@@ -1,22 +1,25 @@
-# MAMA OS - Local Operating Memory for AI Agents
+# MAMA OS - A Local Operator That Watches, Acts, and Shows Its Work
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Local operating memory that lets AI agents read the board, cite the evidence, and stay inside
-> explicit boundaries.
+> A daemon that reads your work channels, decides on its own when something matters, acts on it,
+> and keeps a record of what it changed and why.
 
-MAMA OS connects chats, docs, decisions, and work logs into a local memory substrate. Agents can use
-it to search raw evidence, follow relationships, inspect timelines, and produce better briefings
-instead of guessing from a short prompt.
+MAMA OS runs in the background on your machine. It reads the places your work actually happens —
+Slack, Telegram, Gmail, Trello, your Obsidian vault — and does three things with what it finds:
+remembers it, reports on it, and acts on it.
 
-This release ships the foundation: raw search/window APIs, graph/entity/timeline APIs, situation
-packets, trusted provenance, model/tool traces, strict search diagnostics, runtime envelopes, and
-Context Compile V0. `context_compile` turns those pieces into one selected/rejected/missing
-evidence packet for a task, and `mama_save` can attach that packet through trusted
-`context_packet_id` provenance.
+The part that surprises people is that most of this happens when nobody is talking to it. On a
+recent 75-minute sample of the live daemon, 8 of 114 lane operations came from a human conversation.
+The other 106 were the system deciding for itself: firing a trigger it wrote earlier, publishing a
+report, reconciling a board, promoting a durable judgment into memory.
+
+That makes accountability the point rather than a feature. Every durable change the system makes is
+recorded with the batch of events that caused it — or explicitly marked as having no known cause. A
+database constraint makes it impossible to store a change that claims a cause it does not have.
 
 ## The Operator Runtime
 
@@ -70,7 +73,61 @@ coverage kept inseparable.
   and reports; it never blocks. Where a tool cannot distinguish a read from a write, the verdict says
   so rather than claiming more than it knows.
 
-## Target Workflow
+## What You Actually Get
+
+Written plainly, and split by how much you choose to run. Nothing below is aspirational — the
+"someday" version lives in the Roadmap.
+
+### If you install the Claude Code plugin (smallest step)
+
+Your coding decisions get written down without you doing it, and come back when they matter. When
+you later read a file that a past decision touched, the reasoning shows up in your session. You can
+search it with `/mama:search`. There is no daemon and no background process — just hooks and slash
+commands.
+
+### If you run the daemon (the real thing)
+
+**It reads your channels so you don't re-read them.** Fourteen connectors poll Slack, Telegram,
+Gmail, Trello, Sheets, Obsidian and more. Conversations get turned into decisions, deadlines and
+changes automatically. You do not tag anything.
+
+**It tells you what changed, without being asked.** Reports go out on a schedule — briefing, what
+needs action, decisions made, pipeline. They are not a query result you went and fetched. Nobody
+asked for the 8am report; it arrives because the system decided the day had started.
+
+**It notices recurring situations and writes its own rules for them.** When the same kind of message
+keeps showing up, the agent writes a trigger for it — keywords, what to recall, what to do — and
+fires it on future messages. You did not configure that trigger. Being honest about the rate: most
+authoring passes produce nothing, because a duplicate gate rejects near-variants of triggers that
+already exist.
+
+**Answers come with their sources attached.** A memory can be traced back to the raw message it came
+from. Search runs in a strict mode that rejects a semantic match with no lexical or entity evidence
+behind it — so a plausible-sounding wrong answer gets dropped instead of shown.
+
+**It keeps a record of what it changed, and admits when it can't explain one.** This is the part
+most agent systems skip. Every durable change is stored with the batch of events that caused it. If
+the system cannot name a cause, the change is stored as _unattributed_ rather than given a
+plausible-looking one. A database constraint makes the dishonest version unstorable.
+
+**It cannot quietly send things on your behalf.** An agent can draft a customer message from the
+evidence. Sending it requires the active envelope to permit that destination. Memory writes refuse
+content that looks like a secret.
+
+**Your data does not leave the machine.** SQLite on local disk, embeddings computed locally. The
+only network calls are to the AI provider you already authenticated with, through the official
+`claude` or `codex` CLI.
+
+### What it is not
+
+- Not a chatbot with a good memory. It runs when nobody is talking to it.
+- Not a memory database. Storage is the input; cited reports are the output.
+- Not a hosted service. There is no account, no cloud, no upload.
+
+## Where It Is Headed (not what it does today)
+
+Everything above this line is running now. Everything below is the direction, written as a scenario
+so the gap is visible rather than blurred.
 
 MAMA is being built toward a local memory twin that agents can inspect, cite, and act on inside
 explicit permission boundaries.
@@ -133,28 +190,20 @@ This release is the runtime foundation for that direction. It ships envelope, pr
 worker-context, strict-search, and Context Compile building blocks, including append-only
 context packets and downstream `context_packet_id` save provenance.
 
-## What MAMA OS Does
+## The Surfaces You Look At
 
-MAMA OS is a local daemon that connects to your apps, reads continuously, and turns scattered records
-into scoped, auditable operating memory for agents and humans.
+**The operator board at `http://localhost:3847/ui`** is where the system talks to you: four slots the
+agent publishes into — briefing, what needs action, decisions, pipeline — updating live over SSE,
+plus a Triggers tab showing the rules the loop wrote for itself, and a Tasks view backed by the task
+ledger. Tasks show workflow status and time status separately, so an overdue item is never silently
+displayed as blocked or done.
 
-The **operator board at `/ui`** is the primary live surface: four agent-published report slots
-(briefing, action required, decisions, pipeline) updating over SSE, plus the trigger library. The
-legacy viewer at `/viewer` remains available with `Dashboard`, `Memory`, `Feed`, `Wiki`, `Agents`,
-`Logs`, and `Settings` tabs and a global chat shell.
+**The legacy viewer at `/viewer`** is still there — `Dashboard`, `Memory`, `Feed`, `Wiki`, `Agents`,
+`Logs`, `Settings`, and a chat shell — for looking directly at the stored record.
 
-**Current building blocks and direction:**
-
-- **Read connected sources** — 14 connectors poll Slack, Gmail, Trello, Obsidian, and more
-- **Reconstruct timelines** — Show raw, memory, case, entity, and edge events in order
-- **Build the relationship graph** — Link people, projects, customers, channels, documents, PRs, and decisions across sources
-- **Surface risk signals** — Highlight stale coverage, blocked cases, low-confidence memories, open questions, and conflicting evidence candidates
-- **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
-- **Operate inside envelopes** — Gateway and worker calls carry a signed envelope hash, scope boundaries, and destination limits enforced before each tool call
-- **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
-- **Search with evidence** — Strict and balanced modes reject vector-only noise unless lexical/entity/raw/seed evidence confirms the result
-- **Organize actionable knowledge** — Raw conversations become structured wiki pages and situation summaries with priorities, gaps, and next steps
-- **Prepare briefings** — Dashboard, wiki, and situation agents can summarize visible context for humans and workers
+**Your chat app** is the third surface, and the one you will use most. Reports arrive in Discord,
+Slack or Telegram without you opening anything. In an allowlisted 1:1 Telegram DM you get the owner
+console, which is the same system with a wider set of permissions.
 
 ```text
 Without MAMA:  The agent sees fragments. You still reconstruct the board.
@@ -162,9 +211,6 @@ Without MAMA:  The agent sees fragments. You still reconstruct the board.
 With MAMA:     The agent gets bounded evidence surfaces. You get the
                raw material for cited briefings and safer next actions.
 ```
-
-This is the direction for local AI agents: read connected evidence continuously, then explain which
-sources they used, what may still be missing, and which permission boundary they were inside.
 
 ## How It Runs
 
@@ -246,10 +292,10 @@ MAMA OS has full system access via the backend CLI — so security is foundation
   actor context before irreversible side effects are allowed.
 - **Destination limits** — An agent can draft a customer message from evidence, but cannot send it
   unless the active envelope explicitly allows that destination.
-- **Provenance ledger** — Memory writes, raw refs, model runs, and tool traces can be audited after
-  the fact without exposing prompt bodies or hidden connector payloads.
-- **Evidence before action** — Agent outputs can carry raw source refs, model/tool traces, and
-  missing-context caveats before a human or downstream worker acts on them.
+- **Provenance ledger** — Memory writes, raw refs, model runs, and tool traces are recorded as they
+  happen, and can be audited afterwards without exposing prompt bodies or connector payloads.
+- **Evidence before action** — Reports carry their source refs and say what context was missing, so
+  a human or a downstream worker sees the gaps before acting on the conclusion.
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode, bulk extraction limits. Built from a [real incident](docs/guides/security.md), not theory.
 - **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
 - **Agent permission tiers** — Tier 1 gets full runtime tools, Tier 2 can write scoped
@@ -285,13 +331,18 @@ open-source components.
 
 ## Packages
 
-| Package                                          | Version | Description                                           |
-| ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.29.2  | Always-on runtime, envelopes, connectors, worker APIs |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.15.0  | MCP server for Claude Desktop/Code and any MCP client |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 2.0.0   | Core memory, provenance, raw refs, graph, embeddings  |
-| [mama plugin](packages/claude-code-plugin/)      | 1.11.0  | Claude Code plugin (marketplace)                      |
-| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
+Five packages, and they are not five versions of the same thing. Pick by what you want to run.
+
+| Package                                          | Version | What it is                                                                                                                                                                              | Do you run it?            |
+| ------------------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.29.2  | **The daemon.** 92k lines: connectors, gateways, the trigger loop, the workorder pipeline, the effect ledger, the web UI. When people say "MAMA", this is almost always what they mean. | Yes — `mama start`        |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 2.0.0   | **The library underneath.** 35k lines of memory, provenance, graph, and embeddings. It depends on nothing else in this repo, and the other three all import it.                         | No — it has no binary     |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.15.0  | **A thin MCP adapter**, 3.7k lines over two dependencies. It exposes the core library to Claude Desktop or any MCP client. Deliberately small: it holds no logic of its own.            | Only as an MCP server     |
+| [mama plugin](packages/claude-code-plugin/)      | 1.11.0  | **Hooks and slash commands for Claude Code** — 5k lines of hook scripts plus 2k lines of markdown commands. No daemon, no background process.                                           | Installed, not run        |
+| [memorybench](packages/memorybench/)             | 1.0.0   | **A benchmark harness**, not part of the product. It exists so retrieval-quality claims can be checked rather than asserted.                                                            | Only to reproduce a score |
+
+The dependency direction is one-way: `mama-core` sits at the bottom, and the daemon, the MCP
+server, and the plugin all build on it. Nothing depends on the daemon.
 
 ## Quick Start
 
@@ -345,26 +396,6 @@ legacy viewer at `http://localhost:3847/viewer` with `Dashboard`, `Memory`, `Fee
 - **Extraction:** structured fact extraction from conversations via the configured model backend (default Sonnet; Codex/GPT models also supported)
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
-## What Works Today
-
-Anyone who installs MAMA OS and connects their apps gets:
-
-- **Automatic knowledge extraction** — Connectors poll 14 sources, AI extracts decisions/deadlines/changes without manual input
-- **Cross-source evidence reads** — "What happened with X?" can pull from connected raw sources and decisions together
-- **Noise-resistant search** — Strict and balanced modes can reject vector-only matches and show why a result was included
-- **Bounded agent calls** — Gateway and worker calls can be tied to runtime envelopes and audited for scope or destination mismatches
-- **Evidence provenance** — Memory rows can be traced to raw refs, model runs, tool traces, and trusted runtime context
-- **Worker context APIs** — Raw search, situation packets, graph/entity APIs, and twin edges give sub-agents structured evidence surfaces
-- **Task-scoped context packets** — `context_compile` selects, rejects, and explains evidence
-  for a specific task before a worker saves memory or composes a report
-- **Decision evolution tracking** — Not just what was decided, but what it replaced, contradicted, and depended on
-- **Situation briefings** — Dashboard and situation agents summarize what changed, what is stale, and what needs attention
-- **Wiki organization** — The wiki agent keeps an Obsidian vault as an append-only daily journal plus durable lesson pages, compiled from promoted decisions
-- **93% retrieval accuracy** — 100-question LongMemEval tool-use sample against long conversation histories
-
-`mama_search` remains the broad candidate retriever. `context_compile` is now the task-shaped layer
-that selects, rejects, and explains evidence before a worker writes memory or composes a report.
-
 ## Roadmap
 
 | Phase    | Version | Focus                                                                                                                                                                                                                                                                                |
@@ -385,6 +416,37 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 | **Now**  | v0.29   | Evidence and effects: an effect ledger where every durable change names its cause or admits it has none, bounded runs, `changes_read` and `mama_provenance`, one channel-grant rule pinned by a differential test, and lane verification that observes without blocking              |
 |          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                             |
 |          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                          |
+
+### What needs improving, measured
+
+These are not guesses about what might be nice. Each one is a number taken off the running system,
+and each is a direction the next releases have to move.
+
+**Context churn is the largest cost lever.** Measured against a comparable operator running the same
+CLI on the same machine, MAMA re-reads a cached context 15.9 times before rebuilding it; the other
+system reaches 144.8. MAMA spends 3.4x more on cache creation while doing 2.6x fewer cache reads.
+The stateless-run design bought correctness and is charging for it here. Closing part of that gap is
+worth more than any other single optimisation.
+
+**The system watches your channels better than it watches itself.** The trigger-authoring step died
+on every attempt for three days before anyone noticed, because the failure recorded a 240 KB command
+line and no cause. That is now fixed, but the general problem is not: an autonomous process needs a
+health surface that makes its own silence loud.
+
+**Most authoring passes produce nothing.** Across 705 recorded passes, 84% created zero triggers —
+the duplicate gate rejects near-variants of what already exists. That gate is correct and stops the
+library filling with noise, but a self-evolving loop that is idle five times out of six has room
+either to propose better or to say why it declined.
+
+**Attribution coverage is thin where it matters most.** In a recent window, 3 of 18 recorded changes
+carried a cause. The split is honest — most runs are autonomous and have no owner message to cite —
+but "honestly unattributed" is a floor to build up from, not a resting place. Work orders already
+carry a batch; the autonomous lanes that do the bulk of the work mostly do not.
+
+**Removed surfaces should stay removed.** Two shipped APIs turned out to be permanently empty: a
+delegations endpoint reading a table nothing wrote, and a registered `delegate` tool with no
+executor. Both are gone. The lesson worth keeping is the test that would have caught them — a
+surface that can only ever answer "nothing" should fail a build, not a user.
 
 ## Development
 
