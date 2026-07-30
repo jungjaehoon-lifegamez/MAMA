@@ -22,9 +22,9 @@
 
   <!-- briefing -->
   <text x="100" y="172" class="sec">■ Briefing</text>
-  <text x="100" y="218" class="line">1. Client A sent the revised files overnight</text><rect x="991" y="197" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="218" text-anchor="middle" class="chip">→ source</text>
-  <text x="100" y="262" class="line">2. The #alpha deadline moved: Friday → Wednesday</text><rect x="991" y="241" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="262" text-anchor="middle" class="chip">→ source</text>
-  <text x="100" y="306" class="line">3. B's invoice question: 14 hours unanswered</text><rect x="991" y="285" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="306" text-anchor="middle" class="chip">→ source</text>
+  <text x="100" y="218" class="line">1. The #alpha deadline slipped: Fri → Wed</text><rect x="991" y="197" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="218" text-anchor="middle" class="chip">→ source</text>
+  <text x="100" y="262" class="line">2. B has waited 9 hours for your quote</text><rect x="991" y="241" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="262" text-anchor="middle" class="chip">→ source</text>
+  <text x="100" y="306" class="line">3. Client A paid the invoice — $1,200 in</text><rect x="991" y="285" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="306" text-anchor="middle" class="chip">→ source</text>
 
   <!-- action -->
   <text x="100" y="376" class="sec">■ Needs your action</text>
