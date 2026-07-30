@@ -1416,6 +1416,7 @@ export class TaskLedger implements TaskSource {
           attestation_version: number;
           context_packet_id: string | null;
           context_packet_sha256: string | null;
+          packet_created_at: number | null;
           next_temporal_check_at: number | null;
           created_at: number;
         }
@@ -1444,6 +1445,7 @@ export class TaskLedger implements TaskSource {
       attestationVersion: row.attestation_version === 1 ? 1 : 0,
       contextPacketId: row.context_packet_id ?? '',
       contextPacketSha256: row.context_packet_sha256 ?? '',
+      packetCreatedAt: row.packet_created_at ?? null,
       nextTemporalCheckAt: row.next_temporal_check_at,
       createdAt: row.created_at,
     };
@@ -1743,8 +1745,8 @@ export class TaskLedger implements TaskSource {
              (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
               before_revision, after_revision, changed_fields, reason,
               attestation_version, context_packet_id, context_packet_sha256,
-              next_temporal_check_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
+              packet_created_at, next_temporal_check_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
         )
         .run(
           context.attemptId,
@@ -1758,6 +1760,7 @@ export class TaskLedger implements TaskSource {
           receiptReason,
           evidence.contextPacketId,
           evidence.contextPacketSha256,
+          evidence.packetCreatedAt,
           nextCheck,
           now
         );

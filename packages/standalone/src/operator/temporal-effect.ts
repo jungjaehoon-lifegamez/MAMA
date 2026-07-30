@@ -40,6 +40,8 @@ export type TemporalReconcileInput =
 export interface TemporalEvidenceAttestation {
   contextPacketId: string;
   contextPacketSha256: string;
+  /** Packet creation time - freshness is a receipt, not a gate (S2). */
+  packetCreatedAt: number | null;
 }
 
 export interface TemporalEffectReceipt {
@@ -55,6 +57,7 @@ export interface TemporalEffectReceipt {
   attestationVersion: 0 | 1;
   contextPacketId: string;
   contextPacketSha256: string;
+  packetCreatedAt: number | null;
   nextTemporalCheckAt: number | null;
   createdAt: number;
 }
