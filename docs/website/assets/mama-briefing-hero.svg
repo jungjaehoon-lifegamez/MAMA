@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img"
+  aria-label="A briefing message from MAMA as it arrives in chat: three items with source links, one action needed, one decision recorded.">
+  <defs>
+    <style>
+      .brand { font: 700 21px ui-sans-serif, -apple-system, "Segoe UI", sans-serif; fill: #e8eaf0; }
+      .meta  { font: 500 18px ui-sans-serif, -apple-system, "Segoe UI", sans-serif; fill: #8b94a5; }
+      .sec   { font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #7dd3a8; }
+      .line  { font: 400 22px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #d7dbe4; }
+      .chip  { font: 600 16px ui-monospace, SFMono-Regular, Menlo, monospace; fill: #8ab4ff; }
+      .foot  { font: 500 19px ui-sans-serif, -apple-system, "Segoe UI", sans-serif; fill: #8b94a5; }
+    </style>
+  </defs>
+
+  <rect x="60" y="28" width="1080" height="664" rx="28" fill="#171a21" stroke="#2a2f3a" stroke-width="1.5"/>
+
+  <!-- header -->
+  <circle cx="112" cy="86" r="7" fill="#4ade80"/>
+  <text x="134" y="94" class="brand">MAMA</text>
+  <text x="212" y="94" class="meta">· Telegram</text>
+  <text x="1100" y="94" text-anchor="end" class="meta">Wed 08:00</text>
+  <line x1="92" y1="120" x2="1108" y2="120" stroke="#2a2f3a" stroke-width="1.5"/>
+
+  <!-- briefing -->
+  <text x="100" y="172" class="sec">■ Briefing</text>
+  <text x="100" y="218" class="line">1. Client A sent the revised files overnight</text><rect x="991" y="197" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="218" text-anchor="middle" class="chip">→ source</text>
+  <text x="100" y="262" class="line">2. The #alpha deadline moved: Friday → Wednesday</text><rect x="991" y="241" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="262" text-anchor="middle" class="chip">→ source</text>
+  <text x="100" y="306" class="line">3. B's invoice question: 14 hours unanswered</text><rect x="991" y="285" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="306" text-anchor="middle" class="chip">→ source</text>
+
+  <!-- action -->
+  <text x="100" y="376" class="sec">■ Needs your action</text>
+  <text x="100" y="422" class="line">- Approve the revised scope before the 11:00 call</text><rect x="991" y="401" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="422" text-anchor="middle" class="chip">→ thread</text>
+
+  <!-- recorded -->
+  <text x="100" y="492" class="sec">■ Recorded yesterday</text>
+  <text x="100" y="538" class="line">- Decision: rotate the staging API keys weekly</text><rect x="991" y="517" width="109" height="30" rx="15" fill="#1e2f4d"/><text x="1045" y="538" text-anchor="middle" class="chip">→ source</text>
+
+  <!-- footer -->
+  <line x1="92" y1="590" x2="1108" y2="590" stroke="#2a2f3a" stroke-width="1.5"/>
+  <text x="100" y="636" class="foot">While you slept: 14 sources read · 3 things need you · every line links to its source</text>
+</svg>
