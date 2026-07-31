@@ -236,7 +236,7 @@ change unless they are release-blocking security or data-loss issues.
 - [x] TG-05 same-session and reset prompt-cost tests pass.
 - [x] TG-06 report/outbox restart matrix passes.
 - [x] Focused TG-03 freedom-contract tests pass after the correction (2 files, 13 tests).
-- [x] Final corrective standalone test (4,083 passed, 7 skipped), typecheck, build, lint, format, and
+- [x] Final corrective standalone test (4,088 passed, 7 skipped), typecheck, build, lint, format, and
       `git diff --check` pass.
 - [x] Final reviewers read this artifact first, reported by scenario ID, and every finding was
       closed with a regression test listed in the review-closure section.
