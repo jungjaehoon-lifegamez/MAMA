@@ -181,36 +181,37 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
   });
 
-  it.each(['CODE_ACT_MUTATION_OUTCOME_UNKNOWN', 'MCP_RESULT_MISSING'] as const)(
-    'does not requeue a temporal attempt after terminal ambiguity %s',
-    async (code) => {
-      const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-      const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-      const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
-      ctx.ledger.enqueueTemporalGeneration({
-        generationKey,
-        taskId: task.id,
-        temporalEpoch: task.temporalEpoch,
-        occurrenceKey,
-        checkAt: task.dueAt!,
-        sourceChannel: null,
-        sourceEventId: null,
-      });
-      ctx.deps.runner = {
-        runWithContent: async () => {
-          throw new AgentError('mutation may have committed; do not retry', code);
-        },
-      };
-      const consumer = new WorkOrderConsumer(ctx.deps);
+  it.each([
+    'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+    'MCP_RESULT_MISSING',
+    'MCP_COMPLETED_MUTATION_INTERRUPTED',
+  ] as const)('does not requeue a temporal attempt after terminal ambiguity %s', async (code) => {
+    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
+    ctx.ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new AgentError('mutation may have committed; do not retry', code);
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
 
-      await consumer.tick();
+    await consumer.tick();
 
-      expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
-      expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
-      expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
-      expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
-    }
-  );
+    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
+    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
+    expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
+    expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
+  });
 
   describe('token telemetry: run usage rides the completion event', () => {
     it('carries totalUsage from the runner into the complete event as tokensUsed', async () => {

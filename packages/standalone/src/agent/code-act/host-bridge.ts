@@ -756,6 +756,10 @@ export const READ_ONLY_TOOLS = new Set([
 /** Read-shaped calls that still create a local artifact and therefore need write settlement. */
 const LOCAL_ARTIFACT_TOOLS = new Set(['drive_download']);
 
+export function isCodeActMutatingTool(toolName: string): boolean {
+  return !READ_ONLY_TOOLS.has(toolName) || LOCAL_ARTIFACT_TOOLS.has(toolName);
+}
+
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
@@ -845,21 +849,6 @@ export class HostBridge {
         desc.name,
         async (hostContext, ...args: unknown[]) => {
           const input = this._buildInput(desc, args);
-
-          // Validate required params before execution
-          const missing = desc.params
-            .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
-            .map((p) => `${p.name}: ${p.type}`);
-          if (missing.length > 0) {
-            const sig = desc.params
-              .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
-              .join(', ');
-            throw new Error(
-              `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
-                `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
-            );
-          }
-
           this.onToolUse?.(desc.name, input, undefined);
           const executionContext = this.executionContext
             ? {
@@ -871,6 +860,24 @@ export class HostBridge {
             : undefined;
           let terminalAuditRecorded = false;
           try {
+            // Validation failures are host-tool terminal events too. Keep them
+            // inside the audited region so every projected call has both the
+            // initial observation and one stable terminal outcome.
+            const missing = desc.params
+              .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
+              .map((p) => `${p.name}: ${p.type}`);
+            if (missing.length > 0) {
+              const sig = desc.params
+                .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
+                .join(', ');
+              const validationError = new Error(
+                `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
+                  `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
+              );
+              Object.assign(validationError, { code: 'invalid_tool_input' });
+              throw validationError;
+            }
+
             const result = executionContext
               ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
               : await this.executor.execute(desc.name, input as GatewayToolInput);

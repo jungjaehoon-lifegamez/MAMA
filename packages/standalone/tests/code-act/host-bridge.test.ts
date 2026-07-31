@@ -368,6 +368,26 @@ describe('HostBridge', () => {
       expect(result.success).toBe(false);
     });
 
+    it('TG-06 emits a terminal audit when required input validation fails', async () => {
+      const execute = vi.fn();
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      const audit = vi.fn();
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['Read']);
+
+      const result = await sandbox.execute('Read()');
+
+      expect(result.success).toBe(false);
+      expect(execute).not.toHaveBeenCalled();
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[0]?.[2]).toBeUndefined();
+      expect(audit.mock.calls[1]?.[2]).toEqual({
+        success: false,
+        code: 'invalid_tool_input',
+      });
+    });
+
     it('TG-06 emits one normalized terminal audit for a returned denial', async () => {
       const bridge = new HostBridge(
         makeExecutor({

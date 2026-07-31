@@ -95,10 +95,12 @@ function parseHostToolsInvoked(content: unknown): string[] {
     }
     const root = parsed as Record<string, unknown>;
     const isVersionedMcpResult =
-      root.protocol === 'mama.code_act.result' && root.version === 1 && root.success === true;
+      root.protocol === 'mama.code_act.result' &&
+      root.version === 1 &&
+      typeof root.success === 'boolean';
     const isDirectGatewayResult =
       root.protocol === undefined &&
-      root.success === true &&
+      typeof root.success === 'boolean' &&
       Array.isArray(root.hostToolExecutions);
     if (!isVersionedMcpResult && !isDirectGatewayResult) {
       return [];
@@ -190,17 +192,22 @@ export function summarizeReportToolUse(
     for (const block of msg.content as Array<{ type?: string; id?: string; name?: string }>) {
       if (!block || block.type !== 'tool_use' || typeof block.name !== 'string') continue;
       all.push(block.name);
-      const executed = typeof block.id === 'string' && resultOkById.get(block.id) === true;
-      if (!executed) continue;
       const name = stripMcpPrefix(block.name);
-      if (name === CODE_ACT_TOOL_NAME) {
-        // Nested gather/write: classify what the sandbox actually executed, not code_act itself.
+      if (
+        (block.name === CODE_ACT_TOOL_NAME || block.name === 'mcp__code-act__code_act') &&
+        typeof block.id === 'string' &&
+        resultContentById.has(block.id)
+      ) {
+        // A later Code-Act failure does not erase earlier successful host calls.
+        // The trusted root ledger records each nested execution independently.
         for (const nested of parseHostToolsInvoked(resultContentById.get(block.id as string))) {
           if (GATHER_TOOLS.has(nested)) gatherTools.push(nested);
           else if (WRITE_TOOLS.has(nested)) writeTools.push(nested);
         }
         continue;
       }
+      const executed = typeof block.id === 'string' && resultOkById.get(block.id) === true;
+      if (!executed) continue;
       if (GATHER_TOOLS.has(name)) gatherTools.push(name);
       else if (WRITE_TOOLS.has(name)) writeTools.push(name);
     }
