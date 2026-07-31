@@ -1319,7 +1319,11 @@ export class GatewayToolExecutor {
         toolName === 'context_compile' ||
         toolName === 'code_act';
       auditResult = shouldSanitizeAuditFailure
-        ? sanitizeGatewayFailureResult(rawResult, Boolean(activeCtx.temporalWorkContext))
+        ? sanitizeGatewayFailureResult(
+            rawResult,
+            Boolean(activeCtx.temporalWorkContext),
+            toolName === 'code_act'
+          )
         : rawResult;
       result = activeCtx.temporalWorkContext ? auditResult : rawResult;
       const rawResultRecord = rawResult as Record<string, unknown>;
@@ -4276,20 +4280,54 @@ function gatewayFailureRef(value: string, temporal: boolean): string {
 
 function sanitizeGatewayFailureResult(
   result: GatewayToolResult,
-  temporal: boolean
+  temporal: boolean,
+  preserveCodeActAudit = false
 ): GatewayToolResult {
   const failure = getFailureMessage(result);
   if (!failure) {
     return result;
   }
   const record = result as Record<string, unknown>;
+  const hostToolExecutions = preserveCodeActAudit
+    ? normalizeHostToolExecutionAudit(record.hostToolExecutions)
+    : [];
+  const hostToolsInvoked = [
+    ...new Set(
+      hostToolExecutions.filter((execution) => execution.success).map((execution) => execution.name)
+    ),
+  ];
   return {
     success: false,
     error: gatewayFailureRef(failure, temporal),
     ...(typeof record.code === 'string' ? { code: record.code } : {}),
     ...(record.retryable === false ? { retryable: false } : {}),
     ...(record.abort === true ? { abort: true } : {}),
+    ...(preserveCodeActAudit ? { hostToolExecutions, hostToolsInvoked } : {}),
   } as GatewayToolResult;
+}
+
+function normalizeHostToolExecutionAudit(
+  value: unknown
+): Array<{ name: string; success: boolean; code?: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== 'string' || typeof record.success !== 'boolean') {
+      return [];
+    }
+    return [
+      {
+        name: record.name,
+        success: record.success,
+        ...(typeof record.code === 'string' ? { code: record.code } : {}),
+      },
+    ];
+  });
 }
 
 function sanitizeGatewayError(error: unknown, temporal: boolean): Error {

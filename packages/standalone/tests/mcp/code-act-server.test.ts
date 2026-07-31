@@ -38,13 +38,26 @@ async function readLine(stream: NodeJS.ReadableStream): Promise<string> {
   });
 }
 
-async function invokeCodeAct(contextKey?: string): Promise<{
+async function invokeCodeAct(
+  contextKey?: string,
+  apiResponse: Record<string, unknown> = {
+    success: true,
+    value: { answer: 2, hostToolExecutions: [{ name: 'forged', success: true }] },
+    logs: ['sandbox log'],
+    metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 10 },
+    hostToolExecutions: [{ name: 'mama_search', success: true }],
+    hostToolsInvoked: ['mama_search'],
+  }
+): Promise<{
   body: Record<string, unknown>;
   stdout: string;
   stderr: string;
+  requestCount: number;
 }> {
   let body: Record<string, unknown> | undefined;
+  let requestCount = 0;
   const api = createServer((request, response) => {
+    requestCount += 1;
     let raw = '';
     request.on('data', (chunk: Buffer) => {
       raw += chunk.toString();
@@ -52,7 +65,7 @@ async function invokeCodeAct(contextKey?: string): Promise<{
     request.on('end', () => {
       body = JSON.parse(raw) as Record<string, unknown>;
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ success: true, value: 2, logs: [] }));
+      response.end(JSON.stringify(apiResponse));
     });
   });
   await new Promise<void>((resolveListen) => api.listen(0, '127.0.0.1', resolveListen));
@@ -101,7 +114,7 @@ async function invokeCodeAct(contextKey?: string): Promise<{
   if (!body) {
     throw new Error('MCP child made no HTTP request');
   }
-  return { body, stdout, stderr };
+  return { body, stdout, stderr, requestCount };
 }
 
 describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
@@ -113,12 +126,56 @@ describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
     expect(observed.body).toMatchObject({ code: '1 + 1', context_key: contextKey });
     expect(observed.stdout).not.toContain(contextKey);
     expect(observed.stderr).not.toContain(contextKey);
-    expect(JSON.parse(observed.stdout)).toMatchObject({ jsonrpc: '2.0', id: 1 });
+    expect(observed.requestCount).toBe(1);
+    const response = JSON.parse(observed.stdout) as {
+      result: { content: Array<{ text: string }> };
+    };
+    expect(response).toMatchObject({ jsonrpc: '2.0', id: 1 });
+    expect(response.result.content).toHaveLength(1);
+    expect(JSON.parse(response.result.content[0].text)).toEqual({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: true,
+      hostToolExecutions: [{ name: 'mama_search', success: true }],
+      hostToolsInvoked: ['mama_search'],
+      payload: {
+        value: { answer: 2, hostToolExecutions: [{ name: 'forged', success: true }] },
+        logs: ['sandbox log'],
+        metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 10 },
+      },
+    });
   });
 
   it('keeps the legacy HTTP body unchanged when no process context key exists', async () => {
     const observed = await invokeCodeAct();
 
     expect(observed.body).toEqual({ code: '1 + 1' });
+  });
+
+  it('TG-06 serializes failed nested executions without promoting them to invoked tools', async () => {
+    const observed = await invokeCodeAct(undefined, {
+      success: false,
+      error: 'Permission denied',
+      errorCode: 'permission_denied',
+      retryable: false,
+      hostToolExecutions: [{ name: 'mama_save', success: false, code: 'permission_denied' }],
+      hostToolsInvoked: ['mama_save'],
+    });
+    const response = JSON.parse(observed.stdout) as {
+      result: { content: Array<{ text: string }>; isError?: boolean };
+    };
+
+    expect(observed.requestCount).toBe(1);
+    expect(response.result.isError).toBe(true);
+    expect(JSON.parse(response.result.content[0].text)).toEqual({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [{ name: 'mama_save', success: false, code: 'permission_denied' }],
+      hostToolsInvoked: [],
+      payload: {},
+      error: { message: 'Permission denied', code: 'permission_denied' },
+      retryable: false,
+    });
   });
 });

@@ -30,7 +30,15 @@ import os from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
-import type { TokenUsageRecord, PromptCallbacks, ToolUseBlock } from './types.js';
+import {
+  ClaudeToolStreamProtocolError,
+  type CompletedToolExchange,
+  type PromptCallbacks,
+  type PromptResult,
+  type TokenUsageRecord,
+  type ToolResultBlock,
+  type ToolUseBlock,
+} from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
@@ -130,6 +138,7 @@ export interface ContentBlock {
   input?: Record<string, unknown>;
   tool_use_id?: string;
   content?: string | Array<{ type: string; text?: string }>;
+  is_error?: boolean;
 }
 
 export interface StreamMessage {
@@ -162,24 +171,46 @@ export interface StreamMessage {
   error?: string;
 }
 
-export interface PromptResult {
-  response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  session_id: string;
-  cost_usd?: number;
-  toolUseBlocks?: ToolUseBlock[];
-  hasToolUse?: boolean;
-  duration_ms?: number;
-}
-
-export type { PromptCallbacks };
+export type { PromptCallbacks, PromptResult };
 
 type ProcessState = 'idle' | 'busy' | 'starting' | 'dead';
+
+interface PromptToolExchangeState {
+  toolUse: ToolUseBlock;
+  toolUseFingerprint: string;
+  toolResult?: ToolResultBlock;
+  toolResultFingerprint?: string;
+}
+
+const MAX_STREAM_TOOL_RESULT_CHARS = 64 * 1024;
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? 'undefined' : serialized;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(',')}}`;
+}
+
+function normalizeStreamToolResultContent(content: ContentBlock['content']): string {
+  const normalized =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((block) => block.type === 'text' && typeof block.text === 'string')
+            .map((block) => block.text)
+            .join('\n')
+        : '';
+  return normalized.slice(0, MAX_STREAM_TOOL_RESULT_CHARS);
+}
 
 /**
  * PersistentClaudeProcess - Manages a single long-lived Claude CLI process
@@ -200,6 +231,8 @@ export class PersistentClaudeProcess extends EventEmitter {
   private currentReject: ((error: Error) => void) | null = null;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
+  private readonly promptToolExchanges = new Map<string, PromptToolExchangeState>();
+  private completedToolExchanges: CompletedToolExchange[] = [];
   private awaitingToolResults = false;
   private pendingToolUseStartedAt: number | null = null;
   private accumulatedText: string = '';
@@ -462,6 +495,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
 
     return new Promise((resolve, reject) => {
@@ -539,6 +574,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
 
     return new Promise((resolve, reject) => {
@@ -650,9 +687,19 @@ export class PersistentClaudeProcess extends EventEmitter {
                 name: toolName,
                 input: block.input || {},
               };
-              this.toolUseBlocks.push(toolUse);
-              this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
-              persistentLogger.info(`[PersistentCLI] Tool use: ${toolName}`);
+              if (!this.recordToolUse(toolUse)) {
+                return;
+              }
+            }
+          }
+        }
+        break;
+
+      case 'user':
+        if (event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'tool_result' && !this.recordToolResult(block)) {
+              return;
             }
           }
         }
@@ -663,7 +710,9 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.clearRequestTimeout();
 
         if (event.subtype === 'success') {
-          const hasToolUse = this.toolUseBlocks.length > 0;
+          const unresolvedToolUses = [...this.toolUseBlocks];
+          const completedToolExchanges = [...this.completedToolExchanges];
+          const hasToolUse = unresolvedToolUses.length > 0;
           const result: PromptResult = {
             response: event.result || this.accumulatedText,
             session_id: event.session_id || this.options.sessionId,
@@ -675,8 +724,9 @@ export class PersistentClaudeProcess extends EventEmitter {
               cache_creation_input_tokens: event.usage?.cache_creation_input_tokens,
               cache_read_input_tokens: event.usage?.cache_read_input_tokens,
             },
-            toolUseBlocks: hasToolUse ? this.toolUseBlocks : undefined,
+            toolUseBlocks: hasToolUse ? unresolvedToolUses : undefined,
             hasToolUse,
+            completedToolExchanges,
           };
 
           // Record token usage
@@ -696,11 +746,11 @@ export class PersistentClaudeProcess extends EventEmitter {
           }
 
           persistentLogger.info(
-            `[PersistentCLI] Request complete (${event.duration_ms}ms, ${this.toolUseBlocks.length} tools)`
+            `[PersistentCLI] Request complete (${event.duration_ms}ms, ${unresolvedToolUses.length} unresolved tools, ${completedToolExchanges.length} completed tools)`
           );
           this.currentCallbacks?.onFinal?.({
             content: result.response,
-            toolUseBlocks: this.toolUseBlocks,
+            toolUseBlocks: unresolvedToolUses,
           });
           this.state = 'idle';
           this.awaitingToolResults = hasToolUse;
@@ -733,6 +783,78 @@ export class PersistentClaudeProcess extends EventEmitter {
         break;
       }
     }
+  }
+
+  private recordToolUse(toolUse: ToolUseBlock): boolean {
+    const fingerprint = stableJson({ name: toolUse.name, input: toolUse.input });
+    const current = this.promptToolExchanges.get(toolUse.id);
+    if (current) {
+      if (current.toolResult) {
+        this.failToolStreamProtocol(`Completed tool id was reused: ${toolUse.id}`);
+        return false;
+      }
+      if (current.toolUseFingerprint !== fingerprint) {
+        this.failToolStreamProtocol(`Conflicting tool_use payload for id: ${toolUse.id}`);
+        return false;
+      }
+      return true;
+    }
+
+    this.promptToolExchanges.set(toolUse.id, {
+      toolUse,
+      toolUseFingerprint: fingerprint,
+    });
+    this.toolUseBlocks.push(toolUse);
+    this.currentCallbacks?.onToolUse?.(toolUse.name, toolUse.input);
+    persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
+    return true;
+  }
+
+  private recordToolResult(block: ContentBlock): boolean {
+    const toolUseId = block.tool_use_id;
+    if (!toolUseId) {
+      this.failToolStreamProtocol('tool_result is missing tool_use_id');
+      return false;
+    }
+    const current = this.promptToolExchanges.get(toolUseId);
+    if (!current) {
+      this.failToolStreamProtocol(`tool_result arrived before tool_use: ${toolUseId}`);
+      return false;
+    }
+    const toolResult: ToolResultBlock = {
+      type: 'tool_result',
+      tool_use_id: toolUseId,
+      content: normalizeStreamToolResultContent(block.content),
+      is_error: block.is_error === true,
+    };
+    const fingerprint = stableJson({
+      content: toolResult.content,
+      is_error: toolResult.is_error,
+    });
+    if (current.toolResult) {
+      if (current.toolResultFingerprint !== fingerprint) {
+        this.failToolStreamProtocol(`Conflicting tool_result payload for id: ${toolUseId}`);
+        return false;
+      }
+      return true;
+    }
+
+    current.toolResult = toolResult;
+    current.toolResultFingerprint = fingerprint;
+    this.toolUseBlocks = this.toolUseBlocks.filter((toolUse) => toolUse.id !== toolUseId);
+    this.completedToolExchanges.push({ toolUse: current.toolUse, toolResult });
+    this.currentCallbacks?.onToolComplete?.(
+      current.toolUse.name,
+      toolUseId,
+      toolResult.is_error === true
+    );
+    return true;
+  }
+
+  private failToolStreamProtocol(message: string): void {
+    const error = new ClaudeToolStreamProtocolError(message);
+    this.currentCallbacks?.onError?.(error);
+    this.handleError(error);
   }
 
   /**
@@ -835,6 +957,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.currentResolve = null;
     this.currentReject = null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
   }
 

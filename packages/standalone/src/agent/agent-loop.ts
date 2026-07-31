@@ -64,7 +64,7 @@ import type {
   BackgroundTaskRegistry,
   ModelRunProvenance,
 } from './types.js';
-import { AgentError } from './types.js';
+import { AgentError, ClaudeToolStreamProtocolError, McpResultMissingError } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
@@ -1582,9 +1582,16 @@ export class AgentLoop {
         const promptStart = Date.now();
         const throwFinalCliError = (error: unknown): never => {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
+          const errorType =
+            normalizedError instanceof McpResultMissingError ||
+            normalizedError instanceof ClaudeToolStreamProtocolError
+              ? normalizedError.code
+              : normalizedError instanceof HostToolTerminalError
+                ? normalizedError.terminalCode
+                : 'CLI_ERROR';
           this.onMetric?.('prompt_error', 1, {
             backend: this.backend,
-            error_type: 'CLI_ERROR',
+            error_type: errorType,
           });
           try {
             ext?.onError?.(attemptReportedError ?? normalizedError);
@@ -1599,6 +1606,17 @@ export class AgentLoop {
             throw new AgentError(
               normalizedError.message,
               normalizedError.terminalCode,
+              normalizedError,
+              false
+            );
+          }
+          if (
+            normalizedError instanceof McpResultMissingError ||
+            normalizedError instanceof ClaudeToolStreamProtocolError
+          ) {
+            throw new AgentError(
+              normalizedError.message,
+              normalizedError.code,
               normalizedError,
               false
             );
@@ -1882,6 +1900,29 @@ export class AgentLoop {
           response.usage.input_tokens,
           tokenBackend
         );
+
+        // Claude's MCP server may already have executed these tool calls while the
+        // prompt was streaming. Preserve the observed exchange in conversation
+        // order, but never put the completed tool_use back into executeTools().
+        // Replaying a completed mutation would turn a transport observation into a
+        // second host-side effect.
+        if (Array.isArray(piResult.completedToolExchanges)) {
+          for (const exchange of piResult.completedToolExchanges) {
+            history.push({ role: 'assistant', content: [exchange.toolUse] });
+            runScope.onTurn?.({
+              turn,
+              role: 'assistant',
+              content: [exchange.toolUse],
+              stopReason: 'tool_use',
+            });
+            history.push({ role: 'user', content: [exchange.toolResult] });
+            runScope.onTurn?.({
+              turn,
+              role: 'user',
+              content: [exchange.toolResult],
+            });
+          }
+        }
 
         // PreCompact: inject compaction summary when approaching context limit
         if (tokenStatus.nearThreshold && this.preCompactHandler && !runScope.preCompactInjected) {

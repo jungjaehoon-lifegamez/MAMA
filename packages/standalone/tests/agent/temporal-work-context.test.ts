@@ -887,6 +887,33 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     });
   });
 
+  it('TG-06 preserves failed nested host audit on a temporal Code-Act result', async () => {
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const result = await executor.execute(
+      'code_act',
+      {
+        code: `task_temporal_reconcile({ context_packet_id: 'missing-packet', expected_revision: ${context.revision}, outcome: 'resolved', status: 'done', reason: 'must fail closed' })`,
+        allowedTools: ['task_temporal_reconcile'],
+      },
+      {
+        ...executionContext,
+        agentId: 'workorder-temporal',
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_nested_failure',
+        workorderAttemptId: context.attemptId,
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.hostToolExecutions).toEqual([
+      expect.objectContaining({ name: 'task_temporal_reconcile', success: false }),
+    ]);
+    expect(result.hostToolsInvoked).toEqual([]);
+  });
+
   it('rejects reads and writes after temporal supersession', async () => {
     ledger.update(taskId, { due_at: '2026-07-23T00:00:00+09:00' });
     const published: unknown[] = [];

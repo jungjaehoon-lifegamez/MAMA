@@ -787,6 +787,19 @@ export function isToolAvailableAtTier(toolName: string, tier: 1 | 2 | 3): boolea
   return READ_ONLY_TOOLS.has(toolName);
 }
 
+function thrownHostToolCode(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const record = error as Record<string, unknown>;
+    if (typeof record.code === 'string') {
+      return record.code;
+    }
+    if (record.name === 'AbortError') {
+      return 'aborted';
+    }
+  }
+  return 'host_tool_exception';
+}
+
 export class HostBridge {
   onToolUse?: (toolName: string, input: Record<string, unknown>, result: unknown) => void;
 
@@ -856,20 +869,43 @@ export class HostBridge {
                   : hostContext.signal,
               }
             : undefined;
-          const result = executionContext
-            ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
-            : await this.executor.execute(desc.name, input as GatewayToolInput);
-          this.onToolUse?.(desc.name, input, result);
+          let terminalAuditRecorded = false;
+          try {
+            const result = executionContext
+              ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
+              : await this.executor.execute(desc.name, input as GatewayToolInput);
+            const resultRecord = result as Record<string, unknown>;
+            this.onToolUse?.(desc.name, input, {
+              success: result.success,
+              ...(result.success === false
+                ? {
+                    code:
+                      typeof resultRecord.code === 'string'
+                        ? resultRecord.code
+                        : 'host_tool_failed',
+                  }
+                : {}),
+            });
+            terminalAuditRecorded = true;
 
-          if (!result.success) {
-            const r = result as GatewayToolResult & { message?: string; error?: string };
-            const msg = r.message || r.error || `${desc.name} failed`;
-            throw new Error(`${desc.name}(): ${msg}`);
+            if (!result.success) {
+              const r = result as GatewayToolResult & { message?: string; error?: string };
+              const msg = r.message || r.error || `${desc.name} failed`;
+              throw new Error(`${desc.name}(): ${msg}`);
+            }
+
+            // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
+            const { success: _, ...payload } = result as unknown as Record<string, unknown>;
+            return Object.keys(payload).length === 0 ? true : payload;
+          } catch (error) {
+            if (!terminalAuditRecorded) {
+              this.onToolUse?.(desc.name, input, {
+                success: false,
+                code: thrownHostToolCode(error),
+              });
+            }
+            throw error;
           }
-
-          // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
-          const { success: _, ...payload } = result as unknown as Record<string, unknown>;
-          return Object.keys(payload).length === 0 ? true : payload;
         },
         {
           settleOnAbort: !READ_ONLY_TOOLS.has(desc.name) || LOCAL_ARTIFACT_TOOLS.has(desc.name),

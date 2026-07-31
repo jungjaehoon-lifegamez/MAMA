@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import type { PromptCallbacks, ToolUseBlock } from './types.js';
+import type { PromptCallbacks, PromptResult, ToolUseBlock } from './types.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
 
 const { DebugLogger } = debugLogger as {
@@ -90,23 +90,7 @@ export interface ClaudeCLIWrapperOptions {
   allowedTools?: string[];
 }
 
-export type { PromptCallbacks, ToolUseBlock } from './types.js';
-
-export interface PromptResult {
-  response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  session_id: string;
-  cost_usd?: number;
-  /** Tool use blocks if Claude requested tools */
-  toolUseBlocks?: ToolUseBlock[];
-  /** True if Claude requested tool use */
-  hasToolUse?: boolean;
-}
+export type { PromptCallbacks, PromptResult, ToolUseBlock } from './types.js';
 
 /**
  * ClaudeCLIWrapper - Wraps Claude CLI for programmatic use
