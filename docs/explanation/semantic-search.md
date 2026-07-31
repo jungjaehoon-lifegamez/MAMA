@@ -37,7 +37,7 @@ An **embedding** is a vector (array of numbers) that represents the semantic mea
 
 ```
 Text: "JWT authentication with refresh tokens"
-Embedding: [0.23, -0.45, 0.78, ..., 0.12]  (384 dimensions)
+Embedding: [0.23, -0.45, 0.78, ..., 0.12]  (1024 dimensions)
 ```
 
 **Similar concepts have similar vectors:**
@@ -54,7 +54,7 @@ MAMA uses **Transformers.js** (in-browser ML) with pre-trained models:
 
 | Model                          | Size        | Language                       | Accuracy      |
 | ------------------------------ | ----------- | ------------------------------ | ------------- |
-| `Xenova/multilingual-e5-small` | ~113MB (q8) | 100+ languages (default)       | 80% (default) |
+| `Xenova/multilingual-e5-large` | ~113MB (q8) | 100+ languages (default)       | 80% (default) |
 | `Xenova/all-MiniLM-L6-v2`      | ~90MB       | English + limited multilingual | 75%           |
 | `Xenova/gte-large`             | 200MB       | English only                   | 85%           |
 
@@ -92,9 +92,7 @@ Decision 2: "Database indexing" → 0.15 (15% match)
 MAMA shows results with similarity >= 50% (configurable):
 
 ```json
-{
-  "similarity_threshold": 0.5
-}
+{}
 ```
 
 ---
@@ -136,17 +134,12 @@ Final score: (0.92 × 0.7) + (0.95 × 0.3) + 0.2 = 1.129 → capped at 1.0
 **Default configuration:**
 
 ```json
-{
-  "recency_weight": 0.3,
-  "recency_scale": 7,
-  "recency_decay": 0.5
-}
+{}
 ```
 
 **Decay curve:**
 
 ```
-Score = e^(-(days / recency_scale))
 
 Day 0:  1.0  (100%)
 Day 7:  0.5  (50%)
@@ -162,7 +155,7 @@ Day 30: 0.01 (1%)
 
 ### How It Works
 
-The **multilingual-e5-small** model maps different languages to the **same semantic space**:
+The **multilingual-e5-large** model maps different languages to the **same semantic space**:
 
 ```
 Language A: "security" → [0.23, -0.45, 0.78, ...]
@@ -200,7 +193,7 @@ Graph expansion finds:
 
 **Why?** Understanding the evolution helps avoid repeating past mistakes.
 
-**Implementation:** `src/core/graph-expansion.js`
+**Implementation:** `packages/mama-core/src/` (graph expansion in the search pipeline)
 
 **See also:** [Decision Graph](decision-graph.md)
 
@@ -217,7 +210,7 @@ CREATE TABLE decisions (
   id INTEGER PRIMARY KEY,
   topic TEXT,
   decision TEXT,
-  embedding BLOB  -- 384-dimensional vector stored here
+  embedding BLOB  -- 1024-dimensional vector stored here
 );
 ```
 
@@ -266,7 +259,7 @@ For each decision:
 
 ### 2. Embedding Dimension
 
-**Issue:** 384 dimensions (120MB model) is a trade-off
+**Issue:** 1024 dimensions (120MB model) is a trade-off
 
 **Trade-off:**
 
@@ -277,7 +270,7 @@ For each decision:
 
 ### 3. Language Coverage
 
-**Issue:** Only Korean + English supported
+**Issue:** 100+ languages via multilingual-e5-large
 
 **Future:** Add multilingual-e5-base for more languages (Japanese, Chinese, etc.)
 
@@ -293,11 +286,11 @@ For each decision:
 3. Model inference:
    ├── Token IDs: [1234, 5678, 9012, ...]
    ├── Attention layers: 12 layers
-   └── Output: [0.23, -0.45, 0.78, ..., 0.12] (384 dimensions)
+   └── Output: [0.23, -0.45, 0.78, ..., 0.12] (1024 dimensions)
 4. Store in SQLite as BLOB
 ```
 
-**Implementation:** `src/core/embeddings.js`
+**Implementation:** `packages/mama-core/src/embeddings.ts`
 
 ### Similarity Search Pipeline
 
@@ -314,7 +307,7 @@ For each decision:
 7. Return top 10 (configurable)
 ```
 
-**Implementation:** `src/core/similarity.js`, `src/core/scoring.js`
+**Implementation:** `packages/mama-core/src/` (cosine + rankers)
 
 ---
 

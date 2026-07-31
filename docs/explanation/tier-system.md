@@ -60,7 +60,6 @@ Tier 2 automatically activates when:
    - Insufficient memory
 
 2. **User explicitly disables vector search**
-   - Set `MAMA_FORCE_TIER_2=true`
    - Useful for debugging or ultra-fast queries
 
 ### Performance
@@ -76,7 +75,7 @@ Tier 2 automatically activates when:
 ### Automatic Detection
 
 ```
-1. User runs /mama-suggest "authentication strategy"
+1. User runs /mama:search "authentication strategy"
 2. MAMA attempts Tier 1:
    ├── Load embedding model... ❌ FAILED (`node:sqlite` unavailable in this runtime)
    └── Fall back to Tier 2
@@ -108,7 +107,7 @@ If Tier 2 is active, MAMA shows remediation link:
 ### Check Current Tier
 
 ```
-/mama-list
+/mama:search
 
 # Output:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -156,8 +155,7 @@ All search results show tier status:
 If you know the exact topic name:
 
 ```bash
-export MAMA_FORCE_TIER_2=true
-/mama-recall auth_strategy  # 12ms vs 89ms
+/mama:search auth_strategy  # 12ms vs 89ms
 ```
 
 ### Use Case 2: Debugging
@@ -165,8 +163,7 @@ export MAMA_FORCE_TIER_2=true
 Disable vector search to isolate issues:
 
 ```bash
-export MAMA_FORCE_TIER_2=true
-/mama-suggest "test"  # Pure SQL, no model interference
+/mama:search "test"  # Pure SQL, no model interference
 ```
 
 ### Use Case 3: Low-Resource Environments
@@ -174,9 +171,7 @@ export MAMA_FORCE_TIER_2=true
 On machines with limited RAM or old CPUs:
 
 ```json
-{
-  "force_tier_2": true
-}
+{}
 ```
 
 ---
@@ -204,7 +199,7 @@ npm install --include=optional sharp
 ### Step 4: Verify Upgrade
 
 ```bash
-/mama-list
+/mama:search
 
 # Expected: 🟢 Tier 1 (Full Features Active)
 ```
@@ -270,7 +265,7 @@ function search(query) {
 }
 ```
 
-**Implementation:** `src/core/tier-manager.js`
+**Implementation:** `packages/mama-core/src/tier-validator.ts`
 
 ---
 
@@ -281,8 +276,6 @@ function search(query) {
 **A:** No. All data remains in the database. Only search accuracy changes.
 
 ### Q: Can I manually switch tiers?
-
-**A:** Yes. Set `MAMA_FORCE_TIER_2=true` to force Tier 2. No option to force Tier 1 if requirements aren't met.
 
 ### Q: Does Tier 2 support Korean?
 
@@ -296,42 +289,34 @@ function search(query) {
 
 ## Tool Permission Tiers (Multi-Agent System)
 
-Separate from the search tiers above, the **Multi-Agent System** uses a 3-tier permission model to control which gateway tools each agent can access.
+Separate from the search tiers above, the **Multi-Agent System** uses a tier field to control which native tools a subprocess agent may use. Ground truth: `packages/standalone/src/multi-agent/tool-permission-manager.ts`.
 
-### Overview
+### Defaults (verbatim from code)
 
-| Tier       | Name                | Tools Available                              | Use Case                                    |
-| ---------- | ------------------- | -------------------------------------------- | ------------------------------------------- |
-| **Tier 1** | Full Access         | All gateway tools                            | Conductor, trusted agents                   |
-| **Tier 2** | Read + Memory Write | Read-only tools + `mama_save`, `mama_update` | Advisory agents that need to save decisions |
-| **Tier 3** | Read-Only           | Read-only tools only                         | Review agents, untrusted contexts           |
+| Tier       | Allowed                                         | Blocked                                 |
+| ---------- | ----------------------------------------------- | --------------------------------------- |
+| **Tier 1** | `*` (everything)                                | -                                       |
+| **Tier 2** | `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch` | `Write`, `Edit`, `Bash`, `NotebookEdit` |
+| **Tier 3** | same as Tier 2                                  | same as Tier 2                          |
 
-### Tier 1: Full Access
+Two things the old version of this page got wrong:
 
-All gateway tools available: file I/O, bash execution, browser, communication (Discord/Slack/webchat), OS management, memory, and viewer navigation/control tools.
+- **Tier 2 and Tier 3 defaults are byte-identical.** Downgrading an agent from 2 to 3 changes nothing by default. Differences only come from an explicit `tool_permissions` block on the persona.
+- **These are Claude-Code-native tool names, not MAMA gateway tools.** Memory writes (`mama_save`, `mama_update`) are NOT granted by tier; they require an explicit `tool_permissions` allowlist, and gateway-tool authority is governed separately by per-run envelopes (see the generated catalog `packages/standalone/src/agent/gateway-tools.md`).
 
-**Agents:** Conductor and agents with `tier: 1` in persona config. Can also delegate tasks (`can_delegate: true`).
+Delegation (`can_delegate`) is accepted and persisted by the API but **inert**: the `delegate` tool is not dispatchable - its executor was deleted with the multi-agent delegation path.
 
-### Tier 2: Read + Memory Write
-
-Read-only tools plus memory write tools (`mama_save`, `mama_update`). Cannot execute commands, write files, or send messages.
-
-**Read-only tools:** `mama_search`, `mama_load_checkpoint`, `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `browser_get_text`, `browser_screenshot`, `os_list_bots`, `os_get_config`, `pr_review_threads`
-
-**Additional for Tier 2:** `mama_save`, `mama_update`
-
-### Tier 3: Strictly Read-Only
-
-Only read-only tools. Tier 3 agents cannot opt into Code-Act and fall back to normal tool-call
-mode. The `/api/code-act` HTTP endpoint defaults to Tier 2 for Code-Act-enabled agents, but can be
-forced into read-only injection with `MAMA_CODE_ACT_READ_ONLY=true`.
+Tier 3 agents cannot opt into Code-Act and fall back to normal tool-call mode. The `/api/code-act` HTTP endpoint defaults to Tier 2 for Code-Act-enabled agents, but can be forced into read-only injection with `MAMA_CODE_ACT_READ_ONLY=true`.
 
 ### Configuration
 
-Set tier in agent persona config (`~/.mama/agents/`):
+Personas live in `config.yaml` under `multi_agent.agents` (there is no `~/.mama/agents/` directory):
 
 ```yaml
-tier: 2 # 1, 2, or 3 (default: 1)
+multi_agent:
+  agents:
+    reviewer:
+      tier: 2 # 1, 2, or 3 (default: 1)
 ```
 
 Or via API:

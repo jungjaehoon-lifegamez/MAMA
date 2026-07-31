@@ -63,7 +63,6 @@ _Technical specifications and API documentation_
 
 - [Commands Reference](reference/commands.md) - `/mama-*` commands
 - [MCP Tool API](reference/api.md) - MCP tool interfaces
-- [Skills API](reference/skills-api.md) - Standalone skills system
 - [Hooks Reference](reference/hooks.md) - Hook configuration
 - [Configuration Options](reference/configuration-options.md) - All config settings
 
@@ -134,7 +133,7 @@ _Contributing, testing, and development guidelines_
 1. Read [Multi-Agent Personas](guides/multi-agent-advanced.md) - personas, tool tiers, hot-reload
 2. Set up [Codex Backend](guides/codex-backend.md) to pick a backend per agent
 3. Learn about [Code-Act Sandbox](guides/code-act-sandbox.md) for efficient code execution
-4. Understand the work order pipeline in [MAMA OS](explanation/mama-os.md) - it is what runs
+4. Understand the work order pipeline in [Architecture](explanation/architecture.md) - it is what runs
    scheduled board, wiki and memory work
 
 ### 🛠️ I Need to Operate a Live Install
@@ -147,7 +146,6 @@ _Contributing, testing, and development guidelines_
 
 - [Commands Reference](reference/commands.md) - All `/mama-*` commands
 - [MCP Tool API](reference/api.md) - Tool interfaces
-- [Skills API](reference/skills-api.md) - Standalone skills system
 - [Configuration Options](reference/configuration-options.md) - All settings
 
 ---

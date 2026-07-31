@@ -1,5 +1,10 @@
 # MAMA OS - Unified Web Interface
 
+> **PARTIALLY HISTORICAL (v0.21-era).** The legacy `/viewer` walkthrough below
+> predates the operator runtime. The primary surface today is `/ui` (operator
+> board, four report slots); the workorder pipeline, conductor and effect
+> ledger are documented in [architecture](architecture.md).
+
 **Category:** Explanation (Conceptual Understanding)  
 **Audience:** Users wanting to understand what MAMA OS is and why it exists
 
@@ -303,7 +308,7 @@ Legacy `Skills` and `Playground` tabs were removed. Their remaining responsibili
 
 **Agent Configuration:**
 
-- **Model** - Claude Opus 4.6, Claude Sonnet 4.6, Claude Sonnet 4 (available until at least May 14, 2026)
+- **Model** - default `claude-sonnet-5`; overridable per agent via the multi-agent API.
 - **Max turns** - Maximum conversation turns (1-50)
 - **Timeout** - Seconds before timeout (30-600)
 

@@ -8,11 +8,14 @@
 
 MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an HTTP embedding server for fast context injection (~150ms).
 
-**Active hooks:**
+**Active hooks** (authoritative manifest: `packages/claude-code-plugin/.claude-plugin/plugin.json`):
 
-1. **UserPromptSubmit** - Semantic search on every prompt (~150ms latency)
-2. **PreToolUse** - MCP search + contract-only injection + Reasoning Summary
-3. **PostToolUse** - Contract extraction + save guidance with structured reasoning
+1. **SessionStart** - Session bootstrap: checkpoint + recent decisions (15s timeout)
+2. **PreToolUse** (matcher: `Read`) - MCP search + contract-only injection + Reasoning Summary (5s timeout)
+3. **PostToolUse** (matchers: `Write`, `Edit`) - Contract extraction + save guidance (5s timeout)
+4. **PreCompact** - Checkpoint before context compaction (10s timeout)
+
+UserPromptSubmit is NOT wired - the sections below document only hooks that exist.
 
 **FR Reference:** [FR19-24 (Hook Integration)](../archive/fr-mapping-v1.0.md) (historical v1.0 artifact)
 
@@ -34,59 +37,7 @@ Hooks use an HTTP embedding server running on `127.0.0.1:3849` for fast embeddin
 curl http://127.0.0.1:3849/health
 
 # Expected response
-{"status":"ok","modelLoaded":true,"model":"Xenova/multilingual-e5-small","dim":384}
-```
-
----
-
-## UserPromptSubmit Hook
-
-**Trigger:** Every user message to Claude
-
-**Purpose:** Automatic semantic search and gentle context hints
-
-**Script:** `scripts/userpromptsubmit-hook.js`
-
-**Latency:** ~150ms (with HTTP embedding server)
-
-**Timeout:** 1200ms
-
-**Configuration:**
-
-```json
-{
-  "UserPromptSubmit": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/userpromptsubmit-hook.js"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Behavior:**
-
-- Reads `$USER_PROMPT` environment variable
-- Requests embedding via HTTP server (port 3849)
-- Falls back to local model load if HTTP server unavailable
-- Runs semantic search (Tier 1) or exact match (Tier 2)
-- Shows tier status banner with latency
-- Lists top 3 decisions (if similarity > 75%)
-
-**Output:**
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 System Status: 🟢 Tier 1 | Full Features Active | ✓ 150ms | 3 decisions
-💡 MAMA: 2 related decisions
-   • auth_strategy (85%, 2d ago)
-   • database_choice (72%, 1w ago)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{"status":"ok","modelLoaded":true,"model":"Xenova/multilingual-e5-large","dim":1024}
 ```
 
 ---
@@ -130,14 +81,7 @@ curl http://127.0.0.1:3849/health
           "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
         }
       ]
-    },
-    {
-      "matcher": "Grep",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js"
-        }
+    }
       ]
     }
   ]
@@ -208,49 +152,36 @@ curl http://127.0.0.1:3849/health
 
 **Claude Code handles hook output differently by hook type:**
 
-| Hook                 | Exit Code | Output Method       | Claude Receives    | User Terminal |
-| -------------------- | --------- | ------------------- | ------------------ | ------------- |
-| **UserPromptSubmit** | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
-| **SessionStart**     | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
-| **PreToolUse**       | 2         | `message` + stderr  | ✅ As error        | Varies        |
-| **PostToolUse**      | 2         | `message` + stderr  | ✅ As error        | ✅ Visible    |
+| Hook             | Exit Code | Output Method       | Claude Receives    | User Terminal |
+| ---------------- | --------- | ------------------- | ------------------ | ------------- |
+| **SessionStart** | 0         | `additionalContext` | ✅ Quiet injection | ❌ Hidden     |
+| **PreToolUse**   | 2         | `message` + stderr  | ✅ As error        | Varies        |
+| **PostToolUse**  | 2         | `message` + stderr  | ✅ As error        | ✅ Visible    |
 
 **Key differences:**
 
-- **UserPromptSubmit/SessionStart**: Special exceptions in Claude Code that allow quiet context injection via `hookSpecificOutput.additionalContext`
+- **SessionStart**: A special exception in Claude Code that allow quiet context injection via `hookSpecificOutput.additionalContext`
 - **PreToolUse/PostToolUse**: Must use `exit(2)` to pass context to Claude; output appears as "blocking error"
 
 **Why exit(2)?**
 
-- `exit(0)`: Claude doesn't receive output (except UserPromptSubmit/SessionStart)
+- `exit(0)`: Claude doesn't receive output (except SessionStart)
 - `exit(2)`: Claude receives stderr as error context (only way to pass info)
 
 ---
 
-## Disabling Hooks
+Disabling hooks
 
-**Environment variable:**
-
-```bash
-export MAMA_DISABLE_HOOKS=true
-```
-
-**Configuration file (`~/.mama/config.json`):**
-
-```json
-{
-  "disable_hooks": true
-}
-```
-
----
+There is NO supported kill switch today: `MAMA_DISABLE_HOOKS` is only set
+internally by the multi-agent process manager to suppress hooks in Tier-2+
+subprocesses, and `~/.mama/config.json` has no `disable_hooks` key. To disable
+hooks, remove or disable the plugin itself (Claude Code plugin settings).
 
 ## Hook Environment Variables
 
 **Available to all hooks:**
 
 - `$CLAUDE_PLUGIN_ROOT` - Plugin directory path
-- `$USER_PROMPT` - Current user prompt (UserPromptSubmit only)
 - `$TOOL_NAME` - Tool being called (Pre/PostToolUse only)
 - `$MAMA_DB_PATH` - Database path
 - `$MAMA_EMBEDDING_PORT` - HTTP embedding server port (default: 3849)
@@ -263,16 +194,15 @@ export MAMA_DISABLE_HOOKS=true
 ```bash
 cd ~/.claude/plugins/mama
 
-# Test UserPromptSubmit
-export USER_PROMPT="How does authentication work?"
+# Test PreToolUse (Read matcher)
 export MAMA_DB_PATH=~/.claude/mama-memory.db
-node scripts/userpromptsubmit-hook.js
+echo '{"tool_name":"Read","tool_input":{"file_path":"src/index.ts"}}' | node scripts/pretooluse-hook.js
 
 # Check HTTP embedding server
 curl http://127.0.0.1:3849/health
 
 # Measure hook latency
-time USER_PROMPT="test prompt" node scripts/userpromptsubmit-hook.js
+time (echo '{"tool_name":"Read","tool_input":{"file_path":"src/index.ts"}}' | node scripts/pretooluse-hook.js)
 ```
 
 ---
