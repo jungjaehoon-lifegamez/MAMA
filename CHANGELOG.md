@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.1] - 2026-07-31
+
+### Fixed
+
+- **Watchdog no longer flaps on long runs.** The leg beat lived inside
+  tick(), but the interval handler skips tick() while a run is consuming -
+  so every workorder run longer than 2x the cadence paged the owner
+  "silent" and then "recovered" on finish, one telegram flap per long run
+  (caught on day 1 of the S2 measurement window). The interval now beats
+  unconditionally: a consumer mid-run is alive, not silent. Same fix
+  applied to the trigger loop's identical latent pattern.
+
 ## mama-os [0.31.0] - 2026-07-31
 
 S2 Evidence Transposition (PR #216) - the system can now say what caused each
