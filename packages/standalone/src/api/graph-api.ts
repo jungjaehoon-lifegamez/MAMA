@@ -13,6 +13,7 @@ import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
+import { isProcessContextKey } from '../agent/code-act/run-context-registry.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
@@ -4152,7 +4153,7 @@ async function handleCodeActRequest(
 
     let contextKey: string | undefined;
     if (body.context_key !== undefined) {
-      if (typeof body.context_key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.context_key)) {
+      if (!isProcessContextKey(body.context_key)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({

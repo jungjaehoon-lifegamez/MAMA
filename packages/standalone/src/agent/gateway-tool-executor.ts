@@ -4312,22 +4312,30 @@ function normalizeHostToolExecutionAudit(
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.flatMap((entry) => {
+  const executions: Array<{ name: string; success: boolean; code?: string }> = [];
+  let droppedCount = 0;
+  for (const entry of value) {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      return [];
+      droppedCount += 1;
+      continue;
     }
     const record = entry as Record<string, unknown>;
     if (typeof record.name !== 'string' || typeof record.success !== 'boolean') {
-      return [];
+      droppedCount += 1;
+      continue;
     }
-    return [
-      {
-        name: record.name,
-        success: record.success,
-        ...(typeof record.code === 'string' ? { code: record.code } : {}),
-      },
-    ];
-  });
+    executions.push({
+      name: record.name,
+      success: record.success,
+      ...(typeof record.code === 'string' ? { code: record.code } : {}),
+    });
+  }
+  if (droppedCount > 0) {
+    securityLogger.warn('[code-act] dropped malformed host-tool audit entries', {
+      droppedCount,
+    });
+  }
+  return executions;
 }
 
 function sanitizeGatewayError(error: unknown, temporal: boolean): Error {

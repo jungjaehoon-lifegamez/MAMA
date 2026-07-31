@@ -83,7 +83,7 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   is `MCP_RESULT_MISSING`, non-retryable, and creates no replacement workorder because the mutation
   outcome is unknown. If the stream ends after a paired successful mutation but before its final
   result event, `MCP_COMPLETED_MUTATION_INTERRUPTED` carries the completed exchange into history and
-  likewise blocks replacement. A paired terminal result carries the same exact exchange through
+  likewise blocks replacement. A paired terminal result carries the same exchange through
   close/error, and completed mutation/terminal evidence takes precedence over any later protocol
   violation or missing result so neither history nor no-retry policy is lost. A protocol violation
   while a Code-Act call is still unresolved is likewise promoted to `MCP_RESULT_MISSING` before the
@@ -238,7 +238,7 @@ change unless they are release-blocking security or data-loss issues.
 - [x] TG-05 same-session and reset prompt-cost tests pass.
 - [x] TG-06 report/outbox restart matrix passes.
 - [x] Focused TG-03 freedom-contract tests pass after the correction (2 files, 13 tests).
-- [x] Final corrective standalone test (4,088 passed, 7 skipped), typecheck, build, lint, format, and
+- [x] Final corrective standalone test (4,090 passed, 7 skipped), typecheck, build, lint, format, and
       `git diff --check` pass.
 - [x] Final reviewers read this artifact first, reported by scenario ID, and every finding was
       closed with a regression test listed in the review-closure section.
@@ -256,6 +256,8 @@ change unless they are release-blocking security or data-loss issues.
   compaction, pre-final terminal promotion, interrupted-completed-mutation suppression, and exact
   Code-Act MCP provenance checks. Final closure preserves exact exchanges for interrupted terminal
   results, prioritizes completed mutation evidence over later protocol/missing-result failures, and
-  maps unresolved Code-Act protocol failures to the no-retry `MCP_RESULT_MISSING` outcome.
+  maps unresolved Code-Act protocol failures to the no-retry `MCP_RESULT_MISSING` outcome. PR
+  review also normalized Node abort audit codes, made latency accounting attempt-exact, and covered
+  expired leases that are still draining pinned executions.
 - 2026-07-22: Created after partial, file-by-file parity work repeatedly missed end-to-end
   boundaries. Reference source was re-read from `mama-suite` commit `ea982c1`.
