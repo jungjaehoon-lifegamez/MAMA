@@ -56,7 +56,7 @@ function register(meta: ToolDefinitionMeta): void {
 register({
   name: 'mama_save',
   description:
-    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context.',
+    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context. A packet compiled ONLY against mirror (grant-implied) scopes cannot back a save - re-compile with at least one envelope-named scope.',
   category: 'memory',
   params:
     'type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?',
