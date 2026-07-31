@@ -354,6 +354,26 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
     expect(onError).toHaveBeenCalledWith(error);
   });
 
+  it('TG-06 preserves unresolved MCP ambiguity over a later stream protocol failure', async () => {
+    const onError = vi.fn();
+    const error = await driveProtocolFailure(
+      [
+        assistantToolUse('mcp-unresolved-before-protocol', { code: 'mutate()' }),
+        assistantToolUse('mcp-unresolved-before-protocol', { code: 'conflictingMutation()' }),
+      ],
+      { onError }
+    );
+
+    expect(error).toMatchObject({
+      name: 'McpResultMissingError',
+      code: 'MCP_RESULT_MISSING',
+      retryable: false,
+      toolUseIds: ['mcp-unresolved-before-protocol'],
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(error);
+  });
+
   it.each([
     [
       'process close',
@@ -408,10 +428,6 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
 
   it.each([
     ['result-before-use', [userToolResult('unknown')]],
-    [
-      'conflicting duplicate tool use',
-      [assistantToolUse('same', { code: '1' }), assistantToolUse('same', { code: '2' })],
-    ],
     [
       'conflicting duplicate result',
       [assistantToolUse('same'), userToolResult('same', 'first'), userToolResult('same', 'second')],

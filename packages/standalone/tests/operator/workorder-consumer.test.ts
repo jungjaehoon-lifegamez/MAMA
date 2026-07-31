@@ -381,7 +381,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       expect(ctx.logs.join('\n')).toContain('non-retryable');
     });
 
-    it('TG-06 creates no replacement workorder after MCP_RESULT_MISSING', async () => {
+    it('TG-06 creates no replacement workorder after unresolved Code-Act becomes MCP_RESULT_MISSING', async () => {
       ctx.deps.runner = {
         runWithContent: async () => {
           throw new AgentError(
