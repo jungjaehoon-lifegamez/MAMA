@@ -10,6 +10,7 @@ import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   WorkOrderConsumer,
   WORKORDER_MAX_ATTEMPTS,
+  detectTransportErrorResponse,
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
   classifyTemporalFailure,
@@ -937,3 +938,53 @@ describe('classifyTemporalFailure', () => {
     }
   });
 });
+
+describe('in-band API errors are transport failures, never content', () => {
+  // Live proof: board#2042 completed with "||⏱️ 1 turns|| | API Error: 529
+  // Overloaded..." as its response - a false success delivered as content.
+  it('detects the CLI error-as-response shape, with or without the turns prefix', () => {
+    expect(
+      detectTransportErrorResponse(
+        '||⏱️ 1 turns|| | API Error: 529 Overloaded. This is a server-side issue.'
+      )
+    ).toBe('API Error: 529 Overloaded');
+    expect(detectTransportErrorResponse('API Error: 500 Internal server error')).toBe(
+      'API Error: 500 Internal server error'
+    );
+  });
+
+  it('does NOT flag real content that merely quotes an error', () => {
+    expect(
+      detectTransportErrorResponse(
+        'Board report: yesterday one run failed with API Error: 529 Overloaded and recovered.'
+      )
+    ).toBeNull();
+    expect(detectTransportErrorResponse('All 3 cards reconciled, no changes needed.')).toBeNull();
+  });
+
+  it('a run whose response is an API error FAILS the workorder instead of completing', async () => {
+    const task = ctx2.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    ctx2.ledger.enqueueTemporalGeneration({
+      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    ctx2.deps.runner = {
+      runWithContent: async () => ({
+        response: '||⏱️ 1 turns|| | API Error: 529 Overloaded. Try again later.',
+      }),
+    };
+    const consumer = new WorkOrderConsumer(ctx2.deps);
+    await consumer.tick();
+    const failures = ctx2.events.filter((event) => event.type === 'failed');
+    expect(failures.length).toBeGreaterThan(0);
+    expect(ctx2.events.filter((event) => event.type === 'complete')).toHaveLength(0);
+  });
+});
+
+const ctx2 = makeDeps();

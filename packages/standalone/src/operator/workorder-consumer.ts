@@ -126,6 +126,23 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   temporal: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
 };
 
+/**
+ * An API failure the CLI printed as response text. Bounded to the head of the
+ * response so a report that merely QUOTES an old error is not misclassified -
+ * the CLI emits the error as (nearly) the whole output, optionally behind the
+ * turns-counter prefix.
+ */
+export function detectTransportErrorResponse(response: string): string | null {
+  const head = response.slice(0, 300);
+  const match = /(?:^|\|\s*)API Error:\s*(\d{3}[^.\n]*)/.exec(head);
+  if (!match) return null;
+  // Only when the error IS the message, not buried inside real content: the
+  // text before the marker must be nothing but the turns/status prefix.
+  const prefix = head.slice(0, match.index);
+  if (prefix.replace(/[|\s\d]|turns|⏱️/gu, '').length > 0) return null;
+  return `API Error: ${match[1].trim()}`;
+}
+
 /** Exported so the boot-time leg declaration and the timer share one number. */
 export const DEFAULT_TICK_MS = 60_000;
 const ALARM_DEDUP_MS = 6 * 60 * 60 * 1000;
@@ -305,6 +322,18 @@ export class WorkOrderConsumer {
       }
       const reason = errMessage(err);
       this.handleFailure(wo, reason, !isAmbiguousCodeActMutation(err));
+      return;
+    }
+
+    // The claude CLI reports API failures IN-BAND: it exits cleanly and
+    // prints the error as response text ("API Error: 529 Overloaded ...").
+    // Live proof: board#2042 was marked COMPLETED with exactly that text as
+    // its response - a false success whose "content" then reached the owner
+    // channel looking like a report. A response that is an API error is a
+    // TRANSPORT failure: retry it, never complete it, never deliver it.
+    const transportError = detectTransportErrorResponse(response);
+    if (transportError) {
+      this.handleFailure(wo, `model-transport-error: ${transportError}`);
       return;
     }
 
