@@ -149,6 +149,13 @@ export class PersistentCLIAdapter implements IModelRunner {
     const contextKey = options?.toolExecutionContext ? proc.getRunContextKey() : null;
     let leaseId: string | null = null;
     let ownsPromptAttempt = false;
+    let latencyRecorded = false;
+    const recordLatency = (): void => {
+      if (!latencyRecorded) {
+        latencyRecorded = true;
+        this._totalLatencyMs += Date.now() - startTime;
+      }
+    };
     try {
       if (options?.toolExecutionContext) {
         if (!contextKey) {
@@ -166,7 +173,7 @@ export class PersistentCLIAdapter implements IModelRunner {
       }
 
       const result = await proc.sendMessage(content, callbacks);
-      this._totalLatencyMs += Date.now() - startTime;
+      recordLatency();
 
       const terminalError =
         result.terminalError ?? completedCodeActTerminalError(result.completedToolExchanges);
@@ -198,7 +205,7 @@ export class PersistentCLIAdapter implements IModelRunner {
       return result;
     } catch (err) {
       this._failureCount++;
-      this._totalLatencyMs += Date.now() - startTime;
+      recordLatency();
       const mustRetireProcess =
         ownsPromptAttempt ||
         err instanceof HostToolTerminalError ||

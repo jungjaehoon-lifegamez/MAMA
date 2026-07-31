@@ -17,24 +17,40 @@ afterEach(() => {
   }
 });
 
-async function readLine(stream: NodeJS.ReadableStream): Promise<string> {
+async function readLine(stream: NodeJS.ReadableStream, getStderr: () => string): Promise<string> {
   return new Promise((resolveLine, reject) => {
     let buffered = '';
-    const timeout = setTimeout(
-      () => reject(new Error('Timed out waiting for MCP response')),
-      5_000
-    );
+    const cleanup = () => {
+      clearTimeout(timeout);
+      stream.removeListener('data', onData);
+      stream.removeListener('end', onEnd);
+      stream.removeListener('error', onError);
+    };
+    const stderrSuffix = () => getStderr().trim() || '(empty)';
     const onData = (chunk: Buffer | string) => {
       buffered += chunk.toString();
       const newline = buffered.indexOf('\n');
       if (newline < 0) {
         return;
       }
-      clearTimeout(timeout);
-      stream.removeListener('data', onData);
+      cleanup();
       resolveLine(buffered.slice(0, newline));
     };
+    const onEnd = () => {
+      cleanup();
+      reject(new Error(`MCP child closed stdout with no response. stderr: ${stderrSuffix()}`));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(new Error(`MCP child stdout failed: ${error.message}. stderr: ${stderrSuffix()}`));
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for MCP response. stderr: ${stderrSuffix()}`));
+    }, 5_000);
     stream.on('data', onData);
+    stream.on('end', onEnd);
+    stream.on('error', onError);
   });
 }
 
@@ -68,53 +84,64 @@ async function invokeCodeAct(
       response.end(JSON.stringify(apiResponse));
     });
   });
-  await new Promise<void>((resolveListen) => api.listen(0, '127.0.0.1', resolveListen));
-  const port = (api.address() as AddressInfo).port;
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    MAMA_SERVER_PORT: String(port),
-    MAMA_AUTH_TOKEN: 'transport-test-token',
-  };
-  if (contextKey) {
-    env.MAMA_CODE_ACT_CONTEXT_KEY = contextKey;
-  } else {
-    delete env.MAMA_CODE_ACT_CONTEXT_KEY;
-  }
+  try {
+    await new Promise<void>((resolveListen) => api.listen(0, '127.0.0.1', resolveListen));
+    const port = (api.address() as AddressInfo).port;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      MAMA_SERVER_PORT: String(port),
+      MAMA_AUTH_TOKEN: 'transport-test-token',
+    };
+    if (contextKey) {
+      env.MAMA_CODE_ACT_CONTEXT_KEY = contextKey;
+    } else {
+      delete env.MAMA_CODE_ACT_CONTEXT_KEY;
+    }
 
-  const child = spawn(process.execPath, ['--import', 'tsx', SERVER_ENTRY], {
-    cwd: PACKAGE_ROOT,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  children.push(child);
-  let stderr = '';
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-  child.stdin.write(
-    `${JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: { name: 'code_act', arguments: { code: '1 + 1' } },
-    })}\n`
-  );
-
-  const stdout = await readLine(child.stdout);
-  child.stdin.end();
-  await new Promise<void>((resolveClose, reject) => {
-    const timeout = setTimeout(() => reject(new Error('MCP child did not exit')), 5_000);
-    child.once('close', () => {
-      clearTimeout(timeout);
-      resolveClose();
+    const child = spawn(process.execPath, ['--import', 'tsx', SERVER_ENTRY], {
+      cwd: PACKAGE_ROOT,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
-  });
-  await new Promise<void>((resolveClose) => api.close(() => resolveClose()));
+    children.push(child);
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'code_act', arguments: { code: '1 + 1' } },
+      })}\n`
+    );
 
-  if (!body) {
-    throw new Error('MCP child made no HTTP request');
+    const stdout = await readLine(child.stdout, () => stderr);
+    child.stdin.end();
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((resolveClose, reject) => {
+        const timeout = setTimeout(() => reject(new Error('MCP child did not exit')), 5_000);
+        child.once('close', () => {
+          clearTimeout(timeout);
+          resolveClose();
+        });
+      });
+    }
+
+    if (!body) {
+      throw new Error('MCP child made no HTTP request');
+    }
+    return { body, stdout, stderr, requestCount };
+  } finally {
+    await new Promise<void>((resolveClose) => {
+      if (!api.listening) {
+        resolveClose();
+        return;
+      }
+      api.close(() => resolveClose());
+    });
   }
-  return { body, stdout, stderr, requestCount };
 }
 
 describe('Story S3/TG-03: Code-Act MCP process context transport', () => {

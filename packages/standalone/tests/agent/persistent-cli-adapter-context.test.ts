@@ -147,6 +147,8 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
 
   it('TG-06 rejects an unresolved MCP Code-Act result and retires its process generation', async () => {
     const registry = new RunContextRegistry();
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
     let attemptSignal: AbortSignal | undefined;
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
@@ -155,6 +157,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
         const pin = registry.acquire(CONTEXT_KEY);
         attemptSignal = pin?.context.signal;
         pin?.releasePin();
+        now = 1_100;
         return {
           response: '',
           session_id: 'backend-session',
@@ -174,18 +177,27 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const adapter = new PersistentCLIAdapter({ sessionId: 'route-9' });
     const retireProcess = installAdapterDependencies(adapter, process, registry);
 
-    await expect(
-      adapter.prompt('run workorder', undefined, { toolExecutionContext: makeContext() })
-    ).rejects.toMatchObject({
-      name: 'McpResultMissingError',
-      code: 'MCP_RESULT_MISSING',
-      retryable: false,
-      toolUseIds: ['missing-result-1'],
-    });
+    try {
+      await expect(
+        adapter.prompt('run workorder', undefined, { toolExecutionContext: makeContext() })
+      ).rejects.toMatchObject({
+        name: 'McpResultMissingError',
+        code: 'MCP_RESULT_MISSING',
+        retryable: false,
+        toolUseIds: ['missing-result-1'],
+      });
 
-    expect(attemptSignal?.aborted).toBe(true);
-    expect(registry.acquire(CONTEXT_KEY)).toBeNull();
-    expect(retireProcess).toHaveBeenCalledWith('route-9', process);
+      expect(attemptSignal?.aborted).toBe(true);
+      expect(registry.acquire(CONTEXT_KEY)).toBeNull();
+      expect(retireProcess).toHaveBeenCalledWith('route-9', process);
+      expect(adapter.getMetrics()).toMatchObject({
+        requestCount: 1,
+        failureCount: 1,
+        avgLatencyMs: 100,
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('TG-03/TG-06 prioritizes a paired terminal result over a later missing result', async () => {

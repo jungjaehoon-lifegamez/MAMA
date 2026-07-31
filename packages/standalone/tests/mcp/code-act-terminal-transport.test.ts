@@ -22,7 +22,10 @@ describe('Code-Act terminal MCP transport', () => {
     });
 
     expect(failure).toBeDefined();
-    expect(terminalMcpResult(failure!)).toMatchObject({
+    if (!failure) {
+      throw new Error('Expected terminal mutation failure metadata');
+    }
+    expect(terminalMcpResult(failure)).toMatchObject({
       isError: true,
       _meta: {
         mama: {
@@ -47,7 +50,11 @@ describe('Code-Act terminal MCP transport', () => {
       ],
     });
 
-    const result = terminalMcpResult(failure!) as {
+    expect(failure).toBeDefined();
+    if (!failure) {
+      throw new Error('Expected terminal mutation failure metadata');
+    }
+    const result = terminalMcpResult(failure) as {
       content: Array<{ text: string }>;
     };
     expect(JSON.parse(result.content[0].text)).toMatchObject({

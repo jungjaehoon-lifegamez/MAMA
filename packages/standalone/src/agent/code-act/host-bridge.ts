@@ -794,11 +794,11 @@ export function isToolAvailableAtTier(toolName: string, tier: 1 | 2 | 3): boolea
 function thrownHostToolCode(error: unknown): string {
   if (typeof error === 'object' && error !== null) {
     const record = error as Record<string, unknown>;
+    if (record.name === 'AbortError' || record.code === 'ABORT_ERR') {
+      return 'aborted';
+    }
     if (typeof record.code === 'string') {
       return record.code;
-    }
-    if (record.name === 'AbortError') {
-      return 'aborted';
     }
   }
   return 'host_tool_exception';
@@ -915,7 +915,7 @@ export class HostBridge {
           }
         },
         {
-          settleOnAbort: !READ_ONLY_TOOLS.has(desc.name) || LOCAL_ARTIFACT_TOOLS.has(desc.name),
+          settleOnAbort: isCodeActMutatingTool(desc.name),
         }
       );
     }

@@ -450,6 +450,26 @@ describe('HostBridge', () => {
       expect(audit.mock.calls[1]?.[2]).toEqual({ success: false, code: 'aborted' });
     });
 
+    it('TG-06 normalizes a Node ABORT_ERR host call to the aborted audit code', async () => {
+      const abortError = Object.assign(new Error('stopped'), {
+        name: 'AbortError',
+        code: 'ABORT_ERR',
+      });
+      const bridge = new HostBridge(
+        makeExecutor({ execute: vi.fn().mockRejectedValue(abortError) })
+      );
+      const audit = vi.fn();
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['mama_search']);
+
+      const result = await sandbox.execute('mama_search({ query: "test" })');
+
+      expect(result.success).toBe(false);
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[1]?.[2]).toEqual({ success: false, code: 'aborted' });
+    });
+
     it('allows try-catch for executor errors in sandbox', async () => {
       const executeFn = vi.fn().mockResolvedValue({
         success: false,

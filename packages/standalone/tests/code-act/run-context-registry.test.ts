@@ -122,6 +122,24 @@ describe('S3 TG-03/TG-04: RunContextRegistry', () => {
     expect(registry.has(key)).toBe(false);
   });
 
+  it('rejects re-registration while an expired lease still drains an active pin', () => {
+    const registry = new RunContextRegistry({ createLeaseId: () => 'lease-1' });
+    const key = createProcessContextKey(() => Buffer.alloc(32, 8));
+    registry.register(key, makeContext(NOW + 1_000));
+    const pin = registry.acquire(key);
+
+    vi.advanceTimersByTime(1_001);
+
+    expect(() => registry.register(key, makeContext(NOW + 120_000))).toThrowError(
+      expect.objectContaining<Partial<RunContextRegistryError>>({
+        code: 'RUN_CONTEXT_LEASE_CONFLICT',
+      })
+    );
+    expect(registry.has(key)).toBe(true);
+    pin?.releasePin();
+    expect(registry.has(key)).toBe(false);
+  });
+
   it('applies a 30-minute hard cap to legacy contexts without an envelope', () => {
     const registry = new RunContextRegistry({
       hardCapMs: 30 * 60 * 1_000,
