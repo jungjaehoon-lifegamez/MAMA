@@ -140,4 +140,80 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
 
     expect(attemptSignal?.aborted).toBe(true);
   });
+
+  it('TG-06 rejects an unresolved MCP Code-Act result and retires its process generation', async () => {
+    const registry = new RunContextRegistry();
+    let attemptSignal: AbortSignal | undefined;
+    const process = {
+      getRunContextKey: () => CONTEXT_KEY,
+      isAlive: () => true,
+      sendMessage: vi.fn().mockImplementation(async () => {
+        const pin = registry.acquire(CONTEXT_KEY);
+        attemptSignal = pin?.context.signal;
+        pin?.releasePin();
+        return {
+          response: '',
+          session_id: 'backend-session',
+          toolUseBlocks: [
+            {
+              type: 'tool_use',
+              id: 'missing-result-1',
+              name: 'mcp__code-act__code_act',
+              input: { code: 'mutate()' },
+            },
+          ],
+          completedToolExchanges: [],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      }),
+    };
+    const adapter = new PersistentCLIAdapter({ sessionId: 'route-9' });
+    const retireProcess = installAdapterDependencies(adapter, process, registry);
+
+    await expect(
+      adapter.prompt('run workorder', undefined, { toolExecutionContext: makeContext() })
+    ).rejects.toMatchObject({
+      name: 'McpResultMissingError',
+      code: 'MCP_RESULT_MISSING',
+      retryable: false,
+      toolUseIds: ['missing-result-1'],
+    });
+
+    expect(attemptSignal?.aborted).toBe(true);
+    expect(registry.acquire(CONTEXT_KEY)).toBeNull();
+    expect(retireProcess).toHaveBeenCalledWith('route-9', process);
+  });
+
+  it('keeps unresolved non-MCP host tools on the existing AgentLoop execution path', async () => {
+    const registry = new RunContextRegistry();
+    const process = {
+      getRunContextKey: () => CONTEXT_KEY,
+      isAlive: () => true,
+      sendMessage: vi.fn().mockResolvedValue({
+        response: '',
+        session_id: 'backend-session',
+        toolUseBlocks: [
+          {
+            type: 'tool_use',
+            id: 'host-read-1',
+            name: 'mama_search',
+            input: { query: 'contracts' },
+          },
+        ],
+        completedToolExchanges: [],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    };
+    const adapter = new PersistentCLIAdapter({ sessionId: 'route-9' });
+    const retireProcess = installAdapterDependencies(adapter, process, registry);
+
+    const result = await adapter.prompt('search', undefined, {
+      toolExecutionContext: makeContext(),
+    });
+
+    expect(result.toolUseBlocks).toEqual([
+      expect.objectContaining({ id: 'host-read-1', name: 'mama_search' }),
+    ]);
+    expect(retireProcess).not.toHaveBeenCalled();
+  });
 });

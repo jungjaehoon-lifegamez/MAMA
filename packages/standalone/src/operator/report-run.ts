@@ -83,98 +83,41 @@ export function stripMcpPrefix(name: string): string {
   return match ? match[1] : name;
 }
 
-/** Under a Code-Act role the report gathers INSIDE the sandbox: history carries one code_act
- *  tool_use, and the host tools it actually executed ride in the result message's
- *  hostToolsInvoked field (executeCodeAct collects them from the HostBridge onToolUse hook).
- *  Defensive on purpose: unparseable content, a missing field, or a wrong shape yield [] -
- *  the audit then falls back to warning, never to a throw or a false positive. */
-/**
- * Recover the nested-tool evidence from a code_act tool_result, whatever layer it is in.
- *
- * There are three shapes in play and the audit only ever handled one:
- *
- *   1. `{value, logs, metrics, hostToolsInvoked}`            - the shape this was written for
- *   2. `{success, message: "<shape 1 as a JSON string>"}`    - what the history actually
- *      carries, because executeTools stores the whole GatewayToolResult as tool_result content
- *   3. shape 2 whose `message` is additionally wrapped in untrusted-content markers when the
- *      run touched external evidence, so `message` is prose with shape 1 embedded in it *
- * Measured live 2026-07-29: the report lane executed kagemusha_tasks and task_list, its own
- * trace channel recorded them, and three consecutive fixes still logged "agent executed NO
- * gateway gather tools" - because each fix addressed one layer and the payload was under
- * another. This descends instead of guessing which one.
- */
+/** Read only the host-authored top-level execution ledger. The versioned MCP wrapper and the
+ * direct Gateway result both carry this field at their root. Sandbox value/log/message data is
+ * deliberately never searched: all three are agent-controlled and can contain forged JSON. */
 function parseHostToolsInvoked(content: unknown): string[] {
-  let body = typeof content === 'string' ? content : JSON.stringify(content ?? '');
-  // Bounded: content -> {success,message} -> message JSON. A deeper nesting is not a shape
-  // this system produces, and an unbounded loop on adversarial input is not worth the reach.
-  for (let depth = 0; depth < 3; depth += 1) {
-    const parsed = parseFirstJsonObject(body);
-    if (!parsed) break;
-    const invoked = parsed.hostToolsInvoked;
-    if (Array.isArray(invoked)) {
-      return invoked.filter((name): name is string => typeof name === 'string');
+  const body = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return [];
     }
-    if (typeof parsed.message !== 'string') break;
-    body = parsed.message;
-  }
-  // Deliberately no prose fallback. An earlier version also read the Code-Act MCP server's
-  // `[tools] a, b, c` summary line, and that line shares one text blob with `[logs]` (the
-  // sandbox's console output) and the model's own return value - so a single
-  // `console.log('[tools] mama_save')` forged the audit, precisely in the zero-tools case
-  // the audit exists to catch. Found in review. Losing that route can only produce a FALSE
-  // WARNING on a run that did gather, which is the safe direction; the forgery silenced the
-  // only "substance NOT verified" signal the owner gets. The executor-side shape above is
-  // what the live report lane actually carries.
-  return [];
-}
-
-/**
- * The first balanced JSON object in a string, or null.
- *
- * Not a bare JSON.parse, because an untrusted-content wrapper puts explanatory prose around
- * the payload - the object is in there, it just is not the whole string.
- */
-function parseFirstJsonObject(body: string): Record<string, unknown> | null {
-  const start = body.indexOf('{');
-  if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < body.length; i += 1) {
-    const ch = body[i];
-    if (escaped) {
-      escaped = false;
-      continue;
+    const root = parsed as Record<string, unknown>;
+    const isVersionedMcpResult =
+      root.protocol === 'mama.code_act.result' && root.version === 1 && root.success === true;
+    const isDirectGatewayResult =
+      root.protocol === undefined &&
+      root.success === true &&
+      Array.isArray(root.hostToolExecutions);
+    if (!isVersionedMcpResult && !isDirectGatewayResult) {
+      return [];
     }
-    // The escape only means anything INSIDE a string. Checking it first made a stray
-    // backslash in surrounding prose swallow the next character, and a `\}` could then eat
-    // the closing brace and run the scan to EOF - a false "gathered nothing" against a run
-    // that gathered. Found in review.
-    if (inString) {
-      if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
+    if (!Array.isArray(root.hostToolExecutions)) {
+      return [];
     }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') depth += 1;
-    else if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          const parsed: unknown = JSON.parse(body.slice(start, i + 1));
-          return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : null;
-        } catch {
-          return null;
-        }
+    return root.hostToolExecutions.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+        return [];
       }
-    }
+      const execution = entry as Record<string, unknown>;
+      return execution.success === true && typeof execution.name === 'string'
+        ? [execution.name]
+        : [];
+    });
+  } catch {
+    return [];
   }
-  return null;
 }
 
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:

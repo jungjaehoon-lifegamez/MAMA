@@ -5,7 +5,9 @@
  * so AgentLoop depends on a contract, not concrete implementations.
  */
 
-import type { GatewayToolExecutionContext, PromptCallbacks, ToolUseBlock } from './types.js';
+import type { GatewayToolExecutionContext, PromptCallbacks, PromptResult } from './types.js';
+
+export type { PromptResult } from './types.js';
 
 // ─── Run-local Host Tools ───────────────────────────────────────────────────
 
@@ -80,25 +82,6 @@ export class HostToolTerminalError extends Error {
     super(message);
     this.name = 'HostToolTerminalError';
   }
-}
-
-// ─── Result Types ────────────────────────────────────────────────────────────
-
-/**
- * Standardized prompt result returned by all backends.
- */
-export interface PromptResult {
-  response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  session_id: string;
-  cost_usd?: number;
-  toolUseBlocks?: ToolUseBlock[];
-  hasToolUse?: boolean;
 }
 
 /**

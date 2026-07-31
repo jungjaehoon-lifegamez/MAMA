@@ -12,6 +12,28 @@ export interface TerminalMutationFailure {
   error: string;
 }
 
+interface HostToolExecutionAudit {
+  name: string;
+  success: boolean;
+  code?: string;
+}
+
+interface CodeActMcpPayload {
+  value?: unknown;
+  logs?: string[];
+  metrics?: unknown;
+}
+
+interface CodeActMcpSourceResult extends CodeActMcpPayload {
+  success: boolean;
+  error?: string;
+  errorCode?: string;
+  terminalCode?: string;
+  retryable?: boolean;
+  abort?: boolean;
+  hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
+}
+
 export class CodeActPostSendTransportError extends Error {
   constructor(message: string) {
     super(message);
@@ -40,15 +62,77 @@ export function terminalMutationFailure(result: {
   };
 }
 
+function normalizeHostToolExecutions(value: unknown): HostToolExecutionAudit[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const executions: HostToolExecutionAudit[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== 'string' || typeof record.success !== 'boolean') {
+      continue;
+    }
+    executions.push({
+      name: record.name,
+      success: record.success,
+      ...(typeof record.code === 'string' ? { code: record.code } : {}),
+    });
+  }
+  return executions;
+}
+
+export function codeActMcpResult(result: CodeActMcpSourceResult): Record<string, unknown> {
+  const hostToolExecutions = normalizeHostToolExecutions(result.hostToolExecutions);
+  const successfulNames = new Set<string>();
+  const hostToolsInvoked: string[] = [];
+  for (const execution of hostToolExecutions) {
+    if (execution.success && !successfulNames.has(execution.name)) {
+      successfulNames.add(execution.name);
+      hostToolsInvoked.push(execution.name);
+    }
+  }
+  const envelope = {
+    protocol: 'mama.code_act.result',
+    version: 1,
+    success: result.success,
+    hostToolExecutions,
+    hostToolsInvoked,
+    payload: {
+      ...(result.value !== undefined ? { value: result.value } : {}),
+      ...(result.logs !== undefined ? { logs: result.logs } : {}),
+      ...(result.metrics !== undefined ? { metrics: result.metrics } : {}),
+    },
+    ...(result.success
+      ? {}
+      : {
+          error: {
+            message: result.error ?? 'Unknown error',
+            ...(result.errorCode || result.terminalCode
+              ? { code: result.errorCode ?? result.terminalCode }
+              : {}),
+          },
+          ...(typeof result.retryable === 'boolean' ? { retryable: result.retryable } : {}),
+          ...(result.abort === true ? { abort: true } : {}),
+        }),
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(envelope) }],
+    ...(result.success ? {} : { isError: true }),
+  };
+}
+
 export function terminalMcpResult(failure: TerminalMutationFailure): Record<string, unknown> {
   return {
-    content: [
-      {
-        type: 'text',
-        text: `[${failure.terminalCode}] ${failure.error}. Automatic retry is forbidden.`,
-      },
-    ],
-    isError: true,
+    ...codeActMcpResult({
+      success: false,
+      error: failure.error,
+      terminalCode: failure.terminalCode,
+      retryable: false,
+      abort: true,
+    }),
     _meta: {
       mama: {
         terminalCode: failure.terminalCode,

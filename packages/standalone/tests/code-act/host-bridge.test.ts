@@ -368,6 +368,68 @@ describe('HostBridge', () => {
       expect(result.success).toBe(false);
     });
 
+    it('TG-06 emits one normalized terminal audit for a returned denial', async () => {
+      const bridge = new HostBridge(
+        makeExecutor({
+          execute: vi.fn().mockResolvedValue({
+            success: false,
+            message: 'Permission denied',
+            code: 'permission_denied',
+          }),
+        })
+      );
+      const audit = vi.fn();
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['Read']);
+
+      const result = await sandbox.execute('Read("/secret")');
+
+      expect(result.success).toBe(false);
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[0]?.[2]).toBeUndefined();
+      expect(audit.mock.calls[1]?.[2]).toEqual({
+        success: false,
+        code: 'permission_denied',
+      });
+    });
+
+    it('TG-06 emits one normalized terminal audit when the executor throws', async () => {
+      const denial = Object.assign(new Error('policy denied'), { code: 'permission_denied' });
+      const bridge = new HostBridge(makeExecutor({ execute: vi.fn().mockRejectedValue(denial) }));
+      const audit = vi.fn();
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['Read']);
+
+      const result = await sandbox.execute('Read("/secret")');
+
+      expect(result.success).toBe(false);
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[1]?.[2]).toEqual({
+        success: false,
+        code: 'permission_denied',
+      });
+    });
+
+    it('TG-06 records an aborted host call as a failed terminal outcome', async () => {
+      const bridge = new HostBridge(
+        makeExecutor({
+          execute: vi.fn().mockRejectedValue(new DOMException('stopped', 'AbortError')),
+        })
+      );
+      const audit = vi.fn();
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['mama_search']);
+
+      const result = await sandbox.execute('mama_search({ query: "test" })');
+
+      expect(result.success).toBe(false);
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[1]?.[2]).toEqual({ success: false, code: 'aborted' });
+    });
+
     it('allows try-catch for executor errors in sandbox', async () => {
       const executeFn = vi.fn().mockResolvedValue({
         success: false,
