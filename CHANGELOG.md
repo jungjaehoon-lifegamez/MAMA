@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.2] - 2026-07-31
+
+### Fixed
+
+- **Memory reads follow the channel grant - the dominant compile failure is
+  fixed at its root.** `memory_scope_out_of_scope` (2,700+ envelope
+  violations/morning: conductor chat 1,945 + temporal workers 802) was
+  deterministic: envelopes carry identity scopes while retrieval asks for
+  the real channels memories are stored under. One rule now governs READS
+  at the enforcement layer - a run allowed to read a channel's raw events
+  may recall the memories extracted from it (`mirrorReadScopes`, computed
+  against the LIVE grant at check time; a connector the envelope already
+  narrows keeps its per-channel isolation). Envelopes stay identity-only:
+  raw narrowing and `mama_save`'s permanent write binding are unchanged,
+  and a context packet's mirror-widened scopes are intersected with the
+  envelope before they can back a save. Three-round adversarial review
+  (two BLOCK verdicts fixed, empirically probed) before merge.
+
 ## mama-os [0.31.1] - 2026-07-31
 
 ### Fixed
