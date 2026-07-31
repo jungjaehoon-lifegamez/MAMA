@@ -1140,6 +1140,11 @@ export interface GatewaySessionStore {
 export interface GatewayToolExecutorOptions {
   /** Database path for MAMA (default: ~/.claude/mama-memory.db) */
   mamaDbPath?: string;
+  /**
+   * Live channel-grant provider for the memory read mirror (test seam;
+   * defaults to the connector-config grant).
+   */
+  channelGrantProvider?: () => Record<string, readonly string[]>;
   /** Session store for checkpoint conversation access */
   sessionStore?: GatewaySessionStore;
   /** Custom MAMA API instance for testing */

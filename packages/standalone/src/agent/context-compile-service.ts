@@ -21,7 +21,7 @@ import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 
 import type { Envelope } from '../envelope/types.js';
 import { deriveWorkerEnvelopeVisibility, WorkerEnvelopeError } from '../api/worker-envelope.js';
-import { narrowGrantToEnvelope } from '../evidence/read.js';
+import { narrowGrantToEnvelope, mirrorReadScopes } from '../evidence/read.js';
 
 type CoreAdapter = Pick<DatabaseAdapter, 'prepare'>;
 
@@ -575,10 +575,31 @@ export function createContextCompileService(
 
       const envelopeVisibility = deriveWorkerEnvelopeVisibility(request.envelope, {});
       const requestFilters = normalizeCompileFilters(request.input);
+      // The READ allowance: envelope identity scopes plus the grant mirror
+      // (a run allowed to read a channel's raw events may recall the
+      // memories extracted from it - mirrorReadScopes, evidence/read.ts).
+      // Validating requested scopes against the envelope ALONE was the
+      // second half of the dominant compile failure S2 named: agents naming
+      // the real channels memories live under died here with
+      // worker_envelope_scope_denied even after the enforcer allowed them.
+      const readAllowance = [
+        ...request.envelope.scope.memory_scopes,
+        ...mirrorReadScopes(request.envelope, options.channelGrant?.() ?? {}),
+      ];
       deriveWorkerEnvelopeVisibility(request.envelope, {
-        scopes: requestFilters.scopes,
         connectors: requestFilters.connectors,
       });
+      for (const scope of requestFilters.scopes ?? []) {
+        if (
+          !readAllowance.some((allowed) => allowed.kind === scope.kind && allowed.id === scope.id)
+        ) {
+          throw new WorkerEnvelopeError(
+            403,
+            'worker_envelope_scope_denied',
+            `Scope ${scope.kind}:${scope.id} is outside the worker envelope.`
+          );
+        }
+      }
       const requestedProjectRefs = requestFilters.project_refs ?? envelopeVisibility.projectRefs;
       validateProjectRefs({
         requested: requestedProjectRefs,
@@ -595,7 +616,10 @@ export function createContextCompileService(
         : undefined;
 
       const boundary: ContextBoundary = {
-        scopes: envelopeVisibility.scopes,
+        // Explicit non-empty request narrows within the allowance; omission
+        // (or an empty list, which the empty-packet gate rejects downstream)
+        // reads the full allowance - never silently less than the run may see.
+        scopes: requestFilters.scopes?.length ? requestFilters.scopes : readAllowance,
         connectors: envelopeVisibility.connectors,
         project_refs: envelopeVisibility.projectRefs,
         tenant_id: envelopeVisibility.tenantId,
