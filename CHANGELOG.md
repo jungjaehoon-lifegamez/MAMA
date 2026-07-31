@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.3] - 2026-07-31
+
+### Fixed
+
+- **A scope denial names the scopes it denied.** 84 post-mirror denials in
+  one live window were undiagnosable from a message with no ids; the
+  violation now lists up to three denied `kind:id` keys (observability
+  only, no enforcement change).
+
 ## mama-core [2.1.1] - 2026-07-31
 
 ### Fixed
