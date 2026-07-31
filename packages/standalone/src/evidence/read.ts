@@ -72,6 +72,36 @@ export function liveBoundaryChannels(): ChannelGrant {
 }
 
 /**
+ * The channel grant, as MEMORY scopes.
+ *
+ * Memories extracted from a channel are stored under `channel:<connector>:<channelId>` -
+ * the SAME key the grant declares. Envelope issuance mirrors the grant into memory scopes
+ * so that memory visibility and raw visibility answer to one rule: a run allowed to read a
+ * channel's raw events may recall the memories extracted from it. Before this, issuance
+ * granted synthetic lane identities (`operator:worker:board`) while retrieval asked for
+ * real channels - deterministic denial on every recall (2,700+ violations/morning, the
+ * dominant compile-failure cause S2 named).
+ *
+ * Mirroring is NOT widening: envelope memory scopes double as the raw-channel narrowing
+ * input (`narrowGrantToEnvelope` below), and narrowing a connector to exactly its granted
+ * channels is the identity operation. Runs bound to ONE channel (temporal) keep their
+ * strict binding and must not pass through here.
+ */
+export function channelMemoryScopesFromGrant(
+  grant: ChannelGrant,
+  connectors: readonly string[]
+): Array<{ kind: 'channel'; id: string }> {
+  const scopes: Array<{ kind: 'channel'; id: string }> = [];
+  for (const connector of Object.keys(grant).sort()) {
+    if (!connectors.includes(connector)) continue;
+    for (const channelId of [...grant[connector]].sort()) {
+      scopes.push({ kind: 'channel', id: `${connector}:${channelId}` });
+    }
+  }
+  return scopes;
+}
+
+/**
  * Narrow the configured grant to what THIS envelope may read.
  *
  * Two independent narrowings, and the second is the whole reason this exists rather than a
