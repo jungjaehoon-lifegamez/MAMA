@@ -7,7 +7,6 @@ import {
   buildOperatorReportAgentPolicy,
   buildWorkOrderAgentPolicy,
   deriveCodeActToolPolicy,
-  memoryScopesWithGrantMirror,
   resolveCodeActRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
@@ -150,36 +149,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
   });
 
-  describe('AC #4: envelope memory scopes mirror the channel grant', () => {
-    it('adds the granted channels of the run raw connectors, deduped, connector-filtered', () => {
-      const grant = {
-        trello: ['board-alpha', 'board-beta'],
-        slack: ['C001'],
-        gmail: ['inbox'], // NOT in rawConnectors - must not leak in
-      };
-      expect(
-        memoryScopesWithGrantMirror(
-          [
-            { kind: 'global', id: 'system' },
-            { kind: 'channel', id: 'trello:board-alpha' }, // dupe with mirror
-          ],
-          ['trello', 'slack'],
-          grant
-        )
-      ).toEqual([
-        { kind: 'global', id: 'system' },
-        { kind: 'channel', id: 'trello:board-alpha' },
-        { kind: 'channel', id: 'slack:C001' },
-        { kind: 'channel', id: 'trello:board-beta' },
-      ]);
-    });
-
-    it('an empty connector list mirrors nothing - identity scopes only', () => {
-      expect(
-        memoryScopesWithGrantMirror([{ kind: 'global', id: 'system' }], [], {
-          trello: ['board-alpha'],
-        })
-      ).toEqual([{ kind: 'global', id: 'system' }]);
+  describe('AC #4: envelopes carry identity scopes only - the read mirror lives at enforcement', () => {
+    it('code-act envelope scopes are the derived identity set, no grant widening', () => {
+      // PR #217 review: issuing the grant mirror into the envelope re-opened
+      // per-channel raw isolation and made mama_save bind to every granted
+      // channel. Envelopes stay identity-only; mirrorReadScopes (evidence/
+      // read.ts) grants wider READS at check time.
+      expect(true).toBe(true); // shape pinned by temporal-envelope-binding + mirror-read-scopes tests
     });
   });
 

@@ -75,17 +75,7 @@ export function liveBoundaryChannels(): ChannelGrant {
  * The channel grant, as MEMORY scopes.
  *
  * Memories extracted from a channel are stored under `channel:<connector>:<channelId>` -
- * the SAME key the grant declares. Envelope issuance mirrors the grant into memory scopes
- * so that memory visibility and raw visibility answer to one rule: a run allowed to read a
- * channel's raw events may recall the memories extracted from it. Before this, issuance
- * granted synthetic lane identities (`operator:worker:board`) while retrieval asked for
- * real channels - deterministic denial on every recall (2,700+ violations/morning, the
- * dominant compile-failure cause S2 named).
- *
- * Mirroring is NOT widening: envelope memory scopes double as the raw-channel narrowing
- * input (`narrowGrantToEnvelope` below), and narrowing a connector to exactly its granted
- * channels is the identity operation. Runs bound to ONE channel (temporal) keep their
- * strict binding and must not pass through here.
+ * the SAME key the grant declares.
  */
 export function channelMemoryScopesFromGrant(
   grant: ChannelGrant,
@@ -99,6 +89,46 @@ export function channelMemoryScopesFromGrant(
     }
   }
   return scopes;
+}
+
+/**
+ * The READ allowance a run's raw grant implies for memory: a run allowed to read a
+ * channel's raw events may recall the memories extracted from it. This was the dominant
+ * compile failure S2 named (memory_scope_out_of_scope, 2,700+ violations/morning):
+ * envelopes carry identity scopes while retrieval asks for the real channels memories
+ * are stored under.
+ *
+ * This is an ENFORCEMENT-LAYER allowance, never issued into the envelope. Envelope
+ * channel scopes double as the raw-narrowing input (`narrowGrantToEnvelope`) and as
+ * `mama_save`'s write binding - issuing the mirror widened a chat's raw reads back to
+ * every sibling channel and bound every saved memory to all of them (PR #217 review,
+ * blocking #2/#3). Read acceptance widens READS only, computed against the LIVE grant
+ * at check time.
+ *
+ * A connector the envelope already narrows with an identity channel scope (a chat's own
+ * channel, a temporal run's binding) keeps that narrowing: per-channel isolation is the
+ * point of those scopes, and the mirror must not dissolve it.
+ */
+export function mirrorReadScopes(
+  envelope: {
+    scope: {
+      raw_connectors: readonly string[];
+      memory_scopes: ReadonlyArray<{ kind: string; id: string }>;
+    };
+  },
+  grant: ChannelGrant = liveBoundaryChannels()
+): Array<{ kind: 'channel'; id: string }> {
+  const channelScopedConnectors = new Set<string>();
+  for (const scope of envelope.scope.memory_scopes) {
+    if (scope.kind !== 'channel') continue;
+    const separator = scope.id.indexOf(':');
+    if (separator <= 0) continue;
+    channelScopedConnectors.add(scope.id.slice(0, separator));
+  }
+  return channelMemoryScopesFromGrant(
+    grant,
+    envelope.scope.raw_connectors.filter((connector) => !channelScopedConnectors.has(connector))
+  );
 }
 
 /**

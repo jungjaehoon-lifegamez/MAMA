@@ -101,7 +101,7 @@ import type {
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
-import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
+import { liveBoundaryChannels, narrowGrantToEnvelope, mirrorReadScopes } from '../evidence/read.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -592,6 +592,7 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
+  private readonly channelGrantProvider: () => Record<string, readonly string[]>;
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
@@ -842,6 +843,7 @@ export class GatewayToolExecutor {
   /** Check if delegate tool support is available (multi-agent wired). */
 
   constructor(options: GatewayToolExecutorOptions = {}) {
+    this.channelGrantProvider = options.channelGrantProvider ?? liveBoundaryChannels;
     const privateWorkspaceRoot = resolve(
       process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace')
     );
@@ -1150,7 +1152,9 @@ export class GatewayToolExecutor {
         }
       }
       try {
-        this.envelopeEnforcer.check(ctx.envelope, toolName, enforcementInput);
+        this.envelopeEnforcer.check(ctx.envelope, toolName, enforcementInput, {
+          readScopeMirror: this.readScopeMirrorFor(toolName, ctx.envelope),
+        });
         return undefined;
       } catch (err) {
         if (err instanceof EnvelopeViolation) {
@@ -1698,6 +1702,22 @@ export class GatewayToolExecutor {
     return { scopes: requestedScopes };
   }
 
+  /**
+   * The grant-mirror READ allowance for memory tools (see mirrorReadScopes):
+   * computed lazily - only memory-scoped tools pay the connector-config read -
+   * and against the LIVE grant, so a channel the owner removes stops being
+   * readable on the next call, mid-envelope included.
+   */
+  private readScopeMirrorFor(
+    toolName: string,
+    envelope: Envelope
+  ): Array<{ kind: 'channel'; id: string }> | undefined {
+    if (!MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS.has(toolName)) {
+      return undefined;
+    }
+    return mirrorReadScopes(envelope, this.channelGrantProvider());
+  }
+
   private applyEnvelopeScopedReadDefaults(
     toolName: string,
     input: GatewayToolInput,
@@ -1725,9 +1745,35 @@ export class GatewayToolExecutor {
       return input;
     }
 
+    if (toolName === 'mama_save') {
+      // WRITE scoping never widens: a save binds permanently (one
+      // memory_scope_bindings row per scope), so the default is the
+      // envelope's identity scopes verbatim.
+      return {
+        ...scopedInput,
+        scopes: ctx.envelope.scope.memory_scopes,
+      };
+    }
+    if (toolName === 'context_compile') {
+      // The compile service computes its own read allowance (envelope +
+      // mirror) and defaults its boundary to it - injecting scopes here
+      // would only re-state what it already knows, against a possibly
+      // different grant snapshot.
+      return input;
+    }
+    // READ defaulting: identity scopes plus the grant mirror, so an omitted
+    // scopes arg recalls everything this run is ALLOWED to read instead of
+    // silently less than the enforcer would accept.
+    const mirror = mirrorReadScopes(ctx.envelope, this.channelGrantProvider());
+    const seen = new Set(
+      ctx.envelope.scope.memory_scopes.map((scope) => `${scope.kind}:${scope.id}`)
+    );
     return {
       ...scopedInput,
-      scopes: ctx.envelope.scope.memory_scopes,
+      scopes: [
+        ...ctx.envelope.scope.memory_scopes,
+        ...mirror.filter((scope) => !seen.has(`${scope.kind}:${scope.id}`)),
+      ],
     };
   }
 

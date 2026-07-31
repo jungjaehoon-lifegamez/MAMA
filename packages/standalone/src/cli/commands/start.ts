@@ -21,7 +21,7 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
-import { liveBoundaryChannels, channelMemoryScopesFromGrant } from '../../evidence/read.js';
+import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
@@ -379,8 +379,6 @@ export function workOrderEnvelopeScope(input: {
   projectId: string;
   laneConnectors: string[];
   temporalBinding: { connector: string; channel: string } | null;
-  /** Injectable for tests; defaults to the live connector-config grant. */
-  grant?: import('@jungjaehoon/mama-core/context-compile').ChannelGrant;
 }): {
   project_refs: Array<{ kind: 'project'; id: string }>;
   raw_connectors: string[];
@@ -403,12 +401,12 @@ export function workOrderEnvelopeScope(input: {
         channelId: `worker:${input.workKind}`,
         projectId: input.projectId,
       }),
-      // Memory visibility mirrors raw visibility - one rule. A temporal run
-      // keeps its strict one-channel binding; every other lane gets the
-      // memory scopes of exactly the channels its connectors may read raw
-      // (before this, lanes held only synthetic identities and every recall
-      // of a real channel's memories was denied - the dominant compile
-      // failure S2 named).
+      // Identity scopes ONLY. Wider memory READ visibility (the grant mirror)
+      // is granted at the enforcement layer, never issued into the envelope:
+      // envelope channel scopes double as the raw-narrowing input AND as
+      // mama_save's write binding, so issuing the mirror here re-opened
+      // per-channel raw isolation and bound every saved memory to every
+      // granted channel (PR #217 review, blocking #2/#3).
       ...(input.temporalBinding
         ? [
             {
@@ -416,12 +414,7 @@ export function workOrderEnvelopeScope(input: {
               id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
             },
           ]
-        : isTemporal
-          ? []
-          : channelMemoryScopesFromGrant(
-              input.grant ?? liveBoundaryChannels(),
-              input.laneConnectors
-            )),
+        : []),
     ],
     allowed_destinations: [],
   };
@@ -439,20 +432,6 @@ export function temporalTaskBinding(
     connector: sourceChannel.slice(0, separator),
     channel: sourceChannel.slice(separator + 1),
   };
-}
-
-export function memoryScopesWithGrantMirror(
-  baseScopes: readonly MemoryScopeRef[],
-  rawConnectors: readonly string[],
-  grant: import('@jungjaehoon/mama-core/context-compile').ChannelGrant = liveBoundaryChannels()
-): MemoryScopeRef[] {
-  // Memory visibility mirrors raw visibility - the ONE rule (see
-  // channelMemoryScopesFromGrant). This replaces a DB widening that granted
-  // whatever channels happened to hold raw/% memories (LIMIT 500): that list
-  // trailed the config both ways - removed channels stayed readable through
-  // their old bindings, newly configured channels were invisible until first
-  // extraction, and the cap silently dropped the rest.
-  return uniqueMemoryScopes([...baseScopes, ...channelMemoryScopesFromGrant(grant, rawConnectors)]);
 }
 
 function buildCodeActRole(policy: {
@@ -1163,14 +1142,13 @@ export async function runAgentLoop(
     if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
       const projectId = resolveReactiveProjectRoot(config, process.env);
       const projectRef = { kind: 'project' as const, id: projectId };
-      const memoryScopes = memoryScopesWithGrantMirror(
+      const memoryScopes = uniqueMemoryScopes(
         deriveMemoryScopes({
           source: 'watch',
           channelId: 'api:code-act',
           userId: 'api',
           projectId,
-        }),
-        getAdapter()
+        })
       );
       const wallSeconds = Math.min(
         Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
@@ -1938,9 +1916,8 @@ export async function runAgentLoop(
                       // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
                       raw_connectors: codeActRawConnectors,
-                      memory_scopes: memoryScopesWithGrantMirror(
-                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
-                        codeActRawConnectors
+                      memory_scopes: uniqueMemoryScopes(
+                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
                       ),
                       allowed_destinations: [],
                     },
@@ -2088,15 +2065,12 @@ export async function runAgentLoop(
                     // The conductor reads channel text from its own durable
                     // inbox, never from connectors - no raw read authority.
                     raw_connectors: [],
-                    // raw_connectors is [] by doctrine (inbox-only reads), so
-                    // the grant mirror contributes nothing - identity scopes only.
-                    memory_scopes: memoryScopesWithGrantMirror(
+                    memory_scopes: uniqueMemoryScopes(
                       deriveMemoryScopes({
                         source: 'conductor',
                         channelId: 'conductor',
                         projectId,
-                      }),
-                      []
+                      })
                     ),
                     allowed_destinations: [], // NO send surface
                   },
