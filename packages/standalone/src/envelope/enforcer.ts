@@ -209,12 +209,21 @@ export class EnvelopeEnforcer {
         allowedScopeKeys.add(`${scope.kind}:${scope.id}`);
       }
     }
-    const outOfScope = requestedScopes.some(
+    const outOfScope = requestedScopes.filter(
       (scope) => !allowedScopeKeys.has(`${scope.kind}:${scope.id}`)
     );
-    if (outOfScope) {
+    if (outOfScope.length > 0) {
+      // NAME the denied scopes (bounded): 84 denials in one live window were
+      // undiagnosable because this message carried no ids - the whole S2
+      // lesson applied to its own enforcement surface. Agent-visible and
+      // local-log only; the ids are channel keys the agent already holds.
+      const denied = outOfScope
+        .slice(0, 3)
+        .map((scope) => `${scope.kind}:${scope.id}`)
+        .join(', ');
+      const suffix = outOfScope.length > 3 ? ` +${outOfScope.length - 3} more` : '';
       throw new EnvelopeViolation(
-        'Requested memory scope is outside envelope.scope.memory_scopes',
+        `Requested memory scope is outside envelope.scope.memory_scopes: ${denied}${suffix}`,
         'memory_scope_out_of_scope'
       );
     }
