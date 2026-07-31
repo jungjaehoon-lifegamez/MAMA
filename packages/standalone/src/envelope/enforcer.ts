@@ -67,7 +67,7 @@ const MEMORY_SCOPED_TOOLS = new Set<string>([
  * widen - mama_save's scope binding is permanent, so it answers only to the
  * envelope's identity scopes.
  */
-const MIRROR_READABLE_TOOLS = new Set<string>([
+export const MIRROR_READABLE_TOOLS = new Set<string>([
   'mama_search',
   'mama_recall',
   'mama_provenance',
