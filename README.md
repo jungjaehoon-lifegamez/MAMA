@@ -129,7 +129,7 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.31.2        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-os](packages/standalone/) 0.32.0        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
 | [mama-core](packages/mama-core/) 2.1.1        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
@@ -156,13 +156,13 @@ Dependency direction is one-way: nothing depends on the daemon.
 
 ## Roadmap
 
-|                    |                                                                                                                                                                                                                                 |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                      |
-| Done (v0.30–v0.31) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant. |
-| **Now**            | Flip `conductor.enabled`: the standing judge consumes durable batches live, measured against a six-item parity rubric before it takes report authority.                                                                         |
-| Next               | Unpacked below.                                                                                                                                                                                                                 |
-| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                                                                                                   |
+|                    |                                                                                                                                                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                        |
+| Done (v0.30–v0.32) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant → persistent Code-Act processes follow the active principal and do not replay completed mutations. |
+| **Now**            | Flip `conductor.enabled`: the standing judge consumes durable batches live, measured against a six-item parity rubric before it takes report authority.                                                                                                                                                                           |
+| Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                   |
+| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                                                                                                                                                                                                     |
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 

@@ -67,6 +67,14 @@ Tools are accessed through HostBridge via the gateway. Available tools vary by T
 
 `POST /api/code-act` defaults to Tier 2. The handler reads `allowed_tools` and `blocked_tools` from the request body, normalizes them, and passes them into `executeCodeAct`; MCP proxy calls may also apply the caller agent's gateway allowlist before those values reach the endpoint. Set `MAMA_CODE_ACT_READ_ONLY=true` to force read-only Code-Act injection rather than fully disabling the HTTP API.
 
+The daemon's managed persistent-Claude path also sends a fresh, host-issued `context_key` for
+each process generation. The key lets the local HTTP boundary reacquire the exact active role,
+routing, envelope, and cancellation context instead of reconstructing identity from request
+fields. It is an internal ephemeral secret, not a user setting: external callers must not copy,
+persist, log, or configure it. Requests without this key continue to use the documented
+`agent_id` policy path; an unknown or expired key fails with `CODE_ACT_CONTEXT_UNAVAILABLE` and is
+not retried.
+
 Runtime reference: `packages/standalone/src/cli/commands/start.ts` computes `codeActTier` from `MAMA_CODE_ACT_READ_ONLY`.
 
 ---
@@ -166,7 +174,12 @@ The QuickJS WASM engine provides a fully isolated environment.
 
 ### MCP Registration
 
-Code-Act is also registered as a separate MCP server (`code-act-server.ts`), allowing LLMs to invoke it directly as a `code_act` tool. Actual execution is proxied to `POST /api/code-act` with `MAMA_CODE_ACT_AGENT_ID`, `MAMA_CODE_ACT_ALLOWED_TOOLS`, and `MAMA_CODE_ACT_BLOCKED_TOOLS` propagated from the per-agent MCP config.
+Code-Act is also registered as a separate MCP server (`code-act-server.ts`), allowing LLMs to
+invoke it directly as a `code_act` tool. Actual execution is proxied to `POST /api/code-act` with
+`MAMA_CODE_ACT_AGENT_ID`, `MAMA_CODE_ACT_ALLOWED_TOOLS`, and `MAMA_CODE_ACT_BLOCKED_TOOLS`
+propagated from the per-agent MCP config. For a managed persistent Claude process, the host also
+injects `MAMA_CODE_ACT_CONTEXT_KEY`; MAMA rotates it per process generation and never treats it as
+user configuration.
 
 ---
 

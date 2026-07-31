@@ -158,9 +158,10 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.31.2 — every durable change names its cause KIND or says it
-cannot; failures carry the thrower's code; a silent scheduled leg pages the owner; memory
-reads follow the channel grant (a run allowed to read a channel's raw events may recall
-the memories extracted from it). Conductor foundations ship dark behind
-`conductor.enabled`, measured against a six-item parity rubric before taking authority
-**Last Updated:** 2026-07-29
+**Status:** MAMA OS v0.32.0 — persistent Claude Code-Act processes follow the exact active
+principal, completed mutations are not replayed after terminal transport failures, and report
+audit uses host-authored nested-tool evidence. Every durable change still names its cause KIND or
+says it cannot; failures carry the thrower's code; a silent scheduled leg pages the owner; memory
+reads follow the channel grant. Conductor foundations ship dark behind `conductor.enabled`,
+measured against a six-item parity rubric before taking authority.
+**Last Updated:** 2026-07-31
