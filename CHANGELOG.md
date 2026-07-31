@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-core [2.1.1] - 2026-07-31
+
+### Fixed
+
+- **Migration 043 renumbered to 061 - the retired chain's ledger ceiling
+  swallowed it.** Live DBs carry schema_version rows 44-60 from a retired
+  2026-05/06 migration chain that shared the ledger table; the runner skips
+  any file numbered at or below MAX(version), so 043 shipped in 2.1.0 and
+  silently never applied. 043-060 is a documented dead zone pinned by the
+  migration-chain test: new core migrations number 061+.
+
+## mama-core [2.1.0] - 2026-07-31
+
+### Added
+
+- **`tool_traces.failure_code`** (migration 043, re-issued as 061 in 2.1.1):
+  failed tool traces carry the thrower's structured code - carried, never
+  invented.
+
 ## mama-os [0.31.2] - 2026-07-31
 
 ### Fixed

@@ -129,8 +129,8 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.29.2        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
-| [mama-core](packages/mama-core/) 2.0.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
+| [mama-os](packages/standalone/) 0.31.2        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-core](packages/mama-core/) 2.1.1        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
 | [memorybench](packages/memorybench/) 1.0.0    | The benchmark harness behind the retrieval numbers.                                                            | To reproduce a score |
@@ -147,29 +147,28 @@ Dependency direction is one-way: nothing depends on the daemon.
   should at least say why it declined.
 - **Cache reuse is 15.9x** per built context, against 144.8x for a comparable system
   on the same machine. This is our biggest known cost problem.
-- **3 of 18 recent changes carried a cause.** Honest, but low. Most runs are
-  autonomous and have no owner message to cite. We plan to raise it, not excuse it.
+- **Attribution is wired end-to-end, and the ratio is still low.** Every change now
+  carries a cause KIND (`event`/`owner_message`/`clock`/`card_transition` - the DB
+  rejects a kind that disagrees with its ids), and judgment runs receive their event
+  batch from the host. But most changes are still clock-born: the conductor that turns
+  channel batches into attributed judgments ships dark behind `conductor.enabled`.
+  The ratio rises when it flips, not before. We plan to raise it, not excuse it.
 
 ## Roadmap
 
-|                    |                                                                                                                                                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Done (v0.15–v0.28) | Search overhaul → connector framework → the operator runtime → owner console → durable workorder pipeline. Full history in the [CHANGELOG](CHANGELOG.md). |
-| **Now (v0.29)**    | Evidence and effects: every durable change names its cause, or admits it has none.                                                                        |
-| Next               | Eight concrete items, unpacked below.                                                                                                                     |
-| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                             |
+|                    |                                                                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                      |
+| Done (v0.30–v0.31) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant. |
+| **Now**            | Flip `conductor.enabled`: the standing judge consumes durable batches live, measured against a six-item parity rubric before it takes report authority.                                                                         |
+| Next               | Unpacked below.                                                                                                                                                                                                                 |
+| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                                                                                                   |
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 
 - **Stable prompt prefixes for the autonomous lanes.** Cache reuse is 15.9x against a
   comparable system's 144.8x. One prompt cut (231 KB → 57 KB) already halved per-call
   cost. The same discipline applies to the report and board lanes.
-- **Alarms for the daemon's own silence.** The authoring step once died for three days
-  before anyone noticed. A scheduled job that misses its slot repeatedly should page the
-  owner, and every subprocess death should record its exit code and output.
-- **Causes for the autonomous lanes.** Most changes are made by runs nobody prompted. A
-  board run should receive its event window as the cause of what it changes, the way work
-  orders already do.
 - **Zero-yield authoring that says why.** 84% of authoring passes create nothing. A pass
   that declines should record what it rejected, and a near-duplicate should strengthen the
   existing trigger instead of vanishing.
@@ -190,10 +189,10 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 4,958 tests across five packages
+pnpm test     # 5,005 tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-07-30_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-07-31_
 
 ## License
 

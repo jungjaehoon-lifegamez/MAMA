@@ -160,6 +160,9 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.29.0 — every durable change names its cause or says it cannot;
-lane outcomes are measured against tool traces rather than read from the agent's prose
+**Status:** MAMA OS v0.31.2 — every durable change names its cause KIND or says it
+cannot; failures carry the thrower's code; a silent scheduled leg pages the owner; memory
+reads follow the channel grant (a run allowed to read a channel's raw events may recall
+the memories extracted from it). Conductor foundations ship dark behind
+`conductor.enabled`, measured against a six-item parity rubric before taking authority
 **Last Updated:** 2026-07-29
