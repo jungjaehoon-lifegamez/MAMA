@@ -63,14 +63,16 @@ register({
 });
 register({
   name: 'mama_search',
-  description: 'Search decisions',
+  description:
+    'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
   category: 'memory',
   params:
     'query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?',
 });
 register({
   name: 'mama_recall',
-  description: 'Recall memory bundle with profile, memories, and graph context',
+  description:
+    'Recall memory bundle with profile, memories, and graph context. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
   category: 'memory',
   params: 'query, scopes?, includeProfile?',
 });
