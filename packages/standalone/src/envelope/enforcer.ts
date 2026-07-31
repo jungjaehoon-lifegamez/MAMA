@@ -222,8 +222,16 @@ export class EnvelopeEnforcer {
         .map((scope) => `${scope.kind}:${scope.id}`)
         .join(', ');
       const suffix = outOfScope.length > 3 ? ` +${outOfScope.length - 3} more` : '';
+      // TEACH while denying: live capture showed the dominant denial class is
+      // the model GUESSING scope ids (connector prefix dropped, global:global,
+      // user:<email>) - naming what IS allowed turns each denial into a
+      // mid-run correction. Bounded; omitting scopes entirely uses the full
+      // allowance, which is almost always what the caller wants.
+      const allowed = [...allowedScopeKeys].slice(0, 5).join(', ');
+      const allowedSuffix = allowedScopeKeys.size > 5 ? ` +${allowedScopeKeys.size - 5} more` : '';
       throw new EnvelopeViolation(
-        `Requested memory scope is outside envelope.scope.memory_scopes: ${denied}${suffix}`,
+        `Requested memory scope is outside envelope.scope.memory_scopes: ${denied}${suffix}. ` +
+          `Allowed: ${allowed}${allowedSuffix}. Omit scopes to use the full allowance.`,
         'memory_scope_out_of_scope'
       );
     }
