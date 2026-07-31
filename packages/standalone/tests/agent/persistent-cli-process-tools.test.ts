@@ -22,6 +22,23 @@ function getBuildArgs(options: Record<string, unknown>): string[] {
 }
 
 describe('PersistentClaudeProcess buildArgs() tool flags', () => {
+  it('creates a unique process-generation context key only when run binding is enabled', () => {
+    const first = new PersistentClaudeProcess({
+      sessionId: 'first-session',
+      bindRunContext: true,
+    });
+    const second = new PersistentClaudeProcess({
+      sessionId: 'second-session',
+      bindRunContext: true,
+    });
+    const legacy = new PersistentClaudeProcess({ sessionId: 'legacy-session' });
+
+    expect(first.getRunContextKey()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second.getRunContextKey()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second.getRunContextKey()).not.toBe(first.getRunContextKey());
+    expect(legacy.getRunContextKey()).toBeNull();
+  });
+
   it('should not include tool flags when neither allowedTools nor disallowedTools is set', () => {
     const args = getBuildArgs({});
     expect(args).not.toContain('--allowedTools');

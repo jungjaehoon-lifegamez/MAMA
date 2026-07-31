@@ -1319,7 +1319,11 @@ export class GatewayToolExecutor {
         toolName === 'context_compile' ||
         toolName === 'code_act';
       auditResult = shouldSanitizeAuditFailure
-        ? sanitizeGatewayFailureResult(rawResult, Boolean(activeCtx.temporalWorkContext))
+        ? sanitizeGatewayFailureResult(
+            rawResult,
+            Boolean(activeCtx.temporalWorkContext),
+            toolName === 'code_act'
+          )
         : rawResult;
       result = activeCtx.temporalWorkContext ? auditResult : rawResult;
       const rawResultRecord = rawResult as Record<string, unknown>;
@@ -3764,12 +3768,24 @@ export class GatewayToolExecutor {
     // result !== undefined - host-bridge.ts:1049; the pre-call fire at :1037 is skipped).
     // Ride in the result message so downstream audits (report-run summarizeReportToolUse)
     // can classify nested gather/write without code_act becoming an opaque blob.
+    const hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = [];
     const hostToolsInvoked: string[] = [];
+    const successfulHostToolNames = new Set<string>();
     bridge.onToolUse = (toolName, _toolInput, result) => {
       if (result === undefined) {
         return;
       }
-      hostToolsInvoked.push(toolName);
+      const resultRecord = result as Record<string, unknown>;
+      const success = resultRecord.success === true;
+      hostToolExecutions.push({
+        name: toolName,
+        success,
+        ...(typeof resultRecord.code === 'string' ? { code: resultRecord.code } : {}),
+      });
+      if (success && !successfulHostToolNames.has(toolName)) {
+        successfulHostToolNames.add(toolName);
+        hostToolsInvoked.push(toolName);
+      }
       // Board/card text is written by people outside this system and now reaches the
       // report lane, whose composed text is delivered to the owner verbatim by host
       // code with no intervening model. Deriving this from the connector map keeps a
@@ -3788,9 +3804,15 @@ export class GatewayToolExecutor {
     if (result.error?.code && terminalMutationCodes.has(result.error.code)) {
       return {
         success: false,
+        value: result.value,
+        logs: result.logs,
+        error: result.error.message,
         code: result.error.code,
         retryable: false,
         abort: true,
+        metrics: result.metrics,
+        hostToolExecutions,
+        hostToolsInvoked,
         message: `Code-Act error: ${result.error.message}`,
       } as GatewayToolResult;
     }
@@ -3803,6 +3825,12 @@ export class GatewayToolExecutor {
 
     return {
       success: result.success,
+      value: result.value,
+      logs: result.logs,
+      ...(result.error?.message ? { error: result.error.message } : {}),
+      metrics: result.metrics,
+      hostToolExecutions,
+      hostToolsInvoked,
       message: result.success
         ? usedUntrustedExternalEvidence
           ? wrapUntrustedContent('external-evidence-code-act', successfulMessage)
@@ -4252,20 +4280,62 @@ function gatewayFailureRef(value: string, temporal: boolean): string {
 
 function sanitizeGatewayFailureResult(
   result: GatewayToolResult,
-  temporal: boolean
+  temporal: boolean,
+  preserveCodeActAudit = false
 ): GatewayToolResult {
   const failure = getFailureMessage(result);
   if (!failure) {
     return result;
   }
   const record = result as Record<string, unknown>;
+  const hostToolExecutions = preserveCodeActAudit
+    ? normalizeHostToolExecutionAudit(record.hostToolExecutions)
+    : [];
+  const hostToolsInvoked = [
+    ...new Set(
+      hostToolExecutions.filter((execution) => execution.success).map((execution) => execution.name)
+    ),
+  ];
   return {
     success: false,
     error: gatewayFailureRef(failure, temporal),
     ...(typeof record.code === 'string' ? { code: record.code } : {}),
     ...(record.retryable === false ? { retryable: false } : {}),
     ...(record.abort === true ? { abort: true } : {}),
+    ...(preserveCodeActAudit ? { hostToolExecutions, hostToolsInvoked } : {}),
   } as GatewayToolResult;
+}
+
+function normalizeHostToolExecutionAudit(
+  value: unknown
+): Array<{ name: string; success: boolean; code?: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const executions: Array<{ name: string; success: boolean; code?: string }> = [];
+  let droppedCount = 0;
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      droppedCount += 1;
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== 'string' || typeof record.success !== 'boolean') {
+      droppedCount += 1;
+      continue;
+    }
+    executions.push({
+      name: record.name,
+      success: record.success,
+      ...(typeof record.code === 'string' ? { code: record.code } : {}),
+    });
+  }
+  if (droppedCount > 0) {
+    securityLogger.warn('[code-act] dropped malformed host-tool audit entries', {
+      droppedCount,
+    });
+  }
+  return executions;
 }
 
 function sanitizeGatewayError(error: unknown, temporal: boolean): Error {

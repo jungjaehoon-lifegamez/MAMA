@@ -181,7 +181,11 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
   });
 
-  it('does not requeue a temporal attempt after an ambiguous Code-Act mutation', async () => {
+  it.each([
+    'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+    'MCP_RESULT_MISSING',
+    'MCP_COMPLETED_MUTATION_INTERRUPTED',
+  ] as const)('does not requeue a temporal attempt after terminal ambiguity %s', async (code) => {
     const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
     const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
     const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
@@ -196,10 +200,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
     ctx.deps.runner = {
       runWithContent: async () => {
-        throw new AgentError(
-          'mutation may have committed; do not retry',
-          'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
-        );
+        throw new AgentError('mutation may have committed; do not retry', code);
       },
     };
     const consumer = new WorkOrderConsumer(ctx.deps);
@@ -377,6 +378,31 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
       expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
       expect(ctx.activeSends).toHaveLength(1);
+      expect(ctx.logs.join('\n')).toContain('non-retryable');
+    });
+
+    it('TG-06 creates no replacement workorder after unresolved Code-Act becomes MCP_RESULT_MISSING', async () => {
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new AgentError(
+            'MCP result may have been lost after mutation',
+            'MCP_RESULT_MISSING'
+          );
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:mcp-result-missing',
+        input: { batchId: 'missing-result', events: [] },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
+      expect(ctx.events.filter((event) => event.type === 'failed')).toHaveLength(1);
+      expect(ctx.events.filter((event) => event.type === 'exhausted')).toHaveLength(1);
+      expect(ctx.ledger.countPendingWorkOrders()).toBe(0);
       expect(ctx.logs.join('\n')).toContain('non-retryable');
     });
 

@@ -60,6 +60,50 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
 `pending-report-store.test.ts`, `message-router.test.ts`, `role-manager.test.ts`,
 `attachment-text-extractor.test.ts`, and `gateway-tool-executor.test.ts`.
 
+### Principal-following Code-Act correction: 2026-07-31
+
+- **TG-03/TG-04:** every persistent Claude process generation owns a random 32-byte context key.
+  The host registers the exact prompt-attempt principal under that key, the MCP child passes only
+  the inherited key to the local HTTP boundary, and the keyed executor reacquires the trusted
+  context instead of rebuilding identity from request fields. Closing a prompt lease blocks new
+  acquisitions while already-pinned executions drain under the attempt abort signal. Evidence:
+  `agent/code-act/run-context-registry.ts`, `agent/persistent-cli-adapter.ts`,
+  `cli/runtime/code-act-executor.ts`, `mcp/code-act-server.ts`,
+  `run-context-registry.test.ts`, `persistent-cli-adapter-context.test.ts`,
+  `code-act-executor.test.ts`, and `temporal-work-context.test.ts`. **Status: GREEN.**
+- **TG-05:** same-process continuation remains unchanged. Abnormal prompt cleanup retires only the
+  exact acquired process generation; even when an error listener has already removed the pool
+  entry, that generation is stopped without touching a replacement. Evidence:
+  `agent/persistent-cli-process.ts`, `persistent-process-pool.test.ts`, and the existing
+  `message-router.test.ts`, `session-store.test.ts`, and `channel-history-persistence.test.ts`
+  continuation matrix. **Status: GREEN.**
+- **TG-03/TG-06:** completed Claude MCP exchanges are paired by tool-use ID and recorded in history
+  without host replay. Identical pending duplicates are idempotent; result-before-use, conflicting
+  duplicates, and completed-ID reuse fail the prompt and retire its process. A missing MCP result
+  is `MCP_RESULT_MISSING`, non-retryable, and creates no replacement workorder because the mutation
+  outcome is unknown. If the stream ends after a paired successful mutation but before its final
+  result event, `MCP_COMPLETED_MUTATION_INTERRUPTED` carries the completed exchange into history and
+  likewise blocks replacement. A paired terminal result carries the same exchange through
+  close/error, and completed mutation/terminal evidence takes precedence over any later protocol
+  violation or missing result so neither history nor no-retry policy is lost. A protocol violation
+  while a Code-Act call is still unresolved is likewise promoted to `MCP_RESULT_MISSING` before the
+  workorder layer can retry it. Oversized Code-Act results are structurally compacted so terminal
+  metadata and the host audit remain valid JSON.
+  Evidence: `agent/persistent-cli-process.ts`,
+  `agent/code-act/completed-terminal-result.ts`, `agent/agent-loop.ts`,
+  `operator/workorder-consumer.ts`, `persistent-cli-process-stream.test.ts`, `agent-loop.test.ts`,
+  and `workorder-consumer.test.ts`. **Status: GREEN.**
+- **TG-06:** the Code-Act HTTP/MCP result is a versioned `mama.code_act.result` envelope whose
+  host-authored `hostToolExecutions` ledger records returned failures, thrown denials, and aborts.
+  Terminal MCP conversion retains successful nested executions recorded before the terminal failure,
+  so paired history and report audit do not lose already-observed evidence.
+  Report audit reads only that top-level ledger and counts successful executions, never nested
+  sandbox values, logs, messages, or legacy `[tools]` prose. Only bare host `code_act` and the exact
+  `mcp__code-act__code_act` transport may supply this evidence; similarly named tools from other MCP
+  servers are not trusted. Evidence: `agent/code-act/host-bridge.ts`,
+  `agent/gateway-tool-executor.ts`, `mcp/code-act-terminal-transport.ts`, `operator/report-run.ts`,
+  `host-bridge.test.ts`, `code-act-server.test.ts`, and `report-run.test.ts`. **Status: GREEN.**
+
 ## Intentional differences from Kagemusha
 
 | Area               | Decision                                                                                                                 | Reason                                                                                                                                     |
@@ -194,12 +238,26 @@ change unless they are release-blocking security or data-loss issues.
 - [x] TG-05 same-session and reset prompt-cost tests pass.
 - [x] TG-06 report/outbox restart matrix passes.
 - [x] Focused TG-03 freedom-contract tests pass after the correction (2 files, 13 tests).
-- [x] Final corrective standalone test (4,550 passed, 6 skipped), typecheck, build, lint, format, and
+- [x] Final corrective standalone test (4,090 passed, 7 skipped), typecheck, build, lint, format, and
       `git diff --check` pass.
 - [x] Final reviewers read this artifact first, reported by scenario ID, and every finding was
       closed with a regression test listed in the review-closure section.
+- [x] S3 principal-following review closed the orphan-process finding with a RED→GREEN pool
+      lifecycle regression; full standalone tests, typecheck, build, lint, changed-file format,
+      and `git diff --check` pass.
+- [x] Final S3 closure review passed 7 focused files (234 tests), and all three independent
+      reviewers reported no remaining TG-03/TG-04/TG-05/TG-06 findings.
 
 ## Change log
 
+- 2026-07-31: Recorded process-generation principal binding, completed MCP exchange no-replay,
+  structured nested-tool audit, terminal missing-result handling, and identity-safe process
+  retirement for TG-03/TG-04/TG-05/TG-06. Follow-up review added structural oversized-result
+  compaction, pre-final terminal promotion, interrupted-completed-mutation suppression, and exact
+  Code-Act MCP provenance checks. Final closure preserves exact exchanges for interrupted terminal
+  results, prioritizes completed mutation evidence over later protocol/missing-result failures, and
+  maps unresolved Code-Act protocol failures to the no-retry `MCP_RESULT_MISSING` outcome. PR
+  review also normalized Node abort audit codes, made latency accounting attempt-exact, and covered
+  expired leases that are still draining pinned executions.
 - 2026-07-22: Created after partial, file-by-file parity work repeatedly missed end-to-end
   boundaries. Reference source was re-read from `mama-suite` commit `ea982c1`.

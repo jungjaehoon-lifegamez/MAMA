@@ -51,6 +51,10 @@ const CLASSIFIED = new Map<string, string>([
     'agent/code-act/host-bridge.ts',
     'M1R Reactive Main: HostBridge gateway calls carry the active envelope context',
   ],
+  [
+    'cli/runtime/code-act-executor.ts',
+    'S3 TG-03/TG-04: keyed HTTP Code-Act reacquires and passes the exact outer run context',
+  ],
   ['multi-agent/', 'M7-owned: spawn_subordinate delegated memory worker envelopes are outside M1R'],
   ['scheduler/', 'M8-owned: schedule_worker/Autonomous Standing envelope issuance is outside M1R'],
 ]);

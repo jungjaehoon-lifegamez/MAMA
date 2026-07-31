@@ -13,6 +13,7 @@ import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
+import { isProcessContextKey } from '../agent/code-act/run-context-registry.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
@@ -4150,6 +4151,21 @@ async function handleCodeActRequest(
       return;
     }
 
+    let contextKey: string | undefined;
+    if (body.context_key !== undefined) {
+      if (!isProcessContextKey(body.context_key)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: true,
+            message: 'context_key must be a 32-byte base64url value without padding.',
+          })
+        );
+        return;
+      }
+      contextKey = body.context_key;
+    }
+
     let agentId: string | undefined;
     if (body.agent_id !== undefined) {
       if (typeof body.agent_id !== 'string' || body.agent_id.trim().length === 0) {
@@ -4169,6 +4185,7 @@ async function handleCodeActRequest(
     }
 
     const result = await options.executeCodeAct(code, {
+      ...(contextKey ? { contextKey } : {}),
       ...(agentId ? { agentId } : {}),
       ...(allowedTools ? { allowedTools } : {}),
       ...(blockedTools ? { blockedTools } : {}),

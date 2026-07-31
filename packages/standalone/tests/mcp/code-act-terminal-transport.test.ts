@@ -22,7 +22,10 @@ describe('Code-Act terminal MCP transport', () => {
     });
 
     expect(failure).toBeDefined();
-    expect(terminalMcpResult(failure!)).toMatchObject({
+    if (!failure) {
+      throw new Error('Expected terminal mutation failure metadata');
+    }
+    expect(terminalMcpResult(failure)).toMatchObject({
       isError: true,
       _meta: {
         mama: {
@@ -31,6 +34,38 @@ describe('Code-Act terminal MCP transport', () => {
           abort: true,
         },
       },
+    });
+  });
+
+  it('TG-06 preserves successful nested-tool audit in a terminal MCP result', () => {
+    const failure = terminalMutationFailure({
+      success: false,
+      error: 'Mutation outcome is unknown',
+      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      retryable: false,
+      abort: true,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+    });
+
+    expect(failure).toBeDefined();
+    if (!failure) {
+      throw new Error('Expected terminal mutation failure metadata');
+    }
+    const result = terminalMcpResult(failure) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+      hostToolsInvoked: ['task_list'],
     });
   });
 

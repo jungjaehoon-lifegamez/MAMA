@@ -15,6 +15,7 @@ import type { StreamCallbacks } from '../../src/agent/types.js';
 interface PromptCall {
   resolve: (value: unknown) => void;
   promptText: string;
+  options?: Record<string, unknown>;
 }
 
 const promptGate: { pending: PromptCall[] } = {
@@ -32,11 +33,15 @@ vi.mock('../../src/agent/claude-cli-wrapper.js', () => ({
 
 vi.mock('../../src/agent/persistent-cli-adapter.js', () => ({
   PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
-    prompt: vi.fn().mockImplementation((promptText: string) => {
-      return new Promise((resolve) => {
-        promptGate.pending.push({ resolve, promptText: String(promptText) });
-      });
-    }),
+    prompt: vi
+      .fn()
+      .mockImplementation(
+        (promptText: string, _callbacks: unknown, options?: Record<string, unknown>) => {
+          return new Promise((resolve) => {
+            promptGate.pending.push({ resolve, promptText: String(promptText), options });
+          });
+        }
+      ),
     setSessionId: vi.fn(),
     close: vi.fn(),
   })),
@@ -229,6 +234,36 @@ describe('Story OPS-0: per-run scope + operator global lane', () => {
         true
       );
       expect(bToolEvents).toEqual([]);
+    });
+  });
+
+  describe('S3 TG-03/TG-04: model prompt authority', () => {
+    it('passes the host-built execution context to the Claude runner without dropping provenance', async () => {
+      const loop = new AgentLoop(mockOAuth, { gateway: ['*'] }, {}, { mamaApi: mockApi });
+      const run = loop.runWithContent([{ type: 'text', text: 'temporal owner work' }], {
+        source: 'operator',
+        channelId: 'temporal',
+        workorderAttemptId: 17,
+        causeEventIds: ['cause-17'],
+      });
+      await vi.waitFor(() => {
+        expect(promptGate.pending.length).toBe(1);
+      });
+
+      expect(promptGate.pending[0]?.options?.toolExecutionContext).toMatchObject({
+        source: 'operator',
+        channelId: 'temporal',
+        workorderAttemptId: 17,
+        causeEventIds: ['cause-17'],
+        executionSurface: 'model_tool',
+      });
+
+      flushPrompt('temporal owner work', {
+        response: 'done',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        session_id: 'test-session',
+      });
+      await run;
     });
   });
 });

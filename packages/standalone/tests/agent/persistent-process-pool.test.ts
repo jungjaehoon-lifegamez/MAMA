@@ -243,6 +243,42 @@ describe('PersistentProcessPool idle cleanup', () => {
 
     expect(pool.getActiveCount()).toBe(1);
   });
+
+  it('does not retire a replacement generation during stale prompt cleanup', async () => {
+    const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
+    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
+    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
+
+    const oldProcess = await pool.getProcess('telegram:owner');
+    const oldStop = vi.spyOn(oldProcess, 'stop').mockImplementation(() => {});
+    pool.stopProcess('telegram:owner');
+    const replacement = await pool.getProcess('telegram:owner');
+    const replacementStop = vi.spyOn(replacement, 'stop').mockImplementation(() => {});
+
+    expect(pool.retireProcess('telegram:owner', oldProcess)).toBe(false);
+    expect(oldStop).toHaveBeenCalledTimes(2);
+    expect(replacementStop).not.toHaveBeenCalled();
+    expect(pool.getActiveCount()).toBe(1);
+    expect(await pool.getProcess('telegram:owner')).toBe(replacement);
+
+    expect(pool.retireProcess('telegram:owner', replacement)).toBe(true);
+    expect(replacementStop).toHaveBeenCalledTimes(1);
+    expect(pool.getActiveCount()).toBe(0);
+  });
+
+  it('TG-03/TG-06 stops an errored generation even after its pool listener removed the entry', async () => {
+    const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
+    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
+    const process = await pool.getProcess('telegram:owner');
+    const stop = vi.spyOn(process, 'stop').mockImplementation(() => {});
+
+    process.emit('error', new Error('stream protocol failure'));
+
+    expect(pool.getActiveCount()).toBe(0);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(pool.retireProcess('telegram:owner', process)).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('PersistentClaudeProcess stop()', () => {

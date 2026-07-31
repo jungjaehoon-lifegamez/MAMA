@@ -224,6 +224,67 @@ export interface ToolResultBlock {
   is_error?: boolean;
 }
 
+export interface CompletedToolExchange {
+  toolUse: ToolUseBlock;
+  toolResult: ToolResultBlock;
+}
+
+export interface PromptTerminalError {
+  code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  message: string;
+}
+
+export interface PromptResult {
+  response: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  session_id: string;
+  cost_usd?: number;
+  /** Only tool uses that still require host execution. */
+  toolUseBlocks?: ToolUseBlock[];
+  hasToolUse?: boolean;
+  /** Host-completed MCP exchanges observed on the Claude stream, in result order. */
+  completedToolExchanges?: CompletedToolExchange[];
+  /** Trusted terminal mutation outcome decoded from a completed local MCP exchange. */
+  terminalError?: PromptTerminalError;
+  duration_ms?: number;
+}
+
+export class ClaudeToolStreamProtocolError extends Error {
+  readonly code = 'CLAUDE_TOOL_STREAM_PROTOCOL';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ClaudeToolStreamProtocolError';
+  }
+}
+
+export class McpResultMissingError extends Error {
+  readonly code = 'MCP_RESULT_MISSING';
+  readonly retryable = false;
+
+  constructor(readonly toolUseIds: readonly string[]) {
+    super('Claude MCP tool execution ended without a matching tool result.');
+    this.name = 'McpResultMissingError';
+  }
+}
+
+export class McpCompletedMutationInterruptedError extends Error {
+  readonly code = 'MCP_COMPLETED_MUTATION_INTERRUPTED';
+  readonly retryable = false;
+
+  constructor(readonly completedToolExchanges: readonly CompletedToolExchange[]) {
+    super(
+      'Claude stream ended after a completed Code-Act mutation; the prompt cannot be replayed.'
+    );
+    this.name = 'McpCompletedMutationInterruptedError';
+  }
+}
+
 /**
  * Union type for all content blocks
  */
@@ -1080,6 +1141,9 @@ export type AgentErrorCode =
   | 'INVALID_RESPONSE'
   | 'ENVELOPE_EXPIRED'
   | 'WORKORDER_SUPERSEDED'
+  | 'CLAUDE_TOOL_STREAM_PROTOCOL'
+  | 'MCP_RESULT_MISSING'
+  | 'MCP_COMPLETED_MUTATION_INTERRUPTED'
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
   | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
 
