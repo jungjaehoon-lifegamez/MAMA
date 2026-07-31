@@ -30,10 +30,26 @@ import os from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
-import type { TokenUsageRecord, PromptCallbacks, ToolUseBlock } from './types.js';
+import { HostToolTerminalError } from './model-runner.js';
+import {
+  ClaudeToolStreamProtocolError,
+  McpCompletedMutationInterruptedError,
+  McpResultMissingError,
+  type CompletedToolExchange,
+  type PromptCallbacks,
+  type PromptResult,
+  type TokenUsageRecord,
+  type ToolResultBlock,
+  type ToolUseBlock,
+} from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
+import { createProcessContextKey } from './code-act/run-context-registry.js';
+import {
+  completedCodeActMutationWasObserved,
+  completedCodeActTerminalError,
+} from './code-act/completed-terminal-result.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -94,6 +110,8 @@ export interface PersistentProcessOptions {
   pendingToolUseTimeoutMs?: number;
   /** Environment variables to pass to the Claude CLI process */
   env?: Record<string, string>;
+  /** Bind this process generation's MCP child calls to host-issued run context leases. */
+  bindRunContext?: boolean;
   /** Structurally allowed tools (--allowedTools CLI flag) */
   allowedTools?: string[];
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
@@ -127,6 +145,7 @@ export interface ContentBlock {
   input?: Record<string, unknown>;
   tool_use_id?: string;
   content?: string | Array<{ type: string; text?: string }>;
+  is_error?: boolean;
 }
 
 export interface StreamMessage {
@@ -159,24 +178,118 @@ export interface StreamMessage {
   error?: string;
 }
 
-export interface PromptResult {
-  response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  session_id: string;
-  cost_usd?: number;
-  toolUseBlocks?: ToolUseBlock[];
-  hasToolUse?: boolean;
-  duration_ms?: number;
-}
-
-export type { PromptCallbacks };
+export type { PromptCallbacks, PromptResult };
 
 type ProcessState = 'idle' | 'busy' | 'starting' | 'dead';
+
+interface PromptToolExchangeState {
+  toolUse: ToolUseBlock;
+  toolUseFingerprint: string;
+  toolResult?: ToolResultBlock;
+  toolResultFingerprint?: string;
+}
+
+const MAX_STREAM_TOOL_RESULT_CHARS = 64 * 1024;
+const MAX_CODE_ACT_AUDIT_ENTRIES = 50;
+const MAX_CODE_ACT_AUDIT_FIELD_CHARS = 48;
+const MAX_CODE_ACT_ERROR_MESSAGE_CHARS = 512;
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? 'undefined' : serialized;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(',')}}`;
+}
+
+function normalizeStreamToolResultContent(content: ContentBlock['content']): string {
+  const normalized =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((block) => block.type === 'text' && typeof block.text === 'string')
+            .map((block) => block.text)
+            .join('\n')
+        : '';
+  if (normalized.length <= MAX_STREAM_TOOL_RESULT_CHARS) {
+    return normalized;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(normalized);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const root = parsed as Record<string, unknown>;
+      if (
+        root.protocol === 'mama.code_act.result' &&
+        root.version === 1 &&
+        typeof root.success === 'boolean'
+      ) {
+        const hostToolExecutions = Array.isArray(root.hostToolExecutions)
+          ? root.hostToolExecutions
+              .slice(0, MAX_CODE_ACT_AUDIT_ENTRIES)
+              .flatMap((entry): Array<Record<string, unknown>> => {
+                if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+                  return [];
+                }
+                const execution = entry as Record<string, unknown>;
+                if (typeof execution.name !== 'string' || typeof execution.success !== 'boolean') {
+                  return [];
+                }
+                return [
+                  {
+                    name: execution.name.slice(0, MAX_CODE_ACT_AUDIT_FIELD_CHARS),
+                    success: execution.success,
+                    ...(typeof execution.code === 'string'
+                      ? { code: execution.code.slice(0, MAX_CODE_ACT_AUDIT_FIELD_CHARS) }
+                      : {}),
+                  },
+                ];
+              })
+          : [];
+        const error =
+          typeof root.error === 'object' && root.error !== null && !Array.isArray(root.error)
+            ? (root.error as Record<string, unknown>)
+            : null;
+        return JSON.stringify({
+          protocol: 'mama.code_act.result',
+          version: 1,
+          success: root.success,
+          hostToolExecutions,
+          hostToolsInvoked: hostToolExecutions
+            .filter((execution) => execution.success === true)
+            .map((execution) => execution.name),
+          payload: { truncated: true, originalChars: normalized.length },
+          ...(error
+            ? {
+                error: {
+                  ...(typeof error.code === 'string'
+                    ? { code: error.code.slice(0, MAX_CODE_ACT_AUDIT_FIELD_CHARS) }
+                    : {}),
+                  ...(typeof error.message === 'string'
+                    ? { message: error.message.slice(0, MAX_CODE_ACT_ERROR_MESSAGE_CHARS) }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(typeof root.retryable === 'boolean' ? { retryable: root.retryable } : {}),
+          ...(typeof root.abort === 'boolean' ? { abort: root.abort } : {}),
+        });
+      }
+    }
+  } catch {
+    // Non-JSON results retain the existing bounded text behavior.
+  }
+
+  return normalized.slice(0, MAX_STREAM_TOOL_RESULT_CHARS);
+}
 
 /**
  * PersistentClaudeProcess - Manages a single long-lived Claude CLI process
@@ -197,11 +310,14 @@ export class PersistentClaudeProcess extends EventEmitter {
   private currentReject: ((error: Error) => void) | null = null;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
+  private readonly promptToolExchanges = new Map<string, PromptToolExchangeState>();
+  private completedToolExchanges: CompletedToolExchange[] = [];
   private awaitingToolResults = false;
   private pendingToolUseStartedAt: number | null = null;
   private accumulatedText: string = '';
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
+  private readonly runContextKey: string | null;
 
   /**
    * Resolve the effective request timeout in ms.
@@ -223,6 +339,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     super();
     this.options = options;
     this.onTokenUsage = options.onTokenUsage;
+    this.runContextKey = options.bindRunContext ? createProcessContextKey() : null;
 
     // Register default error handler to prevent Node crash if no listeners attached
     this.on('error', (err) => {
@@ -269,6 +386,9 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     // Clean environment: Remove conflicting MAMA_* variables before merging
     const cleanEnv = { ...process.env };
+    delete cleanEnv.MAMA_CODE_ACT_CONTEXT_KEY;
+    const processOptionsEnv = { ...(this.options.env || {}) };
+    delete processOptionsEnv.MAMA_CODE_ACT_CONTEXT_KEY;
     if (this.options.env) {
       // If we're setting MAMA_DISABLE_HOOKS, remove MAMA_HOOK_FEATURES
       if ('MAMA_DISABLE_HOOKS' in this.options.env) {
@@ -313,7 +433,11 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: workspaceDir, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
-      env: { ...cleanEnv, ...(this.options.env || {}) },
+      env: {
+        ...cleanEnv,
+        ...processOptionsEnv,
+        ...(this.runContextKey ? { MAMA_CODE_ACT_CONTEXT_KEY: this.runContextKey } : {}),
+      },
     });
 
     // Set up event handlers
@@ -450,6 +574,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
 
     return new Promise((resolve, reject) => {
@@ -527,6 +653,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
 
     return new Promise((resolve, reject) => {
@@ -638,9 +766,19 @@ export class PersistentClaudeProcess extends EventEmitter {
                 name: toolName,
                 input: block.input || {},
               };
-              this.toolUseBlocks.push(toolUse);
-              this.currentCallbacks?.onToolUse?.(toolName, block.input ?? {});
-              persistentLogger.info(`[PersistentCLI] Tool use: ${toolName}`);
+              if (!this.recordToolUse(toolUse)) {
+                return;
+              }
+            }
+          }
+        }
+        break;
+
+      case 'user':
+        if (event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'tool_result' && !this.recordToolResult(block)) {
+              return;
             }
           }
         }
@@ -651,7 +789,10 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.clearRequestTimeout();
 
         if (event.subtype === 'success') {
-          const hasToolUse = this.toolUseBlocks.length > 0;
+          const unresolvedToolUses = [...this.toolUseBlocks];
+          const completedToolExchanges = [...this.completedToolExchanges];
+          const terminalError = completedCodeActTerminalError(completedToolExchanges);
+          const hasToolUse = unresolvedToolUses.length > 0;
           const result: PromptResult = {
             response: event.result || this.accumulatedText,
             session_id: event.session_id || this.options.sessionId,
@@ -663,8 +804,10 @@ export class PersistentClaudeProcess extends EventEmitter {
               cache_creation_input_tokens: event.usage?.cache_creation_input_tokens,
               cache_read_input_tokens: event.usage?.cache_read_input_tokens,
             },
-            toolUseBlocks: hasToolUse ? this.toolUseBlocks : undefined,
+            toolUseBlocks: hasToolUse ? unresolvedToolUses : undefined,
             hasToolUse,
+            completedToolExchanges,
+            ...(terminalError ? { terminalError } : {}),
           };
 
           // Record token usage
@@ -684,12 +827,18 @@ export class PersistentClaudeProcess extends EventEmitter {
           }
 
           persistentLogger.info(
-            `[PersistentCLI] Request complete (${event.duration_ms}ms, ${this.toolUseBlocks.length} tools)`
+            `[PersistentCLI] Request complete (${event.duration_ms}ms, ${unresolvedToolUses.length} unresolved tools, ${completedToolExchanges.length} completed tools)`
           );
-          this.currentCallbacks?.onFinal?.({
-            content: result.response,
-            toolUseBlocks: this.toolUseBlocks,
-          });
+          if (terminalError) {
+            this.currentCallbacks?.onError?.(
+              new HostToolTerminalError(terminalError.code, terminalError.message)
+            );
+          } else {
+            this.currentCallbacks?.onFinal?.({
+              content: result.response,
+              toolUseBlocks: unresolvedToolUses,
+            });
+          }
           this.state = 'idle';
           this.awaitingToolResults = hasToolUse;
           this.pendingToolUseStartedAt = hasToolUse ? Date.now() : null;
@@ -697,7 +846,7 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.resetRequestState();
           this.emit('idle'); // F7: Trigger message queue drain (after resolve/cleanup)
         } else if (event.is_error) {
-          const error = new Error(event.error || 'Unknown error');
+          const error = this.promptTerminalError(new Error(event.error || 'Unknown error'));
           this.currentCallbacks?.onError?.(error);
           this.state = 'idle';
           this.awaitingToolResults = false;
@@ -710,7 +859,7 @@ export class PersistentClaudeProcess extends EventEmitter {
 
       case 'error': {
         this.clearRequestTimeout();
-        const error = new Error(event.error || 'Unknown error');
+        const error = this.promptTerminalError(new Error(event.error || 'Unknown error'));
         this.currentCallbacks?.onError?.(error);
         this.state = 'idle';
         this.awaitingToolResults = false;
@@ -721,6 +870,105 @@ export class PersistentClaudeProcess extends EventEmitter {
         break;
       }
     }
+  }
+
+  private recordToolUse(toolUse: ToolUseBlock): boolean {
+    const fingerprint = stableJson({ name: toolUse.name, input: toolUse.input });
+    const current = this.promptToolExchanges.get(toolUse.id);
+    if (current) {
+      if (current.toolResult) {
+        this.failToolStreamProtocol(`Completed tool id was reused: ${toolUse.id}`);
+        return false;
+      }
+      if (current.toolUseFingerprint !== fingerprint) {
+        this.failToolStreamProtocol(`Conflicting tool_use payload for id: ${toolUse.id}`);
+        return false;
+      }
+      return true;
+    }
+
+    this.promptToolExchanges.set(toolUse.id, {
+      toolUse,
+      toolUseFingerprint: fingerprint,
+    });
+    this.toolUseBlocks.push(toolUse);
+    this.currentCallbacks?.onToolUse?.(toolUse.name, toolUse.input);
+    persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
+    return true;
+  }
+
+  private recordToolResult(block: ContentBlock): boolean {
+    const toolUseId = block.tool_use_id;
+    if (!toolUseId) {
+      this.failToolStreamProtocol('tool_result is missing tool_use_id');
+      return false;
+    }
+    const current = this.promptToolExchanges.get(toolUseId);
+    if (!current) {
+      this.failToolStreamProtocol(`tool_result arrived before tool_use: ${toolUseId}`);
+      return false;
+    }
+    const toolResult: ToolResultBlock = {
+      type: 'tool_result',
+      tool_use_id: toolUseId,
+      content: normalizeStreamToolResultContent(block.content),
+      is_error: block.is_error === true,
+    };
+    const fingerprint = stableJson({
+      content: toolResult.content,
+      is_error: toolResult.is_error,
+    });
+    if (current.toolResult) {
+      if (current.toolResultFingerprint !== fingerprint) {
+        this.failToolStreamProtocol(`Conflicting tool_result payload for id: ${toolUseId}`);
+        return false;
+      }
+      return true;
+    }
+
+    current.toolResult = toolResult;
+    current.toolResultFingerprint = fingerprint;
+    this.toolUseBlocks = this.toolUseBlocks.filter((toolUse) => toolUse.id !== toolUseId);
+    this.completedToolExchanges.push({ toolUse: current.toolUse, toolResult });
+    this.currentCallbacks?.onToolComplete?.(
+      current.toolUse.name,
+      toolUseId,
+      toolResult.is_error === true
+    );
+    return true;
+  }
+
+  private failToolStreamProtocol(message: string): void {
+    const error = this.promptTerminalError(new ClaudeToolStreamProtocolError(message));
+    this.currentCallbacks?.onError?.(error);
+    this.handleError(error);
+  }
+
+  private promptTerminalError(error: Error): Error {
+    if (
+      error instanceof McpCompletedMutationInterruptedError ||
+      error instanceof HostToolTerminalError
+    ) {
+      return error;
+    }
+    const terminalError = completedCodeActTerminalError(this.completedToolExchanges);
+    if (terminalError) {
+      return new HostToolTerminalError(terminalError.code, terminalError.message, [
+        ...this.completedToolExchanges,
+      ]);
+    }
+    if (completedCodeActMutationWasObserved(this.completedToolExchanges)) {
+      return new McpCompletedMutationInterruptedError([...this.completedToolExchanges]);
+    }
+    if (error instanceof McpResultMissingError) {
+      return error;
+    }
+    const unresolvedMcpToolUseIds = this.toolUseBlocks
+      .filter((toolUse) => toolUse.name === 'mcp__code-act__code_act')
+      .map((toolUse) => toolUse.id);
+    return unresolvedMcpToolUseIds.length > 0
+      ? new McpResultMissingError(unresolvedMcpToolUseIds)
+      : error;
   }
 
   /**
@@ -745,7 +993,7 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     // Reject any pending request
     if (this.currentReject) {
-      this.currentReject(new Error(`Process exited with code ${code}`));
+      this.currentReject(this.promptTerminalError(new Error(`Process exited with code ${code}`)));
       this.resetRequestState();
     }
 
@@ -756,10 +1004,11 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Handle process error
    */
   private handleError(error: Error): void {
-    console.error(`[PersistentCLI] Process error:`, error.message);
+    const terminalError = this.promptTerminalError(error);
+    console.error(`[PersistentCLI] Process error:`, terminalError.message);
 
     if (this.currentReject) {
-      this.currentReject(error);
+      this.currentReject(terminalError);
       this.resetRequestState();
     }
 
@@ -771,7 +1020,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.emit('idle');
     }
 
-    this.emit('error', error);
+    this.emit('error', terminalError);
   }
 
   /**
@@ -781,7 +1030,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     console.error(`[PersistentCLI] Request timeout — killing process to prevent zombie`);
 
     if (this.currentReject) {
-      this.currentReject(new Error('Request timeout'));
+      this.currentReject(this.promptTerminalError(new Error('Request timeout')));
       this.resetRequestState();
     }
 
@@ -823,6 +1072,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.currentResolve = null;
     this.currentReject = null;
     this.toolUseBlocks = [];
+    this.promptToolExchanges.clear();
+    this.completedToolExchanges = [];
     this.accumulatedText = '';
   }
 
@@ -835,7 +1086,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Reject any pending request BEFORE resetting state
     // This ensures promises are resolved even if process is already dead
     if (this.currentReject) {
-      this.currentReject(new Error('Process stopped by user'));
+      this.currentReject(this.promptTerminalError(new Error('Process stopped by user')));
     }
 
     if (this.process) {
@@ -905,6 +1156,11 @@ export class PersistentClaudeProcess extends EventEmitter {
    */
   getSessionId(): string {
     return this.options.sessionId;
+  }
+
+  /** Process-generation key inherited by the Code-Act MCP child, never a routing/session ID. */
+  getRunContextKey(): string | null {
+    return this.runContextKey;
   }
 }
 
@@ -1031,43 +1287,48 @@ export class PersistentProcessPool {
       };
 
       poolLogger.info(`Creating new process for channel: ${channelKey}`);
-      process = new PersistentClaudeProcess(mergedOptions);
+      const createdProcess = new PersistentClaudeProcess(mergedOptions);
+      process = createdProcess;
 
       // Handle process errors - prevent unhandled 'error' event crash
       const removeIfCurrent = () => {
         const current = this.processes.get(channelKey);
-        if (current?.process === process) {
+        if (current?.process === createdProcess) {
           this.processes.delete(channelKey);
         }
       };
 
       const touchIfCurrent = () => {
         const current = this.processes.get(channelKey);
-        if (!current || current.process !== process) {
+        if (!current || current.process !== createdProcess) {
           return;
         }
         current.lastUsedAt = Date.now();
-        if (process.hasPendingToolUse()) {
-          current.pendingToolUseSince = process.getPendingToolUseStartedAt() ?? current.lastUsedAt;
+        if (createdProcess.hasPendingToolUse()) {
+          current.pendingToolUseSince =
+            createdProcess.getPendingToolUseStartedAt() ?? current.lastUsedAt;
         } else {
           current.pendingToolUseSince = undefined;
         }
       };
 
-      process.on('error', (err) => {
+      createdProcess.on('error', (err) => {
         poolLogger.error(`Process error for ${channelKey}:`, err);
+        // An errored generation is no longer reusable. Stop it before dropping
+        // the pool reference so it cannot survive as an untracked child.
+        createdProcess.stop();
         removeIfCurrent();
       });
 
       // Handle process death - remove from pool
-      process.on('close', () => {
+      createdProcess.on('close', () => {
         poolLogger.info(`Process for ${channelKey} closed, removing from pool`);
         removeIfCurrent();
       });
-      process.on('idle', touchIfCurrent);
+      createdProcess.on('idle', touchIfCurrent);
 
-      this.processes.set(channelKey, { process, lastUsedAt: now });
-      await process.start();
+      this.processes.set(channelKey, { process: createdProcess, lastUsedAt: now });
+      await createdProcess.start();
       created = true;
     } else if (entry) {
       entry.lastUsedAt = now;
@@ -1132,6 +1393,22 @@ export class PersistentProcessPool {
       entry.process.stop();
       this.processes.delete(channelKey);
     }
+  }
+
+  /**
+   * Stop the exact process generation acquired by the caller. Only remove the pool entry when it
+   * still points at that generation, so stale cleanup cannot stop or evict a replacement. The
+   * expected process may already be absent after its error listener ran; it still must be stopped
+   * or the child would remain alive outside pool lifecycle management.
+   */
+  retireProcess(channelKey: string, expectedProcess: PersistentClaudeProcess): boolean {
+    const entry = this.processes.get(channelKey);
+    const removedCurrentGeneration = entry?.process === expectedProcess;
+    if (removedCurrentGeneration) {
+      this.processes.delete(channelKey);
+    }
+    expectedProcess.stop();
+    return removedCurrentGeneration;
   }
 
   /**

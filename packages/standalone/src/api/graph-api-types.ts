@@ -47,13 +47,17 @@ export interface CodeActResult {
   value?: unknown;
   logs?: string[];
   error?: string;
+  errorCode?: string;
   terminalCode?: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
   retryable?: boolean;
   abort?: boolean;
   metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
+  hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
+  hostToolsInvoked?: string[];
 }
 
 export interface CodeActExecutionContext {
+  contextKey?: string;
   agentId?: string;
   allowedTools?: string[];
   blockedTools?: string[];

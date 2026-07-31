@@ -259,7 +259,7 @@ Each package has independent versioning:
 - **mama-core:** 2.1.1 (stable API)
 - **mama-server:** 1.15.0 (follows MAMA version)
 - **claude-code-plugin:** 1.11.0 (follows MAMA version)
-- **mama-os:** 0.31.5 (standalone agent)
+- **mama-os:** 0.32.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -411,4 +411,4 @@ Existing decisions remain valid across all package updates. SQLite schema change
 
 ---
 
-**Last Updated:** 2026-07-22
+**Last Updated:** 2026-07-31

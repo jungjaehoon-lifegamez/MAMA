@@ -5,7 +5,14 @@
  * so AgentLoop depends on a contract, not concrete implementations.
  */
 
-import type { PromptCallbacks, ToolUseBlock } from './types.js';
+import type {
+  CompletedToolExchange,
+  GatewayToolExecutionContext,
+  PromptCallbacks,
+  PromptResult,
+} from './types.js';
+
+export type { PromptResult } from './types.js';
 
 // ─── Run-local Host Tools ───────────────────────────────────────────────────
 
@@ -75,30 +82,12 @@ export class HostToolTerminalError extends Error {
 
   constructor(
     readonly terminalCode: HostToolTerminalCode,
-    message: string
+    message: string,
+    readonly completedToolExchanges?: readonly CompletedToolExchange[]
   ) {
     super(message);
     this.name = 'HostToolTerminalError';
   }
-}
-
-// ─── Result Types ────────────────────────────────────────────────────────────
-
-/**
- * Standardized prompt result returned by all backends.
- */
-export interface PromptResult {
-  response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  session_id: string;
-  cost_usd?: number;
-  toolUseBlocks?: ToolUseBlock[];
-  hasToolUse?: boolean;
 }
 
 /**
@@ -128,6 +117,8 @@ export interface PromptOptions {
    * place, so only callers that opt in (operator worker runs) are affected.
    */
   requestTimeout?: number;
+  /** Host-issued authority for this exact prompt attempt; persistent Claude binds it to MCP. */
+  toolExecutionContext?: GatewayToolExecutionContext | null;
   /**
    * Rebuilds the FULL instructions for a backend that has to rehydrate a durable
    * session on this call. Codex re-anchors the resumed thread with them

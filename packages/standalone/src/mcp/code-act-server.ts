@@ -16,6 +16,7 @@ import { callCodeActAPI } from './code-act-api-client.js';
 import {
   CODE_ACT_MCP_REQUEST_TIMEOUT_MS,
   SerializedCodeActGate,
+  codeActMcpResult,
   terminalMcpResult,
 } from './code-act-terminal-transport.js';
 
@@ -30,6 +31,7 @@ log(`API port: ${MAMA_API_PORT}`);
 const CALLER_AGENT_ID = normalizeEnvString(process.env.MAMA_CODE_ACT_AGENT_ID);
 const CALLER_ALLOWED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_ALLOWED_TOOLS);
 const CALLER_BLOCKED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_BLOCKED_TOOLS);
+const PROCESS_CONTEXT_KEY = normalizeEnvString(process.env.MAMA_CODE_ACT_CONTEXT_KEY);
 const MAMA_AUTH_TOKEN = normalizeEnvString(process.env.MAMA_AUTH_TOKEN);
 log(
   `Policy: agent=${CALLER_AGENT_ID ?? 'default'} allowed=${formatToolListForLog(
@@ -156,6 +158,7 @@ async function handleRequest(
               ...(CALLER_AGENT_ID ? { agent_id: CALLER_AGENT_ID } : {}),
               ...(CALLER_ALLOWED_TOOLS ? { allowed_tools: CALLER_ALLOWED_TOOLS } : {}),
               ...(CALLER_BLOCKED_TOOLS ? { blocked_tools: CALLER_BLOCKED_TOOLS } : {}),
+              ...(PROCESS_CONTEXT_KEY ? { context_key: PROCESS_CONTEXT_KEY } : {}),
             },
             {
               port: MAMA_API_PORT,
@@ -169,37 +172,17 @@ async function handleRequest(
           break;
         }
         const result = gated.result!;
-        if (result.success) {
-          const output: string[] = [];
-          // Show tool calls executed during code-act
-          if (result.toolCalls && result.toolCalls.length > 0) {
-            output.push(
-              `[tools] ${result.toolCalls.map((t: { name: string }) => t.name).join(', ')}`
-            );
-          }
-          if (result.logs && result.logs.length > 0) {
-            output.push(`[logs] ${result.logs.join('\n')}`);
-          }
-          output.push(
-            typeof result.value === 'string' ? result.value : JSON.stringify(result.value, null, 2)
-          );
-          reply(id, { content: [{ type: 'text', text: output.join('\n') }] });
-        } else {
-          reply(id, {
-            content: [{ type: 'text', text: `Code-Act error: ${result.error || 'Unknown error'}` }],
-            isError: true,
-          });
-        }
+        reply(id, codeActMcpResult(result));
       } catch (err) {
-        reply(id, {
-          content: [
-            {
-              type: 'text',
-              text: `Code-Act server error: ${err instanceof Error ? err.message : String(err)}`,
-            },
-          ],
-          isError: true,
-        });
+        reply(
+          id,
+          codeActMcpResult({
+            success: false,
+            error: `Code-Act server error: ${err instanceof Error ? err.message : String(err)}`,
+            errorCode: 'CODE_ACT_SERVER_ERROR',
+            retryable: false,
+          })
+        );
       }
       break;
     }

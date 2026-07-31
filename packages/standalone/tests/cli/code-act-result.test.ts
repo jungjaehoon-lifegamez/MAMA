@@ -17,7 +17,8 @@ describe('Story CA-TERM-1: Code-Act HTTP result serialization', () => {
           logs: [],
           metrics: { durationMs: 10, hostCallCount: 1, memoryUsedBytes: 0 },
         },
-        [{ name: 'telegram_send', input: { chatId: 'owner' } }]
+        [{ name: 'telegram_send', input: { chatId: 'owner' } }],
+        [{ name: 'telegram_send', success: false, code: 'destination_out_of_scope' }]
       );
 
       expect(result).toMatchObject({
@@ -26,6 +27,10 @@ describe('Story CA-TERM-1: Code-Act HTTP result serialization', () => {
         retryable: false,
         abort: true,
         toolCalls: [{ name: 'telegram_send' }],
+        hostToolExecutions: [
+          { name: 'telegram_send', success: false, code: 'destination_out_of_scope' },
+        ],
+        hostToolsInvoked: [],
       });
     });
   });

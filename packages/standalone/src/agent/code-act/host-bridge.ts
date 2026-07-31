@@ -756,6 +756,10 @@ export const READ_ONLY_TOOLS = new Set([
 /** Read-shaped calls that still create a local artifact and therefore need write settlement. */
 const LOCAL_ARTIFACT_TOOLS = new Set(['drive_download']);
 
+export function isCodeActMutatingTool(toolName: string): boolean {
+  return !READ_ONLY_TOOLS.has(toolName) || LOCAL_ARTIFACT_TOOLS.has(toolName);
+}
+
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
@@ -785,6 +789,19 @@ export function isToolAvailableAtTier(toolName: string, tier: 1 | 2 | 3): boolea
     return READ_ONLY_TOOLS.has(toolName) || MEMORY_WRITE_TOOLS.has(toolName);
   }
   return READ_ONLY_TOOLS.has(toolName);
+}
+
+function thrownHostToolCode(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const record = error as Record<string, unknown>;
+    if (record.name === 'AbortError' || record.code === 'ABORT_ERR') {
+      return 'aborted';
+    }
+    if (typeof record.code === 'string') {
+      return record.code;
+    }
+  }
+  return 'host_tool_exception';
 }
 
 export class HostBridge {
@@ -832,21 +849,6 @@ export class HostBridge {
         desc.name,
         async (hostContext, ...args: unknown[]) => {
           const input = this._buildInput(desc, args);
-
-          // Validate required params before execution
-          const missing = desc.params
-            .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
-            .map((p) => `${p.name}: ${p.type}`);
-          if (missing.length > 0) {
-            const sig = desc.params
-              .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
-              .join(', ');
-            throw new Error(
-              `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
-                `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
-            );
-          }
-
           this.onToolUse?.(desc.name, input, undefined);
           const executionContext = this.executionContext
             ? {
@@ -856,23 +858,64 @@ export class HostBridge {
                   : hostContext.signal,
               }
             : undefined;
-          const result = executionContext
-            ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
-            : await this.executor.execute(desc.name, input as GatewayToolInput);
-          this.onToolUse?.(desc.name, input, result);
+          let terminalAuditRecorded = false;
+          try {
+            // Validation failures are host-tool terminal events too. Keep them
+            // inside the audited region so every projected call has both the
+            // initial observation and one stable terminal outcome.
+            const missing = desc.params
+              .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
+              .map((p) => `${p.name}: ${p.type}`);
+            if (missing.length > 0) {
+              const sig = desc.params
+                .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
+                .join(', ');
+              const validationError = new Error(
+                `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
+                  `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
+              );
+              Object.assign(validationError, { code: 'invalid_tool_input' });
+              throw validationError;
+            }
 
-          if (!result.success) {
-            const r = result as GatewayToolResult & { message?: string; error?: string };
-            const msg = r.message || r.error || `${desc.name} failed`;
-            throw new Error(`${desc.name}(): ${msg}`);
+            const result = executionContext
+              ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
+              : await this.executor.execute(desc.name, input as GatewayToolInput);
+            const resultRecord = result as Record<string, unknown>;
+            this.onToolUse?.(desc.name, input, {
+              success: result.success,
+              ...(result.success === false
+                ? {
+                    code:
+                      typeof resultRecord.code === 'string'
+                        ? resultRecord.code
+                        : 'host_tool_failed',
+                  }
+                : {}),
+            });
+            terminalAuditRecorded = true;
+
+            if (!result.success) {
+              const r = result as GatewayToolResult & { message?: string; error?: string };
+              const msg = r.message || r.error || `${desc.name} failed`;
+              throw new Error(`${desc.name}(): ${msg}`);
+            }
+
+            // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
+            const { success: _, ...payload } = result as unknown as Record<string, unknown>;
+            return Object.keys(payload).length === 0 ? true : payload;
+          } catch (error) {
+            if (!terminalAuditRecorded) {
+              this.onToolUse?.(desc.name, input, {
+                success: false,
+                code: thrownHostToolCode(error),
+              });
+            }
+            throw error;
           }
-
-          // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
-          const { success: _, ...payload } = result as unknown as Record<string, unknown>;
-          return Object.keys(payload).length === 0 ? true : payload;
         },
         {
-          settleOnAbort: !READ_ONLY_TOOLS.has(desc.name) || LOCAL_ARTIFACT_TOOLS.has(desc.name),
+          settleOnAbort: isCodeActMutatingTool(desc.name),
         }
       );
     }
