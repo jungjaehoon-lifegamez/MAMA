@@ -1836,7 +1836,12 @@ export class GatewayToolExecutor {
         ctx.envelope.scope.memory_scopes
       );
       if (contextPacketScopes.length === 0) {
-        throw new ContextPacketProvenanceError('Trusted context packet has no memory scopes.');
+        throw new ContextPacketProvenanceError(
+          // Reaching here means the packet HAS scopes but none the envelope
+          // names (a narrow compile against mirror-only scopes) - the
+          // empty-packet case is unreachable, compile 403s it earlier.
+          'Trusted context packet has no envelope-eligible memory scopes; re-compile with at least one envelope-named scope.'
+        );
       }
       const requestedScopeValue = (input as { scopes?: unknown }).scopes;
       if (Array.isArray(requestedScopeValue) && requestedScopeValue.length === 0) {
