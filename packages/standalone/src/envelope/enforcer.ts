@@ -60,8 +60,32 @@ const MEMORY_SCOPED_TOOLS = new Set<string>([
   'context_compile',
 ]);
 
+/**
+ * Memory READ tools may be allowed scopes beyond the envelope's own list via the
+ * grant mirror (see mirrorReadScopes in evidence/read.ts): a run allowed to read a
+ * channel's raw events may recall the memories extracted from it. WRITES never
+ * widen - mama_save's scope binding is permanent, so it answers only to the
+ * envelope's identity scopes.
+ */
+export const MIRROR_READABLE_TOOLS = new Set<string>([
+  'mama_search',
+  'mama_recall',
+  'mama_provenance',
+  'context_compile',
+]);
+
+export interface EnvelopeCheckOptions {
+  /** Extra READ-only memory scope allowance, computed by the caller at check time. */
+  readScopeMirror?: ReadonlyArray<{ kind: string; id: string }>;
+}
+
 export class EnvelopeEnforcer {
-  check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
+  check(
+    envelope: Envelope | null | undefined,
+    toolName: string,
+    args: unknown,
+    options?: EnvelopeCheckOptions
+  ): void {
     if (!envelope) {
       throw new EnvelopeViolation('No envelope bound to this call', 'no_envelope');
     }
@@ -69,7 +93,7 @@ export class EnvelopeEnforcer {
     this.checkExpiry(envelope);
     this.checkDestination(envelope, toolName, args);
     this.checkRawConnectors(envelope, toolName, args);
-    this.checkMemoryScopes(envelope, toolName, args);
+    this.checkMemoryScopes(envelope, toolName, args, options);
     this.checkTier(envelope, toolName);
   }
 
@@ -129,7 +153,12 @@ export class EnvelopeEnforcer {
     }
   }
 
-  private checkMemoryScopes(envelope: Envelope, toolName: string, args: unknown): void {
+  private checkMemoryScopes(
+    envelope: Envelope,
+    toolName: string,
+    args: unknown,
+    options?: EnvelopeCheckOptions
+  ): void {
     if (toolName === 'mama_load_checkpoint') {
       throw new EnvelopeViolation(
         'Checkpoint reads are not scoped yet; use scoped search for checkpoint queries.',
@@ -156,7 +185,14 @@ export class EnvelopeEnforcer {
           return;
         }
       }
-      if (toolName === 'context_compile' && isRecord(args) && Array.isArray(args.scopes)) {
+      if (
+        toolName === 'context_compile' &&
+        isRecord(args) &&
+        (args.scopes === undefined || Array.isArray(args.scopes))
+      ) {
+        // Scope-less compile delegates to the compile service's own read
+        // allowance (envelope + grant mirror) - the service is the single
+        // owner of compile scope semantics and throws its own 403.
         return;
       }
       throw new EnvelopeViolation(
@@ -168,6 +204,11 @@ export class EnvelopeEnforcer {
     const allowedScopeKeys = new Set(
       envelope.scope.memory_scopes.map((scope) => `${scope.kind}:${scope.id}`)
     );
+    if (options?.readScopeMirror && MIRROR_READABLE_TOOLS.has(toolName)) {
+      for (const scope of options.readScopeMirror) {
+        allowedScopeKeys.add(`${scope.kind}:${scope.id}`);
+      }
+    }
     const outOfScope = requestedScopes.some(
       (scope) => !allowedScopeKeys.has(`${scope.kind}:${scope.id}`)
     );

@@ -89,7 +89,7 @@ import type { AgentProcessManager } from '../multi-agent/agent-process-manager.j
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { logActivity } from '../db/agent-store.js';
-import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
+import { EnvelopeEnforcer, EnvelopeViolation, MIRROR_READABLE_TOOLS } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
 import {
   createWikiPublishAdapter,
@@ -101,7 +101,12 @@ import type {
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
-import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
+import {
+  liveBoundaryChannels,
+  narrowGrantToEnvelope,
+  mirrorReadScopes,
+  writeEligiblePacketScopes,
+} from '../evidence/read.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -592,6 +597,7 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
+  private readonly channelGrantProvider: () => Record<string, readonly string[]>;
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
@@ -842,6 +848,7 @@ export class GatewayToolExecutor {
   /** Check if delegate tool support is available (multi-agent wired). */
 
   constructor(options: GatewayToolExecutorOptions = {}) {
+    this.channelGrantProvider = options.channelGrantProvider ?? liveBoundaryChannels;
     const privateWorkspaceRoot = resolve(
       process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace')
     );
@@ -1150,7 +1157,9 @@ export class GatewayToolExecutor {
         }
       }
       try {
-        this.envelopeEnforcer.check(ctx.envelope, toolName, enforcementInput);
+        this.envelopeEnforcer.check(ctx.envelope, toolName, enforcementInput, {
+          readScopeMirror: this.readScopeMirrorFor(toolName, ctx.envelope),
+        });
         return undefined;
       } catch (err) {
         if (err instanceof EnvelopeViolation) {
@@ -1647,8 +1656,18 @@ export class GatewayToolExecutor {
     const ctx = this.getExecutionState();
     const requestedScopes = normalizeMemoryScopes(input.scopes);
     const callerProvidedScopes = input.scopes !== undefined;
-    const allowedScopes =
-      ctx.envelope?.scope.memory_scopes ?? this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
+    // READS answer to the same allowance the enforcer accepts: envelope
+    // identity scopes plus the grant mirror. Without the mirror here, the
+    // executor's own default injection (identity + mirror) was rejected by
+    // this very gate and recall died on every configured daemon (PR #217
+    // re-review, blocking #5).
+    const envelopeScopes = ctx.envelope
+      ? [
+          ...ctx.envelope.scope.memory_scopes,
+          ...mirrorReadScopes(ctx.envelope, this.channelGrantProvider()),
+        ]
+      : null;
+    const allowedScopes = envelopeScopes ?? this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
     const hasActiveScopeBoundary = Boolean(ctx.envelope || ctx.agentContext);
 
     if (callerProvidedScopes && !requestedScopes) {
@@ -1698,6 +1717,22 @@ export class GatewayToolExecutor {
     return { scopes: requestedScopes };
   }
 
+  /**
+   * The grant-mirror READ allowance for memory tools (see mirrorReadScopes):
+   * computed lazily - only memory-scoped tools pay the connector-config read -
+   * and against the LIVE grant, so a channel the owner removes stops being
+   * readable on the next call, mid-envelope included.
+   */
+  private readScopeMirrorFor(
+    toolName: string,
+    envelope: Envelope
+  ): Array<{ kind: 'channel'; id: string }> | undefined {
+    if (!MIRROR_READABLE_TOOLS.has(toolName)) {
+      return undefined;
+    }
+    return mirrorReadScopes(envelope, this.channelGrantProvider());
+  }
+
   private applyEnvelopeScopedReadDefaults(
     toolName: string,
     input: GatewayToolInput,
@@ -1725,9 +1760,35 @@ export class GatewayToolExecutor {
       return input;
     }
 
+    if (toolName === 'mama_save') {
+      // WRITE scoping never widens: a save binds permanently (one
+      // memory_scope_bindings row per scope), so the default is the
+      // envelope's identity scopes verbatim.
+      return {
+        ...scopedInput,
+        scopes: ctx.envelope.scope.memory_scopes,
+      };
+    }
+    if (toolName === 'context_compile') {
+      // The compile service computes its own read allowance (envelope +
+      // mirror) and defaults its boundary to it - injecting scopes here
+      // would only re-state what it already knows, against a possibly
+      // different grant snapshot.
+      return input;
+    }
+    // READ defaulting: identity scopes plus the grant mirror, so an omitted
+    // scopes arg recalls everything this run is ALLOWED to read instead of
+    // silently less than the enforcer would accept.
+    const mirror = mirrorReadScopes(ctx.envelope, this.channelGrantProvider());
+    const seen = new Set(
+      ctx.envelope.scope.memory_scopes.map((scope) => `${scope.kind}:${scope.id}`)
+    );
     return {
       ...scopedInput,
-      scopes: ctx.envelope.scope.memory_scopes,
+      scopes: [
+        ...ctx.envelope.scope.memory_scopes,
+        ...mirror.filter((scope) => !seen.has(`${scope.kind}:${scope.id}`)),
+      ],
     };
   }
 
@@ -1769,9 +1830,18 @@ export class GatewayToolExecutor {
         throw new ContextPacketProvenanceError(`Context packet not found: ${contextPacketId}`);
       }
       packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
-      contextPacketScopes = packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id }));
+      // Same ctx.envelope the guard above verified - never a second context.
+      contextPacketScopes = writeEligiblePacketScopes(
+        packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id })),
+        ctx.envelope.scope.memory_scopes
+      );
       if (contextPacketScopes.length === 0) {
-        throw new ContextPacketProvenanceError('Trusted context packet has no memory scopes.');
+        throw new ContextPacketProvenanceError(
+          // Reaching here means the packet HAS scopes but none the envelope
+          // names (a narrow compile against mirror-only scopes) - the
+          // empty-packet case is unreachable, compile 403s it earlier.
+          'Trusted context packet has no envelope-eligible memory scopes; re-compile with at least one envelope-named scope.'
+        );
       }
       const requestedScopeValue = (input as { scopes?: unknown }).scopes;
       if (Array.isArray(requestedScopeValue) && requestedScopeValue.length === 0) {

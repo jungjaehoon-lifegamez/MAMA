@@ -292,13 +292,6 @@ export function resolveCodeActRawConnectors(
  * irreversible-side-effect gate) and every read lands in tool traces.
  */
 
-const CODE_ACT_RAW_MEMORY_SCOPE_LIMIT = 500;
-const MEMORY_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
-
-function isMemoryScopeKind(value: unknown): value is MemoryScopeRef['kind'] {
-  return typeof value === 'string' && MEMORY_SCOPE_KINDS.has(value);
-}
-
 function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[] {
   const seen = new Set<string>();
   const unique: MemoryScopeRef[] = [];
@@ -408,6 +401,12 @@ export function workOrderEnvelopeScope(input: {
         channelId: `worker:${input.workKind}`,
         projectId: input.projectId,
       }),
+      // Identity scopes ONLY. Wider memory READ visibility (the grant mirror)
+      // is granted at the enforcement layer, never issued into the envelope:
+      // envelope channel scopes double as the raw-narrowing input AND as
+      // mama_save's write binding, so issuing the mirror here re-opened
+      // per-channel raw isolation and bound every saved memory to every
+      // granted channel (PR #217 review, blocking #2/#3).
       ...(input.temporalBinding
         ? [
             {
@@ -433,44 +432,6 @@ export function temporalTaskBinding(
     connector: sourceChannel.slice(0, separator),
     channel: sourceChannel.slice(separator + 1),
   };
-}
-
-export function resolveCodeActMemoryScopes(
-  baseScopes: readonly MemoryScopeRef[],
-  adapter?: Pick<DatabaseAdapter, 'prepare'>
-): MemoryScopeRef[] {
-  const scopes = [...baseScopes];
-  if (!adapter) {
-    return uniqueMemoryScopes(scopes);
-  }
-
-  try {
-    const rows = adapter
-      .prepare(
-        `
-          SELECT DISTINCT ms.kind AS kind, ms.external_id AS id
-          FROM memory_scopes ms
-          JOIN memory_scope_bindings msb ON msb.scope_id = ms.id
-          JOIN decisions d ON d.id = msb.memory_id
-          WHERE d.topic LIKE 'raw/%'
-            AND (d.status = 'active' OR d.status IS NULL)
-            AND d.superseded_by IS NULL
-          ORDER BY ms.kind, ms.external_id
-          LIMIT ?
-        `
-      )
-      .all(CODE_ACT_RAW_MEMORY_SCOPE_LIMIT) as Array<Record<string, unknown>>;
-    for (const row of rows) {
-      if (!isMemoryScopeKind(row.kind) || typeof row.id !== 'string') {
-        continue;
-      }
-      scopes.push({ kind: row.kind, id: row.id });
-    }
-  } catch {
-    return uniqueMemoryScopes(scopes);
-  }
-
-  return uniqueMemoryScopes(scopes);
 }
 
 function buildCodeActRole(policy: {
@@ -1181,14 +1142,13 @@ export async function runAgentLoop(
     if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
       const projectId = resolveReactiveProjectRoot(config, process.env);
       const projectRef = { kind: 'project' as const, id: projectId };
-      const memoryScopes = resolveCodeActMemoryScopes(
+      const memoryScopes = uniqueMemoryScopes(
         deriveMemoryScopes({
           source: 'watch',
           channelId: 'api:code-act',
           userId: 'api',
           projectId,
-        }),
-        getAdapter()
+        })
       );
       const wallSeconds = Math.min(
         Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
@@ -1707,10 +1667,8 @@ export async function runAgentLoop(
                 laneConnectors: codeActRawConnectors,
                 temporalBinding,
               });
-              return {
-                ...scope,
-                memory_scopes: resolveCodeActMemoryScopes(scope.memory_scopes, getAdapter()),
-              };
+              // Identity scopes only - the read mirror is enforcement-layer.
+              return scope;
             })(),
             tier: 2,
             budget: { wall_seconds: wallSeconds },
@@ -1957,9 +1915,8 @@ export async function runAgentLoop(
                       // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
                       raw_connectors: codeActRawConnectors,
-                      memory_scopes: resolveCodeActMemoryScopes(
-                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
-                        getAdapter()
+                      memory_scopes: uniqueMemoryScopes(
+                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
                       ),
                       allowed_destinations: [],
                     },
@@ -2107,13 +2064,12 @@ export async function runAgentLoop(
                     // The conductor reads channel text from its own durable
                     // inbox, never from connectors - no raw read authority.
                     raw_connectors: [],
-                    memory_scopes: resolveCodeActMemoryScopes(
+                    memory_scopes: uniqueMemoryScopes(
                       deriveMemoryScopes({
                         source: 'conductor',
                         channelId: 'conductor',
                         projectId,
-                      }),
-                      getAdapter()
+                      })
                     ),
                     allowed_destinations: [], // NO send surface
                   },

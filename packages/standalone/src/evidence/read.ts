@@ -72,6 +72,66 @@ export function liveBoundaryChannels(): ChannelGrant {
 }
 
 /**
+ * The channel grant, as MEMORY scopes.
+ *
+ * Memories extracted from a channel are stored under `channel:<connector>:<channelId>` -
+ * the SAME key the grant declares.
+ */
+export function channelMemoryScopesFromGrant(
+  grant: ChannelGrant,
+  connectors: readonly string[]
+): Array<{ kind: 'channel'; id: string }> {
+  const scopes: Array<{ kind: 'channel'; id: string }> = [];
+  for (const connector of Object.keys(grant).sort()) {
+    if (!connectors.includes(connector)) continue;
+    for (const channelId of [...grant[connector]].sort()) {
+      scopes.push({ kind: 'channel', id: `${connector}:${channelId}` });
+    }
+  }
+  return scopes;
+}
+
+/**
+ * The READ allowance a run's raw grant implies for memory: a run allowed to read a
+ * channel's raw events may recall the memories extracted from it. This was the dominant
+ * compile failure S2 named (memory_scope_out_of_scope, 2,700+ violations/morning):
+ * envelopes carry identity scopes while retrieval asks for the real channels memories
+ * are stored under.
+ *
+ * This is an ENFORCEMENT-LAYER allowance, never issued into the envelope. Envelope
+ * channel scopes double as the raw-narrowing input (`narrowGrantToEnvelope`) and as
+ * `mama_save`'s write binding - issuing the mirror widened a chat's raw reads back to
+ * every sibling channel and bound every saved memory to all of them (PR #217 review,
+ * blocking #2/#3). Read acceptance widens READS only, computed against the LIVE grant
+ * at check time.
+ *
+ * A connector the envelope already narrows with an identity channel scope (a chat's own
+ * channel, a temporal run's binding) keeps that narrowing: per-channel isolation is the
+ * point of those scopes, and the mirror must not dissolve it.
+ */
+export function mirrorReadScopes(
+  envelope: {
+    scope: {
+      raw_connectors: readonly string[];
+      memory_scopes: ReadonlyArray<{ kind: string; id: string }>;
+    };
+  },
+  grant: ChannelGrant = liveBoundaryChannels()
+): Array<{ kind: 'channel'; id: string }> {
+  const channelScopedConnectors = new Set<string>();
+  for (const scope of envelope.scope.memory_scopes) {
+    if (scope.kind !== 'channel') continue;
+    const separator = scope.id.indexOf(':');
+    if (separator <= 0) continue;
+    channelScopedConnectors.add(scope.id.slice(0, separator));
+  }
+  return channelMemoryScopesFromGrant(
+    grant,
+    envelope.scope.raw_connectors.filter((connector) => !channelScopedConnectors.has(connector))
+  );
+}
+
+/**
  * Narrow the configured grant to what THIS envelope may read.
  *
  * Two independent narrowings, and the second is the whole reason this exists rather than a
@@ -128,4 +188,20 @@ export function narrowGrantToEnvelope(
     narrowed[connector] = bound ? channels.filter((channel) => bound.has(channel)) : channels;
   }
   return narrowed;
+}
+
+/**
+ * WRITE authority never widens past the envelope. A context packet's scopes may
+ * carry the READ allowance (the compile boundary defaults to it), but a save
+ * binds permanently - one memory_scope_bindings row per scope - so only the
+ * packet scopes the envelope itself names are write-eligible (PR #217
+ * re-review, blocking #4: finding #3 through the packet back door). Pre-mirror
+ * packets satisfied packet ⊆ envelope, so this is the identity for them.
+ */
+export function writeEligiblePacketScopes<T extends { kind: string; id: string }>(
+  packetScopes: readonly T[],
+  envelopeScopes: ReadonlyArray<{ kind: string; id: string }>
+): T[] {
+  const envelopeKeys = new Set(envelopeScopes.map((scope) => `${scope.kind}:${scope.id}`));
+  return packetScopes.filter((scope) => envelopeKeys.has(`${scope.kind}:${scope.id}`));
 }
