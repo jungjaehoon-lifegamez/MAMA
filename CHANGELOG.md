@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.32.0] - 2026-07-31
+
+### Added
+
+- **A persistent Claude process now follows the principal of its active run.** Each process
+  generation receives a fresh opaque context key, and Code-Act reacquires the exact trusted
+  Telegram or operator context across the MCP and local HTTP boundaries without rebuilding
+  identity from request fields.
+
+### Fixed
+
+- **A completed Code-Act mutation is never replayed after a transport interruption.** Paired MCP
+  exchanges survive close, error, protocol-failure, and missing-result paths; terminal outcomes
+  remain non-retryable, the affected process generation is retired, and oversized results retain
+  bounded terminal and audit evidence.
+- **Operator report audits now reflect only trusted nested Code-Act executions.** Successful host
+  gathers remain visible even when a later nested call fails, validation failures are recorded,
+  and similarly named tools from other MCP servers cannot forge report evidence.
+
 ## mama-os [0.31.5] - 2026-07-31
 
 ### Fixed
