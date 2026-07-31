@@ -960,7 +960,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (completedCodeActMutationWasObserved(this.completedToolExchanges)) {
       return new McpCompletedMutationInterruptedError([...this.completedToolExchanges]);
     }
-    if (error instanceof ClaudeToolStreamProtocolError || error instanceof McpResultMissingError) {
+    if (error instanceof McpResultMissingError) {
       return error;
     }
     const unresolvedMcpToolUseIds = this.toolUseBlocks

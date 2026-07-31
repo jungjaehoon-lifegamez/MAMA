@@ -85,8 +85,10 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   result event, `MCP_COMPLETED_MUTATION_INTERRUPTED` carries the completed exchange into history and
   likewise blocks replacement. A paired terminal result carries the same exact exchange through
   close/error, and completed mutation/terminal evidence takes precedence over any later protocol
-  violation or missing result so neither history nor no-retry policy is lost. Oversized Code-Act
-  results are structurally compacted so terminal metadata and the host audit remain valid JSON.
+  violation or missing result so neither history nor no-retry policy is lost. A protocol violation
+  while a Code-Act call is still unresolved is likewise promoted to `MCP_RESULT_MISSING` before the
+  workorder layer can retry it. Oversized Code-Act results are structurally compacted so terminal
+  metadata and the host audit remain valid JSON.
   Evidence: `agent/persistent-cli-process.ts`,
   `agent/code-act/completed-terminal-result.ts`, `agent/agent-loop.ts`,
   `operator/workorder-consumer.ts`, `persistent-cli-process-stream.test.ts`, `agent-loop.test.ts`,
@@ -253,6 +255,7 @@ change unless they are release-blocking security or data-loss issues.
   retirement for TG-03/TG-04/TG-05/TG-06. Follow-up review added structural oversized-result
   compaction, pre-final terminal promotion, interrupted-completed-mutation suppression, and exact
   Code-Act MCP provenance checks. Final closure preserves exact exchanges for interrupted terminal
-  results and prioritizes completed mutation evidence over later protocol/missing-result failures.
+  results, prioritizes completed mutation evidence over later protocol/missing-result failures, and
+  maps unresolved Code-Act protocol failures to the no-retry `MCP_RESULT_MISSING` outcome.
 - 2026-07-22: Created after partial, file-by-file parity work repeatedly missed end-to-end
   boundaries. Reference source was re-read from `mama-suite` commit `ea982c1`.
