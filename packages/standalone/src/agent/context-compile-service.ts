@@ -582,9 +582,12 @@ export function createContextCompileService(
       // second half of the dominant compile failure S2 named: agents naming
       // the real channels memories live under died here with
       // worker_envelope_scope_denied even after the enforcer allowed them.
+      // ONE grant snapshot per call: allowance and raw narrowing must never
+      // disagree mid-compile.
+      const grantSnapshot = options.channelGrant?.() ?? null;
       const readAllowance = [
         ...request.envelope.scope.memory_scopes,
-        ...mirrorReadScopes(request.envelope, options.channelGrant?.() ?? {}),
+        ...mirrorReadScopes(request.envelope, grantSnapshot ?? {}),
       ];
       deriveWorkerEnvelopeVisibility(request.envelope, {
         connectors: requestFilters.connectors,
@@ -610,7 +613,7 @@ export function createContextCompileService(
         allowed: envelopeVisibility.tenantId,
       });
 
-      const configuredChannels = options.channelGrant?.() ?? null;
+      const configuredChannels = grantSnapshot;
       const grantedChannels = configuredChannels
         ? narrowGrantToEnvelope(configuredChannels, envelopeVisibility)
         : undefined;

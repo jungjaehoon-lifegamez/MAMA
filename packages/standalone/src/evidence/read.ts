@@ -189,3 +189,19 @@ export function narrowGrantToEnvelope(
   }
   return narrowed;
 }
+
+/**
+ * WRITE authority never widens past the envelope. A context packet's scopes may
+ * carry the READ allowance (the compile boundary defaults to it), but a save
+ * binds permanently - one memory_scope_bindings row per scope - so only the
+ * packet scopes the envelope itself names are write-eligible (PR #217
+ * re-review, blocking #4: finding #3 through the packet back door). Pre-mirror
+ * packets satisfied packet ⊆ envelope, so this is the identity for them.
+ */
+export function writeEligiblePacketScopes<T extends { kind: string; id: string }>(
+  packetScopes: readonly T[],
+  envelopeScopes: ReadonlyArray<{ kind: string; id: string }>
+): T[] {
+  const envelopeKeys = new Set(envelopeScopes.map((scope) => `${scope.kind}:${scope.id}`));
+  return packetScopes.filter((scope) => envelopeKeys.has(`${scope.kind}:${scope.id}`));
+}

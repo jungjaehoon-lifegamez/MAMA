@@ -1667,8 +1667,7 @@ export async function runAgentLoop(
                 laneConnectors: codeActRawConnectors,
                 temporalBinding,
               });
-              // workOrderEnvelopeScope already mirrors the grant into the
-              // lane's memory scopes - no second widening pass.
+              // Identity scopes only - the read mirror is enforcement-layer.
               return scope;
             })(),
             tier: 2,

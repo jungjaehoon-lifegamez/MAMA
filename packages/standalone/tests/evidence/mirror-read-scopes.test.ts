@@ -8,7 +8,7 @@
  * what it must never touch.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { mirrorReadScopes } from '../../src/evidence/read.js';
+import { mirrorReadScopes, writeEligiblePacketScopes } from '../../src/evidence/read.js';
 import { EnvelopeEnforcer } from '../../src/envelope/enforcer.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
@@ -215,6 +215,26 @@ describe('executor scope defaulting under the mirror', () => {
     expect(scopes).toContainEqual({ kind: 'global', id: 'system' });
   });
 
+  it('a scope-less mama_recall reaches the api with identity + mirror - not denied by its own gate', async () => {
+    // Re-review blocking #5: the executor injected identity+mirror, then
+    // resolveMamaRecallScopes rejected the mirror against the envelope alone
+    // - recall returned memory_scope_denied on every configured daemon.
+    const recallMemory = vi.fn().mockResolvedValue({ success: true, results: [] });
+    const executor = makeExecutor({ recallMemory });
+    const result = (await executor
+      .execute('mama_recall', { query: 'q' } as never, ctx)
+      .catch((error) => ({ success: false, error: String(error) }))) as {
+      success?: boolean;
+      code?: string;
+    };
+    expect(result?.code).not.toBe('memory_scope_denied');
+    expect(recallMemory).toHaveBeenCalled();
+    const passed = recallMemory.mock.calls[0]?.[1] as {
+      scopes?: Array<{ kind: string; id: string }>;
+    };
+    expect(passed?.scopes ?? []).toContainEqual({ kind: 'channel', id: 'trello:board-alpha' });
+  });
+
   it('a scope-less mama_save defaults to identity ONLY - never the mirror', async () => {
     const save = vi.fn().mockResolvedValue({ success: true, id: 'd1' });
     const executor = makeExecutor({ save });
@@ -228,5 +248,35 @@ describe('executor scope defaulting under the mirror', () => {
     const passed = save.mock.calls[0]?.[0] as { scopes?: Array<{ kind: string; id: string }> };
     const scopes = Array.isArray(passed?.scopes) ? passed.scopes : [];
     expect(scopes).toEqual([{ kind: 'global', id: 'system' }]);
+  });
+});
+
+describe('writeEligiblePacketScopes - the packet back door stays shut', () => {
+  it('strips mirror-widened packet scopes down to what the envelope names', () => {
+    // Re-review blocking #4: the compile boundary defaults to the read
+    // allowance, so packet.scopes can carry mirror channels; a packet-backed
+    // mama_save delegates its scopes from the packet with no enforcer check.
+    // Only the envelope-named subset may become a permanent write binding.
+    expect(
+      writeEligiblePacketScopes(
+        [
+          { kind: 'channel', id: 'operator:worker:board' },
+          { kind: 'channel', id: 'trello:board-alpha' }, // mirror-only
+          { kind: 'global', id: 'system' },
+        ],
+        [
+          { kind: 'channel', id: 'operator:worker:board' },
+          { kind: 'global', id: 'system' },
+        ]
+      )
+    ).toEqual([
+      { kind: 'channel', id: 'operator:worker:board' },
+      { kind: 'global', id: 'system' },
+    ]);
+  });
+
+  it('is the identity for pre-mirror packets (packet subset of envelope)', () => {
+    const scopes = [{ kind: 'channel' as const, id: 'operator:worker:board' }];
+    expect(writeEligiblePacketScopes(scopes, scopes)).toEqual(scopes);
   });
 });
