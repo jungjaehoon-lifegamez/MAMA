@@ -55,6 +55,7 @@ import {
   type ReactiveEnvelopeConfig,
 } from '../envelope/reactive-config.js';
 import type { Envelope } from '../envelope/types.js';
+import { liveBoundaryChannels, channelMemoryScopesFromGrant } from '../evidence/read.js';
 
 export type { AgentLoopOptions } from '../agent/types.js';
 export type { ReactiveEnvelopeConfig } from '../envelope/reactive-config.js';
@@ -301,6 +302,16 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+
+function uniqueEnvelopeMemoryScopes<T extends { kind: string; id: string }>(scopes: T[]): T[] {
+  const seen = new Set<string>();
+  return scopes.filter((scope) => {
+    const key = `${scope.kind}:${scope.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
   config: ReactiveEnvelopeConfig
@@ -315,7 +326,15 @@ function buildReactiveEnvelopeInput(
     scope: {
       project_refs: policy.projectRefs,
       raw_connectors: policy.rawConnectors,
-      memory_scopes: policy.memoryScopes,
+      // Identity scopes (own chat channel, user, project, global) plus the
+      // grant mirror for this route's connectors: a chat allowed to read
+      // trello raw may recall trello-channel memories. Mirroring is not
+      // widening - the mirror equals the raw grant, and channel scopes
+      // narrow raw reads to exactly that same set.
+      memory_scopes: uniqueEnvelopeMemoryScopes([
+        ...policy.memoryScopes,
+        ...channelMemoryScopesFromGrant(liveBoundaryChannels(), policy.rawConnectors),
+      ]),
       allowed_destinations: policy.allowedDestinations,
     },
     tier: 1,

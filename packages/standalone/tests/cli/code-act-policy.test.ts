@@ -7,7 +7,7 @@ import {
   buildOperatorReportAgentPolicy,
   buildWorkOrderAgentPolicy,
   deriveCodeActToolPolicy,
-  resolveCodeActMemoryScopes,
+  memoryScopesWithGrantMirror,
   resolveCodeActRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
@@ -150,27 +150,36 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
   });
 
-  describe('AC #4: resolveCodeActMemoryScopes aggregates active raw-backed memory scopes', () => {
-    it('adds active raw-backed memory scopes to Code-Act context_compile envelopes', () => {
-      const adapter = {
-        prepare: () => ({
-          all: () => [
-            { kind: 'project', id: 'project_tinklestar' },
-            { kind: 'project', id: 'project_tinklestar' },
-            { kind: 'project', id: 'kakao:user_alpha' },
-            { kind: 'not-a-scope', id: 'ignored' },
-            { kind: 'project', id: '  ' },
-          ],
-        }),
+  describe('AC #4: envelope memory scopes mirror the channel grant', () => {
+    it('adds the granted channels of the run raw connectors, deduped, connector-filtered', () => {
+      const grant = {
+        trello: ['board-alpha', 'board-beta'],
+        slack: ['C001'],
+        gmail: ['inbox'], // NOT in rawConnectors - must not leak in
       };
-
       expect(
-        resolveCodeActMemoryScopes([{ kind: 'global', id: 'system' }], adapter as never)
+        memoryScopesWithGrantMirror(
+          [
+            { kind: 'global', id: 'system' },
+            { kind: 'channel', id: 'trello:board-alpha' }, // dupe with mirror
+          ],
+          ['trello', 'slack'],
+          grant
+        )
       ).toEqual([
         { kind: 'global', id: 'system' },
-        { kind: 'project', id: 'project_tinklestar' },
-        { kind: 'project', id: 'kakao:user_alpha' },
+        { kind: 'channel', id: 'trello:board-alpha' },
+        { kind: 'channel', id: 'slack:C001' },
+        { kind: 'channel', id: 'trello:board-beta' },
       ]);
+    });
+
+    it('an empty connector list mirrors nothing - identity scopes only', () => {
+      expect(
+        memoryScopesWithGrantMirror([{ kind: 'global', id: 'system' }], [], {
+          trello: ['board-alpha'],
+        })
+      ).toEqual([{ kind: 'global', id: 'system' }]);
     });
   });
 

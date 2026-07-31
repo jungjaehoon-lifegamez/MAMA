@@ -84,10 +84,39 @@ describe('workorder envelope scope', () => {
       ...base,
       workKind: 'board',
       temporalBinding: null,
+      grant: {},
     });
 
     expect(scope.raw_connectors).toEqual(['chat', 'board']);
     expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'operator:worker:board' });
+  });
+
+  it('a non-temporal lane mirrors the grant into memory scopes - recall follows raw', () => {
+    // The dominant compile failure S2 named: lanes held only synthetic
+    // identities, so every recall of a real channel's memories was denied.
+    const scope = workOrderEnvelopeScope({
+      ...base,
+      workKind: 'board',
+      temporalBinding: null,
+      grant: { chat: ['C001', 'C002'], board: ['b-1'], gmail: ['inbox'] },
+    });
+
+    expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'chat:C001' });
+    expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'board:b-1' });
+    // gmail is not a lane connector - its memories stay invisible.
+    expect(scope.memory_scopes).not.toContainEqual({ kind: 'channel', id: 'gmail:inbox' });
+  });
+
+  it('a temporal run does NOT mirror - the one-channel binding stays strict', () => {
+    const scope = workOrderEnvelopeScope({
+      ...base,
+      workKind: 'temporal',
+      temporalBinding: { connector: 'chat', channel: 'C001' },
+      grant: { chat: ['C001', 'C002'] },
+    });
+
+    expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'chat:C001' });
+    expect(scope.memory_scopes).not.toContainEqual({ kind: 'channel', id: 'chat:C002' });
   });
 });
 
