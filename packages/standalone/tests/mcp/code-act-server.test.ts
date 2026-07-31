@@ -178,4 +178,40 @@ describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
       retryable: false,
     });
   });
+
+  it('TG-06 preserves successful nested audit when the outer result is terminal', async () => {
+    const observed = await invokeCodeAct(undefined, {
+      success: false,
+      error: 'Mutation outcome is unknown',
+      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      retryable: false,
+      abort: true,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+    });
+    const response = JSON.parse(observed.stdout) as {
+      result: { content: Array<{ text: string }>; isError?: boolean };
+    };
+
+    expect(observed.requestCount).toBe(1);
+    expect(response.result.isError).toBe(true);
+    expect(JSON.parse(response.result.content[0].text)).toMatchObject({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+      hostToolsInvoked: ['task_list'],
+      error: {
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        message: 'Mutation outcome is unknown',
+      },
+      retryable: false,
+      abort: true,
+    });
+  });
 });

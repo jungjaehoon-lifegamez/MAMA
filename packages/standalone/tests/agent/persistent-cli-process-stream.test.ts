@@ -287,6 +287,40 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
     });
   });
 
+  it('TG-03/TG-06 treats a completed drive download as non-replayable local mutation', async () => {
+    const process = new PersistentClaudeProcess({ sessionId: 'stream-session' });
+    const testable = process as unknown as TestablePersistentProcess;
+    testable.state = 'busy';
+    const resultPromise = new Promise<PromptResult>((resolve, reject) => {
+      testable.currentResolve = resolve;
+      testable.currentReject = reject;
+    });
+    const body = JSON.stringify({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: true,
+      hostToolExecutions: [{ name: 'drive_download', success: true }],
+      hostToolsInvoked: ['drive_download'],
+      payload: { value: { path: '/private/workspace/download.bin' } },
+    });
+
+    testable.processEvent(assistantToolUse('mcp-download-before-close'));
+    testable.processEvent(userToolResult('mcp-download-before-close', body));
+    testable.handleClose(1);
+    const error = await resultPromise.catch((reason: unknown) => reason as Error);
+
+    expect(error).toMatchObject({
+      name: 'McpCompletedMutationInterruptedError',
+      code: 'MCP_COMPLETED_MUTATION_INTERRUPTED',
+      retryable: false,
+      completedToolExchanges: [
+        expect.objectContaining({
+          toolUse: expect.objectContaining({ id: 'mcp-download-before-close' }),
+        }),
+      ],
+    });
+  });
+
   it('TG-03/TG-05/TG-06 preserves a completed mutation over a later stream protocol failure', async () => {
     const onError = vi.fn();
     const body = JSON.stringify({

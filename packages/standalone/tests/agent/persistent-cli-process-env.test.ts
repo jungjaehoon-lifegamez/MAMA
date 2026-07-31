@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnMock = vi.hoisted(() => vi.fn());
 
@@ -33,6 +33,19 @@ describe('Story S3/TG-03: persistent process context-key environment', () => {
   beforeEach(() => {
     spawnMock.mockReset();
     spawnMock.mockReturnValue(fakeChild());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('TG-03 scrubs an inherited parent context key from an unbound process', async () => {
+    vi.stubEnv('MAMA_CODE_ACT_CONTEXT_KEY', 'Y'.repeat(43));
+    const process = new PersistentClaudeProcess({ sessionId: 'ambient-env-key' });
+
+    await process.start();
+
+    expect(spawnMock.mock.calls[0]?.[2]?.env).not.toHaveProperty('MAMA_CODE_ACT_CONTEXT_KEY');
   });
 
   it('does not let an explicit legacy env inject a process context key', async () => {

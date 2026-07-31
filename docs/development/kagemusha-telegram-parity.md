@@ -93,6 +93,8 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   and `workorder-consumer.test.ts`. **Status: GREEN.**
 - **TG-06:** the Code-Act HTTP/MCP result is a versioned `mama.code_act.result` envelope whose
   host-authored `hostToolExecutions` ledger records returned failures, thrown denials, and aborts.
+  Terminal MCP conversion retains successful nested executions recorded before the terminal failure,
+  so paired history and report audit do not lose already-observed evidence.
   Report audit reads only that top-level ledger and counts successful executions, never nested
   sandbox values, logs, messages, or legacy `[tools]` prose. Only bare host `code_act` and the exact
   `mcp__code-act__code_act` transport may supply this evidence; similarly named tools from other MCP
