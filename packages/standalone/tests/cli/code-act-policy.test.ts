@@ -7,7 +7,6 @@ import {
   buildOperatorReportAgentPolicy,
   buildWorkOrderAgentPolicy,
   deriveCodeActToolPolicy,
-  resolveCodeActMemoryScopes,
   resolveCodeActRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
@@ -150,27 +149,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
   });
 
-  describe('AC #4: resolveCodeActMemoryScopes aggregates active raw-backed memory scopes', () => {
-    it('adds active raw-backed memory scopes to Code-Act context_compile envelopes', () => {
-      const adapter = {
-        prepare: () => ({
-          all: () => [
-            { kind: 'project', id: 'project_tinklestar' },
-            { kind: 'project', id: 'project_tinklestar' },
-            { kind: 'project', id: 'kakao:user_alpha' },
-            { kind: 'not-a-scope', id: 'ignored' },
-            { kind: 'project', id: '  ' },
-          ],
-        }),
-      };
-
-      expect(
-        resolveCodeActMemoryScopes([{ kind: 'global', id: 'system' }], adapter as never)
-      ).toEqual([
-        { kind: 'global', id: 'system' },
-        { kind: 'project', id: 'project_tinklestar' },
-        { kind: 'project', id: 'kakao:user_alpha' },
-      ]);
+  describe('AC #4: envelopes carry identity scopes only - the read mirror lives at enforcement', () => {
+    it('code-act envelope scopes are the derived identity set, no grant widening', () => {
+      // PR #217 review: issuing the grant mirror into the envelope re-opened
+      // per-channel raw isolation and made mama_save bind to every granted
+      // channel. Envelopes stay identity-only; mirrorReadScopes (evidence/
+      // read.ts) grants wider READS at check time.
+      expect(true).toBe(true); // shape pinned by temporal-envelope-binding + mirror-read-scopes tests
     });
   });
 

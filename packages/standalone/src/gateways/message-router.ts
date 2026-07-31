@@ -301,6 +301,7 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
   config: ReactiveEnvelopeConfig
@@ -315,6 +316,10 @@ function buildReactiveEnvelopeInput(
     scope: {
       project_refs: policy.projectRefs,
       raw_connectors: policy.rawConnectors,
+      // Identity scopes only - the grant mirror is an enforcement-layer READ
+      // allowance, never issued into the envelope (PR #217 review: issuing it
+      // here widened this chat's raw narrowing back to every sibling channel
+      // and bound every mama_save to all of them).
       memory_scopes: policy.memoryScopes,
       allowed_destinations: policy.allowedDestinations,
     },
