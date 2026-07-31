@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.4] - 2026-07-31
+
+### Fixed
+
+- **An Anthropic outage can no longer impersonate a report.** The claude
+  CLI prints API failures as response text ('API Error: 529 Overloaded
+  ...'); a board run was marked COMPLETED with that text as its response
+  and the 'content' reached the owner channel. An error-shaped response
+  head is now classified model-transport-error at the consumer boundary:
+  the workorder fails into the retry policy, nothing completes, nothing
+  is delivered. Content that merely quotes an error is not flagged.
+
 ## mama-os [0.31.3] - 2026-07-31
 
 ### Fixed
