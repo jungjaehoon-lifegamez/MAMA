@@ -19,7 +19,8 @@ import type {
   PromptResult,
   ToolUseBlock,
 } from './claude-cli-wrapper.js';
-import type { IModelRunner, RunnerMetrics } from './model-runner.js';
+import type { IModelRunner, PromptOptions, RunnerMetrics } from './model-runner.js';
+import { runContextRegistry, type RunContextRegistry } from './code-act/run-context-registry.js';
 
 // Re-export types for convenience
 export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlock };
@@ -39,6 +40,7 @@ export class PersistentCLIAdapter implements IModelRunner {
   private currentProcess: PersistentClaudeProcess | null = null;
   private pendingToolResults: Map<string, { result: string; isError: boolean }> = new Map();
   private lastToolUseBlocks: ToolUseBlock[] = [];
+  private contextRegistry: RunContextRegistry = runContextRegistry;
 
   // ─── Metrics tracking ───
   private _requestCount = 0;
@@ -60,6 +62,7 @@ export class PersistentCLIAdapter implements IModelRunner {
       pluginDir: options.pluginDir,
       allowedTools: options.allowedTools,
       disallowedTools: options.disallowedTools,
+      bindRunContext: true,
     });
   }
 
@@ -75,20 +78,7 @@ export class PersistentCLIAdapter implements IModelRunner {
   async prompt(
     content: string,
     callbacks?: PromptCallbacks,
-    options?: {
-      model?: string;
-      resumeSession?: boolean;
-      allowedTools?: string[];
-      disallowedTools?: string[];
-      systemPrompt?: string;
-      // Pool ROUTING key (SessionPool id) for THIS call, NOT the CLI --session-id.
-      // The pool spawns processes with its own randomUUID() (persistent-cli-process.ts:1028)
-      // so the CLI never reloads disk history. Routes this prompt without mutating
-      // shared adapter state.
-      sessionId?: string;
-      // Per-call request timeout (ms) for a freshly spawned pooled process.
-      requestTimeout?: number;
-    }
+    options?: PromptOptions
   ): Promise<PromptResult> {
     // Get or create process for this channel
     // NOTE: Do NOT pass sessionId to the process opts. The pool generates fresh randomUUID()
@@ -141,7 +131,24 @@ export class PersistentCLIAdapter implements IModelRunner {
     const startTime = Date.now();
     this._requestCount++;
     this._lastRequestAt = startTime;
+    const attemptController = options?.toolExecutionContext ? new AbortController() : null;
+    const contextKey = options?.toolExecutionContext ? proc.getRunContextKey() : null;
+    let leaseId: string | null = null;
     try {
+      if (options?.toolExecutionContext) {
+        if (!contextKey) {
+          throw new Error('Persistent Claude process is missing its run-context binding key');
+        }
+        const ownerSignal = options.toolExecutionContext.signal;
+        const signal = ownerSignal
+          ? AbortSignal.any([ownerSignal, attemptController!.signal])
+          : attemptController!.signal;
+        leaseId = this.contextRegistry.register(contextKey, {
+          ...options.toolExecutionContext,
+          signal,
+        });
+      }
+
       const result = await proc.sendMessage(content, callbacks);
       this._totalLatencyMs += Date.now() - startTime;
 
@@ -152,7 +159,18 @@ export class PersistentCLIAdapter implements IModelRunner {
     } catch (err) {
       this._failureCount++;
       this._totalLatencyMs += Date.now() - startTime;
+      if (attemptController) {
+        attemptController.abort(err);
+        if (contextKey && leaseId) {
+          this.contextRegistry.close(contextKey, leaseId);
+        }
+        this.processPool.retireProcess(channelKey, proc);
+      }
       throw err;
+    } finally {
+      if (contextKey && leaseId) {
+        this.contextRegistry.close(contextKey, leaseId);
+      }
     }
   }
 

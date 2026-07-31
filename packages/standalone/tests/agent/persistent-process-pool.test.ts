@@ -243,6 +243,28 @@ describe('PersistentProcessPool idle cleanup', () => {
 
     expect(pool.getActiveCount()).toBe(1);
   });
+
+  it('does not retire a replacement generation during stale prompt cleanup', async () => {
+    const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
+    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
+    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
+    const stopSpy = vi
+      .spyOn(PersistentClaudeProcess.prototype, 'stop')
+      .mockImplementation(() => {});
+
+    const oldProcess = await pool.getProcess('telegram:owner');
+    pool.stopProcess('telegram:owner');
+    const replacement = await pool.getProcess('telegram:owner');
+
+    expect(pool.retireProcess('telegram:owner', oldProcess)).toBe(false);
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(pool.getActiveCount()).toBe(1);
+    expect(await pool.getProcess('telegram:owner')).toBe(replacement);
+
+    expect(pool.retireProcess('telegram:owner', replacement)).toBe(true);
+    expect(stopSpy).toHaveBeenCalledTimes(2);
+    expect(pool.getActiveCount()).toBe(0);
+  });
 });
 
 describe('PersistentClaudeProcess stop()', () => {

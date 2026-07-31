@@ -5,7 +5,7 @@
  * so AgentLoop depends on a contract, not concrete implementations.
  */
 
-import type { PromptCallbacks, ToolUseBlock } from './types.js';
+import type { GatewayToolExecutionContext, PromptCallbacks, ToolUseBlock } from './types.js';
 
 // ─── Run-local Host Tools ───────────────────────────────────────────────────
 
@@ -128,6 +128,8 @@ export interface PromptOptions {
    * place, so only callers that opt in (operator worker runs) are affected.
    */
   requestTimeout?: number;
+  /** Host-issued authority for this exact prompt attempt; persistent Claude binds it to MCP. */
+  toolExecutionContext?: GatewayToolExecutionContext | null;
   /**
    * Rebuilds the FULL instructions for a backend that has to rehydrate a durable
    * session on this call. Codex re-anchors the resumed thread with them

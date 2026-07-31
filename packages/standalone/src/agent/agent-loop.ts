@@ -1661,6 +1661,7 @@ export class AgentLoop {
             // the pool's construction-time default untouched (chat).
             requestTimeout: options?.requestTimeoutMs,
             hostToolBridge,
+            toolExecutionContext,
           });
           provisionalCodexSessionId = undefined;
         } catch (error) {
@@ -1744,6 +1745,7 @@ export class AgentLoop {
                 // Carry the per-run timeout onto the reset session too.
                 requestTimeout: options?.requestTimeoutMs,
                 hostToolBridge,
+                toolExecutionContext,
               });
             } catch (retryError) {
               console.error(
