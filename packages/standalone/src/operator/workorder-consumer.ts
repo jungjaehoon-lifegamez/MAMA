@@ -692,6 +692,11 @@ const TEMPORAL_FAILURE_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b4\d{2}\b|invalid.?request|bad request|unauthorized|forbidden/i, 'request-rejected'],
   [/no such tool|unknown tool|not dispatchable|no executor/i, 'tool-missing'],
   [/out of memory|heap|maxbuffer/i, 'resource-exhausted'],
+  // The run finished but landed no reconcile receipt. Live root cause
+  // (2026-07-31): the code-act MCP transport does not carry the lane's
+  // host-issued temporal work context, so task_temporal_reconcile dies
+  // WORKORDER_SUPERSEDED inside the run - principal-follows-run (S3).
+  [/temporal effect receipt missing/i, 'receipt-missing'],
 ];
 
 /** The failure shape, or null when none of the known ones match. */
