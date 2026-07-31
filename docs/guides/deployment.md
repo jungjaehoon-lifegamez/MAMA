@@ -400,4 +400,4 @@ pnpm vitest run tests/hooks/pretooluse-hook.test.js
 
 ---
 
-_Last Updated: 2026-07-22_
+_Last Updated: 2026-07-31_
