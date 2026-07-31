@@ -5,7 +5,12 @@
  * so AgentLoop depends on a contract, not concrete implementations.
  */
 
-import type { GatewayToolExecutionContext, PromptCallbacks, PromptResult } from './types.js';
+import type {
+  CompletedToolExchange,
+  GatewayToolExecutionContext,
+  PromptCallbacks,
+  PromptResult,
+} from './types.js';
 
 export type { PromptResult } from './types.js';
 
@@ -77,7 +82,8 @@ export class HostToolTerminalError extends Error {
 
   constructor(
     readonly terminalCode: HostToolTerminalCode,
-    message: string
+    message: string,
+    readonly completedToolExchanges?: readonly CompletedToolExchange[]
   ) {
     super(message);
     this.name = 'HostToolTerminalError';

@@ -229,6 +229,11 @@ export interface CompletedToolExchange {
   toolResult: ToolResultBlock;
 }
 
+export interface PromptTerminalError {
+  code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  message: string;
+}
+
 export interface PromptResult {
   response: string;
   usage: {
@@ -244,6 +249,8 @@ export interface PromptResult {
   hasToolUse?: boolean;
   /** Host-completed MCP exchanges observed on the Claude stream, in result order. */
   completedToolExchanges?: CompletedToolExchange[];
+  /** Trusted terminal mutation outcome decoded from a completed local MCP exchange. */
+  terminalError?: PromptTerminalError;
   duration_ms?: number;
 }
 
@@ -263,6 +270,18 @@ export class McpResultMissingError extends Error {
   constructor(readonly toolUseIds: readonly string[]) {
     super('Claude MCP tool execution ended without a matching tool result.');
     this.name = 'McpResultMissingError';
+  }
+}
+
+export class McpCompletedMutationInterruptedError extends Error {
+  readonly code = 'MCP_COMPLETED_MUTATION_INTERRUPTED';
+  readonly retryable = false;
+
+  constructor(readonly completedToolExchanges: readonly CompletedToolExchange[]) {
+    super(
+      'Claude stream ended after a completed Code-Act mutation; the prompt cannot be replayed.'
+    );
+    this.name = 'McpCompletedMutationInterruptedError';
   }
 }
 
@@ -1124,6 +1143,7 @@ export type AgentErrorCode =
   | 'WORKORDER_SUPERSEDED'
   | 'CLAUDE_TOOL_STREAM_PROTOCOL'
   | 'MCP_RESULT_MISSING'
+  | 'MCP_COMPLETED_MUTATION_INTERRUPTED'
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
   | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
 

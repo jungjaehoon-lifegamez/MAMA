@@ -333,6 +333,25 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
     expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
+  it('TG-04/TG-06 rejects a canonical-looking ledger from another MCP server', () => {
+    const history = exchange('mcp__other__code_act', {
+      body: JSON.stringify({
+        protocol: 'mama.code_act.result',
+        version: 1,
+        success: true,
+        hostToolExecutions: [{ name: 'task_list', success: true }],
+        hostToolsInvoked: ['task_list'],
+        payload: {},
+      }),
+    });
+
+    const audit = summarizeReportToolUse(history);
+
+    expect(audit.gatherTools).toEqual([]);
+    expect(audit.writeTools).toEqual([]);
+    expect(audit.all).toEqual(['mcp__other__code_act']);
+  });
+
   // The MCP server returns prose, not the gateway JSON. Parsing only the JSON shape is why
   // the audit still warned after the prefix fix, with the report lane's own trace channel
   // showing kagemusha_tasks and task_list executing in that same run.
@@ -414,9 +433,39 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
   });
 
   it('an errored code_act does NOT count its nested tools (executed-only semantics)', () => {
-    const a = summarizeReportToolUse([...codeActExchange(['kagemusha_tasks'], { error: true })]);
+    const body = JSON.stringify({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [{ name: 'kagemusha_tasks', success: false }],
+      hostToolsInvoked: [],
+    });
+    const a = summarizeReportToolUse(exchange('code_act', { error: true, body }));
     expect(a.gatherTools).toEqual([]);
     expect(a.all).toEqual(['code_act']);
+  });
+
+  it('TG-06 keeps successful nested gather evidence when Code-Act fails later', () => {
+    const body = JSON.stringify({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'permission_denied' },
+      ],
+      hostToolsInvoked: ['task_list'],
+      payload: {},
+      error: { code: 'permission_denied', message: 'Write denied.' },
+      retryable: false,
+    });
+
+    const audit = summarizeReportToolUse(
+      exchange('mcp__code-act__code_act', { error: true, body })
+    );
+
+    expect(audit.gatherTools).toEqual(['task_list']);
+    expect(audit.writeTools).toEqual([]);
   });
 
   it('malformed or field-less code_act results yield no nested tools and never throw', () => {

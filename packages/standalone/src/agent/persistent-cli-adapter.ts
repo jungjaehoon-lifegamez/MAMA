@@ -19,9 +19,22 @@ import type {
   PromptResult,
   ToolUseBlock,
 } from './claude-cli-wrapper.js';
-import type { IModelRunner, PromptOptions, RunnerMetrics } from './model-runner.js';
+import {
+  HostToolTerminalError,
+  type IModelRunner,
+  type PromptOptions,
+  type RunnerMetrics,
+} from './model-runner.js';
 import { runContextRegistry, type RunContextRegistry } from './code-act/run-context-registry.js';
-import { ClaudeToolStreamProtocolError, McpResultMissingError } from './types.js';
+import {
+  completedCodeActMutationWasObserved,
+  completedCodeActTerminalError,
+} from './code-act/completed-terminal-result.js';
+import {
+  ClaudeToolStreamProtocolError,
+  McpCompletedMutationInterruptedError,
+  McpResultMissingError,
+} from './types.js';
 
 // Re-export types for convenience
 export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlock };
@@ -135,6 +148,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     const attemptController = options?.toolExecutionContext ? new AbortController() : null;
     const contextKey = options?.toolExecutionContext ? proc.getRunContextKey() : null;
     let leaseId: string | null = null;
+    let ownsPromptAttempt = false;
     try {
       if (options?.toolExecutionContext) {
         if (!contextKey) {
@@ -148,15 +162,33 @@ export class PersistentCLIAdapter implements IModelRunner {
           ...options.toolExecutionContext,
           signal,
         });
+        ownsPromptAttempt = true;
       }
 
       const result = await proc.sendMessage(content, callbacks);
       this._totalLatencyMs += Date.now() - startTime;
 
+      const terminalError =
+        result.terminalError ?? completedCodeActTerminalError(result.completedToolExchanges);
+      if (terminalError) {
+        result.terminalError = terminalError;
+        attemptController?.abort(new Error(terminalError.message));
+        if (contextKey && leaseId) {
+          this.contextRegistry.close(contextKey, leaseId);
+        }
+        this.processPool.retireProcess(channelKey, proc);
+        return result;
+      }
+
       const unresolvedMcpToolUseIds = (result.toolUseBlocks ?? [])
         .filter((toolUse) => toolUse.name === 'mcp__code-act__code_act')
         .map((toolUse) => toolUse.id);
       if (unresolvedMcpToolUseIds.length > 0) {
+        if (completedCodeActMutationWasObserved(result.completedToolExchanges)) {
+          throw new McpCompletedMutationInterruptedError([
+            ...(result.completedToolExchanges ?? []),
+          ]);
+        }
         throw new McpResultMissingError(unresolvedMcpToolUseIds);
       }
 
@@ -168,11 +200,15 @@ export class PersistentCLIAdapter implements IModelRunner {
       this._failureCount++;
       this._totalLatencyMs += Date.now() - startTime;
       const mustRetireProcess =
-        attemptController !== null ||
+        ownsPromptAttempt ||
+        err instanceof HostToolTerminalError ||
+        err instanceof McpCompletedMutationInterruptedError ||
         err instanceof McpResultMissingError ||
         err instanceof ClaudeToolStreamProtocolError;
       if (mustRetireProcess) {
-        attemptController?.abort(err);
+        if (ownsPromptAttempt) {
+          attemptController?.abort(err);
+        }
         if (contextKey && leaseId) {
           this.contextRegistry.close(contextKey, leaseId);
         }

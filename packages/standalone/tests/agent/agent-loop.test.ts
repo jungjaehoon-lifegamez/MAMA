@@ -17,7 +17,11 @@ import {
 import { HostToolTerminalError } from '../../src/agent/model-runner.js';
 import type { HostToolBridge, PromptOptions } from '../../src/agent/model-runner.js';
 import type { OAuthManager } from '../../src/auth/index.js';
-import { AgentError, McpResultMissingError } from '../../src/agent/types.js';
+import {
+  AgentError,
+  McpCompletedMutationInterruptedError,
+  McpResultMissingError,
+} from '../../src/agent/types.js';
 import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import { summarizeReportToolUse } from '../../src/operator/report-run.js';
@@ -1499,6 +1503,183 @@ describe('AgentLoop', () => {
       expect(gatewayExecutorExecuteMock).not.toHaveBeenCalled();
       expect(persistentPromptMock).toHaveBeenCalledTimes(1);
       expect(result.response).toBe('The operation failed.');
+    });
+
+    it('TG-06 preserves a paired terminal exchange and rejects the run without replay', async () => {
+      const onTurn = vi.fn();
+      const toolUse = {
+        type: 'tool_use' as const,
+        id: 'claude-mcp-terminal-result',
+        name: 'mcp__code-act__code_act',
+        input: { code: 'mama_save({})' },
+      };
+      const toolResult = {
+        type: 'tool_result' as const,
+        tool_use_id: toolUse.id,
+        content: JSON.stringify({
+          protocol: 'mama.code_act.result',
+          version: 1,
+          success: false,
+          hostToolExecutions: [{ name: 'mama_save', success: false }],
+          hostToolsInvoked: [],
+          payload: {},
+          error: {
+            code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+            message: 'Mutation may have committed.',
+          },
+          retryable: false,
+          abort: true,
+        }),
+        is_error: true,
+      };
+      persistentPromptMock.mockResolvedValueOnce({
+        response: 'I could not prove the mutation result.',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'claude-session',
+        completedToolExchanges: [{ toolUse, toolResult }],
+        terminalError: {
+          code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          message: 'Mutation may have committed.',
+        },
+        hasToolUse: false,
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('execute code', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+          onTurn,
+        })
+      ).rejects.toMatchObject({
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+      });
+
+      expect(gatewayExecutorExecuteMock).not.toHaveBeenCalled();
+      expect(persistentPromptMock).toHaveBeenCalledTimes(1);
+      expect(onTurn.mock.calls.map(([entry]) => entry.role)).toEqual(['assistant', 'user']);
+    });
+
+    it('TG-03/TG-05/TG-06 records a completed mutation before rejecting an interrupted stream', async () => {
+      const onTurn = vi.fn();
+      const onError = vi.fn();
+      const toolUse = {
+        type: 'tool_use' as const,
+        id: 'claude-mcp-completed-before-close',
+        name: 'mcp__code-act__code_act',
+        input: { code: 'mama_save({})' },
+      };
+      const toolResult = {
+        type: 'tool_result' as const,
+        tool_use_id: toolUse.id,
+        content: JSON.stringify({
+          protocol: 'mama.code_act.result',
+          version: 1,
+          success: true,
+          hostToolExecutions: [{ name: 'mama_save', success: true }],
+          hostToolsInvoked: ['mama_save'],
+          payload: { value: { id: 'saved' } },
+        }),
+      };
+      const interrupted = new McpCompletedMutationInterruptedError([{ toolUse, toolResult }]);
+      persistentPromptMock.mockImplementationOnce(async (_text: string, callbacks: unknown) => {
+        (callbacks as { onError?: (error: Error) => void }).onError?.(interrupted);
+        throw interrupted;
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('execute code', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+          onTurn,
+          streamCallbacks: { onError },
+        })
+      ).rejects.toMatchObject({
+        code: 'MCP_COMPLETED_MUTATION_INTERRUPTED',
+        retryable: false,
+      });
+
+      expect(gatewayExecutorExecuteMock).not.toHaveBeenCalled();
+      expect(persistentPromptMock).toHaveBeenCalledTimes(1);
+      expect(onTurn.mock.calls.map(([entry]) => entry.role)).toEqual(['assistant', 'user']);
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+
+    it('TG-03/TG-05/TG-06 records a paired terminal result before rejecting an interrupted stream', async () => {
+      const onTurn = vi.fn();
+      const onError = vi.fn();
+      const toolUse = {
+        type: 'tool_use' as const,
+        id: 'claude-mcp-terminal-before-close',
+        name: 'mcp__code-act__code_act',
+        input: { code: 'mama_save({})' },
+      };
+      const toolResult = {
+        type: 'tool_result' as const,
+        tool_use_id: toolUse.id,
+        content: JSON.stringify({
+          protocol: 'mama.code_act.result',
+          version: 1,
+          success: false,
+          hostToolExecutions: [{ name: 'mama_save', success: false, code: 'outcome_unknown' }],
+          hostToolsInvoked: [],
+          payload: {},
+          error: {
+            code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+            message: 'Mutation may have committed.',
+          },
+          retryable: false,
+          abort: true,
+        }),
+        is_error: true,
+      };
+      const interrupted = new HostToolTerminalError(
+        'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        'Mutation may have committed.',
+        [{ toolUse, toolResult }]
+      );
+      persistentPromptMock.mockImplementationOnce(async (_text: string, callbacks: unknown) => {
+        (callbacks as { onError?: (error: Error) => void }).onError?.(interrupted);
+        throw interrupted;
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('execute code', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+          onTurn,
+          streamCallbacks: { onError },
+        })
+      ).rejects.toMatchObject({
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+      });
+
+      expect(gatewayExecutorExecuteMock).not.toHaveBeenCalled();
+      expect(persistentPromptMock).toHaveBeenCalledTimes(1);
+      expect(onTurn.mock.calls.map(([entry]) => entry.role)).toEqual(['assistant', 'user']);
+      expect(onError).toHaveBeenCalledTimes(1);
     });
 
     it('TG-06 surfaces a missing terminal MCP result as non-retryable unknown outcome', async () => {

@@ -667,7 +667,8 @@ function isAmbiguousCodeActMutation(error: unknown): boolean {
     error instanceof AgentError &&
     (error.code === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
       error.code === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN' ||
-      error.code === 'MCP_RESULT_MISSING')
+      error.code === 'MCP_RESULT_MISSING' ||
+      error.code === 'MCP_COMPLETED_MUTATION_INTERRUPTED')
   );
 }
 

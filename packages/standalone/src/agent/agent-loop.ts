@@ -64,7 +64,12 @@ import type {
   BackgroundTaskRegistry,
   ModelRunProvenance,
 } from './types.js';
-import { AgentError, ClaudeToolStreamProtocolError, McpResultMissingError } from './types.js';
+import {
+  AgentError,
+  ClaudeToolStreamProtocolError,
+  McpCompletedMutationInterruptedError,
+  McpResultMissingError,
+} from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
@@ -1584,6 +1589,7 @@ export class AgentLoop {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
           const errorType =
             normalizedError instanceof McpResultMissingError ||
+            normalizedError instanceof McpCompletedMutationInterruptedError ||
             normalizedError instanceof ClaudeToolStreamProtocolError
               ? normalizedError.code
               : normalizedError instanceof HostToolTerminalError
@@ -1612,6 +1618,7 @@ export class AgentLoop {
           }
           if (
             normalizedError instanceof McpResultMissingError ||
+            normalizedError instanceof McpCompletedMutationInterruptedError ||
             normalizedError instanceof ClaudeToolStreamProtocolError
           ) {
             throw new AgentError(
@@ -1627,6 +1634,28 @@ export class AgentLoop {
             normalizedError,
             true
           );
+        };
+        const appendCompletedToolExchanges = (
+          exchanges: readonly {
+            toolUse: ToolUseBlock;
+            toolResult: ToolResultBlock;
+          }[]
+        ): void => {
+          for (const exchange of exchanges) {
+            history.push({ role: 'assistant', content: [exchange.toolUse] });
+            runScope.onTurn?.({
+              turn,
+              role: 'assistant',
+              content: [exchange.toolUse],
+              stopReason: 'tool_use',
+            });
+            history.push({ role: 'user', content: [exchange.toolResult] });
+            runScope.onTurn?.({
+              turn,
+              role: 'user',
+              content: [exchange.toolResult],
+            });
+          }
         };
         try {
           const durablePolicyStatus =
@@ -1689,6 +1718,15 @@ export class AgentLoop {
           }
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
+
+          if (error instanceof McpCompletedMutationInterruptedError) {
+            appendCompletedToolExchanges(error.completedToolExchanges);
+            throwFinalCliError(error);
+          }
+          if (error instanceof HostToolTerminalError && error.completedToolExchanges?.length) {
+            appendCompletedToolExchanges(error.completedToolExchanges);
+            throwFinalCliError(error);
+          }
 
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
@@ -1907,21 +1945,17 @@ export class AgentLoop {
         // Replaying a completed mutation would turn a transport observation into a
         // second host-side effect.
         if (Array.isArray(piResult.completedToolExchanges)) {
-          for (const exchange of piResult.completedToolExchanges) {
-            history.push({ role: 'assistant', content: [exchange.toolUse] });
-            runScope.onTurn?.({
-              turn,
-              role: 'assistant',
-              content: [exchange.toolUse],
-              stopReason: 'tool_use',
-            });
-            history.push({ role: 'user', content: [exchange.toolResult] });
-            runScope.onTurn?.({
-              turn,
-              role: 'user',
-              content: [exchange.toolResult],
-            });
-          }
+          appendCompletedToolExchanges(piResult.completedToolExchanges);
+        }
+
+        // The local MCP server can complete a mutation and still report an
+        // indeterminate terminal outcome. Preserve the paired exchange above
+        // for auditability, then fail this turn without sending it through the
+        // ordinary host-tool loop or retrying the prompt.
+        if (piResult.terminalError) {
+          throwFinalCliError(
+            new HostToolTerminalError(piResult.terminalError.code, piResult.terminalError.message)
+          );
         }
 
         // PreCompact: inject compaction summary when approaching context limit
