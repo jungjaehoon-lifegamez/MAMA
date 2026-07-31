@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.5] - 2026-07-31
+
+### Fixed
+
+- **A scope denial teaches the grammar it enforces.** Named denials
+  (v0.31.3) showed the remaining class is the model guessing scope ids
+  (dropped connector prefixes, global:global, user:<email>). The denial
+  now lists the allowed keys and says omitting scopes reads the full
+  allowance; the tool catalog teaches the same. Observability only.
+
 ## mama-os [0.31.4] - 2026-07-31
 
 ### Fixed
