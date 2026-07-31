@@ -3764,12 +3764,24 @@ export class GatewayToolExecutor {
     // result !== undefined - host-bridge.ts:1049; the pre-call fire at :1037 is skipped).
     // Ride in the result message so downstream audits (report-run summarizeReportToolUse)
     // can classify nested gather/write without code_act becoming an opaque blob.
+    const hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = [];
     const hostToolsInvoked: string[] = [];
+    const successfulHostToolNames = new Set<string>();
     bridge.onToolUse = (toolName, _toolInput, result) => {
       if (result === undefined) {
         return;
       }
-      hostToolsInvoked.push(toolName);
+      const resultRecord = result as Record<string, unknown>;
+      const success = resultRecord.success === true;
+      hostToolExecutions.push({
+        name: toolName,
+        success,
+        ...(typeof resultRecord.code === 'string' ? { code: resultRecord.code } : {}),
+      });
+      if (success && !successfulHostToolNames.has(toolName)) {
+        successfulHostToolNames.add(toolName);
+        hostToolsInvoked.push(toolName);
+      }
       // Board/card text is written by people outside this system and now reaches the
       // report lane, whose composed text is delivered to the owner verbatim by host
       // code with no intervening model. Deriving this from the connector map keeps a
@@ -3788,9 +3800,15 @@ export class GatewayToolExecutor {
     if (result.error?.code && terminalMutationCodes.has(result.error.code)) {
       return {
         success: false,
+        value: result.value,
+        logs: result.logs,
+        error: result.error.message,
         code: result.error.code,
         retryable: false,
         abort: true,
+        metrics: result.metrics,
+        hostToolExecutions,
+        hostToolsInvoked,
         message: `Code-Act error: ${result.error.message}`,
       } as GatewayToolResult;
     }
@@ -3803,6 +3821,12 @@ export class GatewayToolExecutor {
 
     return {
       success: result.success,
+      value: result.value,
+      logs: result.logs,
+      ...(result.error?.message ? { error: result.error.message } : {}),
+      metrics: result.metrics,
+      hostToolExecutions,
+      hostToolsInvoked,
       message: result.success
         ? usedUntrustedExternalEvidence
           ? wrapUntrustedContent('external-evidence-code-act', successfulMessage)

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { RunContextRegistry } from '../../src/agent/code-act/run-context-registry.js';
 import type { GatewayToolExecutionContext, MAMAApiSetInput } from '../../src/agent/types.js';
 import type { ContextCompileService } from '../../src/agent/context-compile-service.js';
 import { initAgentTables } from '../../src/db/agent-store.js';
@@ -8,6 +9,7 @@ import { TaskLedger } from '../../src/operator/task-ledger.js';
 import type { TemporalWorkContext } from '../../src/operator/temporal-effect.js';
 import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { createCodeActExecutor } from '../../src/cli/runtime/code-act-executor.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 describe('Story A2 Task 7: trusted temporal work context', () => {
@@ -815,7 +817,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 2 });
   });
 
-  it('retains the exact trusted context through nested Code-Act', async () => {
+  it('TG-03/TG-04 retains the exact registered principal through keyed nested Code-Act', async () => {
     const packetId = 'ctxp_nested_temporal';
     executor = new GatewayToolExecutor({
       temporalContextPacketLookup: async () => ({
@@ -833,22 +835,52 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     } as unknown as MAMAApiSetInput);
     const nestedContext: GatewayToolExecutionContext = {
       ...executionContext,
+      agentId: 'workorder-temporal',
+      source: 'operator',
+      channelId: 'worker:temporal',
       envelope: makeSignedEnvelope({
         agent_id: 'workorder-temporal',
         instance_id: 'nested-temporal-attempt',
       }),
       modelRunId: 'mr_nested_temporal',
+      workorderAttemptId: context.attemptId,
+      causeEventIds: ['event-temporal-1'],
     };
-    const result = await executor.execute(
-      'code_act',
-      {
-        code: `task_temporal_reconcile({ context_packet_id: '${packetId}', expected_revision: ${context.revision}, outcome: 'resolved', status: 'done', reason: 'Nested host context is exact' })`,
-        allowedTools: ['task_temporal_reconcile'],
-      },
-      nestedContext
+    const executeSpy = vi.spyOn(executor, 'execute');
+    const registry = new RunContextRegistry();
+    const contextKey = 'B'.repeat(43);
+    registry.register(contextKey, nestedContext);
+    const executeCodeAct = createCodeActExecutor({
+      registry,
+      gatewayToolExecutor: executor,
+      executeLegacy: vi.fn(),
+    });
+    const result = await executeCodeAct(
+      `task_temporal_reconcile({ context_packet_id: '${packetId}', expected_revision: ${context.revision}, outcome: 'resolved', status: 'done', reason: 'Nested host context is exact' })`,
+      { contextKey, allowedTools: ['task_temporal_reconcile'] }
     );
 
     expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(result.hostToolExecutions).toEqual([{ name: 'task_temporal_reconcile', success: true }]);
+    expect(result.hostToolsInvoked).toEqual(['task_temporal_reconcile']);
+    const outerCall = executeSpy.mock.calls.find(([toolName]) => toolName === 'code_act');
+    expect(outerCall?.[2]).toBe(nestedContext);
+    const innerCall = executeSpy.mock.calls.find(
+      ([toolName]) => toolName === 'task_temporal_reconcile'
+    );
+    expect(innerCall?.[2]).toMatchObject({
+      agentId: 'workorder-temporal',
+      source: 'operator',
+      channelId: 'worker:temporal',
+      modelRunId: 'mr_nested_temporal',
+      workorderAttemptId: context.attemptId,
+      causeEventIds: ['event-temporal-1'],
+      executionSurface: 'code_act',
+      parentToolName: 'code_act',
+    });
+    expect(innerCall?.[2]?.agentContext).toBe(nestedContext.agentContext);
+    expect(innerCall?.[2]?.temporalWorkContext).toBe(nestedContext.temporalWorkContext);
+    expect(innerCall?.[2]?.envelope).toBe(nestedContext.envelope);
     expect(ledger.getTemporalEffect(context.attemptId)).toMatchObject({
       taskId,
       outcome: 'resolved',

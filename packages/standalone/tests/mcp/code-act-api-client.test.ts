@@ -105,4 +105,43 @@ describe('Code-Act API client settlement boundary', () => {
     );
     expect(failure).toBeInstanceOf(CodeActPostSendTransportError);
   });
+
+  it('TG-06 preserves trusted structured Code-Act result fields', async () => {
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            success: false,
+            error: 'Run context is unavailable',
+            errorCode: 'CODE_ACT_CONTEXT_UNAVAILABLE',
+            retryable: false,
+            hostToolExecutions: [
+              { name: 'task_list', success: true },
+              { name: 'report_publish', success: false, code: 'destination_out_of_scope' },
+            ],
+            hostToolsInvoked: ['task_list'],
+            metrics: { durationMs: 2, hostCallCount: 2, memoryUsedBytes: 10 },
+          })
+        );
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const result = await callCodeActAPI({ code: 'mutate()' }, { port, timeoutMs: 1_000 });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'CODE_ACT_CONTEXT_UNAVAILABLE',
+      retryable: false,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'report_publish', success: false, code: 'destination_out_of_scope' },
+      ],
+      hostToolsInvoked: ['task_list'],
+    });
+  });
 });

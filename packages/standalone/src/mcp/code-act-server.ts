@@ -30,6 +30,7 @@ log(`API port: ${MAMA_API_PORT}`);
 const CALLER_AGENT_ID = normalizeEnvString(process.env.MAMA_CODE_ACT_AGENT_ID);
 const CALLER_ALLOWED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_ALLOWED_TOOLS);
 const CALLER_BLOCKED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_BLOCKED_TOOLS);
+const PROCESS_CONTEXT_KEY = normalizeEnvString(process.env.MAMA_CODE_ACT_CONTEXT_KEY);
 const MAMA_AUTH_TOKEN = normalizeEnvString(process.env.MAMA_AUTH_TOKEN);
 log(
   `Policy: agent=${CALLER_AGENT_ID ?? 'default'} allowed=${formatToolListForLog(
@@ -156,6 +157,7 @@ async function handleRequest(
               ...(CALLER_AGENT_ID ? { agent_id: CALLER_AGENT_ID } : {}),
               ...(CALLER_ALLOWED_TOOLS ? { allowed_tools: CALLER_ALLOWED_TOOLS } : {}),
               ...(CALLER_BLOCKED_TOOLS ? { blocked_tools: CALLER_BLOCKED_TOOLS } : {}),
+              ...(PROCESS_CONTEXT_KEY ? { context_key: PROCESS_CONTEXT_KEY } : {}),
             },
             {
               port: MAMA_API_PORT,
