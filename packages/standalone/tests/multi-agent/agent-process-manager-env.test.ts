@@ -624,6 +624,7 @@ describe('PersistentCLIAdapter (single-agent mode) env vars', () => {
     expect(env).toBeDefined();
     expect(env!['MAMA_HOOK_FEATURES']).toBe('rules,agents');
     expect(env!['MAMA_DISABLE_HOOKS']).toBeUndefined();
+    expect(env!['MAMA_CODE_ACT_CONTEXT_KEY']).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     // Clean up
     adapter.stopAll();
