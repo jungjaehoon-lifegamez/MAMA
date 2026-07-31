@@ -3,7 +3,7 @@
  * completion hooks. Real in-memory TaskLedger; fake runner/alarm sinks.
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentError } from '../../src/agent/types.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
@@ -53,6 +53,51 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
 
   it('keeps the temporal retry budget explicit at three attempts', () => {
     expect(WORKORDER_MAX_ATTEMPTS.temporal).toBe(3);
+  });
+
+  it('the interval beats while a long run is consuming - mid-run is alive, not silent', async () => {
+    // Live day 1 of the S2 window: the beat lived inside tick(), the interval
+    // handler skips tick() while consuming, so every run longer than 2x the
+    // cadence paged the owner and then "recovered" - a telegram flap per run.
+    vi.useFakeTimers();
+    try {
+      const { initLegCadence } = await import('../../src/operator/leg-cadence.js');
+      const legDb: SQLiteDatabase = new Database(':memory:');
+      const legs = initLegCadence(legDb, { now: () => Date.now(), hourOfDay: () => 12 });
+      legs.declare('workorder-consumer', 1_000);
+
+      const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+      const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+      ctx.ledger.enqueueTemporalGeneration({
+        generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
+        taskId: task.id,
+        temporalEpoch: task.temporalEpoch,
+        occurrenceKey,
+        checkAt: task.dueAt!,
+        sourceChannel: null,
+        sourceEventId: null,
+      });
+      // A run that holds `consuming` until we release it.
+      let releaseRun!: () => void;
+      const gate = new Promise<{ response: string }>((resolve) => {
+        releaseRun = () => resolve({ response: 'ok done' });
+      });
+      ctx.deps.runner = { runWithContent: () => gate };
+      ctx.deps.tickMs = 1_000;
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.start();
+
+      await vi.advanceTimersByTimeAsync(1_000); // first tick claims, run hangs
+      await vi.advanceTimersByTimeAsync(3_000); // 3 more firings mid-run
+      // Silent for at most one cadence, never past the 2x page threshold.
+      expect(legs.check().pages).toEqual([]);
+
+      releaseRun();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await consumer.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never writes temporal model response content to operational logs', async () => {

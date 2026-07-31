@@ -182,6 +182,13 @@ export class WorkOrderConsumer {
     this.stopping = false;
     const tickMs = this.deps.tickMs ?? DEFAULT_TICK_MS;
     this.timer = setInterval(() => {
+      // The INTERVAL is the leg, so the interval beats - unconditionally.
+      // The beat used to live inside tick(), but this handler skips tick()
+      // while a run is consuming, so every workorder run longer than 2x the
+      // cadence went "silent", paged the owner, then "recovered" when the
+      // run finished - a page/recover flap on every long run (live, day 1
+      // of the S2 window). A consumer mid-run is alive, not silent.
+      getLegCadence()?.beat('workorder-consumer');
       // Only track a REAL tick: during a long run subsequent firings resolve
       // 'skipped' instantly and would OVERWRITE activeTick - stop() would
       // then await the skipped promise while the true tick still runs and
@@ -218,7 +225,6 @@ export class WorkOrderConsumer {
    * plan G4) - long runs span multiple tick firings.
    */
   async tick(): Promise<'drained' | 'skipped'> {
-    getLegCadence()?.beat('workorder-consumer');
     if (this.consuming || this.stopping) return 'skipped';
     this.consuming = true;
     try {

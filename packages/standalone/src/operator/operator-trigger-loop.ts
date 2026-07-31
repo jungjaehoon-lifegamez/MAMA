@@ -309,7 +309,6 @@ export class OperatorTriggerLoop {
   }
 
   async tick(): Promise<TickResult> {
-    getLegCadence()?.beat('trigger-loop');
     const { delta, memory, registry, askAgent, review, config, log } = this.deps;
     const { output, reportScheduler } = this.deps;
     const fullLegOn = Boolean(output && reportScheduler);
@@ -665,6 +664,10 @@ export class OperatorTriggerLoop {
         });
     }
     const handle = setInterval(() => {
+      // The INTERVAL is the leg: it beats even while a long tick (full
+      // report) is still running - same flap the workorder consumer paged
+      // on live. A loop mid-tick is alive, not silent.
+      getLegCadence()?.beat('trigger-loop');
       if (this.running) {
         log('[trigger-loop] tick skipped: previous tick still running');
         return;
