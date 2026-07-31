@@ -127,7 +127,7 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
-  `~/.mama/briefs/brief-<kind>.md`. On the Codex backend, each worker receives a
+  `~/.mama/briefs/brief-<kind>.md`. On the Codex backend (retained in code but SUSPENDED - the worker loop runs claude; codex sessions do not reset on token usage, so the lifecycle contract only holds on claude), each worker would receive a
   built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`,
   `workorder-memory-curation`, or `workorder-temporal`) whose allowlist matches that brief. Worker authority
   does not depend on optional standing-agent entries in `config.yaml`. Board workers
@@ -222,6 +222,53 @@ because three divergent copies of this rule previously existed and the test guar
 never exercised the production branch. A connector absent from the grant is denied; a
 connector present with an empty channel list is also denied, never read as a wildcard. The
 grant derives from `~/.mama/connectors.json` through `evidence/read.ts`.
+
+**Reads are not gated; sends are (v0.30.1).** The per-principal connector read filter
+(`scopeDaemonRawConnectors`) is deleted: enforcement exists only for irreversible actions,
+and `allowed_destinations: []` on every daemon envelope is the real boundary. Every read
+lands in tool traces - observability over restriction.
+
+**Memory reads follow the channel grant (v0.31.2).** Memories are stored under
+`channel:<connector>:<channelId>` - the same key the grant declares - while envelopes carry
+identity scopes. One rule closes the gap at the ENFORCEMENT layer: a run allowed to read a
+channel's raw events may recall the memories extracted from it (`mirrorReadScopes`,
+`evidence/read.ts`), computed against the live grant at check time. The mirror is never
+issued into the envelope - envelope channel scopes double as the raw-narrowing input and as
+`mama_save`'s permanent write binding, so issuing it would re-open per-channel isolation
+and widen writes. Writes never widen: a context packet's mirror-widened scopes are
+intersected with the envelope's own before they can back a save
+(`writeEligiblePacketScopes`). A connector the envelope already narrows with its own
+channel scope (a chat's own channel, a temporal binding) is excluded from the mirror -
+per-channel isolation wins.
+
+### Evidence transposition (v0.31.0, S2)
+
+- **Causes are wired, not relabeled**: the conductor hands its inbox batch
+  (`causeEventIds`) to every run; on duplicate delivery the HOST batch outranks the
+  agent-supplied `source_event_id`. Every effect carries a cause KIND
+  (`event | owner_message | clock | card_transition`) with a DB trigger rejecting a kind
+  that disagrees with its ids.
+- **Failures carry the thrower's code**: `tool_traces.failure_code` records the structured
+  code emitted at the failure choke - carried, never invented (the generic wrapper stays
+  NULL). mama-core migration note: 043-060 is a dead zone (a retired chain owns those
+  schema_version rows); new core migrations number 061+.
+- **A silent leg pages the owner**: every scheduled leg declares its cadence and beats from
+  its interval handler; an independent watchdog pages past 2x cadence, defers through
+  quiet hours (23-08), and reports recovery once. The interval is the leg - a consumer
+  mid-run is alive, not silent.
+- **Temporal freshness is a receipt, not a gate**: a stale but source-backed packet
+  commits with `packet_created_at` receipted, and the HOST seeds the compile with the
+  bound source's channel/event.
+
+### Conductor foundations (v0.30.0, S1 - dark behind `conductor.enabled`)
+
+A durable inbox (`conductor_inbox`: enqueue-before-commit, per-event dedupe, lease claims,
+5-attempt poison cap) feeds one long-lived judgment session on its own
+`session:conductor:main` lane - deliberately NOT the global operator lane, where Stage-2
+workers serialize and an awaiting judgment would deadlock. Recycled on age/turns/tokens/idle
+with a board re-ground on every fresh session. Default off; report authority transfers only
+after a six-item parity rubric (`docs/development/report-parity-rubric.md`) passes 6/6 three
+days running.
 
 **Channel identity** underpins both. Connectors emit whatever their upstream hands them,
 which for six of seven is a display NAME while the config is keyed by ID — so every

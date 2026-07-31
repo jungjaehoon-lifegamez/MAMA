@@ -1,5 +1,12 @@
 # Data Privacy Principles
 
+> **SCOPE: Claude Code plugin + MCP server ONLY.** MAMA OS (the standalone
+> daemon) is a networked service: it runs Discord/Slack/Telegram gateways and
+> external connectors, binds an HTTP API on port 3847 (protect it with
+> `MAMA_AUTH_TOKEN`), persists connector events, tool traces and effect
+> ledgers, and shells out to the `claude` CLI. None of the offline guarantees
+> below apply to the daemon - see [architecture](architecture.md).
+
 **MAMA's privacy-first design**
 
 **FR Reference:** [FR45-49 (Privacy & Security)](../archive/fr-mapping-v1.0.md)
@@ -53,7 +60,7 @@
 ```bash
 # Downloads from Hugging Face CDN (first run only)
 https://huggingface.co/Xenova/multilingual-e5-large
-# ~120MB model file
+# ~560MB model file (e5-large q8)
 # Cached locally at ~/.cache/huggingface/
 ```
 
@@ -63,8 +70,6 @@ https://huggingface.co/Xenova/multilingual-e5-large
 
 ## Hook Privacy
 
-### UserPromptSubmit Hook
-
 - **Reads:** User's prompt (from environment variable)
 - **Stores:** Nothing (search only, no logging)
 - **Sends:** Nothing (100% local search)
@@ -72,7 +77,7 @@ https://huggingface.co/Xenova/multilingual-e5-large
 ### Can be disabled:
 
 ```bash
-export MAMA_DISABLE_HOOKS=true
+
 ```
 
 ---
@@ -104,11 +109,9 @@ chmod 600 ~/.claude/mama-memory.db
 - Relies on OS-level filesystem encryption (FileVault, LUKS, BitLocker)
 - For sensitive decisions, use encrypted filesystem
 
-### No Authentication
-
-- MCP server is stdio (local process only)
-- No network port, no remote access
-- Only accessible by Claude Code process
+**Authentication** - the MCP server itself is stdio (no port). The MAMA OS
+daemon is different: it binds HTTP on 3847 and REQUIRES `MAMA_AUTH_TOKEN` for
+remote access - the embedding server logs a CRITICAL warning when unset.
 
 ---
 

@@ -109,7 +109,7 @@ topic: 'auth_strategy_final';
 When you recall a topic:
 
 ```
-/mama-recall auth_strategy
+/mama:search auth_strategy
 
 📚 Decision History for: auth_strategy
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

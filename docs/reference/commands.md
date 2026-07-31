@@ -2,7 +2,7 @@
 
 **MAMA Slash Commands (Claude Code Plugin)**
 
-> **v1.6.5:** Commands simplified to match 4 MCP tools. Shorter names for faster typing.
+> **v1.6.5:** Commands simplified to match 5 MCP tools. Shorter names for faster typing.
 
 | Command            | Description          | MCP Tool                 |
 | ------------------ | -------------------- | ------------------------ |
@@ -185,7 +185,7 @@ mama init --skip-auth-check  # Skip API validation
 
 **What it does:**
 
-- Creates `mama-workspace/` directory
+- Creates `~/.mama/workspace`
 - Generates default `config.yaml`
 - Initializes SQLite database
 - Validates available backend login state (`claude auth status` / Codex auth) unless skipped
@@ -252,7 +252,7 @@ mama start --foreground # Run in foreground with logs
 - Connects to configured gateways (Discord, Slack, Telegram)
 - Enables heartbeat scheduler
 - Runs MAMA OS web interface
-- Logs to `mama-workspace/logs/`
+- Logs to `~/.mama/logs/daemon.log`
 
 ---
 
@@ -332,5 +332,5 @@ mama run "Analyze this project" --verbose
 **Related:**
 
 - [MAMA Standalone Package](../../packages/standalone/README.md) - Full standalone documentation
-- [MCP Tool API](api.md) - 4 core tools reference
+- [MCP Tool API](api.md) - 5 advertised tools reference
 - [Getting Started Tutorial](../tutorials/getting-started.md)

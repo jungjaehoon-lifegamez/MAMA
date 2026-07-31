@@ -29,21 +29,6 @@ callable for backward compatibility but is intentionally not discoverable throug
   }
   ```
 
-### OpenClaw Plugin
-
-OpenClaw uses MAMA's consolidated MCP tools with a `mama_` prefix:
-
-| MCP Server                       | OpenClaw Plugin                   |
-| -------------------------------- | --------------------------------- |
-| `save` (`type: 'decision'`)      | `mama_save`                       |
-| `save` (`type: 'ingest'`)        | `mama_ingest`                     |
-| `search`                         | `mama_search`                     |
-| `update`                         | `mama_update`                     |
-| `load_checkpoint`                | `mama_load_checkpoint`            |
-| `search_decisions_and_contracts` | `mama_search_decisions_contracts` |
-
-OpenClaw also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
-
 ## Response Format
 
 All tools return a standard MCP response structure.
@@ -502,7 +487,7 @@ export MAMA_DB_PATH="$HOME/.claude/mama-memory.db"
 # Server token (for development)
 export MAMA_SERVER_TOKEN="dev-token"
 
-# Server port (default: 3847)
+# MCP embedding server port (default: 3000; 3847 is the STANDALONE API port)
 export MAMA_SERVER_PORT="3847"
 
 # Embedding server port (default: 3849)
@@ -1089,10 +1074,10 @@ Update a specific agent's config.
 ```json
 {
   "backend": "claude",
-  "model": "claude-opus-4-5-20251101",
+  "model": "claude-sonnet-5",
   "tier": 1,
   "enabled": true,
-  "can_delegate": true
+  "can_delegate": true // accepted + persisted but INERT: the delegate tool is not dispatchable
 }
 ```
 
@@ -1226,7 +1211,7 @@ Edges are auto-detected and appear in search results with `related_to` and `edge
 
 ## Migration from v1.1
 
-If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
+If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 
 | Old Tool            | New Equivalent                           |
 | ------------------- | ---------------------------------------- |
@@ -1244,5 +1229,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2026-04-30
-**Version:** unreleased search-quality candidate
+**Last Updated:** 2026-07-31
+**Version:** mama-server 1.15.0 / mama-os 0.31.2

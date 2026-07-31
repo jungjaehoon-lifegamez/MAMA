@@ -138,11 +138,7 @@ MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model 
 **Configuration:**
 
 ```json
-{
-  "embedding_model": "Xenova/multilingual-e5-small",
-  "search_limit": 5,
-  "recency_weight": 0.1
-}
+{}
 ```
 
 **Expected performance:**
@@ -162,11 +158,7 @@ MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model 
 **Configuration:**
 
 ```json
-{
-  "embedding_model": "Xenova/gte-large",
-  "search_limit": 20,
-  "recency_weight": 0.3
-}
+{}
 ```
 
 **Expected performance:**
@@ -186,10 +178,7 @@ MAMA Standalone runs an HTTP embedding server on port 3849 that keeps the model 
 **Configuration:**
 
 ```json
-{
-  "recency_weight": 0.7,
-  "recency_scale": 3
-}
+{}
 ```
 
 **Expected performance:**
@@ -258,7 +247,7 @@ All queries (12ms total):
 ### Check Current Tier
 
 ```
-/mama-list
+/mama:search
 # Output shows: 🟢 Tier 1 (Full Features Active)
 ```
 
@@ -269,7 +258,7 @@ All queries (12ms total):
 export MAMA_DEBUG=true
 
 # Run query and check logs
-/mama-suggest "authentication strategy"
+/mama:search "authentication strategy"
 
 # Look for timing logs in Claude Code debug console
 ```
