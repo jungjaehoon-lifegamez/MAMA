@@ -275,6 +275,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Clean environment: Remove conflicting MAMA_* variables before merging
     const cleanEnv = { ...process.env };
     delete cleanEnv.MAMA_CODE_ACT_CONTEXT_KEY;
+    const processOptionsEnv = { ...(this.options.env || {}) };
+    delete processOptionsEnv.MAMA_CODE_ACT_CONTEXT_KEY;
     if (this.options.env) {
       // If we're setting MAMA_DISABLE_HOOKS, remove MAMA_HOOK_FEATURES
       if ('MAMA_DISABLE_HOOKS' in this.options.env) {
@@ -321,7 +323,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       cwd: workspaceDir, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
       env: {
         ...cleanEnv,
-        ...(this.options.env || {}),
+        ...processOptionsEnv,
         ...(this.runContextKey ? { MAMA_CODE_ACT_CONTEXT_KEY: this.runContextKey } : {}),
       },
     });

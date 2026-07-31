@@ -7,9 +7,13 @@ export interface CodeActApiResponse {
   value?: unknown;
   logs?: string[];
   error?: string;
+  errorCode?: string;
   terminalCode?: string;
   retryable?: boolean;
   abort?: boolean;
+  metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
+  hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
+  hostToolsInvoked?: string[];
   toolCalls?: { name: string; input: Record<string, unknown> }[];
 }
 

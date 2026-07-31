@@ -397,6 +397,66 @@ describe('graph api helpers', () => {
         }
       });
 
+      it('TG-03/TG-04 forwards a valid process context key to the executor', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({ success: true, value: 2, logs: [] });
+        const contextKey = 'A'.repeat(43);
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq(
+            '/api/code-act',
+            JSON.stringify({ code: '1 + 1', context_key: contextKey }),
+            {
+              remoteAddress: '127.0.0.92',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            }
+          );
+          const res = createMockRes();
+
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+
+          expect(res._status).toBe(200);
+          expect(executeCodeAct).toHaveBeenCalledWith('1 + 1', { contextKey });
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
+
+      it('TG-06 rejects a malformed process context key before execution', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({ success: true, value: 2, logs: [] });
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq(
+            '/api/code-act',
+            JSON.stringify({ code: '1 + 1', context_key: 'not-a-signed-process-key' }),
+            {
+              remoteAddress: '127.0.0.93',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            }
+          );
+          const res = createMockRes();
+
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+
+          expect(res._status).toBe(400);
+          expect(res._body).toContain('context_key');
+          expect(executeCodeAct).not.toHaveBeenCalled();
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
+
       it('rejects malformed Code-Act agent identity before execution', async () => {
         const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
         process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';

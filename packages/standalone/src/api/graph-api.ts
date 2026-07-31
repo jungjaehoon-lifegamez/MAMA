@@ -4150,6 +4150,21 @@ async function handleCodeActRequest(
       return;
     }
 
+    let contextKey: string | undefined;
+    if (body.context_key !== undefined) {
+      if (typeof body.context_key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.context_key)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: true,
+            message: 'context_key must be a 32-byte base64url value without padding.',
+          })
+        );
+        return;
+      }
+      contextKey = body.context_key;
+    }
+
     let agentId: string | undefined;
     if (body.agent_id !== undefined) {
       if (typeof body.agent_id !== 'string' || body.agent_id.trim().length === 0) {
@@ -4169,6 +4184,7 @@ async function handleCodeActRequest(
     }
 
     const result = await options.executeCodeAct(code, {
+      ...(contextKey ? { contextKey } : {}),
       ...(agentId ? { agentId } : {}),
       ...(allowedTools ? { allowedTools } : {}),
       ...(blockedTools ? { blockedTools } : {}),

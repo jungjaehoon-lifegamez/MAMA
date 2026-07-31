@@ -914,7 +914,17 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           const payload = JSON.parse(String(result.message));
           // Post-call hook only: these names are EXECUTIONS, the evidence the
           // report audit (report-run.ts parseHostToolsInvoked) classifies.
-          expect(payload.hostToolsInvoked).toEqual(['mama_search', 'mama_search']);
+          expect(payload.hostToolsInvoked).toEqual(['mama_search']);
+          expect(result.hostToolExecutions).toEqual([
+            { name: 'mama_search', success: true },
+            { name: 'mama_search', success: true },
+          ]);
+          expect(result.hostToolsInvoked).toEqual(['mama_search']);
+          expect(result).toMatchObject({
+            value: { done: true },
+            logs: [],
+            metrics: expect.objectContaining({ hostCallCount: 2 }),
+          });
         });
 
         it('yields an empty list when the script calls no host tool', async () => {
@@ -925,6 +935,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
           expect(result.success).toBe(true);
           expect(JSON.parse(String(result.message)).hostToolsInvoked).toEqual([]);
+          expect(result.hostToolExecutions).toEqual([]);
+          expect(result.hostToolsInvoked).toEqual([]);
         });
       });
 

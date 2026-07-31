@@ -25,6 +25,7 @@ import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
+import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -100,6 +101,7 @@ import {
   type TemporalRuntime,
 } from '../../operator/temporal-runtime.js';
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
+import { createCodeActExecutor } from '../runtime/code-act-executor.js';
 import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -121,8 +123,14 @@ export function requireRuntimeBackend(value: unknown): RuntimeBackend {
 
 export function serializeCodeActExecutionResult(
   result: ExecutionResult,
-  toolCalls: { name: string; input: Record<string, unknown> }[]
+  toolCalls: { name: string; input: Record<string, unknown> }[],
+  hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = []
 ): CodeActResult & { toolCalls: { name: string; input: Record<string, unknown> }[] } {
+  const hostToolsInvoked = [
+    ...new Set(
+      hostToolExecutions.filter((execution) => execution.success).map((execution) => execution.name)
+    ),
+  ];
   return {
     success: result.success,
     value: result.value,
@@ -133,6 +141,8 @@ export function serializeCodeActExecutionResult(
       : {}),
     metrics: result.metrics,
     toolCalls,
+    hostToolExecutions,
+    hostToolsInvoked,
   };
 }
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -1118,10 +1128,10 @@ export async function runAgentLoop(
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
-  graphHandlerOptions.executeCodeAct = async (
+  const executeLegacyCodeAct = async (
     code: string,
     codeActContext?: CodeActExecutionContext
-  ) => {
+  ): Promise<CodeActResult> => {
     const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
     const sandbox = new CodeActSandbox();
     const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
@@ -1212,9 +1222,16 @@ export async function runAgentLoop(
       executionContext
     );
     const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
+    const hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = [];
     bridge.onToolUse = (toolName, input, result) => {
       if (result !== undefined) {
         toolCalls.push({ name: toolName, input });
+        const resultRecord = result as Record<string, unknown>;
+        hostToolExecutions.push({
+          name: toolName,
+          success: resultRecord.success === true,
+          ...(typeof resultRecord.code === 'string' ? { code: resultRecord.code } : {}),
+        });
         if (CODE_ACT_MUTATION_TOOLS.has(toolName)) {
           codeActLogger.warn('[CodeAct] mutation tool call', {
             toolName,
@@ -1233,7 +1250,7 @@ export async function runAgentLoop(
       bridge.injectInto(sandbox, codeActTier, codeActRole);
       const result = await sandbox.execute(code, { signal: executionContext?.signal });
       finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
-      return serializeCodeActExecutionResult(result, toolCalls);
+      return serializeCodeActExecutionResult(result, toolCalls, hostToolExecutions);
     } catch (error) {
       failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
       throw error;
@@ -1241,6 +1258,11 @@ export async function runAgentLoop(
       toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
     }
   };
+  graphHandlerOptions.executeCodeAct = createCodeActExecutor({
+    registry: runContextRegistry,
+    gatewayToolExecutor: toolExecutor,
+    executeLegacy: executeLegacyCodeAct,
+  });
 
   // Pre-warm Code-Act WASM module for fast first execution
   (async () => {
