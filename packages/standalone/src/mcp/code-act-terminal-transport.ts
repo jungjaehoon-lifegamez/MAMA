@@ -10,9 +10,10 @@ export type TerminalMutationCode =
 export interface TerminalMutationFailure {
   terminalCode: TerminalMutationCode;
   error: string;
+  hostToolExecutions: HostToolExecutionAudit[];
 }
 
-interface HostToolExecutionAudit {
+export interface HostToolExecutionAudit {
   name: string;
   success: boolean;
   code?: string;
@@ -47,6 +48,7 @@ export function terminalMutationFailure(result: {
   terminalCode?: string;
   retryable?: boolean;
   abort?: boolean;
+  hostToolExecutions?: unknown;
 }): TerminalMutationFailure | undefined {
   const terminalCode: TerminalMutationCode | undefined =
     result.terminalCode === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
@@ -59,6 +61,7 @@ export function terminalMutationFailure(result: {
   return {
     terminalCode,
     error: result.error || 'Mutation outcome is ambiguous',
+    hostToolExecutions: normalizeHostToolExecutions(result.hostToolExecutions),
   };
 }
 
@@ -132,6 +135,7 @@ export function terminalMcpResult(failure: TerminalMutationFailure): Record<stri
       terminalCode: failure.terminalCode,
       retryable: false,
       abort: true,
+      hostToolExecutions: failure.hostToolExecutions,
     }),
     _meta: {
       mama: {

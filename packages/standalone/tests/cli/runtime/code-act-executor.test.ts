@@ -65,6 +65,24 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
     expect(registry.has(CONTEXT_KEY)).toBe(false);
   });
 
+  it('TG-03/TG-04 releases the execution pin when gateway execution throws', async () => {
+    const registry = new RunContextRegistry();
+    const leaseId = registry.register(CONTEXT_KEY, makeContext());
+    const execute = vi.fn().mockRejectedValue(new Error('gateway execution failed'));
+    const executeCodeAct = createCodeActExecutor({
+      registry,
+      gatewayToolExecutor: { execute },
+      executeLegacy: vi.fn(),
+    });
+
+    await expect(executeCodeAct('task_list({})', { contextKey: CONTEXT_KEY })).rejects.toThrow(
+      'gateway execution failed'
+    );
+
+    expect(registry.close(CONTEXT_KEY, leaseId)).toBe(true);
+    expect(registry.has(CONTEXT_KEY)).toBe(false);
+  });
+
   it('TG-06 fails closed before gateway execution when the key has no active lease', async () => {
     const execute = vi.fn();
     const executeLegacy = vi.fn();

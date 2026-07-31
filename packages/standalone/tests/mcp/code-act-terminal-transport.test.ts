@@ -34,6 +34,34 @@ describe('Code-Act terminal MCP transport', () => {
     });
   });
 
+  it('TG-06 preserves successful nested-tool audit in a terminal MCP result', () => {
+    const failure = terminalMutationFailure({
+      success: false,
+      error: 'Mutation outcome is unknown',
+      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      retryable: false,
+      abort: true,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+    });
+
+    const result = terminalMcpResult(failure!) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: false,
+      hostToolExecutions: [
+        { name: 'task_list', success: true },
+        { name: 'mama_save', success: false, code: 'outcome_unknown' },
+      ],
+      hostToolsInvoked: ['task_list'],
+    });
+  });
+
   it('does not promote untrusted or incomplete metadata', () => {
     expect(
       terminalMutationFailure({
