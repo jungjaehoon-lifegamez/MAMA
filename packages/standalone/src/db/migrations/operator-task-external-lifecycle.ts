@@ -133,7 +133,10 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
   }
 
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_operator_external_binding_receipts_global_identity
+    DROP TRIGGER IF EXISTS trg_operator_external_binding_receipts_global_identity;
+    DROP TRIGGER IF EXISTS trg_operator_external_lifecycle_receipts_global_identity;
+
+    CREATE TRIGGER trg_operator_external_binding_receipts_global_identity
     BEFORE INSERT ON operator_external_binding_receipts
     BEGIN
       SELECT CASE WHEN EXISTS (
@@ -143,7 +146,7 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
       VALUES (NEW.candidate_id, 'binding', NEW.created_at);
     END;
 
-    CREATE TRIGGER IF NOT EXISTS trg_operator_external_lifecycle_receipts_global_identity
+    CREATE TRIGGER trg_operator_external_lifecycle_receipts_global_identity
     BEFORE INSERT ON operator_external_lifecycle_receipts
     BEGIN
       SELECT CASE WHEN EXISTS (
