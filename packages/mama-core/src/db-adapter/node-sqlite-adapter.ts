@@ -1125,18 +1125,30 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         )
       `);
       this.exec(`
-        WITH ranked AS (
+        WITH existing_max AS (
+          SELECT source_connector, MAX(operator_observation_seq) AS max_seq
+          FROM connector_event_index
+          WHERE operator_observation_seq IS NOT NULL
+          GROUP BY source_connector
+        ), ranked_nulls AS (
           SELECT event_index_id,
+                 source_connector,
                  ROW_NUMBER() OVER (
                    PARTITION BY source_connector
                    ORDER BY source_timestamp_ms, rowid
                  ) AS seq
           FROM connector_event_index
+          WHERE operator_observation_seq IS NULL
         )
         UPDATE connector_event_index
         SET operator_observation_seq = (
-          SELECT seq FROM ranked WHERE ranked.event_index_id = connector_event_index.event_index_id
+          SELECT COALESCE(existing_max.max_seq, 0) + ranked_nulls.seq
+          FROM ranked_nulls
+          LEFT JOIN existing_max
+            ON existing_max.source_connector = ranked_nulls.source_connector
+          WHERE ranked_nulls.event_index_id = connector_event_index.event_index_id
         )
+        WHERE operator_observation_seq IS NULL
       `);
       this.exec(`
         INSERT INTO connector_event_index_observation_cursors (source_connector, next_seq)

@@ -235,6 +235,79 @@ describe('Story M2.5: Migration 062 duplicate-column recovery', () => {
         expect(row?.version).toBe(62);
         db.close();
       });
+
+      it('preserves arrival-ordered observation ordinals while repairing a missing 062 trigger', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-062-ordering-'));
+        const dbPath = join(tempDir, 'partial-062-ordering.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        applyThrough(setupDb, 62);
+
+        const insert = setupDb.prepare(
+          `INSERT INTO connector_event_index (
+            event_index_id, source_connector, source_type, source_id, content,
+            source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+        insert.run(
+          'evt-arrival-first',
+          'kagemusha',
+          'kanban_card',
+          'task:arrival-first',
+          'arrived first with a later timestamp',
+          2,
+          '{}',
+          Buffer.alloc(32, 1),
+          '2026-08-02T00:00:00.000Z',
+          '2026-08-02T00:00:00.000Z'
+        );
+        insert.run(
+          'evt-arrival-second',
+          'kagemusha',
+          'kanban_card',
+          'task:arrival-second',
+          'arrived second with an earlier timestamp',
+          1,
+          '{}',
+          Buffer.alloc(32, 2),
+          '2026-08-02T00:00:00.000Z',
+          '2026-08-02T00:00:00.000Z'
+        );
+        setupDb.exec('DROP TRIGGER trg_connector_event_index_observation_seq_ai');
+        setupDb.close();
+
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        expect(() => {
+          adapter.connect();
+          adapter.runMigrations(MIGRATIONS_DIR);
+        }).not.toThrow();
+        adapter.disconnect();
+
+        const db = new Database(dbPath);
+        expect(
+          db
+            .prepare(
+              `SELECT event_index_id, operator_observation_seq
+               FROM connector_event_index
+               WHERE source_connector = 'kagemusha'
+               ORDER BY event_index_id`
+            )
+            .all()
+        ).toEqual([
+          { event_index_id: 'evt-arrival-first', operator_observation_seq: 1 },
+          { event_index_id: 'evt-arrival-second', operator_observation_seq: 2 },
+        ]);
+        expect(
+          db
+            .prepare(
+              `SELECT next_seq
+               FROM connector_event_index_observation_cursors
+               WHERE source_connector = 'kagemusha'`
+            )
+            .get()
+        ).toEqual({ next_seq: 3 });
+        db.close();
+      });
     });
   });
 });

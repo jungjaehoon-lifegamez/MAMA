@@ -70,6 +70,14 @@ describe('Story M2.5: refreshed connector observation sequences', () => {
         content: 'status:pending',
         source_timestamp_ms: 1_775_260_800_000,
       });
+      const existingDestination = upsertConnectorEventIndex(adapter, {
+        source_connector: 'kagemusha',
+        source_type: 'kanban_card',
+        source_id: 'task:44',
+        channel: 'room-b',
+        content: 'status:pending',
+        source_timestamp_ms: 1_775_260_800_000,
+      });
       const moved = upsertConnectorEventIndex(adapter, {
         source_connector: 'kagemusha',
         source_type: 'kanban_card',
@@ -79,8 +87,12 @@ describe('Story M2.5: refreshed connector observation sequences', () => {
         source_timestamp_ms: 1_775_260_800_000,
       });
 
-      expect(moved.operator_ingest_seq).toBe(1);
+      expect(existingDestination.operator_ingest_seq).toBe(1);
+      expect(moved.operator_ingest_seq).toBe(existingDestination.operator_ingest_seq + 1);
       expect(moved.operator_observation_seq).toBeGreaterThan(first.operator_observation_seq);
+      expect(moved.operator_observation_seq).toBeGreaterThan(
+        existingDestination.operator_observation_seq
+      );
     });
   });
 });
