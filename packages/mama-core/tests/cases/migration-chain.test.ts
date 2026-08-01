@@ -605,4 +605,71 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 062 connector-wide observation sequences', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(columnExists(db, 'connector_event_index', 'operator_observation_seq')).toBe(true);
+    expect(tableExists(db, 'connector_event_index_observation_cursors')).toBe(true);
+    expect(indexExists(db, 'idx_connector_event_index_observation_seq')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_operator_ingest_seq_au')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_ai')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_au')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_explicit_ai')).toBe(true);
+
+    const insert = db.prepare(
+      `INSERT INTO connector_event_index (
+        event_index_id, source_connector, source_type, source_id, content,
+        source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    insert.run(
+      'evt-observation-a',
+      'kagemusha',
+      'kanban_card',
+      'task:99:a',
+      'pending',
+      1_775_260_800_000,
+      '{}',
+      Buffer.alloc(32, 9),
+      '2026-08-02T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z'
+    );
+    insert.run(
+      'evt-observation-b',
+      'kagemusha',
+      'kanban_card',
+      'task:99:b',
+      'done',
+      1_775_260_800_000,
+      '{}',
+      Buffer.alloc(32, 10),
+      '2026-08-02T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z'
+    );
+
+    expect(
+      db
+        .prepare(
+          `SELECT event_index_id, operator_observation_seq
+           FROM connector_event_index
+           WHERE source_connector = 'kagemusha'
+           ORDER BY operator_observation_seq`
+        )
+        .all()
+    ).toEqual([
+      { event_index_id: 'evt-observation-a', operator_observation_seq: 1 },
+      { event_index_id: 'evt-observation-b', operator_observation_seq: 2 },
+    ]);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 62')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(62);
+    expect(row?.description).toContain('observation sequences');
+
+    db.close();
+  });
 });

@@ -91,6 +91,8 @@ function mapConnectorEventIndexRow(row: Record<string, unknown>): ConnectorEvent
     artifact_locator: row.artifact_locator === null ? null : String(row.artifact_locator),
     artifact_title: row.artifact_title === null ? null : String(row.artifact_title),
     content_hash: toBuffer(row.content_hash),
+    operator_ingest_seq: Number(row.operator_ingest_seq),
+    operator_observation_seq: Number(row.operator_observation_seq),
     indexed_at: String(row.indexed_at),
     updated_at: String(row.updated_at),
     expires_at: row.expires_at === null ? null : String(row.expires_at),
@@ -196,7 +198,25 @@ export function upsertConnectorEventIndex(
             artifact_title = excluded.artifact_title,
             content_hash = excluded.content_hash,
             updated_at = excluded.updated_at,
-            expires_at = excluded.expires_at
+            expires_at = excluded.expires_at,
+            operator_ingest_seq = CASE
+              WHEN connector_event_index.content_hash IS NOT excluded.content_hash
+                OR connector_event_index.metadata_json IS NOT excluded.metadata_json
+                OR connector_event_index.source_timestamp_ms IS NOT excluded.source_timestamp_ms
+                OR connector_event_index.source_type IS NOT excluded.source_type
+                OR connector_event_index.channel IS NOT excluded.channel
+              THEN NULL
+              ELSE connector_event_index.operator_ingest_seq
+            END,
+            operator_observation_seq = CASE
+              WHEN connector_event_index.content_hash IS NOT excluded.content_hash
+                OR connector_event_index.metadata_json IS NOT excluded.metadata_json
+                OR connector_event_index.source_timestamp_ms IS NOT excluded.source_timestamp_ms
+                OR connector_event_index.source_type IS NOT excluded.source_type
+                OR connector_event_index.channel IS NOT excluded.channel
+              THEN NULL
+              ELSE connector_event_index.operator_observation_seq
+            END
         `
       )
       .run(

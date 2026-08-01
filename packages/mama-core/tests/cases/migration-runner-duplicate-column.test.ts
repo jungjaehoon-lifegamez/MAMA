@@ -194,6 +194,51 @@ describe('Story M2.4: Migration 039 duplicate-column recovery', () => {
   });
 });
 
+describe('Story M2.5: Migration 062 duplicate-column recovery', () => {
+  afterEach(cleanupTempDir);
+
+  describe('Acceptance Criteria', () => {
+    describe('AC #1: partial connector observation sequence migration recovery', () => {
+      it('repairs a partially applied 062 migration when operator_observation_seq already exists', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-062-'));
+        const dbPath = join(tempDir, 'partial-062.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        applyThrough(setupDb, 61);
+        setupDb.exec(`
+          ALTER TABLE connector_event_index
+            ADD COLUMN operator_observation_seq INTEGER CHECK (
+              operator_observation_seq IS NULL OR operator_observation_seq >= 1
+            )
+        `);
+        setupDb.close();
+
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.disconnect();
+
+        const db = new Database(dbPath);
+        expect(columnExists(db, 'connector_event_index', 'operator_observation_seq')).toBe(true);
+        expect(tableExists(db, 'connector_event_index_observation_cursors')).toBe(true);
+        expect(indexExists(db, 'idx_connector_event_index_observation_seq')).toBe(true);
+        expect(triggerExists(db, 'trg_connector_event_index_operator_ingest_seq_au')).toBe(true);
+        expect(triggerExists(db, 'trg_connector_event_index_observation_seq_ai')).toBe(true);
+        expect(triggerExists(db, 'trg_connector_event_index_observation_seq_au')).toBe(true);
+        expect(triggerExists(db, 'trg_connector_event_index_observation_seq_explicit_ai')).toBe(
+          true
+        );
+
+        const row = db.prepare('SELECT version FROM schema_version WHERE version = 62').get() as
+          | { version: number }
+          | undefined;
+        expect(row?.version).toBe(62);
+        db.close();
+      });
+    });
+  });
+});
+
 describe('Story M2.4: Legacy high schema-version structural recovery', () => {
   afterEach(cleanupTempDir);
 
