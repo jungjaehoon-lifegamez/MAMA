@@ -44,13 +44,12 @@ function parseEnvelopeIssuanceMode(env: EnvLike): EnvelopeIssuanceMode {
 export function buildRuntimeEnvelopeBootstrap(
   db: SQLiteDatabase,
   config: MAMAConfig,
-  env: EnvLike = process.env,
-  connectorConfigLoadResult: ConnectorConfigLoadResult = {
-    ok: true,
-    config: {},
-    enabledNames: [],
-  }
+  env: EnvLike,
+  connectorConfigLoadResult: ConnectorConfigLoadResult
 ): RuntimeEnvelopeBootstrap {
+  if (!connectorConfigLoadResult) {
+    throw new Error('[envelope] connectorConfigLoadResult is required');
+  }
   const issuance = parseEnvelopeIssuanceMode(env);
 
   if (issuance === 'off') {

@@ -70,7 +70,6 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
-  resolvePrivateConnectorPolicy,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
@@ -560,11 +559,14 @@ export interface WorkOrderAgentPolicy {
   gatewayToolsPrompt: string;
 }
 
-const DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
-  ok: true,
-  config: {},
-  enabledNames: [],
-});
+function requirePrivateConnectorPolicy(
+  privateConnectorPolicy: PrivateConnectorPolicy | undefined
+): PrivateConnectorPolicy {
+  if (!privateConnectorPolicy) {
+    throw new Error('privateConnectorPolicy is required');
+  }
+  return privateConnectorPolicy;
+}
 
 function buildProjectedLaneRole(
   surface: ConnectorCapabilitySurface,
@@ -694,13 +696,14 @@ export function resolveConductorConfig(
 export function buildOperatorReportAgentPolicy(
   model: string,
   backend: RuntimeBackend,
-  privateConnectorPolicy: PrivateConnectorPolicy = DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): WorkOrderAgentPolicy {
+  const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
   const surface = 'operator-report';
   const projectedRole = buildProjectedLaneRole(
     surface,
     OPERATOR_REPORT_TOOL_POLICY.allowedTools,
-    privateConnectorPolicy
+    requiredPrivatePolicy
   );
   const blockedTools = [...(projectedRole.blockedTools ?? [])];
   const innerTools = uniqueToolList(projectedRole.allowedTools);
@@ -724,7 +727,7 @@ export function buildOperatorReportAgentPolicy(
   };
   return {
     agentContext,
-    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, privateConnectorPolicy),
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, requiredPrivatePolicy),
   };
 }
 
@@ -732,8 +735,13 @@ export function buildWorkOrderAgentPolicy(
   kind: WorkOrderKind,
   model: string,
   backend: RuntimeBackend,
-  privateConnectorPolicy: PrivateConnectorPolicy = DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY
+  privateConnectorPolicy: PrivateConnectorPolicy,
+  rawConnectorScope: readonly string[]
 ): WorkOrderAgentPolicy {
+  const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
+  if (!rawConnectorScope) {
+    throw new Error('rawConnectorScope is required');
+  }
   const policy = WORKORDER_TOOL_POLICIES[kind];
   if (!policy) {
     throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
@@ -746,10 +754,14 @@ export function buildWorkOrderAgentPolicy(
         : kind === 'temporal'
           ? 'workorder-temporal'
           : 'multi-agent-generic';
+  const scopedSurface: ConnectorCapabilitySurface =
+    requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
+      ? surface
+      : 'multi-agent-generic';
   const projectedRole = buildProjectedLaneRole(
-    surface,
+    scopedSurface,
     policy.allowedTools,
-    privateConnectorPolicy
+    requiredPrivatePolicy
   );
   const blockedTools = [...(projectedRole.blockedTools ?? [])];
   const innerTools = uniqueToolList(projectedRole.allowedTools);
@@ -771,7 +783,7 @@ export function buildWorkOrderAgentPolicy(
   };
   return {
     agentContext,
-    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, privateConnectorPolicy),
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, scopedSurface, requiredPrivatePolicy),
   };
 }
 
@@ -1016,7 +1028,8 @@ export async function runAgentLoop(
           'temporal',
           config.agent.model,
           runtimeBackend,
-          privateConnectorPolicy
+          privateConnectorPolicy,
+          []
         )
       : null;
   const temporalEffectiveTools = temporalPolicy
@@ -1675,6 +1688,25 @@ export async function runAgentLoop(
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
+        // Resolve the run's raw binding before constructing either backend's
+        // role/catalog. The catalog and execution envelope must use the same
+        // projection so an unbound or non-private run never advertises private
+        // connector tools it cannot execute.
+        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
+        let temporalContext: ReturnType<typeof buildTemporalWorkerContext> | undefined;
+        let temporalBinding: { connector: string; channel: string } | null = null;
+        if (wo.workKind === 'temporal') {
+          temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
+        }
+        const projectId = resolveReactiveProjectRoot(config, process.env);
+        const workOrderScope = workOrderEnvelopeScope({
+          workKind: wo.workKind,
+          projectId,
+          laneConnectors: codeActRawConnectors,
+          temporalBinding,
+        });
+
         // Worker prompt selects the provider's supported tool path: Claude's
         // text gateway or Codex's injected native host tools. Both avoid the
         // spawn-default code-act path, where per-run envelope/capture overrides
@@ -1684,7 +1716,8 @@ export async function runAgentLoop(
           wo.workKind,
           config.agent.model,
           runtimeBackend,
-          privateConnectorPolicy
+          privateConnectorPolicy,
+          workOrderScope.raw_connectors
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
@@ -1714,15 +1747,11 @@ export async function runAgentLoop(
         // durable change the run produces rest on it WITHOUT the agent restating anything -
         // the system knew the batch before the run began. This is the whole difference
         // between a bounded run and an unbounded one.
-        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
         if (workOrderBatch.length > 0) {
           runOptions.causeEventIds = workOrderBatch;
         }
-        let temporalBinding: { connector: string; channel: string } | null = null;
-        if (wo.workKind === 'temporal') {
-          const temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+        if (temporalContext) {
           runOptions.temporalWorkContext = temporalContext;
-          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
@@ -1731,7 +1760,6 @@ export async function runAgentLoop(
         // lane's issuance (createPersonaReportAsk wiring below); issuance
         // failure rejects -> failWorkOrder (no envelope-less fallback run).
         if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
-          const projectId = resolveReactiveProjectRoot(config, process.env);
           const wallSeconds = Math.min(
             Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
             1800
@@ -1744,16 +1772,8 @@ export async function runAgentLoop(
             source: 'watch',
             channel_id: `worker:${wo.workKind}`,
             trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
-            scope: (() => {
-              const scope = workOrderEnvelopeScope({
-                workKind: wo.workKind,
-                projectId,
-                laneConnectors: codeActRawConnectors,
-                temporalBinding,
-              });
-              // Identity scopes only - the read mirror is enforcement-layer.
-              return scope;
-            })(),
+            // Identity scopes only - the read mirror is enforcement-layer.
+            scope: workOrderScope,
             tier: 2,
             budget: { wall_seconds: wallSeconds },
             expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),

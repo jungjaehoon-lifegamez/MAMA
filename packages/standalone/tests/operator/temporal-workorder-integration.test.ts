@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type {
+  AgentContext,
   AgentLoopOptions,
   GatewayToolExecutionContext,
   MAMAApiSetInput,
@@ -23,9 +24,20 @@ import {
 } from '../../src/operator/workorder-consumer.js';
 import { buildTemporalWorkOrderHook } from '../../src/operator/workorder-hooks.js';
 import type { WorkerRunnerOptions } from '../../src/operator/worker-run.js';
-import { buildWorkOrderAgentPolicy } from '../../src/cli/commands/start.js';
+import { buildWorkerSystemPrompt } from '../../src/operator/worker-run.js';
+import {
+  buildWorkOrderAgentPolicy,
+  temporalTaskBinding,
+  workOrderEnvelopeScope,
+} from '../../src/cli/commands/start.js';
 import { makeAuthorityHarness } from '../envelope/fixtures.js';
 import type { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
 
 type ModelAction = (
   context: GatewayToolExecutionContext,
@@ -41,6 +53,28 @@ interface FakeEvidence {
 
 const KST = 'Asia/Seoul';
 const at = (time: string): number => Date.parse(`2026-07-21T${time}+09:00`);
+const KAGEMUSHA_TOOLS = [
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
+] as const;
+
+function enabledPrivateConnectorPolicy(): PrivateConnectorPolicy {
+  const connectorConfig: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled: true,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: ['kagemusha'],
+  };
+  return resolvePrivateConnectorPolicy(connectorConfig);
+}
 
 describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   let db: SQLiteDatabase;
@@ -55,9 +89,12 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   let alarms: string[];
   let reports: Array<Record<string, string>>;
   let evidenceReads: Array<{ taskId: number; evidence: FakeEvidence }>;
+  let observedTemporalCatalogs: string[][];
+  let observedTemporalPrompts: string[];
   let envelopeAuthority: EnvelopeAuthority;
   let temporaryRoot: string | null;
   let previousLegacyBypass: string | undefined;
+  let privateConnectorPolicy: PrivateConnectorPolicy;
 
   beforeEach(() => {
     now = at('13:50:00');
@@ -68,9 +105,12 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     alarms = [];
     reports = [];
     evidenceReads = [];
+    observedTemporalCatalogs = [];
+    observedTemporalPrompts = [];
     temporaryRoot = null;
     previousLegacyBypass = process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
     process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = 'false';
+    privateConnectorPolicy = enabledPrivateConnectorPolicy();
     configureRuntime();
   });
 
@@ -87,6 +127,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   function configureRuntime(): void {
     ledger = new TaskLedger(db, { now: () => now, timeZone: KST });
     executor = new GatewayToolExecutor({
+      privateConnectorPolicy,
       temporalContextPacketLookup: async ({ packetId }) => {
         const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
         const context = ledger.loadTemporalWorkContext(attemptId);
@@ -129,23 +170,33 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
       },
       loadBrief: () => 'Reconcile one temporal owner task through the trusted gateway.',
       runOptionsFor: (workOrder) => {
-        const policy = buildWorkOrderAgentPolicy('temporal', 'test-worker-model', 'codex');
+        const temporalWorkContext = buildTemporalWorkerContext(ledger, workOrder);
+        const binding = temporalTaskBinding(ledger, temporalWorkContext.taskId);
+        const scope = workOrderEnvelopeScope({
+          workKind: 'temporal',
+          projectId: '/workspace/MAMA',
+          laneConnectors: ['trello', 'kagemusha'],
+          temporalBinding: binding,
+        });
+        const policy = buildWorkOrderAgentPolicy(
+          'temporal',
+          'test-worker-model',
+          'codex',
+          privateConnectorPolicy,
+          scope.raw_connectors
+        );
         return {
           workorderAttemptId: workOrder.id,
-          temporalWorkContext: buildTemporalWorkerContext(ledger, workOrder),
+          temporalWorkContext,
           agentContext: policy.agentContext,
+          systemPrompt: buildWorkerSystemPrompt(policy.gatewayToolsPrompt, 'codex', 'temporal'),
           envelope: envelopeAuthority.buildAndPersist({
             agent_id: 'workorder-temporal',
             instance_id: `temporal-attempt-${workOrder.id}`,
             source: 'watch',
             channel_id: 'worker:temporal',
             trigger_context: { user_text: `<temporal workorder #${workOrder.id}>` },
-            scope: {
-              project_refs: [{ kind: 'project', id: '/workspace/MAMA' }],
-              raw_connectors: ['trello', 'kagemusha'],
-              memory_scopes: [{ kind: 'project', id: '/workspace/MAMA' }],
-              allowed_destinations: [{ kind: 'dashboard_slot', id: 'pipeline' }],
-            },
+            scope,
             tier: 2,
             budget: { wall_seconds: 60 },
             expires_at: new Date(Date.now() + 90_000).toISOString(),
@@ -180,6 +231,13 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   }> {
     const trusted = options.temporalWorkContext as TemporalWorkContext | undefined;
     if (!trusted) throw new Error('fake model transport did not receive trusted temporal context');
+    const agentContext = options.agentContext as AgentContext;
+    const projectedToolNames = projectCodeActToolPolicy({
+      tier: agentContext.tier,
+      role: agentContext.role,
+    }).names;
+    observedTemporalCatalogs.push(projectedToolNames);
+    observedTemporalPrompts.push(options.systemPrompt ?? '');
     const executionContext = buildAgentToolExecutionContext(
       options as AgentLoopOptions
     ) as GatewayToolExecutionContext | null;
@@ -267,6 +325,13 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
       )
     );
     await consumer.tick();
+
+    expect(observedTemporalCatalogs[0], JSON.stringify(events)).toBeDefined();
+    expect(observedTemporalPrompts[0], JSON.stringify(events)).toBeDefined();
+    for (const toolName of KAGEMUSHA_TOOLS) {
+      expect(observedTemporalCatalogs[0]).not.toContain(toolName);
+      expect(observedTemporalPrompts[0]).not.toContain(toolName);
+    }
 
     const attemptId = runs[0]!;
     expect(ledger.getById(task.id)).toMatchObject({ status: 'done', revision: 2 });

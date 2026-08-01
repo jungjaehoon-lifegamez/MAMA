@@ -9,6 +9,16 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import type { AgentContext } from '../../src/agent/types.js';
+import { buildWorkOrderAgentPolicy } from '../../src/cli/commands/start.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
+import { makeEnvelope } from '../envelope/fixtures.js';
 import {
   buildWorkerSessionKey,
   buildWorkerSystemPrompt,
@@ -16,6 +26,29 @@ import {
   workerRun,
   type WorkerRunner,
 } from '../../src/operator/worker-run.js';
+
+const PRIVATE_TOOLS = [
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
+] as const;
+
+function enabledPrivatePolicy(): PrivateConnectorPolicy {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled: true,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: ['kagemusha'],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
 
 function makeRunner(response = 'worker output'): WorkerRunner & {
   calls: Array<{ content: string; options: Record<string, unknown> }>;
@@ -246,4 +279,103 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(startSource).toContain('agentContext: workOrderPolicy.agentContext');
     expect(startSource).toMatch(/new OperatorTriggerLoop\(\{[\s\S]*?backend: runtimeBackend,/);
   });
+
+  it.each([
+    { backend: 'claude' as const, binding: 'none', rawConnectors: [], privateVisible: false },
+    { backend: 'codex' as const, binding: 'none', rawConnectors: [], privateVisible: false },
+    {
+      backend: 'claude' as const,
+      binding: 'trello',
+      rawConnectors: ['trello'],
+      privateVisible: false,
+    },
+    {
+      backend: 'codex' as const,
+      binding: 'trello',
+      rawConnectors: ['trello'],
+      privateVisible: false,
+    },
+    {
+      backend: 'claude' as const,
+      binding: 'kagemusha',
+      rawConnectors: ['kagemusha'],
+      privateVisible: true,
+    },
+    {
+      backend: 'codex' as const,
+      binding: 'kagemusha',
+      rawConnectors: ['kagemusha'],
+      privateVisible: true,
+    },
+  ])(
+    'TG-06 keeps the $backend temporal run catalog and authorization aligned for $binding binding',
+    async ({ backend, rawConnectors, privateVisible }) => {
+      const privatePolicy = enabledPrivatePolicy();
+      const policy = buildWorkOrderAgentPolicy(
+        'temporal',
+        'worker-model',
+        backend,
+        privatePolicy,
+        rawConnectors
+      );
+      const systemPrompt = buildWorkerSystemPrompt(policy.gatewayToolsPrompt, backend, 'temporal');
+      const runner = makeRunner();
+
+      await workerRun(runner, {
+        kind: 'temporal',
+        brief: 'Reconcile one temporal task.',
+        input: 'Check the bound source and commit one receipt.',
+        runOptions: { systemPrompt, agentContext: policy.agentContext },
+      });
+
+      const capturedContext = runner.calls[0].options.agentContext as AgentContext;
+      const projected = projectCodeActToolPolicy({
+        tier: capturedContext.tier,
+        role: capturedContext.role,
+      });
+      const privateCatalog = PRIVATE_TOOLS.filter((tool) => projected.names.includes(tool));
+      expect(privateCatalog).toEqual(privateVisible ? PRIVATE_TOOLS : []);
+      expect(policy.gatewayToolsPrompt.includes('kagemusha_')).toBe(privateVisible);
+      if (backend === 'claude') {
+        expect(String(runner.calls[0].options.systemPrompt).includes('kagemusha_')).toBe(
+          privateVisible
+        );
+      }
+
+      const executor = new GatewayToolExecutor({
+        envelopeIssuanceMode: 'off',
+        privateConnectorPolicy: privatePolicy,
+      });
+      const authorization = await executor.execute(
+        'code_act',
+        {
+          code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, tasks: typeof kagemusha_tasks, messages: typeof kagemusha_messages })`,
+        },
+        {
+          agentId: 'workorder-temporal',
+          source: 'operator',
+          channelId: 'worker:temporal',
+          agentContext: capturedContext,
+          envelope: makeEnvelope({
+            agent_id: 'workorder-temporal',
+            source: 'watch',
+            channel_id: 'worker:temporal',
+            scope: {
+              project_refs: [{ kind: 'project', id: '/workspace/MAMA' }],
+              raw_connectors: rawConnectors,
+              memory_scopes: [{ kind: 'project', id: '/workspace/MAMA' }],
+              allowed_destinations: [],
+            },
+          }),
+          executionSurface: 'model_tool',
+        }
+      );
+      const value = JSON.parse(String(authorization.message)).value as Record<string, string>;
+      expect(Object.values(value)).toEqual(
+        Array.from({ length: PRIVATE_TOOLS.length }, () =>
+          privateVisible ? 'function' : 'undefined'
+        )
+      );
+    }
+  );
 });

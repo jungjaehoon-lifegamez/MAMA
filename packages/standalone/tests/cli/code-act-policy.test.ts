@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +38,11 @@ function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
 }
 
 const enabledPrivatePolicy = privatePolicy(true);
+
+type ParameterIsRequired<
+  Params extends readonly unknown[],
+  Index extends number,
+> = undefined extends Params[Index] ? false : true;
 
 describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #1: deriveCodeActToolPolicy enforces configured agent allowlists', () => {
@@ -183,6 +188,32 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
   });
 
   describe('AC #5: workorder runners receive an explicit Code-Act role', () => {
+    it('TG-01/TG-06 requires private boot authority for every lane policy', () => {
+      expectTypeOf<
+        ParameterIsRequired<Parameters<typeof buildWorkOrderAgentPolicy>, 3>
+      >().toEqualTypeOf<true>();
+      expectTypeOf<
+        ParameterIsRequired<Parameters<typeof buildOperatorReportAgentPolicy>, 2>
+      >().toEqualTypeOf<true>();
+
+      const workOrderWithoutPolicy = buildWorkOrderAgentPolicy as unknown as (
+        kind: 'temporal',
+        model: string,
+        backend: 'codex'
+      ) => unknown;
+      const reportWithoutPolicy = buildOperatorReportAgentPolicy as unknown as (
+        model: string,
+        backend: 'codex'
+      ) => unknown;
+
+      expect(() => workOrderWithoutPolicy('temporal', 'worker-model', 'codex')).toThrow(
+        /privateConnectorPolicy is required/
+      );
+      expect(() => reportWithoutPolicy('report-model', 'codex')).toThrow(
+        /privateConnectorPolicy is required/
+      );
+    });
+
     const cases = [
       {
         kind: 'board' as const,
@@ -229,7 +260,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(cases)(
       'uses the built-in least-privilege $kind policy without standing agent config',
       ({ kind, roleName, innerTools }) => {
-        const policy = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy);
+        const policy = buildWorkOrderAgentPolicy(
+          kind,
+          'gpt-5.4',
+          'codex',
+          enabledPrivatePolicy,
+          kind === 'wiki' ? [] : ['kagemusha']
+        );
         const context = policy.agentContext;
         const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
@@ -265,7 +302,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'temporal',
           'worker-model',
           backend,
-          enabledPrivatePolicy
+          enabledPrivatePolicy,
+          ['kagemusha']
         );
         const projected = projectCodeActToolPolicy({
           tier: policy.agentContext.tier,
@@ -308,6 +346,46 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         }
       }
     );
+
+    it.each(['codex', 'claude'] as const)(
+      'TG-06 removes private temporal tools for an unbound %s run',
+      (backend) => {
+        const policy = buildWorkOrderAgentPolicy(
+          'temporal',
+          'worker-model',
+          backend,
+          enabledPrivatePolicy,
+          []
+        );
+        const projected = projectCodeActToolPolicy({
+          tier: policy.agentContext.tier,
+          role: policy.agentContext.role,
+        });
+
+        expect(projected.names).not.toContain('kagemusha_overview');
+        expect(projected.names).not.toContain('kagemusha_entities');
+        expect(projected.names).not.toContain('kagemusha_tasks');
+        expect(projected.names).not.toContain('kagemusha_messages');
+        expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+      }
+    );
+
+    it('TG-06 keeps private temporal tools out of a Trello-bound run', () => {
+      const policy = buildWorkOrderAgentPolicy(
+        'temporal',
+        'worker-model',
+        'claude',
+        enabledPrivatePolicy,
+        ['trello']
+      );
+      const projected = projectCodeActToolPolicy({
+        tier: policy.agentContext.tier,
+        role: policy.agentContext.role,
+      });
+
+      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toEqual([]);
+      expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+    });
 
     it('gives the operator report lane a Code-Act role so it can execute gather tools', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
@@ -410,8 +488,16 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     ] as const)(
       'TG-04/TG-06 projects the private bundle onto the enabled %s lane only',
       (kind, roleName) => {
-        const enabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy);
-        const disabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', privatePolicy(false));
+        const enabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy, [
+          'kagemusha',
+        ]);
+        const disabled = buildWorkOrderAgentPolicy(
+          kind,
+          'gpt-5.4',
+          'codex',
+          privatePolicy(false),
+          []
+        );
 
         expect(enabled.agentContext.roleName).toBe(roleName);
         expect(enabled.agentContext.role.allowedTools).toEqual(
