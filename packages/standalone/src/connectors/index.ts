@@ -9,7 +9,6 @@ export const AVAILABLE_CONNECTORS = [
   'calendar',
   'notion',
   'obsidian',
-  'kagemusha',
   'sheets',
   'trello',
   'drive',
@@ -17,7 +16,12 @@ export const AVAILABLE_CONNECTORS = [
   'claude-code',
 ] as const;
 
+export const PRIVATE_CONNECTORS = ['kagemusha'] as const;
+
+export const LOADABLE_CONNECTORS = [...AVAILABLE_CONNECTORS, ...PRIVATE_CONNECTORS] as const;
+
 export type AvailableConnector = (typeof AVAILABLE_CONNECTORS)[number];
+export type LoadableConnector = (typeof LOADABLE_CONNECTORS)[number];
 
 /**
  * Dynamic connector loader — avoids importing all connector deps at startup.
