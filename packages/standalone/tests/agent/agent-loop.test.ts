@@ -612,6 +612,19 @@ describe('AgentLoop', () => {
     ] as const)(
       'TG-06 report-to-AgentLoop gives a Claude non-Code-Act run the %s private catalog exactly once',
       async (_label, enabled, expectedDefinitions) => {
+        const userOwnedGatewayExample = [
+          '# User-authored CLAUDE instructions',
+          '',
+          '# Gateway Tools',
+          '',
+          'Call tools via JSON block:',
+          '',
+          '```tool_call',
+          '{"name":"example_only","input":{"path":"/workspace/kagemusha-logo.svg"}}',
+          '```',
+          '',
+          'Keep this trailing user note.  ',
+        ].join('\r\n');
         let effectivePrompt = '';
         persistentPromptMock.mockImplementationOnce(
           async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
@@ -644,7 +657,7 @@ describe('AgentLoop', () => {
           createMockOAuthManager(),
           {
             backend: 'claude',
-            systemPrompt: 'Operator report base prompt.',
+            systemPrompt: userOwnedGatewayExample,
             useCodeAct: false,
             toolsConfig: { gateway: ['*'], mcp: [] },
           },
@@ -669,6 +682,9 @@ describe('AgentLoop', () => {
 
         await ask('compose the owner report');
 
+        expect(effectivePrompt).toContain(userOwnedGatewayExample);
+        expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
+        expect(effectivePrompt).not.toContain('**drive_download**');
         expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
           expectedDefinitions
         );
@@ -2679,7 +2695,7 @@ Skills provide additional tools.
       expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
     });
 
-    it('replaces a caller generic gateway catalog with the canonical run policy', async () => {
+    it('replaces an exact canonical gateway catalog with the canonical run policy', async () => {
       const context = {
         ...createChatBotContext(),
         role: {
@@ -2728,16 +2744,7 @@ Skills provide additional tools.
           '',
           '---',
           '',
-          '# Gateway Tools',
-          '',
-          'Call tools via JSON block:',
-          '',
-          '```tool_call',
-          '{"name":"mama_save","input":{}}',
-          '```',
-          '',
-          '- **mama_save**(...) — generic write advertisement',
-          '- **Bash**(...) — generic shell advertisement',
+          getGatewayToolsPrompt(),
         ].join('\n'),
       });
 
@@ -2747,8 +2754,7 @@ Skills provide additional tools.
         .sort();
       expect(effectivePrompt).toContain('Keep this instruction.');
       expect(effectivePrompt).not.toContain('# Gateway Tools');
-      expect(effectivePrompt).not.toContain('Call tools via JSON block:');
-      expect(effectivePrompt).not.toContain('generic shell advertisement');
+      expect(effectivePrompt).not.toContain('- **drive_download**');
       expect(effectivePrompt).toContain('## Code-Act: Gateway Tool Execution via Sandbox');
       expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
       expect(advertised).toEqual(policy.names);
@@ -2820,17 +2826,8 @@ Skills provide additional tools.
     it.each([
       {
         name: 'generic gateway catalog',
-        staleSection: [
-          '# Gateway Tools',
-          '',
-          'Call tools via JSON block:',
-          '',
-          '```tool_call',
-          '{"name":"mama_save","input":{}}',
-          '```',
-          '',
-          '- **mama_save**(...) — stale generic write advertisement',
-        ].join('\n'),
+        staleSection: getGatewayToolsPrompt(),
+        removedText: '- **drive_download**',
       },
       {
         name: 'canonical Code-Act section',
@@ -2843,47 +2840,50 @@ Skills provide additional tools.
           'declare function Bash(command: string): unknown;',
           '```',
         ].join('\n'),
+        removedText: 'Stale canonical guidance.',
       },
-    ])('preserves caller suffix bytes while replacing a legacy $name', async ({ staleSection }) => {
-      const suffix = [
-        '\n\n---\n\n',
-        '## Custom Safety & Provenance',
-        '',
-        'KEEP  trailing spaces  ',
-        'provenance-id: caller-owned\r\n',
-      ].join('');
-      let effectivePrompt = '';
-      persistentPromptMock.mockImplementationOnce(
-        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
-          effectivePrompt = promptOptions?.systemPrompt ?? '';
-          return {
-            response: 'Current policy used',
-            usage: { input_tokens: 10, output_tokens: 5 },
-            session_id: 'codex-thread',
-          };
-        }
-      );
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
-        {},
-        { mamaApi: createMockApi() }
-      );
+    ])(
+      'preserves caller suffix bytes while replacing a canonical $name',
+      async ({ staleSection, removedText }) => {
+        const suffix = [
+          '\n\n---\n\n',
+          '## Custom Safety & Provenance',
+          '',
+          'KEEP  trailing spaces  ',
+          'provenance-id: caller-owned\r\n',
+        ].join('');
+        let effectivePrompt = '';
+        persistentPromptMock.mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            effectivePrompt = promptOptions?.systemPrompt ?? '';
+            return {
+              response: 'Current policy used',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'codex-thread',
+            };
+          }
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
+          {},
+          { mamaApi: createMockApi() }
+        );
 
-      await agentLoop.run('Search', {
-        source: 'telegram',
-        channelId: '5551000001',
-        agentContext: withOuterCodeAct(createCodexContext()),
-        systemPrompt: `# Caller Persona\n\n${staleSection}${suffix}`,
-      });
+        await agentLoop.run('Search', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          systemPrompt: `# Caller Persona\n\n---\n\n${staleSection}${suffix}`,
+        });
 
-      expect(effectivePrompt).not.toContain('Stale canonical guidance.');
-      expect(effectivePrompt).not.toContain('stale generic write advertisement');
-      expect(effectivePrompt).toContain(suffix);
-      expect(effectivePrompt).toContain(
-        `${suffix}\n\n---\n\n<!-- MAMA_GENERATED_CODE_ACT_START -->`
-      );
-    });
+        expect(effectivePrompt).not.toContain(removedText);
+        expect(effectivePrompt).toContain(suffix);
+        expect(effectivePrompt).toContain(
+          `${suffix}\n\n---\n\n<!-- MAMA_GENERATED_CODE_ACT_START -->`
+        );
+      }
+    );
 
     it('wraps newly generated Code-Act instructions in explicit replacement boundaries', async () => {
       let effectivePrompt = '';

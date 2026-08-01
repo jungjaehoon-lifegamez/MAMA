@@ -446,29 +446,24 @@ function stripGenericGatewayToolsCatalog(systemPrompt: string): string {
     GENERATED_GATEWAY_TOOLS_START,
     GENERATED_GATEWAY_TOOLS_END
   );
-  const headingPattern = /^#{1,6}\s+Gateway Tools\s*$/gm;
-  let catalogStart = -1;
-  let match: RegExpExecArray | null;
-  while ((match = headingPattern.exec(withoutMarked)) !== null) {
-    catalogStart = match.index;
-  }
+  const generatedCatalog = getGatewayToolsPrompt();
+  const catalogStart = withoutMarked.lastIndexOf(generatedCatalog);
   if (catalogStart < 0) {
     return withoutMarked;
   }
 
-  const catalog = withoutMarked.slice(catalogStart);
-  if (!catalog.includes('Call tools via JSON block:') || !catalog.includes('```tool_call')) {
+  const catalogEnd = catalogStart + generatedCatalog.length;
+  const startsAtLayerBoundary =
+    catalogStart === 0 ||
+    /\r?\n\r?\n---[ \t]*\r?\n\r?\n$/.test(withoutMarked.slice(0, catalogStart));
+  const endsAtLayerBoundary =
+    catalogEnd === withoutMarked.length ||
+    /^\r?\n\r?\n---[ \t]*\r?\n\r?\n/.test(withoutMarked.slice(catalogEnd));
+  if (!startsAtLayerBoundary || !endsAtLayerBoundary) {
     return withoutMarked;
   }
 
-  const generatedCatalog = getGatewayToolsPrompt();
-  if (withoutMarked.startsWith(generatedCatalog, catalogStart)) {
-    return removePromptSection(withoutMarked, catalogStart, catalogStart + generatedCatalog.length);
-  }
-
-  const boundedSeparator = catalog.match(/\r?\n\r?\n---[ \t]*\r?\n\r?\n/);
-  const sectionEnd = boundedSeparator?.index ?? catalog.length;
-  return removePromptSection(withoutMarked, catalogStart, catalogStart + sectionEnd);
+  return removePromptSection(withoutMarked, catalogStart, catalogEnd);
 }
 
 function stripTrailingCanonicalCodeActSection(systemPrompt: string): string {
