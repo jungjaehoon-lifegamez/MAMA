@@ -149,6 +149,19 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     });
   });
 
+  it.each(['', '   ', ' mr_full_1', 'mr_full_1 '])(
+    'TG-06 rejects a supplied non-canonical available model run id %j during capture',
+    async (modelRunId) => {
+      const r = new SituationReporter({
+        fullReportProvenance: () => ({ status: 'available', modelRunId }),
+      });
+
+      await expect(
+        r.prepareReport(async () => 'owner report', 'full', 'delivery-1')
+      ).rejects.toThrow('Full owner report provenance is invalid');
+    }
+  );
+
   it('TG-06 does not persist carry when a full-report send is rejected', async () => {
     const persisted: unknown[] = [];
     const r = new SituationReporter({

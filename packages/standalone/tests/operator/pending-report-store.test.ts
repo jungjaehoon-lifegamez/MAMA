@@ -217,6 +217,100 @@ describe('FilePendingReportStore', () => {
     );
   });
 
+  it('TG-06 refuses to save a state with both a pending delivery and request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+
+    expect(() =>
+      new FilePendingReportStore(path).save({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'digest report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    ).toThrow('Refusing to persist invalid pending operator report state');
+  });
+
+  it('TG-06 quarantines a persisted state with both pending phases', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'digest report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    );
+
+    expect(new FilePendingReportStore(path).load()).toBeNull();
+    expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+  });
+
+  it.each(['', '   ', ' mr_1', 'mr_1 '])(
+    'TG-06 quarantines a supplied non-canonical available model run id %j',
+    async (modelRunId) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+      const path = join(root, 'pending.json');
+      const snapshot = new SituationReporter().snapshot();
+      await writeFile(
+        path,
+        JSON.stringify({
+          version: 1,
+          digest: snapshot,
+          full: snapshot,
+          delivery: {
+            mode: 'full',
+            text: 'owner report',
+            citedTriggerIds: [],
+            createdAtIso: '2026-08-02T00:00:00.000Z',
+            deliveryId: 'full-1',
+            provenance: { status: 'available', modelRunId },
+            occurrence: { kind: 'scheduled_full', hourKey: 'h1' },
+          },
+        })
+      );
+
+      expect(new FilePendingReportStore(path).load()).toBeNull();
+      expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+    }
+  );
+
   it('round-trips an accepted on-demand request before report composition starts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');

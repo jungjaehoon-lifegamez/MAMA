@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { ArtifactProvenance } from './report-carry.js';
+import { isArtifactProvenance } from './report-carry.js';
 import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
 
 export interface PendingReportOccurrence {
@@ -48,7 +48,6 @@ const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
-const UNAVAILABLE_PROVENANCE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
 function isPendingReportState(
   value: unknown,
@@ -64,6 +63,9 @@ function isPendingReportState(
     if (!isSituationSnapshot(fields)) {
       return false;
     }
+  }
+  if (record.delivery !== undefined && record.request !== undefined) {
+    return false;
   }
   return (
     (record.delivery === undefined ||
@@ -151,31 +153,6 @@ function isOnDemandFullOccurrence(value: unknown): boolean {
     keys.includes('firedAtIso') &&
     isNonEmptyBoundedString(record.firedAtIso, 64) &&
     (record.hourKey === undefined || isNonEmptyBoundedString(record.hourKey, 128))
-  );
-}
-
-function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (record.status === 'available') {
-    return (
-      keys.length === 2 &&
-      keys.includes('status') &&
-      keys.includes('modelRunId') &&
-      isBoundedString(record.modelRunId, 512) &&
-      record.modelRunId.length > 0
-    );
-  }
-  return (
-    record.status === 'unavailable' &&
-    keys.length === 2 &&
-    keys.includes('status') &&
-    keys.includes('reason') &&
-    typeof record.reason === 'string' &&
-    UNAVAILABLE_PROVENANCE_REASONS.has(record.reason)
   );
 }
 

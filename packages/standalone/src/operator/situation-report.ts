@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
-import type { ArtifactProvenance } from './report-carry.js';
+import { isArtifactProvenance, type ArtifactProvenance } from './report-carry.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
@@ -131,33 +131,6 @@ export interface SituationReporterOptions {
 
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
 const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
-const UNAVAILABLE_PROVENANCE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
-
-function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (record.status === 'available') {
-    return (
-      keys.length === 2 &&
-      keys.includes('status') &&
-      keys.includes('modelRunId') &&
-      typeof record.modelRunId === 'string' &&
-      record.modelRunId.length > 0 &&
-      record.modelRunId.length <= 512
-    );
-  }
-  return (
-    record.status === 'unavailable' &&
-    keys.length === 2 &&
-    keys.includes('status') &&
-    keys.includes('reason') &&
-    typeof record.reason === 'string' &&
-    UNAVAILABLE_PROVENANCE_REASONS.has(record.reason)
-  );
-}
 
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();

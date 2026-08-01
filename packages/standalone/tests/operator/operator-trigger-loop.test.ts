@@ -993,6 +993,74 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markSuccess).not.toHaveBeenCalled();
   });
 
+  it('TG-06 quarantines a state with both pending phases before restart recovery can send or advance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'old digest',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired,
+        loadLastSuccess: () => null,
+        markSuccess,
+      },
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
+  });
+
   it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
     const first = durableLoop(pendingRef, {

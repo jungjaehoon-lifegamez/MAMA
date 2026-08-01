@@ -120,12 +120,18 @@ function isTarget(value: unknown): value is ReportCarryTarget {
   return value.source === 'telegram' && isNonEmptyString(value.channelId);
 }
 
-function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
+/** Exact persisted provenance contract shared by report composition and outbox recovery. */
+export function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
   if (!isRecord(value)) {
     return false;
   }
   if (value.status === 'available') {
-    return hasOnlyKeys(value, ['status', 'modelRunId']) && isNonEmptyString(value.modelRunId);
+    return (
+      hasOnlyKeys(value, ['status', 'modelRunId']) &&
+      isNonEmptyString(value.modelRunId) &&
+      value.modelRunId.trim() === value.modelRunId &&
+      value.modelRunId.length <= 512
+    );
   }
   return (
     value.status === 'unavailable' &&
