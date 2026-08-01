@@ -929,6 +929,52 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(scheduler.markSuccess).toHaveBeenCalledOnce();
   });
 
+  it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
+    const pendingRef: { current: PendingReportState | null } = { current: null };
+    const first = durableLoop(pendingRef, {
+      output: {
+        send: async () => {
+          throw new Error('telegram unavailable');
+        },
+      },
+      reportAsk: async () => 'stable report body',
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_original' }),
+      reportScheduler: {
+        shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      },
+    });
+
+    await expect(first.tick()).rejects.toThrow('telegram unavailable');
+    expect(pendingRef.current?.delivery?.provenance).toEqual({
+      status: 'available',
+      modelRunId: 'mr_original',
+    });
+
+    const persisted: unknown[] = [];
+    const recovered = durableLoop(pendingRef, {
+      output: { send: async () => {} },
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_wrong_process' }),
+      persistLastFullReport: (report) => persisted.push(report),
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      },
+    });
+
+    await recovered.tick();
+
+    expect(persisted).toHaveLength(1);
+    expect((persisted[0] as { provenance: unknown }).provenance).toEqual({
+      status: 'available',
+      modelRunId: 'mr_original',
+    });
+  });
+
   it('replays the same id after an accepted send whose completion state was not persisted', async () => {
     let durable: PendingReportState | null = null;
     let saveCount = 0;

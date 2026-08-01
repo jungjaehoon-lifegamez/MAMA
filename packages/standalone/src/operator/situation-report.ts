@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
+import type { ArtifactProvenance } from './report-carry.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
@@ -43,6 +44,14 @@ export interface PreparedSituationReport {
   citedTriggerIds: string[];
   createdAtIso: string;
   deliveryId?: string;
+  provenance?: ArtifactProvenance;
+}
+
+export interface DeliveredFullReport {
+  deliveryId: string;
+  deliveredAtIso: string;
+  text: string;
+  provenance: ArtifactProvenance;
 }
 
 /** Deterministic prompt-size bounds (mind memory + prompt length; see plan design decision 4). */
@@ -114,16 +123,41 @@ export interface SituationReporterOptions {
    * of being elimination-only. Uncited fires stay NEUTRAL - not failures.
    */
   recordTriggerUse?: (triggerIds: string[]) => void;
-  /**
-   * Context carry (plan v6 S1-T4): called with (deliveredAtIso, reportText)
-   * after a FULL report is successfully delivered. Runtime wiring persists it
-   * so the owner console can reference the latest report per chat turn.
-   */
-  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
+  /** Reads the provenance of the run that just composed a FULL report. */
+  fullReportProvenance?: () => ArtifactProvenance;
+  /** Called only after a FULL report has definitely been delivered. */
+  persistLastFullReport?: (report: DeliveredFullReport) => void;
 }
 
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
 const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
+const UNAVAILABLE_PROVENANCE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
+
+function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (record.status === 'available') {
+    return (
+      keys.length === 2 &&
+      keys.includes('status') &&
+      keys.includes('modelRunId') &&
+      typeof record.modelRunId === 'string' &&
+      record.modelRunId.length > 0 &&
+      record.modelRunId.length <= 512
+    );
+  }
+  return (
+    record.status === 'unavailable' &&
+    keys.length === 2 &&
+    keys.includes('status') &&
+    keys.includes('reason') &&
+    typeof record.reason === 'string' &&
+    UNAVAILABLE_PROVENANCE_REASONS.has(record.reason)
+  );
+}
 
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
@@ -322,12 +356,24 @@ export class SituationReporter {
       return null;
     }
 
+    const provenance =
+      mode === 'full'
+        ? (this.opts.fullReportProvenance?.() ?? {
+            status: 'unavailable' as const,
+            reason: 'no_run_handle' as const,
+          })
+        : undefined;
+    if (provenance !== undefined && !isArtifactProvenance(provenance)) {
+      throw new Error('Full owner report provenance is invalid');
+    }
+
     return {
       mode,
       text,
       citedTriggerIds: cited,
       createdAtIso: new Date().toISOString(),
       ...(deliveryId ? { deliveryId } : {}),
+      ...(provenance ? { provenance } : {}),
     };
   }
 
@@ -350,20 +396,30 @@ export class SituationReporter {
     if (prepared.citedTriggerIds.length > 0) {
       this.opts.recordTriggerUse?.(prepared.citedTriggerIds);
     }
-    // Context carry (plan v6 S1-T4): persist the DELIVERED full report so the
-    // chat console can reference "the report you just got" instead of
-    // fabricating one. Same success condition as the delta anchor.
+    // TG-06: persist carry only after the external send succeeds. The prepared
+    // artifact, not mutable process state, owns both the delivery ID and run provenance.
     if (prepared.mode === 'full') {
-      try {
-        this.opts.persistLastFullReport?.(new Date().toISOString(), prepared.text);
-      } catch (error) {
-        // Carry is derived state - persistence failure must not fail the
-        // delivered report, but it must be loud.
-        console.warn(
-          `[situation-report] failed to persist last full report for context carry: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+      if (!prepared.deliveryId) {
+        console.warn('[situation-report] skipped full-report carry: missing delivery id');
+      } else if (!prepared.provenance) {
+        console.warn('[situation-report] skipped full-report carry: missing provenance');
+      } else {
+        const report: DeliveredFullReport = {
+          deliveryId: prepared.deliveryId,
+          deliveredAtIso: new Date().toISOString(),
+          text: prepared.text,
+          provenance: prepared.provenance,
+        };
+        try {
+          this.opts.persistLastFullReport?.(report);
+        } catch (error) {
+          // Carry is derived state - persistence failure must not fail the delivered report.
+          console.warn(
+            `[situation-report] failed to persist last full report for context carry: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
     }
     this.reset();

@@ -58,6 +58,88 @@ describe('FilePendingReportStore', () => {
     });
   });
 
+  it('TG-06 round-trips full report provenance across restart replay', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    const provenance = { status: 'available', modelRunId: 'mr_1' } as const;
+    const store = new FilePendingReportStore(path);
+
+    store.save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: {
+        mode: 'full',
+        text: 'owner report',
+        citedTriggerIds: [],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'd1',
+        provenance,
+        occurrence: {
+          kind: 'scheduled_full',
+          hourKey: '2026-08-02:09',
+          firedAtIso: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(store.load()?.delivery?.provenance).toEqual(provenance);
+  });
+
+  it('TG-06 labels a legacy pending full delivery without provenance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'legacy owner report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'legacy-d1',
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+        },
+      })
+    );
+
+    expect(new FilePendingReportStore(path).load()?.delivery?.provenance).toEqual({
+      status: 'unavailable',
+      reason: 'legacy_record',
+    });
+  });
+
+  it('TG-06 quarantines malformed pending full-report provenance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'malformed owner report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'd1',
+          provenance: { status: 'available', modelRunId: '' },
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+        },
+      })
+    );
+
+    expect(new FilePendingReportStore(path).load()).toBeNull();
+    expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+  });
+
   it('round-trips an accepted on-demand request before report composition starts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');

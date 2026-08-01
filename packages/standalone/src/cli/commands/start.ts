@@ -2103,11 +2103,12 @@ export async function runAgentLoop(
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
-        // S1-T4 context carry: the delivered FULL report persists so the owner
-        // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) => {
+        // TG-06: composition supplies provenance immediately to the prepared
+        // delivery; this callback receives that durable artifact only after send success.
+        fullReportProvenance: () => lastReportProvenance,
+        persistLastFullReport: (report) => {
           getLegCadence()?.beat('full-report');
-          return persistLastFullReport(iso, text, lastReportProvenance);
+          return persistLastFullReport(report.deliveredAtIso, report.text, report.provenance);
         },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),

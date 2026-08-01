@@ -10,6 +10,7 @@ import {
   OPERATOR_FULL_REPORT_TAG,
 } from '../../src/operator/situation-report.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
+import type { ArtifactProvenance } from '../../src/operator/report-carry.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -132,6 +133,106 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const send2 = vi.fn(async () => {});
     await r.report(askAgent, { send: send2 }, 'digest');
     expect(send2).toHaveBeenCalledTimes(1);
+  });
+
+  it('TG-06 captures full-report provenance with the prepared delivery', async () => {
+    const provenance: ArtifactProvenance = { status: 'available', modelRunId: 'mr_full_1' };
+    const r = new SituationReporter({ fullReportProvenance: () => provenance });
+
+    const prepared = await r.prepareReport(async () => 'owner report', 'full', 'delivery-1');
+
+    expect(prepared).toMatchObject({
+      mode: 'full',
+      text: 'owner report',
+      deliveryId: 'delivery-1',
+      provenance,
+    });
+  });
+
+  it('TG-06 does not persist carry when a full-report send is rejected', async () => {
+    const persisted: unknown[] = [];
+    const r = new SituationReporter({
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_full_1' }),
+      persistLastFullReport: (report) => persisted.push(report),
+    });
+    const prepared = await r.prepareReport(async () => 'owner report', 'full', 'delivery-1');
+
+    await expect(
+      r.deliverPrepared(prepared!, {
+        send: async () => {
+          throw new Error('telegram rejected');
+        },
+      })
+    ).rejects.toThrow('telegram rejected');
+
+    expect(persisted).toEqual([]);
+  });
+
+  it('TG-06 persists the exact successful full delivery with its captured provenance', async () => {
+    const provenance: ArtifactProvenance = { status: 'available', modelRunId: 'mr_full_1' };
+    const persisted: unknown[] = [];
+    const r = new SituationReporter({
+      fullReportProvenance: () => provenance,
+      persistLastFullReport: (report) => persisted.push(report),
+    });
+    const prepared = await r.prepareReport(async () => 'owner report', 'full', 'delivery-1');
+
+    await r.deliverPrepared(prepared!, { send: async () => {} });
+
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({
+      deliveryId: 'delivery-1',
+      text: 'owner report',
+      provenance,
+    });
+    expect((persisted[0] as { deliveredAtIso: string }).deliveredAtIso).toMatch(
+      /^\d{4}-\d{2}-\d{2}T/
+    );
+  });
+
+  it('TG-06 never persists carry for a digest delivery', async () => {
+    const persisted: unknown[] = [];
+    const r = new SituationReporter({
+      persistLastFullReport: (report) => persisted.push(report),
+    });
+    r.recordFire(fire('t1', 'k', 'c'));
+    const prepared = await r.prepareReport(async () => 'digest', 'digest', 'digest-1');
+
+    await r.deliverPrepared(prepared!, { send: async () => {} });
+
+    expect(persisted).toEqual([]);
+  });
+
+  it('TG-06 warns and skips carry when a successful full report has no delivery id', async () => {
+    const persisted: unknown[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = new SituationReporter({
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_full_1' }),
+      persistLastFullReport: (report) => persisted.push(report),
+    });
+    const prepared = await r.prepareReport(async () => 'owner report', 'full');
+
+    await expect(r.deliverPrepared(prepared!, { send: async () => {} })).resolves.toBeUndefined();
+
+    expect(persisted).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('missing delivery id'));
+    warn.mockRestore();
+  });
+
+  it('TG-06 warns but resolves a successful full delivery when carry persistence fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = new SituationReporter({
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_full_1' }),
+      persistLastFullReport: () => {
+        throw new Error('carry unavailable');
+      },
+    });
+    const prepared = await r.prepareReport(async () => 'owner report', 'full', 'delivery-1');
+
+    await expect(r.deliverPrepared(prepared!, { send: async () => {} })).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('carry unavailable'));
+    warn.mockRestore();
   });
 
   // ---- new M2 behaviors ----

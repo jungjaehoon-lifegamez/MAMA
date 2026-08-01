@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { ArtifactProvenance } from './report-carry.js';
 import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
 
 export interface PendingReportOccurrence {
@@ -47,6 +48,7 @@ const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
+const UNAVAILABLE_PROVENANCE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
 function isPendingReportState(value: unknown): value is PendingReportState {
   if (!value || typeof value !== 'object') return false;
@@ -85,7 +87,7 @@ function isPendingDelivery(value: unknown): value is PendingReportDelivery {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   const occurrence = record.occurrence as Record<string, unknown> | undefined;
-  return (
+  const sharedValid =
     (record.mode === 'digest' || record.mode === 'full') &&
     isBoundedString(record.text, 1_000_000) &&
     isBoundedString(record.deliveryId, 512) &&
@@ -98,8 +100,46 @@ function isPendingDelivery(value: unknown): value is PendingReportDelivery {
       occurrence?.kind === 'scheduled_full' ||
       occurrence?.kind === 'on_demand_full') &&
     (occurrence.hourKey === undefined || isBoundedString(occurrence.hourKey, 128)) &&
-    (occurrence.firedAtIso === undefined || isBoundedString(occurrence.firedAtIso, 64))
+    (occurrence.firedAtIso === undefined || isBoundedString(occurrence.firedAtIso, 64));
+  if (!sharedValid) {
+    return false;
+  }
+  if (record.mode === 'digest') {
+    return record.provenance === undefined;
+  }
+  return record.provenance === undefined || isArtifactProvenance(record.provenance);
+}
+
+function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (record.status === 'available') {
+    return (
+      keys.length === 2 &&
+      keys.includes('status') &&
+      keys.includes('modelRunId') &&
+      isBoundedString(record.modelRunId, 512) &&
+      record.modelRunId.length > 0
+    );
+  }
+  return (
+    record.status === 'unavailable' &&
+    keys.length === 2 &&
+    keys.includes('status') &&
+    keys.includes('reason') &&
+    typeof record.reason === 'string' &&
+    UNAVAILABLE_PROVENANCE_REASONS.has(record.reason)
   );
+}
+
+function normalizeLegacyFullDelivery(state: PendingReportState): PendingReportState {
+  if (state.delivery?.mode === 'full' && state.delivery.provenance === undefined) {
+    state.delivery.provenance = { status: 'unavailable', reason: 'legacy_record' };
+  }
+  return state;
 }
 
 function isSituationSnapshot(fields: Record<string, unknown>): boolean {
@@ -186,7 +226,7 @@ export class FilePendingReportStore implements PendingReportStore {
             : 'Pending operator report state is invalid'
         );
       }
-      return parsed;
+      return normalizeLegacyFullDelivery(parsed);
     } catch (error) {
       const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}`;
       renameSync(this.path, quarantinePath);

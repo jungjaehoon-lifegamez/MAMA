@@ -25,7 +25,7 @@ import { matchTriggers } from './trigger-matcher.js';
 import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
-import { SituationReporter } from './situation-report.js';
+import { SituationReporter, type DeliveredFullReport } from './situation-report.js';
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { randomUUID } from 'node:crypto';
@@ -37,6 +37,7 @@ import type {
 } from './pending-report-store.js';
 import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
+import type { ArtifactProvenance } from './report-carry.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -119,8 +120,10 @@ export interface TriggerLoopDeps {
   };
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
-  /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
-  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
+  /** Captures the provenance of the run that has just composed a FULL report. */
+  fullReportProvenance?: () => ArtifactProvenance;
+  /** Persists the exact successful FULL delivery for the later owner-turn carry. */
+  persistLastFullReport?: (report: DeliveredFullReport) => void;
   /** Durable report accumulator written before connector cursors advance. */
   pendingReportStore?: PendingReportStore;
   config: TriggerLoopConfig;
@@ -181,6 +184,7 @@ export class OperatorTriggerLoop {
           : (deps.fullReportSelfGather ?? []),
       boardPublishLines: deps.fullReportBoardLines,
       recordTriggerUse,
+      fullReportProvenance: deps.fullReportProvenance,
       persistLastFullReport: deps.persistLastFullReport,
     });
     const pending = deps.output ? deps.pendingReportStore?.load() : null;
