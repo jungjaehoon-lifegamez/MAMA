@@ -150,7 +150,6 @@ export class OperatorTriggerLoop {
   private fullReporter: SituationReporter;
   private pendingDelivery: PendingReportDelivery | undefined;
   private pendingRequest: PendingReportRequest | undefined;
-  private pendingReportWorkBlocked = false;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -197,15 +196,19 @@ export class OperatorTriggerLoop {
       this.pendingRequest = pending.request;
       deps.log('[trigger-loop] restored pending owner-report buffer');
     } else if (pendingStore?.loadStatus?.() === 'quarantined') {
-      this.pendingReportWorkBlocked = true;
       deps.log(
         '[trigger-loop] owner-report work blocked until pending outbox quarantine is cleared'
       );
     }
   }
 
+  /** Consult durable state for every report operation; recovery may happen while this loop lives. */
+  private isPendingReportWorkBlocked(): boolean {
+    return this.deps.pendingReportStore?.loadStatus?.() === 'quarantined';
+  }
+
   private persistPendingReports(): void {
-    if (!this.deps.output || this.pendingReportWorkBlocked) return;
+    if (!this.deps.output) return;
     this.deps.pendingReportStore?.save({
       version: 1,
       digest: this.digest.snapshot(),
@@ -257,7 +260,7 @@ export class OperatorTriggerLoop {
     mode: ReportMode,
     occurrence: PendingReportOccurrence
   ): Promise<boolean> {
-    if (!this.deps.output || this.pendingReportWorkBlocked) {
+    if (!this.deps.output || this.isPendingReportWorkBlocked()) {
       return false;
     }
     if (this.pendingDelivery) {
@@ -283,7 +286,7 @@ export class OperatorTriggerLoop {
 
   private async preparePendingRequest(): Promise<boolean> {
     const request = this.pendingRequest;
-    if (!request || !this.deps.output || this.pendingReportWorkBlocked) return false;
+    if (!request || !this.deps.output || this.isPendingReportWorkBlocked()) return false;
     if (this.pendingDelivery) {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
@@ -310,7 +313,7 @@ export class OperatorTriggerLoop {
   }
 
   private async recoverPendingReportWork(): Promise<void> {
-    if (this.pendingReportWorkBlocked) return;
+    if (this.isPendingReportWorkBlocked()) return;
     await this.deliverPendingReport(true);
     if (this.pendingRequest) {
       const sent = await this.preparePendingRequest();
@@ -502,7 +505,7 @@ export class OperatorTriggerLoop {
     const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (
-      !this.pendingReportWorkBlocked &&
+      !this.isPendingReportWorkBlocked() &&
       output &&
       reportEvery > 0 &&
       tick % reportEvery === 0 &&
@@ -518,7 +521,7 @@ export class OperatorTriggerLoop {
     //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
     //    so the next tick retries with the buffer intact.
     let fullReported = false;
-    if (!this.pendingReportWorkBlocked && output && reportScheduler) {
+    if (!this.isPendingReportWorkBlocked() && output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
         // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
@@ -581,7 +584,7 @@ export class OperatorTriggerLoop {
   startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
     const output = this.deps.output;
     const reportScheduler = this.deps.reportScheduler;
-    if (!output || this.pendingReportWorkBlocked) {
+    if (!output || this.isPendingReportWorkBlocked()) {
       return { accepted: false, reason: 'unavailable' };
     }
     if (this.running || this.pendingDelivery || this.pendingRequest) {

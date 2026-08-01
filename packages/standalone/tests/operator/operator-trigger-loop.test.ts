@@ -1061,7 +1061,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markSuccess).not.toHaveBeenCalled();
   });
 
-  it('TG-06 durably blocks scheduled and on-demand replacement reports after a quarantined state', async () => {
+  it('TG-06 blocks replacement reports until the same live loop observes explicit recovery', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
     const snapshot = new (
@@ -1136,6 +1136,19 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markFired).not.toHaveBeenCalled();
     expect(markSuccess).not.toHaveBeenCalled();
     expect(scheduler.shouldFire).not.toHaveBeenCalled();
+
+    new FilePendingReportStore(path).recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+    });
+    await first.tick();
+
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+    expect(markFired).toHaveBeenCalledWith('2026-08-02:09');
+    expect(markSuccess).toHaveBeenCalledOnce();
   });
 
   it('TG-06 treats an absent pending outbox as eligible for the scheduled full report', async () => {

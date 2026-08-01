@@ -1,11 +1,80 @@
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
 import { SituationReporter } from '../../src/operator/situation-report.js';
+
+interface PendingStoreChild {
+  ready: Promise<void>;
+  exited: Promise<void>;
+}
+
+function startPendingStoreChild(
+  operation: 'load' | 'save' | 'recover',
+  path: string,
+  state: unknown,
+  delayMs: number = 0
+): PendingStoreChild {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/operator/pending-report-store.ts')).href;
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const script = `
+    import { FilePendingReportStore } from ${JSON.stringify(moduleUrl)};
+    const store = new FilePendingReportStore(process.env.MAMA_PENDING_PATH);
+    const state = JSON.parse(process.env.MAMA_PENDING_STATE);
+    const run = () => {
+      if (process.env.MAMA_PENDING_OPERATION === 'load') store.load();
+      if (process.env.MAMA_PENDING_OPERATION === 'save') store.save(state);
+      if (process.env.MAMA_PENDING_OPERATION === 'recover') store.recoverWithValidState(state);
+      process.stdout.write('done\\n');
+    };
+    process.stdout.write('ready\\n');
+    setTimeout(run, Number(process.env.MAMA_PENDING_DELAY_MS));
+  `;
+  const child = spawn(process.execPath, [tsxCli, '--eval', script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      MAMA_PENDING_OPERATION: operation,
+      MAMA_PENDING_PATH: path,
+      MAMA_PENDING_STATE: JSON.stringify(state),
+      MAMA_PENDING_DELAY_MS: String(delayMs),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('ready')) {
+        resolve();
+      }
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Pending-store child exited ${code}: ${stderr}`));
+      }
+    });
+  });
+  const exited = new Promise<void>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Pending-store child exited ${code}: ${stderr}`));
+      }
+    });
+  });
+  return { ready, exited };
+}
 
 describe('FilePendingReportStore', () => {
   it('persists both report windows atomically for restart recovery', async () => {
@@ -146,7 +215,7 @@ describe('FilePendingReportStore', () => {
     );
   });
 
-  it('TG-06 preserves a durable quarantine until an explicit valid save clears it', async () => {
+  it('TG-06 preserves a durable quarantine until explicit recovery replaces it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
     const snapshot = new SituationReporter().snapshot();
@@ -156,6 +225,9 @@ describe('FilePendingReportStore', () => {
     );
     const store = new FilePendingReportStore(path);
 
+    // A stale ready observation cannot authorize a later normal save once a
+    // concurrent loader has durably marked the exact source quarantined.
+    expect(store.loadStatus()).toBe('ready');
     expect(store.load()).toBeNull();
     expect(store.loadStatus()).toBe('quarantined');
     expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
@@ -166,11 +238,71 @@ describe('FilePendingReportStore', () => {
       ])
     );
 
-    store.save({ version: 1, digest: snapshot, full: snapshot });
+    const recovered = { version: 1, digest: snapshot, full: snapshot } as const;
+    expect(() => store.save(recovered)).toThrow(
+      'Pending owner-report state is quarantined; explicit recovery is required'
+    );
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+
+    store.recoverWithValidState(recovered);
 
     expect(new FilePendingReportStore(path).loadStatus()).toBe('ready');
     expect(new FilePendingReportStore(path).load()?.digest).toEqual(snapshot);
     expect(await readdir(root)).not.toContain('pending.json.quarantined');
+  });
+
+  it('TG-06 serializes invalid load and explicit recovery across processes without moving valid bytes', async () => {
+    const snapshot = new SituationReporter().snapshot();
+    const valid = { version: 1, digest: snapshot, full: snapshot };
+    const invalid = JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } });
+
+    const loaderFirstRoot = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const loaderFirstPath = join(loaderFirstRoot, 'pending.json');
+    await writeFile(loaderFirstPath, invalid);
+    const invalidLoader = startPendingStoreChild('load', loaderFirstPath, null);
+    const recoveryAfterLoad = startPendingStoreChild('recover', loaderFirstPath, valid, 100);
+    await Promise.all([invalidLoader.ready, recoveryAfterLoad.ready]);
+    await Promise.all([invalidLoader.exited, recoveryAfterLoad.exited]);
+    expect(new FilePendingReportStore(loaderFirstPath).load()).toEqual(valid);
+    const loaderFirstEvidence = (await readdir(loaderFirstRoot)).find((entry) =>
+      entry.startsWith('pending.json.corrupt-')
+    );
+    expect(loaderFirstEvidence).toBeDefined();
+    expect(await readFile(join(loaderFirstRoot, loaderFirstEvidence as string), 'utf8')).toBe(
+      invalid
+    );
+
+    const recoveryFirstRoot = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const recoveryFirstPath = join(recoveryFirstRoot, 'pending.json');
+    await writeFile(recoveryFirstPath, invalid);
+    const recoveryFirst = startPendingStoreChild('recover', recoveryFirstPath, valid);
+    const staleLoader = startPendingStoreChild('load', recoveryFirstPath, null, 100);
+    await Promise.all([recoveryFirst.ready, staleLoader.ready]);
+    await Promise.all([recoveryFirst.exited, staleLoader.exited]);
+    expect(new FilePendingReportStore(recoveryFirstPath).load()).toEqual(valid);
+    expect(
+      (await readdir(recoveryFirstRoot)).filter((entry) => entry.includes('.corrupt-'))
+    ).toEqual([]);
+  });
+
+  it('TG-06 serializes concurrent invalid loaders into one preserved quarantine', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const first = startPendingStoreChild('load', path, null);
+    const second = startPendingStoreChild('load', path, null);
+
+    await Promise.all([first.ready, second.ready]);
+    await Promise.all([first.exited, second.exited]);
+
+    const entries = await readdir(root);
+    expect(entries.filter((entry) => entry.startsWith('pending.json.corrupt-'))).toHaveLength(1);
+    expect(entries).toContain('pending.json.quarantined');
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
   });
 
   it.each([

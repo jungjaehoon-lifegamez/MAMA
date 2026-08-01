@@ -4,14 +4,16 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { isArtifactProvenance } from './report-carry.js';
+import { withFileCoordinationTransaction } from './file-coordination.js';
 import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
 
 export interface PendingReportOccurrence {
@@ -48,6 +50,8 @@ export interface PendingReportStore {
    */
   loadStatus?(): 'empty' | 'ready' | 'quarantined';
   save(state: PendingReportState): void;
+  /** Explicit operator/API repair for a quarantined outbox. */
+  recoverWithValidState?(state: PendingReportState): void;
 }
 
 const MAX_PENDING_REPORT_BYTES = 8 * 1024 * 1024;
@@ -239,6 +243,66 @@ function isNonEmptyBoundedString(value: unknown, maxLength: number): value is st
   return isBoundedString(value, maxLength) && value.trim().length > 0;
 }
 
+function isErrno(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+function writeTextAtomically(path: string, text: string): void {
+  const directory = dirname(path);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stagingDirectory = join(
+    directory,
+    `.${basename(path)}.${process.pid}.${randomUUID()}.stage`
+  );
+  let payloadPath: string | undefined;
+  let ownsStagingDirectory = false;
+  let published = false;
+  let operationError: unknown;
+  let cleanupError: unknown;
+  try {
+    mkdirSync(stagingDirectory, { mode: 0o700 });
+    ownsStagingDirectory = true;
+    chmodSync(stagingDirectory, 0o700);
+    payloadPath = join(stagingDirectory, `${randomUUID()}.json`);
+    writeFileSync(payloadPath, text, { mode: 0o600, flag: 'wx' });
+    chmodSync(payloadPath, 0o600);
+    renameSync(payloadPath, path);
+    published = true;
+    chmodSync(path, 0o600);
+  } catch (error) {
+    operationError = error;
+  } finally {
+    if (!published && payloadPath !== undefined) {
+      try {
+        unlinkSync(payloadPath);
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT')) {
+          cleanupError = error;
+        }
+      }
+    }
+    if (ownsStagingDirectory) {
+      try {
+        rmdirSync(stagingDirectory);
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT') && cleanupError === undefined) {
+          cleanupError = error;
+        }
+      }
+    }
+  }
+  if (cleanupError !== undefined) {
+    throw new Error(
+      `Unable to clean pending owner-report staging directory: ${
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+      }`
+    );
+  }
+  if (operationError !== undefined) {
+    throw operationError;
+  }
+}
+
 export class FilePendingReportStore implements PendingReportStore {
   constructor(
     private readonly path: string,
@@ -250,71 +314,77 @@ export class FilePendingReportStore implements PendingReportStore {
   }
 
   loadStatus(): 'empty' | 'ready' | 'quarantined' {
-    if (existsSync(this.quarantineMarkerPath())) {
-      return 'quarantined';
-    }
-    return existsSync(this.path) ? 'ready' : 'empty';
+    return withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
+      if (existsSync(this.quarantineMarkerPath())) {
+        return 'quarantined';
+      }
+      return existsSync(this.path) ? 'ready' : 'empty';
+    });
   }
 
   load(): PendingReportState | null {
-    if (this.loadStatus() === 'quarantined') {
-      this.log(
-        `[trigger-loop] pending owner-report state remains quarantined at ${this.quarantineMarkerPath()}`
-      );
-      return null;
-    }
-    if (!existsSync(this.path)) return null;
-    const size = statSync(this.path).size;
-    const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
-    try {
-      const parsed: unknown = raw === null ? null : JSON.parse(raw);
-      if (!isPendingReportState(parsed, true)) {
-        throw new Error(
-          size > MAX_PENDING_REPORT_BYTES
-            ? 'Pending operator report state exceeds its size limit'
-            : 'Pending operator report state is invalid'
+    return withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
+      if (existsSync(this.quarantineMarkerPath())) {
+        this.log(
+          `[trigger-loop] pending owner-report state remains quarantined at ${this.quarantineMarkerPath()}`
         );
+        return null;
       }
-      return normalizeLegacyFullDelivery(parsed);
-    } catch (error) {
-      const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;
-      const markerPath = this.quarantineMarkerPath();
-      const markerTemporaryPath = `${markerPath}.tmp`;
-      const reason = error instanceof Error ? error.message : String(error);
-      // Create the durable block first. A process death before the invalid
-      // bytes move still fails closed on the next startup; a successful move
-      // leaves the original bytes intact for operator investigation.
-      writeFileSync(
-        markerTemporaryPath,
-        `${JSON.stringify({ version: 1, quarantinePath, reason })}\n`,
-        { mode: 0o600 }
-      );
-      chmodSync(markerTemporaryPath, 0o600);
-      renameSync(markerTemporaryPath, markerPath);
-      renameSync(this.path, quarantinePath);
-      this.log(
-        `[trigger-loop] invalid pending owner-report state quarantined at ${quarantinePath}: ${
-          reason
-        }`
-      );
-      return null;
-    }
+      if (!existsSync(this.path)) return null;
+      const size = statSync(this.path).size;
+      const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
+      try {
+        const parsed: unknown = raw === null ? null : JSON.parse(raw);
+        if (!isPendingReportState(parsed, true)) {
+          throw new Error(
+            size > MAX_PENDING_REPORT_BYTES
+              ? 'Pending operator report state exceeds its size limit'
+              : 'Pending operator report state is invalid'
+          );
+        }
+        return normalizeLegacyFullDelivery(parsed);
+      } catch (error) {
+        const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;
+        const reason = error instanceof Error ? error.message : String(error);
+        // Re-read and move the exact invalid source while the same process-wide
+        // transaction also excludes a concurrent valid recovery.
+        writeTextAtomically(
+          this.quarantineMarkerPath(),
+          `${JSON.stringify({ version: 1, quarantinePath, reason })}\n`
+        );
+        renameSync(this.path, quarantinePath);
+        this.log(
+          `[trigger-loop] invalid pending owner-report state quarantined at ${quarantinePath}: ${
+            reason
+          }`
+        );
+        return null;
+      }
+    });
   }
 
   save(state: PendingReportState): void {
     if (!isPendingReportState(state, false)) {
       throw new Error('Refusing to persist invalid pending operator report state');
     }
-    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.path}.tmp`;
-    writeFileSync(temporaryPath, `${JSON.stringify(state)}\n`, { mode: 0o600 });
-    chmodSync(temporaryPath, 0o600);
-    renameSync(temporaryPath, this.path);
-    // A successful explicit save is the operator/API recovery action. Do not
-    // silently replace a quarantined record from the loop itself.
-    const markerPath = this.quarantineMarkerPath();
-    if (existsSync(markerPath)) {
-      unlinkSync(markerPath);
+    withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
+      if (existsSync(this.quarantineMarkerPath())) {
+        throw new Error('Pending owner-report state is quarantined; explicit recovery is required');
+      }
+      writeTextAtomically(this.path, `${JSON.stringify(state)}\n`);
+    });
+  }
+
+  recoverWithValidState(state: PendingReportState): void {
+    if (!isPendingReportState(state, false)) {
+      throw new Error('Refusing to recover pending owner-report state with invalid data');
     }
+    withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
+      writeTextAtomically(this.path, `${JSON.stringify(state)}\n`);
+      const markerPath = this.quarantineMarkerPath();
+      if (existsSync(markerPath)) {
+        unlinkSync(markerPath);
+      }
+    });
   }
 }

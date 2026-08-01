@@ -19,8 +19,8 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import Database from '../sqlite.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
+import { withFileCoordinationTransaction } from './file-coordination.js';
 
 export type ArtifactProvenance =
   | { status: 'available'; modelRunId: string }
@@ -84,7 +84,6 @@ type ReadResult = ReadMissing | ReadInvalid | ReadRecord;
 
 const CARRY_SUMMARY_MAX_CHARS = 700;
 const CARRY_TTL_MS = 24 * 60 * 60 * 1000;
-const LOCK_WAIT_MS = 2_000;
 const STAGING_DIRECTORY_ATTEMPTS = 8;
 const UNAVAILABLE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
@@ -252,73 +251,6 @@ function isErrno(error: unknown, code: string): boolean {
   return isRecord(error) && error.code === code;
 }
 
-function isSqliteBusy(error: unknown): boolean {
-  return isRecord(error) && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED');
-}
-
-function coordinationDatabasePath(path: string): string {
-  return `${path}.lock.sqlite`;
-}
-
-function withReportCarryTransaction<T>(path: string, operation: () => T): T {
-  const directory = dirname(path);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  let database: Database | undefined;
-  let transactionOpen = false;
-  let result: T | undefined;
-  let operationError: unknown;
-  let rollbackError: unknown;
-  let closeError: unknown;
-  try {
-    database = new Database(coordinationDatabasePath(path));
-    chmodSync(coordinationDatabasePath(path), 0o600);
-    database.pragma(`busy_timeout = ${LOCK_WAIT_MS}`);
-    // Keep a single coordination file: WAL would leave shared auxiliary paths.
-    database.pragma('journal_mode = DELETE');
-    database.exec('BEGIN IMMEDIATE');
-    transactionOpen = true;
-    result = operation();
-    database.exec('COMMIT');
-    transactionOpen = false;
-  } catch (error) {
-    operationError = error;
-    if (transactionOpen && database !== undefined) {
-      try {
-        database.exec('ROLLBACK');
-        transactionOpen = false;
-      } catch (rollbackFailure) {
-        rollbackError = rollbackFailure;
-      }
-    }
-  } finally {
-    if (database !== undefined) {
-      try {
-        database.close();
-      } catch (closeFailure) {
-        closeError = closeFailure;
-      }
-    }
-  }
-
-  if (rollbackError !== undefined || closeError !== undefined) {
-    const cleanupFailure = rollbackError ?? closeError;
-    throw new Error(
-      `Unable to close report carry SQLite transaction after ${
-        operationError === undefined ? 'operation' : formatError(operationError)
-      }: ${formatError(cleanupFailure)}`
-    );
-  }
-  if (operationError !== undefined) {
-    if (isSqliteBusy(operationError)) {
-      throw new Error(
-        `Timed out waiting for report carry SQLite transaction after ${LOCK_WAIT_MS}ms`
-      );
-    }
-    throw operationError;
-  }
-  return result as T;
-}
-
 function createStagingDirectory(path: string): string {
   const directory = dirname(path);
   const stem = basename(path);
@@ -403,7 +335,7 @@ export class FileReportCarryStore implements ReportCarryPort {
 
   persistDelivered(input: PersistDeliveredInput): void {
     assertPersistInput(input);
-    withReportCarryTransaction(this.path, () => {
+    withFileCoordinationTransaction(this.path, 'report carry', () => {
       const current = this.read();
       if (current.kind === 'invalid') {
         throw new Error('Refusing to overwrite invalid report carry state');
@@ -449,7 +381,7 @@ export class FileReportCarryStore implements ReportCarryPort {
 
   acknowledge(input: AckInput): boolean {
     assertAckInput(input);
-    return withReportCarryTransaction(this.path, () => {
+    return withFileCoordinationTransaction(this.path, 'report carry', () => {
       const current = this.read();
       if (
         current.kind !== 'record' ||
