@@ -3,16 +3,30 @@
  * Telegram owner turn, and durable carry never revives after acknowledgement.
  */
 
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import {
+  readFileSync,
+  readdirSync,
+  mkdirSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FileReportCarryStore,
+  buildCarryLockPath,
   buildCarryTemporaryPath,
+  writeReportCarryAtomically,
+  type AckInput,
   type PersistDeliveredInput,
   type ReportCarryTarget,
+  type ReportCarryV2,
 } from '../../src/operator/report-carry.js';
 
 const TARGET: ReportCarryTarget = { source: 'telegram', channelId: 'C1' };
@@ -33,6 +47,115 @@ function input(overrides: Partial<PersistDeliveredInput> = {}): PersistDelivered
     provenance: RUN,
     ...overrides,
   };
+}
+
+function pause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+interface ChildResult {
+  type: 'result';
+  value: boolean | 'persisted';
+}
+
+interface CarryChild {
+  child: ChildProcess;
+  ready: Promise<void>;
+  result: Promise<ChildResult>;
+}
+
+function startCarryChild(
+  operation: 'persist' | 'ack',
+  path: string,
+  payload: PersistDeliveredInput | AckInput,
+  delayMs: number = 0
+): CarryChild {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/operator/report-carry.ts')).href;
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const script = `
+    import { FileReportCarryStore } from ${JSON.stringify(moduleUrl)};
+    const store = new FileReportCarryStore(process.env.MAMA_CARRY_PATH);
+    const payload = JSON.parse(process.env.MAMA_CARRY_PAYLOAD);
+    process.stdout.write(JSON.stringify({ type: 'ready' }) + '\\n');
+    const delayMs = Number(process.env.MAMA_CARRY_DELAY_MS || 0);
+    const perform = () => {
+      if (process.env.MAMA_CARRY_OPERATION === 'persist') {
+        store.persistDelivered(payload);
+        process.stdout.write(JSON.stringify({ type: 'result', value: 'persisted' }) + '\\n');
+      } else {
+        process.stdout.write(JSON.stringify({ type: 'result', value: store.acknowledge(payload) }) + '\\n');
+      }
+    };
+    if (delayMs > 0) setTimeout(perform, delayMs); else perform();
+  `;
+  const child = spawn(process.execPath, [tsxCli, '--eval', script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      MAMA_CARRY_OPERATION: operation,
+      MAMA_CARRY_PATH: path,
+      MAMA_CARRY_PAYLOAD: JSON.stringify(payload),
+      MAMA_CARRY_DELAY_MS: String(delayMs),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let resolveReady: (() => void) | undefined;
+  let rejectReady: ((error: Error) => void) | undefined;
+  let resolveResult: ((result: ChildResult) => void) | undefined;
+  let rejectResult: ((error: Error) => void) | undefined;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const result = new Promise<ChildResult>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  void result.catch(() => undefined);
+  let stdout = '';
+  let stderr = '';
+  let hasResult = false;
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString();
+    const lines = stdout.split('\n');
+    stdout = lines.pop() ?? '';
+    for (const line of lines) {
+      const message = JSON.parse(line) as { type?: unknown; value?: unknown };
+      if (message.type === 'ready') {
+        resolveReady?.();
+      }
+      if (message.type === 'result') {
+        hasResult = true;
+        resolveResult?.(message as ChildResult);
+      }
+    }
+  });
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  child.on('error', (error) => {
+    rejectReady?.(error);
+    rejectResult?.(error);
+  });
+  child.on('close', (code) => {
+    if (!hasResult) {
+      const error = new Error(`carry child exited ${code}: ${stderr || stdout}`);
+      rejectReady?.(error);
+      rejectResult?.(error);
+    }
+  });
+  return { child, ready, result };
+}
+
+async function settlesWithin(result: Promise<unknown>, milliseconds: number): Promise<boolean> {
+  return Promise.race([
+    result.then(
+      () => true,
+      () => true
+    ),
+    pause(milliseconds).then(() => false),
+  ]);
 }
 
 describe('TG-06: versioned one-shot report carry', () => {
@@ -157,16 +280,32 @@ describe('TG-06: versioned one-shot report carry', () => {
     expect(prefix).toContain('truncated');
   });
 
-  it('cannot accept consumed fields from a delivery caller', () => {
-    const store = new FileReportCarryStore(tempCarryPath());
-    const untrustedInput = {
+  it('rejects unknown persist and acknowledgement fields before preserving carry bytes', () => {
+    const path = tempCarryPath();
+    const store = new FileReportCarryStore(path);
+    store.persistDelivered(input());
+    const before = readFileSync(path);
+    const untrustedPersist = {
       ...input(),
       consumedAt: '2026-08-02T00:00:01.000Z',
       consumingChannelKey: 'telegram:C1',
-    } as PersistDeliveredInput & { consumedAt: string; consumingChannelKey: string };
-    store.persistDelivered(untrustedInput);
+      arbitrary: true,
+    } as PersistDeliveredInput & {
+      consumedAt: string;
+      consumingChannelKey: string;
+      arbitrary: boolean;
+    };
+    const untrustedAck = {
+      deliveryId: 'd1',
+      target: TARGET,
+      consumingChannelKey: 'telegram:C1',
+      consumedAtIso: '2026-08-02T00:01:00.000Z',
+      arbitrary: true,
+    } as AckInput & { arbitrary: boolean };
 
-    expect(store.peek(TARGET, Date.parse(DELIVERED_AT))).not.toBeNull();
+    expect(() => store.persistDelivered(untrustedPersist)).toThrow(/exact fields/i);
+    expect(() => store.acknowledge(untrustedAck)).toThrow(/exact fields/i);
+    expect(readFileSync(path)).toEqual(before);
   });
 
   it('uses a distinct UUID temporary path and leaves the final carry file 0600', () => {
@@ -178,5 +317,69 @@ describe('TG-06: versioned one-shot report carry', () => {
     expect(first).toMatch(/\.last-full-report\.\d+\.[0-9a-f-]{36}\.tmp$/);
     new FileReportCarryStore(path).persistDelivered(input());
     expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('cleans its UUID temporary file after a real atomic rename failure', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-carry-'));
+    const destination = join(root, 'destination');
+    mkdirSync(destination);
+    const record: ReportCarryV2 = { version: 2, ...input() };
+
+    expect(() => writeReportCarryAtomically(destination, record)).toThrow();
+    expect(readdirSync(root).filter((entry) => entry.includes('.tmp'))).toEqual([]);
+  });
+
+  it('recovers a proportionately stale exclusive lock before persisting', () => {
+    const path = tempCarryPath();
+    const lockPath = buildCarryLockPath(path);
+    writeFileSync(lockPath, 'stale owner', { mode: 0o600 });
+    const staleAt = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, staleAt, staleAt);
+
+    new FileReportCarryStore(path).persistDelivered(
+      input({ deliveredAt: new Date().toISOString() })
+    );
+
+    expect(new FileReportCarryStore(path).peek(TARGET)).not.toBeNull();
+    expect(() => statSync(lockPath)).toThrow();
+  });
+
+  it('serializes a stale acknowledgement behind a competing new delivery across processes', async () => {
+    const path = tempCarryPath();
+    const store = new FileReportCarryStore(path);
+    const deliveredAt = new Date().toISOString();
+    store.persistDelivered(input({ deliveredAt }));
+    const lockPath = buildCarryLockPath(path);
+    writeFileSync(lockPath, 'test coordinator', { mode: 0o600 });
+
+    const persist = startCarryChild(
+      'persist',
+      path,
+      input({ deliveryId: 'd2', deliveredAt, text: 'replacement report' })
+    );
+    await persist.ready;
+    expect(await settlesWithin(persist.result, 100)).toBe(false);
+
+    const acknowledgement = startCarryChild(
+      'ack',
+      path,
+      {
+        deliveryId: 'd1',
+        target: TARGET,
+        consumingChannelKey: 'telegram:C1',
+        consumedAtIso: new Date().toISOString(),
+      },
+      250
+    );
+    await acknowledgement.ready;
+    expect(await settlesWithin(acknowledgement.result, 100)).toBe(false);
+
+    unlinkSync(lockPath);
+    expect((await persist.result).value).toBe('persisted');
+    expect((await acknowledgement.result).value).toBe(false);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
+      deliveryId: 'd2',
+      text: 'replacement report',
+    });
   });
 });
