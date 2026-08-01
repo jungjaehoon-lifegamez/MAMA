@@ -50,7 +50,10 @@ const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
 const UNAVAILABLE_PROVENANCE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
-function isPendingReportState(value: unknown): value is PendingReportState {
+function isPendingReportState(
+  value: unknown,
+  allowLegacyFullProvenance: boolean
+): value is PendingReportState {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   if (record.version !== 1) return false;
@@ -63,7 +66,8 @@ function isPendingReportState(value: unknown): value is PendingReportState {
     }
   }
   return (
-    (record.delivery === undefined || isPendingDelivery(record.delivery)) &&
+    (record.delivery === undefined ||
+      isPendingDelivery(record.delivery, allowLegacyFullProvenance)) &&
     (record.request === undefined || isPendingRequest(record.request))
   );
 }
@@ -71,43 +75,83 @@ function isPendingReportState(value: unknown): value is PendingReportState {
 function isPendingRequest(value: unknown): value is PendingReportRequest {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  const occurrence = record.occurrence as Record<string, unknown> | undefined;
   return (
     record.mode === 'full' &&
-    isBoundedString(record.deliveryId, 512) &&
-    isBoundedString(record.acceptedAtIso, 64) &&
-    Boolean(occurrence) &&
-    occurrence?.kind === 'on_demand_full' &&
-    (occurrence.hourKey === undefined || isBoundedString(occurrence.hourKey, 128)) &&
-    isBoundedString(occurrence.firedAtIso, 64)
+    isNonEmptyBoundedString(record.deliveryId, 512) &&
+    isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
+    isOnDemandFullOccurrence(record.occurrence)
   );
 }
 
-function isPendingDelivery(value: unknown): value is PendingReportDelivery {
+function isPendingDelivery(
+  value: unknown,
+  allowLegacyFullProvenance: boolean
+): value is PendingReportDelivery {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  const occurrence = record.occurrence as Record<string, unknown> | undefined;
   const sharedValid =
     (record.mode === 'digest' || record.mode === 'full') &&
     isBoundedString(record.text, 1_000_000) &&
-    isBoundedString(record.deliveryId, 512) &&
-    isBoundedString(record.createdAtIso, 64) &&
+    isNonEmptyBoundedString(record.deliveryId, 512) &&
+    isNonEmptyBoundedString(record.createdAtIso, 64) &&
     Array.isArray(record.citedTriggerIds) &&
     record.citedTriggerIds.length <= MAX_FIRES &&
-    record.citedTriggerIds.every((item) => isBoundedString(item, 512)) &&
-    Boolean(occurrence) &&
-    (occurrence?.kind === 'digest' ||
-      occurrence?.kind === 'scheduled_full' ||
-      occurrence?.kind === 'on_demand_full') &&
-    (occurrence.hourKey === undefined || isBoundedString(occurrence.hourKey, 128)) &&
-    (occurrence.firedAtIso === undefined || isBoundedString(occurrence.firedAtIso, 64));
+    record.citedTriggerIds.every((item) => isNonEmptyBoundedString(item, 512));
   if (!sharedValid) {
     return false;
   }
   if (record.mode === 'digest') {
-    return record.provenance === undefined;
+    return record.provenance === undefined && isDigestOccurrence(record.occurrence);
   }
-  return record.provenance === undefined || isArtifactProvenance(record.provenance);
+  return (
+    isFullOccurrence(record.occurrence) &&
+    (isArtifactProvenance(record.provenance) ||
+      (allowLegacyFullProvenance && record.provenance === undefined))
+  );
+}
+
+function isDigestOccurrence(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.kind === 'digest' && Object.keys(record).length === 1;
+}
+
+function isFullOccurrence(value: unknown): boolean {
+  return isScheduledFullOccurrence(value) || isOnDemandFullOccurrence(value);
+}
+
+function isScheduledFullOccurrence(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return (
+    record.kind === 'scheduled_full' &&
+    (keys.length === 2 || keys.length === 3) &&
+    keys.includes('kind') &&
+    keys.includes('hourKey') &&
+    isNonEmptyBoundedString(record.hourKey, 128) &&
+    (record.firedAtIso === undefined || isNonEmptyBoundedString(record.firedAtIso, 64))
+  );
+}
+
+function isOnDemandFullOccurrence(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return (
+    record.kind === 'on_demand_full' &&
+    (keys.length === 2 || keys.length === 3) &&
+    keys.includes('kind') &&
+    keys.includes('firedAtIso') &&
+    isNonEmptyBoundedString(record.firedAtIso, 64) &&
+    (record.hourKey === undefined || isNonEmptyBoundedString(record.hourKey, 128))
+  );
 }
 
 function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
@@ -207,6 +251,10 @@ function isBoundedString(value: unknown, maxLength: number): value is string {
   return typeof value === 'string' && value.length <= maxLength;
 }
 
+function isNonEmptyBoundedString(value: unknown, maxLength: number): value is string {
+  return isBoundedString(value, maxLength) && value.trim().length > 0;
+}
+
 export class FilePendingReportStore implements PendingReportStore {
   constructor(
     private readonly path: string,
@@ -219,7 +267,7 @@ export class FilePendingReportStore implements PendingReportStore {
     const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
     try {
       const parsed: unknown = raw === null ? null : JSON.parse(raw);
-      if (!isPendingReportState(parsed)) {
+      if (!isPendingReportState(parsed, true)) {
         throw new Error(
           size > MAX_PENDING_REPORT_BYTES
             ? 'Pending operator report state exceeds its size limit'
@@ -240,7 +288,7 @@ export class FilePendingReportStore implements PendingReportStore {
   }
 
   save(state: PendingReportState): void {
-    if (!isPendingReportState(state)) {
+    if (!isPendingReportState(state, false)) {
       throw new Error('Refusing to persist invalid pending operator report state');
     }
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });

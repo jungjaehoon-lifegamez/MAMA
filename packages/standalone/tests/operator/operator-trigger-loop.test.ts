@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
@@ -15,6 +18,7 @@ import type {
 } from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 import type { PendingReportState } from '../../src/operator/pending-report-store.js';
+import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -927,6 +931,66 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(attempts[1]).toEqual(attempts[0]);
     expect(pendingRef.current?.delivery).toBeUndefined();
     expect(scheduler.markSuccess).toHaveBeenCalledOnce();
+  });
+
+  it('TG-06 quarantines an invalid pending full delivery before restart recovery can send or advance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'invalid old report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: '   ',
+          provenance: { status: 'available', modelRunId: 'mr_current_1' },
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired,
+        loadLastSuccess: () => null,
+        markSuccess,
+      },
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
   });
 
   it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
