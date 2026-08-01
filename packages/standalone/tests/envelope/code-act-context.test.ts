@@ -288,7 +288,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
     });
   });
 
-  it('feeds the exact bootstrapped MessageRouter envelope into the real Code-Act compiler', async () => {
+  it('TG-01 feeds only enabled raw connectors into the real Code-Act compiler', async () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'mama-code-act-router-envelope-'));
     const connectorDir = join(tempHome, '.mama');
     mkdirSync(connectorDir, { recursive: true });
@@ -357,7 +357,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
         metadata: { chatType: 'private' },
       });
 
-      expect(emittedEnvelope?.scope.raw_connectors).toEqual(['telegram', 'kagemusha', 'trello']);
+      expect(emittedEnvelope?.scope.raw_connectors).toEqual(['telegram', 'trello']);
       const executionContext: GatewayToolExecutionContext = {
         agentId: emittedEnvelope!.agent_id,
         source: 'telegram',

@@ -13,8 +13,31 @@ import {
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { CODE_ACT_MARKER } from '../../src/agent/code-act/index.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
+
+const enabledPrivatePolicy = privatePolicy(true);
 
 describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #1: deriveCodeActToolPolicy enforces configured agent allowlists', () => {
@@ -195,6 +218,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'agent_notices',
           'kagemusha_entities',
           'kagemusha_messages',
+          'kagemusha_overview',
+          'kagemusha_tasks',
           'mama_save',
           'mama_search',
         ],
@@ -204,7 +229,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(cases)(
       'uses the built-in least-privilege $kind policy without standing agent config',
       ({ kind, roleName, innerTools }) => {
-        const policy = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex');
+        const policy = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy);
         const context = policy.agentContext;
         const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
@@ -214,20 +239,34 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           roleName,
           backend: 'codex',
           tier: 2,
-          role: {
-            blockedTools: [],
-            model: 'gpt-5.4',
-          },
+          role: { model: 'gpt-5.4' },
         });
-        expect(context.role.allowedTools).toEqual(['code_act', ...innerTools]);
-        expect(projected.names).toEqual(innerTools);
+        expect([...context.role.allowedTools].sort()).toEqual(['code_act', ...innerTools].sort());
+        expect([...projected.names].sort()).toEqual([...innerTools].sort());
+        if (kind === 'wiki') {
+          expect(context.role.blockedTools).toEqual(
+            expect.arrayContaining([
+              'kagemusha_overview',
+              'kagemusha_entities',
+              'kagemusha_tasks',
+              'kagemusha_messages',
+            ])
+          );
+        } else {
+          expect(context.role.blockedTools).toEqual([]);
+        }
       }
     );
 
     it.each(['codex', 'claude'] as const)(
       'uses one least-privilege temporal catalog for the %s backend',
       (backend) => {
-        const policy = buildWorkOrderAgentPolicy('temporal', 'worker-model', backend);
+        const policy = buildWorkOrderAgentPolicy(
+          'temporal',
+          'worker-model',
+          backend,
+          enabledPrivatePolicy
+        );
         const projected = projectCodeActToolPolicy({
           tier: policy.agentContext.tier,
           role: policy.agentContext.role,
@@ -271,7 +310,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     );
 
     it('gives the operator report lane a Code-Act role so it can execute gather tools', () => {
-      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const context = policy.agentContext;
       const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
@@ -324,7 +363,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
 
     it('covers every gather tool the report audit counts as substance', () => {
-      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const projected = projectCodeActToolPolicy({
         tier: policy.agentContext.tier,
         role: policy.agentContext.role,
@@ -359,9 +398,43 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       // A report run without agentContext is exactly the zero-tool regression; the
       // freshSession marker anchors the assertion to the report lane's run options.
       expect(reportRun).toMatch(
-        /agentContext:\s*buildOperatorReportAgentPolicy\([\s\S]{0,120}?\)\s*\.?\s*\n?\s*\.?agentContext/
+        /agentContext:\s*buildOperatorReportAgentPolicy\([\s\S]{0,240}?\)\s*\.?\s*\n?\s*\.?agentContext/
       );
       expect(reportRun.slice(0, reportRun.indexOf('freshSession: true'))).toContain('agentContext');
+    });
+
+    it.each([
+      ['board', 'workorder-board'],
+      ['memory-curation', 'workorder-memory-curation'],
+      ['temporal', 'workorder-temporal'],
+    ] as const)(
+      'TG-04/TG-06 projects the private bundle onto the enabled %s lane only',
+      (kind, roleName) => {
+        const enabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy);
+        const disabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', privatePolicy(false));
+
+        expect(enabled.agentContext.roleName).toBe(roleName);
+        expect(enabled.agentContext.role.allowedTools).toEqual(
+          expect.arrayContaining([
+            'kagemusha_overview',
+            'kagemusha_entities',
+            'kagemusha_tasks',
+            'kagemusha_messages',
+          ])
+        );
+        expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+        expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
+      }
+    );
+
+    it('TG-06 projects the report private bundle in both enabled and disabled directions', () => {
+      const enabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
+      const disabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', privatePolicy(false));
+
+      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_tasks');
+      expect(enabled.gatewayToolsPrompt).toContain('kagemusha_tasks');
+      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+      expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
     });
 
     it('wires one temporal runtime from projected and registered transport tools', () => {

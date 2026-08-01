@@ -107,6 +107,21 @@ import {
   mirrorReadScopes,
   writeEligiblePacketScopes,
 } from '../evidence/read.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
+  type PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+type PrivateAwareGatewayToolExecutorOptions = GatewayToolExecutorOptions & {
+  privateConnectorPolicy?: PrivateConnectorPolicy;
+};
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -595,6 +610,7 @@ export class GatewayToolExecutor {
   private slackGateway: SlackGatewayInterface | null = null;
   private telegramGateway: TelegramGatewayInterface | null = null;
   private roleManager: RoleManager;
+  private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly channelGrantProvider: () => Record<string, readonly string[]>;
@@ -847,7 +863,7 @@ export class GatewayToolExecutor {
 
   /** Check if delegate tool support is available (multi-agent wired). */
 
-  constructor(options: GatewayToolExecutorOptions = {}) {
+  constructor(options: PrivateAwareGatewayToolExecutorOptions = {}) {
     this.channelGrantProvider = options.channelGrantProvider ?? liveBoundaryChannels;
     const privateWorkspaceRoot = resolve(
       process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace')
@@ -879,6 +895,8 @@ export class GatewayToolExecutor {
     this.roleManager = getRoleManager(
       options.rolesConfig ? { rolesConfig: options.rolesConfig } : undefined
     );
+    this.privateConnectorPolicy =
+      options.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -1035,29 +1053,36 @@ export class GatewayToolExecutor {
    * @returns Object with allowed status and optional error message
    */
   private checkToolPermission(toolName: string): { allowed: boolean; error?: string } {
-    // If no context set, allow all tools (backward compatibility)
     const context = this.getActiveContext();
-    if (!context) {
-      if (toolName === 'code_act') {
-        return {
-          allowed: false,
-          error: 'Permission denied: code_act requires an active agent role',
-        };
-      }
-
-      return { allowed: true };
+    if (!context && toolName === 'code_act') {
+      return {
+        allowed: false,
+        error: 'Permission denied: code_act requires an active agent role',
+      };
     }
-
-    const role = context.role;
+    const role = context
+      ? this.projectPrivateAgentContext(context).role
+      : this.privateConnectorPolicy.projectRole('legacy-unbound', { allowedTools: ['*'] });
 
     if (!this.roleManager.isToolAllowed(role, toolName)) {
       return {
         allowed: false,
-        error: `Permission denied: ${toolName} is not allowed for role "${context.roleName}"`,
+        error: `Permission denied: ${toolName} is not allowed for role "${context?.roleName ?? 'legacy-unbound'}"`,
       };
     }
 
     return { allowed: true };
+  }
+
+  projectPrivateAgentContext(context: AgentContext): AgentContext {
+    const surface = resolvePrivatePrincipalSurface({ agentContext: context });
+    const role = this.privateConnectorPolicy.projectRole(surface, context.role);
+    return {
+      ...context,
+      role,
+      capabilities: this.roleManager.getCapabilities(role),
+      limitations: this.roleManager.getLimitations(role),
+    };
   }
 
   /**
@@ -3725,14 +3750,17 @@ export class GatewayToolExecutor {
     } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const state = this.getExecutionState();
-    const contextTier = state.agentContext?.tier;
+    const projectedAgentContext = state.agentContext
+      ? this.projectPrivateAgentContext(state.agentContext)
+      : undefined;
+    const contextTier = projectedAgentContext?.tier;
     const tier = contextTier === undefined ? 1 : contextTier;
     let policy;
     try {
       policy = projectCodeActToolPolicy({
         tier,
-        roleName: state.agentContext?.roleName,
-        role: state.agentContext?.role,
+        roleName: projectedAgentContext?.roleName,
+        role: projectedAgentContext?.role,
         disallowedTools: state.disallowedGatewayTools,
         requestedAllowedTools: input.allowedTools,
         requestedBlockedTools: input.blockedTools,
@@ -3758,6 +3786,10 @@ export class GatewayToolExecutor {
 
     const nestedExecutionContext: GatewayToolExecutionContext = {
       ...state,
+      // Preserve the registry-supplied principal object as provenance. The
+      // policy above and every nested final authorization re-project it from
+      // the immutable boot snapshot; replacing the object would blur which
+      // trusted context the keyed call actually carried.
       agentContext: state.agentContext ?? undefined,
       executionSurface: 'code_act',
       parentToolName: 'code_act',

@@ -1160,6 +1160,13 @@ export class AgentLoop {
       throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
+    if (options?.agentContext) {
+      options = {
+        ...options,
+        agentContext: this.mcpExecutor.projectPrivateAgentContext(options.agentContext),
+      };
+    }
+
     const runScope: RunScope = {
       streamCallbacks: options?.streamCallbacks,
       tier: 1,

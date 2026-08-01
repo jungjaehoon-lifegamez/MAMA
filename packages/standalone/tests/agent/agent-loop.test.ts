@@ -160,6 +160,9 @@ const gatewayExecutorFailRuntimeModelRunMock = vi.fn().mockResolvedValue({
   status: 'failed',
 });
 const gatewayExecutorExecuteMock = vi.fn().mockResolvedValue({ success: true });
+const gatewayExecutorProjectPrivateAgentContextMock = vi.fn(
+  (context: AgentContext): AgentContext => context
+);
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -243,6 +246,7 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       commitRuntimeModelRun: gatewayExecutorCommitRuntimeModelRunMock,
       failRuntimeModelRun: gatewayExecutorFailRuntimeModelRunMock,
       execute: gatewayExecutorExecuteMock,
+      projectPrivateAgentContext: gatewayExecutorProjectPrivateAgentContextMock,
     })),
   };
 });
@@ -346,6 +350,7 @@ describe('AgentLoop', () => {
     gatewayExecutorBeginRuntimeModelRunMock.mockClear();
     gatewayExecutorCommitRuntimeModelRunMock.mockClear();
     gatewayExecutorFailRuntimeModelRunMock.mockClear();
+    gatewayExecutorProjectPrivateAgentContextMock.mockClear();
     laneManagerEnqueueWithSessionMock.mockClear();
     persistentSetSystemPromptMock.mockClear();
     persistentCLIAdapterOptionsMock.mockClear();
@@ -3203,6 +3208,71 @@ Skills provide additional tools.
         expect(onCliSessionReset).toHaveBeenCalledWith('fresh-test-session');
         expect(onError).not.toHaveBeenCalled();
         expect(result.response).toBe('Started with the current policy');
+      }
+    );
+
+    it.each([
+      {
+        direction: 'disabled to enabled',
+        fingerprint: 'private-policy-enabled',
+        fullPolicy: 'TG-05 full enabled policy with kagemusha_overview',
+      },
+      {
+        direction: 'enabled to disabled',
+        fingerprint: 'private-policy-disabled',
+        fullPolicy: 'TG-05 full disabled policy without private definitions',
+      },
+    ])(
+      'TG-05 replaces the durable thread once for $direction, then resumes minimally',
+      async ({ fingerprint, fullPolicy }) => {
+        codexSessionPolicyStatusMock.mockReturnValueOnce('mismatch').mockReturnValue('compatible');
+        const freshSessionSystemPrompt = vi.fn().mockResolvedValue(fullPolicy);
+        const deliveredPolicies: Array<{ resume: boolean; prompt: string }> = [];
+        persistentPromptMock.mockImplementation(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            deliveredPolicies.push({
+              resume: promptOptions?.resumeSession ?? true,
+              prompt: promptOptions?.systemPrompt ?? '',
+            });
+            return {
+              response: 'policy-consistent response',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'tg-05-replacement-thread',
+            };
+          }
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const commonOptions = {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          sessionPolicyFingerprint: fingerprint,
+          freshSessionSystemPrompt,
+        } as const;
+
+        await agentLoop.run('first changed-policy turn', {
+          ...commonOptions,
+          systemPrompt: 'minimal stale-policy continuation',
+        });
+        await agentLoop.run('next unchanged-policy turn', {
+          ...commonOptions,
+          systemPrompt: 'minimal current-policy continuation',
+        });
+
+        expect(deliveredPolicies).toHaveLength(2);
+        expect(deliveredPolicies[0]).toMatchObject({ resume: false });
+        expect(deliveredPolicies[0]?.prompt).toContain(fullPolicy);
+        expect(deliveredPolicies[0]?.prompt).not.toContain('minimal stale-policy continuation');
+        expect(deliveredPolicies[1]).toMatchObject({ resume: true });
+        expect(deliveredPolicies[1]?.prompt).toContain('minimal current-policy continuation');
+        expect(deliveredPolicies[1]?.prompt).not.toContain(fullPolicy);
+        expect(freshSessionSystemPrompt).toHaveBeenCalledTimes(1);
       }
     );
 

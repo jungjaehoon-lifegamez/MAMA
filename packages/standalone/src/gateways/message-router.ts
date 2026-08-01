@@ -55,6 +55,14 @@ import {
   type ReactiveEnvelopeConfig,
 } from '../envelope/reactive-config.js';
 import type { Envelope } from '../envelope/types.js';
+import type {
+  ConnectorCapabilitySurface,
+  PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+import {
+  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
+  resolvePrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
 
 export type { AgentLoopOptions } from '../agent/types.js';
 export type { ReactiveEnvelopeConfig } from '../envelope/reactive-config.js';
@@ -68,6 +76,15 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('MessageRouter');
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+export interface MessageRouterDependencies {
+  privateConnectorPolicy?: PrivateConnectorPolicy;
+}
 
 /**
  * The owner's message, as the cause of whatever the turn it started changes.
@@ -407,6 +424,7 @@ export class MessageRouter implements TurnProcessor {
   private config: Required<MessageRouterConfig>;
   private envelopeConfig?: ReactiveEnvelopeConfig;
   private envelopeAuthority?: EnvelopeAuthority;
+  private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private gatewayRegistry: GatewayRegistry | null = null;
@@ -641,13 +659,16 @@ export class MessageRouter implements TurnProcessor {
     mamaApi: MamaApiClient,
     config: MessageRouterConfig = {},
     envelopeConfig?: ReactiveEnvelopeConfig,
-    envelopeAuthority?: EnvelopeAuthority
+    envelopeAuthority?: EnvelopeAuthority,
+    dependencies: MessageRouterDependencies = {}
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
     this.mamaApi = mamaApi;
     this.envelopeConfig = envelopeConfig;
     this.envelopeAuthority = envelopeAuthority;
+    this.privateConnectorPolicy =
+      dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -699,13 +720,20 @@ export class MessageRouter implements TurnProcessor {
       chatType:
         typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
     });
-    const capabilities = this.roleManager.getCapabilities(role);
-    const limitations = this.roleManager.getLimitations(role);
+    const surface: ConnectorCapabilitySurface =
+      roleName === 'owner_console'
+        ? 'owner_console'
+        : roleName === 'os_agent'
+          ? 'os_agent'
+          : 'multi-agent-generic';
+    const projectedRole = this.privateConnectorPolicy.projectRole(surface, role);
+    const capabilities = this.roleManager.getCapabilities(projectedRole);
+    const limitations = this.roleManager.getLimitations(projectedRole);
 
     const ctx = createAgentContext(
       message.source,
       roleName,
-      role,
+      projectedRole,
       {
         sessionId,
         channelId: message.channelId,
@@ -1458,20 +1486,33 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
+    const privatePolicyPrompt = agentContext ? this.buildPrivateConnectorPrompt(agentContext) : '';
     const stableRolePolicy = agentContext
-      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable)
+      ? [
+          buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable),
+          privatePolicyPrompt,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       : '';
     // Onboarding is guided first contact, not operator duty. The awakening persona asks the
     // user's name and runs a personality quiz; ordering it to gather via gateway tools and
     // execute multi-step work would fight that flow and aim it at connectors that do not
     // exist yet. Evidence policy still travels; the operating posture does not.
     const onboardingRolePolicy = agentContext
-      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable, {
-          includeOperatingDiscipline: false,
-        })
+      ? [
+          buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable, {
+            includeOperatingDiscipline: false,
+          }),
+          privatePolicyPrompt,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       : '';
     const appendOnboardingRolePolicy = (basePrompt: string): string =>
-      onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt;
+      this.projectPrivatePromptText(
+        onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt
+      );
 
     if (isOnboarding) {
       // Check if we have existing conversation
@@ -1635,9 +1676,13 @@ ${historyContext}
     // per-bullet filter preserves the '## Gateway Tools' marker - AgentLoop
     // must keep seeing that marker or it double-injects an UNFILTERED catalog
     // (agent-loop alreadyHasTools check).
+    const privateToolNames = new Set<string>(
+      PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map(({ name }) => name)
+    );
     const disallowedForRole = agentContext
       ? ToolRegistry.getValidToolNames().filter(
-          (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
+          (name) =>
+            privateToolNames.has(name) || !this.roleManager.isToolAllowed(agentContext.role, name)
         )
       : undefined;
     const gatewayToolsPrompt =
@@ -1646,7 +1691,7 @@ ${historyContext}
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
 
-    return prompt;
+    return this.projectPrivatePromptText(prompt);
   }
 
   private buildSessionPolicyFingerprint(
@@ -1656,20 +1701,64 @@ ${historyContext}
     trelloAvailable: boolean
   ): string {
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
-    const baseInstructions = existsSync(soulPath)
-      ? loadComposedSystemPrompt(false, agentContext)
-      : COMPLETE_AUTONOMOUS_PROMPT;
+    const baseInstructions = this.projectPrivatePromptText(
+      existsSync(soulPath)
+        ? loadComposedSystemPrompt(false, agentContext)
+        : COMPLETE_AUTONOMOUS_PROMPT
+    );
     return hashSessionPolicyFingerprint({
       baseInstructions,
-      agentsContent: enhanced.agentsContent,
-      rulesContent: enhanced.rulesContent,
+      agentsContent: enhanced.agentsContent
+        ? this.projectPrivatePromptText(enhanced.agentsContent)
+        : undefined,
+      rulesContent: enhanced.rulesContent
+        ? this.projectPrivatePromptText(enhanced.rulesContent)
+        : undefined,
       model,
       stableRolePolicy:
         buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable) +
         // Brief edits must rotate the durable-session policy (re-anchor carries
         // the new manual); non-owner roles contribute an empty string.
-        (agentContext.roleName === 'owner_console' ? `\n${loadConsoleBrief()}` : ''),
+        (agentContext.roleName === 'owner_console'
+          ? `\n${this.projectPrivatePromptText(loadConsoleBrief())}`
+          : '') +
+        `\n${this.privateConnectorPolicy.fingerprint}\n${this.buildPrivateConnectorPrompt(agentContext)}`,
     });
+  }
+
+  private buildPrivateConnectorPrompt(agentContext: AgentContext): string {
+    const surface: ConnectorCapabilitySurface =
+      agentContext.roleName === 'owner_console'
+        ? 'owner_console'
+        : agentContext.roleName === 'os_agent'
+          ? 'os_agent'
+          : 'multi-agent-generic';
+    const definitions = this.privateConnectorPolicy.toolDefinitionsFor(surface);
+    const overlay = this.privateConnectorPolicy.promptOverlayFor(surface);
+    if (!overlay || definitions.length === 0) {
+      return '';
+    }
+    return [
+      overlay,
+      '',
+      ...definitions.map(
+        (definition) =>
+          `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
+      ),
+    ].join('\n');
+  }
+
+  /**
+   * A durable prompt can contain an older operator brief or project instruction
+   * that names a private connector. When the boot snapshot disables that
+   * connector, remove those stale advertisement lines before a new backend
+   * thread is created. Runtime authorization still fails closed independently.
+   */
+  private projectPrivatePromptText(prompt: string): string {
+    if (this.privateConnectorPolicy.enabledPrivateConnectors.length > 0) {
+      return prompt;
+    }
+    return prompt.replace(/kagemusha(?:_[a-z0-9_*]+)?/gi, '[disabled private connector]');
   }
 
   /**

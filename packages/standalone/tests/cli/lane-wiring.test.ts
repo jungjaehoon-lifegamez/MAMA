@@ -74,13 +74,6 @@ describe('report lane: instructions against the grant', () => {
   it('pins the granted-but-never-instructed set', () => {
     const silent = [...REPORT_GRANT].filter((t) => !instructed.has(t)).sort();
     expect(silent).toEqual([
-      // S1: the gather instructs the NATIVE board (task_list). The kagemusha
-      // grants stay for the owner's personal deployment, deliberately silent -
-      // MAMA presupposes no Kagemusha.
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'kagemusha_overview',
-      'kagemusha_tasks',
       // Read on demand while writing, not part of the gather sequence.
       'mama_provenance',
       'mama_save',
@@ -117,6 +110,20 @@ describe('report lane: instructions against the grant', () => {
 });
 
 describe('workorder lanes: every granted tool is a real tool', () => {
+  it('TG-04/TG-06 keeps private tools out of static lane grants', () => {
+    const privateTools = [
+      'kagemusha_overview',
+      'kagemusha_entities',
+      'kagemusha_tasks',
+      'kagemusha_messages',
+    ];
+    for (const lane of [...Object.values(WORKORDER_TOOL_POLICIES), OPERATOR_REPORT_TOOL_POLICY]) {
+      for (const tool of privateTools) {
+        expect(lane.allowedTools).not.toContain(tool);
+      }
+    }
+  });
+
   // A lane granting a name no registry knows is a permission that can never be exercised -
   // the shape `delegate` had for its entire life.
   it('grants only tools the report lane also recognises as real', async () => {

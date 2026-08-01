@@ -10,6 +10,31 @@ import type { CodeActToolPolicyFingerprintData } from '../../src/agent/code-act/
 import type { CodeActToolPolicyInput } from '../../src/agent/code-act/tool-policy.js';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+
+const PRIVATE_TOOL_NAMES = [
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
+] as const;
+
+function privatePolicy(enabled: boolean) {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
 
 function declaredNames(source: string): string[] {
   return [...source.matchAll(/declare function ([A-Za-z0-9_]+)\(/g)].map((match) => match[1]);
@@ -17,7 +42,10 @@ function declaredNames(source: string): string[] {
 
 describe('Code-Act canonical tool policy', () => {
   it('projects every default owner workflow except the outer code_act entry point', () => {
-    const owner = DEFAULT_ROLES.definitions.owner_console;
+    const owner = privatePolicy(true).projectRole(
+      'owner_console',
+      DEFAULT_ROLES.definitions.owner_console
+    );
     const expectedInnerTools = owner.allowedTools.filter((tool) => tool !== 'code_act');
     const registryNames = HostBridge.getToolRegistry().map((tool) => tool.name);
     const policy = projectCodeActToolPolicy({
@@ -37,6 +65,20 @@ describe('Code-Act canonical tool policy', () => {
         'drive_translate_conti',
       ])
     );
+  });
+
+  it('TG-04 keeps private tools out of static roles and ineligible wildcard projections', () => {
+    for (const tool of PRIVATE_TOOL_NAMES) {
+      expect(DEFAULT_ROLES.definitions.owner_console.allowedTools).not.toContain(tool);
+    }
+
+    for (const surface of ['os_agent', 'legacy-unbound', 'multi-agent-generic'] as const) {
+      const role = privatePolicy(true).projectRole(surface, { allowedTools: ['*'] });
+      const projected = projectCodeActToolPolicy({ tier: 1, role });
+      for (const tool of PRIVATE_TOOL_NAMES) {
+        expect(projected.names).not.toContain(tool);
+      }
+    }
   });
 
   it('expands role wildcards into sorted, deduplicated registry names', () => {

@@ -69,6 +69,11 @@ import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type ConnectorCapabilitySurface,
+  type PrivateConnectorPolicy,
+} from '../../connectors/private-connector-policy.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
@@ -477,10 +482,6 @@ export const WORKORDER_TOOL_POLICIES = {
       'changes_read',
       'context_compile',
       'contract_no_update',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'kagemusha_overview',
-      'kagemusha_tasks',
       'mama_search',
       'report_publish',
       'task_create',
@@ -497,23 +498,13 @@ export const WORKORDER_TOOL_POLICIES = {
   },
   'memory-curation': {
     roleName: 'workorder-memory-curation',
-    allowedTools: [
-      'agent_notices',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'mama_save',
-      'mama_search',
-    ],
+    allowedTools: ['agent_notices', 'mama_save', 'mama_search'],
   },
   temporal: {
     roleName: 'workorder-temporal',
     allowedTools: [
       'agent_notices',
       'context_compile',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'kagemusha_overview',
-      'kagemusha_tasks',
       'schedule_upcoming',
       'task_list',
       'task_temporal_reconcile',
@@ -552,10 +543,6 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
     // answer that was to re-read current state and infer the delta, which is how a
     // report ends up restating the board instead of naming the change.
     'changes_read',
-    'kagemusha_entities',
-    'kagemusha_messages',
-    'kagemusha_overview',
-    'kagemusha_tasks',
     'mama_provenance',
     'mama_recall',
     'mama_save',
@@ -571,6 +558,47 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
 export interface WorkOrderAgentPolicy {
   agentContext: AgentContext;
   gatewayToolsPrompt: string;
+}
+
+const DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+function buildProjectedLaneRole(
+  surface: ConnectorCapabilitySurface,
+  allowedTools: readonly string[],
+  privateConnectorPolicy: PrivateConnectorPolicy
+): RoleConfig {
+  return privateConnectorPolicy.projectRole(surface, {
+    allowedTools: [...allowedTools],
+    blockedTools: [],
+    allowedPaths: [],
+    systemControl: false,
+    sensitiveAccess: false,
+  });
+}
+
+function buildProjectedLanePrompt(
+  innerTools: readonly string[],
+  surface: ConnectorCapabilitySurface,
+  privateConnectorPolicy: PrivateConnectorPolicy
+): string {
+  const privateDefinitions = privateConnectorPolicy.toolDefinitionsFor(surface);
+  const privateNames = new Set<string>(privateDefinitions.map((definition) => definition.name));
+  const catalog = ToolRegistry.generatePrompt(innerTools.filter((name) => !privateNames.has(name)));
+  const overlay = privateConnectorPolicy.promptOverlayFor(surface);
+  if (!overlay || privateDefinitions.length === 0) {
+    return catalog;
+  }
+  const privateCatalog = privateDefinitions
+    .map(
+      (definition) =>
+        `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
+    )
+    .join('\n');
+  return `${catalog}\n\n${overlay}\n\n${privateCatalog}`;
 }
 
 /**
@@ -665,23 +693,23 @@ export function resolveConductorConfig(
  */
 export function buildOperatorReportAgentPolicy(
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy = DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY
 ): WorkOrderAgentPolicy {
-  const blockedTools: string[] = [];
-  const innerTools = uniqueToolList(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
+  const surface = 'operator-report';
+  const projectedRole = buildProjectedLaneRole(
+    surface,
+    OPERATOR_REPORT_TOOL_POLICY.allowedTools,
+    privateConnectorPolicy
+  );
+  const blockedTools = [...(projectedRole.blockedTools ?? [])];
+  const innerTools = uniqueToolList(projectedRole.allowedTools);
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: OPERATOR_REPORT_TOOL_POLICY.roleName,
-    role: {
-      allowedTools,
-      blockedTools,
-      allowedPaths: [],
-      systemControl: false,
-      sensitiveAccess: false,
-      model,
-    },
+    role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: OPERATOR_REPORT_SESSION_KEY,
       channelId: 'report',
@@ -694,33 +722,43 @@ export function buildOperatorReportAgentPolicy(
     tier: 2,
     backend,
   };
-  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+  return {
+    agentContext,
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, privateConnectorPolicy),
+  };
 }
 
 export function buildWorkOrderAgentPolicy(
   kind: WorkOrderKind,
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy = DEFAULT_DISABLED_PRIVATE_CONNECTOR_POLICY
 ): WorkOrderAgentPolicy {
   const policy = WORKORDER_TOOL_POLICIES[kind];
   if (!policy) {
     throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
   }
-  const blockedTools: string[] = [];
-  const innerTools = uniqueToolList(policy.allowedTools);
+  const surface: ConnectorCapabilitySurface =
+    kind === 'board'
+      ? 'workorder-board'
+      : kind === 'memory-curation'
+        ? 'workorder-memory-curation'
+        : kind === 'temporal'
+          ? 'workorder-temporal'
+          : 'multi-agent-generic';
+  const projectedRole = buildProjectedLaneRole(
+    surface,
+    policy.allowedTools,
+    privateConnectorPolicy
+  );
+  const blockedTools = [...(projectedRole.blockedTools ?? [])];
+  const innerTools = uniqueToolList(projectedRole.allowedTools);
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: policy.roleName,
-    role: {
-      allowedTools,
-      blockedTools,
-      allowedPaths: [],
-      systemControl: false,
-      sensitiveAccess: false,
-      model,
-    },
+    role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: `operator:worker:${kind}`,
       channelId: `worker:${kind}`,
@@ -733,7 +771,7 @@ export function buildWorkOrderAgentPolicy(
   };
   return {
     agentContext,
-    gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools),
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, privateConnectorPolicy),
   };
 }
 
@@ -970,9 +1008,16 @@ export async function runAgentLoop(
   const temporalStartup = preflightTemporalStartup(process.env);
 
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
+  const { connectorConfigLoadResult, privateConnectorPolicy } =
+    resolveRuntimeConnectorBootstrap(loadConnectorConfig());
   const temporalPolicy =
     temporalStartup.temporalFlag === 'on'
-      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
+      ? buildWorkOrderAgentPolicy(
+          'temporal',
+          config.agent.model,
+          runtimeBackend,
+          privateConnectorPolicy
+        )
       : null;
   const temporalEffectiveTools = temporalPolicy
     ? projectCodeActToolPolicy({
@@ -1033,8 +1078,6 @@ export async function runAgentLoop(
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
 
-  const { connectorConfigLoadResult, privateConnectorPolicy } =
-    resolveRuntimeConnectorBootstrap(loadConnectorConfig());
   const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(
     db,
     config,
@@ -1048,6 +1091,7 @@ export async function runAgentLoop(
     rolesConfig: config.roles, // Pass roles from config.yaml
     envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     metricsStore,
+    privateConnectorPolicy,
   });
 
   process.env.MAMA_BACKEND = runtimeBackend;
@@ -1097,7 +1141,8 @@ export async function runAgentLoop(
     mamaApiClient,
     resolveMessageRouterConfig(config, runtimeBackend),
     envelopeBootstrap.envelopeConfig,
-    envelopeBootstrap.envelopeAuthority
+    envelopeBootstrap.envelopeAuthority,
+    { privateConnectorPolicy }
   );
   messageRouter.setSessionsDb(db);
 
@@ -1126,7 +1171,7 @@ export async function runAgentLoop(
     sessionsDb: db,
     uiCommandQueue,
   };
-  let codeActRawConnectors: string[] = [];
+  const codeActRawConnectors = resolveCodeActRawConnectors(connectorConfigLoadResult.enabledNames);
 
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
@@ -1143,8 +1188,11 @@ export async function runAgentLoop(
   ): Promise<CodeActResult> => {
     const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
     const sandbox = new CodeActSandbox();
+    const legacyRequestContext = codeActContext
+      ? { ...codeActContext, agentId: undefined }
+      : undefined;
     const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
-      codeActContext,
+      legacyRequestContext,
       config.multi_agent?.agents,
       config.multi_agent?.default_agent || 'conductor'
     );
@@ -1153,7 +1201,10 @@ export async function runAgentLoop(
     }
     const codeActAgentId = resolvedCodeActPolicy.agentId;
     const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
-    const codeActRole = buildCodeActRole(codeActPolicy);
+    const codeActRole = privateConnectorPolicy.projectRole(
+      'legacy-unbound',
+      buildCodeActRole(codeActPolicy)
+    );
     const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
     const codeActTier = codeActReadOnly ? 3 : 2;
     const instanceId = randomUUID();
@@ -1433,6 +1484,7 @@ export async function runAgentLoop(
       {
         backend: runtimeBackend,
         model: config.agent.model,
+        privateConnectorPolicy,
       }
     );
     toolExecutor.setAgentProcessManager(pm);
@@ -1631,7 +1683,8 @@ export async function runAgentLoop(
         const workOrderPolicy = buildWorkOrderAgentPolicy(
           wo.workKind,
           config.agent.model,
-          runtimeBackend
+          runtimeBackend,
+          privateConnectorPolicy
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
@@ -1801,8 +1854,6 @@ export async function runAgentLoop(
       nudge: () => triggerLoopNudge.current?.(),
     }
   );
-  codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
-
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {
     toolExecutor.setRawStore(rawStoreForApi);
@@ -1972,8 +2023,11 @@ export async function runAgentLoop(
                 // gather no matter what the prompt instructs (roleAllowsOuterCodeAct
                 // fails closed on an absent role - agent-loop.ts). Same built-in
                 // least-privilege treatment the Stage-2 workers get.
-                agentContext: buildOperatorReportAgentPolicy(config.agent.model, runtimeBackend)
-                  .agentContext,
+                agentContext: buildOperatorReportAgentPolicy(
+                  config.agent.model,
+                  runtimeBackend,
+                  privateConnectorPolicy
+                ).agentContext,
                 // Stateless report lane: each run starts on a fresh session so the
                 // continuous session no longer accumulates every run's gather dumps
                 // (measured 146s -> 521s growth over 3 days). Continuity comes from

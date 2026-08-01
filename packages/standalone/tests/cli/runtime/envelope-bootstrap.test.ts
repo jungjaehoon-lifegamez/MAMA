@@ -434,7 +434,7 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
           text: 'current Trello work?',
           metadata: { chatType: 'private' },
         })
-      ).toEqual(['telegram', 'kagemusha', 'trello']);
+      ).toEqual(['telegram', 'trello']);
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }
@@ -467,7 +467,7 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
           text: 'current Trello work?',
           metadata: { chatType: 'private' },
         })
-      ).toEqual(['telegram', 'kagemusha']);
+      ).toEqual(['telegram']);
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }
@@ -495,7 +495,7 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
           text: 'current Trello work?',
           metadata: { chatType: 'private' },
         })
-      ).toEqual(['telegram', 'kagemusha']);
+      ).toEqual(['telegram']);
     } finally {
       rmSync(tempHome, { recursive: true, force: true });
     }

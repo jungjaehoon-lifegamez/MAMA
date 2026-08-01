@@ -11,7 +11,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
-import { AgentLoop, loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import { AgentLoop, loadBackendAgentsMd } from '../agent/agent-loop.js';
 import { ToolRegistry } from '../agent/tool-registry.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
@@ -35,6 +35,20 @@ import {
 import { HostBridge } from '../agent/code-act/host-bridge.js';
 import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
 import type { AgentContext, AgentPlatform } from '../agent/types.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+type PrivateAwareMultiAgentRuntimeOptions = MultiAgentRuntimeOptions & {
+  privateConnectorPolicy?: PrivateConnectorPolicy;
+};
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -216,6 +230,7 @@ export class AgentProcessManager extends EventEmitter {
   private codexShutdowns: Map<string, Promise<void>> = new Map();
   private permissionManager: ToolPermissionManager;
   private runtimeOptions: MultiAgentRuntimeOptions;
+  private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private gatewayToolExecutor: GatewayToolExecutor | null = null;
   private readonly tracePromptMs = globalThis.process.env.MAMA_CONDUCTOR_PROMPT_MS === '1';
   private readonly dumpConductorPrompt = globalThis.process.env.MAMA_DUMP_CONDUCTOR_PROMPT === '1';
@@ -235,12 +250,14 @@ export class AgentProcessManager extends EventEmitter {
   constructor(
     config: MultiAgentConfig,
     defaultOptions: Partial<PersistentProcessOptions> = {},
-    runtimeOptions: MultiAgentRuntimeOptions = {}
+    runtimeOptions: PrivateAwareMultiAgentRuntimeOptions = {}
   ) {
     super(); // EventEmitter
     this.config = config;
     this.defaultOptions = defaultOptions;
     this.runtimeOptions = runtimeOptions;
+    this.privateConnectorPolicy =
+      runtimeOptions.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
     this.processPool = new PersistentProcessPool(defaultOptions);
     this.permissionManager = new ToolPermissionManager();
   }
@@ -833,10 +850,14 @@ ${skillsPrompt}## Guidelines
     const tier = agentConfig.tier ?? 1;
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
-      const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
+      const allowedTools = this.deriveCodeActAllowedTools(agentConfig) ?? ['*'];
+      const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
+        allowedTools,
+        blockedTools: codeActBlockedTools(agentConfig),
+      });
       const policy = projectCodeActToolPolicy({
         tier: tier as 1 | 2 | 3,
-        role: { allowedTools },
+        role,
       });
       const typeDefs = TypeDefinitionGenerator.generate(policy);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
@@ -850,13 +871,12 @@ ${skillsPrompt}## Guidelines
     }
 
     // Per-agent tool filtering via ToolRegistry (STORY-018)
-    const allowedTools = agentConfig.tool_permissions?.allowed;
-    if (allowedTools && !allowedTools.includes('*')) {
-      return ToolRegistry.generatePrompt(allowedTools);
-    }
-
-    // Default: full gateway tools from gateway-tools.md
-    return getGatewayToolsPrompt();
+    const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
+      allowedTools: agentConfig.tool_permissions?.allowed ?? ['*'],
+      blockedTools: agentConfig.tool_permissions?.blocked,
+    });
+    const allowedTools = ToolRegistry.getHostToolDefinitions(role).map((tool) => tool.name);
+    return ToolRegistry.generatePrompt(allowedTools);
   }
 
   private deriveCodeActAllowedTools(
@@ -891,10 +911,14 @@ ${skillsPrompt}## Guidelines
   }
 
   private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {
+    const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
+      allowedTools,
+      blockedTools,
+    });
     return [
       ...projectCodeActToolPolicy({
         tier: 1,
-        role: { allowedTools, blockedTools },
+        role,
       }).names,
     ];
   }

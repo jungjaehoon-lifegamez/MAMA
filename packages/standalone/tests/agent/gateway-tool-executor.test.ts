@@ -11,6 +11,24 @@ import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+
+function privatePolicy(enabled: boolean) {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
 
 describe('STORY-V019 - GatewayToolExecutor', () => {
   const createMockApi = (): MAMAApiInterface => {
@@ -1031,6 +1049,60 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(directChatResult).toMatchObject({
             success: false,
             error: expect.stringContaining('owner_console'),
+          });
+        });
+
+        it.each([
+          {
+            label: 'default os_agent wildcard',
+            enabled: true,
+            roleName: 'os_agent',
+            source: 'viewer',
+            expected: 'undefined',
+          },
+          {
+            label: 'custom generic wildcard',
+            enabled: true,
+            roleName: 'custom-agent',
+            source: 'discord',
+            expected: 'undefined',
+          },
+          {
+            label: 'disabled owner wildcard',
+            enabled: false,
+            roleName: 'owner_console',
+            source: 'telegram',
+            expected: 'undefined',
+          },
+          {
+            label: 'enabled verified owner',
+            enabled: true,
+            roleName: 'owner_console',
+            source: 'telegram',
+            expected: 'function',
+          },
+        ])('TG-04 final authorization projects private tools for $label', async (scenario) => {
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: privatePolicy(scenario.enabled),
+          });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            source: scenario.source,
+            roleName: scenario.roleName,
+            role: { allowedTools: ['code_act', '*'] },
+          });
+
+          const result = await executor.execute('code_act', {
+            code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, tasks: typeof kagemusha_tasks, messages: typeof kagemusha_messages })`,
+          });
+
+          expect(JSON.parse(String(result.message)).value).toEqual({
+            overview: scenario.expected,
+            entities: scenario.expected,
+            tasks: scenario.expected,
+            messages: scenario.expected,
           });
         });
 

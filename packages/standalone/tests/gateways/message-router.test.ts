@@ -24,11 +24,33 @@ import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.j
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { ReactiveEnvelopeConfig } from '../../src/envelope/reactive-config.js';
 import type { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import type { AgentLoopOptions } from '../../src/agent/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-message-router-'));
 const testMamaHome = join(testHome, '.mama');
 const testSoulPath = join(testMamaHome, 'SOUL.md');
+
+function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
 
 beforeAll(() => {
   mkdirSync(testMamaHome, { recursive: true });
@@ -545,6 +567,88 @@ describe('MessageRouter', () => {
       expect(rebuiltPrompt).toContain('Previous Conversation');
       expect(rebuiltPrompt?.length).toBeGreaterThan(receivedOptions[1]?.systemPrompt?.length ?? 0);
     });
+
+    it.each([
+      {
+        label: 'disabled to enabled',
+        firstPolicy: privatePolicy(false),
+        secondPolicy: privatePolicy(true),
+        expectPrivateDefinitions: true,
+      },
+      {
+        label: 'enabled to disabled',
+        firstPolicy: privatePolicy(true),
+        secondPolicy: privatePolicy(false),
+        expectPrivateDefinitions: false,
+      },
+    ])(
+      'TG-05 requests continuation and rebuilds the current private policy for $label',
+      async ({ firstPolicy, secondPolicy, expectPrivateDefinitions }) => {
+        const channelId = `owner-policy-${expectPrivateDefinitions ? 'enable' : 'disable'}-${Date.now()}`;
+        resetRoleManager();
+        getRoleManager({ rolesConfig: DEFAULT_ROLES }).setTelegramTrust([channelId]);
+        const receivedOptions: Array<{
+          resumeSession?: boolean;
+          sessionPolicyFingerprint?: string;
+          freshSessionSystemPrompt?: () => Promise<string>;
+        }> = [];
+        const agentLoop = {
+          run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+            receivedOptions.push(options ?? {});
+            return { response: 'Response' };
+          }),
+        };
+        const firstRouter = new MessageRouter(
+          sessionStore,
+          agentLoop,
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: firstPolicy }
+        );
+        const secondRouter = new MessageRouter(
+          sessionStore,
+          agentLoop,
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: secondPolicy }
+        );
+        const message: NormalizedMessage = {
+          source: 'telegram',
+          channelId,
+          userId: 'owner-id',
+          text: 'status',
+          metadata: { chatType: 'private' },
+        };
+
+        try {
+          await firstRouter.process(message);
+          await secondRouter.process({ ...message, text: 'continue' });
+
+          expect(receivedOptions[1]?.resumeSession).toBe(true);
+          expect(receivedOptions[1]?.sessionPolicyFingerprint).not.toBe(
+            receivedOptions[0]?.sessionPolicyFingerprint
+          );
+          const rebuilt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
+          expect(rebuilt).toBeDefined();
+          if (expectPrivateDefinitions) {
+            expect(rebuilt).toContain('kagemusha_overview');
+            expect(rebuilt).toContain('kagemusha_entities');
+            expect(rebuilt).toContain('kagemusha_tasks');
+            expect(rebuilt).toContain('kagemusha_messages');
+            expect(rebuilt).toContain('Private business data');
+          } else {
+            expect(rebuilt).not.toMatch(/kagemusha/i);
+            expect(rebuilt).not.toContain('Private business data');
+          }
+        } finally {
+          resetRoleManager();
+        }
+      }
+    );
 
     it('keeps a host-verified attachment path when rebuilding after a long Telegram caption', async () => {
       getRoleManager().setTelegramTrust(['attachment-reset']);

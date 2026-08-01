@@ -4,6 +4,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
+import type { AgentPersonaConfig, MultiAgentConfig } from '../../src/multi-agent/types.js';
+
+const PRIVATE_TOOLS = [
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
+] as const;
 
 describe('Per-agent tool filtering', () => {
   describe('generatePrompt() with allowed_tools patterns', () => {
@@ -60,5 +69,48 @@ describe('Per-agent tool filtering', () => {
       const filtered = ToolRegistry.getFilteredTools(['*']);
       expect(filtered.length).toBe(ToolRegistry.count);
     });
+  });
+
+  describe('TG-04: generic multi-agent private connector isolation', () => {
+    it.each([true, false])(
+      'removes all private tools from a custom wildcard role (Code-Act=%s)',
+      async (useCodeAct) => {
+        const agentConfig: Omit<AgentPersonaConfig, 'id'> = {
+          name: 'Wildcard',
+          display_name: 'Wildcard',
+          trigger_prefix: '!wildcard',
+          persona_file: '/missing/persona.md',
+          backend: 'codex',
+          model: 'gpt-5.4',
+          tier: 1,
+          useCodeAct,
+          gateway_tool_permissions: { allowed: ['*'] },
+          tool_permissions: { allowed: ['*'] },
+        };
+        const config: MultiAgentConfig = {
+          enabled: true,
+          agents: { wildcard: agentConfig },
+          loop_prevention: {
+            max_chain_length: 3,
+            global_cooldown_ms: 2_000,
+            chain_window_ms: 60_000,
+          },
+        };
+        const manager = new AgentProcessManager(config, {}, { backend: 'codex' });
+        const prompt = (
+          manager as unknown as {
+            buildToolsSection(config: Omit<AgentPersonaConfig, 'id'>): string;
+          }
+        ).buildToolsSection(agentConfig);
+
+        try {
+          for (const tool of PRIVATE_TOOLS) {
+            expect(prompt).not.toContain(tool);
+          }
+        } finally {
+          await manager.stopAll();
+        }
+      }
+    );
   });
 });

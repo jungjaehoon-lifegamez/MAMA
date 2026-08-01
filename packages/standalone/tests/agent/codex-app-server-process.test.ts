@@ -1228,6 +1228,72 @@ describe('Story: Codex app-server process', () => {
 
   it.each([
     {
+      direction: 'disabled to enabled',
+      initialFingerprint: 'tg-05-private-disabled',
+      currentFingerprint: 'tg-05-private-enabled',
+      currentPolicy: 'TG-05 enabled private policy: kagemusha_overview',
+    },
+    {
+      direction: 'enabled to disabled',
+      initialFingerprint: 'tg-05-private-enabled',
+      currentFingerprint: 'tg-05-private-disabled',
+      currentPolicy: 'TG-05 disabled private policy without connector definitions',
+    },
+  ])(
+    'TG-05 discards the old durable thread for $direction and continues the replacement minimally',
+    async ({ initialFingerprint, currentFingerprint, currentPolicy }) => {
+      const item = fixture();
+      const original = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: 'original durable private policy',
+        policyFingerprint: initialFingerprint,
+      });
+      await original.prompt('original turn');
+      await original.stop();
+
+      const replacement = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: currentPolicy,
+        policyFingerprint: currentFingerprint,
+      });
+      await expect(replacement.prompt('stale resume attempt')).rejects.toThrow('policy mismatch');
+      await expect(
+        replacement.prompt('replacement first turn', undefined, { resumeSession: false })
+      ).resolves.toMatchObject({ response: 'hello' });
+      await expect(
+        replacement.prompt('replacement unchanged turn', undefined, {
+          resumeSession: true,
+          systemPrompt: 'minimal unchanged-policy prompt',
+        })
+      ).resolves.toMatchObject({ response: 'hello' });
+      await replacement.stop();
+
+      const sent = messages(item.capture);
+      const starts = sent.filter((entry) => entry.method === 'thread/start');
+      expect(starts).toHaveLength(2);
+      expect(starts[1]?.params).toMatchObject({ baseInstructions: currentPolicy });
+      expect(
+        starts.filter(
+          (entry) =>
+            (entry.params as Record<string, unknown> | undefined)?.baseInstructions ===
+            currentPolicy
+        )
+      ).toHaveLength(1);
+      expect(sent.filter((entry) => entry.method === 'thread/resume')).toHaveLength(0);
+      expect(
+        sent
+          .filter((entry) => entry.method === 'turn/start')
+          .map(
+            (entry) =>
+              ((entry.params as Record<string, unknown>)?.input as Array<{ text?: string }>)[0]
+                ?.text
+          )
+      ).toEqual(['original turn', 'replacement first turn', 'replacement unchanged turn']);
+    }
+  );
+
+  it.each([
+    {
       direction: 'narrowing',
       initial: 'code-act:allowed=mama_search,report_publish',
       changed: 'code-act:allowed=mama_search',
@@ -1408,7 +1474,16 @@ describe('Story: Codex app-server process', () => {
           source,
           tier,
           backend: 'codex',
-          role: { allowedTools: expectedRoleAllowedTools, blockedTools: ['mama_save'] },
+          role: {
+            allowedTools: expectedRoleAllowedTools,
+            blockedTools: expect.arrayContaining([
+              'mama_save',
+              'kagemusha_overview',
+              'kagemusha_entities',
+              'kagemusha_tasks',
+              'kagemusha_messages',
+            ]),
+          },
           session: { channelId },
         },
       });
