@@ -158,6 +158,12 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
+   * Host-issued board work-order attempt. This is deliberately separate from
+   * agent-authored update input: it lets the ledger enforce candidate-scoped
+   * mutation rules for direct and nested gateway execution alike.
+   */
+  workOrderAttemptId?: number;
+  /**
    * WHY an id-less change happened (S2 closed set). Ignored when
    * causeEventIds carry - ids always mean 'event'. Callers state it;
    * the ledger's only fallback is 'owner_message' (the human-adjacent
@@ -950,6 +956,129 @@ export class TaskLedger implements TaskSource {
     return receipt!;
   }
 
+  applyExternalLifecycleDecision(
+    attemptId: number,
+    input: {
+      candidate_id: string;
+      decision: 'apply' | 'retain';
+      reason: string;
+      expected_revision: number;
+    },
+    origin: ChangeOrigin
+  ): ExternalLifecycleReceipt {
+    validateExternalLifecycleDecision('lifecycle', input);
+    if (origin.workOrderAttemptId !== attemptId) {
+      throw new Error(`external lifecycle decision requires trusted attempt origin ${attemptId}`);
+    }
+    let receipt: ExternalLifecycleReceipt | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const candidate = this.loadBoardCandidate(attemptId, input.candidate_id, 'lifecycle');
+      if (candidate.kind !== 'lifecycle') {
+        throw new Error(`external lifecycle candidate ${input.candidate_id} has the wrong kind`);
+      }
+      if (input.expected_revision !== candidate.taskRevision) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} revision does not match its host snapshot`
+        );
+      }
+      if (origin.causeEventIds?.length !== 1 || origin.causeEventIds[0] !== candidate.eventId) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} requires its exact host origin event`
+        );
+      }
+
+      const existing = this.getExternalCandidateReceipt(candidate.candidateId);
+      if (existing) {
+        if (existing.kind !== 'lifecycle') {
+          throw new Error(
+            `external lifecycle candidate ${candidate.candidateId} already has another receipt kind`
+          );
+        }
+        this.assertLifecycleReplayMatches(existing, candidate, input);
+        receipt = existing;
+      } else {
+        const task = this.getRowById(candidate.taskId);
+        const binding = this.getExternalBinding(candidate.taskId);
+        if (!task || task.kind !== 'owner' || !binding) {
+          throw new Error(
+            `external lifecycle candidate ${candidate.candidateId} has no active binding`
+          );
+        }
+        const superseded =
+          binding.id !== candidate.bindingId ||
+          binding.revision !== candidate.bindingRevision ||
+          binding.connector !== candidate.connector ||
+          binding.sourceType !== candidate.sourceType ||
+          binding.externalSourceId !== candidate.externalSourceId ||
+          binding.createdByAttemptId >= attemptId ||
+          task.revision !== candidate.taskRevision ||
+          candidate.operatorObservationSeq <= binding.lastObservationSeq;
+        const taskRevisionBefore = task.revision;
+        let taskRevisionAfter = task.revision;
+        let outcome: ExternalLifecycleReceipt['outcome'];
+        if (superseded) {
+          outcome = 'superseded';
+        } else if (input.decision === 'apply') {
+          const transitioned = this.transitionTaskInTransaction(
+            candidate.taskId,
+            { status: candidate.proposedStatus, latest_event: candidate.evidenceSummary },
+            origin,
+            true
+          );
+          taskRevisionAfter = transitioned.revision;
+          outcome = 'applied';
+        } else {
+          outcome = 'retained';
+        }
+        if (outcome !== 'superseded') {
+          const updated = this.db
+            .prepare(
+              `UPDATE operator_external_task_bindings
+               SET last_observation_seq = ?, revision = revision + 1, updated_at = ?
+               WHERE id = ? AND revision = ? AND last_observation_seq < ?`
+            )
+            .run(
+              candidate.operatorObservationSeq,
+              this.now(),
+              candidate.bindingId,
+              candidate.bindingRevision,
+              candidate.operatorObservationSeq
+            );
+          if (updated.changes !== 1) {
+            throw new Error(
+              `external lifecycle candidate ${candidate.candidateId} binding watermark changed`
+            );
+          }
+        }
+        this.insertLifecycleReceipt(
+          candidate,
+          attemptId,
+          input,
+          outcome,
+          taskRevisionBefore,
+          taskRevisionAfter,
+          origin
+        );
+        receipt = {
+          kind: 'lifecycle',
+          candidateId: candidate.candidateId,
+          workOrderAttemptId: attemptId,
+          taskId: candidate.taskId,
+          outcome,
+          reason: input.reason,
+          taskRevisionBefore,
+          taskRevisionAfter,
+        };
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return receipt!;
+  }
+
   getExternalCandidateReceipt(
     candidateId: string
   ): ExternalBindingReceipt | ExternalLifecycleReceipt | null {
@@ -1109,6 +1238,71 @@ export class TaskLedger implements TaskSource {
         outcome,
         input.reason,
         bindingId ?? null,
+        origin.runId ?? null,
+        JSON.stringify(origin.causeEventIds ?? []),
+        this.now()
+      );
+  }
+
+  private assertLifecycleReplayMatches(
+    receipt: ExternalLifecycleReceipt,
+    candidate: LifecycleCandidate,
+    input: { decision: 'apply' | 'retain'; reason: string }
+  ): void {
+    const stored = this.db
+      .prepare(`SELECT decision FROM operator_external_lifecycle_receipts WHERE candidate_id = ?`)
+      .get(candidate.candidateId) as { decision: 'apply' | 'retain' } | undefined;
+    if (
+      !stored ||
+      stored.decision !== input.decision ||
+      receipt.taskId !== candidate.taskId ||
+      receipt.reason !== input.reason
+    ) {
+      throw new Error(
+        `external lifecycle receipt ${candidate.candidateId} conflicts with replay decision`
+      );
+    }
+  }
+
+  private insertLifecycleReceipt(
+    candidate: LifecycleCandidate,
+    attemptId: number,
+    input: { decision: 'apply' | 'retain'; reason: string },
+    outcome: ExternalLifecycleReceipt['outcome'],
+    taskRevisionBefore: number,
+    taskRevisionAfter: number,
+    origin: ChangeOrigin
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO operator_external_lifecycle_receipts
+           (candidate_id, decision, workorder_attempt_id, task_id, event_id, connector, source_type,
+            external_source_id, channel_partition, content_sha256, source_timestamp_ms,
+            operator_ingest_seq, operator_observation_seq, binding_id, binding_revision,
+            task_revision_before, task_revision_after, outcome, reason, origin_run_id,
+            origin_cause_event_ids, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        candidate.candidateId,
+        input.decision,
+        attemptId,
+        candidate.taskId,
+        candidate.eventId,
+        candidate.connector,
+        candidate.sourceType,
+        candidate.externalSourceId,
+        candidate.channelPartition,
+        candidate.contentSha256,
+        candidate.sourceTimestampMs,
+        candidate.operatorIngestSeq,
+        candidate.operatorObservationSeq,
+        candidate.bindingId,
+        candidate.bindingRevision,
+        taskRevisionBefore,
+        taskRevisionAfter,
+        outcome,
+        input.reason,
         origin.runId ?? null,
         JSON.stringify(origin.causeEventIds ?? []),
         this.now()
@@ -1313,6 +1507,44 @@ export class TaskLedger implements TaskSource {
   }
 
   update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
+    this.validateTaskUpdatePatch(patch);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const task = this.transitionTaskInTransaction(id, patch, origin);
+      this.db.exec('COMMIT');
+      return task;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * The one mutation primitive for owner-task state. Callers own the outer
+   * transaction so lifecycle receipts, effects, generation ownership, and the
+   * row revision can commit or roll back as one unit.
+   */
+  private transitionTaskInTransaction(
+    id: number,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin,
+    skipCandidateGuard = false
+  ): TaskRecord {
+    this.validateTaskUpdatePatch(patch);
+    if (!skipCandidateGuard) {
+      this.assertCandidateTaskMutationAllowed(id, patch, origin);
+    }
+    const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
+      | TaskRow
+      | undefined;
+    if (!existing) throw new Error(`task_update: no task with id ${id}`);
+    if (existing.kind === 'system') {
+      throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
+    }
+    return this.transitionOwnerTaskRowInTransaction(id, existing, patch, origin);
+  }
+
+  private validateTaskUpdatePatch(patch: UpdateTaskInput): void {
     if (patch.status === 'failed') {
       throw new Error(`task_update: 'failed' is a system-only status`);
     }
@@ -1324,136 +1556,157 @@ export class TaskLedger implements TaskSource {
     if (patch.title !== undefined && patch.title.trim() === '') {
       throw new Error('task title must be a non-empty string');
     }
+  }
 
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
-        | TaskRow
-        | undefined;
-      if (!existing) throw new Error(`task_update: no task with id ${id}`);
-      if (existing.kind === 'system') {
-        throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
+  private transitionOwnerTaskRowInTransaction(
+    id: number,
+    existing: TaskRow,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin
+  ): TaskRecord {
+    const next: Record<string, unknown> = {
+      title: existing.title,
+      status: existing.status,
+      priority: existing.priority,
+      assignee: existing.assignee,
+      deadline: existing.deadline,
+      due_at: existing.due_at,
+      deadline_offset_minutes: existing.deadline_offset_minutes,
+      latest_event: existing.latest_event,
+      confirmed: existing.confirmed,
+      temporal_epoch: existing.temporal_epoch,
+      temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
+      last_temporal_checked_at: existing.last_temporal_checked_at,
+      next_temporal_check_at: existing.next_temporal_check_at,
+      last_temporal_attempt_id: existing.last_temporal_attempt_id,
+    };
+    if (patch.title !== undefined) next.title = patch.title.trim();
+    if (patch.status !== undefined) next.status = patch.status;
+    if (patch.priority !== undefined) next.priority = patch.priority;
+    if (patch.assignee !== undefined) next.assignee = patch.assignee;
+    if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
+    if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+
+    const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
+    const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
+    if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
+      const exactDue = parseExactDueAt(patch.due_at);
+      if (hasDeadline && patch.deadline !== exactDue.deadline) {
+        throw new Error('task_update: due_at and deadline conflict');
       }
-
-      const next: Record<string, unknown> = {
-        title: existing.title,
-        status: existing.status,
-        priority: existing.priority,
-        assignee: existing.assignee,
-        deadline: existing.deadline,
-        due_at: existing.due_at,
-        deadline_offset_minutes: existing.deadline_offset_minutes,
-        latest_event: existing.latest_event,
-        confirmed: existing.confirmed,
-        temporal_epoch: existing.temporal_epoch,
-        temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
-        last_temporal_checked_at: existing.last_temporal_checked_at,
-        next_temporal_check_at: existing.next_temporal_check_at,
-        last_temporal_attempt_id: existing.last_temporal_attempt_id,
-      };
-      if (patch.title !== undefined) next.title = patch.title.trim();
-      if (patch.status !== undefined) next.status = patch.status;
-      if (patch.priority !== undefined) next.priority = patch.priority;
-      if (patch.assignee !== undefined) next.assignee = patch.assignee;
-      if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
-      if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
-
-      const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
-      const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
-      if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
-        const exactDue = parseExactDueAt(patch.due_at);
-        if (hasDeadline && patch.deadline !== exactDue.deadline) {
-          throw new Error('task_update: due_at and deadline conflict');
-        }
-        next.due_at = exactDue.dueAt;
-        next.deadline = exactDue.deadline;
-        next.deadline_offset_minutes = exactDue.offsetMinutes;
-      } else if (hasDeadline) {
-        next.deadline = patch.deadline ?? null;
-        next.due_at = null;
-        if (patch.deadline === null) {
-          next.deadline_offset_minutes = null;
-        }
-      } else if (hasDueAt) {
-        next.due_at = null;
+      next.due_at = exactDue.dueAt;
+      next.deadline = exactDue.deadline;
+      next.deadline_offset_minutes = exactDue.offsetMinutes;
+    } else if (hasDeadline) {
+      next.deadline = patch.deadline ?? null;
+      next.due_at = null;
+      if (patch.deadline === null) {
+        next.deadline_offset_minutes = null;
       }
-
-      const temporalChanged =
-        next.due_at !== existing.due_at || next.deadline !== existing.deadline;
-      const terminalToOpen =
-        (existing.status === 'done' || existing.status === 'cancelled') &&
-        next.status !== 'done' &&
-        next.status !== 'cancelled';
-      const openToTerminal =
-        existing.status !== 'done' &&
-        existing.status !== 'cancelled' &&
-        (next.status === 'done' || next.status === 'cancelled');
-      if (temporalChanged || terminalToOpen) {
-        next.temporal_epoch = existing.temporal_epoch + 1;
-        next.temporal_reconciled_occurrence_key = null;
-        next.last_temporal_checked_at = null;
-        next.next_temporal_check_at = null;
-        next.last_temporal_attempt_id = null;
-      }
-
-      const persistedColumns = [
-        'title',
-        'status',
-        'priority',
-        'assignee',
-        'deadline',
-        'due_at',
-        'deadline_offset_minutes',
-        'latest_event',
-        'confirmed',
-        'temporal_epoch',
-        'temporal_reconciled_occurrence_key',
-        'last_temporal_checked_at',
-        'next_temporal_check_at',
-        'last_temporal_attempt_id',
-      ] as const;
-      const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
-      if (changedColumns.length === 0) {
-        // Nothing moved, so nothing is recorded. This is the whole point of the ledger:
-        // a call that ran is not a change, and the two must not be countable as one.
-        //
-        // The read-back happens after the catch, not here: a throw between COMMIT and
-        // return would send this into the catch and issue ROLLBACK with no open
-        // transaction, replacing the real error with a confusing one.
-        this.db.exec('COMMIT');
-      } else {
-        const nextRevision = existing.revision + 1;
-        const sets = changedColumns.map((column) => `${column} = ?`);
-        const values = changedColumns.map((column) => next[column]);
-        const updatedAt = this.now();
-        sets.push('revision = ?', 'updated_at = ?');
-        values.push(nextRevision, updatedAt);
-        this.db
-          .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
-          .run(...values, id);
-        this.recordTaskChange({
-          kind: 'task_update',
-          taskId: id,
-          origin,
-          channel: existing.source_channel,
-          payload: {
-            revision: nextRevision,
-            changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
-          },
-          atMs: updatedAt,
-        });
-        if (temporalChanged || terminalToOpen) {
-          this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
-        } else if (openToTerminal) {
-          this.supersedeAllActiveTemporalGenerationsInTransaction(id);
-        }
-        this.db.exec('COMMIT');
-      }
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
+    } else if (hasDueAt) {
+      next.due_at = null;
     }
-    return this.getById(id)!;
+
+    const temporalChanged = next.due_at !== existing.due_at || next.deadline !== existing.deadline;
+    const terminalToOpen =
+      (existing.status === 'done' || existing.status === 'cancelled') &&
+      next.status !== 'done' &&
+      next.status !== 'cancelled';
+    const openToTerminal =
+      existing.status !== 'done' &&
+      existing.status !== 'cancelled' &&
+      (next.status === 'done' || next.status === 'cancelled');
+    if (temporalChanged || terminalToOpen) {
+      next.temporal_epoch = existing.temporal_epoch + 1;
+      next.temporal_reconciled_occurrence_key = null;
+      next.last_temporal_checked_at = null;
+      next.next_temporal_check_at = null;
+      next.last_temporal_attempt_id = null;
+    }
+
+    const persistedColumns = [
+      'title',
+      'status',
+      'priority',
+      'assignee',
+      'deadline',
+      'due_at',
+      'deadline_offset_minutes',
+      'latest_event',
+      'confirmed',
+      'temporal_epoch',
+      'temporal_reconciled_occurrence_key',
+      'last_temporal_checked_at',
+      'next_temporal_check_at',
+      'last_temporal_attempt_id',
+    ] as const;
+    const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
+    if (changedColumns.length === 0) {
+      return this.toRecord(existing);
+    } else {
+      const nextRevision = existing.revision + 1;
+      const sets = changedColumns.map((column) => `${column} = ?`);
+      const values = changedColumns.map((column) => next[column]);
+      const updatedAt = this.now();
+      sets.push('revision = ?', 'updated_at = ?');
+      values.push(nextRevision, updatedAt);
+      const updated = this.db
+        .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ? AND revision = ?`)
+        .run(...values, id, existing.revision);
+      if (updated.changes !== 1) {
+        throw new Error(`task_update: task ${id} revision changed during transition`);
+      }
+      this.recordTaskChange({
+        kind: 'task_update',
+        taskId: id,
+        origin,
+        channel: existing.source_channel,
+        payload: {
+          revision: nextRevision,
+          changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
+        },
+        atMs: updatedAt,
+      });
+      if (temporalChanged || terminalToOpen) {
+        this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
+      } else if (openToTerminal) {
+        this.supersedeAllActiveTemporalGenerationsInTransaction(id);
+      }
+      const transitioned = this.getRowById(id);
+      if (!transitioned) throw new Error(`task_update: task ${id} disappeared during transition`);
+      return transitioned;
+    }
+  }
+
+  private assertCandidateTaskMutationAllowed(
+    taskId: number,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin
+  ): void {
+    if (
+      origin.workOrderAttemptId === undefined ||
+      (!Object.prototype.hasOwnProperty.call(patch, 'status') &&
+        !Object.prototype.hasOwnProperty.call(patch, 'latest_event'))
+    ) {
+      return;
+    }
+    const attempt = this.getWorkOrderById(origin.workOrderAttemptId);
+    if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
+      return;
+    }
+    const { attempts: _attempts, ...payload } = attempt.payload;
+    validateWorkOrderPayload('board', payload);
+    if (payload.mode !== 'reconcile' || !payload.candidates) {
+      return;
+    }
+    const candidates = payload.candidates as {
+      lifecycleCandidates: readonly LifecycleCandidate[];
+    };
+    if (candidates.lifecycleCandidates.some((candidate) => candidate.taskId === taskId)) {
+      throw new Error(
+        `task_update: candidate-bound lifecycle task ${taskId} may change status/latest_event only through its receipted decision`
+      );
+    }
   }
 
   private supersedeTemporalGenerationsInTransaction(

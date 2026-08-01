@@ -2827,6 +2827,7 @@ export class GatewayToolExecutor {
           }
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
+            workOrderAttemptId: this.getExecutionState().workorderAttemptId,
             // The batch this run was handed. A bounded run's changes rest on the delta it
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.

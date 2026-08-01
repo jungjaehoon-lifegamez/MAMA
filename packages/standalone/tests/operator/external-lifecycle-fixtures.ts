@@ -1,6 +1,7 @@
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import {
   TaskLedger,
+  type CreateTaskInput,
   type TaskRecord,
   type WorkOrderRecord,
 } from '../../src/operator/task-ledger.js';
@@ -81,11 +82,11 @@ export function enqueueAndClaimBindingAttempt(
 }
 
 export function seedBindingCandidateAttempt(
-  input: { eventIds?: readonly string[] } = {}
+  input: { eventIds?: readonly string[]; taskInput?: CreateTaskInput } = {}
 ): SeededExternalLifecycleAttempt {
   const db = new Database(':memory:');
   const ledger = new TaskLedger(db, { now: () => Date.parse('2026-08-02T00:00:00.000Z') });
-  const task = ledger.create({ title: 'native task' });
+  const task = ledger.create(input.taskInput ?? { title: 'native task' });
   const candidate = bindingCandidateFor({ task });
   const attempt = enqueueAndClaimBindingAttempt(
     ledger,
@@ -96,8 +97,10 @@ export function seedBindingCandidateAttempt(
   return { db, ledger, task, attempt, candidate };
 }
 
-export function seedLifecycleCandidateAttempt(): SeededExternalLifecycleAttempt {
-  const seeded = seedBindingCandidateAttempt();
+export function seedLifecycleCandidateAttempt(
+  input: { taskInput?: CreateTaskInput; proposedStatus?: LifecycleCandidate['proposedStatus'] } = {}
+): SeededExternalLifecycleAttempt {
+  const seeded = seedBindingCandidateAttempt({ taskInput: input.taskInput });
   if (seeded.candidate.kind !== 'binding')
     throw new Error('fixture must create a binding candidate');
   seeded.ledger.applyExternalBindingDecision(
@@ -127,7 +130,7 @@ export function seedLifecycleCandidateAttempt(): SeededExternalLifecycleAttempt 
       bindingRevision: binding.revision,
       taskId: seeded.task.id,
       taskRevision: seeded.task.revision,
-      proposedStatus: 'done',
+      proposedStatus: input.proposedStatus ?? 'done',
     }),
     eventId: 'evt_lifecycle_2',
     connector: 'kagemusha',
@@ -138,13 +141,13 @@ export function seedLifecycleCandidateAttempt(): SeededExternalLifecycleAttempt 
     sourceTimestampMs,
     operatorIngestSeq: 4,
     operatorObservationSeq: binding.lastObservationSeq + 1,
-    observedStatus: 'done',
-    evidenceSummary: `Kagemusha task 42 reported done at ${new Date(sourceTimestampMs).toISOString()}`,
+    observedStatus: input.proposedStatus ?? 'done',
+    evidenceSummary: `Kagemusha task 42 reported ${input.proposedStatus ?? 'done'} at ${new Date(sourceTimestampMs).toISOString()}`,
     bindingId: binding.id,
     bindingRevision: binding.revision,
     taskId: seeded.task.id,
     taskRevision: seeded.task.revision,
-    proposedStatus: 'done',
+    proposedStatus: input.proposedStatus ?? 'done',
   };
   const attempt = seeded.ledger.enqueueWorkOrder({
     workKind: 'board',

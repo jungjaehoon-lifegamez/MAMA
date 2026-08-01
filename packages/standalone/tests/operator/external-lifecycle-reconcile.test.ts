@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { BindingCandidate } from '../../src/operator/external-lifecycle.js';
+import type {
+  BindingCandidate,
+  LifecycleCandidate,
+} from '../../src/operator/external-lifecycle.js';
 import {
   bindingCandidateFor,
   enqueueAndClaimBindingAttempt,
@@ -7,6 +10,9 @@ import {
   seedLifecycleCandidateAttempt,
   type SeededExternalLifecycleAttempt,
 } from './external-lifecycle-fixtures.js';
+import { listEffects } from '../../src/evidence/effects.js';
+import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
+import { externalLifecycleCandidateId } from '../../src/operator/external-lifecycle-candidates.js';
 
 const origin = (eventId: string) => ({ runId: 'mr_1', causeEventIds: [eventId] });
 
@@ -259,5 +265,369 @@ describe('Story EL3: receipted external task binding', () => {
       source_event_id: 'task:999',
     });
     expect(lifecycle.ledger.getExternalBinding(untouched.id)).toBeNull();
+  });
+});
+
+describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06)', () => {
+  const databases: SeededExternalLifecycleAttempt[] = [];
+  afterEach(() => {
+    while (databases.length > 0) databases.pop()!.db.close();
+  });
+
+  it('applies a host-built status and latest event together in one receipted revision', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') {
+      throw new Error('lifecycle fixture required');
+    }
+
+    const receipt = seeded.ledger.applyExternalLifecycleDecision(
+      seeded.attempt.id,
+      {
+        candidate_id: seeded.candidate.candidateId,
+        decision: 'apply',
+        reason: 'external completion matches the exact bound card',
+        expected_revision: seeded.candidate.taskRevision,
+      },
+      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+    );
+
+    expect(receipt).toMatchObject({
+      kind: 'lifecycle',
+      outcome: 'applied',
+      taskRevisionBefore: seeded.candidate.taskRevision,
+      taskRevisionAfter: seeded.candidate.taskRevision + 1,
+    });
+    expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+      status: seeded.candidate.proposedStatus,
+      latestEvent: seeded.candidate.evidenceSummary,
+      revision: seeded.candidate.taskRevision + 1,
+    });
+    expect(
+      listEffects(seeded.db as never).filter((effect) => effect.kind === 'task_update')
+    ).toEqual([
+      expect.objectContaining({
+        sourceEventIds: [seeded.candidate.eventId],
+        targetId: String(seeded.task.id),
+      }),
+    ]);
+  });
+
+  it('retains an observation without an effect while consuming its connector-wide watermark', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+
+    const receipt = seeded.ledger.applyExternalLifecycleDecision(
+      seeded.attempt.id,
+      {
+        candidate_id: seeded.candidate.candidateId,
+        decision: 'retain',
+        reason: 'native task intentionally remains open',
+        expected_revision: seeded.candidate.taskRevision,
+      },
+      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+    );
+
+    expect(receipt).toMatchObject({
+      outcome: 'retained',
+      taskRevisionBefore: seeded.task.revision,
+      taskRevisionAfter: seeded.task.revision,
+    });
+    expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+      status: seeded.task.status,
+      revision: seeded.task.revision,
+    });
+    expect(seeded.ledger.getExternalBinding(seeded.task.id)?.lastObservationSeq).toBe(
+      seeded.candidate.operatorObservationSeq
+    );
+    expect(
+      listEffects(seeded.db as never).filter((effect) => effect.kind === 'task_update')
+    ).toEqual([]);
+  });
+
+  it.each(['status', 'latest_event'] as const)(
+    'blocks candidate task_update(%s) before mutation while allowing unrelated fields and tasks',
+    (field) => {
+      const seeded = seedLifecycleCandidateAttempt();
+      databases.push(seeded);
+      if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+      const patch = field === 'status' ? { status: 'done' as const } : { latest_event: 'forged' };
+      expect(() =>
+        seeded.ledger.update(seeded.candidate.taskId, patch, {
+          workOrderAttemptId: seeded.attempt.id,
+          causeEventIds: [seeded.candidate.eventId],
+        })
+      ).toThrow(/candidate-bound lifecycle/i);
+      expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+        seeded.candidate.taskRevision
+      );
+      expect(
+        seeded.ledger.update(
+          seeded.candidate.taskId,
+          { title: 'operator note', priority: 'high' },
+          { workOrderAttemptId: seeded.attempt.id }
+        )
+      ).toMatchObject({ title: 'operator note', priority: 'high' });
+      const unrelated = seeded.ledger.create({ title: 'other task' });
+      expect(
+        seeded.ledger.update(
+          unrelated.id,
+          { status: 'done' },
+          { workOrderAttemptId: seeded.attempt.id }
+        )
+      ).toMatchObject({ status: 'done' });
+    }
+  );
+
+  it('rolls task state and watermark back when its lifecycle receipt cannot commit', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+    seeded.db.exec(`CREATE TRIGGER reject_lifecycle_receipt
+      BEFORE INSERT ON operator_external_lifecycle_receipts
+      BEGIN SELECT RAISE(ABORT, 'lifecycle receipt unavailable'); END`);
+
+    expect(() =>
+      seeded.ledger.applyExternalLifecycleDecision(
+        seeded.attempt.id,
+        {
+          candidate_id: seeded.candidate.candidateId,
+          decision: 'apply',
+          reason: 'external completion matches the exact bound card',
+          expected_revision: seeded.candidate.taskRevision,
+        },
+        { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+      )
+    ).toThrow(/lifecycle receipt unavailable/);
+    expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+      status: 'pending',
+      revision: seeded.candidate.taskRevision,
+    });
+    expect(seeded.ledger.getExternalBinding(seeded.task.id)?.lastObservationSeq).toBeLessThan(
+      seeded.candidate.operatorObservationSeq
+    );
+    expect(seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)).toBeNull();
+  });
+
+  it('replays an identical lifecycle receipt but rejects a changed decision or reason', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+    const input = {
+      candidate_id: seeded.candidate.candidateId,
+      decision: 'apply' as const,
+      reason: 'external completion matches the exact bound card',
+      expected_revision: seeded.candidate.taskRevision,
+    };
+    const trustedOrigin = {
+      ...origin(seeded.candidate.eventId),
+      workOrderAttemptId: seeded.attempt.id,
+    };
+    const first = seeded.ledger.applyExternalLifecycleDecision(
+      seeded.attempt.id,
+      input,
+      trustedOrigin
+    );
+    expect(
+      seeded.ledger.applyExternalLifecycleDecision(seeded.attempt.id, input, trustedOrigin)
+    ).toEqual(first);
+    expect(() =>
+      seeded.ledger.applyExternalLifecycleDecision(
+        seeded.attempt.id,
+        { ...input, decision: 'retain' },
+        trustedOrigin
+      )
+    ).toThrow(/receipt|decision/i);
+    expect(() =>
+      seeded.ledger.applyExternalLifecycleDecision(
+        seeded.attempt.id,
+        { ...input, reason: 'changed reason' },
+        trustedOrigin
+      )
+    ).toThrow(/receipt|decision/i);
+  });
+
+  it('records a superseded receipt without applying an observation after task revision drift', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+    seeded.ledger.update(seeded.task.id, { title: 'owner edited before lifecycle review' });
+
+    const receipt = seeded.ledger.applyExternalLifecycleDecision(
+      seeded.attempt.id,
+      {
+        candidate_id: seeded.candidate.candidateId,
+        decision: 'apply',
+        reason: 'external completion matches the exact bound card',
+        expected_revision: seeded.candidate.taskRevision,
+      },
+      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+    );
+
+    expect(receipt).toMatchObject({
+      outcome: 'superseded',
+      taskRevisionBefore: seeded.candidate.taskRevision + 1,
+      taskRevisionAfter: seeded.candidate.taskRevision + 1,
+    });
+    expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+      title: 'owner edited before lifecycle review',
+      status: 'pending',
+    });
+    expect(seeded.ledger.getExternalBinding(seeded.task.id)?.lastObservationSeq).toBeLessThan(
+      seeded.candidate.operatorObservationSeq
+    );
+  });
+
+  it.each([
+    ['open-to-terminal', 'pending', 'done'],
+    ['terminal-to-open', 'done', 'pending'],
+  ] as const)(
+    'uses the canonical temporal generation transition for %s lifecycle apply',
+    (_name, initialStatus, proposedStatus) => {
+      const seeded = seedLifecycleCandidateAttempt({
+        taskInput: {
+          title: 'scheduled native task',
+          status: initialStatus,
+          due_at: '2026-08-03T09:00:00+09:00',
+        },
+        proposedStatus,
+      });
+      databases.push(seeded);
+      if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+      const scheduled = seeded.ledger.getById(seeded.task.id);
+      if (!scheduled || !scheduled.dueAt) throw new Error('scheduled lifecycle task required');
+      const generation =
+        initialStatus === 'pending'
+          ? seeded.ledger.enqueueTemporalGeneration({
+              generationKey: temporalGenerationKey(
+                scheduled.id,
+                occurrenceKeyForTask(scheduled)!,
+                scheduled.dueAt
+              ),
+              taskId: scheduled.id,
+              temporalEpoch: scheduled.temporalEpoch,
+              occurrenceKey: occurrenceKeyForTask(scheduled)!,
+              checkAt: scheduled.dueAt,
+              sourceChannel: scheduled.sourceChannel,
+              sourceEventId: scheduled.sourceEventId,
+            })
+          : null;
+
+      const updated = seeded.ledger.applyExternalLifecycleDecision(
+        seeded.attempt.id,
+        {
+          candidate_id: seeded.candidate.candidateId,
+          decision: 'apply',
+          reason: 'exact external lifecycle observation',
+          expected_revision: seeded.candidate.taskRevision,
+        },
+        { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+      );
+
+      expect(updated.outcome).toBe('applied');
+      if (generation) {
+        expect(
+          seeded.ledger.getTemporalGeneration(generation.generation.generationKey)
+        ).toMatchObject({
+          disposition: 'superseded',
+        });
+        expect(seeded.ledger.getWorkOrderById(generation.workOrder.id)).toMatchObject({
+          status: 'cancelled',
+        });
+      }
+      if (initialStatus === 'done') {
+        expect(seeded.ledger.getById(seeded.task.id)?.temporalEpoch).toBe(
+          scheduled.temporalEpoch + 1
+        );
+      }
+    }
+  );
+
+  it('uses connector-wide ordinals for equal-timestamp cross-channel observations', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    databases.push(seeded);
+    if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
+    const newerOrigin = {
+      ...origin(seeded.candidate.eventId),
+      workOrderAttemptId: seeded.attempt.id,
+    };
+    seeded.ledger.applyExternalLifecycleDecision(
+      seeded.attempt.id,
+      {
+        candidate_id: seeded.candidate.candidateId,
+        decision: 'apply',
+        reason: 'newer room-b observation',
+        expected_revision: seeded.candidate.taskRevision,
+      },
+      newerOrigin
+    );
+    const afterNewer = seeded.ledger.getById(seeded.task.id)!;
+    const binding = seeded.ledger.getExternalBinding(seeded.task.id)!;
+    const olderObservationSeq = seeded.candidate.operatorObservationSeq - 1;
+    const older: LifecycleCandidate = {
+      ...seeded.candidate,
+      candidateId: externalLifecycleCandidateId({
+        kind: 'lifecycle',
+        eventId: 'evt_room_a_older',
+        externalSourceId: binding.externalSourceId,
+        channelPartition: 'room-a',
+        contentSha256: 'c'.repeat(64),
+        operatorObservationSeq: olderObservationSeq,
+        bindingId: binding.id,
+        bindingRevision: binding.revision,
+        taskId: afterNewer.id,
+        taskRevision: afterNewer.revision,
+        proposedStatus: 'pending',
+      }),
+      eventId: 'evt_room_a_older',
+      channelPartition: 'room-a',
+      contentSha256: 'c'.repeat(64),
+      // Both rooms reported at the exact same source timestamp. Only the
+      // connector-wide ordinal establishes their durable observation order.
+      sourceTimestampMs: seeded.candidate.sourceTimestampMs,
+      operatorIngestSeq: 1,
+      operatorObservationSeq: olderObservationSeq,
+      observedStatus: 'pending',
+      evidenceSummary: `Kagemusha task 42 reported pending at ${new Date(seeded.candidate.sourceTimestampMs).toISOString()}`,
+      bindingId: binding.id,
+      bindingRevision: binding.revision,
+      taskId: afterNewer.id,
+      taskRevision: afterNewer.revision,
+      proposedStatus: 'pending',
+    };
+    const staleOrder = seeded.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: `lifecycle:${older.candidateId}`,
+      input: {
+        mode: 'reconcile',
+        channelKey: 'kagemusha:room-a',
+        deltaLines: ['host-authored older observation'],
+        eventIds: [older.eventId],
+        candidates: { bindingCandidates: [], lifecycleCandidates: [older] },
+      },
+    });
+    const staleAttempt = seeded.ledger.claimNextWorkOrder();
+    expect(staleAttempt?.id).toBe(staleOrder.id);
+
+    expect(
+      seeded.ledger.applyExternalLifecycleDecision(
+        staleOrder.id,
+        {
+          candidate_id: older.candidateId,
+          decision: 'apply',
+          reason: 'older room-a observation',
+          expected_revision: older.taskRevision,
+        },
+        { ...origin(older.eventId), workOrderAttemptId: staleOrder.id }
+      )
+    ).toMatchObject({ outcome: 'superseded' });
+    expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+      status: 'done',
+      revision: afterNewer.revision,
+    });
+    expect(seeded.ledger.getExternalBinding(seeded.task.id)?.lastObservationSeq).toBe(
+      seeded.candidate.operatorObservationSeq
+    );
   });
 });
