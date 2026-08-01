@@ -51,7 +51,13 @@ import {
   temporalGenerationKey,
   type TemporalState,
 } from './task-temporal.js';
-import type { BindingCandidate, LifecycleCandidate } from './external-lifecycle.js';
+import type {
+  BindingCandidate,
+  CandidateTaskSnapshot,
+  ExistingExternalBindingSnapshot,
+  LifecycleCandidate,
+  TaskHintLookup,
+} from './external-lifecycle.js';
 import { validateExternalLifecycleDecision } from './external-lifecycle-candidates.js';
 import { validateWorkOrderPayload } from './workorder-publishers.js';
 
@@ -815,6 +821,117 @@ export class TaskLedger implements TaskSource {
         }
       | undefined;
     return row ? this.externalBindingFromRow(row) : null;
+  }
+
+  /**
+   * Host-only lookup material for immutable external-lifecycle candidates.
+   * The caller supplies exact event/source ids obtained from the connector index;
+   * no connector prose is read through this ledger surface.
+   */
+  getExternalLifecycleCandidateSupport(
+    eventIds: readonly string[],
+    externalSourceIds: readonly string[]
+  ): {
+    taskHints: TaskHintLookup;
+    tasksById: ReadonlyMap<number, CandidateTaskSnapshot>;
+    bindings: readonly ExistingExternalBindingSnapshot[];
+  } {
+    const uniqueEventIds = [...new Set(eventIds)];
+    const uniqueSourceIds = [...new Set(externalSourceIds)];
+    const directTaskIdsByEventId = new Map<string, readonly number[]>();
+    const effectTaskIdsByEventId = new Map<string, readonly number[]>();
+    const bindings: ExistingExternalBindingSnapshot[] = [];
+
+    if (uniqueEventIds.length > 0) {
+      const placeholders = uniqueEventIds.map(() => '?').join(',');
+      const directRows = this.db
+        .prepare(
+          `SELECT source_event_id, id FROM operator_tasks
+           WHERE kind = 'owner' AND source_event_id IN (${placeholders})`
+        )
+        .all(...uniqueEventIds) as Array<{ source_event_id: string; id: number }>;
+      for (const row of directRows) {
+        const ids = directTaskIdsByEventId.get(row.source_event_id) ?? [];
+        directTaskIdsByEventId.set(row.source_event_id, [...ids, row.id]);
+      }
+      const effectRows = this.db
+        .prepare(
+          `SELECT DISTINCT json_each.value AS event_id, evidence_effects.target_id AS task_id
+           FROM evidence_effects, json_each(evidence_effects.source_event_ids_json)
+           WHERE evidence_effects.target_type = 'task'
+             AND json_each.value IN (${placeholders})`
+        )
+        .all(...uniqueEventIds) as Array<{ event_id: string; task_id: string }>;
+      for (const row of effectRows) {
+        const taskId = Number(row.task_id);
+        if (!Number.isSafeInteger(taskId) || taskId < 1) continue;
+        const ids = effectTaskIdsByEventId.get(row.event_id) ?? [];
+        effectTaskIdsByEventId.set(row.event_id, [...ids, taskId]);
+      }
+    }
+
+    if (uniqueSourceIds.length > 0) {
+      const placeholders = uniqueSourceIds.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT id, revision, task_id, connector, source_type, external_source_id,
+                  last_observation_seq
+           FROM operator_external_task_bindings
+           WHERE active = 1 AND connector = 'kagemusha' AND source_type = 'kanban_card'
+             AND external_source_id IN (${placeholders})`
+        )
+        .all(...uniqueSourceIds) as Array<{
+        id: number;
+        revision: number;
+        task_id: number;
+        connector: 'kagemusha';
+        source_type: 'kanban_card';
+        external_source_id: string;
+        last_observation_seq: number;
+      }>;
+      for (const row of rows) {
+        bindings.push({
+          bindingId: row.id,
+          bindingRevision: row.revision,
+          taskId: row.task_id,
+          connector: row.connector,
+          sourceType: row.source_type,
+          externalSourceId: row.external_source_id,
+          lastObservationSeq: row.last_observation_seq,
+        });
+      }
+    }
+
+    const taskIds = new Set<number>();
+    for (const ids of directTaskIdsByEventId.values()) ids.forEach((id) => taskIds.add(id));
+    for (const ids of effectTaskIdsByEventId.values()) ids.forEach((id) => taskIds.add(id));
+    for (const binding of bindings) taskIds.add(binding.taskId);
+    const tasksById = new Map<number, CandidateTaskSnapshot>();
+    if (taskIds.size > 0) {
+      const ids = [...taskIds];
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT id, revision FROM operator_tasks WHERE kind = 'owner' AND id IN (${placeholders})`
+        )
+        .all(...ids) as Array<{ id: number; revision: number }>;
+      for (const row of rows) tasksById.set(row.id, { taskId: row.id, revision: row.revision });
+    }
+    return { taskHints: { directTaskIdsByEventId, effectTaskIdsByEventId }, tasksById, bindings };
+  }
+
+  getReceiptedExternalCandidateIds(candidateIds: readonly string[]): ReadonlySet<string> {
+    const ids = [...new Set(candidateIds)];
+    if (ids.length === 0) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT candidate_id FROM operator_external_binding_receipts WHERE candidate_id IN (${placeholders})
+         UNION
+         SELECT candidate_id FROM operator_external_lifecycle_receipts WHERE candidate_id IN (${placeholders})`
+      )
+      .all(...ids, ...ids) as Array<{ candidate_id: string }>;
+    return new Set(rows.map((row) => row.candidate_id));
   }
 
   /**

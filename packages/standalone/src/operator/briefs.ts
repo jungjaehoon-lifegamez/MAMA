@@ -95,6 +95,16 @@ publish ONLY those, use task_create/task_update with source_channel and
 source_event_id from the delta, or contract_no_update({reason, scope:
 "reconcile:<channelKey>"}) when nothing is affected. Finish with exactly one
 line: RECONCILED <comma-separated slots or none>.
+
+When a reconcile payload contains candidates, they are host-authored immutable
+evidence; deltaLines are only human-readable context. Name every candidate by
+its candidateId and make exactly one candidate-bound decision per candidate:
+use task_external_bind for a binding candidate (choose bind or decline), or
+task_lifecycle_reconcile for a lifecycle candidate (choose apply or retain).
+The available choices are bind/decline/apply/retain. Use your judgment; the
+host does not prescribe an outcome or tool order. You must not use task_update for status or latest_event changes to a candidate task. Do not invent candidates, ids,
+statuses, or evidence. When there are no candidates, preserve ordinary reconcile
+behavior unchanged.
 `;
 
 const WIKI_WORKORDER_CONTRACT = `

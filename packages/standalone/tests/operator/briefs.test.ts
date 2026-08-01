@@ -164,6 +164,17 @@ describe('Story S2-T5: briefs', () => {
       expect(brief).not.toContain('MAMA managed'); // marker stripped
     });
 
+    it('TG-04 makes candidate reconcile decisions explicit without prescribing their outcome', () => {
+      const brief = buildDefaultBrief('board');
+
+      expect(brief).toContain('task_external_bind');
+      expect(brief).toContain('task_lifecycle_reconcile');
+      expect(brief).toContain('exactly one candidate-bound decision per candidate');
+      expect(brief).toContain('bind/decline/apply/retain');
+      expect(brief).toMatch(/must not use task_update.*status.*latest_event/i);
+      expect(brief).toContain('no candidates');
+    });
+
     it('temporal brief carries the dedicated three-outcome action contract', () => {
       const brief = buildDefaultBrief('temporal');
       expect(brief).toContain('task_temporal_reconcile');

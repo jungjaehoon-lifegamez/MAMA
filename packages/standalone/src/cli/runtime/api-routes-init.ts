@@ -48,8 +48,14 @@ import {
   promotionKey,
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
-import type { WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
+import type { TaskLedger, WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
+import type { ExternalLifecycleCandidateSet } from '../../operator/external-lifecycle.js';
+import {
+  buildExternalLifecycleCandidateSet,
+  classifyKagemushaObservation,
+  type RawExternalObservation,
+} from '../../operator/external-lifecycle-candidates.js';
 import {
   dispatchSecurityAlertDirect,
   hasSecurityAlertSender,
@@ -80,6 +86,86 @@ export interface KagemushaTaskQueryInput {
 
 export type KagemushaTaskQuery = (input: KagemushaTaskQueryInput) => TaskInfo[];
 export type KagemushaTaskQueryLoader = () => Promise<KagemushaTaskQuery>;
+
+type ConnectorEventAdapter = {
+  prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] };
+};
+
+const MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS = 100;
+
+/**
+ * Construct the only lifecycle authority a reconcile work order may carry.
+ * Connector rows are parsed one by one: malformed/private-unsupported evidence
+ * becomes bounded diagnostics, while a database failure deliberately throws so
+ * the scheduler retains its unconsumed batch for retry.
+ */
+export function buildReconcileExternalLifecycleCandidates(input: {
+  eventIds: readonly string[];
+  getAdapter: () => ConnectorEventAdapter;
+  ledger: TaskLedger;
+}): ExternalLifecycleCandidateSet {
+  const eventIds = [...new Set(input.eventIds)];
+  if (eventIds.length === 0) {
+    return Object.freeze({
+      bindingCandidates: Object.freeze([]),
+      lifecycleCandidates: Object.freeze([]),
+      diagnostics: Object.freeze([]),
+    });
+  }
+  const placeholders = eventIds.map(() => '?').join(',');
+  const rows = input
+    .getAdapter()
+    .prepare(
+      `SELECT event_index_id, source_connector, source_type, source_id, channel, content_hash,
+            source_timestamp_ms, operator_ingest_seq, operator_observation_seq, metadata_json
+       FROM connector_event_index WHERE event_index_id IN (${placeholders})`
+    )
+    .all(...eventIds) as RawExternalObservation[];
+
+  const observations = [] as NonNullable<
+    ReturnType<typeof classifyKagemushaObservation>['observation']
+  >[];
+  const diagnostics: NonNullable<ReturnType<typeof classifyKagemushaObservation>['diagnostic']>[] =
+    [];
+  const invalidEventIds = new Set<string>();
+  for (const row of rows) {
+    const classified = classifyKagemushaObservation(row);
+    if (classified.observation) {
+      observations.push(classified.observation);
+    } else if (classified.diagnostic) {
+      diagnostics.push(classified.diagnostic);
+      invalidEventIds.add(classified.diagnostic.eventId);
+    }
+  }
+  const candidateEventIds = eventIds.filter((eventId) => !invalidEventIds.has(eventId));
+  const support = input.ledger.getExternalLifecycleCandidateSupport(
+    candidateEventIds,
+    observations.map((observation) => observation.externalSourceId)
+  );
+  const unreceipted = buildExternalLifecycleCandidateSet({
+    eventIds: candidateEventIds,
+    observations,
+    ...support,
+    receiptedCandidateIds: new Set(),
+  });
+  const receiptedCandidateIds = input.ledger.getReceiptedExternalCandidateIds([
+    ...unreceipted.bindingCandidates.map((candidate) => candidate.candidateId),
+    ...unreceipted.lifecycleCandidates.map((candidate) => candidate.candidateId),
+  ]);
+  const built = buildExternalLifecycleCandidateSet({
+    eventIds: candidateEventIds,
+    observations,
+    ...support,
+    receiptedCandidateIds,
+  });
+  return Object.freeze({
+    bindingCandidates: built.bindingCandidates,
+    lifecycleCandidates: built.lifecycleCandidates,
+    diagnostics: Object.freeze(
+      [...diagnostics, ...built.diagnostics].slice(0, MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS)
+    ),
+  });
+}
 
 function queryString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -428,6 +514,17 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
+            const ledger = toolExecutor.getTaskLedger();
+            if (!ledger) {
+              throw new Error(
+                '[stage2] TaskLedger unavailable - cannot construct lifecycle evidence'
+              );
+            }
+            const candidates = buildReconcileExternalLifecycleCandidates({
+              eventIds,
+              getAdapter,
+              ledger,
+            });
             enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
               mode: 'reconcile',
               channelKey,
@@ -435,6 +532,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               // The batch, carried structurally. It was already inside deltaLines as
               // `[id:evt_...]` text and could only be recovered by parsing prose.
               eventIds,
+              // Host-authored structural authority. deltaLines remain untrusted,
+              // human-readable context and never grant lifecycle mutations.
+              candidates,
             });
           } catch (err) {
             routesLogger.error(

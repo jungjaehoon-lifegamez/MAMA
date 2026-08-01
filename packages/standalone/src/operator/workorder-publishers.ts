@@ -13,6 +13,7 @@ import type { WorkOrderKind } from './task-ledger.js';
 import {
   EXTERNAL_LIFECYCLE_STATUSES,
   type BindingCandidate,
+  type ExternalLifecycleDiagnostic,
   type LifecycleCandidate,
 } from './external-lifecycle.js';
 import {
@@ -109,6 +110,7 @@ export interface BoardPayload {
   readonly candidates?: {
     readonly bindingCandidates: readonly BindingCandidate[];
     readonly lifecycleCandidates: readonly LifecycleCandidate[];
+    readonly diagnostics?: readonly ExternalLifecycleDiagnostic[];
   };
 }
 
@@ -246,18 +248,56 @@ export function validateWorkOrderPayload(
 }
 
 function validateLifecycleCandidates(value: unknown, eventIds: unknown): void {
-  if (!isPlainObject(value) || !exactKeys(value, ['bindingCandidates', 'lifecycleCandidates'])) {
+  if (
+    !isPlainObject(value) ||
+    !(
+      exactKeys(value, ['bindingCandidates', 'lifecycleCandidates']) ||
+      exactKeys(value, ['bindingCandidates', 'lifecycleCandidates', 'diagnostics'])
+    )
+  ) {
     throw new Error(
       'workorder payload (board reconcile): candidates contain unknown or missing candidate fields'
     );
   }
-  if (!Array.isArray(value.bindingCandidates) || !Array.isArray(value.lifecycleCandidates)) {
+  if (
+    !Array.isArray(value.bindingCandidates) ||
+    !Array.isArray(value.lifecycleCandidates) ||
+    (value.diagnostics !== undefined && !Array.isArray(value.diagnostics))
+  ) {
     throw new Error('workorder payload (board reconcile): candidate lists required');
   }
   const allowedEventIds = new Set(Array.isArray(eventIds) ? eventIds : []);
   const candidateIds = new Set<string>();
   for (const candidate of [...value.bindingCandidates, ...value.lifecycleCandidates]) {
     validateLifecycleCandidate(candidate, allowedEventIds, candidateIds);
+  }
+  const diagnostics = value.diagnostics ?? [];
+  if (diagnostics.length > 100) {
+    throw new Error('workorder payload (board reconcile): diagnostics are bounded to 100 entries');
+  }
+  for (const diagnostic of diagnostics) {
+    if (!isPlainObject(diagnostic) || !exactKeys(diagnostic, ['eventId', 'code'])) {
+      throw new Error(
+        'workorder payload (board reconcile): diagnostic has unknown or missing fields'
+      );
+    }
+    if (!isBoundedString(diagnostic.eventId)) {
+      throw new Error('workorder payload (board reconcile): diagnostic eventId must be bounded');
+    }
+    if (
+      typeof diagnostic.code !== 'string' ||
+      ![
+        'missing_event',
+        'unsupported_connector',
+        'unsupported_source_type',
+        'malformed_metadata',
+        'unknown_status',
+        'ambiguous_task_pair',
+        'receipt_already_exists',
+      ].includes(diagnostic.code)
+    ) {
+      throw new Error('workorder payload (board reconcile): diagnostic code is invalid');
+    }
   }
 }
 

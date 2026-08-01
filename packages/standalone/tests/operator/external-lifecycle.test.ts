@@ -11,6 +11,9 @@ import {
   type ExternalObservationSnapshot,
   type TaskHintLookup,
 } from '../../src/operator/external-lifecycle-candidates.js';
+import { buildReconcileExternalLifecycleCandidates } from '../../src/cli/runtime/api-routes-init.js';
+import Database from '../../src/sqlite.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 
 const observation = (
   overrides: Partial<ExternalObservationSnapshot> = {}
@@ -35,6 +38,113 @@ const hints = (direct: readonly number[] = [], effect: readonly number[] = []): 
 });
 
 describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', () => {
+  it('TG-01/TG-04 persists a host-built binding candidate from the exact event row', () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db);
+      const task = ledger.create({ title: 'native task', source_event_id: 'evt_1' });
+      db.exec(`CREATE TABLE connector_event_index (
+        event_index_id TEXT PRIMARY KEY,
+        source_connector TEXT,
+        source_type TEXT,
+        source_id TEXT,
+        channel TEXT,
+        content_hash TEXT,
+        source_timestamp_ms INTEGER,
+        operator_ingest_seq INTEGER,
+        operator_observation_seq INTEGER,
+        metadata_json TEXT
+      )`);
+      db.prepare(`INSERT INTO connector_event_index VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        'evt_1',
+        'kagemusha',
+        'kanban_card',
+        'task:42',
+        'room-a',
+        'a'.repeat(64),
+        1_775_260_800_000,
+        4,
+        7,
+        JSON.stringify({ taskId: 42, status: 'done', rawConnector: 'kagemusha' })
+      );
+
+      const candidates = buildReconcileExternalLifecycleCandidates({
+        eventIds: ['evt_1'],
+        getAdapter: () => db,
+        ledger,
+      });
+
+      expect(candidates).toEqual({
+        bindingCandidates: [
+          expect.objectContaining({
+            kind: 'binding',
+            eventId: 'evt_1',
+            taskId: task.id,
+            taskRevision: task.revision,
+            observedStatus: 'done',
+          }),
+        ],
+        lifecycleCandidates: [],
+        diagnostics: [],
+      });
+      expect(Object.isFrozen(candidates.bindingCandidates[0])).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('TG-01 retains ordinary reconcile authority while bounding malformed-event diagnostics', () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db);
+      db.exec(`CREATE TABLE connector_event_index (
+        event_index_id TEXT PRIMARY KEY,
+        source_connector TEXT,
+        source_type TEXT,
+        source_id TEXT,
+        channel TEXT,
+        content_hash TEXT,
+        source_timestamp_ms INTEGER,
+        operator_ingest_seq INTEGER,
+        operator_observation_seq INTEGER,
+        metadata_json TEXT
+      )`);
+      const insert = db.prepare(
+        `INSERT INTO connector_event_index VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const eventIds = Array.from({ length: 101 }, (_, index) => `evt_bad_${index + 1}`);
+      for (const [index, eventId] of eventIds.entries()) {
+        insert.run(
+          eventId,
+          'trello',
+          'kanban_card',
+          `task:${index + 1}`,
+          'room-a',
+          'a'.repeat(64),
+          1_775_260_800_000,
+          index + 1,
+          index + 1,
+          '{}'
+        );
+      }
+
+      const candidates = buildReconcileExternalLifecycleCandidates({
+        eventIds,
+        getAdapter: () => db,
+        ledger,
+      });
+
+      expect(candidates.bindingCandidates).toEqual([]);
+      expect(candidates.lifecycleCandidates).toEqual([]);
+      expect(candidates.diagnostics).toHaveLength(100);
+      expect(candidates.diagnostics).toEqual(
+        expect.arrayContaining([{ eventId: 'evt_bad_1', code: 'unsupported_connector' }])
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it.each([
     ['pending', 'pending'],
     ['in_progress', 'in_progress'],
