@@ -12,6 +12,7 @@ import {
   chmodSync,
   closeSync,
   fchmodSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -88,7 +89,6 @@ const CARRY_SUMMARY_MAX_CHARS = 700;
 const CARRY_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_WAIT_MS = 2_000;
 const LOCK_RETRY_MS = 20;
-const STALE_LOCK_MS = 30_000;
 const UNAVAILABLE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
 export function defaultCarryPath(): string {
@@ -262,63 +262,13 @@ function sleepSynchronously(milliseconds: number): void {
   Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
 }
 
-function processOwnsLock(pid: unknown): boolean {
-  if (!Number.isInteger(pid) || (pid as number) <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid as number, 0);
-    return true;
-  } catch (error) {
-    return !isErrno(error, 'ESRCH');
-  }
+interface ReportCarryLock {
+  path: string;
+  device: number;
+  inode: number;
 }
 
-function recoverStaleLock(lockPath: string): boolean {
-  let before;
-  try {
-    before = lstatSync(lockPath);
-  } catch (error) {
-    if (isErrno(error, 'ENOENT')) {
-      return true;
-    }
-    throw new Error(`Unable to inspect report carry lock: ${formatError(error)}`);
-  }
-  if (!before.isFile() || Date.now() - before.mtimeMs < STALE_LOCK_MS) {
-    return false;
-  }
-
-  let ownerPid: unknown;
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
-    ownerPid = isRecord(parsed) ? parsed.pid : undefined;
-  } catch {
-    // A stale malformed lock has no trustworthy live owner claim.
-  }
-  if (processOwnsLock(ownerPid)) {
-    return false;
-  }
-
-  const current = lstatSync(lockPath);
-  if (
-    current.dev !== before.dev ||
-    current.ino !== before.ino ||
-    current.mtimeMs !== before.mtimeMs
-  ) {
-    return false;
-  }
-  try {
-    unlinkSync(lockPath);
-    return true;
-  } catch (error) {
-    if (isErrno(error, 'ENOENT')) {
-      return true;
-    }
-    throw new Error(`Unable to recover stale report carry lock: ${formatError(error)}`);
-  }
-}
-
-function acquireLock(path: string): string {
+function acquireLock(path: string): ReportCarryLock {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const lockPath = buildCarryLockPath(path);
@@ -333,7 +283,8 @@ function acquireLock(path: string): string {
         JSON.stringify({ pid: process.pid, createdAtMs: Date.now() }),
         'utf8'
       );
-      return lockPath;
+      const metadata = fstatSync(descriptor);
+      return { path: lockPath, device: metadata.dev, inode: metadata.ino };
     } catch (error) {
       if (descriptor !== undefined) {
         closeSync(descriptor);
@@ -352,9 +303,9 @@ function acquireLock(path: string): string {
       if (!isErrno(error, 'EEXIST')) {
         throw new Error(`Unable to acquire report carry lock: ${formatError(error)}`);
       }
-      if (recoverStaleLock(lockPath)) {
-        continue;
-      }
+      // A pathname unlink cannot atomically prove it still owns a stale lock.
+      // A crash-stale lock is therefore an explicit operator-cleanup condition,
+      // never an automatic takeover that could delete a replacement owner.
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for report carry lock: ${lockPath}`);
       }
@@ -367,8 +318,21 @@ function acquireLock(path: string): string {
   }
 }
 
+function releaseLock(lock: ReportCarryLock): void {
+  let current;
+  try {
+    current = lstatSync(lock.path);
+  } catch (error) {
+    throw new Error(`Report carry lock ownership lost before release: ${formatError(error)}`);
+  }
+  if (current.dev !== lock.device || current.ino !== lock.inode) {
+    throw new Error('Report carry lock ownership changed before release');
+  }
+  unlinkSync(lock.path);
+}
+
 function withReportCarryLock<T>(path: string, operation: () => T): T {
-  const lockPath = acquireLock(path);
+  const lock = acquireLock(path);
   let result: T | undefined;
   let operationError: unknown;
   let releaseError: unknown;
@@ -378,7 +342,7 @@ function withReportCarryLock<T>(path: string, operation: () => T): T {
     operationError = error;
   } finally {
     try {
-      unlinkSync(lockPath);
+      releaseLock(lock);
     } catch (error) {
       releaseError = error;
     }
@@ -397,13 +361,18 @@ function withReportCarryLock<T>(path: string, operation: () => T): T {
 }
 
 /** @internal Atomic publisher used only while FileReportCarryStore owns its per-path lock. */
-export function writeReportCarryAtomically(path: string, record: ReportCarryV2): void {
+export function writeReportCarryAtomically(
+  path: string,
+  record: ReportCarryV2,
+  options: { temporaryPath?: (destinationPath: string) => string } = {}
+): void {
   if (!isReportCarryV2(record)) {
     throw new Error('Refusing to persist invalid report carry state');
   }
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporaryPath = buildCarryTemporaryPath(path);
+  const temporaryPath = options.temporaryPath?.(path) ?? buildCarryTemporaryPath(path);
+  let ownsTemporary = false;
   let published = false;
   let operationError: unknown;
   let cleanupError: unknown;
@@ -413,6 +382,7 @@ export function writeReportCarryAtomically(path: string, record: ReportCarryV2):
       mode: 0o600,
       flag: 'wx',
     });
+    ownsTemporary = true;
     chmodSync(temporaryPath, 0o600);
     renameSync(temporaryPath, path);
     published = true;
@@ -420,7 +390,7 @@ export function writeReportCarryAtomically(path: string, record: ReportCarryV2):
   } catch (error) {
     operationError = error;
   } finally {
-    if (!published) {
+    if (ownsTemporary && !published) {
       try {
         unlinkSync(temporaryPath);
       } catch (error) {

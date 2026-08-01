@@ -329,19 +329,34 @@ describe('TG-06: versioned one-shot report carry', () => {
     expect(readdirSync(root).filter((entry) => entry.includes('.tmp'))).toEqual([]);
   });
 
-  it('recovers a proportionately stale exclusive lock before persisting', () => {
+  it('fails closed without deleting a stale foreign lock or changing carry bytes', () => {
     const path = tempCarryPath();
+    const store = new FileReportCarryStore(path);
+    store.persistDelivered(input());
+    const carryBefore = readFileSync(path);
     const lockPath = buildCarryLockPath(path);
-    writeFileSync(lockPath, 'stale owner', { mode: 0o600 });
+    writeFileSync(lockPath, 'replacement owner lock', { mode: 0o600 });
+    const foreignLockBytes = readFileSync(lockPath);
     const staleAt = new Date(Date.now() - 60_000);
     utimesSync(lockPath, staleAt, staleAt);
 
-    new FileReportCarryStore(path).persistDelivered(
-      input({ deliveredAt: new Date().toISOString() })
-    );
+    expect(() => store.persistDelivered(input({ deliveryId: 'd2' }))).toThrow(/timed out/i);
+    expect(readFileSync(lockPath)).toEqual(foreignLockBytes);
+    expect(readFileSync(path)).toEqual(carryBefore);
+  });
 
-    expect(new FileReportCarryStore(path).peek(TARGET)).not.toBeNull();
-    expect(() => statSync(lockPath)).toThrow();
+  it('never deletes a foreign temporary file after an EEXIST collision', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-carry-'));
+    const path = join(root, 'last-full-report.json');
+    const foreignTemporary = join(root, '.last-full-report.foreign.tmp');
+    writeFileSync(foreignTemporary, 'foreign temporary bytes', { mode: 0o600 });
+    const record: ReportCarryV2 = { version: 2, ...input() };
+
+    expect(() =>
+      writeReportCarryAtomically(path, record, { temporaryPath: () => foreignTemporary })
+    ).toThrow(/EEXIST/);
+    expect(readFileSync(foreignTemporary, 'utf8')).toBe('foreign temporary bytes');
+    expect(() => statSync(path)).toThrow();
   });
 
   it('serializes a stale acknowledgement behind a competing new delivery across processes', async () => {
