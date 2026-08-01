@@ -10,6 +10,12 @@
  */
 
 import type { WorkOrderKind } from './task-ledger.js';
+import {
+  EXTERNAL_LIFECYCLE_STATUSES,
+  type BindingCandidate,
+  type LifecycleCandidate,
+} from './external-lifecycle.js';
+import { KAGEMUSHA_LIFECYCLE_OBSERVED_STATUSES } from './external-lifecycle-candidates.js';
 import { createHash } from 'node:crypto';
 
 export const STAGE2_FLAG_ENV = 'MAMA_STAGE2_WORKORDERS';
@@ -93,6 +99,11 @@ export interface BoardPayload {
   deltaLines?: string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
   eventIds?: string[];
+  /** Host-authored immutable candidates; reconcile-only. */
+  candidates?: {
+    bindingCandidates: BindingCandidate[];
+    lifecycleCandidates: LifecycleCandidate[];
+  };
 }
 
 export interface WikiPayload {
@@ -116,7 +127,7 @@ export interface TemporalPayload {
 }
 
 const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
-  board: ['mode', 'force', 'channelKey', 'deltaLines', 'eventIds'],
+  board: ['mode', 'force', 'channelKey', 'deltaLines', 'eventIds', 'candidates'],
   wiki: ['batchId', 'events'],
   'memory-curation': ['scheduledAt'],
   temporal: [
@@ -159,7 +170,7 @@ export function validateWorkOrderPayload(
       throw new Error(`workorder payload (board): force must be a boolean`);
     }
     if (mode === 'reconcile') {
-      if (typeof payload.channelKey !== 'string' || payload.channelKey === '') {
+      if (!isBoundedString(payload.channelKey)) {
         throw new Error(`workorder payload (board reconcile): channelKey required`);
       }
       if (!Array.isArray(payload.deltaLines) || payload.deltaLines.length === 0) {
@@ -170,13 +181,20 @@ export function validateWorkOrderPayload(
       if (
         payload.eventIds !== undefined &&
         (!Array.isArray(payload.eventIds) ||
-          payload.eventIds.some((id) => typeof id !== 'string' || id.trim().length === 0))
+          payload.eventIds.some((id) => !isBoundedString(id)) ||
+          new Set(payload.eventIds).size !== payload.eventIds.length)
       ) {
         throw new Error(
-          `workorder payload (board reconcile): eventIds[] must be non-empty strings`
+          `workorder payload (board reconcile): eventIds[] must contain unique 1-1000 character strings`
         );
       }
-    } else if (payload.channelKey !== undefined || payload.deltaLines !== undefined) {
+      if (payload.candidates !== undefined)
+        validateLifecycleCandidates(payload.candidates, payload.eventIds);
+    } else if (
+      payload.channelKey !== undefined ||
+      payload.deltaLines !== undefined ||
+      payload.candidates !== undefined
+    ) {
       // Reconcile-only fields on a full run signal a caller bug - loud.
       throw new Error(`workorder payload (board full): channelKey/deltaLines are reconcile-only`);
     }
@@ -219,4 +237,129 @@ export function validateWorkOrderPayload(
       }
     }
   }
+}
+
+function validateLifecycleCandidates(value: unknown, eventIds: unknown): void {
+  if (!isPlainObject(value) || !exactKeys(value, ['bindingCandidates', 'lifecycleCandidates'])) {
+    throw new Error(
+      'workorder payload (board reconcile): candidates contain unknown or missing candidate fields'
+    );
+  }
+  if (!Array.isArray(value.bindingCandidates) || !Array.isArray(value.lifecycleCandidates)) {
+    throw new Error('workorder payload (board reconcile): candidate lists required');
+  }
+  const allowedEventIds = new Set(Array.isArray(eventIds) ? eventIds : []);
+  const candidateIds = new Set<string>();
+  for (const candidate of [...value.bindingCandidates, ...value.lifecycleCandidates]) {
+    validateLifecycleCandidate(candidate, allowedEventIds, candidateIds);
+  }
+}
+
+function validateLifecycleCandidate(
+  value: unknown,
+  eventIds: ReadonlySet<unknown>,
+  candidateIds: Set<string>
+): void {
+  if (!isPlainObject(value))
+    throw new Error('workorder payload (board reconcile): candidate must be an object');
+  const kind = value.kind;
+  const common = [
+    'kind',
+    'candidateId',
+    'eventId',
+    'connector',
+    'sourceType',
+    'externalSourceId',
+    'channelPartition',
+    'contentSha256',
+    'sourceTimestampMs',
+    'operatorIngestSeq',
+    'operatorObservationSeq',
+    'observedStatus',
+    'evidenceSummary',
+    'taskId',
+    'taskRevision',
+  ];
+  const keys =
+    kind === 'binding' ? common : [...common, 'bindingId', 'bindingRevision', 'proposedStatus'];
+  if ((kind !== 'binding' && kind !== 'lifecycle') || !exactKeys(value, keys)) {
+    throw new Error('workorder payload (board reconcile): candidate has unknown or missing fields');
+  }
+  for (const key of [
+    'candidateId',
+    'eventId',
+    'externalSourceId',
+    'channelPartition',
+    'observedStatus',
+    'evidenceSummary',
+  ] as const) {
+    if (!isBoundedString(value[key]))
+      throw new Error(
+        `workorder payload (board reconcile): candidate ${key} must contain 1-1000 characters`
+      );
+  }
+  if (value.connector !== 'kagemusha' || value.sourceType !== 'kanban_card')
+    throw new Error(
+      'workorder payload (board reconcile): candidate connector/source type is invalid'
+    );
+  if (typeof value.contentSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.contentSha256))
+    throw new Error(
+      'workorder payload (board reconcile): candidate contentSha256 must be sha256 hex'
+    );
+  for (const key of [
+    'sourceTimestampMs',
+    'operatorIngestSeq',
+    'operatorObservationSeq',
+    'taskId',
+    'taskRevision',
+  ] as const) {
+    if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 1)
+      throw new Error(
+        `workorder payload (board reconcile): candidate ${key} must be a positive safe integer`
+      );
+  }
+  if (
+    typeof value.observedStatus !== 'string' ||
+    !KAGEMUSHA_LIFECYCLE_OBSERVED_STATUSES.includes(value.observedStatus as never)
+  ) {
+    throw new Error('workorder payload (board reconcile): candidate observedStatus is invalid');
+  }
+  const eventId = value.eventId as string;
+  const candidateId = value.candidateId as string;
+  if (!eventIds.has(eventId))
+    throw new Error('workorder payload (board reconcile): candidate eventId must be in eventIds');
+  if (candidateIds.has(candidateId))
+    throw new Error('workorder payload (board reconcile): unique candidate IDs required');
+  candidateIds.add(candidateId);
+  if (kind === 'lifecycle') {
+    for (const key of ['bindingId', 'bindingRevision'] as const) {
+      if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 1)
+        throw new Error(
+          `workorder payload (board reconcile): candidate ${key} must be a positive safe integer`
+        );
+    }
+    if (
+      typeof value.proposedStatus !== 'string' ||
+      !EXTERNAL_LIFECYCLE_STATUSES.includes(value.proposedStatus as never)
+    )
+      throw new Error('workorder payload (board reconcile): candidate proposedStatus is invalid');
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+function isBoundedString(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 1000;
 }

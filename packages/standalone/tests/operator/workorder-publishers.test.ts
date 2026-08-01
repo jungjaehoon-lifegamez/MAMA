@@ -82,6 +82,79 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(() => validateWorkOrderPayload('board', { mode: 'full', force: true })).not.toThrow();
     });
 
+    it('accepts only recursively valid unique lifecycle candidates on reconcile payloads', () => {
+      const candidate = {
+        kind: 'binding',
+        candidateId: 'a'.repeat(64),
+        eventId: 'evt_1',
+        connector: 'kagemusha',
+        sourceType: 'kanban_card',
+        externalSourceId: 'task:42',
+        channelPartition: 'room-a',
+        contentSha256: 'b'.repeat(64),
+        sourceTimestampMs: 1_775_260_800_000,
+        operatorIngestSeq: 4,
+        operatorObservationSeq: 7,
+        observedStatus: 'done',
+        evidenceSummary: 'Kagemusha task 42 reported done at 2026-04-02T00:00:00.000Z',
+        taskId: 4,
+        taskRevision: 7,
+      };
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: { bindingCandidates: [candidate], lifecycleCandidates: [] },
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: { bindingCandidates: [candidate, candidate], lifecycleCandidates: [] },
+        })
+      ).toThrow(/unique candidate/i);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: { bindingCandidates: [], lifecycleCandidates: [], injected: true },
+        })
+      ).toThrow(/unknown.*candidate|candidate.*unknown/i);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          candidates: { bindingCandidates: [], lifecycleCandidates: [] },
+        })
+      ).toThrow(/reconcile-only/i);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1', 'evt_1'],
+        })
+      ).toThrow(/eventIds.*unique/i);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: {
+            bindingCandidates: [{ ...candidate, observedStatus: 'trello-done' }],
+            lifecycleCandidates: [],
+          },
+        })
+      ).toThrow(/observedStatus/i);
+    });
+
     it('wiki needs batchId + events[]; promotion needs scheduledAt', () => {
       expect(() => validateWorkOrderPayload('wiki', { batchId: 'b-1' })).toThrow(/events/);
       expect(() => validateWorkOrderPayload('wiki', { batchId: 'b-1', events: [] })).not.toThrow();
