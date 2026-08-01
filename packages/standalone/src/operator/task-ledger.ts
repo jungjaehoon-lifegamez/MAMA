@@ -859,6 +859,9 @@ export class TaskLedger implements TaskSource {
     origin: ChangeOrigin
   ): ExternalBindingReceipt {
     validateExternalLifecycleDecision('binding', input);
+    if (origin.workOrderAttemptId !== attemptId) {
+      throw new Error(`external binding decision requires trusted attempt origin ${attemptId}`);
+    }
     let receipt: ExternalBindingReceipt | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {

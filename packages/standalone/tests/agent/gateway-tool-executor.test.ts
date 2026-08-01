@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
-import type { MAMAApiInterface } from '../../src/agent/types.js';
+import type { MAMAApiInterface, ModelRunRecord } from '../../src/agent/types.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import {
@@ -98,8 +98,33 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       success: true,
       id: 'trusted_ingest_123',
     });
+    api.appendToolTrace = vi.fn().mockResolvedValue({});
     return api;
   };
+
+  const modelRunForAttempt = (attemptId: number, status: ModelRunRecord['status'] = 'running') =>
+    ({
+      model_run_id: `mr_board_${attemptId}`,
+      model_id: null,
+      model_provider: 'test',
+      prompt_version: null,
+      tool_manifest_version: null,
+      output_schema_version: null,
+      agent_id: 'workorder-board',
+      instance_id: null,
+      envelope_hash: null,
+      parent_model_run_id: null,
+      input_snapshot_ref: null,
+      input_refs_json: JSON.stringify({ workorderAttemptId: attemptId }),
+      input_refs: { workorderAttemptId: attemptId },
+      completion_summary: null,
+      status,
+      error_summary: null,
+      token_count: 0,
+      cost_estimate: null,
+      created_at: 1,
+      completed_at: null,
+    }) satisfies ModelRunRecord;
 
   // Shared context helpers (used by multiple test suites)
   const createViewerContext = () => ({
@@ -168,7 +193,10 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
       it('applies the exact lifecycle candidate from trusted attempt state only', async () => {
         const seeded = seedLifecycleCandidateAttempt();
-        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const api = createMockApi();
+        const run = modelRunForAttempt(seeded.attempt.id);
+        api.getModelRun = vi.fn().mockResolvedValue(run);
+        const executor = new GatewayToolExecutor({ mamaApi: api });
         executor.setTaskLedger(seeded.ledger);
 
         const result = await executor.execute(
@@ -182,6 +210,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           {
             executionSurface: 'model_tool',
             workorderAttemptId: seeded.attempt.id,
+            modelRunId: run.model_run_id,
           }
         );
 
@@ -193,6 +222,142 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             outcome: 'applied',
           },
         });
+        seeded.db.close();
+      });
+
+      it.each([
+        ['missing', undefined, null],
+        ['blank', '   ', null],
+        ['unknown', 'mr_unknown', null],
+        ['committed', 'mr_committed', 'committed'],
+        ['cross-attempt', 'mr_other_attempt', 'running'],
+      ] as const)(
+        'fails closed for a %s direct lifecycle run authority',
+        async (_caseName, modelRunId, status) => {
+          const seeded = seedLifecycleCandidateAttempt();
+          const api = createMockApi();
+          const run = modelRunForAttempt(
+            status === 'running' ? seeded.attempt.id + 1 : seeded.attempt.id,
+            status ?? 'running'
+          );
+          api.getModelRun = vi.fn().mockResolvedValue(modelRunId === 'mr_unknown' ? null : run);
+          const executor = new GatewayToolExecutor({ mamaApi: api });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_lifecycle_reconcile',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'apply',
+                reason: 'verified',
+                expected_revision: seeded.candidate.taskRevision,
+              },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                ...(modelRunId === undefined ? {} : { modelRunId }),
+              }
+            )
+          ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+          expect(
+            seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)
+          ).toBeNull();
+          seeded.db.close();
+        }
+      );
+
+      it.each([
+        ['missing', undefined, null],
+        ['blank', '   ', null],
+        ['unknown', 'mr_unknown', null],
+        ['committed', 'mr_committed', 'committed'],
+        ['cross-attempt', 'mr_other_attempt', 'running'],
+      ] as const)(
+        'fails closed for a %s direct binding run authority',
+        async (_caseName, modelRunId, status) => {
+          const seeded = seedBindingCandidateAttempt();
+          const api = createMockApi();
+          const run = modelRunForAttempt(
+            status === 'running' ? seeded.attempt.id + 1 : seeded.attempt.id,
+            status ?? 'running'
+          );
+          api.getModelRun = vi.fn().mockResolvedValue(modelRunId === 'mr_unknown' ? null : run);
+          const executor = new GatewayToolExecutor({ mamaApi: api });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_external_bind',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'bind',
+                reason: 'exact task identity confirmed',
+                expected_revision: seeded.candidate.taskRevision,
+              },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                ...(modelRunId === undefined ? {} : { modelRunId }),
+              }
+            )
+          ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+          expect(
+            seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)
+          ).toBeNull();
+          seeded.db.close();
+        }
+      );
+
+      it('fails closed for a nested lifecycle call without current run authority', async () => {
+        const seeded = seedLifecycleCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'code_act',
+          {
+            code: `task_lifecycle_reconcile({ candidate_id: '${seeded.candidate.candidateId}', decision: 'apply', reason: 'verified', expected_revision: ${seeded.candidate.taskRevision} });`,
+            allowedTools: ['task_lifecycle_reconcile'],
+          },
+          {
+            agentContext: createViewerContext(),
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringMatching(/model run/i),
+        });
+        expect(seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)).toBeNull();
+        seeded.db.close();
+      });
+
+      it('fails closed for a nested binding call without current run authority', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'code_act',
+          {
+            code: `task_external_bind({ candidate_id: '${seeded.candidate.candidateId}', decision: 'bind', reason: 'exact task identity confirmed', expected_revision: ${seeded.candidate.taskRevision} });`,
+            allowedTools: ['task_external_bind'],
+          },
+          {
+            agentContext: createViewerContext(),
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringMatching(/model run/i),
+        });
+        expect(seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)).toBeNull();
         seeded.db.close();
       });
 

@@ -14,7 +14,11 @@ import { listEffects } from '../../src/evidence/effects.js';
 import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { externalLifecycleCandidateId } from '../../src/operator/external-lifecycle-candidates.js';
 
-const origin = (eventId: string) => ({ runId: 'mr_1', causeEventIds: [eventId] });
+const origin = (eventId: string, workOrderAttemptId: number) => ({
+  runId: 'mr_1',
+  workOrderAttemptId,
+  causeEventIds: [eventId],
+});
 
 describe('Story EL3: receipted external task binding', () => {
   const databases: SeededExternalLifecycleAttempt[] = [];
@@ -40,7 +44,7 @@ describe('Story EL3: receipted external task binding', () => {
         reason: 'exact task identity confirmed',
         expected_revision: candidate.taskRevision,
       },
-      origin(candidate.eventId)
+      origin(candidate.eventId, attempt.id)
     );
 
     expect(receipt).toMatchObject({
@@ -90,6 +94,30 @@ describe('Story EL3: receipted external task binding', () => {
     );
   });
 
+  it('refuses a mismatched binding attempt origin before binding or receipt mutation', () => {
+    const { ledger, task, attempt, candidate } = seeded();
+    if (candidate.kind !== 'binding') throw new Error('binding fixture required');
+
+    expect(() =>
+      ledger.applyExternalBindingDecision(
+        attempt.id,
+        {
+          candidate_id: candidate.candidateId,
+          decision: 'bind',
+          reason: 'exact task identity confirmed',
+          expected_revision: candidate.taskRevision,
+        },
+        {
+          runId: 'mr_other',
+          workOrderAttemptId: attempt.id + 1,
+          causeEventIds: [candidate.eventId],
+        }
+      )
+    ).toThrow(/trusted attempt origin/i);
+    expect(ledger.getExternalBinding(task.id)).toBeNull();
+    expect(ledger.getExternalCandidateReceipt(candidate.candidateId)).toBeNull();
+  });
+
   it('refuses an exact candidate from a different multi-event attempt instead of pairing by task or event', () => {
     const { ledger, task, candidate } = seeded();
     if (candidate.kind !== 'binding') throw new Error('binding fixture required');
@@ -109,7 +137,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'cross-event substitution',
           expected_revision: candidate.taskRevision,
         },
-        origin(candidate.eventId)
+        origin(candidate.eventId, other.id)
       )
     ).toThrow(/candidate/i);
     expect(ledger.getExternalBinding(task.id)).toBeNull();
@@ -132,7 +160,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'exact task identity confirmed',
           expected_revision: candidate.taskRevision,
         },
-        origin('evt_other_member_of_batch')
+        origin('evt_other_member_of_batch', attempt.id)
       )
     ).toThrow(/origin|event/i);
     expect(ledger.getExternalBinding(task.id)).toBeNull();
@@ -145,7 +173,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'exact task identity confirmed',
           expected_revision: candidate.taskRevision,
         },
-        origin(candidate.eventId)
+        origin(candidate.eventId, attempt.id)
       )
     ).toMatchObject({ outcome: 'bound' });
   });
@@ -162,7 +190,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'identity remains ambiguous',
           expected_revision: declined.candidate.taskRevision,
         },
-        origin(declined.candidate.eventId)
+        origin(declined.candidate.eventId, declined.attempt.id)
       )
     ).toMatchObject({ outcome: 'declined' });
     expect(declined.ledger.getExternalBinding(declined.task.id)).toBeNull();
@@ -179,7 +207,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'exact task identity confirmed',
           expected_revision: stale.candidate.taskRevision,
         },
-        origin(stale.candidate.eventId)
+        origin(stale.candidate.eventId, stale.attempt.id)
       )
     ).toMatchObject({ outcome: 'superseded' });
     expect(() =>
@@ -191,7 +219,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'exact task identity confirmed',
           expected_revision: stale.candidate.taskRevision,
         },
-        origin(stale.candidate.eventId)
+        origin(stale.candidate.eventId, stale.attempt.id)
       )
     ).toThrow(/receipt|decision/i);
     expect(stale.ledger.getExternalBinding(stale.task.id)).toBeNull();
@@ -206,26 +234,30 @@ describe('Story EL3: receipted external task binding', () => {
       reason: 'identity remains ambiguous',
       expected_revision: candidate.taskRevision,
     };
-    const first = ledger.applyExternalBindingDecision(attempt.id, input, origin(candidate.eventId));
+    const first = ledger.applyExternalBindingDecision(
+      attempt.id,
+      input,
+      origin(candidate.eventId, attempt.id)
+    );
     expect(
-      ledger.applyExternalBindingDecision(attempt.id, input, origin(candidate.eventId))
+      ledger.applyExternalBindingDecision(attempt.id, input, origin(candidate.eventId, attempt.id))
     ).toEqual(first);
     const replay = enqueueAndClaimBindingAttempt(ledger, candidate, 'cross-attempt-replay');
     expect(
-      ledger.applyExternalBindingDecision(replay.id, input, origin(candidate.eventId))
+      ledger.applyExternalBindingDecision(replay.id, input, origin(candidate.eventId, replay.id))
     ).toEqual(first);
     expect(() =>
       ledger.applyExternalBindingDecision(
         replay.id,
         { ...input, decision: 'bind' },
-        origin(candidate.eventId)
+        origin(candidate.eventId, replay.id)
       )
     ).toThrow(/receipt|decision/i);
     expect(() =>
       ledger.applyExternalBindingDecision(
         replay.id,
         { ...input, reason: 'changed reason' },
-        origin(candidate.eventId)
+        origin(candidate.eventId, replay.id)
       )
     ).toThrow(/receipt|reason/i);
     expect(ledger.getExternalBinding(task.id)).toBeNull();
@@ -245,7 +277,7 @@ describe('Story EL3: receipted external task binding', () => {
           reason: 'exact task identity confirmed',
           expected_revision: candidate.taskRevision,
         },
-        origin(candidate.eventId)
+        origin(candidate.eventId, attempt.id)
       )
     ).toThrow(/receipt unavailable/);
     expect(ledger.getExternalBinding(task.id)).toBeNull();
@@ -289,7 +321,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
         reason: 'external completion matches the exact bound card',
         expected_revision: seeded.candidate.taskRevision,
       },
-      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+      origin(seeded.candidate.eventId, seeded.attempt.id)
     );
 
     expect(receipt).toMatchObject({
@@ -326,7 +358,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
         reason: 'native task intentionally remains open',
         expected_revision: seeded.candidate.taskRevision,
       },
-      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+      origin(seeded.candidate.eventId, seeded.attempt.id)
     );
 
     expect(receipt).toMatchObject({
@@ -397,7 +429,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
           reason: 'external completion matches the exact bound card',
           expected_revision: seeded.candidate.taskRevision,
         },
-        { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+        origin(seeded.candidate.eventId, seeded.attempt.id)
       )
     ).toThrow(/lifecycle receipt unavailable/);
     expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
@@ -420,10 +452,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
       reason: 'external completion matches the exact bound card',
       expected_revision: seeded.candidate.taskRevision,
     };
-    const trustedOrigin = {
-      ...origin(seeded.candidate.eventId),
-      workOrderAttemptId: seeded.attempt.id,
-    };
+    const trustedOrigin = origin(seeded.candidate.eventId, seeded.attempt.id);
     const first = seeded.ledger.applyExternalLifecycleDecision(
       seeded.attempt.id,
       input,
@@ -462,7 +491,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
         reason: 'external completion matches the exact bound card',
         expected_revision: seeded.candidate.taskRevision,
       },
-      { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+      origin(seeded.candidate.eventId, seeded.attempt.id)
     );
 
     expect(receipt).toMatchObject({
@@ -522,7 +551,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
           reason: 'exact external lifecycle observation',
           expected_revision: seeded.candidate.taskRevision,
         },
-        { ...origin(seeded.candidate.eventId), workOrderAttemptId: seeded.attempt.id }
+        origin(seeded.candidate.eventId, seeded.attempt.id)
       );
 
       expect(updated.outcome).toBe('applied');
@@ -548,10 +577,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
     const seeded = seedLifecycleCandidateAttempt();
     databases.push(seeded);
     if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
-    const newerOrigin = {
-      ...origin(seeded.candidate.eventId),
-      workOrderAttemptId: seeded.attempt.id,
-    };
+    const newerOrigin = origin(seeded.candidate.eventId, seeded.attempt.id);
     seeded.ledger.applyExternalLifecycleDecision(
       seeded.attempt.id,
       {
@@ -619,7 +645,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
           reason: 'older room-a observation',
           expected_revision: older.taskRevision,
         },
-        { ...origin(older.eventId), workOrderAttemptId: staleOrder.id }
+        origin(older.eventId, staleOrder.id)
       )
     ).toMatchObject({ outcome: 'superseded' });
     expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({

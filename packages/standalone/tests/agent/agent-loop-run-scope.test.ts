@@ -257,6 +257,11 @@ describe('Story OPS-0: per-run scope + operator global lane', () => {
         causeEventIds: ['cause-17'],
         executionSurface: 'model_tool',
       });
+      expect(mockApi.beginModelRun).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          input_refs: expect.objectContaining({ workorderAttemptId: 17 }),
+        })
+      );
 
       flushPrompt('temporal owner work', {
         response: 'done',

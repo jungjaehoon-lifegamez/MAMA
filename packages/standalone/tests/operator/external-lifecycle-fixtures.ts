@@ -111,7 +111,11 @@ export function seedLifecycleCandidateAttempt(
       reason: 'exact task identity confirmed',
       expected_revision: seeded.candidate.taskRevision,
     },
-    { runId: 'fixture_bind', causeEventIds: [seeded.candidate.eventId] }
+    {
+      runId: 'fixture_bind',
+      workOrderAttemptId: seeded.attempt.id,
+      causeEventIds: [seeded.candidate.eventId],
+    }
   );
   const binding = seeded.ledger.getExternalBinding(seeded.task.id);
   if (!binding) throw new Error('fixture must create its binding');

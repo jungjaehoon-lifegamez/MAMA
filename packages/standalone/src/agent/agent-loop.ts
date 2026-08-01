@@ -2271,6 +2271,9 @@ export class AgentLoop {
         ...(options?.sourceTurnId ? { sourceTurnId: options.sourceTurnId } : {}),
         ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
         ...(resolvedCliSessionId ? { cliSessionId: resolvedCliSessionId } : {}),
+        ...(options?.workorderAttemptId !== undefined
+          ? { workorderAttemptId: options.workorderAttemptId }
+          : {}),
       },
     };
   }

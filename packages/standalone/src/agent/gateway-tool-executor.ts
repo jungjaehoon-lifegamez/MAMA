@@ -1448,6 +1448,63 @@ export class GatewayToolExecutor {
     return result;
   }
 
+  /**
+   * External lifecycle decisions are only valid while the host-created model run that owns the
+   * claimed board attempt is still running. Tool input cannot name either authority.
+   */
+  private async requireExternalLifecycleModelRun(attemptId: number): Promise<string> {
+    const modelRunId = this.getExecutionState().modelRunId;
+    if (
+      typeof modelRunId !== 'string' ||
+      modelRunId.trim().length === 0 ||
+      modelRunId.trim() !== modelRunId
+    ) {
+      throw new AgentError(
+        'External lifecycle authority requires a current host-issued model run',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    const api = await this.initializeMAMAApi();
+    if (!api.getModelRun) {
+      throw new AgentError(
+        'External lifecycle model-run authority is unavailable',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    let modelRun: ModelRunRecord | null;
+    try {
+      modelRun = await api.getModelRun(modelRunId);
+    } catch (error) {
+      throw new AgentError(
+        'External lifecycle model-run authority could not be verified',
+        'WORKORDER_SUPERSEDED',
+        error instanceof Error ? error : undefined,
+        false
+      );
+    }
+
+    if (
+      !modelRun ||
+      modelRun.status !== 'running' ||
+      modelRun.input_refs?.workorderAttemptId !== attemptId
+    ) {
+      throw new AgentError(
+        'External lifecycle authority is no longer current for this claimed attempt',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    return modelRunId;
+  }
+
   private async beginTraceIfNeeded(
     ctx: ActiveGatewayExecutionContext,
     gatewayCallId: string
@@ -2818,6 +2875,7 @@ export class GatewayToolExecutor {
               false
             );
           }
+          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
           let candidate;
           try {
             candidate = this.taskLedger.loadBoardCandidate(
@@ -2839,7 +2897,7 @@ export class GatewayToolExecutor {
             attemptId,
             input as ExternalBindingToolInput,
             {
-              runId: state.modelRunId ?? null,
+              runId: modelRunId,
               workOrderAttemptId: attemptId,
               causeEventIds: [candidate.eventId],
             }
@@ -2877,6 +2935,7 @@ export class GatewayToolExecutor {
               false
             );
           }
+          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
           let candidate;
           try {
             candidate = this.taskLedger.loadBoardCandidate(
@@ -2898,7 +2957,7 @@ export class GatewayToolExecutor {
             attemptId,
             input as ExternalLifecycleReconcileToolInput,
             {
-              runId: state.modelRunId ?? null,
+              runId: modelRunId,
               workOrderAttemptId: attemptId,
               causeEventIds: [candidate.eventId],
             }
