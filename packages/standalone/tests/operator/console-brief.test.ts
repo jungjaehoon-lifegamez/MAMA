@@ -7,7 +7,7 @@
  * self-update rule itself - with its one new lesson on the loop's first fire.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,7 +17,9 @@ import {
   consoleBriefPath,
   ensureConsoleBrief,
   loadConsoleBrief,
+  projectConsoleBriefForPrompt,
 } from '../../src/operator/console-brief.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 let home: string;
 beforeEach(() => {
@@ -28,6 +30,22 @@ afterEach(() => {
 });
 
 describe('owner-console brief substrate', () => {
+  it('TG-05 keeps the packaged default source-neutral', () => {
+    expect(CONSOLE_BRIEF_DEFAULT.toLowerCase()).not.toContain('kagemusha');
+  });
+
+  it('TG-05 hides disabled private lessons without changing the user-owned file', () => {
+    const raw = '# Owner Console Operating Brief\n\n## Lessons\n- Use kagemusha_tasks first.\n';
+    ensureConsoleBrief(home);
+    writeFileSync(consoleBriefPath(home), raw, 'utf-8');
+    const policy = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+    const projected = projectConsoleBriefForPrompt(raw, policy);
+
+    expect(projected).not.toContain('kagemusha_tasks');
+    expect(loadConsoleBrief(home)).toBe(raw);
+  });
+
   it('seeds the packaged skeleton once and never overwrites edits (agent-owned)', () => {
     expect(ensureConsoleBrief(home)).toBe(true);
     expect(loadConsoleBrief(home)).toBe(CONSOLE_BRIEF_DEFAULT);

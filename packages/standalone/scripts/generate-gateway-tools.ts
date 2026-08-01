@@ -7,7 +7,8 @@
 
 import { writeFileSync, mkdirSync, copyFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { ToolRegistry } from '../src/agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../src/agent/gateway-tool-catalog.js';
+import { resolvePrivateConnectorPolicy } from '../src/connectors/private-connector-policy.js';
 
 // ─── Static sections appended after tool list ────────────────────────────────
 
@@ -95,7 +96,16 @@ Call tools via JSON block:
 
 `;
 
-const toolList = ToolRegistry.generatePrompt();
+const publicCatalog = buildGatewayToolCatalog({
+  surface: 'multi-agent-generic',
+  allowedTools: ['*'],
+  privateConnectorPolicy: resolvePrivateConnectorPolicy({
+    ok: true,
+    config: {},
+    enabledNames: [],
+  }),
+});
+const toolList = publicCatalog.prompt;
 // generatePrompt() includes "# Gateway Tools" header — strip it to avoid duplication
 const toolListBody = toolList.replace(/^# Gateway Tools\n*/, '');
 
@@ -118,4 +128,4 @@ try {
   // dist may not exist yet during first build
 }
 
-console.log(`✓ gateway-tools.md generated (${ToolRegistry.count} tools)`);
+console.log(`✓ gateway-tools.md generated (${publicCatalog.toolNames.length} public tools)`);

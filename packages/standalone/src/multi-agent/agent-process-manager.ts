@@ -12,7 +12,7 @@ import { readFile } from 'fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { AgentLoop, loadBackendAgentsMd } from '../agent/agent-loop.js';
-import { ToolRegistry } from '../agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
@@ -326,15 +326,23 @@ export class AgentProcessManager extends EventEmitter {
     return this.config.agents[agentId]?.persona_file === '';
   }
 
+  private personaCacheKey(agentId: string): string {
+    return `${this.privateConnectorPolicy.fingerprint}:${agentId}`;
+  }
+
+  private personaCacheAgentId(cacheKey: string): string {
+    return cacheKey.slice(this.privateConnectorPolicy.fingerprint.length + 1);
+  }
+
   private clearPersonaCache(preserveEphemeral = false): void {
     if (!preserveEphemeral) {
       this.personaCache.clear();
       return;
     }
 
-    for (const agentId of this.personaCache.keys()) {
-      if (!this.isEphemeralAgent(agentId)) {
-        this.personaCache.delete(agentId);
+    for (const cacheKey of this.personaCache.keys()) {
+      if (!this.isEphemeralAgent(this.personaCacheAgentId(cacheKey))) {
+        this.personaCache.delete(cacheKey);
       }
     }
   }
@@ -635,8 +643,9 @@ export class AgentProcessManager extends EventEmitter {
     const hasSkillFile = existsSync(skillPath);
 
     // Check cache first — skip cache if skill file exists to allow hot-reload
-    if (this.personaCache.has(agentId) && !hasSkillFile) {
-      const cachedPrompt = this.personaCache.get(agentId)!;
+    const cacheKey = this.personaCacheKey(agentId);
+    if (this.personaCache.has(cacheKey) && !hasSkillFile) {
+      const cachedPrompt = this.personaCache.get(cacheKey)!;
       if (shouldTrace) {
         processManagerLogger.debug(
           `[Conductor] system prompt cache HIT | key=${traceCacheKey} len=${cachedPrompt.length}`
@@ -658,7 +667,7 @@ export class AgentProcessManager extends EventEmitter {
       console.warn(`[AgentProcessManager] Persona file not found: ${personaPath}`);
       // Return default persona
       const defaultPersona = this.buildDefaultPersona(agentId, agentConfig);
-      this.personaCache.set(agentId, defaultPersona);
+      this.personaCache.set(cacheKey, defaultPersona);
       if (shouldTrace) {
         processManagerLogger.warn(
           `[Conductor] persona file missing (${traceCacheKey}), using default in ${Date.now() - loadStart}ms`
@@ -703,7 +712,7 @@ export class AgentProcessManager extends EventEmitter {
         }
       }
 
-      this.personaCache.set(agentId, systemPrompt);
+      this.personaCache.set(cacheKey, systemPrompt);
       if (shouldTrace && this.dumpConductorPrompt) {
         processManagerLogger.debug(`[Conductor] system prompt content:\n${systemPrompt}`);
       }
@@ -848,16 +857,23 @@ ${skillsPrompt}## Guidelines
 
   private buildToolsSection(agentConfig: Omit<AgentPersonaConfig, 'id'>): string {
     const tier = agentConfig.tier ?? 1;
+    const allowedTools = agentConfig.useCodeAct
+      ? (this.deriveCodeActAllowedTools(agentConfig) ?? ['*'])
+      : (agentConfig.tool_permissions?.allowed ?? ['*']);
+    const blockedTools = agentConfig.useCodeAct
+      ? codeActBlockedTools(agentConfig)
+      : agentConfig.tool_permissions?.blocked;
+    const catalog = buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
+      allowedTools,
+      blockedTools,
+      privateConnectorPolicy: this.privateConnectorPolicy,
+    });
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
-      const allowedTools = this.deriveCodeActAllowedTools(agentConfig) ?? ['*'];
-      const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
-        allowedTools,
-        blockedTools: codeActBlockedTools(agentConfig),
-      });
       const policy = projectCodeActToolPolicy({
         tier: tier as 1 | 2 | 3,
-        role,
+        role: { allowedTools: [...catalog.toolNames], blockedTools: [] },
       });
       const typeDefs = TypeDefinitionGenerator.generate(policy);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
@@ -871,12 +887,7 @@ ${skillsPrompt}## Guidelines
     }
 
     // Per-agent tool filtering via ToolRegistry (STORY-018)
-    const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
-      allowedTools: agentConfig.tool_permissions?.allowed ?? ['*'],
-      blockedTools: agentConfig.tool_permissions?.blocked,
-    });
-    const allowedTools = ToolRegistry.getHostToolDefinitions(role).map((tool) => tool.name);
-    return ToolRegistry.generatePrompt(allowedTools);
+    return catalog.prompt;
   }
 
   private deriveCodeActAllowedTools(
@@ -911,14 +922,16 @@ ${skillsPrompt}## Guidelines
   }
 
   private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {
-    const role = this.privateConnectorPolicy.projectRole('multi-agent-generic', {
+    const catalog = buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
       allowedTools,
       blockedTools,
+      privateConnectorPolicy: this.privateConnectorPolicy,
     });
     return [
       ...projectCodeActToolPolicy({
         tier: 1,
-        role,
+        role: { allowedTools: [...catalog.toolNames], blockedTools: [] },
       }).names,
     ];
   }
@@ -1214,7 +1227,7 @@ Respond to messages in a helpful and professional manner.
       agentConfig,
       agentDef.system_prompt
     );
-    this.personaCache.set(agentDef.id, fullPrompt);
+    this.personaCache.set(this.personaCacheKey(agentDef.id), fullPrompt);
   }
 
   /**
@@ -1223,7 +1236,7 @@ Respond to messages in a helpful and professional manner.
   unregisterEphemeralAgents(agentDefs: EphemeralAgentDef[]): void {
     for (const { id: agentId } of agentDefs) {
       this.stopAgentProcesses(agentId);
-      this.personaCache.delete(agentId);
+      this.personaCache.delete(this.personaCacheKey(agentId));
       delete this.config.agents[agentId];
     }
   }
@@ -1232,7 +1245,7 @@ Respond to messages in a helpful and professional manner.
    * Reload persona for an agent (clears cache)
    */
   reloadPersona(agentId: string): void {
-    this.personaCache.delete(agentId);
+    this.personaCache.delete(this.personaCacheKey(agentId));
     // Stop all processes for this agent to force reload
     this.stopAgentProcesses(agentId);
   }

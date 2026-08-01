@@ -19,6 +19,46 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
 import { buildTemporalWorkerBrief } from './temporal-worker.js';
+import {
+  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
+  type ConnectorCapabilitySurface,
+  type PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+import {
+  stripMarkedPrivatePromptOverlays,
+  wrapPrivatePromptOverlay,
+} from '../connectors/private-prompt-overlay.js';
+
+const PRIVATE_CONNECTOR_NAMES = new Set(
+  PRIVATE_CONNECTOR_TOOL_DEFINITIONS.flatMap((definition) => [
+    definition.name.toLowerCase(),
+    definition.name.split('_', 1)[0]!.toLowerCase(),
+  ])
+);
+const LEGACY_PRIVATE_LINES: Readonly<Record<WorkOrderKind, ReadonlySet<string>>> = {
+  board: new Set([
+    '- kagemusha_tasks({status?}) -- the bridge task board. Statuses are real lifecycle states: pending, in_progress, review, done, completed, cancelled, dismissed. Includes title, priority, deadline, source_room, confirmed.',
+    '- kagemusha_overview() -- room/task/message counts for the stat line',
+    '- kagemusha_entities({channel?, activeOnly?}) -- list rooms/people with activity stats; find the busiest rooms',
+    '- kagemusha_messages({channelId, since?, limit?}) -- read recent raw messages from a room for deltas and evidence',
+    "- context_compile({task, connectors?, limit?, max_tool_calls?, strictness?}) -- compile a scoped evidence packet for the board. Trello is external connector evidence and is available only through context_compile; when intentionally isolating Trello, pass connectors: ['trello']. Never treat kagemusha_* as Trello.",
+    '- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source. Never infer or copy lifecycle status across those stores.',
+    '- Never copy Trello or Kagemusha lifecycle status into your task board.',
+    '- Project-task completion/progress comes ONLY from kagemusha_tasks. NEVER infer a project task\'s state from message archaeology ("no approval message found" is not a status).',
+    '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
+    '1. Read the REAL task state first: kagemusha_tasks({}) for open work, plus kagemusha_tasks({status: "review"}) and kagemusha_tasks({status: "pending"}) slices; kagemusha_overview() for the stat line',
+    '2. Gather deltas: kagemusha_entities({activeOnly: true}), then kagemusha_messages({channelId, since}) on the busiest 2-3 rooms (since = ISO timestamp for the last 24-48h) for what changed since the last board',
+  ]),
+  wiki: new Set(),
+  'memory-curation': new Set([
+    '2. kagemusha_entities({activeOnly: true}) to find the rooms active since the',
+    'boundary, then kagemusha_messages({channelId, since: <boundary ISO>}) on',
+    'the busiest 3-4 rooms.',
+  ]),
+  temporal: new Set([
+    '- Kagemusha is read-only project truth. Do not copy its lifecycle state into the native task.',
+  ]),
+};
 
 export function briefsDir(homeDir: string = homedir()): string {
   return join(homeDir, '.mama', 'briefs');
@@ -81,9 +121,9 @@ scheduledAt as the current time reference.
 1. agent_notices({limit: 100}): find your latest promotion notice (action
    "promoted" or "no_update") and treat it as the boundary; default to the
    last 24h when absent.
-2. kagemusha_entities({activeOnly: true}) to find the rooms active since the
-   boundary, then kagemusha_messages({channelId, since: <boundary ISO>}) on
-   the busiest 3-4 rooms.
+2. Use the business-data readers present in this run's catalog to find active
+   channels since the boundary, then inspect the busiest 3-4 channels without
+   widening the boundary.
 3. For each candidate judgment, mama_search first to find the existing topic;
    reuse it so the evolution chain stays intact.
 4. Promote at most 5 durable judgments per run via mama_save: pricing/scope
@@ -105,6 +145,81 @@ export function buildDefaultBrief(kind: WorkOrderKind): string {
     case 'temporal':
       return buildTemporalWorkerBrief();
   }
+}
+
+function stripLegacyPrivateLines(kind: WorkOrderKind, raw: string): string {
+  const legacyLines = LEGACY_PRIVATE_LINES[kind];
+  return raw
+    .split(/\r?\n/)
+    .filter((line) => !legacyLines.has(line.trim()))
+    .join('\n');
+}
+
+function hideDisabledPrivateLessons(raw: string): string {
+  let inLessons = false;
+  return raw
+    .split('\n')
+    .filter((line) => {
+      const heading = line.match(/^##\s+(.+?)\s*$/);
+      if (heading) {
+        inLessons = heading[1].toLowerCase() === 'lessons';
+        return true;
+      }
+      if (!inLessons) {
+        return true;
+      }
+      const lower = line.toLowerCase();
+      return ![...PRIVATE_CONNECTOR_NAMES].some((name) => lower.includes(name));
+    })
+    .join('\n');
+}
+
+function workOrderSurface(kind: WorkOrderKind): ConnectorCapabilitySurface {
+  switch (kind) {
+    case 'board':
+      return 'workorder-board';
+    case 'memory-curation':
+      return 'workorder-memory-curation';
+    case 'temporal':
+      return 'workorder-temporal';
+    case 'wiki':
+      return 'multi-agent-generic';
+  }
+}
+
+function privateOverlayForPrompt(
+  surface: ConnectorCapabilitySurface,
+  policy: PrivateConnectorPolicy
+): string {
+  const overlay = policy.promptOverlayFor(surface).trim();
+  const definitions = policy.toolDefinitionsFor(surface);
+  if (!overlay || definitions.length === 0) {
+    return '';
+  }
+  return wrapPrivatePromptOverlay(
+    [
+      overlay,
+      '',
+      ...definitions.map(
+        (definition) =>
+          `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
+      ),
+    ].join('\n')
+  );
+}
+
+/** Project a user-owned work-order brief for one run without changing its file. */
+export function projectWorkOrderBriefForPrompt(
+  kind: WorkOrderKind,
+  raw: string,
+  policy: PrivateConnectorPolicy
+): string {
+  let projected = stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw));
+  if (policy.enabledPrivateConnectors.length === 0) {
+    projected = hideDisabledPrivateLessons(projected);
+  }
+  const overlay = privateOverlayForPrompt(workOrderSurface(kind), policy);
+  return overlay ? `${projected.trimEnd()}\n\n${overlay}\n` : projected;
 }
 
 /**

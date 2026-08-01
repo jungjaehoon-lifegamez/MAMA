@@ -64,7 +64,7 @@ register({
 register({
   name: 'mama_search',
   description:
-    'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
+    'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must exactly match granted forms such as channel:<connector>:<channelId> or global:system - guessed ids are denied.',
   category: 'memory',
   params:
     'query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?',
@@ -72,7 +72,7 @@ register({
 register({
   name: 'mama_recall',
   description:
-    'Recall memory bundle with profile, memories, and graph context. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
+    'Recall memory bundle with profile, memories, and graph context. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must exactly match granted forms such as channel:<connector>:<channelId> or global:system - guessed ids are denied.',
   category: 'memory',
   params: 'query, scopes?, includeProfile?',
 });
@@ -339,7 +339,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List work items from YOUR task board - the working tracker you maintain for the owner, who only views it (the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
+    'List work items from YOUR native task board - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. Returns server-derived temporal_state and normalized due_at. Board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)",
@@ -433,17 +433,30 @@ export class ToolRegistry {
 
   /**
    * Get tools filtered by allowed list.
-   * If allowedTools is undefined or empty, returns all tools.
+   * If allowedTools is undefined, returns all tools. An empty list returns none.
    * Supports wildcard patterns: "mama_*", "browser_*", "*"
    */
-  static getFilteredTools(allowedTools?: string[]): ToolDefinitionMeta[] {
-    if (!allowedTools || allowedTools.length === 0 || allowedTools.includes('*')) {
+  static getFilteredTools(allowedTools?: readonly string[]): ToolDefinitionMeta[] {
+    if (allowedTools === undefined || allowedTools.includes('*')) {
       return ToolRegistry.getAllTools();
     }
 
     return ToolRegistry.getAllTools().filter((tool) =>
       allowedTools.some((pattern) => matchToolPattern(pattern, tool.name))
     );
+  }
+
+  /** Expand optional exact/glob patterns to canonical registry names. */
+  static expandToolPatterns(patterns?: readonly string[]): string[] {
+    if (patterns === undefined) {
+      return ToolRegistry.getValidToolNames();
+    }
+    if (patterns.length === 0) {
+      return [];
+    }
+    return ToolRegistry.getAllTools()
+      .filter((tool) => patterns.some((pattern) => matchToolPattern(pattern, tool.name)))
+      .map((tool) => tool.name);
   }
 
   /**
@@ -520,7 +533,7 @@ export class ToolRegistry {
   /**
    * Generate a markdown prompt listing all tools (or filtered subset).
    */
-  static generatePrompt(allowedTools?: string[]): string {
+  static generatePrompt(allowedTools?: readonly string[]): string {
     const tools = ToolRegistry.getFilteredTools(allowedTools);
     const grouped = new Map<ToolCategory, ToolDefinitionMeta[]>();
     for (const tool of tools) {
@@ -559,7 +572,7 @@ export class ToolRegistry {
   /**
    * Generate a compact fallback prompt (for when gateway-tools.md is not available).
    */
-  static generateFallbackPrompt(allowedTools?: string[]): string {
+  static generateFallbackPrompt(allowedTools?: readonly string[]): string {
     const tools = ToolRegistry.getFilteredTools(allowedTools);
     const grouped = new Map<ToolCategory, string[]>();
     for (const tool of tools) {

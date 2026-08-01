@@ -21,10 +21,11 @@ import { ContextInjector, type InjectedContext, type MamaApiClient } from './con
 import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
-import { loadConsoleBrief } from '../operator/console-brief.js';
+import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
+import { loadConsoleBrief, projectConsoleBriefForPrompt } from '../operator/console-brief.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
-import { ToolRegistry } from '../agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
+import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
@@ -62,6 +63,7 @@ import type {
 import {
   PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
   resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
 } from '../connectors/private-connector-policy.js';
 
 export type { AgentLoopOptions } from '../agent/types.js';
@@ -1486,7 +1488,21 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
-    const privatePolicyPrompt = agentContext ? this.buildPrivateConnectorPrompt(agentContext) : '';
+    const surface = agentContext
+      ? resolvePrivatePrincipalSurface({ agentContext })
+      : 'multi-agent-generic';
+    const gatewayCatalog = agentContext
+      ? buildGatewayToolCatalog({
+          surface,
+          allowedTools: agentContext.role.allowedTools,
+          blockedTools: agentContext.role.blockedTools,
+          privateConnectorPolicy: this.privateConnectorPolicy,
+        })
+      : null;
+    const privatePolicyPrompt =
+      this.config.backend === 'codex' && surface === 'owner_console'
+        ? projectConsoleBriefForPrompt('', this.privateConnectorPolicy).trim()
+        : '';
     const stableRolePolicy = agentContext
       ? [
           buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable),
@@ -1653,7 +1669,15 @@ ${historyContext}
       if (agentContext.roleName === 'owner_console') {
         const consoleBrief = loadConsoleBrief();
         if (consoleBrief.trim()) {
-          prompt += `\n\n${consoleBrief.trim()}\n`;
+          const projectedBrief = projectConsoleBriefForPrompt(
+            consoleBrief,
+            this.privateConnectorPolicy
+          );
+          prompt += `\n\n${((gatewayCatalog && this.config.backend !== 'codex') ||
+          privatePolicyPrompt
+            ? stripMarkedPrivatePromptOverlays(projectedBrief)
+            : projectedBrief
+          ).trim()}\n`;
         }
       }
     }
@@ -1669,24 +1693,11 @@ ${historyContext}
 
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer.
-    // Prompt-permission coherence: advertise ONLY the tools this role can
-    // execute - the previous role-agnostic single cache advertised the full
-    // catalog, teaching the model to call tools the executor then denied.
-    // getGatewayToolsPrompt keeps its own per-disallowed-key cache, and its
-    // per-bullet filter preserves the '## Gateway Tools' marker - AgentLoop
-    // must keep seeing that marker or it double-injects an UNFILTERED catalog
-    // (agent-loop alreadyHasTools check).
-    const privateToolNames = new Set<string>(
-      PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map(({ name }) => name)
-    );
-    const disallowedForRole = agentContext
-      ? ToolRegistry.getValidToolNames().filter(
-          (name) =>
-            privateToolNames.has(name) || !this.roleManager.isToolAllowed(agentContext.role, name)
-        )
-      : undefined;
+    // Prompt-permission coherence: the policy-keyed catalog is generated from
+    // the final exact role projection, so cached private text cannot cross a
+    // connector-policy or principal boundary.
     const gatewayToolsPrompt =
-      this.config.backend === 'codex' ? '' : getGatewayToolsPrompt(disallowedForRole) || '';
+      this.config.backend === 'codex' ? '' : (gatewayCatalog?.prompt ?? '');
     if (gatewayToolsPrompt) {
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
@@ -1701,64 +1712,60 @@ ${historyContext}
     trelloAvailable: boolean
   ): string {
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
-    const baseInstructions = this.projectPrivatePromptText(
-      existsSync(soulPath)
-        ? loadComposedSystemPrompt(false, agentContext)
-        : COMPLETE_AUTONOMOUS_PROMPT
-    );
+    const baseInstructions = existsSync(soulPath)
+      ? loadComposedSystemPrompt(false, agentContext)
+      : COMPLETE_AUTONOMOUS_PROMPT;
+    const surface = resolvePrivatePrincipalSurface({ agentContext });
+    const gatewayCatalog = buildGatewayToolCatalog({
+      surface,
+      allowedTools: agentContext.role.allowedTools,
+      blockedTools: agentContext.role.blockedTools,
+      privateConnectorPolicy: this.privateConnectorPolicy,
+    });
     return hashSessionPolicyFingerprint({
       baseInstructions,
-      agentsContent: enhanced.agentsContent
-        ? this.projectPrivatePromptText(enhanced.agentsContent)
-        : undefined,
-      rulesContent: enhanced.rulesContent
-        ? this.projectPrivatePromptText(enhanced.rulesContent)
-        : undefined,
+      agentsContent: enhanced.agentsContent,
+      rulesContent: enhanced.rulesContent,
       model,
       stableRolePolicy:
         buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable) +
         // Brief edits must rotate the durable-session policy (re-anchor carries
         // the new manual); non-owner roles contribute an empty string.
         (agentContext.roleName === 'owner_console'
-          ? `\n${this.projectPrivatePromptText(loadConsoleBrief())}`
+          ? `\n${projectConsoleBriefForPrompt(loadConsoleBrief(), this.privateConnectorPolicy)}`
           : '') +
-        `\n${this.privateConnectorPolicy.fingerprint}\n${this.buildPrivateConnectorPrompt(agentContext)}`,
+        `\n${gatewayCatalog.cacheKey}`,
     });
   }
 
-  private buildPrivateConnectorPrompt(agentContext: AgentContext): string {
-    const surface: ConnectorCapabilitySurface =
-      agentContext.roleName === 'owner_console'
-        ? 'owner_console'
-        : agentContext.roleName === 'os_agent'
-          ? 'os_agent'
-          : 'multi-agent-generic';
-    const definitions = this.privateConnectorPolicy.toolDefinitionsFor(surface);
-    const overlay = this.privateConnectorPolicy.promptOverlayFor(surface);
-    if (!overlay || definitions.length === 0) {
-      return '';
-    }
-    return [
-      overlay,
-      '',
-      ...definitions.map(
-        (definition) =>
-          `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
-      ),
-    ].join('\n');
-  }
-
   /**
-   * A durable prompt can contain an older operator brief or project instruction
-   * that names a private connector. When the boot snapshot disables that
-   * connector, remove those stale advertisement lines before a new backend
-   * thread is created. Runtime authorization still fails closed independently.
+   * Remove disabled private-provider prompt lines in memory. Current generated
+   * overlays are marker-bounded; legacy composed prompt layers are filtered a
+   * line at a time so no user-owned file is rewritten or broadly regex-edited.
    */
   private projectPrivatePromptText(prompt: string): string {
     if (this.privateConnectorPolicy.enabledPrivateConnectors.length > 0) {
       return prompt;
     }
-    return prompt.replace(/kagemusha(?:_[a-z0-9_*]+)?/gi, '[disabled private connector]');
+    const privateTerms = new Set(
+      PRIVATE_CONNECTOR_TOOL_DEFINITIONS.flatMap((definition) => [
+        definition.name.toLowerCase(),
+        definition.name.split('_', 1)[0]!.toLowerCase(),
+      ])
+    );
+    return [...privateTerms]
+      .sort((left, right) => right.length - left.length)
+      .reduce((projected, term) => {
+        let result = '';
+        let rest = projected;
+        let index = rest.toLowerCase().indexOf(term);
+        while (index >= 0) {
+          result += `${rest.slice(0, index)}[disabled private connector]`;
+          rest = rest.slice(index + term.length);
+          index = rest.toLowerCase().indexOf(term);
+        }
+        return result + rest;
+      }, stripMarkedPrivatePromptOverlays(prompt));
   }
 
   /**

@@ -13,8 +13,11 @@ import {
   briefPath,
   briefsDir,
   buildDefaultBrief,
+  projectWorkOrderBriefForPrompt,
 } from '../../src/operator/briefs.js';
 import { WORKORDER_KINDS } from '../../src/operator/task-ledger.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 describe('Story S2-T5: briefs', () => {
   let home: string;
@@ -28,6 +31,45 @@ describe('Story S2-T5: briefs', () => {
   });
 
   describe('AC #1: seeding e2e - missing briefs seeded, then loadable', () => {
+    it('TG-06 keeps every packaged work-order default source-neutral', () => {
+      for (const kind of WORKORDER_KINDS) {
+        expect(buildDefaultBrief(kind).toLowerCase()).not.toContain('kagemusha');
+      }
+    });
+
+    it('TG-06 appends the enabled private overlay exactly once in memory', () => {
+      const loadResult: ConnectorConfigLoadResult = {
+        ok: true,
+        config: {
+          kagemusha: {
+            enabled: true,
+            pollIntervalMinutes: 60,
+            channels: {},
+            auth: { type: 'none' },
+          },
+        },
+        enabledNames: ['kagemusha'],
+      };
+      const policy = resolvePrivateConnectorPolicy(loadResult);
+
+      const projected = projectWorkOrderBriefForPrompt('board', '# Board brief\n', policy);
+
+      expect(projected.match(/kagemusha_tasks/g)).toHaveLength(1);
+    });
+
+    it('TG-06 projects a disabled private lesson without mutating the user brief', () => {
+      const path = briefPath('board', home);
+      const raw = '# Board brief\n\n## Lessons\n- Use kagemusha_tasks for owner work.\n';
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const policy = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', loadBrief('board', home)!, policy);
+
+      expect(projected.toLowerCase()).not.toContain('kagemusha');
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
     it('seeds all three kinds and loadBrief returns non-empty procedure text', () => {
       const seeded = ensureBriefs(home);
       expect(seeded.sort()).toEqual([...WORKORDER_KINDS].sort());

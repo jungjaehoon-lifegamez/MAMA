@@ -213,6 +213,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
 
     expect(claude).toContain('```tool_call');
     expect(claude).toContain('fenced tool_call JSON block');
+    expect(claude).toContain('{"name": "task_list", "input": {"status": "in_progress"}}');
     expect(codex).toContain('injected native host tools directly');
     expect(codex).toContain('never emit Markdown or JavaScript substitutes');
     expect(codex).not.toContain('```tool_call');

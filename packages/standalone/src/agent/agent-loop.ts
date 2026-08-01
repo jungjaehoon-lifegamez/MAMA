@@ -27,6 +27,11 @@ import {
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
+import { buildGatewayToolCatalog } from './gateway-tool-catalog.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
+} from '../connectors/private-connector-policy.js';
 import {
   TypeDefinitionGenerator,
   getCodeActInstructions,
@@ -100,6 +105,12 @@ const DEFAULT_TOOLS_CONFIG = {
   mcp: [] as string[],
   mcp_config: '~/.mama/mama-mcp-config.json',
 };
+
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
 
 // Exported so the conductor test can PIN that 'conductor' is absent: the
 // conductor must run on its own session:operator:conductor lane, never the
@@ -362,34 +373,27 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
  * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
-// Cache gateway-tools.md content (static at runtime, no need to re-read)
-let _gatewayToolsCache: string | null = null;
-// Cache filtered versions keyed by sorted disallowed list
-const _filteredCache = new Map<string, string>();
+export function getGatewayToolsPrompt(disallowed?: readonly string[]): string {
+  return buildGatewayToolCatalog({
+    surface: 'multi-agent-generic',
+    allowedTools: ['*'],
+    blockedTools: disallowed,
+    privateConnectorPolicy: DEFAULT_PRIVATE_CONNECTOR_POLICY,
+  }).prompt;
+}
 
-export function getGatewayToolsPrompt(disallowed?: string[]): string {
-  if (!_gatewayToolsCache) {
-    const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
-    if (existsSync(gatewayToolsPath)) {
-      _gatewayToolsCache = readFileSync(gatewayToolsPath, 'utf-8');
-    } else {
-      logger.warn('gateway-tools.md not found, using registry fallback');
-      _gatewayToolsCache = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
-    }
-  }
-
-  if (!disallowed?.length) return _gatewayToolsCache;
-
-  const cacheKey = [...disallowed].sort().join(',');
-  let filtered = _filteredCache.get(cacheKey);
-  if (!filtered) {
-    filtered = _gatewayToolsCache;
-    for (const tool of disallowed) {
-      filtered = filtered.replace(new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm'), '');
-    }
-    _filteredCache.set(cacheKey, filtered);
-  }
-  return filtered;
+function getRunGatewayToolsPrompt(
+  context: AgentContext | undefined,
+  disallowed: readonly string[] | undefined
+): string {
+  return buildGatewayToolCatalog({
+    surface: context
+      ? resolvePrivatePrincipalSurface({ agentContext: context })
+      : 'multi-agent-generic',
+    allowedTools: context?.role.allowedTools ?? ['*'],
+    blockedTools: [...(context?.role.blockedTools ?? []), ...(disallowed ?? [])],
+    privateConnectorPolicy: DEFAULT_PRIVATE_CONNECTOR_POLICY,
+  }).prompt;
 }
 
 const CANONICAL_CODE_ACT_HEADING = '## Code-Act: Gateway Tool Execution via Sandbox';
@@ -789,7 +793,10 @@ export class AgentLoop {
         );
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else if (!this.useCodeAct && backend !== 'codex') {
-        const gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
+        const gatewayToolsPrompt = getRunGatewayToolsPrompt(
+          options.agentContext,
+          this.disallowedTools
+        );
         if (gatewayToolsPrompt) {
           promptLayers.push({
             name: 'gatewayTools',
@@ -1437,7 +1444,7 @@ export class AgentLoop {
             if (!alreadyHasTools) {
               gatewayToolsPrompt = wrapGeneratedPromptSection(
                 'gatewayTools',
-                getGatewayToolsPrompt(this.disallowedTools)
+                getRunGatewayToolsPrompt(options?.agentContext, this.disallowedTools)
               );
             }
           }

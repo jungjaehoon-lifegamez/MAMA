@@ -24,6 +24,7 @@ import { createContextCompileService } from '../../agent/context-compile-service
 import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
@@ -70,6 +71,7 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
+  resolvePrivateConnectorPolicy,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
@@ -119,6 +121,11 @@ const { DebugLogger } = debugLogger as unknown as {
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 type RuntimeBackend = 'claude' | 'codex';
+const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
   if (value === 'claude' || value === 'codex') {
@@ -557,6 +564,7 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
 export interface WorkOrderAgentPolicy {
   agentContext: AgentContext;
   gatewayToolsPrompt: string;
+  briefProjectionPolicy: PrivateConnectorPolicy;
 }
 
 function requirePrivateConnectorPolicy(
@@ -587,20 +595,11 @@ function buildProjectedLanePrompt(
   surface: ConnectorCapabilitySurface,
   privateConnectorPolicy: PrivateConnectorPolicy
 ): string {
-  const privateDefinitions = privateConnectorPolicy.toolDefinitionsFor(surface);
-  const privateNames = new Set<string>(privateDefinitions.map((definition) => definition.name));
-  const catalog = ToolRegistry.generatePrompt(innerTools.filter((name) => !privateNames.has(name)));
-  const overlay = privateConnectorPolicy.promptOverlayFor(surface);
-  if (!overlay || privateDefinitions.length === 0) {
-    return catalog;
-  }
-  const privateCatalog = privateDefinitions
-    .map(
-      (definition) =>
-        `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
-    )
-    .join('\n');
-  return `${catalog}\n\n${overlay}\n\n${privateCatalog}`;
+  return buildGatewayToolCatalog({
+    surface,
+    allowedTools: innerTools,
+    privateConnectorPolicy,
+  }).prompt;
 }
 
 /**
@@ -627,7 +626,8 @@ export const CONDUCTOR_TOOL_POLICY = {
 /** Mirrors buildOperatorReportAgentPolicy - same shape, conductor grant. */
 export function buildConductorAgentPolicy(
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): WorkOrderAgentPolicy {
   const blockedTools: string[] = [];
   const innerTools = uniqueToolList(CONDUCTOR_TOOL_POLICY.allowedTools);
@@ -655,7 +655,15 @@ export function buildConductorAgentPolicy(
     tier: 2,
     backend,
   };
-  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+  return {
+    agentContext,
+    gatewayToolsPrompt: buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
+      allowedTools: innerTools,
+      privateConnectorPolicy,
+    }).prompt,
+    briefProjectionPolicy: DISABLED_PRIVATE_CONNECTOR_POLICY,
+  };
 }
 
 /**
@@ -728,6 +736,7 @@ export function buildOperatorReportAgentPolicy(
   return {
     agentContext,
     gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, requiredPrivatePolicy),
+    briefProjectionPolicy: requiredPrivatePolicy,
   };
 }
 
@@ -784,6 +793,10 @@ export function buildWorkOrderAgentPolicy(
   return {
     agentContext,
     gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, scopedSurface, requiredPrivatePolicy),
+    briefProjectionPolicy:
+      scopedSurface === 'multi-agent-generic'
+        ? DISABLED_PRIVATE_CONNECTOR_POLICY
+        : requiredPrivatePolicy,
   };
 }
 
@@ -1727,6 +1740,7 @@ export async function runAgentLoop(
               wo.workKind
             ),
             agentContext: workOrderPolicy.agentContext,
+            workOrderBriefProjectionPolicy: workOrderPolicy.briefProjectionPolicy,
           },
           wo.id
         );
@@ -2152,7 +2166,11 @@ export async function runAgentLoop(
           maxTurns: conductorConfig.maxTurns,
           maxTokens: conductorConfig.maxTokens,
         });
-        const conductorPolicy = buildConductorAgentPolicy(config.agent.model, runtimeBackend);
+        const conductorPolicy = buildConductorAgentPolicy(
+          config.agent.model,
+          runtimeBackend,
+          privateConnectorPolicy
+        );
         // Per-run envelope, mirroring the report lane: without it every
         // model_tool call dies 'envelope_missing' while the run resolves and
         // acks the batch - zero work, green ledger (review F2).

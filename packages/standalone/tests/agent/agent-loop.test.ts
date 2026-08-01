@@ -2545,6 +2545,7 @@ Skills provide additional tools.
     it('should expose the full gateway tools prompt', () => {
       expect(getGatewayToolsPrompt()).toContain('# Gateway Tools');
       expect(getGatewayToolsPrompt()).toContain('mama_search');
+      expect(getGatewayToolsPrompt().toLowerCase()).not.toContain('kagemusha');
     });
 
     it('filters role-blocked gateway tools out of Code-Act declarations', async () => {

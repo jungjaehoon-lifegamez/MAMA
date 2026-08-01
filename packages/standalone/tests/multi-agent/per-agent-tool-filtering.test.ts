@@ -104,6 +104,7 @@ describe('Per-agent tool filtering', () => {
         ).buildToolsSection(agentConfig);
 
         try {
+          expect(prompt.toLowerCase()).not.toContain('kagemusha');
           for (const tool of PRIVATE_TOOLS) {
             expect(prompt).not.toContain(tool);
           }

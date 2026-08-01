@@ -5,15 +5,14 @@
  * execute. Advertising the full catalog taught the model to call tools the
  * executor then denied (live: 47 denials/day). The composition under test is
  * exactly what MessageRouter.buildSystemPrompt wires: registry names filtered
- * through RoleManager into getGatewayToolsPrompt(disallowed).
+ * through the policy-keyed gateway catalog builder.
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
-import { getRoleManager, resetRoleManager, RoleManager } from '../../src/agent/role-manager.js';
-import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../../src/agent/gateway-tool-catalog.js';
+import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import Database from '../../src/sqlite.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
@@ -38,13 +37,23 @@ function enabledPrivatePolicy() {
   return resolvePrivateConnectorPolicy(result);
 }
 
-function promptForRole(roleName: 'chat_bot' | 'owner_console'): string {
-  const rm = new RoleManager({ rolesConfig: DEFAULT_ROLES });
+const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+function promptForRole(
+  roleName: 'chat_bot' | 'owner_console',
+  privateConnectorPolicy = disabledPrivatePolicy
+): string {
   const role = DEFAULT_ROLES.definitions[roleName];
-  const disallowed = ToolRegistry.getValidToolNames().filter(
-    (name) => !rm.isToolAllowed(role, name)
-  );
-  return getGatewayToolsPrompt(disallowed) || '';
+  return buildGatewayToolCatalog({
+    surface: roleName === 'owner_console' ? 'owner_console' : 'multi-agent-generic',
+    allowedTools: role.allowedTools,
+    blockedTools: role.blockedTools,
+    privateConnectorPolicy,
+  }).prompt;
 }
 
 describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
@@ -69,6 +78,14 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(prompt).not.toContain('os_restart_bot');
       expect(prompt).not.toContain('delegate');
       expect(prompt).not.toContain('browser_navigate');
+    });
+
+    it('TG-03/TG-04 advertises private tools only to an enabled eligible owner catalog', () => {
+      const owner = promptForRole('owner_console', enabledPrivatePolicy());
+      const chat = promptForRole('chat_bot', enabledPrivatePolicy());
+
+      expect(owner.match(/\*\*kagemusha_tasks\*\*/g)).toHaveLength(1);
+      expect(chat).not.toContain('kagemusha_tasks');
     });
   });
 

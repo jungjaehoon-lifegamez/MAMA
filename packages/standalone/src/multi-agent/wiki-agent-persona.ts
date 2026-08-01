@@ -3,8 +3,8 @@
  * Written to ~/.mama/personas/wiki.md on first use if not present.
  *
  * v5: purpose narrowed to LESSONS + DAILY HISTORY. Current task state lives on
- * the operator board (kagemusha_tasks is the truth source), so the wiki no
- * longer mirrors per-task status into entity pages. Daily notes are an
+ * the operator board, so the wiki no longer mirrors per-task status into
+ * entity pages. Daily notes are an
  * append-only journal; lesson pages are durable judgments that strengthen with
  * recurring evidence and get superseded (never deleted) when contradicted.
  */

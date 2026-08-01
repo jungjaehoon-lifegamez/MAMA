@@ -23,8 +23,8 @@ import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
- * report from a digest for tool-use auditing (report-run.ts). Kagemusha frames its scheduled full
- * report with the same bracketed-tag convention (report-prompts.ts buildFullReportPrompt).
+ * report from a digest for tool-use auditing (report-run.ts). The bracketed tag keeps framing
+ * source-neutral while remaining machine-readable.
  */
 export const OPERATOR_FULL_REPORT_TAG = '[operator_full_report]';
 
@@ -89,8 +89,8 @@ export interface SituationReporterOptions {
   /**
    * M2.3: tool-call instructions injected into the FULL report framing so the agent
    * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
-   * lesson from Kagemusha, whose report prompt instructs its agent to call its tools
-   * (and which deleted its deterministic report builder for low quality). The lines
+   * lesson from the reference owner console: report prompts instruct the agent to call tools
+   * instead of relying on a low-quality deterministic report builder. The lines
    * are injected from the runtime wiring (which knows the daemon's toolset); this
    * module stays generic. Digest mode never uses them (frequent + must stay light).
    *
@@ -100,7 +100,7 @@ export interface SituationReporterOptions {
    */
   selfGatherLines?: string[] | (() => string[]);
   /**
-   * Kagemusha dual-output mechanism: lines instructing the FULL report run to also
+   * Dual-output mechanism: lines instructing the FULL report run to also
    * publish the operator board slots (report_publish) before writing the text
    * report. Injected from runtime wiring (board-slot-instructions.ts); digest mode
    * never publishes the board.
@@ -450,7 +450,7 @@ export class SituationReporter {
             'Emit each call as a fenced tool_call JSON block and wait for the result before',
             'the next call. The block format is exactly:',
             '```tool_call',
-            '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
+            '{"name": "task_list", "input": {"status": "in_progress"}}',
             '```',
             'Gather with these gateway tool calls:',
             ...gatherLines.map((line) => `- ${line}`),
@@ -512,7 +512,7 @@ export class SituationReporter {
       'before the owner sees the report.',
       'Reply in the language the owner uses on these channels if you can tell; otherwise English.',
       // Local wall-clock, not UTC: the first live report stamped itself in UTC because the
-      // agent had no local time reference (Kagemusha injects local time the same way).
+      // agent had no local time reference; inject the runtime's local wall clock explicitly.
       `Current local time: ${new Date().toLocaleString()}. Use LOCAL time in the report, never UTC.`,
       '',
       'Window (per channel; excerpts truncated):',
