@@ -968,17 +968,6 @@ export class TaskLedger implements TaskSource {
           binding_id: number | null;
         }
       | undefined;
-    if (binding) {
-      return {
-        kind: 'binding',
-        candidateId: binding.candidate_id,
-        workOrderAttemptId: binding.workorder_attempt_id,
-        taskId: binding.task_id,
-        outcome: binding.outcome,
-        reason: binding.reason,
-        ...(binding.binding_id === null ? {} : { bindingId: binding.binding_id }),
-      };
-    }
     const lifecycle = this.db
       .prepare(
         `SELECT candidate_id, workorder_attempt_id, task_id, outcome, reason,
@@ -996,6 +985,39 @@ export class TaskLedger implements TaskSource {
           task_revision_after: number;
         }
       | undefined;
+    if (binding && lifecycle) {
+      throw new Error(`external lifecycle candidate ${candidateId} has duplicate global receipts`);
+    }
+    const receiptKind = binding ? 'binding' : lifecycle ? 'lifecycle' : null;
+    const identity = this.db
+      .prepare(
+        `SELECT receipt_kind FROM operator_external_receipt_identities WHERE candidate_id = ?`
+      )
+      .get(candidateId) as { receipt_kind: 'binding' | 'lifecycle' } | undefined;
+    if (receiptKind === null) {
+      if (identity) {
+        throw new Error(
+          `external lifecycle candidate ${candidateId} has an orphan receipt identity`
+        );
+      }
+      return null;
+    }
+    if (!identity || identity.receipt_kind !== receiptKind) {
+      throw new Error(
+        `external lifecycle candidate ${candidateId} has inconsistent global receipt identity`
+      );
+    }
+    if (binding) {
+      return {
+        kind: 'binding',
+        candidateId: binding.candidate_id,
+        workOrderAttemptId: binding.workorder_attempt_id,
+        taskId: binding.task_id,
+        outcome: binding.outcome,
+        reason: binding.reason,
+        ...(binding.binding_id === null ? {} : { bindingId: binding.binding_id }),
+      };
+    }
     return lifecycle
       ? {
           kind: 'lifecycle',

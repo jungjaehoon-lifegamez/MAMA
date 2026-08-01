@@ -60,7 +60,8 @@ export function bindingCandidateFor(input: {
 export function enqueueAndClaimBindingAttempt(
   ledger: TaskLedger,
   candidate: BindingCandidate,
-  key = `binding:${candidate.candidateId}`
+  key = `binding:${candidate.candidateId}`,
+  eventIds: readonly string[] = [candidate.eventId]
 ): WorkOrderRecord {
   const attempt = ledger.enqueueWorkOrder({
     workKind: 'board',
@@ -69,7 +70,7 @@ export function enqueueAndClaimBindingAttempt(
       mode: 'reconcile',
       channelKey: 'kagemusha:room-a',
       deltaLines: ['host-authored candidate context'],
-      eventIds: [candidate.eventId],
+      eventIds: [...eventIds],
       candidates: { bindingCandidates: [candidate], lifecycleCandidates: [] },
     },
   });
@@ -79,12 +80,19 @@ export function enqueueAndClaimBindingAttempt(
   return claimed;
 }
 
-export function seedBindingCandidateAttempt(): SeededExternalLifecycleAttempt {
+export function seedBindingCandidateAttempt(
+  input: { eventIds?: readonly string[] } = {}
+): SeededExternalLifecycleAttempt {
   const db = new Database(':memory:');
   const ledger = new TaskLedger(db, { now: () => Date.parse('2026-08-02T00:00:00.000Z') });
   const task = ledger.create({ title: 'native task' });
   const candidate = bindingCandidateFor({ task });
-  const attempt = enqueueAndClaimBindingAttempt(ledger, candidate);
+  const attempt = enqueueAndClaimBindingAttempt(
+    ledger,
+    candidate,
+    undefined,
+    input.eventIds ?? [candidate.eventId]
+  );
   return { db, ledger, task, attempt, candidate };
 }
 

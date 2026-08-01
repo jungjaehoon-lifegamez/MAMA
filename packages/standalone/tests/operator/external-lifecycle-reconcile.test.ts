@@ -110,8 +110,13 @@ describe('Story EL3: receipted external task binding', () => {
   });
 
   it('refuses an origin event that does not exactly match the host candidate in a multi-event batch', () => {
-    const { ledger, task, attempt, candidate } = seeded();
+    const value = seedBindingCandidateAttempt({
+      eventIds: ['evt_binding_1', 'evt_other_member_of_batch'],
+    });
+    databases.push(value);
+    const { ledger, task, attempt, candidate } = value;
     if (candidate.kind !== 'binding') throw new Error('binding fixture required');
+    expect(attempt.payload.eventIds).toEqual([candidate.eventId, 'evt_other_member_of_batch']);
     expect(() =>
       ledger.applyExternalBindingDecision(
         attempt.id,
@@ -125,6 +130,18 @@ describe('Story EL3: receipted external task binding', () => {
       )
     ).toThrow(/origin|event/i);
     expect(ledger.getExternalBinding(task.id)).toBeNull();
+    expect(
+      ledger.applyExternalBindingDecision(
+        attempt.id,
+        {
+          candidate_id: candidate.candidateId,
+          decision: 'bind',
+          reason: 'exact task identity confirmed',
+          expected_revision: candidate.taskRevision,
+        },
+        origin(candidate.eventId)
+      )
+    ).toMatchObject({ outcome: 'bound' });
   });
 
   it('declines and supersedes stale revisions without binding', () => {

@@ -47,6 +47,11 @@ describe('Story EL3: external lifecycle binding migration', () => {
       idempotencyKey: 'schema',
       input: { mode: 'full' },
     });
+    const laterAttempt = ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'schema-later',
+      input: { mode: 'full' },
+    });
 
     const insertBinding = db.prepare(`INSERT INTO operator_external_task_bindings
       (task_id, connector, source_type, external_source_id, last_observation_seq, created_by_attempt_id, active, created_at, updated_at)
@@ -70,6 +75,20 @@ describe('Story EL3: external lifecycle binding migration', () => {
       VALUES ('${'d'.repeat(64)}', 'invented', ?, ?, 'evt_schema_2', 'kagemusha', 'kanban_card', 'task:43', 'room-a',
        '${'a'.repeat(64)}', 1, 1, 1, 1, 'declined', 'not exact', '[]', 1)`);
     expect(() => invalidDecision.run(attempt.id, second.id)).toThrow();
+
+    const insertLifecycleReceipt = db.prepare(`INSERT INTO operator_external_lifecycle_receipts
+      (candidate_id, decision, workorder_attempt_id, task_id, event_id, connector, source_type, external_source_id,
+       channel_partition, content_sha256, source_timestamp_ms, operator_ingest_seq, operator_observation_seq,
+       binding_id, binding_revision, task_revision_before, task_revision_after, outcome, reason,
+       origin_cause_event_ids, created_at)
+      VALUES ('${'c'.repeat(64)}', 'retain', ?, ?, 'evt_schema_3', 'kagemusha', 'kanban_card', 'task:42', 'room-b',
+       '${'b'.repeat(64)}', 2, 2, 2, ?, 1, 1, 1, 'retained', 'already current', '[]', 2)`);
+    expect(() => insertLifecycleReceipt.run(laterAttempt.id, first.id, 1)).toThrow();
+
+    db.exec('DROP TRIGGER IF EXISTS trg_operator_external_binding_receipts_global_identity');
+    db.exec('DROP TRIGGER IF EXISTS trg_operator_external_lifecycle_receipts_global_identity');
+    insertLifecycleReceipt.run(laterAttempt.id, first.id, 1);
+    expect(() => ledger.getExternalCandidateReceipt('c'.repeat(64))).toThrow(/duplicate|global/i);
     db.close();
   });
 });
