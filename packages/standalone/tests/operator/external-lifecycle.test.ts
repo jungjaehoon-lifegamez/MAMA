@@ -14,6 +14,20 @@ import {
 import { buildReconcileExternalLifecycleCandidates } from '../../src/cli/runtime/api-routes-init.js';
 import Database from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+
+const kagemushaLifecyclePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {
+    kagemusha: {
+      enabled: true,
+      pollIntervalMinutes: 60,
+      channels: {},
+      auth: { type: 'none' },
+    },
+  },
+  enabledNames: ['kagemusha'],
+});
 
 const observation = (
   overrides: Partial<ExternalObservationSnapshot> = {}
@@ -72,6 +86,8 @@ describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', ()
         eventIds: ['evt_1'],
         getAdapter: () => db,
         ledger,
+        privateConnectorPolicy: kagemushaLifecyclePolicy,
+        rawConnectorScope: ['kagemusha'],
       });
 
       expect(candidates).toEqual({
@@ -132,6 +148,8 @@ describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', ()
         eventIds,
         getAdapter: () => db,
         ledger,
+        privateConnectorPolicy: kagemushaLifecyclePolicy,
+        rawConnectorScope: ['kagemusha'],
       });
 
       expect(candidates.bindingCandidates).toEqual([]);

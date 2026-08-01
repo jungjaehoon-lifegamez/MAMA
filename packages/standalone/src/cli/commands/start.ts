@@ -2296,6 +2296,8 @@ export async function runAgentLoop(
     slackGateway,
     graphHandler,
     getAdapter,
+    privateConnectorPolicy,
+    rawConnectorScope: codeActRawConnectors,
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
   });

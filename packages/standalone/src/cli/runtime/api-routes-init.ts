@@ -103,6 +103,8 @@ export function buildReconcileExternalLifecycleCandidates(input: {
   eventIds: readonly string[];
   getAdapter: () => ConnectorEventAdapter;
   ledger: TaskLedger;
+  privateConnectorPolicy: PrivateConnectorPolicy;
+  rawConnectorScope: readonly string[];
 }): ExternalLifecycleCandidateSet {
   const eventIds = [...new Set(input.eventIds)];
   if (eventIds.length === 0) {
@@ -122,13 +124,30 @@ export function buildReconcileExternalLifecycleCandidates(input: {
     )
     .all(...eventIds) as RawExternalObservation[];
 
+  // This is intentionally limited to the boot-owned private capability and
+  // the same raw connector scope projected into worker envelopes. Do not
+  // discover connector state here: a reconcile run must not widen authority
+  // after startup, especially from a historical connector row.
+  const mayProjectKagemushaLifecycle =
+    input.privateConnectorPolicy.isEnabled('kagemusha') &&
+    input.rawConnectorScope.includes('kagemusha');
   const observations = [] as NonNullable<
     ReturnType<typeof classifyKagemushaObservation>['observation']
   >[];
   const diagnostics: NonNullable<ReturnType<typeof classifyKagemushaObservation>['diagnostic']>[] =
     [];
   const invalidEventIds = new Set<string>();
+  const suppressedEventIds = new Set<string>();
   for (const row of rows) {
+    if (row.source_connector === 'kagemusha' && !mayProjectKagemushaLifecycle) {
+      // Do not emit diagnostics for a denied private row: even a bounded
+      // diagnostic is an unnecessary cross-boundary signal in a generic board
+      // workorder. The scheduler consumes its matching private partition.
+      if (typeof row.event_index_id === 'string') {
+        suppressedEventIds.add(row.event_index_id);
+      }
+      continue;
+    }
     const classified = classifyKagemushaObservation(row);
     if (classified.observation) {
       observations.push(classified.observation);
@@ -137,7 +156,9 @@ export function buildReconcileExternalLifecycleCandidates(input: {
       invalidEventIds.add(classified.diagnostic.eventId);
     }
   }
-  const candidateEventIds = eventIds.filter((eventId) => !invalidEventIds.has(eventId));
+  const candidateEventIds = eventIds.filter(
+    (eventId) => !invalidEventIds.has(eventId) && !suppressedEventIds.has(eventId)
+  );
   const support = input.ledger.getExternalLifecycleCandidateSupport(
     candidateEventIds,
     observations.map((observation) => observation.externalSourceId)
@@ -231,6 +252,10 @@ export interface RegisterApiRoutesParams {
   discordGateway: DiscordGateway | null;
   slackGateway: SlackGateway | null;
   graphHandler: (req: express.Request, res: express.Response) => Promise<boolean>;
+  /** Immutable boot snapshot. Private connector access must not be rediscovered per delta. */
+  privateConnectorPolicy: PrivateConnectorPolicy;
+  /** Immutable boot scope used for raw evidence projection in worker envelopes. */
+  rawConnectorScope: readonly string[];
   /** mama-core getAdapter() — used for DB queries */
   getAdapter: () => {
     prepare: (sql: string) => {
@@ -259,6 +284,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     slackGateway,
     graphHandler,
     getAdapter,
+    privateConnectorPolicy,
+    rawConnectorScope,
     sessionsDb,
     workOrderConsumer,
   } = params;
@@ -514,6 +541,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
+            const privateKagemushaPartition = channelKey.startsWith('kagemusha:');
+            const mayProjectKagemushaLifecycle =
+              privateConnectorPolicy.isEnabled('kagemusha') &&
+              rawConnectorScope.includes('kagemusha');
+            if (privateKagemushaPartition && !mayProjectKagemushaLifecycle) {
+              // A private partition that boot did not authorize is consumed
+              // without a generic board workorder. Rejecting would retain and
+              // retry the private delta; enqueuing would leak its prose.
+              return Promise.resolve();
+            }
             const ledger = toolExecutor.getTaskLedger();
             if (!ledger) {
               throw new Error(
@@ -524,6 +561,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               eventIds,
               getAdapter,
               ledger,
+              privateConnectorPolicy,
+              rawConnectorScope,
             });
             enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
               mode: 'reconcile',
