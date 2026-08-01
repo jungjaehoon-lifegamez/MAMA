@@ -82,19 +82,40 @@ export function enqueueAndClaimBindingAttempt(
 }
 
 export function seedBindingCandidateAttempt(
-  input: { eventIds?: readonly string[]; taskInput?: CreateTaskInput } = {}
+  input: { eventIds?: readonly string[]; taskInput?: CreateTaskInput; candidateCount?: 1 | 2 } = {}
 ): SeededExternalLifecycleAttempt {
   const db = new Database(':memory:');
   const ledger = new TaskLedger(db, { now: () => Date.parse('2026-08-02T00:00:00.000Z') });
   const task = ledger.create(input.taskInput ?? { title: 'native task' });
   const candidate = bindingCandidateFor({ task });
-  const attempt = enqueueAndClaimBindingAttempt(
-    ledger,
-    candidate,
-    undefined,
-    input.eventIds ?? [candidate.eventId]
-  );
-  return { db, ledger, task, attempt, candidate };
+  const candidates =
+    input.candidateCount === 2
+      ? [
+          candidate,
+          bindingCandidateFor({
+            task,
+            eventId: 'evt_binding_2',
+            externalSourceId: 'task:43',
+            operatorObservationSeq: 10,
+          }),
+        ]
+      : [candidate];
+  const attempt = ledger.enqueueWorkOrder({
+    workKind: 'board',
+    idempotencyKey: `binding:${candidate.candidateId}`,
+    input: {
+      mode: 'reconcile',
+      channelKey: 'kagemusha:room-a',
+      deltaLines: ['host-authored candidate context'],
+      eventIds: input.eventIds ?? candidates.map((value) => value.eventId),
+      candidates: { bindingCandidates: candidates, lifecycleCandidates: [] },
+    },
+  });
+  const claimed = ledger.claimNextWorkOrder();
+  if (!claimed || claimed.id !== attempt.id) {
+    throw new Error('fixture must claim its binding attempt');
+  }
+  return { db, ledger, task, attempt: claimed, candidate };
 }
 
 export function seedLifecycleCandidateAttempt(

@@ -358,12 +358,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       // (agent_activity has NO channel_id column; json_extract is the only
       // schema-supported key; agent_id re-keying is a green-test trap).
       if (workOrderConsumer) {
-        const { buildWorkerTraceQueries } = await import('../../operator/workorder-hooks.js');
+        const { buildWorkerTraceQueries, boardCandidateReceiptVerdict } =
+          await import('../../operator/workorder-hooks.js');
         const workerVerifierDeps = {
           ...verifierDeps,
           ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
         };
         workOrderConsumer.registerHook('board', {
+          verdictRequired: true,
           before: (wo) => {
             if (wo.payload.mode !== 'reconcile') return null;
             return captureSnapshot(
@@ -377,7 +379,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               if (response.includes('NO_UPDATE')) {
                 console.log('[stage2] board worker: no changes detected, publish skipped');
               }
-              return;
+              return boardCandidateReceiptVerdict(wo, reconcileLedger);
             }
             const scope = `reconcile:${String(wo.payload.channelKey)}`;
             const verdict = verifyAfterRun(
@@ -412,6 +414,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
                 target: String(wo.payload.channelKey),
               });
             }
+            return boardCandidateReceiptVerdict(wo, reconcileLedger);
           },
         });
       }

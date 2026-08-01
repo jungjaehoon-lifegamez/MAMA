@@ -259,6 +259,13 @@ export type TemporalWorkFailureResult =
     }
   | { disposition: 'superseded'; attempt: number; maxAttempts: number };
 
+/** Durable receipt view for one candidate-bearing board attempt. */
+export type BoardCandidateAttemptState =
+  | { disposition: 'none' }
+  | { disposition: 'complete'; outcomes: readonly string[] }
+  | { disposition: 'partial'; missingCandidateIds: readonly string[] }
+  | { disposition: 'zero' };
+
 export interface CreateTaskInput {
   title: string;
   status?: TaskStatus;
@@ -846,6 +853,55 @@ export class TaskLedger implements TaskSource {
       );
     }
     return candidate;
+  }
+
+  /**
+   * Read the complete, immutable candidate set for a board attempt against
+   * its durable decision receipts. This deliberately works for stale claims
+   * as well as live in-progress attempts: recovery must never infer effects
+   * from a runner result when the database can answer exactly.
+   */
+  inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState {
+    const attempt = this.getWorkOrderById(attemptId);
+    if (!attempt || attempt.workKind !== 'board') {
+      throw new Error(`board candidate inspection requires board attempt ${attemptId}`);
+    }
+    const { attempts: _attempts, ...payload } = attempt.payload;
+    validateWorkOrderPayload('board', payload);
+    if (payload.mode !== 'reconcile' || !payload.candidates) {
+      return { disposition: 'none' };
+    }
+    const candidates = payload.candidates as {
+      bindingCandidates: readonly BindingCandidate[];
+      lifecycleCandidates: readonly LifecycleCandidate[];
+    };
+    const all = [...candidates.bindingCandidates, ...candidates.lifecycleCandidates];
+    if (all.length === 0) {
+      return { disposition: 'none' };
+    }
+
+    const outcomes: string[] = [];
+    const missingCandidateIds: string[] = [];
+    for (const candidate of all) {
+      const receipt = this.getExternalCandidateReceipt(candidate.candidateId);
+      if (!receipt) {
+        missingCandidateIds.push(candidate.candidateId);
+        continue;
+      }
+      if (receipt.kind !== candidate.kind) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} has a receipt of the wrong kind`
+        );
+      }
+      outcomes.push(receipt.outcome);
+    }
+    if (missingCandidateIds.length === 0) {
+      return { disposition: 'complete', outcomes };
+    }
+    if (missingCandidateIds.length === all.length) {
+      return { disposition: 'zero' };
+    }
+    return { disposition: 'partial', missingCandidateIds };
   }
 
   applyExternalBindingDecision(

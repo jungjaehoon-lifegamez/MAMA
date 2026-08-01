@@ -15,14 +15,43 @@
 
 import type { SQLiteDatabase } from '../sqlite.js';
 import { OBLIGATED_TOOLS } from './action-verifier.js';
-import type { WorkOrderRecord } from './task-ledger.js';
+import type { BoardCandidateAttemptState, WorkOrderRecord } from './task-ledger.js';
 import {
   captureTemporalEffectSnapshot,
   verifyTemporalEffect,
   type TemporalEffectSnapshot,
   type TemporalVerifierDeps,
 } from './action-verifier.js';
-import type { WorkOrderHook } from './workorder-consumer.js';
+import type { WorkOrderEffectVerdict, WorkOrderHook } from './workorder-consumer.js';
+
+export interface BoardCandidateReceiptInspector {
+  inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState;
+}
+
+/** Candidate completion is established by receipts, never verifier telemetry. */
+export function boardCandidateReceiptVerdict(
+  workOrder: WorkOrderRecord,
+  inspector: BoardCandidateReceiptInspector | null | undefined
+): WorkOrderEffectVerdict {
+  const candidates = workOrder.payload.candidates as
+    | { bindingCandidates: readonly unknown[]; lifecycleCandidates: readonly unknown[] }
+    | undefined;
+  const hasCandidates =
+    workOrder.payload.mode === 'reconcile' &&
+    candidates !== undefined &&
+    candidates.bindingCandidates.length + candidates.lifecycleCandidates.length > 0;
+  if (!hasCandidates) return { disposition: 'complete' };
+  if (!inspector) return { disposition: 'fail', reason: 'candidate receipt inspector unavailable' };
+  const state = inspector.inspectBoardCandidateAttempt(workOrder.id);
+  if (state.disposition === 'complete') return { disposition: 'complete' };
+  if (state.disposition === 'partial') {
+    return {
+      disposition: 'fail',
+      reason: `candidate receipt set partial; missing ${state.missingCandidateIds.length} decision(s)`,
+    };
+  }
+  return { disposition: 'fail', reason: 'candidate receipt set is empty' };
+}
 
 /**
  * The tools whose execution proves a lane did its job, per lane.
