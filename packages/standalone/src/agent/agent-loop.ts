@@ -1436,16 +1436,29 @@ export class AgentLoop {
         } else if (this.isGatewayMode && !isCodex) {
           baseSystemPrompt = stripDisabledCodeActGuidance(baseSystemPrompt);
           if (!isResumingSession) {
-            // Non-CodeAct callers may already embed the generic gateway catalog.
-            const alreadyHasTools =
-              baseSystemPrompt.includes('# Gateway Tools') ||
-              baseSystemPrompt.includes('# Code Execution') ||
-              baseSystemPrompt.includes('## Code-Act');
-            if (!alreadyHasTools) {
-              gatewayToolsPrompt = wrapGeneratedPromptSection(
-                'gatewayTools',
-                getRunGatewayToolsPrompt(options?.agentContext, this.disallowedTools)
-              );
+            if (options?.gatewayToolsPrompt !== undefined) {
+              // A short-lived caller may carry a more specific final policy than
+              // the process-wide default. Replace the host-generated constructor
+              // catalog with that exact policy-keyed catalog for this run.
+              baseSystemPrompt = stripGenericGatewayToolsCatalog(baseSystemPrompt);
+              if (options.gatewayToolsPrompt) {
+                gatewayToolsPrompt = wrapGeneratedPromptSection(
+                  'gatewayTools',
+                  options.gatewayToolsPrompt
+                );
+              }
+            } else {
+              // Non-CodeAct callers may already embed the generic gateway catalog.
+              const alreadyHasTools =
+                baseSystemPrompt.includes('# Gateway Tools') ||
+                baseSystemPrompt.includes('# Code Execution') ||
+                baseSystemPrompt.includes('## Code-Act');
+              if (!alreadyHasTools) {
+                gatewayToolsPrompt = wrapGeneratedPromptSection(
+                  'gatewayTools',
+                  getRunGatewayToolsPrompt(options?.agentContext, this.disallowedTools)
+                );
+              }
             }
           }
         }
@@ -1490,7 +1503,11 @@ export class AgentLoop {
       };
 
       let perCallSystemPrompt: string;
-      if (options?.systemPrompt || (this.isGatewayMode && this.useCodeAct)) {
+      if (
+        options?.systemPrompt ||
+        options?.gatewayToolsPrompt !== undefined ||
+        (this.isGatewayMode && this.useCodeAct)
+      ) {
         perCallSystemPrompt = prepareSystemPrompt(
           options?.systemPrompt,
           options?.resumeSession === true

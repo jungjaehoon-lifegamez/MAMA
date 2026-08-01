@@ -18,6 +18,10 @@ import {
 import { WORKORDER_KINDS } from '../../src/operator/task-ledger.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import {
+  PRIVATE_PROMPT_OVERLAY_END,
+  PRIVATE_PROMPT_OVERLAY_START,
+} from '../../src/connectors/private-prompt-overlay.js';
 
 describe('Story S2-T5: briefs', () => {
   let home: string;
@@ -68,6 +72,76 @@ describe('Story S2-T5: briefs', () => {
 
       expect(projected.toLowerCase()).not.toContain('kagemusha');
       expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
+    it('TG-06 preserves malformed, spoofed, and nested work-order markers byte-for-byte', () => {
+      const enabled = resolvePrivateConnectorPolicy({
+        ok: true,
+        config: {
+          kagemusha: {
+            enabled: true,
+            pollIntervalMinutes: 60,
+            channels: {},
+            auth: { type: 'none' },
+          },
+        },
+        enabledNames: ['kagemusha'],
+      });
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+      const generatedOverlay = projectWorkOrderBriefForPrompt('board', '', enabled).trim();
+      const samples = [
+        `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker without an end`,
+        `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored body\n${PRIVATE_PROMPT_OVERLAY_END}`,
+        [
+          PRIVATE_PROMPT_OVERLAY_START,
+          'outer user-authored body',
+          generatedOverlay,
+          PRIVATE_PROMPT_OVERLAY_END,
+        ].join('\n'),
+      ];
+
+      for (const raw of samples) {
+        expect(projectWorkOrderBriefForPrompt('board', raw, disabled)).toBe(raw);
+      }
+    });
+
+    it('TG-06 preserves unrelated paths, canonicity, and user lessons', () => {
+      const raw = [
+        '# Board brief',
+        '',
+        'Keep /workspace/kagemusha-logo.svg in the generated report.',
+        'Artifact canonicity stays with the artifact owner.',
+        '',
+        '## Lessons',
+        '- Keep the Kagemusha migration note for historical context.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      expect(projectWorkOrderBriefForPrompt('board', raw, disabled)).toBe(raw);
+    });
+
+    it('TG-06 removes a complete generated work-order overlay only', () => {
+      const enabled = resolvePrivateConnectorPolicy({
+        ok: true,
+        config: {
+          kagemusha: {
+            enabled: true,
+            pollIntervalMinutes: 60,
+            channels: {},
+            auth: { type: 'none' },
+          },
+        },
+        enabledNames: ['kagemusha'],
+      });
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+      const base = '# Board brief\n\nKeep this unrelated canonicity rule.\n';
+      const withGeneratedOverlay = projectWorkOrderBriefForPrompt('board', base, enabled);
+
+      const projected = projectWorkOrderBriefForPrompt('board', withGeneratedOverlay, disabled);
+
+      expect(projected).toContain(base);
+      expect(projected).not.toContain('**kagemusha_tasks**');
     });
 
     it('seeds all three kinds and loadBrief returns non-empty procedure text', () => {

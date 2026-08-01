@@ -18,13 +18,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { type PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 import {
-  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
-  type PrivateConnectorPolicy,
-} from '../connectors/private-connector-policy.js';
-import {
+  buildPrivatePromptOverlay,
   stripMarkedPrivatePromptOverlays,
-  wrapPrivatePromptOverlay,
 } from '../connectors/private-prompt-overlay.js';
 
 /** Full-replace ceiling with headroom for a mature manual while preventing a
@@ -36,13 +33,8 @@ const LEGACY_CONSOLE_PRIVATE_LINES = new Set([
   'kagemusha_entities({activeOnly:true}) then kagemusha_tasks({...}) then',
   'kagemusha_messages({channelId, since}) on the busiest channels. Never',
   'widen a since window you were given.',
+  '- Use kagemusha_tasks first.',
 ]);
-const PRIVATE_CONNECTOR_NAMES = new Set(
-  PRIVATE_CONNECTOR_TOOL_DEFINITIONS.flatMap((definition) => [
-    definition.name.toLowerCase(),
-    definition.name.split('_', 1)[0]!.toLowerCase(),
-  ])
-);
 
 export const CONSOLE_BRIEF_DEFAULT = `# Owner Console Operating Brief
 
@@ -115,58 +107,27 @@ export function loadConsoleBrief(homeDir: string = homedir()): string {
 }
 
 function removeLegacyConsolePrivateLines(raw: string): string {
-  return raw
-    .split(/\r?\n/)
-    .filter((line) => !LEGACY_CONSOLE_PRIVATE_LINES.has(line.trim()))
-    .join('\n');
-}
-
-function hideDisabledPrivateLessons(raw: string): string {
-  let inLessons = false;
-  return raw
-    .split('\n')
-    .filter((line) => {
-      const heading = line.match(/^##\s+(.+?)\s*$/);
-      if (heading) {
-        inLessons = heading[1].toLowerCase() === 'lessons';
-        return true;
-      }
-      if (!inLessons) {
-        return true;
-      }
-      const lower = line.toLowerCase();
-      return ![...PRIVATE_CONNECTOR_NAMES].some((name) => lower.includes(name));
-    })
-    .join('\n');
-}
-
-function privateOverlayForPrompt(policy: PrivateConnectorPolicy): string {
-  const surface = 'owner_console';
-  const overlay = policy.promptOverlayFor(surface).trim();
-  const definitions = policy.toolDefinitionsFor(surface);
-  if (!overlay || definitions.length === 0) {
-    return '';
+  const parts = raw.split(/(\r?\n)/);
+  let projected = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    if (!LEGACY_CONSOLE_PRIVATE_LINES.has(line)) {
+      projected += line + separator;
+    }
   }
-  return wrapPrivatePromptOverlay(
-    [
-      overlay,
-      '',
-      ...definitions.map(
-        (definition) =>
-          `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
-      ),
-    ].join('\n')
-  );
+  return projected;
 }
 
 /** Project a user-owned brief for one prompt without modifying its file. */
 export function projectConsoleBriefForPrompt(raw: string, policy: PrivateConnectorPolicy): string {
-  let projected = removeLegacyConsolePrivateLines(stripMarkedPrivatePromptOverlays(raw));
-  if (policy.enabledPrivateConnectors.length === 0) {
-    projected = hideDisabledPrivateLessons(projected);
+  const projected = removeLegacyConsolePrivateLines(stripMarkedPrivatePromptOverlays(raw));
+  const overlay = buildPrivatePromptOverlay('owner_console', policy);
+  if (!overlay) {
+    return projected;
   }
-  const overlay = privateOverlayForPrompt(policy);
-  return overlay ? `${projected.trimEnd()}\n\n${overlay}\n` : projected;
+  const separator = projected.endsWith('\n\n') ? '' : projected.endsWith('\n') ? '\n' : '\n\n';
+  return `${projected}${separator}${overlay}\n`;
 }
 
 /**

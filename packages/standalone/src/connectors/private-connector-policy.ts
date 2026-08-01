@@ -82,7 +82,7 @@ const PRIVATE_TOOL_NAMES = Object.freeze(
   PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) => definition.name)
 );
 
-const PRIVATE_PROMPT_OVERLAY = [
+export const PRIVATE_CONNECTOR_PROMPT_OVERLAY = [
   '## Private business data',
   '',
   "Use Kagemusha read tools only when they are present in this run's catalog. Explore progressively: overview, then entities or tasks, then messages for a specific channel.",
@@ -142,7 +142,7 @@ function overlayFor(
   enabledPrivateConnectors: readonly string[]
 ): string {
   return isEligibleSurface(surface) && enabledPrivateConnectors.length > 0
-    ? PRIVATE_PROMPT_OVERLAY
+    ? PRIVATE_CONNECTOR_PROMPT_OVERLAY
     : '';
 }
 

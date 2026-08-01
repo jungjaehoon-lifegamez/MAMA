@@ -24,12 +24,18 @@ import {
 } from '../../src/agent/types.js';
 import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
-import { summarizeReportToolUse } from '../../src/operator/report-run.js';
+import {
+  createPersonaReportAsk,
+  OPERATOR_REPORT_SESSION_KEY,
+  summarizeReportToolUse,
+} from '../../src/operator/report-run.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 interface CanonicalDeclarationParam {
   name: string;
@@ -599,6 +605,75 @@ describe('AgentLoop', () => {
         expect.any(Object)
       );
     });
+
+    it.each([
+      ['enabled', true, 1],
+      ['disabled', false, 0],
+    ] as const)(
+      'TG-06 report-to-AgentLoop gives a Claude non-Code-Act run the %s private catalog exactly once',
+      async (_label, enabled, expectedDefinitions) => {
+        let effectivePrompt = '';
+        persistentPromptMock.mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            effectivePrompt = promptOptions?.systemPrompt ?? '';
+            return {
+              response: 'report body',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: `claude-report-${String(enabled)}`,
+            };
+          }
+        );
+        const privateConnectorPolicy = resolvePrivateConnectorPolicy({
+          ok: true,
+          config: {
+            kagemusha: {
+              enabled,
+              pollIntervalMinutes: 60,
+              channels: {},
+              auth: { type: 'none' },
+            },
+          },
+          enabledNames: enabled ? ['kagemusha'] : [],
+        });
+        const reportPolicy = buildOperatorReportAgentPolicy(
+          'claude-sonnet-4-6',
+          'claude',
+          privateConnectorPolicy
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: 'Operator report base prompt.',
+            useCodeAct: false,
+            toolsConfig: { gateway: ['*'], mcp: [] },
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const ask = createPersonaReportAsk({
+          run: async (prompt) => {
+            const result = await agentLoop.runWithContent([{ type: 'text', text: prompt }], {
+              sessionKey: OPERATOR_REPORT_SESSION_KEY,
+              source: 'operator',
+              channelId: 'report',
+              agentContext: reportPolicy.agentContext,
+              gatewayToolsPrompt: reportPolicy.gatewayToolsPrompt,
+              freshSession: true,
+            });
+            return result;
+          },
+          log: () => {},
+          fullReportTag: '[operator_full_report]',
+        });
+
+        await ask('compose the owner report');
+
+        expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
+          expectedDefinitions
+        );
+      }
+    );
 
     it('removes disabled code_act guidance from resumed Claude prompts', async () => {
       let effectivePrompt = '';

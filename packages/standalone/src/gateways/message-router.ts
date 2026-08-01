@@ -61,7 +61,6 @@ import type {
   PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
 import {
-  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
   resolvePrivateConnectorPolicy,
   resolvePrivatePrincipalSurface,
 } from '../connectors/private-connector-policy.js';
@@ -196,6 +195,7 @@ function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
   roleManager: RoleManager,
   trelloAvailable: boolean,
+  privateConnectorPolicy: PrivateConnectorPolicy,
   options: { includeOperatingDiscipline?: boolean } = {}
 ): string {
   if (agentContext.roleName !== 'owner_console') {
@@ -206,9 +206,13 @@ function buildStableRolePolicyInstructions(
     trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
       ? `
 - ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
-- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
+- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that one store is another or substitute lifecycle state across stores.`
       : '';
-  const evidencePolicy = `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the task board (task_list/task_create/task_update) is the tracker YOU maintain - the owner only views it. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
+  const privateStoreBoundary =
+    privateConnectorPolicy.enabledPrivateConnectors.length > 0
+      ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
+      : '';
+  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence; never copy or infer lifecycle state across stores.${privateStoreBoundary}${trelloBoundary}
 - Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
   return includeOperatingDiscipline
     ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
@@ -1505,7 +1509,12 @@ This protects your credentials from being exposed in chat logs.`;
         : '';
     const stableRolePolicy = agentContext
       ? [
-          buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable),
+          buildStableRolePolicyInstructions(
+            agentContext,
+            this.roleManager,
+            trelloAvailable,
+            this.privateConnectorPolicy
+          ),
           privatePolicyPrompt,
         ]
           .filter(Boolean)
@@ -1517,9 +1526,13 @@ This protects your credentials from being exposed in chat logs.`;
     // exist yet. Evidence policy still travels; the operating posture does not.
     const onboardingRolePolicy = agentContext
       ? [
-          buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable, {
-            includeOperatingDiscipline: false,
-          }),
+          buildStableRolePolicyInstructions(
+            agentContext,
+            this.roleManager,
+            trelloAvailable,
+            this.privateConnectorPolicy,
+            { includeOperatingDiscipline: false }
+          ),
           privatePolicyPrompt,
         ]
           .filter(Boolean)
@@ -1728,7 +1741,12 @@ ${historyContext}
       rulesContent: enhanced.rulesContent,
       model,
       stableRolePolicy:
-        buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable) +
+        buildStableRolePolicyInstructions(
+          agentContext,
+          this.roleManager,
+          trelloAvailable,
+          this.privateConnectorPolicy
+        ) +
         // Brief edits must rotate the durable-session policy (re-anchor carries
         // the new manual); non-owner roles contribute an empty string.
         (agentContext.roleName === 'owner_console'
@@ -1738,34 +1756,12 @@ ${historyContext}
     });
   }
 
-  /**
-   * Remove disabled private-provider prompt lines in memory. Current generated
-   * overlays are marker-bounded; legacy composed prompt layers are filtered a
-   * line at a time so no user-owned file is rewritten or broadly regex-edited.
-   */
+  /** Remove only a complete, structurally valid host-generated private overlay. */
   private projectPrivatePromptText(prompt: string): string {
     if (this.privateConnectorPolicy.enabledPrivateConnectors.length > 0) {
       return prompt;
     }
-    const privateTerms = new Set(
-      PRIVATE_CONNECTOR_TOOL_DEFINITIONS.flatMap((definition) => [
-        definition.name.toLowerCase(),
-        definition.name.split('_', 1)[0]!.toLowerCase(),
-      ])
-    );
-    return [...privateTerms]
-      .sort((left, right) => right.length - left.length)
-      .reduce((projected, term) => {
-        let result = '';
-        let rest = projected;
-        let index = rest.toLowerCase().indexOf(term);
-        while (index >= 0) {
-          result += `${rest.slice(0, index)}[disabled private connector]`;
-          rest = rest.slice(index + term.length);
-          index = rest.toLowerCase().indexOf(term);
-        }
-        return result + rest;
-      }, stripMarkedPrivatePromptOverlays(prompt));
+    return stripMarkedPrivatePromptOverlays(prompt);
   }
 
   /**

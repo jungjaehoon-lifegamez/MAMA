@@ -871,6 +871,8 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** Exact policy-keyed Gateway Tools catalog for this run (Claude non-Code-Act only). */
+  gatewayToolsPrompt?: string;
   /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
   freshSessionSystemPrompt?: () => Promise<string>;
   /** Stable identity/rules fingerprint for durable Codex threads. */

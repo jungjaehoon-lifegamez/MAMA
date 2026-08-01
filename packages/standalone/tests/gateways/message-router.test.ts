@@ -30,6 +30,14 @@ import {
   resolvePrivateConnectorPolicy,
   type PrivateConnectorPolicy,
 } from '../../src/connectors/private-connector-policy.js';
+import {
+  PRIVATE_PROMPT_OVERLAY_END,
+  PRIVATE_PROMPT_OVERLAY_START,
+} from '../../src/connectors/private-prompt-overlay.js';
+import {
+  consoleBriefPath,
+  projectConsoleBriefForPrompt,
+} from '../../src/operator/console-brief.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-message-router-'));
@@ -54,6 +62,7 @@ function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
 
 beforeAll(() => {
   mkdirSync(testMamaHome, { recursive: true });
+  mkdirSync(join(testMamaHome, 'briefs'), { recursive: true });
   writeFileSync(testSoulPath, '# Synthetic test persona\n', { mode: 0o600 });
   process.env.HOME = testHome;
 });
@@ -641,7 +650,10 @@ describe('MessageRouter', () => {
             expect(rebuilt).toContain('kagemusha_messages');
             expect(rebuilt).toContain('Private business data');
           } else {
-            expect(rebuilt).not.toMatch(/kagemusha/i);
+            expect(rebuilt).not.toContain('**kagemusha_overview**');
+            expect(rebuilt).not.toContain('**kagemusha_entities**');
+            expect(rebuilt).not.toContain('**kagemusha_tasks**');
+            expect(rebuilt).not.toContain('**kagemusha_messages**');
             expect(rebuilt).not.toContain('Private business data');
           }
         } finally {
@@ -893,6 +905,111 @@ describe('MessageRouter', () => {
         resetRoleManager();
       }
     });
+
+    it('TG-05 preserves spoofed markers, unrelated paths, and unrelated canonicity in the final prompt', async () => {
+      resetRoleManager();
+      const ownerChannelId = 'synthetic-owner-private-cleanup';
+      getRoleManager().setTelegramTrust([ownerChannelId]);
+      const rawBrief = [
+        '# Owner Console Operating Brief',
+        '',
+        `${PRIVATE_PROMPT_OVERLAY_START}`,
+        'user-authored marker body',
+        `${PRIVATE_PROMPT_OVERLAY_END}`,
+        '',
+        'Use /workspace/kagemusha-logo.svg as an unrelated report asset.',
+        'Artifact canonicity: preserve the Kagemusha migration record.',
+        '',
+      ].join('\n');
+      writeFileSync(consoleBriefPath(testHome), rawBrief, { mode: 0o600 });
+      let systemPrompt = '';
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        { backend: 'claude' },
+        undefined,
+        undefined,
+        { privateConnectorPolicy: privatePolicy(false) }
+      );
+
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId: ownerChannelId,
+          userId: ownerChannelId,
+          text: 'What is the status?',
+          metadata: { chatType: 'private' },
+        });
+
+        expect(systemPrompt).toContain(
+          `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker body\n${PRIVATE_PROMPT_OVERLAY_END}`
+        );
+        expect(systemPrompt).toContain('/workspace/kagemusha-logo.svg');
+        expect(systemPrompt).toContain(
+          'Artifact canonicity: preserve the Kagemusha migration record.'
+        );
+        expect(systemPrompt).not.toContain('[disabled private connector]');
+      } finally {
+        rmSync(consoleBriefPath(testHome), { force: true });
+        resetRoleManager();
+      }
+    });
+
+    it.each([
+      ['enabled', true, 1],
+      ['disabled', false, 0],
+    ] as const)(
+      'TG-05 keeps a legitimate generated overlay %s exactly once in the final Claude prompt',
+      async (_label, enabled, expectedDefinitions) => {
+        resetRoleManager();
+        const ownerChannelId = `synthetic-owner-generated-overlay-${String(enabled)}`;
+        getRoleManager().setTelegramTrust([ownerChannelId]);
+        const generatedOverlay = projectConsoleBriefForPrompt('', privatePolicy(true)).trim();
+        writeFileSync(
+          consoleBriefPath(testHome),
+          `# Owner Console Operating Brief\n\n${generatedOverlay}\n`,
+          { mode: 0o600 }
+        );
+        let systemPrompt = '';
+        const customRouter = new MessageRouter(
+          sessionStore,
+          {
+            run: vi.fn(async (_prompt, options) => {
+              systemPrompt = options?.systemPrompt ?? '';
+              return { response: 'Response' };
+            }),
+          },
+          createMockMamaApi(mockDecisions),
+          { backend: 'claude' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: privatePolicy(enabled) }
+        );
+
+        try {
+          await customRouter.process({
+            source: 'telegram',
+            channelId: ownerChannelId,
+            userId: ownerChannelId,
+            text: 'What is the status?',
+            metadata: { chatType: 'private' },
+          });
+
+          expect(systemPrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
+            expectedDefinitions
+          );
+        } finally {
+          rmSync(consoleBriefPath(testHome), { force: true });
+          resetRoleManager();
+        }
+      }
+    );
 
     it('keeps the owner operating discipline out of the onboarding conversation', async () => {
       resetRoleManager();

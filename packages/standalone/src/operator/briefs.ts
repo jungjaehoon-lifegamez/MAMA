@@ -19,22 +19,15 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
 import { buildTemporalWorkerBrief } from './temporal-worker.js';
-import {
-  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
-  type ConnectorCapabilitySurface,
-  type PrivateConnectorPolicy,
+import type {
+  ConnectorCapabilitySurface,
+  PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
 import {
+  buildPrivatePromptOverlay,
   stripMarkedPrivatePromptOverlays,
-  wrapPrivatePromptOverlay,
 } from '../connectors/private-prompt-overlay.js';
 
-const PRIVATE_CONNECTOR_NAMES = new Set(
-  PRIVATE_CONNECTOR_TOOL_DEFINITIONS.flatMap((definition) => [
-    definition.name.toLowerCase(),
-    definition.name.split('_', 1)[0]!.toLowerCase(),
-  ])
-);
 const LEGACY_PRIVATE_LINES: Readonly<Record<WorkOrderKind, ReadonlySet<string>>> = {
   board: new Set([
     '- kagemusha_tasks({status?}) -- the bridge task board. Statuses are real lifecycle states: pending, in_progress, review, done, completed, cancelled, dismissed. Includes title, priority, deadline, source_room, confirmed.',
@@ -48,6 +41,7 @@ const LEGACY_PRIVATE_LINES: Readonly<Record<WorkOrderKind, ReadonlySet<string>>>
     '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
     '1. Read the REAL task state first: kagemusha_tasks({}) for open work, plus kagemusha_tasks({status: "review"}) and kagemusha_tasks({status: "pending"}) slices; kagemusha_overview() for the stat line',
     '2. Gather deltas: kagemusha_entities({activeOnly: true}), then kagemusha_messages({channelId, since}) on the busiest 2-3 rooms (since = ISO timestamp for the last 24-48h) for what changed since the last board',
+    '- Use kagemusha_tasks for owner work.',
   ]),
   wiki: new Set(),
   'memory-curation': new Set([
@@ -149,29 +143,16 @@ export function buildDefaultBrief(kind: WorkOrderKind): string {
 
 function stripLegacyPrivateLines(kind: WorkOrderKind, raw: string): string {
   const legacyLines = LEGACY_PRIVATE_LINES[kind];
-  return raw
-    .split(/\r?\n/)
-    .filter((line) => !legacyLines.has(line.trim()))
-    .join('\n');
-}
-
-function hideDisabledPrivateLessons(raw: string): string {
-  let inLessons = false;
-  return raw
-    .split('\n')
-    .filter((line) => {
-      const heading = line.match(/^##\s+(.+?)\s*$/);
-      if (heading) {
-        inLessons = heading[1].toLowerCase() === 'lessons';
-        return true;
-      }
-      if (!inLessons) {
-        return true;
-      }
-      const lower = line.toLowerCase();
-      return ![...PRIVATE_CONNECTOR_NAMES].some((name) => lower.includes(name));
-    })
-    .join('\n');
+  const parts = raw.split(/(\r?\n)/);
+  let projected = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    if (!legacyLines.has(line)) {
+      projected += line + separator;
+    }
+  }
+  return projected;
 }
 
 function workOrderSurface(kind: WorkOrderKind): ConnectorCapabilitySurface {
@@ -187,39 +168,19 @@ function workOrderSurface(kind: WorkOrderKind): ConnectorCapabilitySurface {
   }
 }
 
-function privateOverlayForPrompt(
-  surface: ConnectorCapabilitySurface,
-  policy: PrivateConnectorPolicy
-): string {
-  const overlay = policy.promptOverlayFor(surface).trim();
-  const definitions = policy.toolDefinitionsFor(surface);
-  if (!overlay || definitions.length === 0) {
-    return '';
-  }
-  return wrapPrivatePromptOverlay(
-    [
-      overlay,
-      '',
-      ...definitions.map(
-        (definition) =>
-          `- **${definition.name}**(${definition.params ?? ''}) — ${definition.description}`
-      ),
-    ].join('\n')
-  );
-}
-
 /** Project a user-owned work-order brief for one run without changing its file. */
 export function projectWorkOrderBriefForPrompt(
   kind: WorkOrderKind,
   raw: string,
   policy: PrivateConnectorPolicy
 ): string {
-  let projected = stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw));
-  if (policy.enabledPrivateConnectors.length === 0) {
-    projected = hideDisabledPrivateLessons(projected);
+  const projected = stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw));
+  const overlay = buildPrivatePromptOverlay(workOrderSurface(kind), policy);
+  if (!overlay) {
+    return projected;
   }
-  const overlay = privateOverlayForPrompt(workOrderSurface(kind), policy);
-  return overlay ? `${projected.trimEnd()}\n\n${overlay}\n` : projected;
+  const separator = projected.endsWith('\n\n') ? '' : projected.endsWith('\n') ? '\n' : '\n\n';
+  return `${projected}${separator}${overlay}\n`;
 }
 
 /**

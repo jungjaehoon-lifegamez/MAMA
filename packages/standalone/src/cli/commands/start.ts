@@ -2046,6 +2046,11 @@ export async function runAgentLoop(
                 }
               : undefined,
           run: async (prompt, envelope) => {
+            const reportAgentPolicy = buildOperatorReportAgentPolicy(
+              config.agent.model,
+              runtimeBackend,
+              privateConnectorPolicy
+            );
             const result = await agentLoop.runWithContent(
               [{ type: 'text' as const, text: prompt }],
               {
@@ -2057,11 +2062,8 @@ export async function runAgentLoop(
                 // gather no matter what the prompt instructs (roleAllowsOuterCodeAct
                 // fails closed on an absent role - agent-loop.ts). Same built-in
                 // least-privilege treatment the Stage-2 workers get.
-                agentContext: buildOperatorReportAgentPolicy(
-                  config.agent.model,
-                  runtimeBackend,
-                  privateConnectorPolicy
-                ).agentContext,
+                agentContext: reportAgentPolicy.agentContext,
+                gatewayToolsPrompt: reportAgentPolicy.gatewayToolsPrompt,
                 // Stateless report lane: each run starts on a fresh session so the
                 // continuous session no longer accumulates every run's gather dumps
                 // (measured 146s -> 521s growth over 3 days). Continuity comes from

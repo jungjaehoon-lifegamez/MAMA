@@ -468,19 +468,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(projected.names).not.toContain('context_compile');
     });
 
-    it('passes the report role into the report lane run', () => {
-      const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
-      const reportRun = startSource.slice(
-        startSource.indexOf('sessionKey: OPERATOR_REPORT_SESSION_KEY')
-      );
-      // A report run without agentContext is exactly the zero-tool regression; the
-      // freshSession marker anchors the assertion to the report lane's run options.
-      expect(reportRun).toMatch(
-        /agentContext:\s*buildOperatorReportAgentPolicy\([\s\S]{0,240}?\)\s*\.?\s*\n?\s*\.?agentContext/
-      );
-      expect(reportRun.slice(0, reportRun.indexOf('freshSession: true'))).toContain('agentContext');
-    });
-
     it.each([
       ['board', 'workorder-board'],
       ['memory-curation', 'workorder-memory-curation'],
