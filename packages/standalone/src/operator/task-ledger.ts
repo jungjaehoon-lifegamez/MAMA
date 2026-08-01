@@ -1691,7 +1691,13 @@ export class TaskLedger implements TaskSource {
       return;
     }
     const attempt = this.getWorkOrderById(origin.workOrderAttemptId);
-    if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
+    // Unlike a lifecycle decision, this is a standing mutation guard. A late
+    // direct or nested tool call can retain the host-issued attempt context
+    // after its board workorder has reached a terminal status, and its durable
+    // candidate payload must remain authoritative in that case. Decision
+    // application still calls loadBoardCandidate(), which requires a claimed
+    // in-progress attempt.
+    if (!attempt || attempt.workKind !== 'board') {
       return;
     }
     const { attempts: _attempts, ...payload } = attempt.payload;
