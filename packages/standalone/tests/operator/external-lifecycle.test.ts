@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildExternalLifecycleCandidateSet,
+  classifyKagemushaObservation,
   externalLifecycleCandidateId,
   mapKagemushaLifecycle,
   parseKagemushaObservation,
@@ -50,6 +51,42 @@ describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', ()
     expect(mapKagemushaLifecycle('Done')).toBeNull();
     expect(mapKagemushaLifecycle('in-review')).toBeNull();
     expect(mapKagemushaLifecycle('trello-done')).toBeNull();
+  });
+
+  it('classifies malformed, unsupported, and unknown-status rows without throwing', () => {
+    const base = {
+      event_index_id: 'evt_1',
+      source_connector: 'kagemusha',
+      source_type: 'kanban_card',
+      source_id: 'task:42',
+      channel: 'room-a',
+      content_hash: 'a'.repeat(64),
+      source_timestamp_ms: 1_775_260_800_000,
+      operator_ingest_seq: 4,
+      operator_observation_seq: 7,
+      metadata_json: JSON.stringify({ taskId: 42, status: 'done', rawConnector: 'kagemusha' }),
+    };
+
+    expect(
+      classifyKagemushaObservation({ ...base, source_connector: 'trello' }).diagnostic
+    ).toEqual({ eventId: 'evt_1', code: 'unsupported_connector' });
+    expect(classifyKagemushaObservation({ ...base, source_type: 'message' }).diagnostic).toEqual({
+      eventId: 'evt_1',
+      code: 'unsupported_source_type',
+    });
+    expect(() =>
+      classifyKagemushaObservation({ ...base, source_timestamp_ms: Number.MAX_SAFE_INTEGER })
+    ).not.toThrow();
+    expect(
+      classifyKagemushaObservation({ ...base, source_timestamp_ms: Number.MAX_SAFE_INTEGER })
+        .diagnostic
+    ).toEqual({ eventId: 'evt_1', code: 'malformed_metadata' });
+    expect(
+      classifyKagemushaObservation({
+        ...base,
+        metadata_json: JSON.stringify({ taskId: 42, status: 'moved', rawConnector: 'kagemusha' }),
+      }).diagnostic
+    ).toEqual({ eventId: 'evt_1', code: 'unknown_status' });
   });
 
   it('accepts only strict Kagemusha kanban metadata and derives fixed evidence without prose', () => {
@@ -156,6 +193,8 @@ describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', ()
     expect(result.bindingCandidates).toMatchObject([
       { kind: 'binding', taskId: 4, taskRevision: 7 },
     ]);
+    expect(Object.isFrozen(result.bindingCandidates)).toBe(true);
+    expect(Object.isFrozen(result.bindingCandidates[0])).toBe(true);
     expect(result.lifecycleCandidates).toEqual([]);
   });
 

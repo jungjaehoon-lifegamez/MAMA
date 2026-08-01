@@ -16,40 +16,40 @@ export const EXTERNAL_LIFECYCLE_STATUSES = [
 export type ExternalLifecycleStatus = (typeof EXTERNAL_LIFECYCLE_STATUSES)[number];
 
 export interface ExternalObservationSnapshot {
-  eventId: string;
-  connector: 'kagemusha';
-  sourceType: 'kanban_card';
-  externalSourceId: string;
-  channelPartition: string;
-  contentSha256: string;
-  sourceTimestampMs: number;
-  operatorIngestSeq: number;
-  operatorObservationSeq: number;
-  observedStatus: string;
-  evidenceSummary: string;
+  readonly eventId: string;
+  readonly connector: 'kagemusha';
+  readonly sourceType: 'kanban_card';
+  readonly externalSourceId: string;
+  readonly channelPartition: string;
+  readonly contentSha256: string;
+  readonly sourceTimestampMs: number;
+  readonly operatorIngestSeq: number;
+  readonly operatorObservationSeq: number;
+  readonly observedStatus: string;
+  readonly evidenceSummary: string;
 }
 
 export interface BindingCandidate extends ExternalObservationSnapshot {
-  kind: 'binding';
-  candidateId: string;
-  taskId: number;
-  taskRevision: number;
+  readonly kind: 'binding';
+  readonly candidateId: string;
+  readonly taskId: number;
+  readonly taskRevision: number;
 }
 
 export interface LifecycleCandidate extends ExternalObservationSnapshot {
-  kind: 'lifecycle';
-  candidateId: string;
-  bindingId: number;
-  bindingRevision: number;
-  taskId: number;
-  taskRevision: number;
-  proposedStatus: ExternalLifecycleStatus;
+  readonly kind: 'lifecycle';
+  readonly candidateId: string;
+  readonly bindingId: number;
+  readonly bindingRevision: number;
+  readonly taskId: number;
+  readonly taskRevision: number;
+  readonly proposedStatus: ExternalLifecycleStatus;
 }
 
 export interface ExternalLifecycleCandidateSet {
-  bindingCandidates: readonly BindingCandidate[];
-  lifecycleCandidates: readonly LifecycleCandidate[];
-  diagnostics: readonly ExternalLifecycleDiagnostic[];
+  readonly bindingCandidates: readonly BindingCandidate[];
+  readonly lifecycleCandidates: readonly LifecycleCandidate[];
+  readonly diagnostics: readonly ExternalLifecycleDiagnostic[];
 }
 
 export type ExternalLifecycleDiagnosticCode =
@@ -62,47 +62,47 @@ export type ExternalLifecycleDiagnosticCode =
   | 'receipt_already_exists';
 
 export interface ExternalLifecycleDiagnostic {
-  eventId: string;
-  code: ExternalLifecycleDiagnosticCode;
+  readonly eventId: string;
+  readonly code: ExternalLifecycleDiagnosticCode;
 }
 
 export interface TaskHintLookup {
-  directTaskIdsByEventId: ReadonlyMap<string, readonly number[]>;
-  effectTaskIdsByEventId: ReadonlyMap<string, readonly number[]>;
+  readonly directTaskIdsByEventId: ReadonlyMap<string, readonly number[]>;
+  readonly effectTaskIdsByEventId: ReadonlyMap<string, readonly number[]>;
 }
 
 export interface CandidateTaskSnapshot {
-  taskId: number;
-  revision: number;
+  readonly taskId: number;
+  readonly revision: number;
 }
 
 export interface ExistingExternalBindingSnapshot {
-  bindingId: number;
-  bindingRevision: number;
-  taskId: number;
-  externalSourceId: string;
-  connector: 'kagemusha';
-  sourceType: 'kanban_card';
-  lastObservationSeq: number;
+  readonly bindingId: number;
+  readonly bindingRevision: number;
+  readonly taskId: number;
+  readonly externalSourceId: string;
+  readonly connector: 'kagemusha';
+  readonly sourceType: 'kanban_card';
+  readonly lastObservationSeq: number;
 }
 
 export interface BindingCandidateIdentityInput {
-  kind: 'binding';
-  eventId: string;
-  externalSourceId: string;
-  channelPartition: string;
-  contentSha256: string;
-  operatorObservationSeq: number;
-  taskId: number;
-  taskRevision: number;
+  readonly kind: 'binding';
+  readonly eventId: string;
+  readonly externalSourceId: string;
+  readonly channelPartition: string;
+  readonly contentSha256: string;
+  readonly operatorObservationSeq: number;
+  readonly taskId: number;
+  readonly taskRevision: number;
 }
 
 export interface LifecycleCandidateIdentityInput extends Omit<
   BindingCandidateIdentityInput,
   'kind'
 > {
-  kind: 'lifecycle';
-  bindingId: number;
-  bindingRevision: number;
-  proposedStatus: ExternalLifecycleStatus;
+  readonly kind: 'lifecycle';
+  readonly bindingId: number;
+  readonly bindingRevision: number;
+  readonly proposedStatus: ExternalLifecycleStatus;
 }

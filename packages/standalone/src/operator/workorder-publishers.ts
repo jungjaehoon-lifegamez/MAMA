@@ -15,7 +15,12 @@ import {
   type BindingCandidate,
   type LifecycleCandidate,
 } from './external-lifecycle.js';
-import { KAGEMUSHA_LIFECYCLE_OBSERVED_STATUSES } from './external-lifecycle-candidates.js';
+import {
+  externalLifecycleCandidateId,
+  kagemushaEvidenceSummary,
+  KAGEMUSHA_LIFECYCLE_OBSERVED_STATUSES,
+  parseKagemushaExternalSourceId,
+} from './external-lifecycle-candidates.js';
 import { createHash } from 'node:crypto';
 
 export const STAGE2_FLAG_ENV = 'MAMA_STAGE2_WORKORDERS';
@@ -96,13 +101,13 @@ export interface BoardPayload {
   /** Owner-forced refresh: brief must publish even on NO_UPDATE. */
   force?: boolean;
   channelKey?: string;
-  deltaLines?: string[];
+  readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
-  eventIds?: string[];
+  readonly eventIds?: readonly string[];
   /** Host-authored immutable candidates; reconcile-only. */
-  candidates?: {
-    bindingCandidates: BindingCandidate[];
-    lifecycleCandidates: LifecycleCandidate[];
+  readonly candidates?: {
+    readonly bindingCandidates: readonly BindingCandidate[];
+    readonly lifecycleCandidates: readonly LifecycleCandidate[];
   };
 }
 
@@ -324,13 +329,25 @@ function validateLifecycleCandidate(
   ) {
     throw new Error('workorder payload (board reconcile): candidate observedStatus is invalid');
   }
+  const externalSourceId = value.externalSourceId as string;
+  const taskId = value.taskId as number;
+  const taskRevision = value.taskRevision as number;
+  const evidenceSummary = kagemushaEvidenceSummary(
+    parseKagemushaExternalSourceId(externalSourceId),
+    value.observedStatus,
+    value.sourceTimestampMs
+  );
+  if (evidenceSummary === null || value.evidenceSummary !== evidenceSummary) {
+    throw new Error(
+      'workorder payload (board reconcile): candidate evidenceSummary must be host-derived'
+    );
+  }
   const eventId = value.eventId as string;
   const candidateId = value.candidateId as string;
   if (!eventIds.has(eventId))
     throw new Error('workorder payload (board reconcile): candidate eventId must be in eventIds');
   if (candidateIds.has(candidateId))
     throw new Error('workorder payload (board reconcile): unique candidate IDs required');
-  candidateIds.add(candidateId);
   if (kind === 'lifecycle') {
     for (const key of ['bindingId', 'bindingRevision'] as const) {
       if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 1)
@@ -344,6 +361,37 @@ function validateLifecycleCandidate(
     )
       throw new Error('workorder payload (board reconcile): candidate proposedStatus is invalid');
   }
+  const expectedCandidateId =
+    kind === 'binding'
+      ? externalLifecycleCandidateId({
+          kind,
+          eventId,
+          externalSourceId,
+          channelPartition: value.channelPartition as string,
+          contentSha256: value.contentSha256 as string,
+          operatorObservationSeq: value.operatorObservationSeq as number,
+          taskId,
+          taskRevision,
+        })
+      : externalLifecycleCandidateId({
+          kind,
+          eventId,
+          externalSourceId,
+          channelPartition: value.channelPartition as string,
+          contentSha256: value.contentSha256 as string,
+          operatorObservationSeq: value.operatorObservationSeq as number,
+          taskId,
+          taskRevision,
+          bindingId: value.bindingId as number,
+          bindingRevision: value.bindingRevision as number,
+          proposedStatus: value.proposedStatus as (typeof EXTERNAL_LIFECYCLE_STATUSES)[number],
+        });
+  if (candidateId !== expectedCandidateId) {
+    throw new Error(
+      'workorder payload (board reconcile): candidateId does not match canonical identity'
+    );
+  }
+  candidateIds.add(candidateId);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

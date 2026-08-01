@@ -56,10 +56,15 @@ export interface RawExternalObservation {
 }
 
 export interface ExternalLifecycleDecisionInput {
-  candidate_id: string;
-  decision: 'bind' | 'decline' | 'apply' | 'retain';
-  reason: string;
-  expected_revision: number;
+  readonly candidate_id: string;
+  readonly decision: 'bind' | 'decline' | 'apply' | 'retain';
+  readonly reason: string;
+  readonly expected_revision: number;
+}
+
+export interface ClassifiedKagemushaObservation {
+  readonly observation: ExternalObservationSnapshot | null;
+  readonly diagnostic: ExternalLifecycleDiagnostic | null;
 }
 
 /** Exact status spellings emitted by the private Kagemusha task connector. */
@@ -105,36 +110,92 @@ export function validateExternalLifecycleDecision(
 export function parseKagemushaObservation(
   row: RawExternalObservation
 ): ExternalObservationSnapshot | null {
-  if (row.source_connector !== 'kagemusha' || row.source_type !== 'kanban_card') return null;
+  return classifyKagemushaObservation(row).observation;
+}
+
+/**
+ * Classifies one untrusted database row once, so callers can preserve a
+ * bounded per-event diagnostic without re-parsing connector content.
+ */
+export function classifyKagemushaObservation(
+  row: RawExternalObservation
+): ClassifiedKagemushaObservation {
+  const eventId = diagnosticEventId(row.event_index_id);
+  if (row.source_connector !== 'kagemusha') {
+    return classified(null, { eventId, code: 'unsupported_connector' });
+  }
+  if (row.source_type !== 'kanban_card') {
+    return classified(null, { eventId, code: 'unsupported_source_type' });
+  }
   if (
     !isBoundedString(row.event_index_id) ||
     !isBoundedString(row.source_id) ||
     !isBoundedString(row.channel) ||
     typeof row.content_hash !== 'string' ||
     !HEX_SHA256.test(row.content_hash) ||
-    !isPositiveSafeInteger(row.source_timestamp_ms) ||
+    !isIsoRenderableTimestamp(row.source_timestamp_ms) ||
     !isPositiveSafeInteger(row.operator_ingest_seq) ||
     !isPositiveSafeInteger(row.operator_observation_seq)
   ) {
-    return null;
+    return classified(null, { eventId, code: 'malformed_metadata' });
   }
   const metadata = parseStrictKagemushaMetadata(row.metadata_json);
-  if (!metadata || row.source_id !== `task:${metadata.taskId}`) return null;
-  if (!mapKagemushaLifecycle(metadata.status)) return null;
+  if (!metadata || parseKagemushaExternalSourceId(row.source_id) !== metadata.taskId) {
+    return classified(null, { eventId, code: 'malformed_metadata' });
+  }
+  if (!mapKagemushaLifecycle(metadata.status)) {
+    return classified(null, { eventId, code: 'unknown_status' });
+  }
+  const evidenceSummary = kagemushaEvidenceSummary(
+    metadata.taskId,
+    metadata.status,
+    row.source_timestamp_ms
+  );
+  if (evidenceSummary === null) {
+    return classified(null, { eventId, code: 'malformed_metadata' });
+  }
 
-  return Object.freeze({
-    eventId: row.event_index_id,
-    connector: 'kagemusha',
-    sourceType: 'kanban_card',
-    externalSourceId: row.source_id,
-    channelPartition: row.channel,
-    contentSha256: row.content_hash.toLowerCase(),
-    sourceTimestampMs: row.source_timestamp_ms,
-    operatorIngestSeq: row.operator_ingest_seq,
-    operatorObservationSeq: row.operator_observation_seq,
-    observedStatus: metadata.status,
-    evidenceSummary: `Kagemusha task ${metadata.taskId} reported ${metadata.status} at ${new Date(row.source_timestamp_ms).toISOString()}`,
-  });
+  return classified(
+    Object.freeze({
+      eventId,
+      connector: 'kagemusha',
+      sourceType: 'kanban_card',
+      externalSourceId: row.source_id,
+      channelPartition: row.channel,
+      contentSha256: row.content_hash.toLowerCase(),
+      sourceTimestampMs: row.source_timestamp_ms,
+      operatorIngestSeq: row.operator_ingest_seq,
+      operatorObservationSeq: row.operator_observation_seq,
+      observedStatus: metadata.status,
+      evidenceSummary,
+    })
+  );
+}
+
+/** Parses the only source identity accepted for private Kagemusha card evidence. */
+export function parseKagemushaExternalSourceId(value: unknown): number | null {
+  if (!isBoundedString(value)) return null;
+  const match = /^task:([1-9][0-9]*)$/.exec(value);
+  if (!match) return null;
+  const taskId = Number(match[1]);
+  return isPositiveSafeInteger(taskId) ? taskId : null;
+}
+
+/** Returns the sole permitted summary; malformed inputs cannot render arbitrary prose. */
+export function kagemushaEvidenceSummary(
+  taskId: unknown,
+  observedStatus: unknown,
+  sourceTimestampMs: unknown
+): string | null {
+  if (
+    !isPositiveSafeInteger(taskId) ||
+    typeof observedStatus !== 'string' ||
+    !mapKagemushaLifecycle(observedStatus) ||
+    !isIsoRenderableTimestamp(sourceTimestampMs)
+  ) {
+    return null;
+  }
+  return `Kagemusha task ${taskId} reported ${observedStatus} at ${new Date(sourceTimestampMs).toISOString()}`;
 }
 
 export function externalLifecycleCandidateId(
@@ -366,6 +427,20 @@ function parseStrictKagemushaMetadata(value: unknown): { taskId: number; status:
   return { taskId: parsed.taskId, status: parsed.status };
 }
 
+function classified(
+  observation: ExternalObservationSnapshot | null,
+  diagnostic: ExternalLifecycleDiagnostic | null = null
+): ClassifiedKagemushaObservation {
+  return Object.freeze({
+    observation,
+    diagnostic: diagnostic === null ? null : Object.freeze(diagnostic),
+  });
+}
+
+function diagnosticEventId(value: unknown): string {
+  return isBoundedString(value) ? value : 'invalid_event';
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&
@@ -386,6 +461,14 @@ function isBoundedString(value: unknown): value is string {
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+function isIsoRenderableTimestamp(value: unknown): value is number {
+  return (
+    Number.isSafeInteger(value) &&
+    (value as number) > 0 &&
+    (value as number) <= 8_640_000_000_000_000
+  );
 }
 
 function uniquePositiveTaskIds(ids: readonly number[] | undefined): Set<number> {
