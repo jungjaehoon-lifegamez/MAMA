@@ -17,7 +17,7 @@ import {
   closeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import express from 'express';
+import express, { type Express } from 'express';
 import path from 'node:path';
 import http from 'node:http';
 
@@ -57,6 +57,8 @@ import {
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getLegCadence } from '../../operator/leg-cadence.js';
+import type { TaskInfo } from '../../connectors/kagemusha/query-tools.js';
+import type { PrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -67,6 +69,69 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const routesLogger = new DebugLogger('api-routes');
+
+export interface KagemushaTaskQueryInput {
+  sourceRoom?: string;
+  status?: string;
+  priority?: string;
+  search?: string;
+  limit?: number;
+}
+
+export type KagemushaTaskQuery = (input: KagemushaTaskQueryInput) => TaskInfo[];
+export type KagemushaTaskQueryLoader = () => Promise<KagemushaTaskQuery>;
+
+function queryString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function queryLimit(value: unknown): number {
+  if (typeof value !== 'string') {
+    return 30;
+  }
+  const limit = Number(value);
+  return Number.isFinite(limit) ? limit : 30;
+}
+
+export function registerKagemushaTaskRoute(
+  app: Express,
+  policy: PrivateConnectorPolicy,
+  loadQuery: KagemushaTaskQueryLoader = async () =>
+    (await import('../../connectors/kagemusha/query-tools.js')).queryTasks
+): void {
+  if (!policy.isEnabled('kagemusha')) {
+    return;
+  }
+
+  app.get('/api/kagemusha/tasks', requireAuth, async (req, res) => {
+    try {
+      const queryTasks = await loadQuery();
+      const tasks = queryTasks({
+        status: queryString(req.query.status),
+        priority: queryString(req.query.priority),
+        search: queryString(req.query.search),
+        sourceRoom: queryString(req.query.sourceRoom),
+        limit: queryLimit(req.query.limit),
+      });
+
+      if (req.query.filter === 'overdue') {
+        const now = Date.now();
+        const overdue = tasks.filter((task) => {
+          return task.deadline !== null && new Date(task.deadline).getTime() < now;
+        });
+        res.json({ success: true, tasks: overdue, total: overdue.length });
+        return;
+      }
+
+      res.json({ success: true, tasks, total: tasks.length });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
 
 export interface RegisterApiRoutesParams {
   config: MAMAConfig;
@@ -895,36 +960,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   });
 
-  // ── Kagemusha Tasks endpoint ───────────────────────────────────────────
-  apiServer.app.get('/api/kagemusha/tasks', requireAuth, async (req, res) => {
-    try {
-      const { queryTasks } = await import('../../connectors/kagemusha/query-tools.js');
-      const tasks = queryTasks({
-        status: (req.query.status as string) || undefined,
-        priority: (req.query.priority as string) || undefined,
-        search: (req.query.search as string) || undefined,
-        sourceRoom: (req.query.sourceRoom as string) || undefined,
-        limit: req.query.limit ? Number(req.query.limit) : 30,
-      });
-
-      // Filter for overdue if requested
-      if (req.query.filter === 'overdue') {
-        const now = Date.now();
-        const overdue = tasks.filter(
-          (t: { deadline: string | null }) => t.deadline && new Date(t.deadline).getTime() < now
-        );
-        res.json({ success: true, tasks: overdue, total: overdue.length });
-        return;
-      }
-
-      res.json({ success: true, tasks, total: tasks.length });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
+  registerKagemushaTaskRoute(apiServer.app, apiServer.privateConnectorPolicy);
 
   // ── Agent Notices endpoint ────────────────────────────────────────────
   apiServer.app.get('/api/agent-notices', requireAuth, async (_req, res) => {

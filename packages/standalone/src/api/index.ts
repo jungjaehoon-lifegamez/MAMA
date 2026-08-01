@@ -41,10 +41,14 @@ import {
 } from './agent-context-handler.js';
 import { createAgentGraphRouter, type AgentGraphRouterOptions } from './agent-graph-handler.js';
 import { liveBoundaryChannels } from '../evidence/read.js';
-import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { AVAILABLE_CONNECTORS } from '../connectors/index.js';
+import type { ConnectorConfigLoadResult } from '../connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  visibleConnectorNames,
+  type PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
 
 // Re-export types
 export * from './types.js';
@@ -118,6 +122,10 @@ export interface ApiServerOptions {
   situationNow?: AgentSituationRouterOptions['now'];
   /** Shared context compile service for HTTP/gateway packet compilation */
   contextCompileService?: AgentContextRouterOptions['contextCompileService'];
+  /** Validated connector configuration captured once during runtime boot. */
+  connectorConfigLoadResult?: ConnectorConfigLoadResult;
+  /** Private connector visibility and capability policy captured during runtime boot. */
+  privateConnectorPolicy?: PrivateConnectorPolicy;
 }
 
 export type ApiEnvelopeMetadata = {
@@ -138,6 +146,10 @@ export interface ApiServer {
   reportStore: import('./report-handler.js').ReportStore;
   /** SSE clients for report updates */
   reportSseClients: Set<ServerResponse>;
+  /** Validated connector configuration captured for this server's lifetime. */
+  connectorConfigLoadResult: ConnectorConfigLoadResult;
+  /** Private connector policy captured for this server's lifetime. */
+  privateConnectorPolicy: PrivateConnectorPolicy;
   /** Start the server */
   start(): Promise<void>;
   /** Stop the server */
@@ -172,6 +184,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     situationBuilder,
     situationNow,
     contextCompileService,
+    connectorConfigLoadResult = { ok: true, config: {}, enabledNames: [] },
+    privateConnectorPolicy = resolvePrivateConnectorPolicy(connectorConfigLoadResult),
   } = options;
 
   const app = express();
@@ -326,37 +340,22 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/wiki', wikiRouter);
   }
 
-  // Connector status endpoint -- reads connectors.json + runtime state
+  // Connector status endpoint -- uses the validated boot snapshot.
   app.get('/api/connectors/status', requireAuth, (_req, res) => {
-    const configPath = join(homedir(), '.mama', 'connectors.json');
-    let config: Record<
-      string,
-      {
-        enabled?: boolean;
-        pollIntervalMinutes?: number;
-        channels?: Record<string, unknown>;
-        auth?: unknown;
+    const connectors = visibleConnectorNames(Object.keys(connectorConfigLoadResult.config)).map(
+      (name) => {
+        const cfg = connectorConfigLoadResult.config[name];
+        return {
+          name,
+          enabled: cfg?.enabled ?? false,
+          healthy: cfg?.enabled ?? false,
+          lastPollTime: null,
+          lastPollCount: 0,
+          channelCount: cfg?.channels ? Object.keys(cfg.channels).length : 0,
+          pollIntervalMinutes: cfg?.pollIntervalMinutes ?? 60,
+        };
       }
-    > = {};
-    try {
-      if (existsSync(configPath)) {
-        config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      }
-    } catch {
-      /* empty */
-    }
-    const connectors = AVAILABLE_CONNECTORS.map((name) => {
-      const cfg = config[name];
-      return {
-        name,
-        enabled: cfg?.enabled ?? false,
-        healthy: cfg?.enabled ?? false,
-        lastPollTime: null,
-        lastPollCount: 0,
-        channelCount: cfg?.channels ? Object.keys(cfg.channels).length : 0,
-        pollIntervalMinutes: cfg?.pollIntervalMinutes ?? 60,
-      };
-    });
+    );
     res.json({ connectors });
   });
 
@@ -427,6 +426,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app,
     reportStore,
     reportSseClients,
+    connectorConfigLoadResult,
+    privateConnectorPolicy,
     get server() {
       return server;
     },

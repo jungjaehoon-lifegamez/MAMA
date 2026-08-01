@@ -67,6 +67,8 @@ import { registerApiRoutes } from '../runtime/api-routes-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
+import { loadConnectorConfig } from '../../connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
@@ -1031,7 +1033,20 @@ export async function runAgentLoop(
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
 
-  const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(db, config, process.env);
+  const connectorConfigLoadResult = loadConnectorConfig();
+  if (!connectorConfigLoadResult.ok) {
+    console.error(
+      `[connector] failed to load connector configuration (${connectorConfigLoadResult.error.code}): ` +
+        connectorConfigLoadResult.error.message
+    );
+  }
+  const privateConnectorPolicy = resolvePrivateConnectorPolicy(connectorConfigLoadResult);
+  const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(
+    db,
+    config,
+    process.env,
+    connectorConfigLoadResult
+  );
   const mamaDbPath = expandPath(config.database.path);
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
@@ -1787,7 +1802,10 @@ export async function runAgentLoop(
   temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
-    { nudge: () => triggerLoopNudge.current?.() }
+    {
+      connectorConfigLoadResult,
+      nudge: () => triggerLoopNudge.current?.(),
+    }
   );
   codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
@@ -2168,6 +2186,8 @@ export async function runAgentLoop(
     envelopeMetadata: envelopeBootstrap.metadata,
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
     contextCompileService,
+    connectorConfigLoadResult,
+    privateConnectorPolicy,
   });
 
   channelDeltaSink.current = (channelKey, lines, eventIds) =>

@@ -557,29 +557,29 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
   it('auto-enables only claude-code when the connector file is missing', async () => {
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null);
+    const result = await initConnectors(null, {
+      connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
+    });
 
     expect(connectorMocks.loadedNames).toEqual(['claude-code']);
     expect(result.enabledConnectorNames).toEqual(['claude-code']);
     result.connectorSchedulerStop?.();
   });
 
-  it('logs malformed JSON and auto-enables only claude-code', async () => {
+  it('uses a malformed validated snapshot and auto-enables only claude-code', async () => {
     writeFileSync(join(tempHome, '.mama', 'connectors.json'), '{', 'utf8');
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null);
+    const result = await initConnectors(null, {
+      connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
+    });
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/failed to load connector configuration.*parse_error/i)
-    );
     expect(connectorMocks.loadedNames).toEqual(['claude-code']);
     expect(result.enabledConnectorNames).toEqual(['claude-code']);
     result.connectorSchedulerStop?.();
   });
 
-  it('logs a sanitized explicit error and initializes only auto-enabled claude-code on failure', async () => {
+  it('uses a sanitized invalid snapshot and initializes only auto-enabled claude-code on failure', async () => {
     const secret = 'api-key:must-not-leak';
     writeFileSync(
       join(tempHome, '.mama', 'connectors.json'),
@@ -592,15 +592,12 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
       }),
       'utf8'
     );
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null);
+    const result = await initConnectors(null, {
+      connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
+    });
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/failed to load connector configuration.*validation_error/i)
-    );
-    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(secret);
     expect(connectorMocks.loadedNames).toEqual(['claude-code']);
     expect(result.enabledConnectorNames).toEqual(['claude-code']);
     result.connectorSchedulerStop?.();
@@ -614,7 +611,9 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     );
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null);
+    const result = await initConnectors(null, {
+      connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
+    });
 
     expect(connectorMocks.loadedNames).toEqual(['trello', 'claude-code']);
     expect(result.enabledConnectorNames).toEqual(['trello', 'claude-code']);
@@ -635,7 +634,9 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     let stop: (() => void) | undefined;
 
     try {
-      const result = await initConnectors(null);
+      const result = await initConnectors(null, {
+        connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
+      });
       stop = result.connectorSchedulerStop;
       pollutedDuringInit = Object.prototype.hasOwnProperty.call(Object.prototype, pollutionKey);
       expect(Object.getPrototypeOf(connectorMocks.channelConfigs)).toBeNull();

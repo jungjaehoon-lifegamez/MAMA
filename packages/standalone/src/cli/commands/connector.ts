@@ -7,31 +7,39 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { Command } from 'commander';
 
 import { AVAILABLE_CONNECTORS, loadConnector } from '../../connectors/index.js';
 import type { ConnectorsConfig, ConnectorConfig } from '../../connectors/index.js';
+import { visibleConnectorNames } from '../../connectors/private-connector-policy.js';
 
-const CONNECTORS_CONFIG_PATH = join(homedir(), '.mama', 'connectors.json');
+export interface ConnectorCommandOptions {
+  configPath?: string;
+  writeOut?: (line: string) => void;
+  writeError?: (line: string) => void;
+}
 
-function loadConnectorsConfig(): ConnectorsConfig {
-  if (!existsSync(CONNECTORS_CONFIG_PATH)) return {};
+function loadConnectorsConfig(configPath: string): ConnectorsConfig {
+  if (!existsSync(configPath)) return {};
   try {
-    return JSON.parse(readFileSync(CONNECTORS_CONFIG_PATH, 'utf-8')) as ConnectorsConfig;
+    return JSON.parse(readFileSync(configPath, 'utf-8')) as ConnectorsConfig;
   } catch {
     return {};
   }
 }
 
-function saveConnectorsConfig(config: ConnectorsConfig): void {
-  const dir = join(homedir(), '.mama');
+function saveConnectorsConfig(configPath: string, config: ConnectorsConfig): void {
+  const dir = dirname(configPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(CONNECTORS_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
 
-export function createConnectorCommand(): Command {
+export function createConnectorCommand(options: ConnectorCommandOptions = {}): Command {
+  const configPath = options.configPath ?? join(homedir(), '.mama', 'connectors.json');
+  const writeOut = options.writeOut ?? ((line: string) => console.log(line));
+  const writeError = options.writeError ?? ((line: string) => console.error(line));
   const cmd = new Command('connector').description('Manage data source connectors');
 
   // ── list ────────────────────────────────────────────────────────────────────
@@ -39,19 +47,19 @@ export function createConnectorCommand(): Command {
     .command('list')
     .description('List all connectors and their status')
     .action(() => {
-      const config = loadConnectorsConfig();
+      const config = loadConnectorsConfig(configPath);
 
-      console.log('\nAvailable connectors:\n');
-      for (const name of AVAILABLE_CONNECTORS) {
+      writeOut('\nAvailable connectors:\n');
+      for (const name of visibleConnectorNames(Object.keys(config))) {
         const connectorCfg = config[name];
         const enabled = connectorCfg?.enabled ?? false;
         const status = enabled ? '✓ enabled ' : '✗ disabled';
         const interval = connectorCfg?.pollIntervalMinutes
           ? ` (poll: ${connectorCfg.pollIntervalMinutes}m)`
           : '';
-        console.log(`  ${status}  ${name}${interval}`);
+        writeOut(`  ${status}  ${name}${interval}`);
       }
-      console.log('');
+      writeOut('');
     });
 
   // ── add ─────────────────────────────────────────────────────────────────────
@@ -60,13 +68,13 @@ export function createConnectorCommand(): Command {
     .description('Enable a connector')
     .action(async (name: string) => {
       if (!(AVAILABLE_CONNECTORS as readonly string[]).includes(name)) {
-        console.error(`Unknown connector: ${name}`);
-        console.error(`Available: ${AVAILABLE_CONNECTORS.join(', ')}`);
+        writeError(`Unknown connector: ${name}`);
+        writeError(`Available: ${AVAILABLE_CONNECTORS.join(', ')}`);
         process.exitCode = 1;
         return;
       }
 
-      const config = loadConnectorsConfig();
+      const config = loadConnectorsConfig(configPath);
 
       // Build a default enabled config if not present
       if (!config[name]) {
@@ -80,25 +88,25 @@ export function createConnectorCommand(): Command {
         config[name]!.enabled = true;
       }
 
-      saveConnectorsConfig(config);
-      console.log(`\n✓ Connector '${name}' enabled.\n`);
+      saveConnectorsConfig(configPath, config);
+      writeOut(`\n✓ Connector '${name}' enabled.\n`);
 
       // Show auth requirements
       try {
         const connector = await loadConnector(name, config[name]);
         const reqs = connector.getAuthRequirements();
         if (reqs.length > 0) {
-          console.log('Auth requirements:');
+          writeOut('Auth requirements:');
           for (const req of reqs) {
-            console.log(`  • ${req.description}`);
+            writeOut(`  • ${req.description}`);
             if (req.type === 'token' && req.tokenName) {
-              console.log(`    Set env: ${req.tokenName}`);
+              writeOut(`    Set env: ${req.tokenName}`);
             }
             if (req.type === 'cli' && req.cliAuthCommand) {
-              console.log(`    Run: ${req.cliAuthCommand}`);
+              writeOut(`    Run: ${req.cliAuthCommand}`);
             }
           }
-          console.log('');
+          writeOut('');
         }
       } catch {
         // Auth requirements display is best-effort
@@ -110,23 +118,23 @@ export function createConnectorCommand(): Command {
     .command('remove <name>')
     .description('Disable a connector')
     .action((name: string) => {
-      if (!(AVAILABLE_CONNECTORS as readonly string[]).includes(name)) {
-        console.error(`Unknown connector: ${name}`);
-        console.error(`Available: ${AVAILABLE_CONNECTORS.join(', ')}`);
+      const config = loadConnectorsConfig(configPath);
+      const visibleNames = visibleConnectorNames(Object.keys(config));
+      if (!visibleNames.includes(name)) {
+        writeError(`Unknown connector: ${name}`);
+        writeError(`Available: ${visibleNames.join(', ')}`);
         process.exitCode = 1;
         return;
       }
 
-      const config = loadConnectorsConfig();
-
       if (!config[name]) {
-        console.log(`Connector '${name}' is already disabled (no config found).`);
+        writeOut(`Connector '${name}' is already disabled (no config found).`);
         return;
       }
 
       config[name]!.enabled = false;
-      saveConnectorsConfig(config);
-      console.log(`\n✓ Connector '${name}' disabled.\n`);
+      saveConnectorsConfig(configPath, config);
+      writeOut(`\n✓ Connector '${name}' disabled.\n`);
     });
 
   // ── status ──────────────────────────────────────────────────────────────────
@@ -134,15 +142,17 @@ export function createConnectorCommand(): Command {
     .command('status')
     .description('Show connector health and last poll times')
     .action(async () => {
-      const config = loadConnectorsConfig();
-      const enabledNames = AVAILABLE_CONNECTORS.filter((name) => config[name]?.enabled === true);
+      const config = loadConnectorsConfig(configPath);
+      const enabledNames = visibleConnectorNames(Object.keys(config)).filter(
+        (name) => config[name]?.enabled === true
+      );
 
       if (enabledNames.length === 0) {
-        console.log('\nNo connectors enabled. Run: mama connector add <name>\n');
+        writeOut('\nNo connectors enabled. Run: mama connector add <name>\n');
         return;
       }
 
-      console.log('\nConnector health:\n');
+      writeOut('\nConnector health:\n');
 
       await Promise.all(
         enabledNames.map(async (name) => {
@@ -154,21 +164,21 @@ export function createConnectorCommand(): Command {
 
             const statusIcon = health.healthy ? '✓' : '✗';
             const lastPoll = health.lastPollTime ? health.lastPollTime.toLocaleString() : 'never';
-            console.log(`  ${statusIcon} ${name}`);
-            console.log(`      last poll: ${lastPoll}  items: ${health.lastPollCount}`);
+            writeOut(`  ${statusIcon} ${name}`);
+            writeOut(`      last poll: ${lastPoll}  items: ${health.lastPollCount}`);
             if (health.error) {
-              console.log(`      error: ${health.error}`);
+              writeOut(`      error: ${health.error}`);
             }
           } catch (err) {
-            console.log(`  ✗ ${name}`);
-            console.log(`      error: ${err instanceof Error ? err.message : String(err)}`);
+            writeOut(`  ✗ ${name}`);
+            writeOut(`      error: ${err instanceof Error ? err.message : String(err)}`);
           } finally {
             await connector?.dispose();
           }
         })
       );
 
-      console.log('');
+      writeOut('');
     });
 
   return cmd;

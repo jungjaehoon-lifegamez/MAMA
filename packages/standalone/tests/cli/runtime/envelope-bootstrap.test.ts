@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
+import { describe, expect, it } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../../src/sqlite.js';
 import { DEFAULT_ROLES, type MAMAConfig } from '../../../src/cli/config/types.js';
 import type { AgentLoopOptions } from '../../../src/agent/types.js';
@@ -14,6 +13,10 @@ import { SessionStore } from '../../../src/gateways/session-store.js';
 import { EnvelopeStore } from '../../../src/envelope/store.js';
 import type { EnvelopeAuthority } from '../../../src/envelope/authority.js';
 import { buildRuntimeEnvelopeBootstrap } from '../../../src/cli/runtime/envelope-bootstrap.js';
+import {
+  loadConnectorConfig,
+  type ConnectorConfigLoadResult,
+} from '../../../src/connectors/config-loader.js';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
   return {
@@ -101,6 +104,10 @@ function writeConnectorConfig(
           : {}),
       });
   writeFileSync(join(configDir, 'connectors.json'), contents, 'utf8');
+}
+
+function loadWrittenConnectorConfig(home: string): ConnectorConfigLoadResult {
+  return loadConnectorConfig(join(home, '.mama', 'connectors.json'));
 }
 
 describe('STORY-M1R-BOOTSTRAP-1: issuance/config validation', () => {
@@ -285,15 +292,57 @@ describe('STORY-M1R-BOOTSTRAP-3: off-mode behavior', () => {
 });
 
 describe('STORY-TG-DRIVE-PARITY: Drive destination safety', () => {
+  it('TG-01/TG-05/TG-06: uses the boot-owned connector snapshot instead of reading a home config', () => {
+    const connectorConfigLoadResult: ConnectorConfigLoadResult = {
+      ok: true,
+      config: {
+        drive: {
+          enabled: true,
+          pollIntervalMinutes: 15,
+          channels: {
+            deliverable: {
+              role: 'deliverable',
+              folderId: 'snapshot-deliverable',
+              driveId: 'snapshot-drive',
+            },
+          },
+          auth: { type: 'cli', cli: 'gws' },
+        },
+      },
+      enabledNames: ['drive'],
+    };
+    const bootstrap = buildRuntimeEnvelopeBootstrap(
+      new Database(':memory:'),
+      makeOwnerConfig(),
+      makeKeyEnv('enabled'),
+      connectorConfigLoadResult
+    );
+
+    expect(
+      bootstrap.envelopeConfig!.allowedDestinationsFor({
+        source: 'telegram',
+        channelId: '7777',
+        userId: '7777',
+        text: 'upload translated images',
+        metadata: { chatType: 'private' },
+      })
+    ).toContainEqual({ kind: 'drive', id: 'snapshot-deliverable' });
+  });
+
   it('authorizes only configured deliverable folders, never reference folders or a drive root', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-drive-home-'));
     try {
       writeConnectorConfig(tempHome, { includeDrive: true });
       const db: SQLiteDatabase = new Database(':memory:');
-      const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeOwnerConfig(), {
-        ...makeKeyEnv('enabled'),
-        HOME: tempHome,
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        db,
+        makeOwnerConfig(),
+        {
+          ...makeKeyEnv('enabled'),
+          HOME: tempHome,
+        },
+        loadWrittenConnectorConfig(tempHome)
+      );
       const destinations = bootstrap.envelopeConfig!.allowedDestinationsFor({
         source: 'telegram',
         channelId: '7777',
@@ -367,10 +416,15 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
     try {
       writeConnectorConfig(tempHome);
       const db: SQLiteDatabase = new Database(':memory:');
-      const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeOwnerConfig(), {
-        ...makeKeyEnv('enabled'),
-        HOME: tempHome,
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        db,
+        makeOwnerConfig(),
+        {
+          ...makeKeyEnv('enabled'),
+          HOME: tempHome,
+        },
+        loadWrittenConnectorConfig(tempHome)
+      );
 
       expect(
         bootstrap.envelopeConfig?.rawConnectorsFor({
@@ -395,10 +449,15 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
       if (writeConfig) {
         writeConnectorConfig(tempHome, { enabled: false });
       }
-      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
-        ...makeKeyEnv('enabled'),
-        HOME: tempHome,
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        new Database(':memory:'),
+        makeOwnerConfig(),
+        {
+          ...makeKeyEnv('enabled'),
+          HOME: tempHome,
+        },
+        loadWrittenConnectorConfig(tempHome)
+      );
 
       expect(
         bootstrap.envelopeConfig?.rawConnectorsFor({
@@ -414,19 +473,20 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
     }
   });
 
-  it('logs one sanitized typed failure and keeps Trello out for malformed config', () => {
+  it('keeps Trello out when the supplied snapshot reports malformed config', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-'));
-    const errorSpy = vi.spyOn(DebugLogger.prototype, 'error').mockImplementation(() => undefined);
     try {
       writeConnectorConfig(tempHome, { malformed: true });
-      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
-        ...makeKeyEnv('enabled'),
-        HOME: tempHome,
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        new Database(':memory:'),
+        makeOwnerConfig(),
+        {
+          ...makeKeyEnv('enabled'),
+          HOME: tempHome,
+        },
+        loadWrittenConnectorConfig(tempHome)
+      );
 
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(errorSpy.mock.calls[0]?.join(' ')).toMatch(/connector.*parse_error/i);
-      expect(errorSpy.mock.calls[0]?.join(' ')).not.toContain('must-not-leak');
       expect(
         bootstrap.envelopeConfig?.rawConnectorsFor({
           source: 'telegram',
@@ -437,27 +497,28 @@ describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
         })
       ).toEqual(['telegram', 'kagemusha']);
     } finally {
-      errorSpy.mockRestore();
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
   it('does not read connector config or create auth state when issuance is off', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-off-'));
-    const errorSpy = vi.spyOn(DebugLogger.prototype, 'error').mockImplementation(() => undefined);
     try {
       writeConnectorConfig(tempHome, { malformed: true });
 
-      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
-        MAMA_ENVELOPE_ISSUANCE: 'off',
-        HOME: tempHome,
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        new Database(':memory:'),
+        makeOwnerConfig(),
+        {
+          MAMA_ENVELOPE_ISSUANCE: 'off',
+          HOME: tempHome,
+        },
+        loadWrittenConnectorConfig(tempHome)
+      );
 
       expect(bootstrap).toEqual({ metadata: { issuance: 'off' } });
-      expect(errorSpy).not.toHaveBeenCalled();
       expect(existsSync(join(tempHome, '.mama', 'envelope-key.json'))).toBe(false);
     } finally {
-      errorSpy.mockRestore();
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
