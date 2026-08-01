@@ -190,6 +190,7 @@ export class WorkOrderConsumer {
       reason: string;
       retryEvidence?: SafeCandidateRetryEvidence;
       tokensUsed?: number;
+      completeWhenNoCandidates: boolean;
     }
   >();
   private timer: NodeJS.Timeout | null = null;
@@ -540,7 +541,14 @@ export class WorkOrderConsumer {
     try {
       state = this.deps.ledger.inspectBoardCandidateAttempt(wo.id);
     } catch (err) {
-      this.deferBoardCandidateArbitration(wo, reason, err, retryEvidence, tokensUsed);
+      this.deferBoardCandidateArbitration(
+        wo,
+        reason,
+        err,
+        retryEvidence,
+        tokensUsed,
+        completeWhenNoCandidates
+      );
       return;
     }
     this.unresolvedBoardCandidateEffects.delete(wo.id);
@@ -616,13 +624,15 @@ export class WorkOrderConsumer {
     reason: string,
     err: unknown,
     retryEvidence?: SafeCandidateRetryEvidence,
-    tokensUsed?: number
+    tokensUsed?: number,
+    completeWhenNoCandidates = false
   ): void {
     this.unresolvedBoardCandidateEffects.set(wo.id, {
       workOrder: wo,
       reason,
       retryEvidence,
       tokensUsed,
+      completeWhenNoCandidates,
     });
     const message = `workorder board#${wo.id} candidate receipt state unresolved: ${errMessage(err)}`;
     this.log(`[workorder-consumer] ${message}`);
@@ -635,7 +645,8 @@ export class WorkOrderConsumer {
         pending.workOrder,
         pending.reason,
         pending.retryEvidence,
-        pending.tokensUsed
+        pending.tokensUsed,
+        pending.completeWhenNoCandidates
       );
     }
   }

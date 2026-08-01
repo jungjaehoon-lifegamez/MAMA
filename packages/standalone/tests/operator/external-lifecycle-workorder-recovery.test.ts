@@ -270,4 +270,48 @@ describe('TG-01/TG-05/TG-06 Task 6: receipt-authoritative board candidate recove
     expect(seeded.ledger.getWorkOrderById(ordinary.id)?.status).toBe('pending');
     expect(runs).toBe(0);
   });
+
+  it.each(['full', 'candidate-free reconcile'] as const)(
+    'completes a successful %s board after one transient receipt-read barrier without replay',
+    async (mode) => {
+      const seeded = seedBindingCandidateAttempt();
+      const workOrder = seeded.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: `successful-${mode}-after-transient-receipt-read`,
+        input:
+          mode === 'full'
+            ? { mode: 'full' }
+            : {
+                mode: 'reconcile',
+                channelKey: 'kagemusha:room-c',
+                deltaLines: ['candidate discovery yielded none'],
+              },
+      });
+      const inspect = seeded.ledger.inspectBoardCandidateAttempt.bind(seeded.ledger);
+      let receiptReads = 0;
+      seeded.ledger.inspectBoardCandidateAttempt = (attemptId) => {
+        if (attemptId === workOrder.id && receiptReads++ === 0) {
+          throw new Error('transient receipt database outage');
+        }
+        return inspect(attemptId);
+      };
+      let runs = 0;
+      const consumer = consumerFor(seeded.ledger, {
+        runWithContent: async () => ({ response: (++runs, 'board completed') }),
+      });
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: () => ({ disposition: 'complete' }),
+      });
+
+      await consumer.tick();
+      expect(seeded.ledger.getWorkOrderById(workOrder.id)?.status).toBe('in_progress');
+
+      await consumer.tick();
+      seeded.ledger.inspectBoardCandidateAttempt = inspect;
+
+      expect(seeded.ledger.getWorkOrderById(workOrder.id)?.status).toBe('done');
+      expect(runs).toBe(1);
+    }
+  );
 });
