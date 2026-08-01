@@ -4,15 +4,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import {
-  readFileSync,
-  readdirSync,
-  mkdirSync,
-  statSync,
-  unlinkSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
@@ -20,8 +12,6 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FileReportCarryStore,
-  buildCarryLockPath,
-  buildCarryTemporaryPath,
   writeReportCarryAtomically,
   type AckInput,
   type PersistDeliveredInput,
@@ -62,6 +52,54 @@ interface CarryChild {
   child: ChildProcess;
   ready: Promise<void>;
   result: Promise<ChildResult>;
+}
+
+interface SQLiteLockChild {
+  ready: Promise<void>;
+  exited: Promise<number | null>;
+}
+
+function startSQLiteLockChild(path: string, crashAfterMs: number): SQLiteLockChild {
+  const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const script = `
+    import Database from 'better-sqlite3';
+    const database = new Database(process.env.MAMA_CARRY_DB_PATH);
+    database.pragma('busy_timeout = 2000');
+    database.pragma('journal_mode = DELETE');
+    database.exec('BEGIN IMMEDIATE');
+    process.stdout.write('ready\\n');
+    setTimeout(() => process.exit(17), Number(process.env.MAMA_CARRY_CRASH_AFTER_MS));
+  `;
+  const child = spawn(process.execPath, [tsxCli, '--eval', script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      MAMA_CARRY_DB_PATH: `${path}.lock.sqlite`,
+      MAMA_CARRY_CRASH_AFTER_MS: String(crashAfterMs),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('ready')) {
+        resolve();
+      }
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 17) {
+        reject(new Error(`SQLite lock child exited ${code}: ${stderr}`));
+      }
+    });
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    child.on('close', resolve);
+  });
+  return { ready, exited };
 }
 
 function startCarryChild(
@@ -308,64 +346,49 @@ describe('TG-06: versioned one-shot report carry', () => {
     expect(readFileSync(path)).toEqual(before);
   });
 
-  it('uses a distinct UUID temporary path and leaves the final carry file 0600', () => {
+  it('uses a 0600 SQLite companion lock without leaving staging directories', () => {
     const path = tempCarryPath();
-    const first = buildCarryTemporaryPath(path);
-    const second = buildCarryTemporaryPath(path);
-
-    expect(first).not.toBe(second);
-    expect(first).toMatch(/\.last-full-report\.\d+\.[0-9a-f-]{36}\.tmp$/);
     new FileReportCarryStore(path).persistDelivered(input());
     expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(`${path}.lock.sqlite`).mode & 0o777).toBe(0o600);
+    expect(readdirSync(join(path, '..')).filter((entry) => entry.endsWith('.stage'))).toEqual([]);
+    expect(existsSync(`${path}.lock.sqlite-wal`)).toBe(false);
+    expect(existsSync(`${path}.lock.sqlite-shm`)).toBe(false);
   });
 
-  it('cleans its UUID temporary file after a real atomic rename failure', () => {
+  it('cleans its owned private staging directory after a real atomic rename failure', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-carry-'));
     const destination = join(root, 'destination');
     mkdirSync(destination);
     const record: ReportCarryV2 = { version: 2, ...input() };
 
     expect(() => writeReportCarryAtomically(destination, record)).toThrow();
-    expect(readdirSync(root).filter((entry) => entry.includes('.tmp'))).toEqual([]);
+    expect(readdirSync(root).filter((entry) => entry.endsWith('.stage'))).toEqual([]);
   });
 
-  it('fails closed without deleting a stale foreign lock or changing carry bytes', () => {
-    const path = tempCarryPath();
-    const store = new FileReportCarryStore(path);
-    store.persistDelivered(input());
-    const carryBefore = readFileSync(path);
-    const lockPath = buildCarryLockPath(path);
-    writeFileSync(lockPath, 'replacement owner lock', { mode: 0o600 });
-    const foreignLockBytes = readFileSync(lockPath);
-    const staleAt = new Date(Date.now() - 60_000);
-    utimesSync(lockPath, staleAt, staleAt);
-
-    expect(() => store.persistDelivered(input({ deliveryId: 'd2' }))).toThrow(/timed out/i);
-    expect(readFileSync(lockPath)).toEqual(foreignLockBytes);
-    expect(readFileSync(path)).toEqual(carryBefore);
-  });
-
-  it('never deletes a foreign temporary file after an EEXIST collision', () => {
+  it('never deletes a foreign adjacent path while cleaning its owned staging directory', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-carry-'));
     const path = join(root, 'last-full-report.json');
-    const foreignTemporary = join(root, '.last-full-report.foreign.tmp');
+    const foreignDirectory = join(root, '.last-full-report.foreign.stage');
+    mkdirSync(foreignDirectory, { mode: 0o700 });
+    const foreignTemporary = join(foreignDirectory, 'foreign.json');
     writeFileSync(foreignTemporary, 'foreign temporary bytes', { mode: 0o600 });
     const record: ReportCarryV2 = { version: 2, ...input() };
 
-    expect(() =>
-      writeReportCarryAtomically(path, record, { temporaryPath: () => foreignTemporary })
-    ).toThrow(/EEXIST/);
+    writeReportCarryAtomically(path, record);
     expect(readFileSync(foreignTemporary, 'utf8')).toBe('foreign temporary bytes');
-    expect(() => statSync(path)).toThrow();
+    expect(readdirSync(root).filter((entry) => entry.endsWith('.stage'))).toEqual([
+      '.last-full-report.foreign.stage',
+    ]);
   });
 
-  it('serializes a stale acknowledgement behind a competing new delivery across processes', async () => {
+  it('releases a crashed SQLite transaction and serializes stale ack behind d2 across processes', async () => {
     const path = tempCarryPath();
     const store = new FileReportCarryStore(path);
     const deliveredAt = new Date().toISOString();
     store.persistDelivered(input({ deliveredAt }));
-    const lockPath = buildCarryLockPath(path);
-    writeFileSync(lockPath, 'test coordinator', { mode: 0o600 });
+    const lockHolder = startSQLiteLockChild(path, 500);
+    await lockHolder.ready;
 
     const persist = startCarryChild(
       'persist',
@@ -384,17 +407,18 @@ describe('TG-06: versioned one-shot report carry', () => {
         consumingChannelKey: 'telegram:C1',
         consumedAtIso: new Date().toISOString(),
       },
-      250
+      750
     );
     await acknowledgement.ready;
     expect(await settlesWithin(acknowledgement.result, 100)).toBe(false);
 
-    unlinkSync(lockPath);
+    expect(await lockHolder.exited).toBe(17);
     expect((await persist.result).value).toBe('persisted');
     expect((await acknowledgement.result).value).toBe(false);
     expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
       deliveryId: 'd2',
       text: 'replacement report',
     });
+    expect(existsSync(`${path}.lock`)).toBe(false);
   });
 });

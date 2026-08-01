@@ -10,19 +10,16 @@
 import { randomUUID } from 'node:crypto';
 import {
   chmodSync,
-  closeSync,
-  fchmodSync,
-  fstatSync,
-  lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import Database from '../sqlite.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 export type ArtifactProvenance =
@@ -88,19 +85,11 @@ type ReadResult = ReadMissing | ReadInvalid | ReadRecord;
 const CARRY_SUMMARY_MAX_CHARS = 700;
 const CARRY_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_WAIT_MS = 2_000;
-const LOCK_RETRY_MS = 20;
+const STAGING_DIRECTORY_ATTEMPTS = 8;
 const UNAVAILABLE_REASONS = new Set(['no_run_handle', 'commit_failed', 'legacy_record']);
 
 export function defaultCarryPath(): string {
   return join(homedir(), '.mama', 'operator', 'last-full-report.json');
-}
-
-export function buildCarryTemporaryPath(path: string): string {
-  return join(dirname(path), `.last-full-report.${process.pid}.${randomUUID()}.tmp`);
-}
-
-export function buildCarryLockPath(path: string): string {
-  return `${path}.lock`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -257,144 +246,135 @@ function isErrno(error: unknown, code: string): boolean {
   return isRecord(error) && error.code === code;
 }
 
-function sleepSynchronously(milliseconds: number): void {
-  const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
-  Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
+function isSqliteBusy(error: unknown): boolean {
+  return isRecord(error) && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED');
 }
 
-interface ReportCarryLock {
-  path: string;
-  device: number;
-  inode: number;
+function coordinationDatabasePath(path: string): string {
+  return `${path}.lock.sqlite`;
 }
 
-function acquireLock(path: string): ReportCarryLock {
+function withReportCarryTransaction<T>(path: string, operation: () => T): T {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const lockPath = buildCarryLockPath(path);
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    let descriptor: number | undefined;
-    try {
-      descriptor = openSync(lockPath, 'wx', 0o600);
-      fchmodSync(descriptor, 0o600);
-      writeFileSync(
-        descriptor,
-        JSON.stringify({ pid: process.pid, createdAtMs: Date.now() }),
-        'utf8'
-      );
-      const metadata = fstatSync(descriptor);
-      return { path: lockPath, device: metadata.dev, inode: metadata.ino };
-    } catch (error) {
-      if (descriptor !== undefined) {
-        closeSync(descriptor);
-        descriptor = undefined;
-        try {
-          unlinkSync(lockPath);
-        } catch (cleanupError) {
-          if (!isErrno(cleanupError, 'ENOENT')) {
-            throw new Error(
-              `Unable to clean failed report carry lock after ${formatError(error)}: ${formatError(cleanupError)}`
-            );
-          }
-        }
-        throw new Error(`Unable to create report carry lock: ${formatError(error)}`);
-      }
-      if (!isErrno(error, 'EEXIST')) {
-        throw new Error(`Unable to acquire report carry lock: ${formatError(error)}`);
-      }
-      // A pathname unlink cannot atomically prove it still owns a stale lock.
-      // A crash-stale lock is therefore an explicit operator-cleanup condition,
-      // never an automatic takeover that could delete a replacement owner.
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for report carry lock: ${lockPath}`);
-      }
-      sleepSynchronously(LOCK_RETRY_MS);
-    } finally {
-      if (descriptor !== undefined) {
-        closeSync(descriptor);
-      }
-    }
-  }
-}
-
-function releaseLock(lock: ReportCarryLock): void {
-  let current;
-  try {
-    current = lstatSync(lock.path);
-  } catch (error) {
-    throw new Error(`Report carry lock ownership lost before release: ${formatError(error)}`);
-  }
-  if (current.dev !== lock.device || current.ino !== lock.inode) {
-    throw new Error('Report carry lock ownership changed before release');
-  }
-  unlinkSync(lock.path);
-}
-
-function withReportCarryLock<T>(path: string, operation: () => T): T {
-  const lock = acquireLock(path);
+  let database: Database | undefined;
+  let transactionOpen = false;
   let result: T | undefined;
   let operationError: unknown;
-  let releaseError: unknown;
+  let rollbackError: unknown;
+  let closeError: unknown;
   try {
+    database = new Database(coordinationDatabasePath(path));
+    chmodSync(coordinationDatabasePath(path), 0o600);
+    database.pragma(`busy_timeout = ${LOCK_WAIT_MS}`);
+    // Keep a single coordination file: WAL would leave shared auxiliary paths.
+    database.pragma('journal_mode = DELETE');
+    database.exec('BEGIN IMMEDIATE');
+    transactionOpen = true;
     result = operation();
+    database.exec('COMMIT');
+    transactionOpen = false;
   } catch (error) {
     operationError = error;
+    if (transactionOpen && database !== undefined) {
+      try {
+        database.exec('ROLLBACK');
+        transactionOpen = false;
+      } catch (rollbackFailure) {
+        rollbackError = rollbackFailure;
+      }
+    }
   } finally {
-    try {
-      releaseLock(lock);
-    } catch (error) {
-      releaseError = error;
+    if (database !== undefined) {
+      try {
+        database.close();
+      } catch (closeFailure) {
+        closeError = closeFailure;
+      }
     }
   }
-  if (releaseError !== undefined) {
+
+  if (rollbackError !== undefined || closeError !== undefined) {
+    const cleanupFailure = rollbackError ?? closeError;
     throw new Error(
-      `Unable to release report carry lock after ${
+      `Unable to close report carry SQLite transaction after ${
         operationError === undefined ? 'operation' : formatError(operationError)
-      }: ${formatError(releaseError)}`
+      }: ${formatError(cleanupFailure)}`
     );
   }
   if (operationError !== undefined) {
+    if (isSqliteBusy(operationError)) {
+      throw new Error(
+        `Timed out waiting for report carry SQLite transaction after ${LOCK_WAIT_MS}ms`
+      );
+    }
     throw operationError;
   }
   return result as T;
 }
 
-/** @internal Atomic publisher used only while FileReportCarryStore owns its per-path lock. */
-export function writeReportCarryAtomically(
-  path: string,
-  record: ReportCarryV2,
-  options: { temporaryPath?: (destinationPath: string) => string } = {}
-): void {
+function createStagingDirectory(path: string): string {
+  const directory = dirname(path);
+  const stem = basename(path);
+  for (let attempt = 0; attempt < STAGING_DIRECTORY_ATTEMPTS; attempt += 1) {
+    const stagingDirectory = join(directory, `.${stem}.${process.pid}.${randomUUID()}.stage`);
+    try {
+      mkdirSync(stagingDirectory, { mode: 0o700 });
+      chmodSync(stagingDirectory, 0o700);
+      return stagingDirectory;
+    } catch (error) {
+      if (isErrno(error, 'EEXIST')) {
+        continue;
+      }
+      throw new Error(`Unable to create report carry staging directory: ${formatError(error)}`);
+    }
+  }
+  throw new Error('Unable to allocate unique report carry staging directory');
+}
+
+/** @internal Atomic publisher used only while FileReportCarryStore owns its SQLite transaction. */
+export function writeReportCarryAtomically(path: string, record: ReportCarryV2): void {
   if (!isReportCarryV2(record)) {
     throw new Error('Refusing to persist invalid report carry state');
   }
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporaryPath = options.temporaryPath?.(path) ?? buildCarryTemporaryPath(path);
-  let ownsTemporary = false;
+  let stagingDirectory: string | undefined;
+  let payloadPath: string | undefined;
+  let ownsPayload = false;
   let published = false;
   let operationError: unknown;
   let cleanupError: unknown;
   try {
-    writeFileSync(temporaryPath, `${JSON.stringify(record)}\n`, {
+    stagingDirectory = createStagingDirectory(path);
+    payloadPath = join(stagingDirectory, `${randomUUID()}.json`);
+    writeFileSync(payloadPath, `${JSON.stringify(record)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
       flag: 'wx',
     });
-    ownsTemporary = true;
-    chmodSync(temporaryPath, 0o600);
-    renameSync(temporaryPath, path);
+    ownsPayload = true;
+    chmodSync(payloadPath, 0o600);
+    renameSync(payloadPath, path);
     published = true;
     chmodSync(path, 0o600);
   } catch (error) {
     operationError = error;
   } finally {
-    if (ownsTemporary && !published) {
+    if (ownsPayload && !published && payloadPath !== undefined) {
       try {
-        unlinkSync(temporaryPath);
+        unlinkSync(payloadPath);
       } catch (error) {
         if (!isErrno(error, 'ENOENT')) {
+          cleanupError = error;
+        }
+      }
+    }
+    if (stagingDirectory !== undefined) {
+      try {
+        rmdirSync(stagingDirectory);
+      } catch (error) {
+        if (!isErrno(error, 'ENOENT') && cleanupError === undefined) {
           cleanupError = error;
         }
       }
@@ -402,7 +382,7 @@ export function writeReportCarryAtomically(
   }
   if (cleanupError !== undefined) {
     throw new Error(
-      `Unable to clean report carry temporary file after ${
+      `Unable to clean report carry staging directory after ${
         operationError === undefined ? 'publish' : formatError(operationError)
       }: ${formatError(cleanupError)}`
     );
@@ -417,7 +397,7 @@ export class FileReportCarryStore implements ReportCarryPort {
 
   persistDelivered(input: PersistDeliveredInput): void {
     assertPersistInput(input);
-    withReportCarryLock(this.path, () => {
+    withReportCarryTransaction(this.path, () => {
       const current = this.read();
       if (current.kind === 'invalid') {
         throw new Error('Refusing to overwrite invalid report carry state');
@@ -463,7 +443,7 @@ export class FileReportCarryStore implements ReportCarryPort {
 
   acknowledge(input: AckInput): boolean {
     assertAckInput(input);
-    return withReportCarryLock(this.path, () => {
+    return withReportCarryTransaction(this.path, () => {
       const current = this.read();
       if (
         current.kind !== 'record' ||
