@@ -113,6 +113,48 @@ describe('Story S2-T2: publisher contracts', () => {
           taskRevision: candidate.taskRevision,
         }),
       };
+      const completedLifecycleCandidate = {
+        ...candidate,
+        kind: 'lifecycle',
+        observedStatus: 'completed',
+        evidenceSummary: 'Kagemusha task 42 reported completed at 2026-04-04T00:00:00.000Z',
+        bindingId: 9,
+        bindingRevision: 3,
+        proposedStatus: 'done',
+        candidateId: externalLifecycleCandidateId({
+          kind: 'lifecycle',
+          eventId: candidate.eventId,
+          externalSourceId: candidate.externalSourceId,
+          channelPartition: candidate.channelPartition,
+          contentSha256: candidate.contentSha256,
+          operatorObservationSeq: candidate.operatorObservationSeq,
+          taskId: candidate.taskId,
+          taskRevision: candidate.taskRevision,
+          bindingId: 9,
+          bindingRevision: 3,
+          proposedStatus: 'done',
+        }),
+      };
+      const mismatchedLifecycleCandidate = {
+        ...candidate,
+        kind: 'lifecycle',
+        bindingId: 9,
+        bindingRevision: 3,
+        proposedStatus: 'cancelled',
+        candidateId: externalLifecycleCandidateId({
+          kind: 'lifecycle',
+          eventId: candidate.eventId,
+          externalSourceId: candidate.externalSourceId,
+          channelPartition: candidate.channelPartition,
+          contentSha256: candidate.contentSha256,
+          operatorObservationSeq: candidate.operatorObservationSeq,
+          taskId: candidate.taskId,
+          taskRevision: candidate.taskRevision,
+          bindingId: 9,
+          bindingRevision: 3,
+          proposedStatus: 'cancelled',
+        }),
+      };
       expect(() =>
         validateWorkOrderPayload('board', {
           mode: 'reconcile',
@@ -120,6 +162,15 @@ describe('Story S2-T2: publisher contracts', () => {
           deltaLines: ['untrusted prose'],
           eventIds: ['evt_1'],
           candidates: { bindingCandidates: [validCandidate], lifecycleCandidates: [] },
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: { bindingCandidates: [], lifecycleCandidates: [completedLifecycleCandidate] },
         })
       ).not.toThrow();
       expect(() =>
@@ -195,6 +246,18 @@ describe('Story S2-T2: publisher contracts', () => {
           },
         })
       ).toThrow(/evidenceSummary/i);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'kagemusha:room-a',
+          deltaLines: ['untrusted prose'],
+          eventIds: ['evt_1'],
+          candidates: {
+            bindingCandidates: [],
+            lifecycleCandidates: [mismatchedLifecycleCandidate],
+          },
+        })
+      ).toThrow(/proposedStatus.*observedStatus/i);
     });
 
     it('wiki needs batchId + events[]; promotion needs scheduledAt', () => {

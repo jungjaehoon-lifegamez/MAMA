@@ -19,6 +19,7 @@ import {
   externalLifecycleCandidateId,
   kagemushaEvidenceSummary,
   KAGEMUSHA_LIFECYCLE_OBSERVED_STATUSES,
+  mapKagemushaLifecycle,
   parseKagemushaExternalSourceId,
 } from './external-lifecycle-candidates.js';
 import { createHash } from 'node:crypto';
@@ -360,6 +361,12 @@ function validateLifecycleCandidate(
       !EXTERNAL_LIFECYCLE_STATUSES.includes(value.proposedStatus as never)
     )
       throw new Error('workorder payload (board reconcile): candidate proposedStatus is invalid');
+    const mappedStatus = mapKagemushaLifecycle(value.observedStatus);
+    if (mappedStatus === null || value.proposedStatus !== mappedStatus) {
+      throw new Error(
+        'workorder payload (board reconcile): candidate proposedStatus must match observedStatus'
+      );
+    }
   }
   const expectedCandidateId =
     kind === 'binding'
