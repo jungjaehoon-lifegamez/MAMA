@@ -352,6 +352,42 @@ register({
   params: '(none)',
 });
 register({
+  name: 'task_external_bind',
+  description:
+    'Record bind or decline for one host-issued external-task binding candidate. Candidate identity and task authority are recovered from this claimed board run; do not supply task or event identifiers.',
+  category: 'os_monitoring',
+  params: 'candidate_id, decision (bind|decline), reason, expected_revision',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      candidate_id: { type: 'string' },
+      decision: { enum: ['bind', 'decline'] },
+      reason: { type: 'string' },
+      expected_revision: { type: 'integer', minimum: 1 },
+    },
+    required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'task_lifecycle_reconcile',
+  description:
+    'Apply or retain one host-issued external lifecycle candidate. Candidate identity, task, event, and proposed lifecycle state are recovered from this claimed board run.',
+  category: 'os_monitoring',
+  params: 'candidate_id, decision (apply|retain), reason, expected_revision',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      candidate_id: { type: 'string' },
+      decision: { enum: ['apply', 'retain'] },
+      reason: { type: 'string' },
+      expected_revision: { type: 'integer', minimum: 1 },
+    },
+    required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+    additionalProperties: false,
+  },
+});
+register({
   name: 'changes_read',
   description:
     'Durable changes THIS system made in a window, and what each rested on. Every change carries cause_state: "attributed" names the source events behind it, "unattributed" means the system changed something it cannot explain; coverage counts both over the same population the rows came from. ONE PAGE: total is the full match count and returned is what you got, so a page of unattributed rows is never evidence that nothing was explainable - check total. A task list shows current state; this shows what MOVED and on whose evidence. Runs that changed nothing appear nowhere, which is the point. SCOPE TODAY: work-item changes only. Report, memory and wiki writes are not yet recorded here, so their absence is not evidence they did not happen.',

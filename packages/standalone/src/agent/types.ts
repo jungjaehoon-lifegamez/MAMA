@@ -33,6 +33,22 @@ export type {
 export type ContextCompileInput = CoreContextCompileInput;
 export type TemporalReconcileToolInput = TemporalReconcileInput & { context_packet_id: string };
 
+/** Agent-authored decision only; candidate authority remains in claimed workorder state. */
+export interface ExternalBindingToolInput {
+  candidate_id: string;
+  decision: 'bind' | 'decline';
+  reason: string;
+  expected_revision: number;
+}
+
+/** Agent-authored decision only; task, event, and status are host-recovered. */
+export interface ExternalLifecycleReconcileToolInput {
+  candidate_id: string;
+  decision: 'apply' | 'retain';
+  reason: string;
+  expected_revision: number;
+}
+
 // ============================================================================
 // Agent Context Types (Role Awareness)
 // ============================================================================
@@ -654,7 +670,9 @@ export type GatewayToolInput =
   | DriveFindFolderInput
   | DriveDownloadInput
   | DriveUploadInput
-  | TemporalReconcileToolInput;
+  | TemporalReconcileToolInput
+  | ExternalBindingToolInput
+  | ExternalLifecycleReconcileToolInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -716,6 +734,8 @@ export type GatewayToolName =
   // Native task ledger (M8: operator-owned work items)
   | 'task_list'
   | 'task_external_correlation'
+  | 'task_external_bind'
+  | 'task_lifecycle_reconcile'
   | 'changes_read'
   | 'task_create'
   | 'task_update'

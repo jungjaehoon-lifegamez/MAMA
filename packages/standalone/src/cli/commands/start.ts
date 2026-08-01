@@ -491,6 +491,8 @@ export const WORKORDER_TOOL_POLICIES = {
       'mama_search',
       'report_publish',
       'task_create',
+      'task_external_bind',
+      'task_lifecycle_reconcile',
       'task_list',
       'task_update',
       'trello_card',

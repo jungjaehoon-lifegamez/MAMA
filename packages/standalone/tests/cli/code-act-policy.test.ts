@@ -229,6 +229,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_tasks',
           'mama_search',
           'report_publish',
+          'task_external_bind',
+          'task_lifecycle_reconcile',
           'task_create',
           'task_list',
           'task_update',
@@ -340,6 +342,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'task_create',
           'task_update',
           'report_publish',
+          'task_external_bind',
+          'task_lifecycle_reconcile',
         ]) {
           expect(projected.names).not.toContain(forbidden);
           expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);

@@ -5,6 +5,7 @@ import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { WorkOrderConsumer } from '../../src/operator/workorder-consumer.js';
 import { attachWorkOrderAttemptContext } from '../../src/operator/worker-run.js';
+import { seedLifecycleCandidateAttempt } from './external-lifecycle-fixtures.js';
 
 describe('Story A1: claimed workorder attempt context', () => {
   it('carries the claimed row id through runOptionsFor and workerRun into AgentLoop context', async () => {
@@ -42,5 +43,15 @@ describe('Story A1: claimed workorder attempt context', () => {
     expect(claimedId).toBe(enqueued.id);
     expect(observedAttemptId).toBe(enqueued.id);
     db.close();
+  });
+
+  it('fails closed when a candidate attempt is no longer claimed', () => {
+    const seeded = seedLifecycleCandidateAttempt();
+    seeded.ledger.completeWorkOrder(seeded.attempt.id);
+
+    expect(() =>
+      seeded.ledger.loadBoardCandidate(seeded.attempt.id, seeded.candidate.candidateId, 'lifecycle')
+    ).toThrow(/claimed board attempt/i);
+    seeded.db.close();
   });
 });

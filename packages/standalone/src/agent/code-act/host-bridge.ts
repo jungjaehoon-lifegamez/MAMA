@@ -625,6 +625,32 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'task_external_bind',
+    description:
+      'Record bind or decline for one host-issued external-task binding candidate. Authority is recovered from the claimed board run.',
+    params: [
+      { name: 'candidate_id', type: 'string', required: true },
+      { name: 'decision', type: "'bind' | 'decline'", required: true },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+    ],
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
+    category: 'memory',
+  },
+  {
+    name: 'task_lifecycle_reconcile',
+    description:
+      'Apply or retain one host-issued lifecycle candidate. Task, event, and proposed state are recovered from the claimed board run.',
+    params: [
+      { name: 'candidate_id', type: 'string', required: true },
+      { name: 'decision', type: "'apply' | 'retain'", required: true },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+    ],
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
+    category: 'memory',
+  },
+  {
     name: 'task_create',
     description: 'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts.',
     params: [
@@ -776,6 +802,8 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // Native task ledger writes: reconcile runs maintain work items (M8).
   'task_create',
   'task_update',
+  'task_external_bind',
+  'task_lifecycle_reconcile',
   'task_temporal_reconcile',
   'contract_no_update',
   'drive_upload',

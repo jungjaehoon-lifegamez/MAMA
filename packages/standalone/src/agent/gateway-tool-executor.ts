@@ -67,6 +67,8 @@ import type {
   ModelRunRecord,
   AppendToolTraceInput,
   TemporalReconcileToolInput,
+  ExternalBindingToolInput,
+  ExternalLifecycleReconcileToolInput,
 } from './types.js';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
@@ -76,6 +78,7 @@ import {
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
+import { validateExternalLifecycleDecision } from '../operator/external-lifecycle-candidates.js';
 import SqliteDatabase from '../sqlite.js';
 import {
   handleSave,
@@ -2790,6 +2793,124 @@ export class GatewayToolExecutor {
               error: err instanceof Error ? err.message : String(err),
             };
           }
+        }
+        case 'task_external_bind': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const state = this.getExecutionState();
+          const attemptId = state.workorderAttemptId;
+          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
+            throw new AgentError(
+              'task_external_bind requires a trusted claimed board attempt',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          try {
+            validateExternalLifecycleDecision('binding', input);
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'task_external_bind input is invalid',
+              'TOOL_ERROR',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          let candidate;
+          try {
+            candidate = this.taskLedger.loadBoardCandidate(
+              attemptId,
+              input.candidate_id,
+              'binding'
+            );
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error
+                ? error.message
+                : 'task_external_bind candidate is unavailable',
+              'WORKORDER_SUPERSEDED',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const receipt = this.taskLedger.applyExternalBindingDecision(
+            attemptId,
+            input as ExternalBindingToolInput,
+            {
+              runId: state.modelRunId ?? null,
+              workOrderAttemptId: attemptId,
+              causeEventIds: [candidate.eventId],
+            }
+          );
+          return {
+            success: true,
+            receipt: {
+              taskId: receipt.taskId,
+              workorderAttemptId: receipt.workOrderAttemptId,
+              outcome: receipt.outcome,
+            },
+          } as GatewayToolResult;
+        }
+        case 'task_lifecycle_reconcile': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const state = this.getExecutionState();
+          const attemptId = state.workorderAttemptId;
+          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
+            throw new AgentError(
+              'task_lifecycle_reconcile requires a trusted claimed board attempt',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          try {
+            validateExternalLifecycleDecision('lifecycle', input);
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'task_lifecycle_reconcile input is invalid',
+              'TOOL_ERROR',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          let candidate;
+          try {
+            candidate = this.taskLedger.loadBoardCandidate(
+              attemptId,
+              input.candidate_id,
+              'lifecycle'
+            );
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error
+                ? error.message
+                : 'task_lifecycle_reconcile candidate is unavailable',
+              'WORKORDER_SUPERSEDED',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const receipt = this.taskLedger.applyExternalLifecycleDecision(
+            attemptId,
+            input as ExternalLifecycleReconcileToolInput,
+            {
+              runId: state.modelRunId ?? null,
+              workOrderAttemptId: attemptId,
+              causeEventIds: [candidate.eventId],
+            }
+          );
+          return {
+            success: true,
+            receipt: {
+              taskId: receipt.taskId,
+              workorderAttemptId: receipt.workOrderAttemptId,
+              outcome: receipt.outcome,
+            },
+          } as GatewayToolResult;
         }
         case 'task_create': {
           if (!this.taskLedger) {

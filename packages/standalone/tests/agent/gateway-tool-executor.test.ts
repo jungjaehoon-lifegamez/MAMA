@@ -13,6 +13,10 @@ import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import {
+  seedBindingCandidateAttempt,
+  seedLifecycleCandidateAttempt,
+} from '../operator/external-lifecycle-fixtures.js';
 
 function privatePolicy(enabled: boolean) {
   const result: ConnectorConfigLoadResult = {
@@ -143,6 +147,78 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           code: 'UNKNOWN_TOOL',
         });
       });
+    });
+
+    describe('bound external lifecycle mutations', () => {
+      it('fails closed without a host-issued claimed attempt', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        await expect(
+          executor.execute('task_external_bind', {
+            candidate_id: seeded.candidate.candidateId,
+            decision: 'bind',
+            reason: 'exact task identity confirmed',
+            expected_revision: seeded.candidate.taskRevision,
+          })
+        ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+        seeded.db.close();
+      });
+
+      it('applies the exact lifecycle candidate from trusted attempt state only', async () => {
+        const seeded = seedLifecycleCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'task_lifecycle_reconcile',
+          {
+            candidate_id: seeded.candidate.candidateId,
+            decision: 'apply',
+            reason: 'verified',
+            expected_revision: seeded.candidate.taskRevision,
+          },
+          {
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+          }
+        );
+
+        expect(result).toEqual({
+          success: true,
+          receipt: {
+            taskId: seeded.task.id,
+            workorderAttemptId: seeded.attempt.id,
+            outcome: 'applied',
+          },
+        });
+        seeded.db.close();
+      });
+
+      it.each(['taskId', 'status', 'eventId', 'unexpected'])(
+        'rejects raw lifecycle authority field %s',
+        async (field) => {
+          const seeded = seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_lifecycle_reconcile',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'apply',
+                reason: 'verified',
+                expected_revision: seeded.candidate.taskRevision,
+                [field]: field === 'status' ? 'done' : 42,
+              },
+              { executionSurface: 'model_tool', workorderAttemptId: seeded.attempt.id }
+            )
+          ).rejects.toMatchObject({ code: 'TOOL_ERROR' });
+          seeded.db.close();
+        }
+      );
     });
 
     describe('save tool', () => {
