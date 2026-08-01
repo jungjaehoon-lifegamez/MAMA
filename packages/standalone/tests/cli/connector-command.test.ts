@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -67,5 +67,20 @@ describe('Story private connector isolation: connector command discovery boundar
 
     expect((await runConnectorCommand(['list'], configPath)).stdout).toContain('kagemusha');
     expect((await runConnectorCommand(['remove', 'kagemusha'], configPath)).exitCode).toBe(0);
+  });
+
+  it('TG-01/TG-05/TG-06: fails closed without rewriting malformed connector configuration', async () => {
+    const configPath = join(createTempDirectory(), 'malformed-connectors.json');
+    const malformedContent = '{"sentinel":"keep-this-byte-for-byte"';
+    writeFileSync(configPath, malformedContent, 'utf8');
+
+    for (const args of [['list'], ['status'], ['remove', 'slack'], ['add', 'slack']]) {
+      const result = await runConnectorCommand(args, configPath);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toEqual(['Unable to load connector configuration.'].join('\n'));
+      expect(result.stderr).not.toContain('keep-this-byte-for-byte');
+      expect(readFileSync(configPath, 'utf8')).toBe(malformedContent);
+    }
   });
 });

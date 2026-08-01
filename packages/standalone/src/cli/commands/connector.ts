@@ -5,7 +5,7 @@
  * Config file: ~/.mama/connectors.json
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -13,6 +13,7 @@ import { Command } from 'commander';
 
 import { AVAILABLE_CONNECTORS, loadConnector } from '../../connectors/index.js';
 import type { ConnectorsConfig, ConnectorConfig } from '../../connectors/index.js';
+import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { visibleConnectorNames } from '../../connectors/private-connector-policy.js';
 
 export interface ConnectorCommandOptions {
@@ -21,13 +22,17 @@ export interface ConnectorCommandOptions {
   writeError?: (line: string) => void;
 }
 
-function loadConnectorsConfig(configPath: string): ConnectorsConfig {
-  if (!existsSync(configPath)) return {};
-  try {
-    return JSON.parse(readFileSync(configPath, 'utf-8')) as ConnectorsConfig;
-  } catch {
-    return {};
+function loadConnectorsConfig(
+  configPath: string,
+  writeError: (line: string) => void
+): ConnectorsConfig | undefined {
+  const result = loadConnectorConfig(configPath);
+  if (result.ok) {
+    return result.config;
   }
+  writeError('Unable to load connector configuration.');
+  process.exitCode = 1;
+  return undefined;
 }
 
 function saveConnectorsConfig(configPath: string, config: ConnectorsConfig): void {
@@ -47,7 +52,10 @@ export function createConnectorCommand(options: ConnectorCommandOptions = {}): C
     .command('list')
     .description('List all connectors and their status')
     .action(() => {
-      const config = loadConnectorsConfig(configPath);
+      const config = loadConnectorsConfig(configPath, writeError);
+      if (!config) {
+        return;
+      }
 
       writeOut('\nAvailable connectors:\n');
       for (const name of visibleConnectorNames(Object.keys(config))) {
@@ -74,7 +82,10 @@ export function createConnectorCommand(options: ConnectorCommandOptions = {}): C
         return;
       }
 
-      const config = loadConnectorsConfig(configPath);
+      const config = loadConnectorsConfig(configPath, writeError);
+      if (!config) {
+        return;
+      }
 
       // Build a default enabled config if not present
       if (!config[name]) {
@@ -118,7 +129,10 @@ export function createConnectorCommand(options: ConnectorCommandOptions = {}): C
     .command('remove <name>')
     .description('Disable a connector')
     .action((name: string) => {
-      const config = loadConnectorsConfig(configPath);
+      const config = loadConnectorsConfig(configPath, writeError);
+      if (!config) {
+        return;
+      }
       const visibleNames = visibleConnectorNames(Object.keys(config));
       if (!visibleNames.includes(name)) {
         writeError(`Unknown connector: ${name}`);
@@ -142,7 +156,10 @@ export function createConnectorCommand(options: ConnectorCommandOptions = {}): C
     .command('status')
     .description('Show connector health and last poll times')
     .action(async () => {
-      const config = loadConnectorsConfig(configPath);
+      const config = loadConnectorsConfig(configPath, writeError);
+      if (!config) {
+        return;
+      }
       const enabledNames = visibleConnectorNames(Object.keys(config)).filter(
         (name) => config[name]?.enabled === true
       );

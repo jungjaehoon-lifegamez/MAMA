@@ -77,4 +77,41 @@ describe('Story private connector isolation: API discovery boundary', () => {
       .set('Authorization', authHeader)
       .expect(200, { success: true, tasks: [], total: 0 });
   });
+
+  it('TG-01/TG-05/TG-06: keeps a configured-disabled private connector visible without loading its route', async () => {
+    process.env.MAMA_AUTH_TOKEN = 'test-auth-token';
+    const loadResult: ConnectorConfigLoadResult = {
+      ok: true,
+      config: {
+        kagemusha: {
+          enabled: false,
+          pollIntervalMinutes: 60,
+          channels: {},
+          auth: { type: 'none' },
+        },
+      },
+      enabledNames: [],
+    };
+    const policy = resolvePrivateConnectorPolicy(loadResult);
+    const server = createApiServer({
+      scheduler: new CronScheduler(),
+      port: 0,
+      connectorConfigLoadResult: loadResult,
+      privateConnectorPolicy: policy,
+    });
+    registerKagemushaTaskRoute(server.app, policy, async () => {
+      throw new Error('private task query must not load when the connector is disabled');
+    });
+
+    expect(
+      (await request(server.app).get('/api/connectors/status').set('Authorization', authHeader))
+        .body.connectors
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'kagemusha', enabled: false })])
+    );
+    await request(server.app)
+      .get('/api/kagemusha/tasks')
+      .set('Authorization', authHeader)
+      .expect(404);
+  });
 });
