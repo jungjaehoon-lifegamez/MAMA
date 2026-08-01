@@ -136,6 +136,9 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
     CREATE TRIGGER IF NOT EXISTS trg_operator_external_binding_receipts_global_identity
     BEFORE INSERT ON operator_external_binding_receipts
     BEGIN
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM operator_external_receipt_identities WHERE candidate_id = NEW.candidate_id
+      ) THEN RAISE(ABORT, 'external receipt candidate id is already reserved') END;
       INSERT INTO operator_external_receipt_identities (candidate_id, receipt_kind, created_at)
       VALUES (NEW.candidate_id, 'binding', NEW.created_at);
     END;
@@ -143,9 +146,19 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
     CREATE TRIGGER IF NOT EXISTS trg_operator_external_lifecycle_receipts_global_identity
     BEFORE INSERT ON operator_external_lifecycle_receipts
     BEGIN
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM operator_external_receipt_identities WHERE candidate_id = NEW.candidate_id
+      ) THEN RAISE(ABORT, 'external receipt candidate id is already reserved') END;
       INSERT INTO operator_external_receipt_identities (candidate_id, receipt_kind, created_at)
       VALUES (NEW.candidate_id, 'lifecycle', NEW.created_at);
     END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_operator_external_receipt_identities_immutable_update
+    BEFORE UPDATE ON operator_external_receipt_identities
+    BEGIN SELECT RAISE(ABORT, 'external receipt identities are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_operator_external_receipt_identities_immutable_delete
+    BEFORE DELETE ON operator_external_receipt_identities
+    BEGIN SELECT RAISE(ABORT, 'external receipt identities are immutable'); END;
 
     CREATE TRIGGER IF NOT EXISTS trg_operator_external_binding_receipts_immutable_update
     BEFORE UPDATE ON operator_external_binding_receipts
