@@ -78,14 +78,23 @@ generic role tools
 The resolver is used by:
 
 - Telegram `owner_console` role projection;
+- default/custom wildcard OS roles, unbound legacy `/api/code-act`, generic multi-agent prompts, and
+  final gateway executor authorization (private tools are denied on these ineligible principals);
+- context-keyed Code-Act, where the trusted registry `agentContext.roleName` preserves an eligible
+  owner/work-order/report principal instead of the API transport deciding capability;
 - board, memory-curation, and temporal worker policies;
 - the scheduled/on-demand operator report policy;
-- reactive envelope raw-connector scope.
+- reactive envelope raw-connector scope and all four direct Kagemusha reader mappings.
 
 The existing connector configuration is read before the message router is created. Capability
 projection follows the locally configured enabled set; a configured connector whose runtime
 initialization later fails remains visible to its owner but every call fails loudly. An absent or
 disabled private connector always fails closed and is never projected.
+
+Load and validate `connectors.json` once at boot, then reuse that immutable result for connector
+initialization, envelope scope, role/tool projection, CLI/API discovery, and prompt overlays. The
+private-policy fingerprint participates in the TG-05 session policy fingerprint so enabling or
+disabling the bundle rotates a stale backend session instead of continuing with the old grant.
 
 ### Prompt and local-brief isolation
 
@@ -118,8 +127,24 @@ For each event, the host:
 3. resolves only an already receipted task/external-item binding for that exact stable item;
 4. treats the task's recorded `source_event_id` and attributed batch `source_event_ids` only as
    discovery hints, never as proof of the exact pair;
-5. requires a one-to-one external-item/native-task match; and
+5. constructs a bipartite event↔task hint graph and requires both endpoint degrees to be one,
+   with direct/effect hints agreeing whenever both exist; and
 6. maps only a connector lifecycle vocabulary that has an explicit adapter.
+
+`connector_event_index` rows use stable connector/source identity and are updated in place. A
+content-changing upsert must therefore receive a fresh per-partition `operator_ingest_seq` so the
+delta cursor observes it and a fresh connector-wide `operator_observation_seq` so lifecycle
+watermarks remain ordered across channel moves. Byte-identical re-upserts retain both values;
+partition sequence numbers are never compared across channels.
+
+At work-order enqueue, copy the exact observation into the operator-owned payload: event and
+external identities, channel partition, content hash, source timestamp, both operator sequences,
+parsed lifecycle fields, task/binding revisions, and bounded evidence summary. The summary is a
+fixed host template of validated task ID, status, and timestamp and contains no raw connector prose.
+The candidate ID hashes this immutable
+snapshot. That persisted snapshot, not a later reread of the mutable cross-DB row, is the authority
+for the attempt. A newer connector update receives another sequence and work order; revision and
+last-observation watermarks supersede an older candidate rather than allowing state regression.
 
 Add `operator_task_external_bindings` and binding-receipt storage for the verified association.
 Batch attribution is too broad to establish an exact pair: the same host `causeEventIds` can be
@@ -195,6 +220,12 @@ Generic `task_update` remains available for ordinary native-board maintenance, b
 forbids using it to project external lifecycle. External lifecycle decisions go through the bound
 tool only.
 
+The brief is not the enforcement boundary. During a candidate-bearing board attempt, host
+execution context prevents generic `task_update` from changing `status` or `latest_event` on any
+candidate task. Other native-board fields and tasks remain maintainable. The guard uses the
+trusted work-order attempt ID and durable payload, so direct and nested Code-Act paths enforce the
+same rule.
+
 ### Durable receipts and completion gate
 
 Add a standalone operator-DB migration for binding and lifecycle receipts. Both name the work-order
@@ -212,18 +243,21 @@ returns an explicit verdict:
 - a missing/mismatched receipt fails loudly instead of allowing `latest_event`-only drift to count
   as success.
 
-Calls are idempotent by candidate identity. A retry observes the prior committed receipt and does
-not duplicate a status change. Receipt inspection is also the authority when the runner, hook, or
+Calls are idempotent by candidate identity across work-order attempts. Receipt candidate IDs are
+unique and candidate construction suppresses already-receipted snapshots; decline and retain
+consume the exact observation, while a changed snapshot produces a new ID. A retry observes the
+prior committed receipt and does not duplicate a status change. Receipt inspection is also the authority when the runner, hook, or
 tool transport reports an error and when boot recovery encounters a stale claimed work order:
 
 - a complete valid receipt set wins over a later transport error and completes without replay;
 - a partial receipt set is an unknown mixed outcome and fails loudly without automatic replay;
 - `MCP_RESULT_MISSING`, interrupted-mutation, and other ambiguous terminal classifications retain
   the existing no-replay rule; and
-- one bounded retry is allowed only when durable inspection finds zero candidate receipts and the
-  terminal classification independently proves execution stopped before any candidate mutation
-  could commit, or when a clean runner completion reached only the required-receipt verdict with
-  zero receipts.
+- one bounded retry is allowed only when durable inspection finds zero candidate receipts and a
+  closed positive whitelist was minted by the consumer before it called `runWithContent()` (the
+  candidate before-hook or run-options branch). Once the runner is called, its current contract
+  cannot prove whether model/tool execution began, so every rejection, missing verdict, and generic
+  runner error defaults to no replay.
 
 The absence of a receipt alone is not permission to retry an ambiguous run. Preserve the current
 one-attempt policy for ordinary full-board and reconcile work; this narrow arbitration does not
@@ -232,8 +266,9 @@ increase their retry budget or weaken TG-06 unknown-mutation handling.
 At startup, stale candidate-bearing board claims must rehydrate the trusted candidates and run
 this same complete/partial/zero-receipt arbitration before ordinary `handleFailure`. A complete
 receipt set finalizes the work order without replay; a partial set fails loudly without replay;
-zero receipts fall through to the existing terminal-classification policy. This closes the crash
-window between atomic receipt commit and the separate work-order completion write.
+zero receipts fail without replay because live pre-model retry authority does not survive a crash.
+This closes the crash window between atomic receipt commit and the separate work-order completion
+write without inventing boot-time replay authority.
 
 ## 3. One-shot, chat-scoped report carry
 
@@ -245,7 +280,17 @@ Replace the unversioned `last-full-report.json` record with a versioned state co
 - optional consumed timestamp and consuming channel key.
 
 The report remains persisted only after Telegram confirms delivery. The pending report outbox,
-exact-text replay, schedule advancement, and delivery deduplication are unchanged.
+exact-text replay, schedule advancement, and delivery deduplication are unchanged. Full-report
+model-run provenance is captured when composition finishes and stored with the pending delivery,
+so a restart before successful send does not degrade replayed carry provenance to
+`no_run_handle`. Legacy pending records without provenance remain replayable and are labeled
+`legacy_record`.
+
+Persisting a delivered carry is idempotent by delivery ID. Re-delivery of the same ID preserves
+the original delivery timestamp and any consumed state; a new callback timestamp is ignored and it
+may never revive an acknowledged carry. The same ID with different text, target, or provenance
+fails loudly instead of overwriting audit history. Only a new delivery ID replaces the current
+carry.
 
 At the start of an owner turn, the router peeks the carry for that exact Telegram chat. It injects
 the bounded untrusted prefix only when all conditions hold:
@@ -255,9 +300,11 @@ the bounded untrusted prefix only when all conditions hold:
 - the report is not consumed; and
 - delivery is no older than 24 hours.
 
-After a successful model turn and final session persistence, the router acknowledges the exact
-delivery ID with compare-and-set semantics. A failed model turn does not consume it, so the next
-turn may retry. A concurrent newer report cannot be acknowledged accidentally.
+After a successful model turn, the router requires either final streaming flush or fallback
+assistant append to return `true`; only then does it acknowledge the exact delivery ID with
+compare-and-set semantics. Throws and a `false`/`false` persistence result leave the carry
+unconsumed so the next turn may retry. A concurrent newer report cannot be acknowledged
+accidentally.
 
 Legacy unscoped records continue to parse for diagnostics but are non-actionable: without a target
 chat they cannot be injected safely. The next delivered full report replaces them with v2 state.
@@ -294,8 +341,11 @@ Expired or already consumed state stays on disk for audit but contributes no pro
 
 - Connector configuration load errors fail closed for private capabilities and remain loud.
 - A tool present in an old `config.yaml` role is stripped when its private connector is disabled.
+- A private-policy change rotates the TG-05 session fingerprint; the new session receives exactly
+  the new projected grant and prompt.
 - Binding or lifecycle candidate construction errors do not silently map text; they produce no
-  candidate and leave the ordinary reconcile evidence path intact.
+  candidate plus a bounded diagnostic and leave the ordinary reconcile evidence path intact. Only
+  a database read outage retries the batch; one malformed event cannot poison its channel.
 - Binding/lifecycle receipt or mutation transaction failure fails the tool and the required
   completion verdict. No partial receipt, binding, or status update is accepted.
 - A complete committed candidate receipt set is authoritative even if the worker result is lost;
@@ -304,6 +354,8 @@ Expired or already consumed state stays on disk for audit but contributes no pro
   delivered Telegram report. A failed ack may retry the same carry on the next turn; it cannot
   cross chats or survive the 24-hour bound.
 - TG-06 pending exact-text replay remains authoritative across daemon restart.
+- TG-06 replay preserves the composed report provenance, and same-ID redelivery cannot reset an
+  already consumed carry.
 
 ## 6. Verification contract
 
@@ -313,6 +365,10 @@ Expired or already consumed state stays on disk for audit but contributes no pro
 - A preconfigured private connector remains loadable, removable, and visible to that installation.
 - Disabled/absent connector: owner, board, memory, temporal, report prompts and projected tool
   definitions contain no Kagemusha name or tool.
+- Default/custom wildcard OS, unbound legacy Code-Act, generic multi-agent, and executor paths
+  neither advertise nor execute any Kagemusha reader; context-keyed Code-Act preserves only the
+  trusted owner/work-order/report principal, and all four readers are mapped to envelope connector
+  scope.
 - Enabled connector: all four Kagemusha reads are callable on the intended owner/operator surfaces,
   and envelope scope includes `kagemusha`.
 - Old generated roles/briefs cannot reintroduce the connector when disabled.
@@ -325,6 +381,9 @@ Expired or already consumed state stays on disk for audit but contributes no pro
   mutate.
 - Binding tests cover multi-event batches, bind, decline, duplicate-pair rejection, stale revision,
   no same-work-order lifecycle promotion, and the absence of automatic legacy backfill.
+- Connector-index tests prove content-changing stable-row upserts receive fresh partition and
+  connector-wide sequences while byte-identical upserts do not, including an equal-timestamp channel
+  move; candidate tests prove the persisted content-hash snapshot is the attempt authority.
 - Apply, retain, superseded, idempotent replay, stale revision, transaction rollback, and missing
   receipt cases are covered.
 - Apply exercises the same terminal/open temporal-generation and effect-attribution invariants as
@@ -332,8 +391,10 @@ Expired or already consumed state stays on disk for audit but contributes no pro
 - Completion-after-result-loss, partial receipts, zero-receipt pre-mutation failure, and ambiguous
   post-mutation terminal classifications cover receipt-authoritative retry arbitration.
 - Boot recovery covers a crash after all candidate receipts commit but before work-order
-  completion, plus partial- and zero-receipt stale claims.
+  completion, plus partial- and zero-receipt stale claims; boot zero never replays.
 - A `latest_event`-only generic update does not satisfy a lifecycle-candidate work order.
+- Candidate-target `task_update(status/latest_event)` is rejected before mutation on direct and
+  nested tool paths, while unrelated native maintenance remains allowed.
 - Trello disappearance and arbitrary list names never auto-complete a native task.
 
 ### Report carry and Telegram parity
@@ -346,6 +407,8 @@ Expired or already consumed state stays on disk for audit but contributes no pro
 - Carry tests cover one injection, acknowledgement, no second injection, failed-turn retry,
   target-chat isolation, 24-hour expiry, newer-report compare-and-set safety, corrupt state, and
   legacy unscoped state.
+- Pending-report and carry tests cover provenance across restart, legacy pending provenance, and
+  same-delivery-ID replay after acknowledgement without carry revival.
 
 The parity artifact must be updated with the new TG-01/TG-05/TG-06 evidence paths and statuses.
 
