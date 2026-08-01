@@ -5,8 +5,10 @@ import {
   readFileSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
 import { isArtifactProvenance } from './report-carry.js';
@@ -40,6 +42,11 @@ export interface PendingReportState {
 
 export interface PendingReportStore {
   load(): PendingReportState | null;
+  /**
+   * A quarantined outbox is distinct from an absent outbox: callers must not
+   * replace an operation whose persisted intent could not be safely decoded.
+   */
+  loadStatus?(): 'empty' | 'ready' | 'quarantined';
   save(state: PendingReportState): void;
 }
 
@@ -238,7 +245,24 @@ export class FilePendingReportStore implements PendingReportStore {
     private readonly log: (line: string) => void = () => {}
   ) {}
 
+  private quarantineMarkerPath(): string {
+    return `${this.path}.quarantined`;
+  }
+
+  loadStatus(): 'empty' | 'ready' | 'quarantined' {
+    if (existsSync(this.quarantineMarkerPath())) {
+      return 'quarantined';
+    }
+    return existsSync(this.path) ? 'ready' : 'empty';
+  }
+
   load(): PendingReportState | null {
+    if (this.loadStatus() === 'quarantined') {
+      this.log(
+        `[trigger-loop] pending owner-report state remains quarantined at ${this.quarantineMarkerPath()}`
+      );
+      return null;
+    }
     if (!existsSync(this.path)) return null;
     const size = statSync(this.path).size;
     const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
@@ -253,11 +277,24 @@ export class FilePendingReportStore implements PendingReportStore {
       }
       return normalizeLegacyFullDelivery(parsed);
     } catch (error) {
-      const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}`;
+      const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;
+      const markerPath = this.quarantineMarkerPath();
+      const markerTemporaryPath = `${markerPath}.tmp`;
+      const reason = error instanceof Error ? error.message : String(error);
+      // Create the durable block first. A process death before the invalid
+      // bytes move still fails closed on the next startup; a successful move
+      // leaves the original bytes intact for operator investigation.
+      writeFileSync(
+        markerTemporaryPath,
+        `${JSON.stringify({ version: 1, quarantinePath, reason })}\n`,
+        { mode: 0o600 }
+      );
+      chmodSync(markerTemporaryPath, 0o600);
+      renameSync(markerTemporaryPath, markerPath);
       renameSync(this.path, quarantinePath);
       this.log(
         `[trigger-loop] invalid pending owner-report state quarantined at ${quarantinePath}: ${
-          error instanceof Error ? error.message : String(error)
+          reason
         }`
       );
       return null;
@@ -273,5 +310,11 @@ export class FilePendingReportStore implements PendingReportStore {
     writeFileSync(temporaryPath, `${JSON.stringify(state)}\n`, { mode: 0o600 });
     chmodSync(temporaryPath, 0o600);
     renameSync(temporaryPath, this.path);
+    // A successful explicit save is the operator/API recovery action. Do not
+    // silently replace a quarantined record from the loop itself.
+    const markerPath = this.quarantineMarkerPath();
+    if (existsSync(markerPath)) {
+      unlinkSync(markerPath);
+    }
   }
 }

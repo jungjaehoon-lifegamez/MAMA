@@ -150,6 +150,7 @@ export class OperatorTriggerLoop {
   private fullReporter: SituationReporter;
   private pendingDelivery: PendingReportDelivery | undefined;
   private pendingRequest: PendingReportRequest | undefined;
+  private pendingReportWorkBlocked = false;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -187,18 +188,24 @@ export class OperatorTriggerLoop {
       fullReportProvenance: deps.fullReportProvenance,
       persistLastFullReport: deps.persistLastFullReport,
     });
-    const pending = deps.output ? deps.pendingReportStore?.load() : null;
+    const pendingStore = deps.output ? deps.pendingReportStore : undefined;
+    const pending = pendingStore?.load() ?? null;
     if (pending) {
       this.digest.restore(pending.digest);
       this.fullReporter.restore(pending.full);
       this.pendingDelivery = pending.delivery;
       this.pendingRequest = pending.request;
       deps.log('[trigger-loop] restored pending owner-report buffer');
+    } else if (pendingStore?.loadStatus?.() === 'quarantined') {
+      this.pendingReportWorkBlocked = true;
+      deps.log(
+        '[trigger-loop] owner-report work blocked until pending outbox quarantine is cleared'
+      );
     }
   }
 
   private persistPendingReports(): void {
-    if (!this.deps.output) return;
+    if (!this.deps.output || this.pendingReportWorkBlocked) return;
     this.deps.pendingReportStore?.save({
       version: 1,
       digest: this.digest.snapshot(),
@@ -250,7 +257,7 @@ export class OperatorTriggerLoop {
     mode: ReportMode,
     occurrence: PendingReportOccurrence
   ): Promise<boolean> {
-    if (!this.deps.output) {
+    if (!this.deps.output || this.pendingReportWorkBlocked) {
       return false;
     }
     if (this.pendingDelivery) {
@@ -276,7 +283,7 @@ export class OperatorTriggerLoop {
 
   private async preparePendingRequest(): Promise<boolean> {
     const request = this.pendingRequest;
-    if (!request || !this.deps.output) return false;
+    if (!request || !this.deps.output || this.pendingReportWorkBlocked) return false;
     if (this.pendingDelivery) {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
@@ -303,6 +310,7 @@ export class OperatorTriggerLoop {
   }
 
   private async recoverPendingReportWork(): Promise<void> {
+    if (this.pendingReportWorkBlocked) return;
     await this.deliverPendingReport(true);
     if (this.pendingRequest) {
       const sent = await this.preparePendingRequest();
@@ -493,7 +501,13 @@ export class OperatorTriggerLoop {
     let reported = false;
     const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
-    if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
+    if (
+      !this.pendingReportWorkBlocked &&
+      output &&
+      reportEvery > 0 &&
+      tick % reportEvery === 0 &&
+      this.digest.hasActivity()
+    ) {
       reported = await this.prepareAndDeliverReport(reportAsk, 'digest', { kind: 'digest' });
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
@@ -504,7 +518,7 @@ export class OperatorTriggerLoop {
     //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
     //    so the next tick retries with the buffer intact.
     let fullReported = false;
-    if (output && reportScheduler) {
+    if (!this.pendingReportWorkBlocked && output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
         // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
@@ -567,7 +581,7 @@ export class OperatorTriggerLoop {
   startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
     const output = this.deps.output;
     const reportScheduler = this.deps.reportScheduler;
-    if (!output) {
+    if (!output || this.pendingReportWorkBlocked) {
       return { accepted: false, reason: 'unavailable' };
     }
     if (this.running || this.pendingDelivery || this.pendingRequest) {

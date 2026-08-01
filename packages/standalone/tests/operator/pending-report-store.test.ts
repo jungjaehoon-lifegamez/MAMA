@@ -138,7 +138,39 @@ describe('FilePendingReportStore', () => {
     );
 
     expect(new FilePendingReportStore(path).load()).toBeNull();
-    expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
+  });
+
+  it('TG-06 preserves a durable quarantine until an explicit valid save clears it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const store = new FilePendingReportStore(path);
+
+    expect(store.load()).toBeNull();
+    expect(store.loadStatus()).toBe('quarantined');
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
+
+    store.save({ version: 1, digest: snapshot, full: snapshot });
+
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('ready');
+    expect(new FilePendingReportStore(path).load()?.digest).toEqual(snapshot);
+    expect(await readdir(root)).not.toContain('pending.json.quarantined');
   });
 
   it.each([
@@ -190,7 +222,12 @@ describe('FilePendingReportStore', () => {
       );
 
       expect(new FilePendingReportStore(path).load()).toBeNull();
-      expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^pending\.json\.corrupt-/),
+          'pending.json.quarantined',
+        ])
+      );
     }
   );
 
@@ -279,7 +316,12 @@ describe('FilePendingReportStore', () => {
     );
 
     expect(new FilePendingReportStore(path).load()).toBeNull();
-    expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
   });
 
   it.each(['', '   ', ' mr_1', 'mr_1 '])(
@@ -307,7 +349,12 @@ describe('FilePendingReportStore', () => {
       );
 
       expect(new FilePendingReportStore(path).load()).toBeNull();
-      expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^pending\.json\.corrupt-/),
+          'pending.json.quarantined',
+        ])
+      );
     }
   );
 
@@ -366,7 +413,12 @@ describe('FilePendingReportStore', () => {
     );
 
     expect(new FilePendingReportStore(path, log).load()).toBeNull();
-    expect(await readdir(root)).toEqual([expect.stringMatching(/^pending\.json\.corrupt-/)]);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('quarantined'));
   });
 

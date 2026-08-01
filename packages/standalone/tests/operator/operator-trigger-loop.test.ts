@@ -1061,6 +1061,128 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markSuccess).not.toHaveBeenCalled();
   });
 
+  it('TG-06 durably blocks scheduled and on-demand replacement reports after a quarantined state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'valid but mutually exclusive digest',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
+    const makeBlockedLoop = () =>
+      new OperatorTriggerLoop({
+        delta: new FakeDelta(),
+        memory: fakeMem(),
+        registry: new TriggerRegistry(new Database(':memory:')),
+        askAgent: async () => '[]',
+        reportAsk,
+        review: async () => ({ action: 'kept' as const }),
+        output: { send },
+        reportScheduler: scheduler,
+        pendingReportStore: new FilePendingReportStore(path),
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+        },
+        log: () => {},
+      });
+
+    const first = makeBlockedLoop();
+    await first.tick();
+    expect(first.startFullReport()).toEqual({ accepted: false, reason: 'unavailable' });
+
+    const restarted = makeBlockedLoop();
+    await restarted.tick();
+    expect(restarted.startFullReport()).toEqual({ accepted: false, reason: 'unavailable' });
+
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+  });
+
+  it('TG-06 treats an absent pending outbox as eligible for the scheduled full report', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'normal scheduled full report');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: scheduler,
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      'normal scheduled full report',
+      'operator-report:scheduled:2026-08-02:09'
+    );
+    expect(markFired).toHaveBeenCalledWith('2026-08-02:09');
+    expect(markSuccess).toHaveBeenCalledOnce();
+  });
+
   it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
     const first = durableLoop(pendingRef, {
