@@ -65,10 +65,16 @@ export function createTelegramReportCarryDelivery({
     if (
       report.target?.source !== 'telegram' ||
       report.target.channelId !== reportChatId ||
+      report.occurrence === undefined ||
       report.payloadIdentity !==
         pendingReportDeliveryPayloadIdentity({
+          mode: report.mode,
           deliveryId: report.deliveryId,
           text: report.text,
+          citedTriggerIds: report.citedTriggerIds,
+          createdAtIso: report.createdAtIso,
+          provenance: report.provenance,
+          occurrence: report.occurrence,
           target: report.target,
         })
     ) {

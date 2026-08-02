@@ -51,15 +51,24 @@ export interface PreparedSituationReport {
   provenance?: ArtifactProvenance;
   target?: ReportCarryTarget;
   payloadIdentity?: string;
+  occurrence?: {
+    kind: 'digest' | 'scheduled_full' | 'on_demand_full';
+    hourKey?: string;
+    firedAtIso?: string;
+  };
 }
 
 export interface DeliveredFullReport {
+  mode: 'full';
   deliveryId: string;
+  citedTriggerIds: string[];
+  createdAtIso: string;
   deliveredAtIso: string;
   text: string;
   provenance: ArtifactProvenance;
   target?: ReportCarryTarget;
   payloadIdentity?: string;
+  occurrence?: PreparedSituationReport['occurrence'];
 }
 
 /** Deterministic prompt-size bounds (mind memory + prompt length; see plan design decision 4). */
@@ -386,12 +395,16 @@ export class SituationReporter {
         console.warn('[situation-report] skipped full-report carry: missing provenance');
       } else {
         const report: DeliveredFullReport = {
+          mode: 'full',
           deliveryId: prepared.deliveryId,
+          citedTriggerIds: [...prepared.citedTriggerIds],
+          createdAtIso: prepared.createdAtIso,
           deliveredAtIso: new Date().toISOString(),
           text: prepared.text,
           provenance: prepared.provenance,
           ...(prepared.target ? { target: prepared.target } : {}),
           ...(prepared.payloadIdentity ? { payloadIdentity: prepared.payloadIdentity } : {}),
+          ...(prepared.occurrence ? { occurrence: prepared.occurrence } : {}),
         };
         try {
           this.opts.persistLastFullReport?.(report);

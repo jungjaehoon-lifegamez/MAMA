@@ -12,7 +12,11 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
-import { isArtifactProvenance, type ReportCarryTarget } from './report-carry.js';
+import {
+  isArtifactProvenance,
+  type ArtifactProvenance,
+  type ReportCarryTarget,
+} from './report-carry.js';
 import { withFileCoordinationTransaction } from './file-coordination.js';
 import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
 
@@ -98,8 +102,13 @@ interface PendingReportRequestIdentityInput {
 }
 
 interface PendingReportDeliveryIdentityInput {
+  mode: 'digest' | 'full';
   deliveryId: string;
   text: string;
+  citedTriggerIds: readonly string[];
+  createdAtIso: string;
+  provenance?: ArtifactProvenance;
+  occurrence: PendingReportOccurrence;
   target: ReportCarryTarget;
 }
 
@@ -135,22 +144,34 @@ export function pendingReportRequestPayloadIdentity(
 export function pendingReportDeliveryPayloadIdentity(
   delivery: PendingReportDeliveryIdentityInput
 ): string {
+  const provenanceIdentity =
+    delivery.provenance?.status === 'available'
+      ? (['available', delivery.provenance.modelRunId] as const)
+      : delivery.provenance?.status === 'unavailable'
+        ? (['unavailable', delivery.provenance.reason] as const)
+        : null;
   return createHash('sha256')
     .update(
       JSON.stringify([
-        'pending-report-delivery-v1',
+        'pending-report-delivery-v2',
+        delivery.mode,
         delivery.deliveryId,
-        reportTargetIdentity(delivery.target),
         delivery.text,
+        delivery.citedTriggerIds,
+        delivery.createdAtIso,
+        provenanceIdentity,
+        [
+          delivery.occurrence.kind,
+          delivery.occurrence.hourKey ?? null,
+          delivery.occurrence.firedAtIso ?? null,
+        ],
+        [delivery.target.source, delivery.target.channelId],
       ])
     )
     .digest('hex');
 }
 
-function isPendingReportState(
-  value: unknown,
-  allowLegacyFullProvenance: boolean
-): value is PendingReportState {
+function isPendingReportState(value: unknown): value is PendingReportState {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   if (record.version !== 1) return false;
@@ -166,8 +187,7 @@ function isPendingReportState(
     return false;
   }
   return (
-    (record.delivery === undefined ||
-      isPendingDelivery(record.delivery, allowLegacyFullProvenance)) &&
+    (record.delivery === undefined || isPendingDelivery(record.delivery)) &&
     (record.request === undefined || isPendingRequest(record.request))
   );
 }
@@ -199,42 +219,65 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
   );
 }
 
-function isPendingDelivery(
-  value: unknown,
-  allowLegacyFullProvenance: boolean
-): value is PendingReportDelivery {
+function isPendingDelivery(value: unknown): value is PendingReportDelivery {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  const sharedValid =
-    (record.mode === 'digest' || record.mode === 'full') &&
-    isBoundedString(record.text, 1_000_000) &&
-    isNonEmptyBoundedString(record.deliveryId, 512) &&
-    isNonEmptyBoundedString(record.createdAtIso, 64) &&
-    Array.isArray(record.citedTriggerIds) &&
-    record.citedTriggerIds.length <= MAX_FIRES &&
-    record.citedTriggerIds.every((item) => isNonEmptyBoundedString(item, 512));
-  if (!sharedValid) {
-    return false;
-  }
+  const mode = record.mode;
+  const text = record.text;
+  const deliveryId = record.deliveryId;
+  const createdAtIso = record.createdAtIso;
+  const citedTriggerIds = record.citedTriggerIds;
+  const target = record.target;
+  const payloadIdentity = record.payloadIdentity;
   if (
-    !isReportTarget(record.target) ||
-    !isSha256Identity(record.payloadIdentity) ||
-    record.payloadIdentity !==
-      pendingReportDeliveryPayloadIdentity({
-        deliveryId: record.deliveryId as string,
-        text: record.text as string,
-        target: record.target,
-      })
+    (mode !== 'digest' && mode !== 'full') ||
+    !isBoundedString(text, 1_000_000) ||
+    !isNonEmptyBoundedString(deliveryId, 512) ||
+    !isNonEmptyBoundedString(createdAtIso, 64) ||
+    !Array.isArray(citedTriggerIds) ||
+    citedTriggerIds.length > MAX_FIRES ||
+    !citedTriggerIds.every((item: unknown) => isNonEmptyBoundedString(item, 512)) ||
+    !isReportTarget(target) ||
+    !isSha256Identity(payloadIdentity)
   ) {
     return false;
   }
-  if (record.mode === 'digest') {
-    return record.provenance === undefined && isDigestOccurrence(record.occurrence);
+  const modeValid =
+    mode === 'digest'
+      ? record.provenance === undefined && isDigestOccurrence(record.occurrence)
+      : isArtifactProvenance(record.provenance) && isFullOccurrence(record.occurrence);
+  if (!modeValid) {
+    return false;
+  }
+  const expectedKeys = [
+    'mode',
+    'text',
+    'citedTriggerIds',
+    'createdAtIso',
+    'deliveryId',
+    'occurrence',
+    'target',
+    'payloadIdentity',
+    ...(mode === 'full' ? ['provenance'] : []),
+  ];
+  if (
+    Object.keys(record).length !== expectedKeys.length ||
+    !Object.keys(record).every((key) => expectedKeys.includes(key))
+  ) {
+    return false;
   }
   return (
-    isFullOccurrence(record.occurrence) &&
-    (isArtifactProvenance(record.provenance) ||
-      (allowLegacyFullProvenance && record.provenance === undefined))
+    payloadIdentity ===
+    pendingReportDeliveryPayloadIdentity({
+      mode,
+      deliveryId,
+      text,
+      citedTriggerIds,
+      createdAtIso,
+      ...(isArtifactProvenance(record.provenance) ? { provenance: record.provenance } : {}),
+      occurrence: record.occurrence as PendingReportOccurrence,
+      target,
+    })
   );
 }
 
@@ -280,13 +323,6 @@ function isOnDemandFullOccurrence(value: unknown): value is PendingReportOccurre
     isNonEmptyBoundedString(record.firedAtIso, 64) &&
     (record.hourKey === undefined || isNonEmptyBoundedString(record.hourKey, 128))
   );
-}
-
-function normalizeLegacyFullDelivery(state: PendingReportState): PendingReportState {
-  if (state.delivery?.mode === 'full' && state.delivery.provenance === undefined) {
-    state.delivery.provenance = { status: 'unavailable', reason: 'legacy_record' };
-  }
-  return state;
 }
 
 function isSituationSnapshot(fields: Record<string, unknown>): boolean {
@@ -469,7 +505,7 @@ export class FilePendingReportStore implements PendingReportStore {
   }
 
   save(state: PendingReportState, expected?: PendingReportSaveExpectation): void {
-    if (!isPendingReportState(state, false)) {
+    if (!isPendingReportState(state)) {
       throw new Error('Refusing to persist invalid pending operator report state');
     }
     withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
@@ -488,7 +524,7 @@ export class FilePendingReportStore implements PendingReportStore {
   }
 
   recoverWithValidState(state: PendingReportState): void {
-    if (!isPendingReportState(state, false)) {
+    if (!isPendingReportState(state)) {
       throw new Error('Refusing to recover pending owner-report state with invalid data');
     }
     withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
@@ -517,7 +553,7 @@ export class FilePendingReportStore implements PendingReportStore {
         throw new Error('Pending operator report state exceeds its size limit');
       }
       const parsed: unknown = JSON.parse(raw);
-      if (!isPendingReportState(parsed, true)) {
+      if (!isPendingReportState(parsed)) {
         throw new Error(
           size > MAX_PENDING_REPORT_BYTES
             ? 'Pending operator report state exceeds its size limit'
@@ -527,7 +563,7 @@ export class FilePendingReportStore implements PendingReportStore {
       return {
         status: 'ready',
         revision: revisionFor(raw),
-        state: normalizeLegacyFullDelivery(parsed),
+        state: parsed,
       };
     } catch (error) {
       const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;

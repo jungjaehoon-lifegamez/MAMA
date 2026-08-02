@@ -11,21 +11,20 @@ import {
   FilePendingReportStore,
   pendingReportDeliveryPayloadIdentity,
   pendingReportRequestPayloadIdentity,
+  type PendingReportDelivery,
   type PendingReportOccurrence,
 } from '../../src/operator/pending-report-store.js';
 import { SituationReporter } from '../../src/operator/situation-report.js';
 
 const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
 
-function bindDelivery<T extends { deliveryId: string; text: string }>(delivery: T) {
+function bindDelivery<T extends Omit<PendingReportDelivery, 'target' | 'payloadIdentity'>>(
+  delivery: T
+) {
+  const bound = { ...delivery, target: TEST_REPORT_TARGET };
   return {
-    ...delivery,
-    target: TEST_REPORT_TARGET,
-    payloadIdentity: pendingReportDeliveryPayloadIdentity({
-      deliveryId: delivery.deliveryId,
-      text: delivery.text,
-      target: TEST_REPORT_TARGET,
-    }),
+    ...bound,
+    payloadIdentity: pendingReportDeliveryPayloadIdentity(bound),
   };
 }
 
@@ -221,7 +220,7 @@ describe('FilePendingReportStore', () => {
     expect(store.load()?.delivery?.provenance).toEqual(provenance);
   });
 
-  it('TG-06 labels a legacy pending full delivery without provenance', async () => {
+  it('TG-06 quarantines a legacy pending full delivery without provenance', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
     const snapshot = new SituationReporter().snapshot();
@@ -231,21 +230,20 @@ describe('FilePendingReportStore', () => {
         version: 1,
         digest: snapshot,
         full: snapshot,
-        delivery: bindDelivery({
+        delivery: {
           mode: 'full',
           text: 'legacy owner report',
           citedTriggerIds: [],
           createdAtIso: '2026-08-02T00:00:00.000Z',
           deliveryId: 'legacy-d1',
           occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
-        }),
+          target: TEST_REPORT_TARGET,
+          payloadIdentity: '8f622df5cedccfd4c41d26bcfd62ad0ecaa342953876b85a27bafeb3b037703f',
+        },
       })
     );
 
-    expect(new FilePendingReportStore(path).load()?.delivery?.provenance).toEqual({
-      status: 'unavailable',
-      reason: 'legacy_record',
-    });
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
   });
 
   it('TG-06 quarantines a pending delivery whose exact payload no longer matches its identity', async () => {
@@ -278,6 +276,108 @@ describe('FilePendingReportStore', () => {
         'pending.json.quarantined',
       ])
     );
+  });
+
+  it.each([
+    [
+      'mode',
+      (delivery: Record<string, unknown>) => {
+        delivery.mode = 'digest';
+        delivery.occurrence = { kind: 'digest' };
+        delete delivery.provenance;
+      },
+    ],
+    [
+      'citations',
+      (delivery: Record<string, unknown>) => {
+        delivery.citedTriggerIds = ['trigger-mutated'];
+      },
+    ],
+    [
+      'creation timestamp',
+      (delivery: Record<string, unknown>) => {
+        delivery.createdAtIso = '2026-08-02T00:01:00.000Z';
+      },
+    ],
+    [
+      'provenance',
+      (delivery: Record<string, unknown>) => {
+        delivery.provenance = { status: 'available', modelRunId: 'mr_mutated' };
+      },
+    ],
+    [
+      'scheduled occurrence',
+      (delivery: Record<string, unknown>) => {
+        delivery.occurrence = {
+          kind: 'scheduled_full',
+          hourKey: '2026-08-02:10',
+          firedAtIso: '2026-08-02T01:00:00.000Z',
+        };
+      },
+    ],
+  ] as const)(
+    'TG-06 quarantines a structurally valid delivery whose bound %s changed',
+    async (_field, mutate) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+      const path = join(root, 'pending.json');
+      const snapshot = new SituationReporter().snapshot();
+      const state = {
+        version: 1 as const,
+        digest: snapshot,
+        full: snapshot,
+        delivery: bindDelivery({
+          mode: 'full' as const,
+          text: 'owner report',
+          citedTriggerIds: ['trigger-1'],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'fully-bound-d1',
+          provenance: { status: 'available' as const, modelRunId: 'mr_original' },
+          occurrence: {
+            kind: 'scheduled_full' as const,
+            hourKey: '2026-08-02:09',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        }),
+      };
+      const tampered = structuredClone(state);
+      mutate(tampered.delivery as unknown as Record<string, unknown>);
+      await writeFile(path, JSON.stringify(tampered));
+
+      expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^pending\.json\.corrupt-/),
+          'pending.json.quarantined',
+        ])
+      );
+    }
+  );
+
+  it('TG-06 quarantines the legacy weaker delivery identity instead of accepting it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'owner report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'legacy-weak-d1',
+          provenance: { status: 'available', modelRunId: 'mr_original' },
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+          target: TEST_REPORT_TARGET,
+          payloadIdentity: '8b44012855f58b25ef968f78012982f3d4691e136d0644bfcd0ca6ed1401f57d',
+        },
+      })
+    );
+
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
   });
 
   it('TG-06 quarantines a legacy active delivery without an authorized target binding', async () => {

@@ -945,10 +945,15 @@ describe('TG-06: durable owner-report delivery identity', () => {
     const carryStore: ReportCarryDeliveryStore & CapturingCarryStore = new CapturingCarryStore(
       path
     );
-    const persistLastFullReport = createTelegramReportCarryDelivery({
+    const deliverToCarry = createTelegramReportCarryDelivery({
       reportChatId: 'trusted-owner-chat',
       carryStore,
     });
+    const deliveredReports: Array<Parameters<typeof deliverToCarry>[0]> = [];
+    const persistLastFullReport = (report: Parameters<typeof deliverToCarry>[0]): void => {
+      deliveredReports.push(structuredClone(report));
+      deliverToCarry(report);
+    };
     const sent: Array<{ chatId: string; text: string; deliveryId?: string }> = [];
     const output = createTelegramReportOutput({
       reportChatId: 'trusted-owner-chat',
@@ -1029,18 +1034,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
         consumedAtIso: '2026-08-02T00:01:00.000Z',
       })
     ).toBe(true);
-    persistLastFullReport({
-      deliveryId: carryStore.persisted[1].deliveryId,
-      deliveredAtIso: carryStore.persisted[1].deliveredAt,
-      text: carryStore.persisted[1].text,
-      provenance: carryStore.persisted[1].provenance,
-      target: carryStore.persisted[1].target,
-      payloadIdentity: pendingReportDeliveryPayloadIdentity({
-        deliveryId: carryStore.persisted[1].deliveryId,
-        target: carryStore.persisted[1].target,
-        text: carryStore.persisted[1].text,
-      }),
-    });
+    persistLastFullReport(deliveredReports[1]!);
     expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
       deliveryId: carryStore.persisted[1].deliveryId,
       consumedAt: '2026-08-02T00:01:00.000Z',
@@ -1286,6 +1280,90 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markSuccess).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'provenance',
+      (delivery: Record<string, unknown>) => {
+        delivery.provenance = { status: 'available', modelRunId: 'mr_mutated' };
+      },
+    ],
+    [
+      'scheduled occurrence',
+      (delivery: Record<string, unknown>) => {
+        delivery.occurrence = {
+          kind: 'scheduled_full',
+          hourKey: '2026-08-02:10',
+          firedAtIso: '2026-08-02T01:00:00.000Z',
+        };
+      },
+    ],
+  ] as const)(
+    'TG-06 quarantines a pending delivery with mutated %s before send, carry, or scheduler mutation',
+    async (_field, mutate) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-identity-mutation-'));
+      const path = join(root, 'pending.json');
+      const snapshot = new (
+        await import('../../src/operator/situation-report.js')
+      ).SituationReporter().snapshot();
+      const delivery = {
+        mode: 'full' as const,
+        text: 'authorized owner report',
+        citedTriggerIds: ['trigger-1'],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'fully-bound-d1',
+        provenance: { status: 'available' as const, modelRunId: 'mr_original' },
+        occurrence: {
+          kind: 'scheduled_full' as const,
+          hourKey: '2026-08-02:09',
+          firedAtIso: '2026-08-02T00:00:00.000Z',
+        },
+        target: TEST_REPORT_TARGET,
+      };
+      const state = {
+        version: 1 as const,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          ...delivery,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+        },
+      };
+      const tampered = structuredClone(state);
+      mutate(tampered.delivery as unknown as Record<string, unknown>);
+      await writeFile(path, JSON.stringify(tampered));
+
+      const send = vi.fn(async () => {});
+      const persistLastFullReport = vi.fn();
+      const reportAsk = vi.fn(async () => 'must not compose replacement');
+      const scheduler = {
+        shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:11' })),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      };
+      const loop = durableLoop(
+        { current: null },
+        {
+          pendingReportStore: new FilePendingReportStore(path),
+          output: testReportOutput(send),
+          persistLastFullReport,
+          reportAsk,
+          reportScheduler: scheduler,
+        }
+      );
+
+      await loop.tick();
+
+      expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+      expect(send).not.toHaveBeenCalled();
+      expect(persistLastFullReport).not.toHaveBeenCalled();
+      expect(reportAsk).not.toHaveBeenCalled();
+      expect(scheduler.shouldFire).not.toHaveBeenCalled();
+      expect(scheduler.markFired).not.toHaveBeenCalled();
+      expect(scheduler.markSuccess).not.toHaveBeenCalled();
+    }
+  );
+
   it('TG-06 quarantines a state with both pending phases before restart recovery can send or advance', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
@@ -1529,23 +1607,21 @@ describe('TG-06: durable owner-report delivery identity', () => {
     });
 
     const recoveredDelivery = {
+      mode: 'full' as const,
       deliveryId: 'd1',
       target: TEST_REPORT_TARGET,
       text: 'recovered d1',
+      citedTriggerIds: [],
+      createdAtIso: '2026-08-02T00:00:00.000Z',
+      provenance: { status: 'available' as const, modelRunId: 'mr_d1' },
+      occurrence: { kind: 'scheduled_full' as const, hourKey: '2026-08-02:09' },
     };
     store.recoverWithValidState({
       version: 1,
       digest: snapshot,
       full: snapshot,
       delivery: {
-        mode: 'full',
-        text: 'recovered d1',
-        citedTriggerIds: [],
-        createdAtIso: '2026-08-02T00:00:00.000Z',
-        deliveryId: 'd1',
-        provenance: { status: 'available', modelRunId: 'mr_d1' },
-        occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
-        target: TEST_REPORT_TARGET,
+        ...recoveredDelivery,
         payloadIdentity: pendingReportDeliveryPayloadIdentity(recoveredDelivery),
       },
     });
@@ -1635,20 +1711,21 @@ describe('TG-06: durable owner-report delivery identity', () => {
       version: 1,
       digest: snapshot,
       full: snapshot,
-      delivery: {
-        mode: 'digest' as const,
-        text: 'external d1 wins',
-        citedTriggerIds: [],
-        createdAtIso: '2026-08-02T00:00:00.000Z',
-        deliveryId: 'd1',
-        occurrence: { kind: 'digest' as const },
-        target: TEST_REPORT_TARGET,
-        payloadIdentity: pendingReportDeliveryPayloadIdentity({
-          deliveryId: 'd1',
+      delivery: (() => {
+        const delivery = {
+          mode: 'digest' as const,
           text: 'external d1 wins',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'd1',
+          occurrence: { kind: 'digest' as const },
           target: TEST_REPORT_TARGET,
-        }),
-      },
+        };
+        return {
+          ...delivery,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+        };
+      })(),
     };
     let injectRecovery = true;
     const raceStore = {
@@ -2019,8 +2096,12 @@ describe('TG-06: durable owner-report delivery identity', () => {
       await import('../../src/operator/situation-report.js')
     ).SituationReporter().snapshot();
     const startupDelivery = {
+      mode: 'digest' as const,
       deliveryId: 'operator-report:digest:startup-recovery',
       text: 'startup recovery report',
+      citedTriggerIds: [],
+      createdAtIso: '2026-07-22T03:30:00.000Z',
+      occurrence: { kind: 'digest' as const },
       target: TEST_REPORT_TARGET,
     };
     const pendingRef: { current: PendingReportState | null } = {
@@ -2029,13 +2110,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
         digest: snapshot,
         full: snapshot,
         delivery: {
-          mode: 'digest',
-          text: 'startup recovery report',
-          citedTriggerIds: [],
-          createdAtIso: '2026-07-22T03:30:00.000Z',
-          deliveryId: 'operator-report:digest:startup-recovery',
-          occurrence: { kind: 'digest' },
-          target: TEST_REPORT_TARGET,
+          ...startupDelivery,
           payloadIdentity: pendingReportDeliveryPayloadIdentity(startupDelivery),
         },
       },

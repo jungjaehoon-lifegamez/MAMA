@@ -365,16 +365,15 @@ export class OperatorTriggerLoop {
       this.persistPendingReports();
       return false;
     }
-    this.pendingDelivery = {
+    const delivery = {
       ...prepared,
       deliveryId,
       occurrence,
       target,
-      payloadIdentity: pendingReportDeliveryPayloadIdentity({
-        deliveryId,
-        target,
-        text: prepared.text,
-      }),
+    };
+    this.pendingDelivery = {
+      ...delivery,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
     };
     // Persist the exact owner-visible text and operation identity before the
     // first external send. A restart replays this record, never a regeneration.
@@ -403,16 +402,15 @@ export class OperatorTriggerLoop {
       this.persistPendingReports();
       return false;
     }
-    this.pendingDelivery = {
+    const delivery = {
       ...prepared,
       deliveryId: request.deliveryId,
       occurrence: request.occurrence,
       target: request.target,
-      payloadIdentity: pendingReportDeliveryPayloadIdentity({
-        deliveryId: request.deliveryId,
-        target: request.target,
-        text: prepared.text,
-      }),
+    };
+    this.pendingDelivery = {
+      ...delivery,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
     };
     this.pendingRequest = undefined;
     if (!this.persistPendingReports()) {
