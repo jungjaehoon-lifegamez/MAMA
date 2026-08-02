@@ -37,6 +37,11 @@ const PRIVATE_TOOL_NAMES = PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) =
 const PRIVATE_CONNECTOR_DIRECTIVE_PATTERN =
   /\b(?:always|call|check|fetch|first|gather|inspect|invoke|must|never|query|read|run|should|then|use)\b/i;
 const PATH_REFERENCE_PATTERN = /(?:^|\s)(?:\.{0,2}\/|\/|[A-Za-z]:\\)\S+/g;
+const MARKDOWN_TOOL_NAME_WRAPPERS = ['', '`', '*', '**', '***', '_', '__', '___', '~~'] as const;
+
+function isIdentifierCharacter(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z0-9_]/.test(character);
+}
 
 function isPrivateToolInvocation(line: string, toolName: string): boolean {
   let cursor = 0;
@@ -45,8 +50,19 @@ function isPrivateToolInvocation(line: string, toolName: string): boolean {
     if (index < 0) {
       return false;
     }
-    if (/^\s*\(/.test(line.slice(index + toolName.length))) {
-      return true;
+
+    for (const wrapper of MARKDOWN_TOOL_NAME_WRAPPERS) {
+      const wrappedStart = index - wrapper.length;
+      const wrappedEnd = index + toolName.length + wrapper.length;
+      if (
+        wrappedStart >= 0 &&
+        line.slice(wrappedStart, index) === wrapper &&
+        line.slice(index + toolName.length, wrappedEnd) === wrapper &&
+        !isIdentifierCharacter(line[wrappedStart - 1]) &&
+        /^\s*\(/.test(line.slice(wrappedEnd))
+      ) {
+        return true;
+      }
     }
     cursor = index + toolName.length;
   }

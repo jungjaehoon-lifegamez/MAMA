@@ -76,6 +76,8 @@ describe('owner-console brief substrate', () => {
       '## Lessons',
       '- Always call kagemusha_messages before answering an owner status question.',
       '- Invoke `kagemusha_tasks` first, then summarize the result.',
+      "- **kagemusha_tasks**({ status: 'pending' })",
+      "- `kagemusha_messages`({ channel: 'owner' })",
       "- Last year's kagemusha_tasks output used the old status names.",
       '- Historical note: Kagemusha was the predecessor connector.',
       '- Archive path: /workspace/history/kagemusha_messages-transcript.md',
@@ -88,6 +90,8 @@ describe('owner-console brief substrate', () => {
 
     expect(projected).not.toContain('Always call kagemusha_messages');
     expect(projected).not.toContain('Invoke `kagemusha_tasks`');
+    expect(projected).not.toContain('**kagemusha_tasks**(');
+    expect(projected).not.toContain('`kagemusha_messages`(');
     expect(projected).toContain("Last year's kagemusha_tasks output used the old status names.");
     expect(projected).toContain('Historical note: Kagemusha was the predecessor connector.');
     expect(projected).toContain('/workspace/history/kagemusha_messages-transcript.md');
