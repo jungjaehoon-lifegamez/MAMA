@@ -7,9 +7,11 @@ import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import {
   PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
+  projectPrivateRawConnectorScope,
   projectPrivateToolPolicy,
   resolvePrivateConnectorPolicy,
   resolvePrivatePrincipalSurface,
+  resolveWorkOrderPrivateSurface,
   visibleConnectorNames,
 } from '../../src/connectors/private-connector-policy.js';
 import {
@@ -96,6 +98,67 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
       expect(projected.blockedTools).toEqual(expect.arrayContaining(PRIVATE_TOOL_NAMES));
     }
   );
+
+  it.each(['os_agent', 'legacy-unbound', 'multi-agent-generic'] as const)(
+    'TG-05/TG-06: removes private raw connector scope from the ineligible %s surface',
+    (surface) => {
+      const enabled = resolvePrivateConnectorPolicy(connectorResult(true));
+
+      expect(
+        projectPrivateRawConnectorScope(
+          surface,
+          ['telegram', 'kagemusha', 'trello', 'kagemusha'],
+          enabled
+        )
+      ).toEqual(['telegram', 'trello']);
+    }
+  );
+
+  it.each([
+    'owner_console',
+    'workorder-board',
+    'workorder-memory-curation',
+    'workorder-temporal',
+    'operator-report',
+  ] as const)(
+    'TG-01/TG-06: retains enabled private raw connector scope for the eligible %s surface',
+    (surface) => {
+      const enabled = resolvePrivateConnectorPolicy(connectorResult(true));
+
+      expect(
+        projectPrivateRawConnectorScope(surface, ['telegram', 'kagemusha', 'kagemusha'], enabled)
+      ).toEqual(['telegram', 'kagemusha']);
+    }
+  );
+
+  it('TG-05: removes disabled private raw connectors even from an eligible surface', () => {
+    const disabled = resolvePrivateConnectorPolicy(connectorResult(false));
+
+    expect(
+      projectPrivateRawConnectorScope('owner_console', ['telegram', 'kagemusha'], disabled)
+    ).toEqual(['telegram']);
+  });
+
+  it('TG-05: raw projection only attenuates an immutable caller snapshot', () => {
+    const enabled = resolvePrivateConnectorPolicy(connectorResult(true));
+    const input = ['telegram', 'trello'];
+    const projected = projectPrivateRawConnectorScope('owner_console', input, enabled);
+
+    expect(projected).toEqual(input);
+    expect(projected).not.toBe(input);
+    expect(projected).not.toContain('kagemusha');
+    expect(Object.isFrozen(projected)).toBe(true);
+    expect(input).toEqual(['telegram', 'trello']);
+  });
+
+  it.each([
+    ['board', 'workorder-board'],
+    ['wiki', 'multi-agent-generic'],
+    ['memory-curation', 'workorder-memory-curation'],
+    ['temporal', 'workorder-temporal'],
+  ] as const)('maps the %s workorder to the canonical %s private surface', (kind, surface) => {
+    expect(resolveWorkOrderPrivateSurface(kind)).toBe(surface);
+  });
 
   it('TG-01: makes the configured private connector visible only from the supplied config names', () => {
     expect(visibleConnectorNames(['telegram', 'kagemusha'])).toEqual(

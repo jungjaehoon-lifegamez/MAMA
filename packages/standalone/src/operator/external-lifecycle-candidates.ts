@@ -134,6 +134,7 @@ export function classifyKagemushaObservation(
   row: RawExternalObservation
 ): ClassifiedKagemushaObservation {
   const eventId = diagnosticEventId(row.event_index_id);
+  const contentSha256 = normalizeContentSha256(row.content_hash);
   if (row.source_connector !== 'kagemusha') {
     return classified(null, { eventId, code: 'unsupported_connector' });
   }
@@ -144,8 +145,7 @@ export function classifyKagemushaObservation(
     !isBoundedString(row.event_index_id) ||
     !isBoundedString(row.source_id) ||
     !isBoundedString(row.channel) ||
-    typeof row.content_hash !== 'string' ||
-    !HEX_SHA256.test(row.content_hash) ||
+    contentSha256 === null ||
     !isIsoRenderableTimestamp(row.source_timestamp_ms) ||
     !isPositiveSafeInteger(row.operator_ingest_seq) ||
     !isPositiveSafeInteger(row.operator_observation_seq)
@@ -175,7 +175,7 @@ export function classifyKagemushaObservation(
       sourceType: 'kanban_card',
       externalSourceId: row.source_id,
       channelPartition: row.channel,
-      contentSha256: row.content_hash.toLowerCase(),
+      contentSha256,
       sourceTimestampMs: row.source_timestamp_ms,
       operatorIngestSeq: row.operator_ingest_seq,
       operatorObservationSeq: row.operator_observation_seq,
@@ -183,6 +183,16 @@ export function classifyKagemushaObservation(
       evidenceSummary,
     })
   );
+}
+
+function normalizeContentSha256(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return HEX_SHA256.test(value) ? value.toLowerCase() : null;
+  }
+  if (value instanceof Uint8Array && value.byteLength === 32) {
+    return Buffer.from(value).toString('hex');
+  }
+  return null;
 }
 
 /** Parses the only source identity accepted for private Kagemusha card evidence. */

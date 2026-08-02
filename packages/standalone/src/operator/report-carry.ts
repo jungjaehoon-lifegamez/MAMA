@@ -75,12 +75,16 @@ interface ReadInvalid {
   kind: 'invalid';
 }
 
+interface ReadLegacy {
+  kind: 'legacy';
+}
+
 interface ReadRecord {
   kind: 'record';
   record: ReportCarryV2;
 }
 
-type ReadResult = ReadMissing | ReadInvalid | ReadRecord;
+type ReadResult = ReadMissing | ReadInvalid | ReadLegacy | ReadRecord;
 
 const CARRY_SUMMARY_MAX_CHARS = 700;
 const CARRY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -168,6 +172,17 @@ function isReportCarryV2(value: unknown): value is ReportCarryV2 {
     isArtifactProvenance(value.provenance) &&
     (!consumedFieldsPresent ||
       (isIsoTimestamp(value.consumedAt) && isNonEmptyString(value.consumingChannelKey)))
+  );
+}
+
+function isLegacyReportCarry(value: unknown): boolean {
+  if (!isRecord(value) || !isIsoTimestamp(value.deliveredAt) || typeof value.text !== 'string') {
+    return false;
+  }
+  return (
+    hasOnlyKeys(value, ['deliveredAt', 'text']) ||
+    (hasOnlyKeys(value, ['deliveredAt', 'text', 'provenance']) &&
+      isArtifactProvenance(value.provenance))
   );
 }
 
@@ -340,6 +355,9 @@ export class FileReportCarryStore implements ReportCarryPort {
       if (current.kind === 'invalid') {
         throw new Error('Refusing to overwrite invalid report carry state');
       }
+      if (current.kind === 'legacy') {
+        this.quarantineLegacy();
+      }
       if (current.kind === 'record' && current.record.deliveryId === input.deliveryId) {
         const record = current.record;
         if (
@@ -415,6 +433,10 @@ export class FileReportCarryStore implements ReportCarryPort {
 
     try {
       const parsed: unknown = JSON.parse(raw);
+      if (isLegacyReportCarry(parsed)) {
+        this.warn('legacy unscoped carry state');
+        return { kind: 'legacy' };
+      }
       if (!isReportCarryV2(parsed)) {
         throw new Error('carry state is not an exact version 2 record');
       }
@@ -424,6 +446,17 @@ export class FileReportCarryStore implements ReportCarryPort {
       return { kind: 'invalid' };
     }
   }
+
+  private quarantineLegacy(): void {
+    const quarantinePath = `${this.path}.legacy-v1.${process.pid}.${randomUUID()}.json`;
+    renameSync(this.path, quarantinePath);
+    chmodSync(quarantinePath, 0o600);
+    console.warn(
+      `[report-carry] quarantined legacy unscoped carry at ${quarantinePath}; ` +
+        'a new target-bound delivery may now replace it'
+    );
+  }
+
   private warn(message: string): void {
     console.warn(`[report-carry] ${message}; refusing to inject ${this.path}`);
   }

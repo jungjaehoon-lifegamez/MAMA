@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -34,6 +34,11 @@ interface LedgerStateV2 {
   entries: TelegramMessageLedgerEntry[];
 }
 
+interface LedgerStateV3 {
+  version: 3;
+  entries: TelegramMessageLedgerEntry[];
+}
+
 interface LedgerStateV1 {
   version: 1;
   entries: Array<{ key: string; completedAt: number }>;
@@ -51,6 +56,7 @@ const DEFAULT_TTL_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_ENTRIES = 10_000;
 const MAX_RESPONSE_CHARS = 1_000_000;
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
+const LEGACY_OUTBOUND_PREFIX = 'outbound:legacy-unbound:';
 
 export class TelegramMessageLedger {
   private readonly entries = new Map<string, TelegramMessageLedgerEntry>();
@@ -205,19 +211,55 @@ export class TelegramMessageLedger {
       this.log(`[Telegram] message ledger rejected without modification: ${error.message}`);
       throw error;
     }
+    let serialized: string;
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.path, 'utf8'));
-      if (isLedgerStateV2(parsed, this.maxEntries)) {
+      serialized = readFileSync(this.path, 'utf8');
+    } catch (error) {
+      this.log(
+        `[Telegram] message ledger read failed without modification: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      throw error;
+    }
+    let migratedLegacyOutbound = 0;
+    let needsSchemaUpgrade = false;
+    try {
+      const parsed: unknown = JSON.parse(serialized);
+      if (isLedgerStateV3(parsed, this.maxEntries)) {
         for (const entry of parsed.entries) {
-          if (entry.state === 'delivered') {
-            const { response: _response, ...delivered } = entry;
-            this.entries.set(entry.key, delivered);
-          } else {
-            this.entries.set(entry.key, entry);
+          this.loadEntry(entry);
+        }
+      } else if (isLedgerStateV2(parsed, this.maxEntries)) {
+        needsSchemaUpgrade = true;
+        for (const entry of parsed.entries) {
+          if (isUnboundLegacyOutboundEntry(entry)) {
+            const digest = createHash('sha256').update(entry.key).digest('hex');
+            this.entries.set(`${LEGACY_OUTBOUND_PREFIX}${digest}`, {
+              key: `${LEGACY_OUTBOUND_PREFIX}${digest}`,
+              state: 'delivered',
+              updatedAt: entry.updatedAt,
+              ownerId: 'legacy-unbound',
+            });
+            migratedLegacyOutbound += 1;
+            continue;
           }
+          this.loadEntry(entry);
         }
       } else if (isLedgerStateV1(parsed, this.maxEntries)) {
+        needsSchemaUpgrade = true;
         for (const entry of parsed.entries) {
+          if (entry.key.startsWith('outbound:')) {
+            const digest = createHash('sha256').update(entry.key).digest('hex');
+            this.entries.set(`${LEGACY_OUTBOUND_PREFIX}${digest}`, {
+              key: `${LEGACY_OUTBOUND_PREFIX}${digest}`,
+              state: 'delivered',
+              updatedAt: entry.completedAt,
+              ownerId: 'legacy-unbound',
+            });
+            migratedLegacyOutbound += 1;
+            continue;
+          }
           this.entries.set(entry.key, {
             key: entry.key,
             state: 'delivered',
@@ -238,6 +280,25 @@ export class TelegramMessageLedger {
           error instanceof Error ? error.message : String(error)
         }`
       );
+      return;
+    }
+    if (needsSchemaUpgrade) {
+      try {
+        this.save();
+      } catch (error) {
+        this.log(
+          `[Telegram] message ledger schema upgrade failed; preserved ${this.path}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        throw error;
+      }
+      if (migratedLegacyOutbound > 0) {
+        this.log(
+          `[Telegram] migrated ${migratedLegacyOutbound} unbound outbound ` +
+            'entries to non-replayable legacy identities'
+        );
+      }
     }
   }
 
@@ -264,8 +325,17 @@ export class TelegramMessageLedger {
   }
 
   private serialize(): string {
-    const state: LedgerStateV2 = { version: 2, entries: [...this.entries.values()] };
+    const state: LedgerStateV3 = { version: 3, entries: [...this.entries.values()] };
     return `${JSON.stringify(state)}\n`;
+  }
+
+  private loadEntry(entry: TelegramMessageLedgerEntry): void {
+    if (entry.state === 'delivered') {
+      const { response: _response, ...delivered } = entry;
+      this.entries.set(entry.key, delivered);
+      return;
+    }
+    this.entries.set(entry.key, entry);
   }
 
   private evictOldestDelivered(): boolean {
@@ -318,28 +388,71 @@ function isLedgerStateV2(value: unknown, maxEntries: number): value is LedgerSta
   ) {
     return false;
   }
+  return record.entries.every(isLedgerEntry);
+}
+
+function isLedgerStateV3(value: unknown, maxEntries: number): value is LedgerStateV3 {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 3 ||
+    !Array.isArray(record.entries) ||
+    record.entries.length > maxEntries
+  ) {
+    return false;
+  }
   return record.entries.every((entry) => {
-    if (!entry || typeof entry !== 'object') return false;
-    const item = entry as Record<string, unknown>;
-    return (
-      isKey(item.key) &&
-      (item.state === 'processing' || item.state === 'ready' || item.state === 'delivered') &&
-      isTimestamp(item.updatedAt) &&
-      typeof item.ownerId === 'string' &&
-      item.ownerId.length > 0 &&
-      item.ownerId.length <= 128 &&
-      (item.response === undefined ||
-        (typeof item.response === 'string' && item.response.length <= MAX_RESPONSE_CHARS)) &&
-      (item.nextChunkIndex === undefined ||
-        (Number.isSafeInteger(item.nextChunkIndex) && (item.nextChunkIndex as number) >= 0)) &&
-      (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean') &&
-      ((item.deliveryTarget === undefined && item.payloadIdentity === undefined) ||
-        isDeliveryBinding({
-          deliveryTarget: item.deliveryTarget,
-          payloadIdentity: item.payloadIdentity,
-        }))
-    );
+    if (!isLedgerEntry(entry)) return false;
+    if (entry.key.startsWith(LEGACY_OUTBOUND_PREFIX)) {
+      return (
+        entry.state === 'delivered' &&
+        entry.response === undefined &&
+        entry.nextChunkIndex === undefined &&
+        entry.deliveryUncertain === undefined &&
+        entry.deliveryTarget === undefined &&
+        entry.payloadIdentity === undefined
+      );
+    }
+    if (entry.key.startsWith('outbound:')) {
+      return isDeliveryBinding({
+        deliveryTarget: entry.deliveryTarget,
+        payloadIdentity: entry.payloadIdentity,
+      });
+    }
+    return true;
   });
+}
+
+function isLedgerEntry(value: unknown): value is TelegramMessageLedgerEntry {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    isKey(item.key) &&
+    (item.state === 'processing' || item.state === 'ready' || item.state === 'delivered') &&
+    isTimestamp(item.updatedAt) &&
+    typeof item.ownerId === 'string' &&
+    item.ownerId.length > 0 &&
+    item.ownerId.length <= 128 &&
+    (item.response === undefined ||
+      (typeof item.response === 'string' && item.response.length <= MAX_RESPONSE_CHARS)) &&
+    (item.nextChunkIndex === undefined ||
+      (Number.isSafeInteger(item.nextChunkIndex) && (item.nextChunkIndex as number) >= 0)) &&
+    (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean') &&
+    ((item.deliveryTarget === undefined && item.payloadIdentity === undefined) ||
+      isDeliveryBinding({
+        deliveryTarget: item.deliveryTarget,
+        payloadIdentity: item.payloadIdentity,
+      }))
+  );
+}
+
+function isUnboundLegacyOutboundEntry(entry: TelegramMessageLedgerEntry): boolean {
+  return (
+    entry.key.startsWith('outbound:') &&
+    !entry.key.startsWith(LEGACY_OUTBOUND_PREFIX) &&
+    entry.deliveryTarget === undefined &&
+    entry.payloadIdentity === undefined
+  );
 }
 
 function isDeliveryBinding(value: {

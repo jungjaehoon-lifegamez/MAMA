@@ -16,9 +16,22 @@
  */
 import { describe, it, expect } from 'vitest';
 import { temporalTaskBinding, workOrderEnvelopeScope } from '../../src/cli/commands/start.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import { narrowGrantToEnvelope } from '../../src/evidence/read.js';
 
 const CONFIGURED = { chat: ['C001', 'C002'], board: ['b-1'] };
+const PRIVATE_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {
+    kagemusha: {
+      enabled: true,
+      pollIntervalMinutes: 60,
+      channels: {},
+      auth: { type: 'none' },
+    },
+  },
+  enabledNames: ['kagemusha'],
+});
 
 function ledgerWith(sourceChannel: string | null) {
   return { getById: () => ({ sourceChannel }) };
@@ -54,6 +67,7 @@ describe('workorder envelope scope', () => {
   const base = {
     projectId: '/w/project',
     laneConnectors: ['chat', 'board'],
+    privateConnectorPolicy: PRIVATE_POLICY,
   };
 
   it('binds a temporal run to its task connector and channel', () => {
@@ -89,6 +103,31 @@ describe('workorder envelope scope', () => {
     expect(scope.raw_connectors).toEqual(['chat', 'board']);
     expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'operator:worker:board' });
   });
+
+  it('TG-05/TG-06 removes Kagemusha from a generic wiki lane', () => {
+    const scope = workOrderEnvelopeScope({
+      ...base,
+      laneConnectors: ['trello', 'kagemusha'],
+      workKind: 'wiki',
+      temporalBinding: null,
+    });
+
+    expect(scope.raw_connectors).toEqual(['trello']);
+  });
+
+  it.each(['board', 'memory-curation'] as const)(
+    'TG-01/TG-06 keeps Kagemusha for the eligible %s lane',
+    (workKind) => {
+      const scope = workOrderEnvelopeScope({
+        ...base,
+        laneConnectors: ['trello', 'kagemusha'],
+        workKind,
+        temporalBinding: null,
+      });
+
+      expect(scope.raw_connectors).toEqual(['trello', 'kagemusha']);
+    }
+  );
 });
 
 describe('the grant that scope produces', () => {
@@ -100,6 +139,7 @@ describe('the grant that scope produces', () => {
       laneConnectors: ['chat', 'board'],
       workKind: 'temporal',
       temporalBinding: { connector: 'chat', channel: 'C001' },
+      privateConnectorPolicy: PRIVATE_POLICY,
     });
 
     expect(
@@ -119,6 +159,7 @@ describe('the grant that scope produces', () => {
       laneConnectors: ['chat', 'board'],
       workKind: 'temporal',
       temporalBinding: null,
+      privateConnectorPolicy: PRIVATE_POLICY,
     });
 
     // Same scopes, but with the lane's connectors restored - the shape before this change.
@@ -138,6 +179,7 @@ describe('the grant that scope produces', () => {
       laneConnectors: ['chat'],
       workKind: 'temporal',
       temporalBinding: { connector: 'chat', channel: 'C-never-configured' },
+      privateConnectorPolicy: PRIVATE_POLICY,
     });
 
     expect(

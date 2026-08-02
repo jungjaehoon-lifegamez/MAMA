@@ -128,6 +128,19 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   standalone files and 4,413 tests, with four files and seven tests skipped, and the fresh
   whole-branch reviewer returned clear. This is focused/full standalone follow-up evidence, not a
   new root matrix. Kagemusha remains a configured user-private connector.
+- **Final compatibility and boundary follow-up (TG-01/TG-05/TG-06):** raw connector scope is now
+  projected at every signed-envelope issuance boundary, so generic Code-Act, wiki, and legacy
+  unbound surfaces cannot inherit Kagemusha while the configured owner console and operator
+  surfaces retain it. Telegram delivery-ledger V2 outbound records without a target binding are
+  retired into non-replayable V3 tombstones before a fresh target-bound claim. Both historical
+  unscoped report-carry shapes are quarantined before accepting a target-bound V2 carry. Database
+  migration 063 detects authoritative updates from pre-sequence writers and allocates fresh
+  observation/ingest ordinals; partial 062/063 recovery preserves the largest existing cursor.
+  Lifecycle reconciliation normalizes the production 32-byte BLOB content hash instead of
+  rejecting real connector rows. Ledger read or schema-upgrade I/O failures preserve the original
+  file and fail startup closed rather than quarantining valid delivery state. The privacy,
+  migration, API-contract, and final whole-branch red-team reviewers returned clear after the
+  compatibility regressions passed.
 - **Current-worktree verification:** at `b8a533ae`, the 31-file state-isolation matrix passed 895
   tests and four later-added test files passed 45 more. The full standalone suite included every
   file from the Task 2 production-boundary gate and passed 331 files and 4,388 tests, with four
@@ -296,11 +309,22 @@ change unless they are release-blocking security or data-loss issues.
       occurrence keys (`2790e402`). Focused gates passed 84, 131, and 83 tests; the latest full
       standalone hook passed 4,413 tests with seven skipped, and the fresh reviewer returned
       clear. No new root matrix is claimed by this follow-up.
+- [x] The final TG-01/TG-05/TG-06 compatibility gate passed the full standalone suite (331 files,
+      4,437 tests; 4 files / 7 tests skipped), covering envelope-surface projection, ledger V3
+      outbound binding migration, both legacy report-carry shapes, and mixed-version connector
+      event writers. Production BLOB evidence and fail-closed ledger migration I/O are included.
+      Privacy, migration, API-contract, and final whole-branch reviewers returned clear.
 - [x] Branch-touched Prettier verification passes. Root `pnpm format:check` remains exit 1 on 30
       pre-existing branch-unrelated files and is explicitly retained as repository format debt.
 
 ## Change log
 
+- 2026-08-02: Added TG-01/TG-05/TG-06 compatibility evidence for signed-envelope private-scope
+  projection, non-replayable ledger V3 migration, both historical report-carry shapes, and
+  migration 063 mixed-version writer refresh. Production BLOB lifecycle evidence and ledger
+  migration I/O preservation closed the final red-team findings. The full standalone gate passed
+  4,437 tests with seven skipped. Kagemusha remains a configured user-private connector and is
+  absent from generic, wiki, and legacy-unbound surfaces.
 - 2026-08-02: Closed the fresh whole-branch TG-06 findings with production Kagemusha metadata
   compatibility (`65fe9ef2`), delivery-v2 full semantic identity (`9dc62450`), and exact
   scheduled/on-demand occurrence keys (`2790e402`). Focused gates passed 84, 131, and 83 tests;

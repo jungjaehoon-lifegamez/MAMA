@@ -3,7 +3,7 @@ ALTER TABLE connector_event_index
     operator_observation_seq IS NULL OR operator_observation_seq >= 1
   );
 
-CREATE TABLE connector_event_index_observation_cursors (
+CREATE TABLE IF NOT EXISTS connector_event_index_observation_cursors (
   source_connector TEXT PRIMARY KEY,
   next_seq INTEGER NOT NULL CHECK (next_seq >= 1)
 );
@@ -24,13 +24,18 @@ SET operator_observation_seq = (
 INSERT INTO connector_event_index_observation_cursors (source_connector, next_seq)
 SELECT source_connector, MAX(operator_observation_seq) + 1
 FROM connector_event_index
-GROUP BY source_connector;
+GROUP BY source_connector
+ON CONFLICT(source_connector) DO UPDATE SET next_seq = CASE
+  WHEN connector_event_index_observation_cursors.next_seq < excluded.next_seq
+  THEN excluded.next_seq
+  ELSE connector_event_index_observation_cursors.next_seq
+END;
 
-CREATE UNIQUE INDEX idx_connector_event_index_observation_seq
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_event_index_observation_seq
   ON connector_event_index(source_connector, operator_observation_seq)
   WHERE operator_observation_seq IS NOT NULL;
 
-CREATE TRIGGER trg_connector_event_index_operator_ingest_seq_au
+CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_operator_ingest_seq_au
 AFTER UPDATE OF operator_ingest_seq ON connector_event_index
 WHEN NEW.operator_ingest_seq IS NULL AND OLD.operator_ingest_seq IS NOT NULL
 BEGIN
@@ -51,7 +56,7 @@ BEGIN
     AND channel = COALESCE(NEW.channel, '');
 END;
 
-CREATE TRIGGER trg_connector_event_index_observation_seq_ai
+CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_ai
 AFTER INSERT ON connector_event_index
 WHEN NEW.operator_observation_seq IS NULL
 BEGIN
@@ -70,7 +75,7 @@ BEGIN
   WHERE source_connector = NEW.source_connector;
 END;
 
-CREATE TRIGGER trg_connector_event_index_observation_seq_au
+CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_au
 AFTER UPDATE OF operator_observation_seq ON connector_event_index
 WHEN NEW.operator_observation_seq IS NULL AND OLD.operator_observation_seq IS NOT NULL
 BEGIN
@@ -89,7 +94,7 @@ BEGIN
   WHERE source_connector = NEW.source_connector;
 END;
 
-CREATE TRIGGER trg_connector_event_index_observation_seq_explicit_ai
+CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_explicit_ai
 AFTER INSERT ON connector_event_index
 WHEN NEW.operator_observation_seq IS NOT NULL
 BEGIN

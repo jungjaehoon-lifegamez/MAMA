@@ -308,6 +308,44 @@ describe('TG-06: versioned one-shot report carry', () => {
     }
   });
 
+  it.each([
+    ['without provenance', { deliveredAt: DELIVERED_AT, text: 'legacy owner report' }],
+    [
+      'with provenance',
+      { deliveredAt: DELIVERED_AT, text: 'legacy owner report', provenance: RUN },
+    ],
+  ])(
+    'TG-05/TG-06 quarantines an exact V1 carry %s before accepting a target-bound delivery',
+    (_variant, legacyCarry) => {
+      const path = tempCarryPath();
+      const store = new FileReportCarryStore(path);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        writeFileSync(path, JSON.stringify(legacyCarry), { mode: 0o600 });
+
+        expect(store.peek(TARGET, Date.parse(DELIVERED_AT))).toBeNull();
+        store.persistDelivered(input({ deliveryId: 'v2-delivery' }));
+        expect(store.peek(TARGET, Date.parse(DELIVERED_AT))).toMatchObject({
+          deliveryId: 'v2-delivery',
+        });
+        expect(
+          readdirSync(join(path, '..')).filter((entry) => entry.includes('.legacy-v1.'))
+        ).toHaveLength(1);
+        expect(
+          store.acknowledge({
+            deliveryId: 'v2-delivery',
+            target: TARGET,
+            consumingChannelKey: 'telegram:C1',
+            consumedAtIso: '2026-08-02T00:01:00.000Z',
+          })
+        ).toBe(true);
+        expect(store.peek(TARGET, Date.parse(DELIVERED_AT))).toBeNull();
+      } finally {
+        warn.mockRestore();
+      }
+    }
+  );
+
   it('validates the closed provenance reasons before storing or injecting carry', () => {
     const path = tempCarryPath();
     const store = new FileReportCarryStore(path);

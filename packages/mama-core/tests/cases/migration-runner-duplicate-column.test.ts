@@ -236,6 +236,66 @@ describe('Story M2.5: Migration 062 duplicate-column recovery', () => {
         db.close();
       });
 
+      it('repairs migration 062 when the observation cursor table already exists', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-062-cursor-'));
+        const dbPath = join(tempDir, 'partial-062-cursor.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        applyThrough(setupDb, 61);
+        setupDb
+          .prepare(
+            `INSERT INTO connector_event_index (
+              event_index_id, source_connector, source_type, source_id, content,
+              source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            'evt-partial-cursor',
+            'kagemusha',
+            'kanban_card',
+            'task:partial-cursor',
+            'pending',
+            1_775_260_800_000,
+            '{}',
+            Buffer.alloc(32, 14),
+            '2026-08-02T00:00:00.000Z',
+            '2026-08-02T00:00:00.000Z'
+          );
+        setupDb.exec(`
+          CREATE TABLE connector_event_index_observation_cursors (
+            source_connector TEXT PRIMARY KEY,
+            next_seq INTEGER NOT NULL CHECK (next_seq >= 1)
+          );
+          INSERT INTO connector_event_index_observation_cursors (source_connector, next_seq)
+          VALUES ('kagemusha', 7)
+        `);
+        setupDb.close();
+
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        expect(() => {
+          adapter.connect();
+          adapter.runMigrations(MIGRATIONS_DIR);
+        }).not.toThrow();
+        adapter.disconnect();
+
+        const db = new Database(dbPath);
+        expect(columnExists(db, 'connector_event_index', 'operator_observation_seq')).toBe(true);
+        expect(indexExists(db, 'idx_connector_event_index_observation_seq')).toBe(true);
+        expect(triggerExists(db, 'trg_connector_event_index_observation_seq_ai')).toBe(true);
+        expect(
+          db
+            .prepare(
+              `SELECT next_seq FROM connector_event_index_observation_cursors
+               WHERE source_connector = 'kagemusha'`
+            )
+            .get()
+        ).toEqual({ next_seq: 7 });
+        expect(
+          db.prepare('SELECT version FROM schema_version WHERE version = 62').get()
+        ).toMatchObject({ version: 62 });
+        db.close();
+      });
+
       it('preserves arrival-ordered observation ordinals while repairing a missing 062 trigger', () => {
         tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-062-ordering-'));
         const dbPath = join(tempDir, 'partial-062-ordering.db');

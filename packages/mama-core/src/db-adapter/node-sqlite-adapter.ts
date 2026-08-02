@@ -538,6 +538,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
 
+        if (
+          version === 63 &&
+          (message.includes('no such column') || message.includes('no such table'))
+        ) {
+          warn(
+            `[node-sqlite-adapter] Migration ${file} deferred until connector structure recovery (${message})`
+          );
+          continue;
+        }
+
         if (message.includes('duplicate column')) {
           warn(
             `[node-sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`
@@ -661,6 +671,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           info(
             '[node-sqlite-adapter] Repaired skipped connector event observation sequence migration'
           );
+        }
+
+        const hasMissingLegacyRefreshFeature =
+          !this.triggerExists('trg_connector_event_index_legacy_content_refresh_au') ||
+          !this.schemaVersionExists(63);
+        if (hasMissingLegacyRefreshFeature) {
+          this.recoverConnectorEventLegacyRefreshMigration063();
+          info('[node-sqlite-adapter] Repaired skipped legacy connector event refresh migration');
         }
       }
     }
@@ -1266,6 +1284,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'Migration 062 recovery failed: missing connector_event_index_observation_cursors'
       );
     }
+    const cursorColumns = this.tableColumns('connector_event_index_observation_cursors');
+    for (const columnName of ['source_connector', 'next_seq']) {
+      if (!cursorColumns.has(columnName)) {
+        throw new Error(
+          `Migration 062 recovery failed: missing connector_event_index_observation_cursors.${columnName}`
+        );
+      }
+    }
     if (!this.indexExists('idx_connector_event_index_observation_seq')) {
       throw new Error(
         'Migration 062 recovery failed: missing index idx_connector_event_index_observation_seq'
@@ -1281,6 +1307,64 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         throw new Error(`Migration 062 recovery failed: missing trigger ${triggerName}`);
       }
     }
+  }
+
+  private recoverConnectorEventLegacyRefreshMigration063(): void {
+    this.transaction(() => {
+      this.assertMigration062Complete();
+      const connectorColumns = this.tableColumns('connector_event_index');
+      for (const columnName of [
+        'content_hash',
+        'metadata_json',
+        'source_timestamp_ms',
+        'source_type',
+        'channel',
+        'operator_ingest_seq',
+        'operator_observation_seq',
+      ]) {
+        if (!connectorColumns.has(columnName)) {
+          throw new Error(
+            `Migration 063 recovery failed: missing connector_event_index.${columnName}`
+          );
+        }
+      }
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_legacy_content_refresh_au
+        AFTER UPDATE OF content_hash, metadata_json, source_timestamp_ms, source_type, channel
+        ON connector_event_index
+        WHEN (
+          OLD.content_hash IS NOT NEW.content_hash
+          OR OLD.metadata_json IS NOT NEW.metadata_json
+          OR OLD.source_timestamp_ms IS NOT NEW.source_timestamp_ms
+          OR OLD.source_type IS NOT NEW.source_type
+          OR OLD.channel IS NOT NEW.channel
+        ) AND (
+          NEW.operator_ingest_seq IS OLD.operator_ingest_seq
+          OR NEW.operator_observation_seq IS OLD.operator_observation_seq
+        )
+        BEGIN
+          UPDATE connector_event_index
+          SET operator_ingest_seq = CASE
+                WHEN NEW.operator_ingest_seq IS OLD.operator_ingest_seq THEN NULL
+                ELSE NEW.operator_ingest_seq
+              END,
+              operator_observation_seq = CASE
+                WHEN NEW.operator_observation_seq IS OLD.operator_observation_seq THEN NULL
+                ELSE NEW.operator_observation_seq
+              END
+          WHERE event_index_id = NEW.event_index_id;
+        END
+      `);
+      if (!this.triggerExists('trg_connector_event_index_legacy_content_refresh_au')) {
+        throw new Error(
+          'Migration 063 recovery failed: missing trigger trg_connector_event_index_legacy_content_refresh_au'
+        );
+      }
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        63,
+        'Refresh sequences for legacy connector event updates'
+      );
+    });
   }
 
   private tableColumns(tableName: string): Set<string> {

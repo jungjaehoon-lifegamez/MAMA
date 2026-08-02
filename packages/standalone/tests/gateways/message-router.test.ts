@@ -1126,6 +1126,57 @@ describe('MessageRouter', () => {
       }
     });
 
+    it.each([
+      {
+        label: 'generic Telegram group',
+        channelId: 'synthetic-private-scope-group',
+        chatType: 'group',
+        expected: ['telegram', 'trello'],
+      },
+      {
+        label: 'verified owner DM',
+        channelId: 'synthetic-private-scope-owner',
+        chatType: 'private',
+        expected: ['telegram', 'kagemusha', 'trello'],
+      },
+    ] as const)(
+      'TG-01/TG-05/TG-06 projects private raw connector scope for a $label',
+      async ({ channelId, chatType, expected }) => {
+        resetRoleManager();
+        getRoleManager().setTelegramTrust(['synthetic-private-scope-owner']);
+        const envelopeRuntime = makeEnvelopeRuntime(['telegram', 'kagemusha', 'trello']);
+        let rawConnectors: readonly string[] | undefined;
+        const customRouter = new MessageRouter(
+          sessionStore,
+          {
+            run: vi.fn(async (_prompt, options) => {
+              rawConnectors = options?.envelope?.scope.raw_connectors;
+              return { response: 'Response' };
+            }),
+          },
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          envelopeRuntime.config,
+          envelopeRuntime.authority,
+          { privateConnectorPolicy: privatePolicy(true) }
+        );
+
+        try {
+          await customRouter.process({
+            source: 'telegram',
+            channelId,
+            userId: channelId,
+            text: 'Check the private project connector',
+            metadata: { chatType },
+          });
+
+          expect(rawConnectors).toEqual(expected);
+        } finally {
+          resetRoleManager();
+        }
+      }
+    );
+
     it('keeps owner connector trust boundaries during first-run onboarding', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-onboarding-owner';

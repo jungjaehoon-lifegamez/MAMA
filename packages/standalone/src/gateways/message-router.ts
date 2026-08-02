@@ -332,7 +332,9 @@ const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
 
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
-  config: ReactiveEnvelopeConfig
+  config: ReactiveEnvelopeConfig,
+  surface: ConnectorCapabilitySurface,
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): Omit<Envelope, 'envelope_hash' | 'signature'> {
   const policy = getReactiveRoutePolicy(message, config);
   return {
@@ -343,7 +345,9 @@ function buildReactiveEnvelopeInput(
     trigger_context: { user_text: message.text },
     scope: {
       project_refs: policy.projectRefs,
-      raw_connectors: policy.rawConnectors,
+      raw_connectors: [
+        ...privateConnectorPolicy.projectRawConnectors(surface, policy.rawConnectors),
+      ],
       // Identity scopes only - the grant mirror is an enforcement-layer READ
       // allowance, never issued into the envelope (PR #217 review: issuing it
       // here widened this chat's raw narrowing back to every sibling channel
@@ -710,7 +714,10 @@ export class MessageRouter implements TurnProcessor {
     });
   }
 
-  private buildReactiveEnvelope(message: NormalizedMessage): Envelope | undefined {
+  private buildReactiveEnvelope(
+    message: NormalizedMessage,
+    agentContext: AgentContext
+  ): Envelope | undefined {
     const config = this.envelopeConfig;
     const authority = this.envelopeAuthority;
 
@@ -718,7 +725,10 @@ export class MessageRouter implements TurnProcessor {
       return undefined;
     }
 
-    return authority.buildAndPersist(buildReactiveEnvelopeInput(message, config));
+    const surface = resolvePrivatePrincipalSurface({ agentContext });
+    return authority.buildAndPersist(
+      buildReactiveEnvelopeInput(message, config, surface, this.privateConnectorPolicy)
+    );
   }
 
   /**
@@ -1127,7 +1137,7 @@ This protects your credentials from being exposed in chat logs.`;
         let pendingNotices = false;
         let pendingChannelNoticeCount = 0;
         let pendingBroadcastNoticeCount = 0;
-        const envelope = this.buildReactiveEnvelope(message);
+        const envelope = this.buildReactiveEnvelope(message, agentContext);
         const options: AgentLoopOptions = {
           systemPrompt: effectivePrompt,
           sessionPolicyFingerprint,

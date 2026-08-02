@@ -52,14 +52,16 @@ export interface ExternalLifecycleCandidateSet {
   readonly diagnostics: readonly ExternalLifecycleDiagnostic[];
 }
 
-export type ExternalLifecycleDiagnosticCode =
-  | 'missing_event'
-  | 'unsupported_connector'
-  | 'unsupported_source_type'
-  | 'malformed_metadata'
-  | 'unknown_status'
-  | 'ambiguous_task_pair'
-  | 'receipt_already_exists';
+export const EXTERNAL_LIFECYCLE_DIAGNOSTIC_CODES = [
+  'missing_event',
+  'unsupported_connector',
+  'unsupported_source_type',
+  'malformed_metadata',
+  'unknown_status',
+  'ambiguous_task_pair',
+  'receipt_already_exists',
+] as const;
+export type ExternalLifecycleDiagnosticCode = (typeof EXTERNAL_LIFECYCLE_DIAGNOSTIC_CODES)[number];
 
 export interface ExternalLifecycleDiagnostic {
   readonly eventId: string;

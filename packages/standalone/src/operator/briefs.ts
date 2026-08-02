@@ -19,9 +19,9 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
 import { buildTemporalWorkerBrief } from './temporal-worker.js';
-import type {
-  ConnectorCapabilitySurface,
-  PrivateConnectorPolicy,
+import {
+  resolveWorkOrderPrivateSurface,
+  type PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
 import {
   buildPrivatePromptOverlay,
@@ -166,26 +166,13 @@ function stripLegacyPrivateLines(kind: WorkOrderKind, raw: string): string {
   return projected;
 }
 
-function workOrderSurface(kind: WorkOrderKind): ConnectorCapabilitySurface {
-  switch (kind) {
-    case 'board':
-      return 'workorder-board';
-    case 'memory-curation':
-      return 'workorder-memory-curation';
-    case 'temporal':
-      return 'workorder-temporal';
-    case 'wiki':
-      return 'multi-agent-generic';
-  }
-}
-
 /** Project a user-owned work-order brief for one run without changing its file. */
 export function projectWorkOrderBriefForPrompt(
   kind: WorkOrderKind,
   raw: string,
   policy: PrivateConnectorPolicy
 ): string {
-  const overlay = buildPrivatePromptOverlay(workOrderSurface(kind), policy);
+  const overlay = buildPrivatePromptOverlay(resolveWorkOrderPrivateSurface(kind), policy);
   const projected = stripDisabledPrivatePromptRecipes(
     stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw)),
     overlay.length > 0

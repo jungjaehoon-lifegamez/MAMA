@@ -177,6 +177,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
           projectId: '/workspace/MAMA',
           laneConnectors: ['trello', 'kagemusha'],
           temporalBinding: binding,
+          privateConnectorPolicy,
         });
         const policy = buildWorkOrderAgentPolicy(
           'temporal',

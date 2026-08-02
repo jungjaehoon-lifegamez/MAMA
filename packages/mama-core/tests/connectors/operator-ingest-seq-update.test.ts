@@ -54,8 +54,8 @@ describe('Story M2.5: refreshed connector observation sequences', () => {
       expect(identical.operator_ingest_seq).toBe(first.operator_ingest_seq);
       expect(identical.operator_observation_seq).toBe(first.operator_observation_seq);
       expect(changed.event_index_id).toBe(first.event_index_id);
-      expect(changed.operator_ingest_seq).toBeGreaterThan(first.operator_ingest_seq);
-      expect(changed.operator_observation_seq).toBeGreaterThan(first.operator_observation_seq);
+      expect(changed.operator_ingest_seq).toBe(first.operator_ingest_seq + 1);
+      expect(changed.operator_observation_seq).toBe(first.operator_observation_seq + 1);
     });
   });
 

@@ -16,6 +16,8 @@ export type ConnectorCapabilitySurface =
   | 'workorder-temporal'
   | 'operator-report';
 
+export type PrivateWorkOrderKind = 'board' | 'wiki' | 'memory-curation' | 'temporal';
+
 export interface PrivateConnectorToolDefinition {
   readonly name: GatewayToolName;
   readonly description: string;
@@ -43,6 +45,10 @@ export interface PrivateConnectorPolicy {
   toolDefinitionsFor(
     surface: ConnectorCapabilitySurface
   ): readonly PrivateConnectorToolDefinition[];
+  projectRawConnectors(
+    surface: ConnectorCapabilitySurface,
+    connectors: readonly string[]
+  ): readonly string[];
   projectRole(surface: ConnectorCapabilitySurface, role: RoleConfig): RoleConfig;
   promptOverlayFor(surface: ConnectorCapabilitySurface): string;
 }
@@ -212,6 +218,21 @@ function isEligibleSurface(surface: ConnectorCapabilitySurface): boolean {
   return ELIGIBLE_SURFACES.has(surface);
 }
 
+export function resolveWorkOrderPrivateSurface(
+  kind: PrivateWorkOrderKind
+): ConnectorCapabilitySurface {
+  switch (kind) {
+    case 'board':
+      return 'workorder-board';
+    case 'memory-curation':
+      return 'workorder-memory-curation';
+    case 'temporal':
+      return 'workorder-temporal';
+    case 'wiki':
+      return 'multi-agent-generic';
+  }
+}
+
 function privateToolsFor(
   surface: ConnectorCapabilitySurface,
   enabledPrivateConnectors: readonly string[]
@@ -292,6 +313,28 @@ export function projectPrivateToolPolicy(
   };
 }
 
+/**
+ * Attenuate a host-issued raw connector snapshot for one trusted execution surface.
+ *
+ * Public connectors pass through unchanged. A private connector survives only when the
+ * surface is eligible and the connector is enabled in the boot policy. This function never
+ * adds authority that was absent from the supplied snapshot.
+ */
+export function projectPrivateRawConnectorScope(
+  surface: ConnectorCapabilitySurface,
+  connectors: readonly string[],
+  policy: PrivateConnectorPolicy
+): readonly string[] {
+  return uniqueStrings(
+    connectors.filter((connector) => {
+      if (!PRIVATE_CONNECTORS.includes(connector as 'kagemusha')) {
+        return connector.trim().length > 0;
+      }
+      return isEligibleSurface(surface) && policy.isEnabled(connector);
+    })
+  );
+}
+
 export function resolvePrivateConnectorPolicy(
   result: ConnectorConfigLoadResult
 ): PrivateConnectorPolicy {
@@ -316,6 +359,12 @@ export function resolvePrivateConnectorPolicy(
       surface: ConnectorCapabilitySurface
     ): readonly PrivateConnectorToolDefinition[] {
       return definitionsFor(surface, enabledPrivateConnectors);
+    },
+    projectRawConnectors(
+      surface: ConnectorCapabilitySurface,
+      connectors: readonly string[]
+    ): readonly string[] {
+      return projectPrivateRawConnectorScope(surface, connectors, this);
     },
     projectRole(surface: ConnectorCapabilitySurface, role: RoleConfig): RoleConfig {
       const projectedTools = projectPrivateToolPolicy(surface, role, this);

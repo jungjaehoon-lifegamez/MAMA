@@ -160,18 +160,14 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
   });
 
-  describe('AC #3: resolveCodeActRawConnectors deduplicates connector visibility', () => {
+  describe('AC #3: resolveCodeActRawConnectors builds the boot connector snapshot', () => {
     it('uses enabled connector names as Code-Act raw connector visibility', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('never filters a connector out of read visibility - reads are not gated', () => {
-      // 2026-07-30 owner rule: enforcement only for irreversible side effects
-      // (sends, gated by allowed_destinations: []); reads are traced, never
-      // denied. The per-principal trello filter this replaces killed 100% of
-      // owner-chat board questions when the 07-28 code-act transport switch
-      // moved chat onto the api-code-act envelope, and the board drifted 3
-      // weeks undetected. If a read filter reappears, it must fail here.
+    it('keeps public and private names in the boot snapshot for downstream surface projection', () => {
+      // This is capability discovery, not a principal grant. Each host envelope
+      // attenuates the snapshot through PrivateConnectorPolicy before execution.
       const enabled = ['trello', 'kagemusha', 'telegram'];
       expect(resolveCodeActRawConnectors(enabled)).toEqual(enabled);
     });

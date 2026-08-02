@@ -11,6 +11,7 @@
 
 import type { WorkOrderKind } from './task-ledger.js';
 import {
+  EXTERNAL_LIFECYCLE_DIAGNOSTIC_CODES,
   EXTERNAL_LIFECYCLE_STATUSES,
   type BindingCandidate,
   type ExternalLifecycleDiagnostic,
@@ -286,15 +287,7 @@ function validateLifecycleCandidates(value: unknown, eventIds: unknown): void {
     }
     if (
       typeof diagnostic.code !== 'string' ||
-      ![
-        'missing_event',
-        'unsupported_connector',
-        'unsupported_source_type',
-        'malformed_metadata',
-        'unknown_status',
-        'ambiguous_task_pair',
-        'receipt_already_exists',
-      ].includes(diagnostic.code)
+      !EXTERNAL_LIFECYCLE_DIAGNOSTIC_CODES.some((code) => code === diagnostic.code)
     ) {
       throw new Error('workorder payload (board reconcile): diagnostic code is invalid');
     }

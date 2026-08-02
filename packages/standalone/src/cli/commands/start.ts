@@ -72,6 +72,7 @@ import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
   resolvePrivateConnectorPolicy,
+  resolveWorkOrderPrivateSurface,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
@@ -399,10 +400,11 @@ export function causeEventIdsFromPayload(payload: unknown): string[] {
 }
 
 export function workOrderEnvelopeScope(input: {
-  workKind: string;
+  workKind: WorkOrderKind;
   projectId: string;
   laneConnectors: string[];
   temporalBinding: { connector: string; channel: string } | null;
+  privateConnectorPolicy: PrivateConnectorPolicy;
 }): {
   project_refs: Array<{ kind: 'project'; id: string }>;
   raw_connectors: string[];
@@ -410,15 +412,19 @@ export function workOrderEnvelopeScope(input: {
   allowed_destinations: never[];
 } {
   const isTemporal = input.workKind === 'temporal';
+  const surface = resolveWorkOrderPrivateSurface(input.workKind);
+  const candidateConnectors = isTemporal
+    ? input.temporalBinding
+      ? [input.temporalBinding.connector]
+      : []
+    : input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
     // A temporal run reads its task's connector or nothing. Every other lane keeps the
     // connectors it was configured with.
-    raw_connectors: isTemporal
-      ? input.temporalBinding
-        ? [input.temporalBinding.connector]
-        : []
-      : input.laneConnectors,
+    raw_connectors: [
+      ...input.privateConnectorPolicy.projectRawConnectors(surface, candidateConnectors),
+    ],
     memory_scopes: [
       ...deriveMemoryScopes({
         source: 'operator',
@@ -758,14 +764,7 @@ export function buildWorkOrderAgentPolicy(
   if (!policy) {
     throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
   }
-  const surface: ConnectorCapabilitySurface =
-    kind === 'board'
-      ? 'workorder-board'
-      : kind === 'memory-curation'
-        ? 'workorder-memory-curation'
-        : kind === 'temporal'
-          ? 'workorder-temporal'
-          : 'multi-agent-generic';
+  const surface = resolveWorkOrderPrivateSurface(kind);
   const scopedSurface: ConnectorCapabilitySurface =
     requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
       ? surface
@@ -1261,7 +1260,9 @@ export async function runAgentLoop(
         trigger_context: { user_text: '<api-code-act invocation>' },
         scope: {
           project_refs: [projectRef],
-          raw_connectors: codeActRawConnectors,
+          raw_connectors: [
+            ...privateConnectorPolicy.projectRawConnectors('legacy-unbound', codeActRawConnectors),
+          ],
           memory_scopes: memoryScopes,
           allowed_destinations: [],
         },
@@ -1721,6 +1722,7 @@ export async function runAgentLoop(
           projectId,
           laneConnectors: codeActRawConnectors,
           temporalBinding,
+          privateConnectorPolicy,
         });
 
         // Worker prompt selects the provider's supported tool path: Claude's
@@ -2036,7 +2038,12 @@ export async function runAgentLoop(
                       // read authority is bounded per tool by envelope/tool-connector-scope.ts
                       // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
-                      raw_connectors: codeActRawConnectors,
+                      raw_connectors: [
+                        ...privateConnectorPolicy.projectRawConnectors(
+                          'operator-report',
+                          codeActRawConnectors
+                        ),
+                      ],
                       memory_scopes: uniqueMemoryScopes(
                         deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
                       ),
@@ -2302,7 +2309,9 @@ export async function runAgentLoop(
     graphHandler,
     getAdapter,
     privateConnectorPolicy,
-    rawConnectorScope: codeActRawConnectors,
+    rawConnectorScope: [
+      ...privateConnectorPolicy.projectRawConnectors('workorder-board', codeActRawConnectors),
+    ],
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
   });

@@ -1,7 +1,7 @@
 # Telegram Owner State Isolation Design
 
-**Date:** 2026-08-02  
-**Status:** Approved approach, written specification  
+**Date:** 2026-08-02
+**Status:** Approved approach, written specification
 **Scope:** MAMA OS standalone Telegram owner console and operator workers
 
 ## Decision
