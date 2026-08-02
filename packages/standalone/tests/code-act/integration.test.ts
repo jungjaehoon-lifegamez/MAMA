@@ -177,6 +177,18 @@ describe('Code-Act Integration', () => {
       expect(instructions).toContain('MCP tool called `code_act`');
       expect(instructions).toContain('mcp__code-act__code_act');
     });
+
+    it('TG-03/TG-04 keeps Cline native tools and routes only MAMA gateways through Code-Act', () => {
+      const instructions = getCodeActInstructions('cline', ['mama_search']);
+
+      expect(instructions).toContain('MCP tool called `code_act`');
+      expect(instructions).toContain('mcp__code-act__code_act');
+      expect(instructions).toContain('Use your Cline native tools directly');
+      expect(instructions).toContain('`run_commands`');
+      expect(instructions).toContain('USE code_act only for these allowed gateway tools');
+      expect(instructions).not.toContain('DO NOT use these Cline built-in tools');
+      expect(instructions).not.toContain('mcp__brave-search__*');
+    });
   });
 
   it('system prompt combines instructions + type definitions', () => {

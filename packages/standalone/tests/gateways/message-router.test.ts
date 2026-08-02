@@ -275,6 +275,34 @@ describe('MessageRouter', () => {
       getRoleManager().setTelegramTrust(undefined);
     });
 
+    it('TG-03/TG-04 keeps an inbound image on the Cline native-media path', async () => {
+      getRoleManager().setTelegramTrust(['cline-image']);
+      const runWithContent = vi.fn().mockResolvedValue({ response: 'translated' });
+      const clineRouter = new MessageRouter(
+        sessionStore,
+        { run: vi.fn(), runWithContent },
+        createMockMamaApi([]),
+        { backend: 'cline' }
+      );
+      const image = {
+        type: 'image' as const,
+        source: { type: 'base64' as const, media_type: 'image/png', data: 'aW1hZ2U=' },
+      };
+
+      await clineRouter.process({
+        source: 'telegram',
+        channelId: 'cline-image',
+        userId: 'owner',
+        text: 'Translate this image',
+        contentBlocks: [image],
+        metadata: { chatType: 'private', messageId: 'cline-image-1' },
+      });
+
+      expect(runWithContent).toHaveBeenCalledOnce();
+      expect(runWithContent.mock.calls[0][0]).toContainEqual(image);
+      getRoleManager().setTelegramTrust(undefined);
+    });
+
     it('should process message and return response', async () => {
       const message: NormalizedMessage = {
         source: 'discord',
@@ -539,44 +567,85 @@ describe('MessageRouter', () => {
       );
     });
 
-    it('can rebuild the complete Codex prompt when a resumed durable thread is replaced', async () => {
-      const receivedOptions: Array<{
-        systemPrompt?: string;
-        freshSessionSystemPrompt?: () => Promise<string>;
-      }> = [];
-      const agentLoop = {
-        async run(
-          _prompt: string,
-          options?: {
-            systemPrompt?: string;
-            freshSessionSystemPrompt?: () => Promise<string>;
-          }
-        ): Promise<{ response: string }> {
-          receivedOptions.push(options ?? {});
-          return { response: 'Response' };
-        },
-      };
+    it.each(['codex', 'cline'] as const)(
+      'TG-05 can rebuild the complete %s prompt when a resumed durable thread is replaced',
+      async (backend) => {
+        const receivedOptions: Array<{
+          systemPrompt?: string;
+          freshSessionSystemPrompt?: () => Promise<string>;
+        }> = [];
+        const agentLoop = {
+          async run(
+            _prompt: string,
+            options?: {
+              systemPrompt?: string;
+              freshSessionSystemPrompt?: () => Promise<string>;
+            }
+          ): Promise<{ response: string }> {
+            receivedOptions.push(options ?? {});
+            return { response: 'Response' };
+          },
+        };
+        const customRouter = new MessageRouter(
+          sessionStore,
+          agentLoop,
+          createMockMamaApi(mockDecisions),
+          { backend }
+        );
+        const message: NormalizedMessage = {
+          source: 'discord',
+          channelId: 'channel-codex-full-reset',
+          userId: 'user-456',
+          text: 'Hello',
+        };
+
+        await customRouter.process(message);
+        await customRouter.process({ ...message, text: 'Continue' });
+
+        expect(receivedOptions[1]?.systemPrompt).toContain('[Role:');
+        const rebuiltPrompt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
+        expect(rebuiltPrompt).toContain('## Instructions');
+        expect(rebuiltPrompt).toContain('Previous Conversation');
+        expect(rebuiltPrompt?.length).toBeGreaterThan(
+          receivedOptions[1]?.systemPrompt?.length ?? 0
+        );
+      }
+    );
+
+    it('TG-03/TG-04 gives Cline one native Code-Act surface without a Claude gateway catalog', async () => {
+      const channelId = `cline-owner-catalog-${Date.now()}`;
+      resetRoleManager();
+      getRoleManager({ rolesConfig: DEFAULT_ROLES }).setTelegramTrust([channelId]);
+      let systemPrompt = '';
       const customRouter = new MessageRouter(
         sessionStore,
-        agentLoop,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
         createMockMamaApi(mockDecisions),
-        { backend: 'codex' }
+        { backend: 'cline' },
+        undefined,
+        undefined,
+        { privateConnectorPolicy: privatePolicy(true) }
       );
-      const message: NormalizedMessage = {
-        source: 'discord',
-        channelId: 'channel-codex-full-reset',
-        userId: 'user-456',
-        text: 'Hello',
-      };
 
-      await customRouter.process(message);
-      await customRouter.process({ ...message, text: 'Continue' });
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId,
+          userId: 'owner-id',
+          text: 'status',
+          metadata: { chatType: 'private' },
+        });
 
-      expect(receivedOptions[1]?.systemPrompt).toContain('[Role:');
-      const rebuiltPrompt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
-      expect(rebuiltPrompt).toContain('## Instructions');
-      expect(rebuiltPrompt).toContain('Previous Conversation');
-      expect(rebuiltPrompt?.length).toBeGreaterThan(receivedOptions[1]?.systemPrompt?.length ?? 0);
+        expect(systemPrompt).not.toContain('# Gateway Tools');
+        expect(systemPrompt).toContain('Private business data');
+      } finally {
+        resetRoleManager();
+      }
     });
 
     it.each([
@@ -1496,6 +1565,50 @@ describe('MessageRouter', () => {
       expect(receivedOptionsHistory[1].systemPrompt!.length).toBeLessThan(
         receivedOptionsHistory[0].systemPrompt!.length / 4
       );
+    });
+
+    it('TG-05 resumes the same Cline Hub session with only the incremental prompt', async () => {
+      const uniqueChannelId = `channel-cline-context-${Date.now()}`;
+      const receivedOptionsHistory: Array<{ systemPrompt?: string; resumeSession?: boolean }> = [];
+      const agentLoop = {
+        async run(
+          _prompt: string,
+          options?: { systemPrompt?: string; resumeSession?: boolean }
+        ): Promise<{ response: string }> {
+          receivedOptionsHistory.push({ ...options });
+          return { response: `Response ${receivedOptionsHistory.length}` };
+        },
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions),
+        { backend: 'cline' }
+      );
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: uniqueChannelId,
+        userId: 'owner',
+        text: 'First Cline turn',
+      });
+      await customRouter.process({
+        source: 'telegram',
+        channelId: uniqueChannelId,
+        userId: 'owner',
+        text: 'Second Cline turn',
+      });
+
+      expect(receivedOptionsHistory).toHaveLength(2);
+      expect(receivedOptionsHistory[0]).toEqual(
+        expect.objectContaining({ systemPrompt: expect.any(String), resumeSession: false })
+      );
+      expect(receivedOptionsHistory[1]).toEqual(
+        expect.objectContaining({ systemPrompt: expect.any(String), resumeSession: true })
+      );
+      expect(receivedOptionsHistory[1].systemPrompt).not.toContain('## Previous Conversation');
+      expect(receivedOptionsHistory[1].systemPrompt).not.toContain('First Cline turn');
+      expect(receivedOptionsHistory[1].systemPrompt).not.toContain('Response 1');
     });
 
     it('should not parse JSON facts and save them directly in the router', async () => {

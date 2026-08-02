@@ -1,186 +1,133 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../src/agent/persistent-cli-process.js', () => {
-  return {
-    PersistentClaudeProcess: vi.fn().mockImplementation(() => ({
-      sendMessage: vi.fn().mockResolvedValue({
-        response: 'mock result',
-        usage: { input_tokens: 10, output_tokens: 20 },
-        session_id: 'test-session',
-      }),
-      stop: vi.fn().mockResolvedValue(undefined),
-    })),
-  };
-});
-
+import type { IModelRunner } from '../../src/agent/model-runner.js';
 import { CronWorker } from '../../src/scheduler/cron-worker.js';
 import type { CronCompletedEvent, CronFailedEvent } from '../../src/scheduler/cron-worker.js';
-import { PersistentClaudeProcess } from '../../src/agent/persistent-cli-process.js';
 
-describe('CronWorker', () => {
+function createRunner(response = 'mock result'): IModelRunner {
+  return {
+    backendType: 'cline',
+    prompt: vi.fn().mockResolvedValue({
+      response,
+      usage: { input_tokens: 10, output_tokens: 20 },
+      session_id: 'test-session',
+    }),
+    setSessionId: vi.fn(),
+    setSystemPrompt: vi.fn(),
+    isHealthy: vi.fn(() => true),
+    getMetrics: vi.fn(() => ({
+      requestCount: 0,
+      failureCount: 0,
+      avgLatencyMs: 0,
+      lastRequestAt: null,
+    })),
+    stop: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe('TG-06: CronWorker backend isolation', () => {
   let emitter: EventEmitter;
+  let runner: IModelRunner;
+  let runnerFactory: ReturnType<typeof vi.fn>;
   let worker: CronWorker;
 
   beforeEach(() => {
-    vi.clearAllMocks();
     emitter = new EventEmitter();
-    worker = new CronWorker({ emitter });
+    runner = createRunner();
+    runnerFactory = vi.fn(() => runner);
+    worker = new CronWorker({ emitter, runnerFactory });
   });
 
   afterEach(async () => {
     await worker.stop();
   });
 
-  describe('execute()', () => {
-    it('should return result from PersistentClaudeProcess', async () => {
-      const result = await worker.execute('test prompt');
-      expect(result).toBe('mock result');
+  it('executes through the injected configured-backend runner', async () => {
+    await expect(worker.execute('do something')).resolves.toBe('mock result');
+    expect(runner.prompt).toHaveBeenCalledWith(
+      'do something',
+      undefined,
+      expect.objectContaining({
+        sessionKey: 'system:cron',
+      })
+    );
+  });
+
+  it('passes a backend-correct Cline tool catalog in the per-turn system prompt', async () => {
+    worker = new CronWorker({
+      emitter,
+      runnerFactory,
+      systemPrompt:
+        'Available tools: run_commands, read_files, apply_patch/editor, search_codebase.',
     });
+    await worker.execute('inspect');
+    expect(runner.prompt).toHaveBeenCalledWith(
+      'inspect',
+      undefined,
+      expect.objectContaining({ systemPrompt: expect.stringContaining('run_commands') })
+    );
+  });
 
-    it('should pass prompt to sendMessage', async () => {
-      await worker.execute('do something');
+  it('reuses one runner across executions', async () => {
+    await worker.execute('first');
+    await worker.execute('second');
+    expect(runnerFactory).toHaveBeenCalledTimes(1);
+  });
 
-      const mockInstance = vi.mocked(PersistentClaudeProcess).mock.results[0].value;
-      expect(mockInstance.sendMessage).toHaveBeenCalledWith('do something');
+  it('emits cron:completed with routing context', async () => {
+    const events: CronCompletedEvent[] = [];
+    emitter.on('cron:completed', (event: CronCompletedEvent) => events.push(event));
+    await worker.execute('test', { jobId: 'j1', jobName: 'Job 1', channel: 'discord:123' });
+    expect(events[0]).toMatchObject({
+      jobId: 'j1',
+      jobName: 'Job 1',
+      result: 'mock result',
+      channel: 'discord:123',
     });
+  });
 
-    it('should create PersistentClaudeProcess with cron-specific config', async () => {
-      await worker.execute('test');
+  it('emits cron:failed when the configured backend rejects', async () => {
+    vi.mocked(runner.prompt).mockRejectedValueOnce(new Error('backend crashed'));
+    const events: CronFailedEvent[] = [];
+    emitter.on('cron:failed', (event: CronFailedEvent) => events.push(event));
+    await expect(worker.execute('fail', { jobId: 'j2', jobName: 'Job 2' })).rejects.toThrow(
+      'backend crashed'
+    );
+    expect(events[0]).toMatchObject({ jobId: 'j2', jobName: 'Job 2', error: 'backend crashed' });
+  });
 
-      expect(PersistentClaudeProcess).toHaveBeenCalledWith(
-        expect.objectContaining({
-          // Claude CLI rejects non-UUID --session-id values ("Invalid session ID");
-          // randomUUID() emits v4: version nibble '4', variant nibble '8'-'b'
-          sessionId: expect.stringMatching(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-          ),
-          model: 'claude-haiku-4-5-20251001',
-          dangerouslySkipPermissions: true,
-          allowedTools: ['Bash', 'Read', 'Write', 'Glob', 'Grep'],
+  it('stops the runner and rejects later execution', async () => {
+    await worker.execute('first');
+    await worker.stop();
+    expect(runner.stop).toHaveBeenCalledTimes(1);
+    await expect(worker.execute('second')).rejects.toThrow('stopping');
+    expect(runnerFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it('is safe to stop before execution', async () => {
+    const idle = new CronWorker({ emitter, runnerFactory });
+    await expect(idle.stop()).resolves.toBeUndefined();
+  });
+
+  it('does not start a new runner for work queued when shutdown begins', async () => {
+    let releaseFirst!: () => void;
+    vi.mocked(runner.prompt).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirst = () =>
+            resolve({ response: 'first done', usage: {}, session_id: 'first-session' });
         })
-      );
-    });
+    );
+    const first = worker.execute('first');
+    await vi.waitFor(() => expect(runner.prompt).toHaveBeenCalledOnce());
+    const second = worker.execute('second');
+    const stopping = worker.stop();
+    releaseFirst();
 
-    it('should reuse CLI instance across executions', async () => {
-      await worker.execute('first');
-      await worker.execute('second');
-
-      expect(PersistentClaudeProcess).toHaveBeenCalledTimes(1);
-    });
-
-    it('should use custom model when provided', async () => {
-      const customWorker = new CronWorker({ emitter, model: 'claude-sonnet-4-20250514' });
-      await customWorker.execute('test');
-
-      expect(PersistentClaudeProcess).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'claude-sonnet-4-20250514' })
-      );
-      await customWorker.stop();
-    });
-  });
-
-  describe('cron:completed event', () => {
-    it('should emit cron:completed on success', async () => {
-      const events: CronCompletedEvent[] = [];
-      emitter.on('cron:completed', (e: CronCompletedEvent) => events.push(e));
-
-      await worker.execute('test prompt', { jobId: 'j1', jobName: 'Job 1' });
-
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({
-        jobId: 'j1',
-        jobName: 'Job 1',
-        result: 'mock result',
-      });
-      expect(events[0].duration).toBeGreaterThanOrEqual(0);
-    });
-
-    it('should include channel in completed event', async () => {
-      const events: CronCompletedEvent[] = [];
-      emitter.on('cron:completed', (e: CronCompletedEvent) => events.push(e));
-
-      await worker.execute('test', { jobId: 'j1', jobName: 'J1', channel: 'discord:123' });
-
-      expect(events[0].channel).toBe('discord:123');
-    });
-
-    it('should default jobId and jobName to "unknown"', async () => {
-      const events: CronCompletedEvent[] = [];
-      emitter.on('cron:completed', (e: CronCompletedEvent) => events.push(e));
-
-      await worker.execute('test');
-
-      expect(events[0].jobId).toBe('unknown');
-      expect(events[0].jobName).toBe('unknown');
-    });
-  });
-
-  describe('cron:failed event', () => {
-    it('should emit cron:failed on error', async () => {
-      // First call to create the CLI
-      await worker.execute('setup');
-
-      // Now make sendMessage reject
-      const cli = vi.mocked(PersistentClaudeProcess).mock.results[0].value;
-      cli.sendMessage.mockRejectedValueOnce(new Error('CLI crashed'));
-
-      const events: CronFailedEvent[] = [];
-      emitter.on('cron:failed', (e: CronFailedEvent) => events.push(e));
-
-      await expect(
-        worker.execute('fail prompt', { jobId: 'j2', jobName: 'Job 2' })
-      ).rejects.toThrow('CLI crashed');
-
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({
-        jobId: 'j2',
-        jobName: 'Job 2',
-        error: 'CLI crashed',
-      });
-      expect(events[0].duration).toBeGreaterThanOrEqual(0);
-    });
-
-    it('should include channel in failed event', async () => {
-      await worker.execute('setup');
-
-      const cli = vi.mocked(PersistentClaudeProcess).mock.results[0].value;
-      cli.sendMessage.mockRejectedValueOnce(new Error('fail'));
-
-      const events: CronFailedEvent[] = [];
-      emitter.on('cron:failed', (e: CronFailedEvent) => events.push(e));
-
-      await expect(
-        worker.execute('test', { jobId: 'j1', jobName: 'J1', channel: 'slack:456' })
-      ).rejects.toThrow();
-
-      expect(events[0].channel).toBe('slack:456');
-    });
-  });
-
-  describe('stop()', () => {
-    it('should call cli.stop() and nullify reference', async () => {
-      await worker.execute('test');
-
-      const cli = vi.mocked(PersistentClaudeProcess).mock.results[0].value;
-
-      await worker.stop();
-
-      expect(cli.stop).toHaveBeenCalled();
-
-      // After stop, next execute should create a new CLI
-      await worker.execute('after stop');
-      expect(PersistentClaudeProcess).toHaveBeenCalledTimes(2);
-    });
-
-    it('should be safe to call stop() when no CLI exists', async () => {
-      await expect(worker.stop()).resolves.toBeUndefined();
-    });
-
-    it('should be safe to call stop() multiple times', async () => {
-      await worker.execute('test');
-      await worker.stop();
-      await expect(worker.stop()).resolves.toBeUndefined();
-    });
+    await expect(first).resolves.toBe('first done');
+    await expect(second).rejects.toThrow('stopping');
+    await stopping;
+    expect(runnerFactory).toHaveBeenCalledOnce();
   });
 });

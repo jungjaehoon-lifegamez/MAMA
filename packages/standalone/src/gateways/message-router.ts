@@ -1028,17 +1028,22 @@ This protects your credentials from being exposed in chat logs.`;
           ruleContext
         );
 
-        // CONTINUE: skip expensive embedding search — Codex retains full conversation via threadId
+        // TG-05: every main backend keeps its live conversation in a durable
+        // runtime session. Only a genuinely new/replacement session rebuilds
+        // bounded MAMA context.
+        const needsFullContext = isNewCliSession;
+
+        // Persistent backends skip repeated retrieval after the first turn.
         context =
-          isNewCliSession && this.config.implicitLegacyContextSearch
+          needsFullContext && this.config.implicitLegacyContextSearch
             ? await this.contextInjector.getRelevantContext(message.text)
             : { prompt: '', decisions: [], hasContext: false };
 
-        if (!isNewCliSession) {
+        if (!needsFullContext) {
           systemPrompt = '';
           logger.info('CONTINUE turn: skipping context injection');
         } else {
-          // NEW session: full prompt build
+          // New persistent session: full prompt build.
           const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
             source: message.source,
             channelId: message.channelId,
@@ -1050,7 +1055,7 @@ This protects your credentials from being exposed in chat logs.`;
             sessionStartupContext,
             agentContext,
             enhanced,
-            isNewCliSession,
+            true,
             trelloAvailable
           );
         }
@@ -1067,6 +1072,9 @@ This protects your credentials from being exposed in chat logs.`;
               '  Codex:  codex login → roles.definitions.' +
               agentContext.roleName +
               '.model: gpt-5.4\n\n' +
+              '  Cline:  cline auth cline → roles.definitions.' +
+              agentContext.roleName +
+              '.model: deepseek/deepseek-v4-flash\n\n' +
               'Or run: mama init --reconfigure'
           );
         }
@@ -1170,7 +1178,7 @@ This protects your credentials from being exposed in chat logs.`;
           // citation this ledger exists to refuse.
           ...(causeFromOwnerMessage(sourceTurnId, sourceMessageRef) ?? {}),
         };
-        if (this.config.backend === 'codex' && shouldResume) {
+        if ((this.config.backend === 'codex' || this.config.backend === 'cline') && shouldResume) {
           options.freshSessionSystemPrompt = async () => {
             const freshContext = this.config.implicitLegacyContextSearch
               ? await this.contextInjector.getRelevantContext(message.text)
@@ -1297,8 +1305,10 @@ This protects your credentials from being exposed in chat logs.`;
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
 
-          // Pre-analyze images via shared ImageAnalyzer
-          if (hasImages) {
+          // Claude uses its direct vision client. Durable Codex/Cline runtimes
+          // receive the original image block and inspect the private workspace
+          // media through their own native path, avoiding hidden Claude auth.
+          if (hasImages && this.config.backend === 'claude') {
             const { getImageAnalyzer } = await import('./image-analyzer.js');
             const analysisText = protectImageAnalysis(
               message,
@@ -1312,6 +1322,8 @@ This protects your credentials from being exposed in chat logs.`;
           } else {
             for (const block of message.contentBlocks) {
               if (block.type === 'text' && block.text) {
+                contentBlocks.push(block);
+              } else if (block.type === 'image') {
                 contentBlocks.push(block);
               }
             }
@@ -1401,10 +1413,12 @@ This protects your credentials from being exposed in chat logs.`;
         );
         // CLI timeout or resume failure - invalidate session to force fresh start next time
         const errorMsg = error instanceof Error ? error.message : String(error);
+        const normalizedErrorMsg = errorMsg.toLowerCase();
         const isCriticalError =
-          errorMsg.includes('timeout') ||
-          errorMsg.includes('resume') ||
-          errorMsg.includes('exited with code');
+          normalizedErrorMsg.includes('timeout') ||
+          normalizedErrorMsg.includes('timed out') ||
+          normalizedErrorMsg.includes('resume') ||
+          normalizedErrorMsg.includes('exited with code');
 
         if (isCriticalError) {
           logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
@@ -1545,8 +1559,9 @@ This protects your credentials from being exposed in chat logs.`;
           privateConnectorPolicy: this.privateConnectorPolicy,
         })
       : null;
+    const durableNativeBackend = this.config.backend === 'codex' || this.config.backend === 'cline';
     const privatePolicyPrompt =
-      this.config.backend === 'codex' && surface === 'owner_console'
+      durableNativeBackend && surface === 'owner_console'
         ? projectConsoleBriefForPrompt('', this.privateConnectorPolicy).trim()
         : '';
     const stableRolePolicy = agentContext
@@ -1728,8 +1743,7 @@ ${historyContext}
             consoleBrief,
             this.privateConnectorPolicy
           );
-          prompt += `\n\n${((gatewayCatalog && this.config.backend !== 'codex') ||
-          privatePolicyPrompt
+          prompt += `\n\n${((gatewayCatalog && !durableNativeBackend) || privatePolicyPrompt
             ? stripMarkedPrivatePromptOverlays(projectedBrief)
             : projectedBrief
           ).trim()}\n`;
@@ -1751,8 +1765,7 @@ ${historyContext}
     // Prompt-permission coherence: the policy-keyed catalog is generated from
     // the final exact role projection, so cached private text cannot cross a
     // connector-policy or principal boundary.
-    const gatewayToolsPrompt =
-      this.config.backend === 'codex' ? '' : (gatewayCatalog?.prompt ?? '');
+    const gatewayToolsPrompt = durableNativeBackend ? '' : (gatewayCatalog?.prompt ?? '');
     if (gatewayToolsPrompt) {
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }

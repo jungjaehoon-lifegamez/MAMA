@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, writeFile, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -91,6 +91,19 @@ describe('ConfigManager', () => {
       expect(loaded.agent.max_turns).toBe(5);
       expect(loaded.database.path).toBe('~/.test/db.sqlite');
       expect(loaded.logging.level).toBe('debug');
+    });
+
+    it('atomically narrows an existing token-bearing config to owner-only permissions', async () => {
+      const mamaDir = join(testDir, '.mama');
+      const configPath = join(mamaDir, 'config.yaml');
+      await mkdir(mamaDir, { recursive: true });
+      await writeFile(configPath, 'discord:\n  token: old-secret\n');
+      await chmod(configPath, 0o644);
+
+      await saveConfig(DEFAULT_CONFIG);
+
+      expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+      expect(existsSync(`${configPath}.tmp`)).toBe(false);
     });
 
     it('should throw error when config file not found', async () => {
@@ -548,7 +561,7 @@ describe('ConfigManager', () => {
       expect(errors.some((e) => e.includes('timeout'))).toBe(true);
     });
 
-    it('should accept Codex backends and reject unsupported Gemini backend values', () => {
+    it('should accept Codex and Cline backends and reject unsupported Gemini backend values', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
@@ -558,9 +571,19 @@ describe('ConfigManager', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
+          agent: {
+            ...DEFAULT_CONFIG.agent,
+            backend: 'cline',
+            model: 'deepseek/deepseek-v4-flash',
+          },
+        })
+      ).toHaveLength(0);
+      expect(
+        validateConfig({
+          ...DEFAULT_CONFIG,
           agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' as 'claude' },
         })
-      ).toContain('agent.backend must be "claude" or "codex"');
+      ).toContain('agent.backend must be "claude", "codex", or "cline"');
     });
 
     it('should reject the removed Codex transport selector', () => {
@@ -669,6 +692,36 @@ describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
     );
     // Default mappings still resolve
     expect(loaded.roles?.sourceMapping.viewer).toBe('os_agent');
+  });
+
+  it('inherits the active backend model for default roles missing from an older config', async () => {
+    const clineModel = 'deepseek/deepseek-v4-flash';
+    const config = {
+      version: 1,
+      agent: {
+        ...DEFAULT_CONFIG.agent,
+        backend: 'cline',
+        model: clineModel,
+        cline_provider: 'cline',
+      },
+      database: { path: '~/.test/db.sqlite' },
+      logging: { level: 'debug', file: '~/.test/logs/test.log' },
+      roles: {
+        definitions: {
+          chat_bot: {
+            ...DEFAULT_ROLES.definitions.chat_bot,
+            model: clineModel,
+          },
+        },
+        sourceMapping: { telegram: 'chat_bot' },
+      },
+    } as MAMAConfig;
+
+    await saveConfig(config);
+    const loaded = await loadConfig();
+
+    expect(loaded.roles?.definitions.owner_console?.model).toBe(clineModel);
+    expect(loaded.roles?.definitions.chat_bot?.model).toBe(clineModel);
   });
 
   it('enables only the outer Code-Act entry point on the default owner role', () => {

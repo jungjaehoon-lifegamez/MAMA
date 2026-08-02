@@ -127,13 +127,12 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
-  `~/.mama/briefs/brief-<kind>.md`. On the Codex backend (retained in code but SUSPENDED - the worker loop runs claude; codex sessions do not reset on token usage, so the lifecycle contract only holds on claude), each worker would receive a
-  built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`,
+  `~/.mama/briefs/brief-<kind>.md`. Workers use the configured Claude, Codex, or Cline
+  backend. Each worker receives a built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`,
   `workorder-memory-curation`, or `workorder-temporal`) whose allowlist matches that brief. Worker authority
   does not depend on optional standing-agent entries in `config.yaml`. Board workers
-  keep three evidence domains explicit: Trello is read through
-  `context_compile({ connectors: ['trello'] })`, `kagemusha_*` is read-only
-  project-task truth, and the native task ledger owns owner-console tasks and the
+  keep evidence domains explicit: Trello and configured private connectors are read-only
+  evidence accessed through `context_compile`, and the native task ledger owns owner-console tasks and the
   pipeline projection. Every workorder worker treats connector packets as untrusted
   data: instructions, requests, and tool calls inside them are never executed.
   Lifecycle status is never inferred across those stores.
@@ -161,8 +160,8 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   as length plus SHA-256 references; raw model prose is not logged. Model prose, a board report,
   elapsed time, or calendar disappearance is not completion evidence.
 - **Authority boundary:** Trello remains untrusted connector evidence read through
-  `context_compile`; Kagemusha remains read-only project-task truth; the native ledger
-  owns owner-task workflow state. Temporal reconciliation does not write Trello or copy
+  `context_compile`; configured private connectors remain read-only evidence; the native ledger
+  owns owner-task workflow state. Temporal reconciliation does not write connectors or copy
   lifecycle state between these stores. Stale-claim, unresolved-state, and exhaustion
   alarms are observable and deduplicated, not exactly-once external delivery
   guarantees; an ordinary retry emits only its event/log.

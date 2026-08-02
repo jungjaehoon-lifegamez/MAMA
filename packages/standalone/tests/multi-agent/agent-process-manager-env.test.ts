@@ -92,7 +92,9 @@ vi.mock('child_process', () => {
 
 // Mock fs/promises and fs to prevent persona file loading errors
 vi.mock('fs/promises', () => ({
-  readFile: vi.fn().mockResolvedValue('# Test Persona\nYou are a test agent.'),
+  readFile: vi
+    .fn()
+    .mockResolvedValue('# Test Persona\nYou are a test agent on {{model_id}} ({{model}}).'),
 }));
 
 vi.mock('fs', async (importOriginal) => {
@@ -108,7 +110,10 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 // Now import modules that depend on mocked child_process
-import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
+import {
+  AgentProcessManager,
+  projectClineNativeTools,
+} from '../../src/multi-agent/agent-process-manager.js';
 import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
@@ -127,7 +132,7 @@ function makeConfig(
       is_planning_agent?: boolean;
       isPlanningAgent?: boolean;
       useCodeAct?: boolean;
-      backend?: 'claude' | 'codex';
+      backend?: 'claude' | 'codex' | 'cline';
       tool_permissions?: { allowed?: string[]; blocked?: string[] };
       gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
     }
@@ -328,6 +333,10 @@ describe('AgentProcessManager env vars by tier', () => {
         dashboard: {
           tier: 2,
           useCodeAct: true,
+          tool_permissions: {
+            allowed: ['Read', 'Grep'],
+            blocked: ['Bash'],
+          },
           gateway_tool_permissions: {
             allowed: ['*'],
             blocked: ['mama_save'],
@@ -443,6 +452,176 @@ describe('AgentProcessManager env vars by tier', () => {
 
       expect(runner).toBeDefined();
       expect(writeFileSyncCalls).toHaveLength(0);
+    });
+
+    it('TG-03/TG-04 creates a managed Cline Code-Act runner through AgentLoop', async () => {
+      readFileSyncValue = codeActMcpConfig();
+      const config = makeConfig({
+        dashboard: {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(
+        config,
+        {},
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          clineCommand: '/usr/local/bin/cline',
+          clineProvider: 'cline',
+          clineDataDir: '/tmp/mama-cline-data',
+        }
+      );
+      manager.setGatewayToolExecutor({} as GatewayToolExecutor);
+
+      const runner = await manager.getProcess('telegram', 'owner-chat', 'dashboard');
+      const context = (runner as unknown as { agentContext: AgentContext }).agentContext;
+      const loop = (
+        runner as unknown as {
+          loop: {
+            clineNativeAllowedTools: string[];
+            clineNativeDisallowedTools: string[];
+          };
+        }
+      ).loop;
+
+      expect(context.backend).toBe('cline');
+      expect(context.role.allowedTools).toEqual(['code_act', 'mama_search', 'report_publish']);
+      expect(loop.clineNativeAllowedTools).toEqual([
+        'read_files',
+        'search_codebase',
+        'fetch_web_content',
+      ]);
+      expect(loop.clineNativeDisallowedTools).toEqual(['apply_patch', 'editor', 'run_commands']);
+      expect(writeFileSyncCalls).toHaveLength(0);
+    });
+
+    it('TG-03/TG-04 constructs, reuses, and stops a direct managed Cline runner', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          tier: 2,
+          useCodeAct: false,
+          tool_permissions: { allowed: ['Read', 'Grep'], blocked: ['Bash'] },
+        },
+      });
+      manager = new AgentProcessManager(
+        config,
+        {},
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          clineCommand: '/resolved/cline',
+        }
+      );
+
+      const runner = await manager.getProcess('telegram', 'owner-chat', 'dashboard');
+      const direct = runner as unknown as {
+        backendType: string;
+        options: {
+          command: string;
+          allowedTools: string[];
+          disallowedTools: string[];
+        };
+        isHealthy(): boolean;
+      };
+      expect(direct.backendType).toBe('cline');
+      expect(direct.options).toMatchObject({
+        command: '/resolved/cline',
+        allowedTools: ['read_files', 'search_codebase'],
+        disallowedTools: ['run_commands'],
+      });
+      await expect(manager.getProcess('telegram', 'owner-chat', 'dashboard')).resolves.toBe(runner);
+
+      manager.stopProcess('telegram', 'owner-chat', 'dashboard');
+      await vi.waitFor(() => expect(direct.isHealthy()).toBe(false));
+    });
+
+    it('TG-03/TG-04 keeps the managed prompt model aligned with a backend-only Cline switch', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'cline',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: { allowed: ['mama_search'] },
+        },
+      });
+      delete config.agents.dashboard.model;
+      manager = new AgentProcessManager(
+        config,
+        {},
+        {
+          backend: 'claude',
+          model: 'claude-sonnet-4-6',
+        }
+      );
+      manager.setGatewayToolExecutor({} as GatewayToolExecutor);
+
+      const runner = await manager.getProcess('telegram', 'owner-chat', 'dashboard');
+      const managed = runner as unknown as {
+        model: string;
+        loop: { defaultSystemPrompt: string };
+      };
+
+      expect(managed.model).toBe('deepseek/deepseek-v4-flash');
+      expect(managed.loop.defaultSystemPrompt).toContain('deepseek/deepseek-v4-flash');
+      expect(managed.loop.defaultSystemPrompt).not.toContain('claude-sonnet-4-6 (');
+    });
+
+    it('uses the Cline default when resolving an unconfigured Cline workflow model', () => {
+      const config = makeConfig({ developer: { backend: 'claude' } });
+      manager = new AgentProcessManager(
+        config,
+        {},
+        {
+          backend: 'claude',
+          model: 'claude-sonnet-4-6',
+        }
+      );
+
+      expect(manager.resolveModelForBackend('cline')).toBe('deepseek/deepseek-v4-flash');
+    });
+
+    it('TG-03/TG-04 fails explicitly when managed Cline Code-Act lacks executor wiring', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'cline',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: { allowed: ['mama_search'] },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'deepseek/deepseek-v4-flash' });
+
+      await expect(manager.getProcess('telegram', 'owner-chat', 'dashboard')).rejects.toThrow(
+        /Managed cline Code-Act.*GatewayToolExecutor.*not wired/
+      );
+    });
+
+    it('TG-04 maps canonical managed permissions to actual Cline native tool names', () => {
+      expect(projectClineNativeTools(['Read', 'Grep', 'Glob', 'WebFetch'])).toEqual([
+        'read_files',
+        'search_codebase',
+        'fetch_web_content',
+      ]);
+      expect(projectClineNativeTools(['Write', 'Edit', 'Bash', 'NotebookEdit'])).toEqual([
+        'apply_patch',
+        'editor',
+        'run_commands',
+      ]);
+      expect(projectClineNativeTools(['unknown_tool'])).toEqual([]);
+      expect(
+        projectClineNativeTools(['mcp__brave-search__search', 'mcp__brave-search__*'])
+      ).toEqual(['mcp__brave-search__search']);
+      expect(projectClineNativeTools(['mcp__*__*', 'mcp__bad name__tool'])).toEqual([]);
     });
 
     it('synthesizes code_act only on the managed outer role', async () => {

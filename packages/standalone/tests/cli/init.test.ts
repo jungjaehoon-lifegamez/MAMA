@@ -9,6 +9,19 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as yaml from 'js-yaml';
 
+const { hasPersistedClineCredentialMock, spawnSyncMock } = vi.hoisted(() => ({
+  hasPersistedClineCredentialMock: vi.fn().mockResolvedValue(false),
+  spawnSyncMock: vi.fn(() => ({ status: 0 })),
+}));
+
+vi.mock('../../src/agent/cline-cli-adapter.js', () => ({
+  hasPersistedClineCredential: hasPersistedClineCredentialMock,
+}));
+
+vi.mock('node:child_process', () => ({
+  spawnSync: spawnSyncMock,
+}));
+
 import { initCommand } from '../../src/cli/commands/init.js';
 import {
   getConfigPath,
@@ -23,12 +36,14 @@ import {
  * - Creates config file in ~/.mama/config.yaml
  * - Supports --force to overwrite existing config
  * - Supports --skip-auth-check for testing
- * - Supports --backend option (claude, codex)
+ * - Supports --backend option (claude, codex, cline)
  */
 describe('mama init command', () => {
   let testHome: string;
   let originalHome: string | undefined;
   let originalTier3: string | undefined;
+  let originalClineCommand: string | undefined;
+  let originalLegacyClineCommand: string | undefined;
   let consoleOutput: string[] = [];
   let consoleErrors: string[] = [];
 
@@ -41,11 +56,15 @@ describe('mama init command', () => {
 
     originalHome = process.env.HOME;
     originalTier3 = process.env.MAMA_FORCE_TIER_3;
+    originalClineCommand = process.env.MAMA_CLINE_COMMAND;
+    originalLegacyClineCommand = process.env.CLINE_COMMAND;
     process.env.HOME = testHome;
     process.env.MAMA_FORCE_TIER_3 = 'true';
 
     consoleOutput = [];
     consoleErrors = [];
+    hasPersistedClineCredentialMock.mockReset().mockResolvedValue(false);
+    spawnSyncMock.mockReset().mockReturnValue({ status: 0 });
 
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       consoleOutput.push(args.join(' '));
@@ -75,6 +94,11 @@ describe('mama init command', () => {
     } else {
       delete process.env.MAMA_FORCE_TIER_3;
     }
+    if (originalClineCommand !== undefined) process.env.MAMA_CLINE_COMMAND = originalClineCommand;
+    else delete process.env.MAMA_CLINE_COMMAND;
+    if (originalLegacyClineCommand !== undefined)
+      process.env.CLINE_COMMAND = originalLegacyClineCommand;
+    else delete process.env.CLINE_COMMAND;
 
     await rm(testHome, { recursive: true, force: true });
   });
@@ -243,6 +267,99 @@ describe('mama init command', () => {
         'gpt-5.4',
         'gpt-5.4',
       ]);
+    });
+
+    it('should apply the Cline DeepSeek backend when skipAuthCheck is enabled', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'cline' });
+
+      const config = await loadConfig();
+      expect(config.agent.backend).toBe('cline');
+      expect(config.agent.model).toBe('deepseek/deepseek-v4-flash');
+      expect(config.agent.cline_provider).toBe('cline');
+      expect(Object.values(config.roles?.definitions ?? {}).map((role) => role.model)).toEqual([
+        'deepseek/deepseek-v4-flash',
+        'deepseek/deepseek-v4-flash',
+        'deepseek/deepseek-v4-flash',
+      ]);
+    });
+
+    it('accepts an installed and authenticated Cline hosted provider', async () => {
+      hasPersistedClineCredentialMock.mockResolvedValue(true);
+
+      await initCommand({ backend: 'cline' });
+
+      expect(hasPersistedClineCredentialMock).toHaveBeenCalledWith({ command: 'cline' });
+      expect((await loadConfig()).agent.backend).toBe('cline');
+    });
+
+    it('auto-selects Cline when it is the only authenticated backend', async () => {
+      hasPersistedClineCredentialMock.mockResolvedValue(true);
+
+      await initCommand();
+
+      expect((await loadConfig()).agent).toMatchObject({
+        backend: 'cline',
+        model: 'deepseek/deepseek-v4-flash',
+      });
+    });
+
+    it('keeps deterministic Claude then Codex then Cline auto precedence', async () => {
+      hasPersistedClineCredentialMock.mockResolvedValue(true);
+      const codexDir = join(testHome, '.codex');
+      await mkdir(codexDir, { recursive: true });
+      await writeFile(join(codexDir, 'auth.json'), '{}');
+
+      await initCommand();
+      expect((await loadConfig()).agent.backend).toBe('codex');
+
+      const claudeDir = join(testHome, '.claude');
+      await mkdir(claudeDir, { recursive: true });
+      await writeFile(join(claudeDir, '.credentials.json'), '{}');
+      await initCommand({ force: true });
+      expect((await loadConfig()).agent.backend).toBe('claude');
+    });
+
+    it('uses MAMA_CLINE_COMMAND for availability and persisted credential checks', async () => {
+      process.env.MAMA_CLINE_COMMAND = '/opt/mama/cline-wrapper';
+      hasPersistedClineCredentialMock.mockResolvedValue(true);
+
+      await initCommand({ backend: 'cline' });
+
+      expect(spawnSyncMock).toHaveBeenCalledWith(
+        '/opt/mama/cline-wrapper',
+        ['--version'],
+        expect.any(Object)
+      );
+      expect(hasPersistedClineCredentialMock).toHaveBeenCalledWith({
+        command: '/opt/mama/cline-wrapper',
+      });
+    });
+
+    it('falls back to CLINE_COMMAND for availability and persisted credential checks', async () => {
+      delete process.env.MAMA_CLINE_COMMAND;
+      process.env.CLINE_COMMAND = '/opt/legacy/cline-wrapper';
+      hasPersistedClineCredentialMock.mockResolvedValue(true);
+
+      await initCommand({ backend: 'cline' });
+
+      expect(spawnSyncMock).toHaveBeenCalledWith(
+        '/opt/legacy/cline-wrapper',
+        ['--version'],
+        expect.any(Object)
+      );
+      expect(hasPersistedClineCredentialMock).toHaveBeenCalledWith({
+        command: '/opt/legacy/cline-wrapper',
+      });
+    });
+
+    it('rejects an installed but unauthenticated Cline hosted provider', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit called');
+      });
+
+      await expect(initCommand({ backend: 'cline' })).rejects.toThrow('process.exit called');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(consoleErrors.join('\n')).toContain('cline auth cline');
     });
 
     it('should create a provider-compatible config for a Codex-only installation', async () => {

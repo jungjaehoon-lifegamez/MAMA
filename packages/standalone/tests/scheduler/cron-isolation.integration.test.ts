@@ -1,20 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-vi.mock('../../src/agent/persistent-cli-process.js', () => ({
-  PersistentClaudeProcess: vi.fn().mockImplementation(() => ({
-    sendMessage: vi.fn().mockResolvedValue({
-      response: 'cron result data',
-      usage: { input_tokens: 10, output_tokens: 5 },
-      session_id: 'cron-test',
-    }),
-    stop: vi.fn().mockResolvedValue(undefined),
-    on: vi.fn(),
-  })),
-}));
-
 import { CronWorker } from '../../src/scheduler/cron-worker.js';
 import { CronResultRouter } from '../../src/scheduler/cron-result-router.js';
+import type { IModelRunner } from '../../src/agent/model-runner.js';
+
+function createRunner(response = 'cron result data'): IModelRunner {
+  return {
+    backendType: 'cline',
+    prompt: vi.fn().mockResolvedValue({ response, usage: {}, session_id: 'cron-test' }),
+    setSessionId: vi.fn(),
+    setSystemPrompt: vi.fn(),
+    isHealthy: vi.fn(() => true),
+    getMetrics: vi.fn(() => ({
+      requestCount: 0,
+      failureCount: 0,
+      avgLatencyMs: 0,
+      lastRequestAt: null,
+    })),
+    stop: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe('Cron Isolation Integration', () => {
   let emitter: EventEmitter;
@@ -22,10 +28,12 @@ describe('Cron Isolation Integration', () => {
   let discordSend: ReturnType<typeof vi.fn>;
   let slackSend: ReturnType<typeof vi.fn>;
   let viewerSend: ReturnType<typeof vi.fn>;
+  let runner: IModelRunner;
 
   beforeEach(() => {
     emitter = new EventEmitter();
-    worker = new CronWorker({ emitter });
+    runner = createRunner();
+    worker = new CronWorker({ emitter, runnerFactory: () => runner });
     discordSend = vi.fn().mockResolvedValue(undefined);
     slackSend = vi.fn().mockResolvedValue(undefined);
     viewerSend = vi.fn().mockResolvedValue(undefined);
@@ -82,16 +90,9 @@ describe('Cron Isolation Integration', () => {
   });
 
   it('should deliver error to gateway on failure', async () => {
-    const { PersistentClaudeProcess } = await import('../../src/agent/persistent-cli-process.js');
-
-    // Create a worker whose CLI always rejects
-    vi.mocked(PersistentClaudeProcess).mockImplementationOnce(() => ({
-      sendMessage: vi.fn().mockRejectedValue(new Error('network timeout')),
-      stop: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    }));
-
-    const failWorker = new CronWorker({ emitter });
+    const failRunner = createRunner();
+    vi.mocked(failRunner.prompt).mockRejectedValue(new Error('network timeout'));
+    const failWorker = new CronWorker({ emitter, runnerFactory: () => failRunner });
 
     await expect(
       failWorker.execute('failing job', {

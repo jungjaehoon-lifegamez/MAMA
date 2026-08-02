@@ -340,6 +340,44 @@ describe('trigger agent provider boundary', () => {
     expect(JSON.stringify(createCodexRuntime.mock.calls)).not.toMatch(/mcp|tool_call/i);
   });
 
+  it('uses isolated Cline routes for isolated author and review calls', async () => {
+    const prompt = vi
+      .fn()
+      .mockResolvedValueOnce({ response: '[{"kind":"cline"}]' })
+      .mockResolvedValueOnce({ response: '{"action":"kept"}' });
+    const stop = vi.fn();
+    const createClineRuntime = vi.fn(() => ({ prompt, stop }));
+    const runtime = createTriggerAgentRuntime(
+      'cline',
+      {
+        model: 'deepseek/deepseek-v4-flash',
+        cwd: '/safe/workspace',
+        command: '/usr/local/bin/cline',
+        provider: 'cline',
+      },
+      { createClineRuntime }
+    );
+
+    await expect(runtime.askAuthor('author prompt')).resolves.toBe('[{"kind":"cline"}]');
+    await expect(runtime.askReview('review prompt')).resolves.toBe('{"action":"kept"}');
+    expect(createClineRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: '/usr/local/bin/cline',
+        provider: 'cline',
+        model: 'deepseek/deepseek-v4-flash',
+        cwd: '/safe/workspace',
+      })
+    );
+    expect(prompt.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ resumeSession: false, sessionKey: 'operator:trigger-author' })
+    );
+    expect(prompt.mock.calls[1][2]).toEqual(
+      expect.objectContaining({ resumeSession: false, sessionKey: 'operator:trigger-review' })
+    );
+    await runtime.stop();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it('propagates malformed Codex results and runner errors without fallback', async () => {
     const malformedRuntime = createTriggerAgentRuntime(
       'codex',

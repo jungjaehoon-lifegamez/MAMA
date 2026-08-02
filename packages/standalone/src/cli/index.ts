@@ -36,7 +36,7 @@ const program = new Command();
 
 program
   .name('mama')
-  .description('MAMA Standalone - Always-on AI Assistant powered by Claude Pro')
+  .description('MAMA Standalone - Always-on AI Assistant')
   .version(VERSION, '-v, --version', 'Print version information');
 
 program
@@ -44,10 +44,16 @@ program
   .description('Initialize MAMA configuration')
   .option('-f, --force', 'Overwrite existing configuration')
   .option('--skip-auth-check', 'Skip authentication check (for testing)')
-  .option('--backend <backend>', 'Preferred backend: auto | claude | codex (default: auto)', 'auto')
+  .option(
+    '--backend <backend>',
+    'Preferred backend: auto | claude | codex | cline (default: auto)',
+    'auto'
+  )
   .action(async (options) => {
     const backend =
-      options.backend === 'claude' || options.backend === 'codex' ? options.backend : 'auto';
+      options.backend === 'claude' || options.backend === 'codex' || options.backend === 'cline'
+        ? options.backend
+        : 'auto';
     await initCommand({
       force: options.force,
       skipAuthCheck: options.skipAuthCheck,
@@ -57,7 +63,7 @@ program
 
 program
   .command('setup')
-  .description('Interactive setup wizard (guided by Claude)')
+  .description('Interactive setup wizard (guided by the configured backend)')
   .option('-p, --port <port>', 'Port number', '3848')
   .option('--no-browser', 'Disable automatic browser opening')
   .action(async (options) => {

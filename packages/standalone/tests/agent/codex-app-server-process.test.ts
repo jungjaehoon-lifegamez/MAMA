@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   symlinkSync,
   rmSync,
   statSync,
@@ -223,6 +224,7 @@ rl.on('line', line => {
   const threadResult = (id,params) => { const sandbox=params.sandbox === 'workspace-write'?{type:'workspaceWrite',writableRoots:[params.cwd],networkAccess:false,excludeTmpdirEnvVar:false,excludeSlashTmp:false}:params.sandbox === 'read-only'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}; const instructionSources=mode==='symlink-source'?[params.cwd+'/AGENTS.md']:fs.existsSync(${JSON.stringify(join(root, 'bad-source'))})?['/outside/AGENTS.md']:[]; const result={...${JSON.stringify(responseFixture)},thread:fullThread(id),model:mode === 'bad-policy'?'unexpected-model':params.model,cwd:params.cwd,instructionSources,sandbox}; if(mode==='bad-thread-schema') delete result.thread.sessionId; return result; };
   if (message.method === 'thread/start') return send({jsonrpc:'2.0',id:message.id,result:threadResult('thread-'+(++thread),message.params)});
   if (message.method === 'thread/resume') return send({jsonrpc:'2.0',id:message.id,result:threadResult(message.params.threadId,message.params)});
+  if (message.method === 'command/exec') return send({jsonrpc:'2.0',id:message.id,result:{exitCode:0,stdout:'sandboxed command',stderr:''}});
   if (message.method === 'turn/start') {
     if (mode === 'overloaded-once' && !overloaded) { overloaded = true; return send({jsonrpc:'2.0',id:message.id,error:{code:-32001,message:'Server overloaded; retry later.'}}); }
     if (mode === 'timeout') return;
@@ -248,6 +250,10 @@ rl.on('line', line => {
     const earlyTool = mode === 'tool-early';
     const toolParams = mode === 'code-act-tool-success'
       ? {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'code_act',arguments:{code:'({ ok: true })'}}
+      : mode === 'auxiliary-write'
+      ? {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'Write',arguments:{path:${JSON.stringify(join(root, 'auxiliary-output.txt'))},content:'written'}}
+      : mode === 'auxiliary-bash'
+      ? {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'Bash',arguments:{command:'pwd',workdir:${JSON.stringify(root)}}}
       : {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'report_request',arguments:{topic:'status'}};
     const requestTool = (requestId, params, callback) => { toolReplies.set(requestId, callback); send({jsonrpc:'2.0',id:requestId,method:'item/tool/call',params}); };
     let toolReplyCount = 0;
@@ -271,7 +277,7 @@ rl.on('line', line => {
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}});
     if (mode === 'exit-after-turn') setTimeout(() => process.exit(23), 5);
     };
-    if (['tool-success','code-act-tool-success','tool-failure','tool-null-result','tool-error-stop','tool-abort-completed-first','tool-terminal-exit','tool-interrupt-hang','tool-malformed','tool-malformed-once','tool-malformed-turn','tool-malformed-call','tool-malformed-tool','tool-malformed-namespace','tool-unknown','tool-duplicate','tool-duplicate-conflict','tool-serialized','tool-queue-cancel','tool-stop','tool-stale'].includes(mode)) {
+    if (['tool-success','code-act-tool-success','auxiliary-write','auxiliary-bash','tool-failure','tool-null-result','tool-error-stop','tool-abort-completed-first','tool-terminal-exit','tool-interrupt-hang','tool-malformed','tool-malformed-once','tool-malformed-turn','tool-malformed-call','tool-malformed-tool','tool-malformed-namespace','tool-unknown','tool-duplicate','tool-duplicate-conflict','tool-serialized','tool-queue-cancel','tool-stop','tool-stale'].includes(mode)) {
       if (mode === 'tool-stale' && fs.existsSync(${JSON.stringify(join(root, 'tool-issued'))})) { complete(); return; }
       if (mode === 'tool-stale') fs.writeFileSync(${JSON.stringify(join(root, 'tool-issued'))},'1');
       if (mode === 'tool-malformed-once' && fs.existsSync(${JSON.stringify(join(root, 'malformed-tool-issued'))})) { complete(); return; }
@@ -493,6 +499,50 @@ describe('Story: Codex app-server process', () => {
       },
     });
   });
+
+  it.each([
+    ['auxiliary-write', ['Write'], 'auxiliary-output.txt'],
+    ['auxiliary-bash', ['Bash'], undefined],
+  ] as const)(
+    'runs the %s TG-06 auxiliary path through dynamic tools and the app-server boundary',
+    async (mode, allowedTools, outputFile) => {
+      const item = fixture(mode);
+      const runner = new CodexRuntimeProcess({
+        ...item.options,
+        defaultSessionKey: 'auxiliary',
+        sandbox: 'read-only',
+        auxiliaryToolPolicy: { allowedTools, roots: [item.root] },
+      });
+
+      await expect(runner.prompt('perform the auxiliary task')).resolves.toMatchObject({
+        response: 'hello',
+      });
+      await runner.stop();
+      if (outputFile) expect(readFileSync(join(item.root, outputFile), 'utf8')).toBe('written');
+      const sent = messages(item.capture);
+      expect(sent.find((entry) => entry.method === 'thread/start')?.params).toMatchObject({
+        sandbox: 'read-only',
+        dynamicTools: [expect.objectContaining({ name: allowedTools[0] })],
+      });
+      if (mode === 'auxiliary-bash') {
+        const canonicalRoot = realpathSync(item.root);
+        expect(sent.find((entry) => entry.method === 'command/exec')?.params).toMatchObject({
+          command: ['/bin/sh', '-c', 'pwd'],
+          cwd: canonicalRoot,
+          sandboxPolicy: {
+            type: 'workspaceWrite',
+            writableRoots: [canonicalRoot],
+            readOnlyAccess: {
+              type: 'restricted',
+              includePlatformDefaults: true,
+              readableRoots: [canonicalRoot],
+            },
+            networkAccess: false,
+          },
+        });
+      }
+    }
+  );
 
   it('returns a native tool failure to Codex without turning it into empty success', async () => {
     const item = fixture('tool-failure');
@@ -914,7 +964,10 @@ describe('Story: Codex app-server process', () => {
     'preserves a trusted terminal mutation code when %s disrupts settlement',
     async (mode) => {
       const item = fixture(mode);
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 60 });
+      // This timeout also covers spawning and initializing the fake Node app-server.
+      // Keep enough headroom for a loaded full-suite worker; the assertion targets
+      // terminal-result preservation after settlement disruption, not startup latency.
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
 
       const failure = await runner
         .prompt('hi', undefined, {

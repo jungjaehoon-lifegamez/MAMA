@@ -82,6 +82,67 @@ describe('managed-agent-runtime-sync', () => {
     expect(codexRuntime.snapshot.backend).toBe('codex');
   });
 
+  it('TG-03/TG-04 preserves the cline backend when creating agents', async () => {
+    const config = {
+      agent: { backend: 'claude' as const },
+      multi_agent: { enabled: true, agents: {} },
+    };
+
+    const result = await createManagedAgentRuntime(
+      {
+        id: 'cline',
+        name: 'Cline',
+        model: 'deepseek/deepseek-v4-flash',
+        tier: 1,
+        backend: 'cline',
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot.backend).toBe('cline');
+    expect(config.multi_agent.agents).toMatchObject({
+      cline: { backend: 'cline' },
+    });
+  });
+
+  it('TG-03/TG-04 preserves the cline backend when updating agents', async () => {
+    const config = {
+      multi_agent: {
+        enabled: true,
+        agents: {
+          alpha: {
+            name: 'Alpha',
+            display_name: 'Alpha',
+            trigger_prefix: '!alpha',
+            tier: 1,
+            backend: 'claude' as const,
+          },
+        },
+      },
+    };
+
+    const result = await updateManagedAgentRuntime(
+      {
+        agentId: 'alpha',
+        changes: { backend: 'cline' },
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot.backend).toBe('cline');
+    expect(result.snapshot.model).toBe('deepseek/deepseek-v4-flash');
+    expect(config.multi_agent.agents.alpha.backend).toBe('cline');
+    expect(config.multi_agent.agents.alpha.model).toBe('deepseek/deepseek-v4-flash');
+  });
+
   it('uses a default persona path when updating system text without persona_file', async () => {
     const config = {
       multi_agent: {

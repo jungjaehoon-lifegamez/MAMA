@@ -653,7 +653,7 @@ describe('graph api helpers', () => {
 
   describe('Story LEGACY-MANAGED-BACKENDS: managed-agent backend migration', () => {
     describe('AC: validates supported managed backend families', () => {
-      it('accepts Codex backends and rejects unsupported Gemini backends in legacy config validation', () => {
+      it('accepts Codex and Cline backends and rejects unsupported Gemini backends in legacy config validation', () => {
         expect(
           validateConfigUpdate({
             agent: { backend: 'codex', model: 'gpt-5.4-mini' },
@@ -666,13 +666,23 @@ describe('graph api helpers', () => {
         ).toEqual([]);
         expect(
           validateConfigUpdate({
+            agent: { backend: 'cline', model: 'deepseek/deepseek-v4-flash' },
+            multi_agent: {
+              agents: {
+                coder: { backend: 'cline', model: 'deepseek/deepseek-v4-flash' },
+              },
+            },
+          })
+        ).toEqual([]);
+        expect(
+          validateConfigUpdate({
             multi_agent: {
               agents: {
                 resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
               },
             },
           })
-        ).toContain('multi_agent.agents.resolver.backend must be "claude" or "codex"');
+        ).toContain('multi_agent.agents.resolver.backend must be "claude", "codex", or "cline"');
       });
     });
 

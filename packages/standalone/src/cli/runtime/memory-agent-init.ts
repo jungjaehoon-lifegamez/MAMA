@@ -24,6 +24,7 @@ import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import type { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { BackendType } from '../../agent/model-runner.js';
+import { resolveBackendScopedModel } from '../../agent/backend-model-policy.js';
 import type { AgentContext } from '../../agent/types.js';
 import type { MessageRouter } from '../../gateways/message-router.js';
 import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
@@ -44,7 +45,7 @@ export interface MemoryAgentInitResult {
 }
 
 function isBackendType(value: string | undefined): value is BackendType {
-  return value === 'claude' || value === 'codex';
+  return value === 'claude' || value === 'codex' || value === 'cline';
 }
 
 function resolveMemoryBackend(
@@ -98,7 +99,10 @@ export async function initMemoryAgent(
       platform: 'cli',
       roleName: 'memory_agent',
       role: {
-        allowedTools: ['mama_search', 'mama_save'],
+        allowedTools:
+          memoryBackend === 'cline'
+            ? ['code_act', 'mama_search', 'mama_save']
+            : ['mama_search', 'mama_save'],
         blockedTools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'Edit'],
         systemControl: false,
         sensitiveAccess: false,
@@ -108,20 +112,30 @@ export async function initMemoryAgent(
         channelId: 'shared',
         startedAt: new Date(),
       },
-      capabilities: ['mama_search', 'mama_save'],
+      capabilities:
+        memoryBackend === 'cline'
+          ? ['code_act', 'mama_search', 'mama_save']
+          : ['mama_search', 'mama_save'],
       limitations: ['No file or shell access'],
       tier: 2,
       backend: memoryBackend,
     };
 
-    const memoryModel =
-      memoryAgentConfig?.model ||
-      (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);
+    const memoryModel = resolveBackendScopedModel({
+      backend: memoryBackend,
+      model: memoryAgentConfig?.model,
+      inheritedBackend: isBackendType(runtimeBackend) ? runtimeBackend : config.agent.backend,
+      inheritedModel: config.agent.model,
+    });
     memoryAgentLoop = new AgentLoop(oauthManager, {
       systemPrompt: memoryPersona,
       model: memoryModel,
       maxTurns: 3,
       backend: memoryBackend,
+      useCodeAct: memoryBackend === 'cline',
+      clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
+      clineProvider: config.agent.cline_provider,
+      clineDataDir: config.agent.cline_data_dir,
       toolsConfig: {
         gateway: ['mama_search', 'mama_save'],
         mcp: [],

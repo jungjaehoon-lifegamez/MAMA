@@ -500,13 +500,18 @@ export class DiscordGateway extends BaseGateway {
     }
 
     // Pre-analyze images before routing (multi-agent handler only gets text)
+    let imagesWerePreAnalyzed = false;
     if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
-      const { getImageAnalyzer } = await import('./image-analyzer.js');
-      const analysisText = await getImageAnalyzer().processContentBlocks(
-        normalizedMessage.contentBlocks
-      );
-      if (analysisText) {
-        enrichedContent = `${enrichedContent}\n\n${analysisText}`;
+      const { getImageAnalyzer, shouldUseClaudeImagePreanalysis } =
+        await import('./image-analyzer.js');
+      if (shouldUseClaudeImagePreanalysis()) {
+        imagesWerePreAnalyzed = true;
+        const analysisText = await getImageAnalyzer().processContentBlocks(
+          normalizedMessage.contentBlocks
+        );
+        if (analysisText) {
+          enrichedContent = `${enrichedContent}\n\n${analysisText}`;
+        }
       }
     }
 
@@ -519,8 +524,9 @@ export class DiscordGateway extends BaseGateway {
     if (enrichedContent !== cleanContent) {
       normalizedMessage.text = enrichedContent;
     }
-    // Always clear contentBlocks after image analysis attempt to prevent double analysis in message-router
-    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
+    // Clear only when Claude already converted the image to text. Cline/Codex
+    // retain the original block for their configured native media path.
+    if (imagesWerePreAnalyzed && normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
       normalizedMessage.contentBlocks = undefined;
     }
     // Create tool status tracker for real-time progress

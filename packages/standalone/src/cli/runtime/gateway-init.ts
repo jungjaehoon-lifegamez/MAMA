@@ -73,7 +73,7 @@ export async function initGateways(
   agentLoop: AgentLoop,
   // Both were only read by the multi-agent handler hookup, which is gone. Kept in the
   // signature so callers compile unchanged.
-  _runtimeBackend: 'claude' | 'codex',
+  _runtimeBackend: 'claude' | 'codex' | 'cline',
   _db: SQLiteDatabase
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup

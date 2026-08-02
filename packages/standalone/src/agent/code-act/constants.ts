@@ -1,10 +1,11 @@
-export type CodeActBackend = 'claude' | 'codex';
+export type CodeActBackend = 'claude' | 'codex' | 'cline';
 
 export function getCodeActInstructions(
   backend: CodeActBackend,
   allowedTools?: readonly string[]
 ): string {
   const isCodex = backend === 'codex';
+  const isCline = backend === 'cline';
   const allowedSummary = formatAllowedToolsSummary(allowedTools);
   const hasExplicitGatewayAllowlist = allowedSummary !== null;
 
@@ -52,7 +53,18 @@ The functions listed below are **ONLY available inside code_act** — they are N
 The functions listed below are **ONLY available inside code_act** — they are NOT direct MCP tools.`;
   const directToolSection = isCodex
     ? `**Call the native \`code_act\` tool directly** with a normal model tool call.`
-    : `**USE these MCP tools directly** (normal tool_use calls):
+    : isCline
+      ? `**Use this MCP tool for MAMA gateway operations** (normal tool_use call):
+- \`mcp__code-act__code_act\` — memory, connector, report, wiki, and other MAMA gateway functions
+
+**Use your Cline native tools directly** for local work, subject to the current Tool Permissions:
+- \`read_files\`, \`search_codebase\` — file and code discovery
+- \`run_commands\` — shell commands
+- native file editing, web, skill, and agent tools when allowed
+
+Do not wrap native local operations in code_act. Do not call a native tool that the
+current Tool Permissions mark as blocked.`
+      : `**USE these MCP tools directly** (normal tool_use calls):
 - \`mcp__code-act__code_act\` — gateway tool execution (see below)
 - \`mcp__brave-search__*\` — web search
 - \`mcp__brave-devtools__*\` — browser control
