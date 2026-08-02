@@ -37,10 +37,28 @@ const PRIVATE_TOOL_NAMES = PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) =
 const PRIVATE_CONNECTOR_DIRECTIVE_PATTERN =
   /\b(?:always|call|check|fetch|first|gather|inspect|invoke|must|never|query|read|run|should|then|use)\b/i;
 const PATH_REFERENCE_PATTERN = /(?:^|\s)(?:\.{0,2}\/|\/|[A-Za-z]:\\)\S+/g;
-const MARKDOWN_TOOL_NAME_WRAPPERS = ['', '`', '*', '**', '***', '_', '__', '___', '~~'] as const;
+const MARKDOWN_TOOL_NAME_WRAPPERS = ['', '*', '**', '***', '_', '__', '___', '~~'] as const;
 
 function isIdentifierCharacter(character: string | undefined): boolean {
   return character !== undefined && /[A-Za-z0-9_]/.test(character);
+}
+
+function isBacktickWrappedToolInvocation(line: string, index: number, toolName: string): boolean {
+  let wrappedStart = index;
+  while (wrappedStart > 0 && line[wrappedStart - 1] === '`') {
+    wrappedStart -= 1;
+  }
+  const openingLength = index - wrappedStart;
+  if (openingLength === 0 || isIdentifierCharacter(line[wrappedStart - 1])) {
+    return false;
+  }
+
+  const nameEnd = index + toolName.length;
+  let wrappedEnd = nameEnd;
+  while (wrappedEnd < line.length && line[wrappedEnd] === '`') {
+    wrappedEnd += 1;
+  }
+  return wrappedEnd - nameEnd === openingLength && /^\s*\(/.test(line.slice(wrappedEnd));
 }
 
 function isPrivateToolInvocation(line: string, toolName: string): boolean {
@@ -49,6 +67,9 @@ function isPrivateToolInvocation(line: string, toolName: string): boolean {
     const index = line.indexOf(toolName, cursor);
     if (index < 0) {
       return false;
+    }
+    if (isBacktickWrappedToolInvocation(line, index, toolName)) {
+      return true;
     }
 
     for (const wrapper of MARKDOWN_TOOL_NAME_WRAPPERS) {
