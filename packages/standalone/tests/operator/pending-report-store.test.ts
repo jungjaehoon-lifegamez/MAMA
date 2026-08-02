@@ -380,6 +380,79 @@ describe('FilePendingReportStore', () => {
     expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
   });
 
+  it.each([
+    [
+      'scheduled delivery',
+      (snapshot: ReturnType<SituationReporter['snapshot']>) => {
+        const occurrence = {
+          kind: 'scheduled_full' as const,
+          hourKey: '2026-08-02:09',
+          unknown: 'substitutes-for-firedAtIso',
+        };
+        const delivery = {
+          mode: 'full' as const,
+          text: 'owner report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'unknown-scheduled-key-d1',
+          provenance: { status: 'available' as const, modelRunId: 'mr_original' },
+          occurrence,
+          target: TEST_REPORT_TARGET,
+        };
+        return {
+          version: 1 as const,
+          digest: snapshot,
+          full: snapshot,
+          delivery: {
+            ...delivery,
+            payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+          },
+        };
+      },
+    ],
+    [
+      'on-demand request',
+      (snapshot: ReturnType<SituationReporter['snapshot']>) => {
+        const request = {
+          mode: 'full' as const,
+          deliveryId: 'unknown-on-demand-key-d1',
+          occurrence: {
+            kind: 'on_demand_full' as const,
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+            unknown: 'substitutes-for-hourKey',
+          },
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          target: TEST_REPORT_TARGET,
+        };
+        return {
+          version: 1 as const,
+          digest: snapshot,
+          full: snapshot,
+          request: {
+            ...request,
+            payloadIdentity: pendingReportRequestPayloadIdentity(request),
+          },
+        };
+      },
+    ],
+  ] as const)(
+    'TG-06 quarantines a persisted %s with an unknown occurrence key',
+    async (_phase, buildState) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+      const path = join(root, 'pending.json');
+      const state = buildState(new SituationReporter().snapshot());
+      await writeFile(path, JSON.stringify(state));
+
+      expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^pending\.json\.corrupt-/),
+          'pending.json.quarantined',
+        ])
+      );
+    }
+  );
+
   it('TG-06 quarantines a legacy active delivery without an authorized target binding', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');

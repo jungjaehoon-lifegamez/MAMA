@@ -302,6 +302,7 @@ function isScheduledFullOccurrence(value: unknown): value is PendingReportOccurr
   return (
     record.kind === 'scheduled_full' &&
     (keys.length === 2 || keys.length === 3) &&
+    keys.every((key) => key === 'kind' || key === 'hourKey' || key === 'firedAtIso') &&
     keys.includes('kind') &&
     keys.includes('hourKey') &&
     isNonEmptyBoundedString(record.hourKey, 128) &&
@@ -318,6 +319,7 @@ function isOnDemandFullOccurrence(value: unknown): value is PendingReportOccurre
   return (
     record.kind === 'on_demand_full' &&
     (keys.length === 2 || keys.length === 3) &&
+    keys.every((key) => key === 'kind' || key === 'firedAtIso' || key === 'hourKey') &&
     keys.includes('kind') &&
     keys.includes('firedAtIso') &&
     isNonEmptyBoundedString(record.firedAtIso, 64) &&
