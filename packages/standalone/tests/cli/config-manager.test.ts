@@ -659,7 +659,14 @@ describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
     expect(loaded.roles?.definitions.chat_bot?.model).toBe('custom-model');
     // New default definition gained (the B1 silent-death fix)
     expect(loaded.roles?.definitions.owner_console).toBeDefined();
-    expect(loaded.roles?.definitions.owner_console?.allowedTools).toContain('kagemusha_tasks');
+    expect(loaded.roles?.definitions.owner_console?.allowedTools).not.toEqual(
+      expect.arrayContaining([
+        'kagemusha_overview',
+        'kagemusha_entities',
+        'kagemusha_tasks',
+        'kagemusha_messages',
+      ])
+    );
     // Default mappings still resolve
     expect(loaded.roles?.sourceMapping.viewer).toBe('os_agent');
   });

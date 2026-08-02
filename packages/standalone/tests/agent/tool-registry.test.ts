@@ -94,6 +94,43 @@ describe('ToolRegistry', () => {
   });
 
   describe('getHostToolDefinitions()', () => {
+    it('defines bound external lifecycle tools with closed input schemas', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['task_external_bind', 'task_lifecycle_reconcile'],
+      });
+
+      expect(definitions).toEqual([
+        expect.objectContaining({
+          name: 'task_external_bind',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              candidate_id: { type: 'string' },
+              decision: { enum: ['bind', 'decline'] },
+              reason: { type: 'string' },
+              expected_revision: { type: 'integer', minimum: 1 },
+            },
+            required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+            additionalProperties: false,
+          },
+        }),
+        expect.objectContaining({
+          name: 'task_lifecycle_reconcile',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              candidate_id: { type: 'string' },
+              decision: { enum: ['apply', 'retain'] },
+              reason: { type: 'string' },
+              expected_revision: { type: 'integer', minimum: 1 },
+            },
+            required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+            additionalProperties: false,
+          },
+        }),
+      ]);
+    });
+
     it('should advertise all non-viewer registered tools when allowedTools is undefined', () => {
       const definitions = ToolRegistry.getHostToolDefinitions();
 

@@ -198,10 +198,11 @@ export function getReactiveRoutePolicy(
   // verified-owner DM or the enforcer denies kagemusha_messages even after
   // the role layer allows it (connector_out_of_scope).
   const isOwnerConsole = isOwnerConsoleMessage(message, config);
+  const kagemushaAvailable = enabledConnectorNames.includes('kagemusha');
   const rawConnectors = Array.from(
     new Set([
       ...route.rawConnectors,
-      ...(isOwnerConsole ? ['kagemusha'] : []),
+      ...(isOwnerConsole && kagemushaAvailable ? ['kagemusha'] : []),
       ...(isOwnerConsole && enabledConnectorNames.includes('trello') ? ['trello'] : []),
       ...(isOwnerConsole && enabledConnectorNames.includes('drive') ? ['drive'] : []),
     ])

@@ -27,6 +27,11 @@ import {
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
+import { buildGatewayToolCatalog } from './gateway-tool-catalog.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
+} from '../connectors/private-connector-policy.js';
 import {
   TypeDefinitionGenerator,
   getCodeActInstructions,
@@ -100,6 +105,12 @@ const DEFAULT_TOOLS_CONFIG = {
   mcp: [] as string[],
   mcp_config: '~/.mama/mama-mcp-config.json',
 };
+
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
 
 // Exported so the conductor test can PIN that 'conductor' is absent: the
 // conductor must run on its own session:operator:conductor lane, never the
@@ -362,34 +373,27 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
  * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
-// Cache gateway-tools.md content (static at runtime, no need to re-read)
-let _gatewayToolsCache: string | null = null;
-// Cache filtered versions keyed by sorted disallowed list
-const _filteredCache = new Map<string, string>();
+export function getGatewayToolsPrompt(disallowed?: readonly string[]): string {
+  return buildGatewayToolCatalog({
+    surface: 'multi-agent-generic',
+    allowedTools: ['*'],
+    blockedTools: disallowed,
+    privateConnectorPolicy: DEFAULT_PRIVATE_CONNECTOR_POLICY,
+  }).prompt;
+}
 
-export function getGatewayToolsPrompt(disallowed?: string[]): string {
-  if (!_gatewayToolsCache) {
-    const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
-    if (existsSync(gatewayToolsPath)) {
-      _gatewayToolsCache = readFileSync(gatewayToolsPath, 'utf-8');
-    } else {
-      logger.warn('gateway-tools.md not found, using registry fallback');
-      _gatewayToolsCache = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
-    }
-  }
-
-  if (!disallowed?.length) return _gatewayToolsCache;
-
-  const cacheKey = [...disallowed].sort().join(',');
-  let filtered = _filteredCache.get(cacheKey);
-  if (!filtered) {
-    filtered = _gatewayToolsCache;
-    for (const tool of disallowed) {
-      filtered = filtered.replace(new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm'), '');
-    }
-    _filteredCache.set(cacheKey, filtered);
-  }
-  return filtered;
+function getRunGatewayToolsPrompt(
+  context: AgentContext | undefined,
+  disallowed: readonly string[] | undefined
+): string {
+  return buildGatewayToolCatalog({
+    surface: context
+      ? resolvePrivatePrincipalSurface({ agentContext: context })
+      : 'multi-agent-generic',
+    allowedTools: context?.role.allowedTools ?? ['*'],
+    blockedTools: [...(context?.role.blockedTools ?? []), ...(disallowed ?? [])],
+    privateConnectorPolicy: DEFAULT_PRIVATE_CONNECTOR_POLICY,
+  }).prompt;
 }
 
 const CANONICAL_CODE_ACT_HEADING = '## Code-Act: Gateway Tool Execution via Sandbox';
@@ -442,29 +446,24 @@ function stripGenericGatewayToolsCatalog(systemPrompt: string): string {
     GENERATED_GATEWAY_TOOLS_START,
     GENERATED_GATEWAY_TOOLS_END
   );
-  const headingPattern = /^#{1,6}\s+Gateway Tools\s*$/gm;
-  let catalogStart = -1;
-  let match: RegExpExecArray | null;
-  while ((match = headingPattern.exec(withoutMarked)) !== null) {
-    catalogStart = match.index;
-  }
+  const generatedCatalog = getGatewayToolsPrompt();
+  const catalogStart = withoutMarked.lastIndexOf(generatedCatalog);
   if (catalogStart < 0) {
     return withoutMarked;
   }
 
-  const catalog = withoutMarked.slice(catalogStart);
-  if (!catalog.includes('Call tools via JSON block:') || !catalog.includes('```tool_call')) {
+  const catalogEnd = catalogStart + generatedCatalog.length;
+  const startsAtLayerBoundary =
+    catalogStart === 0 ||
+    /\r?\n\r?\n---[ \t]*\r?\n\r?\n$/.test(withoutMarked.slice(0, catalogStart));
+  const endsAtLayerBoundary =
+    catalogEnd === withoutMarked.length ||
+    /^\r?\n\r?\n---[ \t]*\r?\n\r?\n/.test(withoutMarked.slice(catalogEnd));
+  if (!startsAtLayerBoundary || !endsAtLayerBoundary) {
     return withoutMarked;
   }
 
-  const generatedCatalog = getGatewayToolsPrompt();
-  if (withoutMarked.startsWith(generatedCatalog, catalogStart)) {
-    return removePromptSection(withoutMarked, catalogStart, catalogStart + generatedCatalog.length);
-  }
-
-  const boundedSeparator = catalog.match(/\r?\n\r?\n---[ \t]*\r?\n\r?\n/);
-  const sectionEnd = boundedSeparator?.index ?? catalog.length;
-  return removePromptSection(withoutMarked, catalogStart, catalogStart + sectionEnd);
+  return removePromptSection(withoutMarked, catalogStart, catalogEnd);
 }
 
 function stripTrailingCanonicalCodeActSection(systemPrompt: string): string {
@@ -789,7 +788,10 @@ export class AgentLoop {
         );
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else if (!this.useCodeAct && backend !== 'codex') {
-        const gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
+        const gatewayToolsPrompt = getRunGatewayToolsPrompt(
+          options.agentContext,
+          this.disallowedTools
+        );
         if (gatewayToolsPrompt) {
           promptLayers.push({
             name: 'gatewayTools',
@@ -1160,6 +1162,13 @@ export class AgentLoop {
       throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
+    if (options?.agentContext) {
+      options = {
+        ...options,
+        agentContext: this.mcpExecutor.projectPrivateAgentContext(options.agentContext),
+      };
+    }
+
     const runScope: RunScope = {
       streamCallbacks: options?.streamCallbacks,
       tier: 1,
@@ -1422,16 +1431,29 @@ export class AgentLoop {
         } else if (this.isGatewayMode && !isCodex) {
           baseSystemPrompt = stripDisabledCodeActGuidance(baseSystemPrompt);
           if (!isResumingSession) {
-            // Non-CodeAct callers may already embed the generic gateway catalog.
-            const alreadyHasTools =
-              baseSystemPrompt.includes('# Gateway Tools') ||
-              baseSystemPrompt.includes('# Code Execution') ||
-              baseSystemPrompt.includes('## Code-Act');
-            if (!alreadyHasTools) {
-              gatewayToolsPrompt = wrapGeneratedPromptSection(
-                'gatewayTools',
-                getGatewayToolsPrompt(this.disallowedTools)
-              );
+            if (options?.gatewayToolsPrompt !== undefined) {
+              // A short-lived caller may carry a more specific final policy than
+              // the process-wide default. Replace the host-generated constructor
+              // catalog with that exact policy-keyed catalog for this run.
+              baseSystemPrompt = stripGenericGatewayToolsCatalog(baseSystemPrompt);
+              if (options.gatewayToolsPrompt) {
+                gatewayToolsPrompt = wrapGeneratedPromptSection(
+                  'gatewayTools',
+                  options.gatewayToolsPrompt
+                );
+              }
+            } else {
+              // Non-CodeAct callers may already embed the generic gateway catalog.
+              const alreadyHasTools =
+                baseSystemPrompt.includes('# Gateway Tools') ||
+                baseSystemPrompt.includes('# Code Execution') ||
+                baseSystemPrompt.includes('## Code-Act');
+              if (!alreadyHasTools) {
+                gatewayToolsPrompt = wrapGeneratedPromptSection(
+                  'gatewayTools',
+                  getRunGatewayToolsPrompt(options?.agentContext, this.disallowedTools)
+                );
+              }
             }
           }
         }
@@ -1476,7 +1498,11 @@ export class AgentLoop {
       };
 
       let perCallSystemPrompt: string;
-      if (options?.systemPrompt || (this.isGatewayMode && this.useCodeAct)) {
+      if (
+        options?.systemPrompt ||
+        options?.gatewayToolsPrompt !== undefined ||
+        (this.isGatewayMode && this.useCodeAct)
+      ) {
         perCallSystemPrompt = prepareSystemPrompt(
           options?.systemPrompt,
           options?.resumeSession === true
@@ -2245,6 +2271,9 @@ export class AgentLoop {
         ...(options?.sourceTurnId ? { sourceTurnId: options.sourceTurnId } : {}),
         ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
         ...(resolvedCliSessionId ? { cliSessionId: resolvedCliSessionId } : {}),
+        ...(options?.workorderAttemptId !== undefined
+          ? { workorderAttemptId: options.workorderAttemptId }
+          : {}),
       },
     };
   }

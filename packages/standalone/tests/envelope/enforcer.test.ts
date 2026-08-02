@@ -111,12 +111,15 @@ describe('EnvelopeEnforcer', () => {
     ).not.toThrow();
   });
 
-  it('rejects kagemusha_messages when kagemusha is outside raw_connectors', () => {
-    const env = makeEnvelope();
+  it.each([
+    'kagemusha_overview',
+    'kagemusha_entities',
+    'kagemusha_tasks',
+    'kagemusha_messages',
+  ] as const)('TG-04: denies %s without an enabled private raw scope', (tool) => {
+    const input = tool === 'kagemusha_messages' ? { channelId: 'room:1' } : {};
 
-    expect(() =>
-      enforcer.check(env, 'kagemusha_messages', { channelId: 'room:1', search: 'x' })
-    ).toThrow(EnvelopeViolation);
+    expect(() => enforcer.check(makeEnvelope(), tool, input)).toThrow(/connector_out_of_scope/);
   });
 
   it('allows kagemusha_messages when kagemusha is inside raw_connectors', () => {

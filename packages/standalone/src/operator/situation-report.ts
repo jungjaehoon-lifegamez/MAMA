@@ -20,11 +20,16 @@ import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
+import {
+  isArtifactProvenance,
+  type ArtifactProvenance,
+  type ReportCarryTarget,
+} from './report-carry.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
- * report from a digest for tool-use auditing (report-run.ts). Kagemusha frames its scheduled full
- * report with the same bracketed-tag convention (report-prompts.ts buildFullReportPrompt).
+ * report from a digest for tool-use auditing (report-run.ts). The bracketed tag keeps framing
+ * source-neutral while remaining machine-readable.
  */
 export const OPERATOR_FULL_REPORT_TAG = '[operator_full_report]';
 
@@ -43,6 +48,27 @@ export interface PreparedSituationReport {
   citedTriggerIds: string[];
   createdAtIso: string;
   deliveryId?: string;
+  provenance?: ArtifactProvenance;
+  target?: ReportCarryTarget;
+  payloadIdentity?: string;
+  occurrence?: {
+    kind: 'digest' | 'scheduled_full' | 'on_demand_full';
+    hourKey?: string;
+    firedAtIso?: string;
+  };
+}
+
+export interface DeliveredFullReport {
+  mode: 'full';
+  deliveryId: string;
+  citedTriggerIds: string[];
+  createdAtIso: string;
+  deliveredAtIso: string;
+  text: string;
+  provenance: ArtifactProvenance;
+  target?: ReportCarryTarget;
+  payloadIdentity?: string;
+  occurrence?: PreparedSituationReport['occurrence'];
 }
 
 /** Deterministic prompt-size bounds (mind memory + prompt length; see plan design decision 4). */
@@ -89,8 +115,8 @@ export interface SituationReporterOptions {
   /**
    * M2.3: tool-call instructions injected into the FULL report framing so the agent
    * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
-   * lesson from Kagemusha, whose report prompt instructs its agent to call its tools
-   * (and which deleted its deterministic report builder for low quality). The lines
+   * lesson from the reference owner console: report prompts instruct the agent to call tools
+   * instead of relying on a low-quality deterministic report builder. The lines
    * are injected from the runtime wiring (which knows the daemon's toolset); this
    * module stays generic. Digest mode never uses them (frequent + must stay light).
    *
@@ -100,7 +126,7 @@ export interface SituationReporterOptions {
    */
   selfGatherLines?: string[] | (() => string[]);
   /**
-   * Kagemusha dual-output mechanism: lines instructing the FULL report run to also
+   * Dual-output mechanism: lines instructing the FULL report run to also
    * publish the operator board slots (report_publish) before writing the text
    * report. Injected from runtime wiring (board-slot-instructions.ts); digest mode
    * never publishes the board.
@@ -114,12 +140,10 @@ export interface SituationReporterOptions {
    * of being elimination-only. Uncited fires stay NEUTRAL - not failures.
    */
   recordTriggerUse?: (triggerIds: string[]) => void;
-  /**
-   * Context carry (plan v6 S1-T4): called with (deliveredAtIso, reportText)
-   * after a FULL report is successfully delivered. Runtime wiring persists it
-   * so the owner console can reference the latest report per chat turn.
-   */
-  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
+  /** Reads the provenance of the run that just composed a FULL report. */
+  fullReportProvenance?: () => ArtifactProvenance;
+  /** Called only after a FULL report has definitely been delivered. */
+  persistLastFullReport?: (report: DeliveredFullReport) => void;
 }
 
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
@@ -322,12 +346,24 @@ export class SituationReporter {
       return null;
     }
 
+    const provenance =
+      mode === 'full'
+        ? (this.opts.fullReportProvenance?.() ?? {
+            status: 'unavailable' as const,
+            reason: 'no_run_handle' as const,
+          })
+        : undefined;
+    if (provenance !== undefined && !isArtifactProvenance(provenance)) {
+      throw new Error('Full owner report provenance is invalid');
+    }
+
     return {
       mode,
       text,
       citedTriggerIds: cited,
       createdAtIso: new Date().toISOString(),
       ...(deliveryId ? { deliveryId } : {}),
+      ...(provenance ? { provenance } : {}),
     };
   }
 
@@ -350,20 +386,36 @@ export class SituationReporter {
     if (prepared.citedTriggerIds.length > 0) {
       this.opts.recordTriggerUse?.(prepared.citedTriggerIds);
     }
-    // Context carry (plan v6 S1-T4): persist the DELIVERED full report so the
-    // chat console can reference "the report you just got" instead of
-    // fabricating one. Same success condition as the delta anchor.
+    // TG-06: persist carry only after the external send succeeds. The prepared
+    // artifact, not mutable process state, owns both the delivery ID and run provenance.
     if (prepared.mode === 'full') {
-      try {
-        this.opts.persistLastFullReport?.(new Date().toISOString(), prepared.text);
-      } catch (error) {
-        // Carry is derived state - persistence failure must not fail the
-        // delivered report, but it must be loud.
-        console.warn(
-          `[situation-report] failed to persist last full report for context carry: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+      if (!prepared.deliveryId) {
+        console.warn('[situation-report] skipped full-report carry: missing delivery id');
+      } else if (!prepared.provenance) {
+        console.warn('[situation-report] skipped full-report carry: missing provenance');
+      } else {
+        const report: DeliveredFullReport = {
+          mode: 'full',
+          deliveryId: prepared.deliveryId,
+          citedTriggerIds: [...prepared.citedTriggerIds],
+          createdAtIso: prepared.createdAtIso,
+          deliveredAtIso: new Date().toISOString(),
+          text: prepared.text,
+          provenance: prepared.provenance,
+          ...(prepared.target ? { target: prepared.target } : {}),
+          ...(prepared.payloadIdentity ? { payloadIdentity: prepared.payloadIdentity } : {}),
+          ...(prepared.occurrence ? { occurrence: prepared.occurrence } : {}),
+        };
+        try {
+          this.opts.persistLastFullReport?.(report);
+        } catch (error) {
+          // Carry is derived state - persistence failure must not fail the delivered report.
+          console.warn(
+            `[situation-report] failed to persist last full report for context carry: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
     }
     this.reset();
@@ -450,7 +502,7 @@ export class SituationReporter {
             'Emit each call as a fenced tool_call JSON block and wait for the result before',
             'the next call. The block format is exactly:',
             '```tool_call',
-            '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
+            '{"name": "task_list", "input": {"status": "in_progress"}}',
             '```',
             'Gather with these gateway tool calls:',
             ...gatherLines.map((line) => `- ${line}`),
@@ -512,7 +564,7 @@ export class SituationReporter {
       'before the owner sees the report.',
       'Reply in the language the owner uses on these channels if you can tell; otherwise English.',
       // Local wall-clock, not UTC: the first live report stamped itself in UTC because the
-      // agent had no local time reference (Kagemusha injects local time the same way).
+      // agent had no local time reference; inject the runtime's local wall clock explicitly.
       `Current local time: ${new Date().toLocaleString()}. Use LOCAL time in the report, never UTC.`,
       '',
       'Window (per channel; excerpts truncated):',

@@ -23,6 +23,8 @@ export interface ConnectorEventIndexRecord {
   artifact_locator: string | null;
   artifact_title: string | null;
   content_hash: Buffer;
+  operator_ingest_seq: number;
+  operator_observation_seq: number;
   indexed_at: string;
   updated_at: string;
   expires_at: string | null;

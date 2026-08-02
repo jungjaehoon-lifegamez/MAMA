@@ -3,6 +3,7 @@
  */
 
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
@@ -24,14 +25,46 @@ import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.j
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { ReactiveEnvelopeConfig } from '../../src/envelope/reactive-config.js';
 import type { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import type { AgentLoopOptions } from '../../src/agent/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
+import {
+  PRIVATE_PROMPT_OVERLAY_END,
+  PRIVATE_PROMPT_OVERLAY_START,
+} from '../../src/connectors/private-prompt-overlay.js';
+import {
+  consoleBriefPath,
+  projectConsoleBriefForPrompt,
+} from '../../src/operator/console-brief.js';
+import { FileReportCarryStore, type ReportCarryPort } from '../../src/operator/report-carry.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-message-router-'));
 const testMamaHome = join(testHome, '.mama');
 const testSoulPath = join(testMamaHome, 'SOUL.md');
 
+function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
+
 beforeAll(() => {
   mkdirSync(testMamaHome, { recursive: true });
+  mkdirSync(join(testMamaHome, 'briefs'), { recursive: true });
   writeFileSync(testSoulPath, '# Synthetic test persona\n', { mode: 0o600 });
   process.env.HOME = testHome;
 });
@@ -546,6 +579,91 @@ describe('MessageRouter', () => {
       expect(rebuiltPrompt?.length).toBeGreaterThan(receivedOptions[1]?.systemPrompt?.length ?? 0);
     });
 
+    it.each([
+      {
+        label: 'disabled to enabled',
+        firstPolicy: privatePolicy(false),
+        secondPolicy: privatePolicy(true),
+        expectPrivateDefinitions: true,
+      },
+      {
+        label: 'enabled to disabled',
+        firstPolicy: privatePolicy(true),
+        secondPolicy: privatePolicy(false),
+        expectPrivateDefinitions: false,
+      },
+    ])(
+      'TG-05 requests continuation and rebuilds the current private policy for $label',
+      async ({ firstPolicy, secondPolicy, expectPrivateDefinitions }) => {
+        const channelId = `owner-policy-${expectPrivateDefinitions ? 'enable' : 'disable'}-${Date.now()}`;
+        resetRoleManager();
+        getRoleManager({ rolesConfig: DEFAULT_ROLES }).setTelegramTrust([channelId]);
+        const receivedOptions: Array<{
+          resumeSession?: boolean;
+          sessionPolicyFingerprint?: string;
+          freshSessionSystemPrompt?: () => Promise<string>;
+        }> = [];
+        const agentLoop = {
+          run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+            receivedOptions.push(options ?? {});
+            return { response: 'Response' };
+          }),
+        };
+        const firstRouter = new MessageRouter(
+          sessionStore,
+          agentLoop,
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: firstPolicy }
+        );
+        const secondRouter = new MessageRouter(
+          sessionStore,
+          agentLoop,
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: secondPolicy }
+        );
+        const message: NormalizedMessage = {
+          source: 'telegram',
+          channelId,
+          userId: 'owner-id',
+          text: 'status',
+          metadata: { chatType: 'private' },
+        };
+
+        try {
+          await firstRouter.process(message);
+          await secondRouter.process({ ...message, text: 'continue' });
+
+          expect(receivedOptions[1]?.resumeSession).toBe(true);
+          expect(receivedOptions[1]?.sessionPolicyFingerprint).not.toBe(
+            receivedOptions[0]?.sessionPolicyFingerprint
+          );
+          const rebuilt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
+          expect(rebuilt).toBeDefined();
+          if (expectPrivateDefinitions) {
+            expect(rebuilt).toContain('kagemusha_overview');
+            expect(rebuilt).toContain('kagemusha_entities');
+            expect(rebuilt).toContain('kagemusha_tasks');
+            expect(rebuilt).toContain('kagemusha_messages');
+            expect(rebuilt).toContain('Private business data');
+          } else {
+            expect(rebuilt).not.toContain('**kagemusha_overview**');
+            expect(rebuilt).not.toContain('**kagemusha_entities**');
+            expect(rebuilt).not.toContain('**kagemusha_tasks**');
+            expect(rebuilt).not.toContain('**kagemusha_messages**');
+            expect(rebuilt).not.toContain('Private business data');
+          }
+        } finally {
+          resetRoleManager();
+        }
+      }
+    );
+
     it('keeps a host-verified attachment path when rebuilding after a long Telegram caption', async () => {
       getRoleManager().setTelegramTrust(['attachment-reset']);
       const receivedOptions: Array<{
@@ -790,6 +908,111 @@ describe('MessageRouter', () => {
       }
     });
 
+    it('TG-05 preserves spoofed markers, unrelated paths, and unrelated canonicity in the final prompt', async () => {
+      resetRoleManager();
+      const ownerChannelId = 'synthetic-owner-private-cleanup';
+      getRoleManager().setTelegramTrust([ownerChannelId]);
+      const rawBrief = [
+        '# Owner Console Operating Brief',
+        '',
+        `${PRIVATE_PROMPT_OVERLAY_START}`,
+        'user-authored marker body',
+        `${PRIVATE_PROMPT_OVERLAY_END}`,
+        '',
+        'Use /workspace/kagemusha-logo.svg as an unrelated report asset.',
+        'Artifact canonicity: preserve the Kagemusha migration record.',
+        '',
+      ].join('\n');
+      writeFileSync(consoleBriefPath(testHome), rawBrief, { mode: 0o600 });
+      let systemPrompt = '';
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        { backend: 'claude' },
+        undefined,
+        undefined,
+        { privateConnectorPolicy: privatePolicy(false) }
+      );
+
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId: ownerChannelId,
+          userId: ownerChannelId,
+          text: 'What is the status?',
+          metadata: { chatType: 'private' },
+        });
+
+        expect(systemPrompt).toContain(
+          `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker body\n${PRIVATE_PROMPT_OVERLAY_END}`
+        );
+        expect(systemPrompt).toContain('/workspace/kagemusha-logo.svg');
+        expect(systemPrompt).toContain(
+          'Artifact canonicity: preserve the Kagemusha migration record.'
+        );
+        expect(systemPrompt).not.toContain('[disabled private connector]');
+      } finally {
+        rmSync(consoleBriefPath(testHome), { force: true });
+        resetRoleManager();
+      }
+    });
+
+    it.each([
+      ['enabled', true, 1],
+      ['disabled', false, 0],
+    ] as const)(
+      'TG-05 keeps a legitimate generated overlay %s exactly once in the final Claude prompt',
+      async (_label, enabled, expectedDefinitions) => {
+        resetRoleManager();
+        const ownerChannelId = `synthetic-owner-generated-overlay-${String(enabled)}`;
+        getRoleManager().setTelegramTrust([ownerChannelId]);
+        const generatedOverlay = projectConsoleBriefForPrompt('', privatePolicy(true)).trim();
+        writeFileSync(
+          consoleBriefPath(testHome),
+          `# Owner Console Operating Brief\n\n${generatedOverlay}\n`,
+          { mode: 0o600 }
+        );
+        let systemPrompt = '';
+        const customRouter = new MessageRouter(
+          sessionStore,
+          {
+            run: vi.fn(async (_prompt, options) => {
+              systemPrompt = options?.systemPrompt ?? '';
+              return { response: 'Response' };
+            }),
+          },
+          createMockMamaApi(mockDecisions),
+          { backend: 'claude' },
+          undefined,
+          undefined,
+          { privateConnectorPolicy: privatePolicy(enabled) }
+        );
+
+        try {
+          await customRouter.process({
+            source: 'telegram',
+            channelId: ownerChannelId,
+            userId: ownerChannelId,
+            text: 'What is the status?',
+            metadata: { chatType: 'private' },
+          });
+
+          expect(systemPrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
+            expectedDefinitions
+          );
+        } finally {
+          rmSync(consoleBriefPath(testHome), { force: true });
+          resetRoleManager();
+        }
+      }
+    );
+
     it('keeps the owner operating discipline out of the onboarding conversation', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-owner-onboarding';
@@ -902,6 +1125,57 @@ describe('MessageRouter', () => {
         resetRoleManager();
       }
     });
+
+    it.each([
+      {
+        label: 'generic Telegram group',
+        channelId: 'synthetic-private-scope-group',
+        chatType: 'group',
+        expected: ['telegram', 'trello'],
+      },
+      {
+        label: 'verified owner DM',
+        channelId: 'synthetic-private-scope-owner',
+        chatType: 'private',
+        expected: ['telegram', 'kagemusha', 'trello'],
+      },
+    ] as const)(
+      'TG-01/TG-05/TG-06 projects private raw connector scope for a $label',
+      async ({ channelId, chatType, expected }) => {
+        resetRoleManager();
+        getRoleManager().setTelegramTrust(['synthetic-private-scope-owner']);
+        const envelopeRuntime = makeEnvelopeRuntime(['telegram', 'kagemusha', 'trello']);
+        let rawConnectors: readonly string[] | undefined;
+        const customRouter = new MessageRouter(
+          sessionStore,
+          {
+            run: vi.fn(async (_prompt, options) => {
+              rawConnectors = options?.envelope?.scope.raw_connectors;
+              return { response: 'Response' };
+            }),
+          },
+          createMockMamaApi(mockDecisions),
+          { backend: 'codex' },
+          envelopeRuntime.config,
+          envelopeRuntime.authority,
+          { privateConnectorPolicy: privatePolicy(true) }
+        );
+
+        try {
+          await customRouter.process({
+            source: 'telegram',
+            channelId,
+            userId: channelId,
+            text: 'Check the private project connector',
+            metadata: { chatType },
+          });
+
+          expect(rawConnectors).toEqual(expected);
+        } finally {
+          resetRoleManager();
+        }
+      }
+    );
 
     it('keeps owner connector trust boundaries during first-run onboarding', async () => {
       resetRoleManager();
@@ -1631,6 +1905,584 @@ describe('MessageRouter', () => {
       const result = await agentLoop.run('Hello');
       expect(result.response).toBe('Echo: Hello');
     });
+  });
+});
+
+describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
+  it('injects the report once into a verified owner continuation and acknowledges only after persistence', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    const target = { source: 'telegram', channelId: 'owner-chat' } as const;
+    carry.persistDelivered({
+      deliveryId: 'delivery-a',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'the owner report',
+      provenance: { status: 'available', modelRunId: 'report-run-a' },
+    });
+    const prompts: string[] = [];
+    const options: AgentLoopOptions[] = [];
+    const agentLoop = {
+      async run(prompt: string, runOptions?: AgentLoopOptions): Promise<{ response: string }> {
+        prompts.push(prompt);
+        if (runOptions) {
+          options.push(runOptions);
+        }
+        return { response: 'owner response' };
+      },
+    };
+
+    resetRoleManager();
+    getRoleManager().setTelegramTrust(['owner-chat']);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: 'owner-chat',
+        userId: 'owner',
+        text: 'first',
+        metadata: { chatType: 'private' },
+      });
+      await router.process({
+        source: 'telegram',
+        channelId: 'owner-chat',
+        userId: 'owner',
+        text: 'second',
+        metadata: { chatType: 'private' },
+      });
+
+      expect(prompts[0]).toContain('operator-report-carry');
+      expect(prompts[1]).not.toContain('operator-report-carry');
+      expect(options[1]?.resumeSession).toBe(true);
+      expect(options[1]?.systemPrompt).not.toContain('## Instructions');
+      expect(carry.peek(target)).toBeNull();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('leaves carry available after a model failure', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'model-failure-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-model-failure',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'retry this report',
+      provenance: { status: 'available', modelRunId: 'report-run-model-failure' },
+    });
+    const prompts: string[] = [];
+    let attempts = 0;
+    const agentLoop = {
+      async run(prompt: string): Promise<{ response: string }> {
+        prompts.push(prompt);
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('synthetic model failure');
+        }
+        return { response: 'recovered' };
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      const message: NormalizedMessage = {
+        source: 'telegram',
+        channelId: target.channelId,
+        userId: 'owner',
+        text: 'continue',
+        metadata: { chatType: 'private' },
+      };
+      await expect(router.process(message)).rejects.toThrow('synthetic model failure');
+      await router.process(message);
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain('operator-report-carry');
+      expect(prompts[1]).toContain('operator-report-carry');
+      expect(carry.peek(target)).toBeNull();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('leaves carry available when final assistant persistence fails', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'persistence-failure-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-persistence-failure',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'persist this report',
+      provenance: { status: 'available', modelRunId: 'report-run-persistence-failure' },
+    });
+    const flush = vi.spyOn(sessionStore, 'flushStreamingResponse').mockReturnValue(false);
+    const append = vi.spyOn(sessionStore, 'appendMessage').mockReturnValue(false);
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await expect(
+        router.process({
+          source: 'telegram',
+          channelId: target.channelId,
+          userId: 'owner',
+          text: 'persist',
+          metadata: { chatType: 'private' },
+        })
+      ).rejects.toThrow('Unable to persist final assistant response');
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-persistence-failure');
+    } finally {
+      flush.mockRestore();
+      append.mockRestore();
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('leaves carry available when final assistant persistence throws', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'persistence-throw-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-persistence-throw',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'throw while persisting',
+      provenance: { status: 'available', modelRunId: 'report-run-persistence-throw' },
+    });
+    const originalAppend = sessionStore.appendMessage.bind(sessionStore);
+    const flush = vi.spyOn(sessionStore, 'flushStreamingResponse').mockReturnValue(false);
+    const append = vi
+      .spyOn(sessionStore, 'appendMessage')
+      .mockImplementation((sessionId, message) => {
+        if (message.role === 'assistant') {
+          throw new Error('synthetic final persistence failure');
+        }
+        return originalAppend(sessionId, message);
+      });
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await expect(
+        router.process({
+          source: 'telegram',
+          channelId: target.channelId,
+          userId: 'owner',
+          text: 'persist',
+          metadata: { chatType: 'private' },
+        })
+      ).rejects.toThrow('synthetic final persistence failure');
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-persistence-throw');
+    } finally {
+      flush.mockRestore();
+      append.mockRestore();
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('does not consume a target-scoped carry for an unverified or different Telegram turn', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'verified-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-gated',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'private report',
+      provenance: { status: 'available', modelRunId: 'report-run-gated' },
+    });
+    const prompts: string[] = [];
+    const agentLoop = createMockAgentLoop((prompt) => {
+      prompts.push(prompt);
+      return 'response';
+    });
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: 'other-chat',
+        userId: 'other',
+        text: 'untrusted',
+        metadata: { chatType: 'private' },
+      });
+      await router.process({
+        source: 'telegram',
+        channelId: target.channelId,
+        userId: 'owner',
+        text: 'group owner',
+        metadata: { chatType: 'group' },
+      });
+
+      expect(prompts.every((prompt) => !prompt.includes('operator-report-carry'))).toBe(true);
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-gated');
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('does not peek carry before Telegram owner-console verification', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const reportCarry: ReportCarryPort = {
+      peek: vi.fn(() => ({ deliveryId: 'must-not-read', prefix: 'must-not-read' })),
+      acknowledge: vi.fn(() => true),
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust(['trusted-owner']);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: 'other-chat',
+        userId: 'other',
+        text: 'untrusted',
+        metadata: { chatType: 'private' },
+      });
+      await router.process({
+        source: 'telegram',
+        channelId: 'trusted-owner',
+        userId: 'owner',
+        text: 'group turn',
+        metadata: { chatType: 'group' },
+      });
+
+      expect(reportCarry.peek).not.toHaveBeenCalled();
+      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('preserves a concurrently delivered report when acknowledgement uses a stale delivery id', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'concurrent-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-a',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'report A',
+      provenance: { status: 'available', modelRunId: 'report-run-a' },
+    });
+    const agentLoop = {
+      async run(): Promise<{ response: string }> {
+        carry.persistDelivered({
+          deliveryId: 'delivery-b',
+          target,
+          deliveredAt: new Date().toISOString(),
+          text: 'report B',
+          provenance: { status: 'available', modelRunId: 'report-run-b' },
+        });
+        return { response: 'response' };
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: target.channelId,
+        userId: 'owner',
+        text: 'use report A',
+        metadata: { chatType: 'private' },
+      });
+
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-b');
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('injects carry through the multimodal effective user message', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'multimodal-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-multimodal',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'multimodal report',
+      provenance: { status: 'available', modelRunId: 'report-run-multimodal' },
+    });
+    const received: ContentBlock[][] = [];
+    const agentLoop = {
+      async run(): Promise<{ response: string }> {
+        throw new Error('text path must not run');
+      },
+      async runWithContent(blocks: ContentBlock[]): Promise<{ response: string }> {
+        received.push(blocks);
+        return { response: 'multimodal response' };
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry: carry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: target.channelId,
+        userId: 'owner',
+        text: 'caption',
+        metadata: { chatType: 'private' },
+        contentBlocks: [{ type: 'text', text: 'caption' }],
+      });
+
+      expect(received[0]?.[0]).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('operator-report-carry'),
+      });
+      expect(carry.peek(target)).toBeNull();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('logs acknowledgement failure without failing a persisted owner turn', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'ack-failure-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-ack-failure',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'ack failure report',
+      provenance: { status: 'available', modelRunId: 'report-run-ack-failure' },
+    });
+    const reportCarry: ReportCarryPort = {
+      peek: carry.peek.bind(carry),
+      acknowledge: () => {
+        throw new Error('synthetic acknowledgement failure');
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([target.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await expect(
+        router.process({
+          source: 'telegram',
+          channelId: target.channelId,
+          userId: 'owner',
+          text: 'ack',
+          metadata: { chatType: 'private' },
+        })
+      ).resolves.toMatchObject({ outcome: 'completed' });
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-ack-failure');
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('acknowledges the immutable target captured before an agent mutates the message', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const originalTarget = { source: 'telegram', channelId: 'immutable-owner' } as const;
+    const mutatedTarget = { source: 'telegram', channelId: 'mutated-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-immutable',
+      target: originalTarget,
+      deliveredAt: new Date().toISOString(),
+      text: 'original report',
+      provenance: { status: 'available', modelRunId: 'report-run-immutable' },
+    });
+    const reportCarry: ReportCarryPort = {
+      peek: carry.peek.bind(carry),
+      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
+    };
+    const message: NormalizedMessage = {
+      source: 'telegram',
+      channelId: originalTarget.channelId,
+      userId: 'owner',
+      text: 'use original report',
+      metadata: { chatType: 'private' },
+    };
+    const agentLoop = {
+      async run(): Promise<{ response: string }> {
+        message.source = 'discord';
+        message.channelId = mutatedTarget.channelId;
+        return { response: 'response' };
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([originalTarget.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process(message);
+
+      expect(reportCarry.acknowledge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryId: 'delivery-immutable',
+          target: originalTarget,
+          consumingChannelKey: 'telegram:immutable-owner',
+        })
+      );
+      expect(carry.peek(originalTarget)).toBeNull();
+      expect(carry.peek(mutatedTarget)).toBeNull();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('does not peek, prefix, acknowledge, or consume Telegram carry on a Discord turn', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'telegram-owner-only' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-non-telegram',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'Telegram-only report',
+      provenance: { status: 'available', modelRunId: 'report-run-non-telegram' },
+    });
+    const reportCarry: ReportCarryPort = {
+      peek: vi.fn(carry.peek.bind(carry)),
+      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
+    };
+    const prompts: string[] = [];
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop((prompt) => {
+        prompts.push(prompt);
+        return 'response';
+      }),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process({
+        source: 'discord',
+        channelId: 'discord-owner',
+        userId: 'owner',
+        text: 'discord request',
+      });
+
+      expect(reportCarry.peek).not.toHaveBeenCalled();
+      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
+      expect(prompts[0]).not.toContain('operator-report-carry');
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-non-telegram');
+    } finally {
+      sessionStore.close();
+    }
   });
 });
 

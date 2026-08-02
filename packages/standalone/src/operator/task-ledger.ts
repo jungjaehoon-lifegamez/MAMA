@@ -21,6 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
+import { applyOperatorTaskExternalLifecycleMigration } from '../db/migrations/operator-task-external-lifecycle.js';
 import {
   changeCoverage,
   ensureEffectLedger,
@@ -50,6 +51,15 @@ import {
   temporalGenerationKey,
   type TemporalState,
 } from './task-temporal.js';
+import type {
+  BindingCandidate,
+  CandidateTaskSnapshot,
+  ExistingExternalBindingSnapshot,
+  LifecycleCandidate,
+  TaskHintLookup,
+} from './external-lifecycle.js';
+import { validateExternalLifecycleDecision } from './external-lifecycle-candidates.js';
+import { validateWorkOrderPayload } from './workorder-publishers.js';
 
 export const TASK_STATUSES = [
   'pending',
@@ -154,6 +164,12 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
+   * Host-issued board work-order attempt. This is deliberately separate from
+   * agent-authored update input: it lets the ledger enforce candidate-scoped
+   * mutation rules for direct and nested gateway execution alike.
+   */
+  workOrderAttemptId?: number;
+  /**
    * WHY an id-less change happened (S2 closed set). Ignored when
    * causeEventIds carry - ids always mean 'event'. Callers state it;
    * the ledger's only fallback is 'owner_message' (the human-adjacent
@@ -169,6 +185,38 @@ export interface ChangeOrigin {
    * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
    */
   causeEventIds?: readonly string[];
+}
+
+export interface ExternalTaskBinding {
+  id: number;
+  revision: number;
+  taskId: number;
+  connector: 'kagemusha';
+  sourceType: 'kanban_card';
+  externalSourceId: string;
+  lastObservationSeq: number;
+  createdByAttemptId: number;
+}
+
+export interface ExternalBindingReceipt {
+  kind: 'binding';
+  candidateId: string;
+  workOrderAttemptId: number;
+  taskId: number;
+  outcome: 'bound' | 'declined' | 'superseded';
+  reason: string;
+  bindingId?: number;
+}
+
+export interface ExternalLifecycleReceipt {
+  kind: 'lifecycle';
+  candidateId: string;
+  workOrderAttemptId: number;
+  taskId: number;
+  outcome: 'applied' | 'retained' | 'superseded';
+  reason: string;
+  taskRevisionBefore: number;
+  taskRevisionAfter: number;
 }
 
 export type TemporalGenerationDisposition =
@@ -216,6 +264,13 @@ export type TemporalWorkFailureResult =
       retrySuppressed?: boolean;
     }
   | { disposition: 'superseded'; attempt: number; maxAttempts: number };
+
+/** Durable receipt view for one candidate-bearing board attempt. */
+export type BoardCandidateAttemptState =
+  | { disposition: 'none' }
+  | { disposition: 'complete'; outcomes: readonly string[] }
+  | { disposition: 'partial'; missingCandidateIds: readonly string[] }
+  | { disposition: 'zero' };
 
 export interface CreateTaskInput {
   title: string;
@@ -551,6 +606,7 @@ export class TaskLedger implements TaskSource {
       }
 
       applyOperatorTaskTemporalMigration(this.db);
+      applyOperatorTaskExternalLifecycleMigration(this.db);
 
       // Old-predicate unique index (no terminal exclusion) -> swap in place.
       const idxRow = this.db
@@ -741,6 +797,692 @@ export class TaskLedger implements TaskSource {
       | TaskRow
       | undefined;
     return row ? this.toRecord(row) : null;
+  }
+
+  /** Returns one active, explicitly receipted external identity for an owner task. */
+  getExternalBinding(taskId: number): ExternalTaskBinding | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, revision, task_id, connector, source_type, external_source_id,
+                last_observation_seq, created_by_attempt_id
+         FROM operator_external_task_bindings
+         WHERE task_id = ? AND active = 1`
+      )
+      .get(taskId) as
+      | {
+          id: number;
+          revision: number;
+          task_id: number;
+          connector: 'kagemusha';
+          source_type: 'kanban_card';
+          external_source_id: string;
+          last_observation_seq: number;
+          created_by_attempt_id: number;
+        }
+      | undefined;
+    return row ? this.externalBindingFromRow(row) : null;
+  }
+
+  /**
+   * Host-only lookup material for immutable external-lifecycle candidates.
+   * The caller supplies exact event/source ids obtained from the connector index;
+   * no connector prose is read through this ledger surface.
+   */
+  getExternalLifecycleCandidateSupport(
+    eventIds: readonly string[],
+    externalSourceIds: readonly string[]
+  ): {
+    taskHints: TaskHintLookup;
+    tasksById: ReadonlyMap<number, CandidateTaskSnapshot>;
+    bindings: readonly ExistingExternalBindingSnapshot[];
+  } {
+    const uniqueEventIds = [...new Set(eventIds)];
+    const uniqueSourceIds = [...new Set(externalSourceIds)];
+    const directTaskIdsByEventId = new Map<string, readonly number[]>();
+    const effectTaskIdsByEventId = new Map<string, readonly number[]>();
+    const bindings: ExistingExternalBindingSnapshot[] = [];
+
+    if (uniqueEventIds.length > 0) {
+      const placeholders = uniqueEventIds.map(() => '?').join(',');
+      const directRows = this.db
+        .prepare(
+          `SELECT source_event_id, id FROM operator_tasks
+           WHERE kind = 'owner' AND source_event_id IN (${placeholders})`
+        )
+        .all(...uniqueEventIds) as Array<{ source_event_id: string; id: number }>;
+      for (const row of directRows) {
+        const ids = directTaskIdsByEventId.get(row.source_event_id) ?? [];
+        directTaskIdsByEventId.set(row.source_event_id, [...ids, row.id]);
+      }
+      const effectRows = this.db
+        .prepare(
+          `SELECT DISTINCT json_each.value AS event_id, evidence_effects.target_id AS task_id
+           FROM evidence_effects, json_each(evidence_effects.source_event_ids_json)
+           WHERE evidence_effects.target_type = 'task'
+             AND json_each.value IN (${placeholders})`
+        )
+        .all(...uniqueEventIds) as Array<{ event_id: string; task_id: string }>;
+      for (const row of effectRows) {
+        const taskId = Number(row.task_id);
+        if (!Number.isSafeInteger(taskId) || taskId < 1) continue;
+        const ids = effectTaskIdsByEventId.get(row.event_id) ?? [];
+        effectTaskIdsByEventId.set(row.event_id, [...ids, taskId]);
+      }
+    }
+
+    if (uniqueSourceIds.length > 0) {
+      const placeholders = uniqueSourceIds.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT id, revision, task_id, connector, source_type, external_source_id,
+                  last_observation_seq
+           FROM operator_external_task_bindings
+           WHERE active = 1 AND connector = 'kagemusha' AND source_type = 'kanban_card'
+             AND external_source_id IN (${placeholders})`
+        )
+        .all(...uniqueSourceIds) as Array<{
+        id: number;
+        revision: number;
+        task_id: number;
+        connector: 'kagemusha';
+        source_type: 'kanban_card';
+        external_source_id: string;
+        last_observation_seq: number;
+      }>;
+      for (const row of rows) {
+        bindings.push({
+          bindingId: row.id,
+          bindingRevision: row.revision,
+          taskId: row.task_id,
+          connector: row.connector,
+          sourceType: row.source_type,
+          externalSourceId: row.external_source_id,
+          lastObservationSeq: row.last_observation_seq,
+        });
+      }
+    }
+
+    const taskIds = new Set<number>();
+    for (const ids of directTaskIdsByEventId.values()) ids.forEach((id) => taskIds.add(id));
+    for (const ids of effectTaskIdsByEventId.values()) ids.forEach((id) => taskIds.add(id));
+    for (const binding of bindings) taskIds.add(binding.taskId);
+    const tasksById = new Map<number, CandidateTaskSnapshot>();
+    if (taskIds.size > 0) {
+      const ids = [...taskIds];
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT id, revision FROM operator_tasks WHERE kind = 'owner' AND id IN (${placeholders})`
+        )
+        .all(...ids) as Array<{ id: number; revision: number }>;
+      for (const row of rows) tasksById.set(row.id, { taskId: row.id, revision: row.revision });
+    }
+    return { taskHints: { directTaskIdsByEventId, effectTaskIdsByEventId }, tasksById, bindings };
+  }
+
+  getReceiptedExternalCandidateIds(candidateIds: readonly string[]): ReadonlySet<string> {
+    const ids = [...new Set(candidateIds)];
+    if (ids.length === 0) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT candidate_id FROM operator_external_binding_receipts WHERE candidate_id IN (${placeholders})
+         UNION
+         SELECT candidate_id FROM operator_external_lifecycle_receipts WHERE candidate_id IN (${placeholders})`
+      )
+      .all(...ids, ...ids) as Array<{ candidate_id: string }>;
+    return new Set(rows.map((row) => row.candidate_id));
+  }
+
+  /**
+   * Recover a candidate only from the payload of the exact currently claimed
+   * board attempt. Revalidate the serialized payload: database bytes are not
+   * a capability merely because they originated in a previous host process.
+   */
+  loadBoardCandidate(
+    attemptId: number,
+    candidateId: string,
+    kind: 'binding' | 'lifecycle'
+  ): BindingCandidate | LifecycleCandidate {
+    const attempt = this.getWorkOrderById(attemptId);
+    if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
+      throw new Error(`external lifecycle candidate requires claimed board attempt ${attemptId}`);
+    }
+    const { attempts: _attempts, ...payload } = attempt.payload;
+    validateWorkOrderPayload('board', payload);
+    if (payload.mode !== 'reconcile' || !payload.candidates) {
+      throw new Error(
+        `external lifecycle candidate ${candidateId} is absent from attempt ${attemptId}`
+      );
+    }
+    const candidatePayload = payload.candidates as {
+      bindingCandidates: readonly BindingCandidate[];
+      lifecycleCandidates: readonly LifecycleCandidate[];
+    };
+    const candidates: readonly (BindingCandidate | LifecycleCandidate)[] =
+      kind === 'binding'
+        ? candidatePayload.bindingCandidates
+        : candidatePayload.lifecycleCandidates;
+    const candidate = candidates.find((value) => value.candidateId === candidateId);
+    if (!candidate) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} is absent from attempt ${attemptId}`
+      );
+    }
+    return candidate;
+  }
+
+  /**
+   * Read the complete, immutable candidate set for a board attempt against
+   * its durable decision receipts. This deliberately works for stale claims
+   * as well as live in-progress attempts: recovery must never infer effects
+   * from a runner result when the database can answer exactly.
+   */
+  inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState {
+    const attempt = this.getWorkOrderById(attemptId);
+    if (!attempt || attempt.workKind !== 'board') {
+      throw new Error(`board candidate inspection requires board attempt ${attemptId}`);
+    }
+    const { attempts: _attempts, ...payload } = attempt.payload;
+    validateWorkOrderPayload('board', payload);
+    if (payload.mode !== 'reconcile' || !payload.candidates) {
+      return { disposition: 'none' };
+    }
+    const candidates = payload.candidates as {
+      bindingCandidates: readonly BindingCandidate[];
+      lifecycleCandidates: readonly LifecycleCandidate[];
+    };
+    const all = [...candidates.bindingCandidates, ...candidates.lifecycleCandidates];
+    if (all.length === 0) {
+      return { disposition: 'none' };
+    }
+
+    const outcomes: string[] = [];
+    const missingCandidateIds: string[] = [];
+    for (const candidate of all) {
+      const receipt = this.getExternalCandidateReceipt(candidate.candidateId);
+      if (!receipt) {
+        missingCandidateIds.push(candidate.candidateId);
+        continue;
+      }
+      if (receipt.kind !== candidate.kind) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} has a receipt of the wrong kind`
+        );
+      }
+      outcomes.push(receipt.outcome);
+    }
+    if (missingCandidateIds.length === 0) {
+      return { disposition: 'complete', outcomes };
+    }
+    if (missingCandidateIds.length === all.length) {
+      return { disposition: 'zero' };
+    }
+    return { disposition: 'partial', missingCandidateIds };
+  }
+
+  applyExternalBindingDecision(
+    attemptId: number,
+    input: {
+      candidate_id: string;
+      decision: 'bind' | 'decline';
+      reason: string;
+      expected_revision: number;
+    },
+    origin: ChangeOrigin
+  ): ExternalBindingReceipt {
+    validateExternalLifecycleDecision('binding', input);
+    if (origin.workOrderAttemptId !== attemptId) {
+      throw new Error(`external binding decision requires trusted attempt origin ${attemptId}`);
+    }
+    let receipt: ExternalBindingReceipt | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const candidate = this.loadBoardCandidate(attemptId, input.candidate_id, 'binding');
+      if (candidate.kind !== 'binding') {
+        throw new Error(`external lifecycle candidate ${input.candidate_id} has the wrong kind`);
+      }
+      if (input.expected_revision !== candidate.taskRevision) {
+        throw new Error(
+          `external binding candidate ${candidate.candidateId} revision does not match its host snapshot`
+        );
+      }
+      if (origin.causeEventIds?.length !== 1 || origin.causeEventIds[0] !== candidate.eventId) {
+        throw new Error(
+          `external binding candidate ${candidate.candidateId} requires its exact host origin event`
+        );
+      }
+
+      const existing = this.getExternalCandidateReceipt(candidate.candidateId);
+      if (existing) {
+        if (existing.kind !== 'binding') {
+          throw new Error(
+            `external lifecycle candidate ${candidate.candidateId} already has another receipt kind`
+          );
+        }
+        this.assertBindingReplayMatches(existing, candidate, input);
+        receipt = existing;
+      } else {
+        const task = this.getRowById(candidate.taskId);
+        if (!task || task.kind !== 'owner') {
+          throw new Error(
+            `external binding candidate ${candidate.candidateId} references no owner task`
+          );
+        }
+        const outcome: ExternalBindingReceipt['outcome'] =
+          task.revision === candidate.taskRevision
+            ? input.decision === 'bind'
+              ? 'bound'
+              : 'declined'
+            : 'superseded';
+        let bindingId: number | undefined;
+        if (outcome === 'bound') {
+          const collision = this.db
+            .prepare(
+              `SELECT id, task_id, external_source_id FROM operator_external_task_bindings
+               WHERE active = 1 AND (task_id = ? OR (connector = ? AND source_type = ? AND external_source_id = ?))`
+            )
+            .get(
+              candidate.taskId,
+              candidate.connector,
+              candidate.sourceType,
+              candidate.externalSourceId
+            ) as { id: number; task_id: number; external_source_id: string } | undefined;
+          if (collision) {
+            throw new Error(
+              `external binding conflict for task ${candidate.taskId} or ${candidate.externalSourceId}`
+            );
+          }
+          const now = this.now();
+          const inserted = this.db
+            .prepare(
+              `INSERT INTO operator_external_task_bindings
+                 (task_id, connector, source_type, external_source_id, last_observation_seq,
+                  created_by_attempt_id, active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
+            )
+            .run(
+              candidate.taskId,
+              candidate.connector,
+              candidate.sourceType,
+              candidate.externalSourceId,
+              candidate.operatorObservationSeq,
+              attemptId,
+              now,
+              now
+            );
+          bindingId = Number(inserted.lastInsertRowid);
+        }
+        this.insertBindingReceipt(candidate, attemptId, input, outcome, bindingId, origin);
+        receipt = {
+          kind: 'binding',
+          candidateId: candidate.candidateId,
+          workOrderAttemptId: attemptId,
+          taskId: candidate.taskId,
+          outcome,
+          reason: input.reason,
+          ...(bindingId === undefined ? {} : { bindingId }),
+        };
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return receipt!;
+  }
+
+  applyExternalLifecycleDecision(
+    attemptId: number,
+    input: {
+      candidate_id: string;
+      decision: 'apply' | 'retain';
+      reason: string;
+      expected_revision: number;
+    },
+    origin: ChangeOrigin
+  ): ExternalLifecycleReceipt {
+    validateExternalLifecycleDecision('lifecycle', input);
+    if (origin.workOrderAttemptId !== attemptId) {
+      throw new Error(`external lifecycle decision requires trusted attempt origin ${attemptId}`);
+    }
+    let receipt: ExternalLifecycleReceipt | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const candidate = this.loadBoardCandidate(attemptId, input.candidate_id, 'lifecycle');
+      if (candidate.kind !== 'lifecycle') {
+        throw new Error(`external lifecycle candidate ${input.candidate_id} has the wrong kind`);
+      }
+      if (input.expected_revision !== candidate.taskRevision) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} revision does not match its host snapshot`
+        );
+      }
+      if (origin.causeEventIds?.length !== 1 || origin.causeEventIds[0] !== candidate.eventId) {
+        throw new Error(
+          `external lifecycle candidate ${candidate.candidateId} requires its exact host origin event`
+        );
+      }
+
+      const existing = this.getExternalCandidateReceipt(candidate.candidateId);
+      if (existing) {
+        if (existing.kind !== 'lifecycle') {
+          throw new Error(
+            `external lifecycle candidate ${candidate.candidateId} already has another receipt kind`
+          );
+        }
+        this.assertLifecycleReplayMatches(existing, candidate, input);
+        receipt = existing;
+      } else {
+        const task = this.getRowById(candidate.taskId);
+        const binding = this.getExternalBinding(candidate.taskId);
+        if (!task || task.kind !== 'owner' || !binding) {
+          throw new Error(
+            `external lifecycle candidate ${candidate.candidateId} has no active binding`
+          );
+        }
+        const superseded =
+          binding.id !== candidate.bindingId ||
+          binding.revision !== candidate.bindingRevision ||
+          binding.connector !== candidate.connector ||
+          binding.sourceType !== candidate.sourceType ||
+          binding.externalSourceId !== candidate.externalSourceId ||
+          binding.createdByAttemptId >= attemptId ||
+          task.revision !== candidate.taskRevision ||
+          candidate.operatorObservationSeq <= binding.lastObservationSeq;
+        const taskRevisionBefore = task.revision;
+        let taskRevisionAfter = task.revision;
+        let outcome: ExternalLifecycleReceipt['outcome'];
+        if (superseded) {
+          outcome = 'superseded';
+        } else if (input.decision === 'apply') {
+          const transitioned = this.transitionTaskInTransaction(
+            candidate.taskId,
+            { status: candidate.proposedStatus, latest_event: candidate.evidenceSummary },
+            origin,
+            true
+          );
+          taskRevisionAfter = transitioned.revision;
+          outcome = 'applied';
+        } else {
+          outcome = 'retained';
+        }
+        if (outcome !== 'superseded') {
+          const updated = this.db
+            .prepare(
+              `UPDATE operator_external_task_bindings
+               SET last_observation_seq = ?, revision = revision + 1, updated_at = ?
+               WHERE id = ? AND revision = ? AND last_observation_seq < ?`
+            )
+            .run(
+              candidate.operatorObservationSeq,
+              this.now(),
+              candidate.bindingId,
+              candidate.bindingRevision,
+              candidate.operatorObservationSeq
+            );
+          if (updated.changes !== 1) {
+            throw new Error(
+              `external lifecycle candidate ${candidate.candidateId} binding watermark changed`
+            );
+          }
+        }
+        this.insertLifecycleReceipt(
+          candidate,
+          attemptId,
+          input,
+          outcome,
+          taskRevisionBefore,
+          taskRevisionAfter,
+          origin
+        );
+        receipt = {
+          kind: 'lifecycle',
+          candidateId: candidate.candidateId,
+          workOrderAttemptId: attemptId,
+          taskId: candidate.taskId,
+          outcome,
+          reason: input.reason,
+          taskRevisionBefore,
+          taskRevisionAfter,
+        };
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return receipt!;
+  }
+
+  getExternalCandidateReceipt(
+    candidateId: string
+  ): ExternalBindingReceipt | ExternalLifecycleReceipt | null {
+    const binding = this.db
+      .prepare(
+        `SELECT candidate_id, workorder_attempt_id, task_id, outcome, reason, binding_id
+         FROM operator_external_binding_receipts WHERE candidate_id = ?`
+      )
+      .get(candidateId) as
+      | {
+          candidate_id: string;
+          workorder_attempt_id: number;
+          task_id: number;
+          outcome: ExternalBindingReceipt['outcome'];
+          reason: string;
+          binding_id: number | null;
+        }
+      | undefined;
+    const lifecycle = this.db
+      .prepare(
+        `SELECT candidate_id, workorder_attempt_id, task_id, outcome, reason,
+                task_revision_before, task_revision_after
+         FROM operator_external_lifecycle_receipts WHERE candidate_id = ?`
+      )
+      .get(candidateId) as
+      | {
+          candidate_id: string;
+          workorder_attempt_id: number;
+          task_id: number;
+          outcome: ExternalLifecycleReceipt['outcome'];
+          reason: string;
+          task_revision_before: number;
+          task_revision_after: number;
+        }
+      | undefined;
+    if (binding && lifecycle) {
+      throw new Error(`external lifecycle candidate ${candidateId} has duplicate global receipts`);
+    }
+    const receiptKind = binding ? 'binding' : lifecycle ? 'lifecycle' : null;
+    const identity = this.db
+      .prepare(
+        `SELECT receipt_kind FROM operator_external_receipt_identities WHERE candidate_id = ?`
+      )
+      .get(candidateId) as { receipt_kind: 'binding' | 'lifecycle' } | undefined;
+    if (receiptKind === null) {
+      if (identity) {
+        throw new Error(
+          `external lifecycle candidate ${candidateId} has an orphan receipt identity`
+        );
+      }
+      return null;
+    }
+    if (!identity || identity.receipt_kind !== receiptKind) {
+      throw new Error(
+        `external lifecycle candidate ${candidateId} has inconsistent global receipt identity`
+      );
+    }
+    if (binding) {
+      return {
+        kind: 'binding',
+        candidateId: binding.candidate_id,
+        workOrderAttemptId: binding.workorder_attempt_id,
+        taskId: binding.task_id,
+        outcome: binding.outcome,
+        reason: binding.reason,
+        ...(binding.binding_id === null ? {} : { bindingId: binding.binding_id }),
+      };
+    }
+    return lifecycle
+      ? {
+          kind: 'lifecycle',
+          candidateId: lifecycle.candidate_id,
+          workOrderAttemptId: lifecycle.workorder_attempt_id,
+          taskId: lifecycle.task_id,
+          outcome: lifecycle.outcome,
+          reason: lifecycle.reason,
+          taskRevisionBefore: lifecycle.task_revision_before,
+          taskRevisionAfter: lifecycle.task_revision_after,
+        }
+      : null;
+  }
+
+  private externalBindingFromRow(row: {
+    id: number;
+    revision: number;
+    task_id: number;
+    connector: 'kagemusha';
+    source_type: 'kanban_card';
+    external_source_id: string;
+    last_observation_seq: number;
+    created_by_attempt_id: number;
+  }): ExternalTaskBinding {
+    return {
+      id: row.id,
+      revision: row.revision,
+      taskId: row.task_id,
+      connector: row.connector,
+      sourceType: row.source_type,
+      externalSourceId: row.external_source_id,
+      lastObservationSeq: row.last_observation_seq,
+      createdByAttemptId: row.created_by_attempt_id,
+    };
+  }
+
+  private assertBindingReplayMatches(
+    receipt: ExternalBindingReceipt,
+    candidate: BindingCandidate,
+    input: { decision: 'bind' | 'decline'; reason: string }
+  ): void {
+    const stored = this.db
+      .prepare(`SELECT decision FROM operator_external_binding_receipts WHERE candidate_id = ?`)
+      .get(candidate.candidateId) as { decision: 'bind' | 'decline' } | undefined;
+    if (
+      !stored ||
+      stored.decision !== input.decision ||
+      receipt.taskId !== candidate.taskId ||
+      receipt.reason !== input.reason
+    ) {
+      throw new Error(
+        `external binding receipt ${candidate.candidateId} conflicts with replay decision`
+      );
+    }
+  }
+
+  private insertBindingReceipt(
+    candidate: BindingCandidate,
+    attemptId: number,
+    input: { decision: 'bind' | 'decline'; reason: string },
+    outcome: ExternalBindingReceipt['outcome'],
+    bindingId: number | undefined,
+    origin: ChangeOrigin
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO operator_external_binding_receipts
+           (candidate_id, decision, workorder_attempt_id, task_id, event_id, connector, source_type,
+            external_source_id, channel_partition, content_sha256, source_timestamp_ms,
+            operator_ingest_seq, operator_observation_seq, task_revision, outcome, reason, binding_id,
+            origin_run_id, origin_cause_event_ids, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        candidate.candidateId,
+        input.decision,
+        attemptId,
+        candidate.taskId,
+        candidate.eventId,
+        candidate.connector,
+        candidate.sourceType,
+        candidate.externalSourceId,
+        candidate.channelPartition,
+        candidate.contentSha256,
+        candidate.sourceTimestampMs,
+        candidate.operatorIngestSeq,
+        candidate.operatorObservationSeq,
+        candidate.taskRevision,
+        outcome,
+        input.reason,
+        bindingId ?? null,
+        origin.runId ?? null,
+        JSON.stringify(origin.causeEventIds ?? []),
+        this.now()
+      );
+  }
+
+  private assertLifecycleReplayMatches(
+    receipt: ExternalLifecycleReceipt,
+    candidate: LifecycleCandidate,
+    input: { decision: 'apply' | 'retain'; reason: string }
+  ): void {
+    const stored = this.db
+      .prepare(`SELECT decision FROM operator_external_lifecycle_receipts WHERE candidate_id = ?`)
+      .get(candidate.candidateId) as { decision: 'apply' | 'retain' } | undefined;
+    if (
+      !stored ||
+      stored.decision !== input.decision ||
+      receipt.taskId !== candidate.taskId ||
+      receipt.reason !== input.reason
+    ) {
+      throw new Error(
+        `external lifecycle receipt ${candidate.candidateId} conflicts with replay decision`
+      );
+    }
+  }
+
+  private insertLifecycleReceipt(
+    candidate: LifecycleCandidate,
+    attemptId: number,
+    input: { decision: 'apply' | 'retain'; reason: string },
+    outcome: ExternalLifecycleReceipt['outcome'],
+    taskRevisionBefore: number,
+    taskRevisionAfter: number,
+    origin: ChangeOrigin
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO operator_external_lifecycle_receipts
+           (candidate_id, decision, workorder_attempt_id, task_id, event_id, connector, source_type,
+            external_source_id, channel_partition, content_sha256, source_timestamp_ms,
+            operator_ingest_seq, operator_observation_seq, binding_id, binding_revision,
+            task_revision_before, task_revision_after, outcome, reason, origin_run_id,
+            origin_cause_event_ids, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        candidate.candidateId,
+        input.decision,
+        attemptId,
+        candidate.taskId,
+        candidate.eventId,
+        candidate.connector,
+        candidate.sourceType,
+        candidate.externalSourceId,
+        candidate.channelPartition,
+        candidate.contentSha256,
+        candidate.sourceTimestampMs,
+        candidate.operatorIngestSeq,
+        candidate.operatorObservationSeq,
+        candidate.bindingId,
+        candidate.bindingRevision,
+        taskRevisionBefore,
+        taskRevisionAfter,
+        outcome,
+        input.reason,
+        origin.runId ?? null,
+        JSON.stringify(origin.causeEventIds ?? []),
+        this.now()
+      );
   }
 
   /**
@@ -941,6 +1683,44 @@ export class TaskLedger implements TaskSource {
   }
 
   update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
+    this.validateTaskUpdatePatch(patch);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const task = this.transitionTaskInTransaction(id, patch, origin);
+      this.db.exec('COMMIT');
+      return task;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * The one mutation primitive for owner-task state. Callers own the outer
+   * transaction so lifecycle receipts, effects, generation ownership, and the
+   * row revision can commit or roll back as one unit.
+   */
+  private transitionTaskInTransaction(
+    id: number,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin,
+    skipCandidateGuard = false
+  ): TaskRecord {
+    this.validateTaskUpdatePatch(patch);
+    if (!skipCandidateGuard) {
+      this.assertCandidateTaskMutationAllowed(id, patch, origin);
+    }
+    const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
+      | TaskRow
+      | undefined;
+    if (!existing) throw new Error(`task_update: no task with id ${id}`);
+    if (existing.kind === 'system') {
+      throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
+    }
+    return this.transitionOwnerTaskRowInTransaction(id, existing, patch, origin);
+  }
+
+  private validateTaskUpdatePatch(patch: UpdateTaskInput): void {
     if (patch.status === 'failed') {
       throw new Error(`task_update: 'failed' is a system-only status`);
     }
@@ -952,136 +1732,168 @@ export class TaskLedger implements TaskSource {
     if (patch.title !== undefined && patch.title.trim() === '') {
       throw new Error('task title must be a non-empty string');
     }
+  }
 
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
-        | TaskRow
-        | undefined;
-      if (!existing) throw new Error(`task_update: no task with id ${id}`);
-      if (existing.kind === 'system') {
-        throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
+  private transitionOwnerTaskRowInTransaction(
+    id: number,
+    existing: TaskRow,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin
+  ): TaskRecord {
+    const next: Record<string, unknown> = {
+      title: existing.title,
+      status: existing.status,
+      priority: existing.priority,
+      assignee: existing.assignee,
+      deadline: existing.deadline,
+      due_at: existing.due_at,
+      deadline_offset_minutes: existing.deadline_offset_minutes,
+      latest_event: existing.latest_event,
+      confirmed: existing.confirmed,
+      temporal_epoch: existing.temporal_epoch,
+      temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
+      last_temporal_checked_at: existing.last_temporal_checked_at,
+      next_temporal_check_at: existing.next_temporal_check_at,
+      last_temporal_attempt_id: existing.last_temporal_attempt_id,
+    };
+    if (patch.title !== undefined) next.title = patch.title.trim();
+    if (patch.status !== undefined) next.status = patch.status;
+    if (patch.priority !== undefined) next.priority = patch.priority;
+    if (patch.assignee !== undefined) next.assignee = patch.assignee;
+    if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
+    if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+
+    const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
+    const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
+    if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
+      const exactDue = parseExactDueAt(patch.due_at);
+      if (hasDeadline && patch.deadline !== exactDue.deadline) {
+        throw new Error('task_update: due_at and deadline conflict');
       }
-
-      const next: Record<string, unknown> = {
-        title: existing.title,
-        status: existing.status,
-        priority: existing.priority,
-        assignee: existing.assignee,
-        deadline: existing.deadline,
-        due_at: existing.due_at,
-        deadline_offset_minutes: existing.deadline_offset_minutes,
-        latest_event: existing.latest_event,
-        confirmed: existing.confirmed,
-        temporal_epoch: existing.temporal_epoch,
-        temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
-        last_temporal_checked_at: existing.last_temporal_checked_at,
-        next_temporal_check_at: existing.next_temporal_check_at,
-        last_temporal_attempt_id: existing.last_temporal_attempt_id,
-      };
-      if (patch.title !== undefined) next.title = patch.title.trim();
-      if (patch.status !== undefined) next.status = patch.status;
-      if (patch.priority !== undefined) next.priority = patch.priority;
-      if (patch.assignee !== undefined) next.assignee = patch.assignee;
-      if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
-      if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
-
-      const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
-      const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
-      if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
-        const exactDue = parseExactDueAt(patch.due_at);
-        if (hasDeadline && patch.deadline !== exactDue.deadline) {
-          throw new Error('task_update: due_at and deadline conflict');
-        }
-        next.due_at = exactDue.dueAt;
-        next.deadline = exactDue.deadline;
-        next.deadline_offset_minutes = exactDue.offsetMinutes;
-      } else if (hasDeadline) {
-        next.deadline = patch.deadline ?? null;
-        next.due_at = null;
-        if (patch.deadline === null) {
-          next.deadline_offset_minutes = null;
-        }
-      } else if (hasDueAt) {
-        next.due_at = null;
+      next.due_at = exactDue.dueAt;
+      next.deadline = exactDue.deadline;
+      next.deadline_offset_minutes = exactDue.offsetMinutes;
+    } else if (hasDeadline) {
+      next.deadline = patch.deadline ?? null;
+      next.due_at = null;
+      if (patch.deadline === null) {
+        next.deadline_offset_minutes = null;
       }
-
-      const temporalChanged =
-        next.due_at !== existing.due_at || next.deadline !== existing.deadline;
-      const terminalToOpen =
-        (existing.status === 'done' || existing.status === 'cancelled') &&
-        next.status !== 'done' &&
-        next.status !== 'cancelled';
-      const openToTerminal =
-        existing.status !== 'done' &&
-        existing.status !== 'cancelled' &&
-        (next.status === 'done' || next.status === 'cancelled');
-      if (temporalChanged || terminalToOpen) {
-        next.temporal_epoch = existing.temporal_epoch + 1;
-        next.temporal_reconciled_occurrence_key = null;
-        next.last_temporal_checked_at = null;
-        next.next_temporal_check_at = null;
-        next.last_temporal_attempt_id = null;
-      }
-
-      const persistedColumns = [
-        'title',
-        'status',
-        'priority',
-        'assignee',
-        'deadline',
-        'due_at',
-        'deadline_offset_minutes',
-        'latest_event',
-        'confirmed',
-        'temporal_epoch',
-        'temporal_reconciled_occurrence_key',
-        'last_temporal_checked_at',
-        'next_temporal_check_at',
-        'last_temporal_attempt_id',
-      ] as const;
-      const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
-      if (changedColumns.length === 0) {
-        // Nothing moved, so nothing is recorded. This is the whole point of the ledger:
-        // a call that ran is not a change, and the two must not be countable as one.
-        //
-        // The read-back happens after the catch, not here: a throw between COMMIT and
-        // return would send this into the catch and issue ROLLBACK with no open
-        // transaction, replacing the real error with a confusing one.
-        this.db.exec('COMMIT');
-      } else {
-        const nextRevision = existing.revision + 1;
-        const sets = changedColumns.map((column) => `${column} = ?`);
-        const values = changedColumns.map((column) => next[column]);
-        const updatedAt = this.now();
-        sets.push('revision = ?', 'updated_at = ?');
-        values.push(nextRevision, updatedAt);
-        this.db
-          .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
-          .run(...values, id);
-        this.recordTaskChange({
-          kind: 'task_update',
-          taskId: id,
-          origin,
-          channel: existing.source_channel,
-          payload: {
-            revision: nextRevision,
-            changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
-          },
-          atMs: updatedAt,
-        });
-        if (temporalChanged || terminalToOpen) {
-          this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
-        } else if (openToTerminal) {
-          this.supersedeAllActiveTemporalGenerationsInTransaction(id);
-        }
-        this.db.exec('COMMIT');
-      }
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
+    } else if (hasDueAt) {
+      next.due_at = null;
     }
-    return this.getById(id)!;
+
+    const temporalChanged = next.due_at !== existing.due_at || next.deadline !== existing.deadline;
+    const terminalToOpen =
+      (existing.status === 'done' || existing.status === 'cancelled') &&
+      next.status !== 'done' &&
+      next.status !== 'cancelled';
+    const openToTerminal =
+      existing.status !== 'done' &&
+      existing.status !== 'cancelled' &&
+      (next.status === 'done' || next.status === 'cancelled');
+    if (temporalChanged || terminalToOpen) {
+      next.temporal_epoch = existing.temporal_epoch + 1;
+      next.temporal_reconciled_occurrence_key = null;
+      next.last_temporal_checked_at = null;
+      next.next_temporal_check_at = null;
+      next.last_temporal_attempt_id = null;
+    }
+
+    const persistedColumns = [
+      'title',
+      'status',
+      'priority',
+      'assignee',
+      'deadline',
+      'due_at',
+      'deadline_offset_minutes',
+      'latest_event',
+      'confirmed',
+      'temporal_epoch',
+      'temporal_reconciled_occurrence_key',
+      'last_temporal_checked_at',
+      'next_temporal_check_at',
+      'last_temporal_attempt_id',
+    ] as const;
+    const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
+    if (changedColumns.length === 0) {
+      return this.toRecord(existing);
+    } else {
+      const nextRevision = existing.revision + 1;
+      const sets = changedColumns.map((column) => `${column} = ?`);
+      const values = changedColumns.map((column) => next[column]);
+      const updatedAt = this.now();
+      sets.push('revision = ?', 'updated_at = ?');
+      values.push(nextRevision, updatedAt);
+      const updated = this.db
+        .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ? AND revision = ?`)
+        .run(...values, id, existing.revision);
+      if (updated.changes !== 1) {
+        throw new Error(`task_update: task ${id} revision changed during transition`);
+      }
+      this.recordTaskChange({
+        kind: 'task_update',
+        taskId: id,
+        origin,
+        channel: existing.source_channel,
+        payload: {
+          revision: nextRevision,
+          changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
+        },
+        atMs: updatedAt,
+      });
+      if (temporalChanged || terminalToOpen) {
+        this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
+      } else if (openToTerminal) {
+        this.supersedeAllActiveTemporalGenerationsInTransaction(id);
+      }
+      const transitioned = this.getRowById(id);
+      if (!transitioned) throw new Error(`task_update: task ${id} disappeared during transition`);
+      return transitioned;
+    }
+  }
+
+  private assertCandidateTaskMutationAllowed(
+    taskId: number,
+    patch: UpdateTaskInput,
+    origin: ChangeOrigin
+  ): void {
+    if (
+      origin.workOrderAttemptId === undefined ||
+      (!Object.prototype.hasOwnProperty.call(patch, 'status') &&
+        !Object.prototype.hasOwnProperty.call(patch, 'latest_event'))
+    ) {
+      return;
+    }
+    const attempt = this.getWorkOrderById(origin.workOrderAttemptId);
+    // Unlike a lifecycle decision, this is a standing mutation guard. A late
+    // direct or nested tool call can retain the host-issued attempt context
+    // after its board workorder has reached a terminal status, and its durable
+    // candidate payload must remain authoritative in that case. Decision
+    // application still calls loadBoardCandidate(), which requires a claimed
+    // in-progress attempt.
+    if (!attempt || attempt.workKind !== 'board') {
+      return;
+    }
+    const { attempts: _attempts, ...payload } = attempt.payload;
+    validateWorkOrderPayload('board', payload);
+    if (payload.mode !== 'reconcile' || !payload.candidates) {
+      return;
+    }
+    const candidates = payload.candidates as {
+      bindingCandidates: readonly BindingCandidate[];
+      lifecycleCandidates: readonly LifecycleCandidate[];
+    };
+    if (
+      [...candidates.bindingCandidates, ...candidates.lifecycleCandidates].some(
+        (candidate) => candidate.taskId === taskId
+      )
+    ) {
+      throw new Error(
+        `task_update: candidate-bound lifecycle task ${taskId} may change status/latest_event only through its receipted decision`
+      );
+    }
   }
 
   private supersedeTemporalGenerationsInTransaction(

@@ -25,18 +25,23 @@ import { matchTriggers } from './trigger-matcher.js';
 import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
-import { SituationReporter } from './situation-report.js';
+import { SituationReporter, type DeliveredFullReport } from './situation-report.js';
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { randomUUID } from 'node:crypto';
-import type {
-  PendingReportDelivery,
-  PendingReportOccurrence,
-  PendingReportRequest,
-  PendingReportStore,
+import {
+  pendingReportDeliveryPayloadIdentity,
+  pendingReportRequestPayloadIdentity,
+  type PendingReportDelivery,
+  type PendingReportLoadOutcome,
+  type PendingReportOccurrence,
+  type PendingReportRequest,
+  type PendingReportSaveExpectation,
+  type PendingReportStore,
 } from './pending-report-store.js';
 import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
+import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -84,7 +89,7 @@ export interface TriggerLoopDeps {
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
-  output?: Pick<OutputSink, 'send'>;
+  output?: Pick<OutputSink, 'send'> & { target?: ReportCarryTarget };
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
   /**
@@ -119,8 +124,10 @@ export interface TriggerLoopDeps {
   };
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
-  /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
-  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
+  /** Captures the provenance of the run that has just composed a FULL report. */
+  fullReportProvenance?: () => ArtifactProvenance;
+  /** Persists the exact successful FULL delivery for the later owner-turn carry. */
+  persistLastFullReport?: (report: DeliveredFullReport) => void;
   /** Durable report accumulator written before connector cursors advance. */
   pendingReportStore?: PendingReportStore;
   config: TriggerLoopConfig;
@@ -147,6 +154,8 @@ export class OperatorTriggerLoop {
   private fullReporter: SituationReporter;
   private pendingDelivery: PendingReportDelivery | undefined;
   private pendingRequest: PendingReportRequest | undefined;
+  private pendingReportExpectation: PendingReportSaveExpectation | undefined;
+  private pendingReportLegacyLoaded = false;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -181,27 +190,82 @@ export class OperatorTriggerLoop {
           : (deps.fullReportSelfGather ?? []),
       boardPublishLines: deps.fullReportBoardLines,
       recordTriggerUse,
+      fullReportProvenance: deps.fullReportProvenance,
       persistLastFullReport: deps.persistLastFullReport,
     });
-    const pending = deps.output ? deps.pendingReportStore?.load() : null;
-    if (pending) {
-      this.digest.restore(pending.digest);
-      this.fullReporter.restore(pending.full);
-      this.pendingDelivery = pending.delivery;
-      this.pendingRequest = pending.request;
-      deps.log('[trigger-loop] restored pending owner-report buffer');
+    if (this.refreshPendingReportState() === 'quarantined') {
+      deps.log(
+        '[trigger-loop] owner-report work blocked until pending outbox quarantine is cleared'
+      );
     }
   }
 
-  private persistPendingReports(): void {
-    if (!this.deps.output) return;
-    this.deps.pendingReportStore?.save({
+  /** Reloads one durable outcome so recovery can hydrate this live loop before report work. */
+  private refreshPendingReportState(): PendingReportLoadOutcome['status'] | 'unavailable' {
+    if (!this.deps.output) {
+      return 'unavailable';
+    }
+    const store = this.deps.pendingReportStore;
+    if (!store?.loadOutcome) {
+      if (store?.loadStatus?.() === 'quarantined') {
+        return 'quarantined';
+      }
+      if (!this.pendingReportLegacyLoaded) {
+        const pending = store?.load() ?? null;
+        this.pendingReportLegacyLoaded = true;
+        if (pending) {
+          this.digest.restore(pending.digest);
+          this.fullReporter.restore(pending.full);
+          this.pendingDelivery = pending.delivery;
+          this.pendingRequest = pending.request;
+          return 'ready';
+        }
+        this.pendingReportExpectation = { status: 'empty', revision: null };
+      }
+      return this.pendingDelivery || this.pendingRequest ? 'ready' : 'empty';
+    }
+    const outcome = store.loadOutcome();
+    if (outcome.status === 'quarantined') {
+      this.pendingReportExpectation = undefined;
+      return 'quarantined';
+    }
+    if (outcome.status === 'empty') {
+      this.pendingReportExpectation = outcome;
+      return 'empty';
+    }
+    if (this.pendingReportExpectation?.revision !== outcome.revision) {
+      this.digest.restore(outcome.state.digest);
+      this.fullReporter.restore(outcome.state.full);
+      this.pendingDelivery = outcome.state.delivery;
+      this.pendingRequest = outcome.state.request;
+      this.deps.log('[trigger-loop] refreshed durable pending owner-report buffer');
+    }
+    this.pendingReportExpectation = outcome;
+    return 'ready';
+  }
+
+  private isPendingReportWorkBlocked(): boolean {
+    return this.refreshPendingReportState() === 'quarantined';
+  }
+
+  private persistPendingReports(): boolean {
+    if (!this.deps.output) return false;
+    if (this.refreshPendingReportState() === 'quarantined') return false;
+    const state = {
       version: 1,
       digest: this.digest.snapshot(),
       full: this.fullReporter.snapshot(),
       ...(this.pendingDelivery ? { delivery: this.pendingDelivery } : {}),
       ...(this.pendingRequest ? { request: this.pendingRequest } : {}),
-    });
+    } as const;
+    try {
+      this.deps.pendingReportStore?.save(state, this.pendingReportExpectation);
+      this.refreshPendingReportState();
+      return true;
+    } catch (error) {
+      this.refreshPendingReportState();
+      throw error;
+    }
   }
 
   private reporterFor(mode: ReportMode): SituationReporter {
@@ -215,6 +279,47 @@ export class OperatorTriggerLoop {
     return `operator-report:${occurrence.kind}:${randomUUID()}`;
   }
 
+  private requireOutputTarget(): ReportCarryTarget {
+    const target = this.deps.output?.target;
+    if (
+      target?.source !== 'telegram' ||
+      target.channelId.length === 0 ||
+      target.channelId.trim() !== target.channelId
+    ) {
+      throw new Error('Owner-report output is missing its canonical Telegram target binding');
+    }
+    return target;
+  }
+
+  private assertPendingTarget(target: ReportCarryTarget, phase: string): void {
+    const configured = this.requireOutputTarget();
+    if (target.source !== configured.source || target.channelId !== configured.channelId) {
+      throw new Error(
+        `Pending owner-report ${phase} target ${target.channelId} does not match configured target ${configured.channelId}`
+      );
+    }
+  }
+
+  private assertPendingDeliveryBinding(delivery: PendingReportDelivery): void {
+    this.assertPendingTarget(delivery.target, 'delivery');
+    const expected = pendingReportDeliveryPayloadIdentity(delivery);
+    if (delivery.payloadIdentity !== expected) {
+      throw new Error(
+        `Pending owner-report delivery ${delivery.deliveryId} payload identity mismatch`
+      );
+    }
+  }
+
+  private assertPendingRequestBinding(request: PendingReportRequest): void {
+    this.assertPendingTarget(request.target, 'request');
+    const expected = pendingReportRequestPayloadIdentity(request);
+    if (request.payloadIdentity !== expected) {
+      throw new Error(
+        `Pending owner-report request ${request.deliveryId} payload identity mismatch`
+      );
+    }
+  }
+
   private async deliverPendingReport(recovered: boolean): Promise<PendingReportDelivery | null> {
     const pending = this.pendingDelivery;
     const output = this.deps.output;
@@ -222,6 +327,7 @@ export class OperatorTriggerLoop {
       return null;
     }
 
+    this.assertPendingDeliveryBinding(pending);
     await this.reporterFor(pending.mode).deliverPrepared(pending, output);
     if (pending.mode === 'full' && this.deps.reportScheduler) {
       if (pending.occurrence.hourKey) {
@@ -246,36 +352,45 @@ export class OperatorTriggerLoop {
     mode: ReportMode,
     occurrence: PendingReportOccurrence
   ): Promise<boolean> {
-    if (!this.deps.output) {
+    if (!this.deps.output || this.isPendingReportWorkBlocked()) {
       return false;
     }
     if (this.pendingDelivery) {
       throw new Error('A pending owner report must be recovered before composing another report');
     }
+    const target = this.requireOutputTarget();
     const deliveryId = this.deliveryIdFor(occurrence);
     const prepared = await this.reporterFor(mode).prepareReport(askAgent, mode, deliveryId);
     if (!prepared) {
       this.persistPendingReports();
       return false;
     }
-    this.pendingDelivery = {
+    const delivery = {
       ...prepared,
       deliveryId,
       occurrence,
+      target,
+    };
+    this.pendingDelivery = {
+      ...delivery,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
     };
     // Persist the exact owner-visible text and operation identity before the
     // first external send. A restart replays this record, never a regeneration.
-    this.persistPendingReports();
+    if (!this.persistPendingReports()) {
+      return false;
+    }
     await this.deliverPendingReport(false);
     return true;
   }
 
   private async preparePendingRequest(): Promise<boolean> {
     const request = this.pendingRequest;
-    if (!request || !this.deps.output) return false;
+    if (!request || !this.deps.output || this.isPendingReportWorkBlocked()) return false;
     if (this.pendingDelivery) {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
+    this.assertPendingRequestBinding(request);
     const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
     const prepared = await this.fullReporter.prepareReport(
       reportAsk,
@@ -287,25 +402,36 @@ export class OperatorTriggerLoop {
       this.persistPendingReports();
       return false;
     }
-    this.pendingDelivery = {
+    const delivery = {
       ...prepared,
       deliveryId: request.deliveryId,
       occurrence: request.occurrence,
+      target: request.target,
+    };
+    this.pendingDelivery = {
+      ...delivery,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
     };
     this.pendingRequest = undefined;
-    this.persistPendingReports();
+    if (!this.persistPendingReports()) {
+      return false;
+    }
     await this.deliverPendingReport(false);
     return true;
   }
 
-  private async recoverPendingReportWork(): Promise<void> {
-    await this.deliverPendingReport(true);
+  private async recoverPendingReportWork(): Promise<boolean> {
+    if (this.isPendingReportWorkBlocked()) return false;
+    const delivered = await this.deliverPendingReport(true);
+    let recovered = delivered !== null;
     if (this.pendingRequest) {
       const sent = await this.preparePendingRequest();
+      recovered = true;
       this.deps.log(
         `[trigger-loop] recovered on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
       );
     }
+    return recovered;
   }
 
   async tick(): Promise<TickResult> {
@@ -318,7 +444,8 @@ export class OperatorTriggerLoop {
     // Outbox recovery is the first effect in a tick. It reuses the persisted
     // delivery id, allowing Telegram's confirmed-chunk ledger to suppress a
     // send that was accepted just before the prior daemon stopped.
-    await this.recoverPendingReportWork();
+    this.refreshPendingReportState();
+    const recoveredPendingWork = await this.recoverPendingReportWork();
 
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
@@ -489,7 +616,13 @@ export class OperatorTriggerLoop {
     let reported = false;
     const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
-    if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
+    if (
+      !this.isPendingReportWorkBlocked() &&
+      output &&
+      reportEvery > 0 &&
+      tick % reportEvery === 0 &&
+      this.digest.hasActivity()
+    ) {
       reported = await this.prepareAndDeliverReport(reportAsk, 'digest', { kind: 'digest' });
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
@@ -500,7 +633,7 @@ export class OperatorTriggerLoop {
     //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
     //    so the next tick retries with the buffer intact.
     let fullReported = false;
-    if (output && reportScheduler) {
+    if (!recoveredPendingWork && !this.isPendingReportWorkBlocked() && output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
         // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
@@ -563,7 +696,7 @@ export class OperatorTriggerLoop {
   startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
     const output = this.deps.output;
     const reportScheduler = this.deps.reportScheduler;
-    if (!output) {
+    if (!output || this.isPendingReportWorkBlocked()) {
       return { accepted: false, reason: 'unavailable' };
     }
     if (this.running || this.pendingDelivery || this.pendingRequest) {
@@ -576,14 +709,33 @@ export class OperatorTriggerLoop {
       ...(hourKey ? { hourKey } : {}),
       firedAtIso,
     };
-    this.pendingRequest = {
+    let target: ReportCarryTarget;
+    try {
+      target = this.requireOutputTarget();
+    } catch (error) {
+      this.deps.log(
+        `[trigger-loop] on-demand full report target binding unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return { accepted: false, reason: 'unavailable' };
+    }
+    const request = {
       mode: 'full',
       deliveryId: this.deliveryIdFor(occurrence),
       occurrence,
       acceptedAtIso: firedAtIso,
+      target,
+    } as const;
+    this.pendingRequest = {
+      ...request,
+      payloadIdentity: pendingReportRequestPayloadIdentity(request),
     };
     try {
-      this.persistPendingReports();
+      if (!this.persistPendingReports()) {
+        this.pendingRequest = undefined;
+        return { accepted: false, reason: 'unavailable' };
+      }
     } catch (error) {
       this.pendingRequest = undefined;
       this.deps.log(

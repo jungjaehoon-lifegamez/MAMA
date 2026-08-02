@@ -24,6 +24,8 @@ import type { CronScheduler } from '../../scheduler/index.js';
 import type { HealthScoreService } from '../../observability/health-score.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
 import type { RawStore } from '../../connectors/framework/raw-store.js';
+import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.js';
+import type { PrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { RuntimeEnvelopeBootstrap } from './envelope-bootstrap.js';
@@ -40,6 +42,8 @@ export interface InitApiServerParams {
   healthCheckService: HealthCheckService;
   rawStore: RawStore | undefined;
   enabledConnectors: string[];
+  connectorConfigLoadResult: ConnectorConfigLoadResult;
+  privateConnectorPolicy: PrivateConnectorPolicy;
   agentLoop: AgentLoop;
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
@@ -65,6 +69,8 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     healthCheckService,
     rawStore,
     enabledConnectors,
+    connectorConfigLoadResult,
+    privateConnectorPolicy,
     agentLoop,
     getAdapter,
     envelopeMetadata,
@@ -136,6 +142,8 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     envelope: envelopeMetadata,
     envelopeAuthority,
     contextCompileService,
+    connectorConfigLoadResult,
+    privateConnectorPolicy,
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);

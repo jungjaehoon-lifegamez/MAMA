@@ -29,7 +29,7 @@ import {
   type RawIndexSink,
   type RawStore,
 } from '../../connectors/framework/raw-store.js';
-import { loadConnectorConfig } from '../../connectors/config-loader.js';
+import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.js';
 
 const logger = new DebugLogger('connector-init');
 
@@ -65,6 +65,8 @@ export interface ConnectorInitResult {
 }
 
 export interface ConnectorInitOptions {
+  /** Validated connector configuration captured once by the startup owner. */
+  connectorConfigLoadResult: ConnectorConfigLoadResult;
   /**
    * M2.4 freshness nudge. Called best-effort whenever a poll batch indexes >= 1 item into
    * connector_event_index, so the trigger loop can tick soon instead of waiting for its next
@@ -86,7 +88,7 @@ export interface ConnectorInitOptions {
 export async function initConnectors(
   /** @deprecated Direct LLM connector-to-memory extraction is disabled in M0. */
   _connectorExtractionFn: ((prompt: string) => Promise<string>) | null,
-  options: ConnectorInitOptions = {}
+  options: ConnectorInitOptions
 ): Promise<ConnectorInitResult> {
   // M2.4: unified batch poll cadence. UNSET -> 60 (unchanged default); a bad value fails loud HERE,
   // before any stateful connector init below.
@@ -149,19 +151,12 @@ export async function initConnectors(
     return idsBySourceId;
   };
 
-  const configLoadResult = loadConnectorConfig();
-  if (!configLoadResult.ok) {
-    console.error(
-      `[connector] failed to load connector configuration (${configLoadResult.error.code}): ` +
-        configLoadResult.error.message
-    );
-  }
   // The loader's empty success/failure boundaries are frozen. Connector initialization owns a
   // fresh top-level map because it may auto-enable claude-code; validated nested records remain
   // shared read-only inputs to connector construction.
   const connectorsConfig = Object.assign(
     Object.create(null) as ConnectorsJson,
-    configLoadResult.config
+    options.connectorConfigLoadResult.config
   );
 
   // Auto-enable claude-code connector (local, no auth needed)

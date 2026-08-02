@@ -19,6 +19,7 @@ import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 import { DEFAULT_CONFIG, DEFAULT_ROLES, type MAMAConfig } from '../../src/cli/config/types.js';
 import { buildRuntimeEnvelopeBootstrap } from '../../src/cli/runtime/envelope-bootstrap.js';
+import { loadConnectorConfig } from '../../src/connectors/config-loader.js';
 import { getReactiveRoutePolicy } from '../../src/envelope/reactive-config.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import { createMockMamaApi } from '../../src/gateways/context-injector.js';
@@ -287,7 +288,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
     });
   });
 
-  it('feeds the exact bootstrapped MessageRouter envelope into the real Code-Act compiler', async () => {
+  it('TG-01 feeds only enabled raw connectors into the real Code-Act compiler', async () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'mama-code-act-router-envelope-'));
     const connectorDir = join(tempHome, '.mama');
     mkdirSync(connectorDir, { recursive: true });
@@ -327,13 +328,18 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
     };
 
     try {
-      const bootstrap = buildRuntimeEnvelopeBootstrap(sessionsDb, config, {
-        HOME: tempHome,
-        MAMA_ENVELOPE_ISSUANCE: 'enabled',
-        MAMA_ENVELOPE_HMAC_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
-        MAMA_ENVELOPE_HMAC_KEY_ID: 'router-test-key',
-        MAMA_ENVELOPE_HMAC_KEY_VERSION: '1',
-      });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(
+        sessionsDb,
+        config,
+        {
+          HOME: tempHome,
+          MAMA_ENVELOPE_ISSUANCE: 'enabled',
+          MAMA_ENVELOPE_HMAC_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
+          MAMA_ENVELOPE_HMAC_KEY_ID: 'router-test-key',
+          MAMA_ENVELOPE_HMAC_KEY_VERSION: '1',
+        },
+        loadConnectorConfig(join(tempHome, '.mama', 'connectors.json'))
+      );
       const router = new MessageRouter(
         sessionStore,
         agentLoop,
@@ -351,7 +357,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
         metadata: { chatType: 'private' },
       });
 
-      expect(emittedEnvelope?.scope.raw_connectors).toEqual(['telegram', 'kagemusha', 'trello']);
+      expect(emittedEnvelope?.scope.raw_connectors).toEqual(['telegram', 'trello']);
       const executionContext: GatewayToolExecutionContext = {
         agentId: emittedEnvelope!.agent_id,
         source: 'telegram',

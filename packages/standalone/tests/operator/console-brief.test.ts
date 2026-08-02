@@ -7,7 +7,7 @@
  * self-update rule itself - with its one new lesson on the loop's first fire.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,7 +17,32 @@ import {
   consoleBriefPath,
   ensureConsoleBrief,
   loadConsoleBrief,
+  projectConsoleBriefForPrompt,
 } from '../../src/operator/console-brief.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import {
+  PRIVATE_PROMPT_OVERLAY_END,
+  PRIVATE_PROMPT_OVERLAY_START,
+} from '../../src/connectors/private-prompt-overlay.js';
+
+const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+const enabledPrivatePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {
+    kagemusha: {
+      enabled: true,
+      pollIntervalMinutes: 60,
+      channels: {},
+      auth: { type: 'none' },
+    },
+  },
+  enabledNames: ['kagemusha'],
+});
 
 let home: string;
 beforeEach(() => {
@@ -28,6 +53,97 @@ afterEach(() => {
 });
 
 describe('owner-console brief substrate', () => {
+  it('TG-05 keeps the packaged default source-neutral', () => {
+    expect(CONSOLE_BRIEF_DEFAULT.toLowerCase()).not.toContain('kagemusha');
+  });
+
+  it('TG-05 hides disabled private lessons without changing the user-owned file', () => {
+    const raw = '# Owner Console Operating Brief\n\n## Lessons\n- Use kagemusha_tasks first.\n';
+    ensureConsoleBrief(home);
+    writeFileSync(consoleBriefPath(home), raw, 'utf-8');
+    const policy = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+    const projected = projectConsoleBriefForPrompt(raw, policy);
+
+    expect(projected).not.toContain('kagemusha_tasks');
+    expect(loadConsoleBrief(home)).toBe(raw);
+  });
+
+  it('TG-05 removes arbitrary disabled private tool recipes but preserves references', () => {
+    const raw = [
+      '# Owner Console Operating Brief',
+      '',
+      '## Lessons',
+      '- Always call kagemusha_messages before answering an owner status question.',
+      '- Invoke `kagemusha_tasks` first, then summarize the result.',
+      "- **kagemusha_tasks**({ status: 'pending' })",
+      "- `kagemusha_messages`({ channel: 'owner' })",
+      "- ``kagemusha_tasks``({ status: 'pending' })",
+      "- ```kagemusha_messages```({ channel: 'owner' })",
+      "- Last year's kagemusha_tasks output used the old status names.",
+      '- Historical note: Kagemusha was the predecessor connector.',
+      '- Archive path: /workspace/history/kagemusha_messages-transcript.md',
+      '',
+    ].join('\n');
+    ensureConsoleBrief(home);
+    writeFileSync(consoleBriefPath(home), raw, 'utf-8');
+
+    const projected = projectConsoleBriefForPrompt(raw, disabledPrivatePolicy);
+
+    expect(projected).not.toContain('Always call kagemusha_messages');
+    expect(projected).not.toContain('Invoke `kagemusha_tasks`');
+    expect(projected).not.toContain('**kagemusha_tasks**(');
+    expect(projected).not.toContain('`kagemusha_messages`(');
+    expect(projected).not.toContain('``kagemusha_tasks``(');
+    expect(projected).not.toContain('```kagemusha_messages```(');
+    expect(projected).toContain("Last year's kagemusha_tasks output used the old status names.");
+    expect(projected).toContain('Historical note: Kagemusha was the predecessor connector.');
+    expect(projected).toContain('/workspace/history/kagemusha_messages-transcript.md');
+    expect(loadConsoleBrief(home)).toBe(raw);
+  });
+
+  it('TG-05 preserves malformed, spoofed, and nested marker text byte-for-byte', () => {
+    const generatedOverlay = projectConsoleBriefForPrompt('', enabledPrivatePolicy).trim();
+    const samples = [
+      `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker without an end`,
+      `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored body\n${PRIVATE_PROMPT_OVERLAY_END}`,
+      [
+        PRIVATE_PROMPT_OVERLAY_START,
+        'outer user-authored body',
+        generatedOverlay,
+        PRIVATE_PROMPT_OVERLAY_END,
+      ].join('\n'),
+    ];
+
+    for (const raw of samples) {
+      expect(projectConsoleBriefForPrompt(raw, disabledPrivatePolicy)).toBe(raw);
+    }
+  });
+
+  it('TG-05 preserves unrelated private-looking paths and user lessons', () => {
+    const raw = [
+      '# Owner Console Operating Brief',
+      '',
+      'Use /workspace/kagemusha-logo.svg as the report icon.',
+      '',
+      '## Lessons',
+      '- Keep the Kagemusha migration note for historical context.',
+      '',
+    ].join('\n');
+
+    expect(projectConsoleBriefForPrompt(raw, disabledPrivatePolicy)).toBe(raw);
+  });
+
+  it('TG-05 removes a complete generated overlay but preserves its surrounding prompt', () => {
+    const base = '# Owner Console Operating Brief\n\nKeep this unrelated canonicity rule.\n';
+    const withGeneratedOverlay = projectConsoleBriefForPrompt(base, enabledPrivatePolicy);
+
+    const projected = projectConsoleBriefForPrompt(withGeneratedOverlay, disabledPrivatePolicy);
+
+    expect(projected).toContain(base);
+    expect(projected).not.toContain('**kagemusha_tasks**');
+  });
+
   it('seeds the packaged skeleton once and never overwrites edits (agent-owned)', () => {
     expect(ensureConsoleBrief(home)).toBe(true);
     expect(loadConsoleBrief(home)).toBe(CONSOLE_BRIEF_DEFAULT);

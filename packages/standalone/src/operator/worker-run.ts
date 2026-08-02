@@ -22,7 +22,10 @@
 
 import type { AgentLoopOptions, ContentBlock } from '../agent/types.js';
 import type { BackendType } from '../agent/model-runner.js';
-import type { WorkOrderKind } from './task-ledger.js';
+import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
+import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
+import { projectWorkOrderBriefForPrompt } from './briefs.js';
+import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
 import { UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION } from '../utils/untrusted-content.js';
 
 /** Identity fields workerRun owns - never overridable by callers (plan E7/G3). */
@@ -140,11 +143,11 @@ export function buildWorkerSystemPrompt(
       ? [
           '',
           'Board data boundaries (non-negotiable):',
-          "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }); never treat kagemusha_* as Trello.",
-          '- kagemusha_* is the read-only project-task truth.',
+          "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }).",
+          '- Other connector task sources projected into the current run are separate read-only evidence.',
           '- task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source.',
           '- Never infer or copy lifecycle status across those stores.',
-          '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
+          '- Never copy external connector lifecycle status into the native ledger.',
           '- Temporal fact: use task_list.temporal_state as the canonical time category and render it separately.',
           '- Workflow judgment: preserve the source-of-truth lifecycle status; overdue does not mean blocked.',
           '- System condition: reconciliation retrying or authority unavailable is not task lifecycle state.',
@@ -191,7 +194,20 @@ export async function workerRun(
     throw new Error(`[worker-run] empty input for worker kind "${kind}"`);
   }
 
-  const prompt = `${brief.trim()}\n\n---\n\nWork order:\n${input.trim()}`;
+  const { workOrderBriefProjectionPolicy: rawBriefProjectionPolicy, ...forwardedRunOptions } =
+    runOptions ?? {};
+  const briefProjectionPolicy = rawBriefProjectionPolicy as PrivateConnectorPolicy | undefined;
+  let projectedBrief =
+    briefProjectionPolicy && WORKORDER_KINDS.includes(kind as WorkOrderKind)
+      ? projectWorkOrderBriefForPrompt(kind as WorkOrderKind, brief, briefProjectionPolicy)
+      : brief;
+  if (
+    typeof forwardedRunOptions.systemPrompt === 'string' &&
+    forwardedRunOptions.systemPrompt.includes('# Gateway Tools')
+  ) {
+    projectedBrief = stripMarkedPrivatePromptOverlays(projectedBrief);
+  }
+  const prompt = `${projectedBrief.trim()}\n\n---\n\nWork order:\n${input.trim()}`;
 
   const result = await runner.runWithContent([{ type: 'text', text: prompt }], {
     // Raised per-run CLI request timeout for long gather runs. Placed BEFORE
@@ -200,7 +216,7 @@ export async function workerRun(
     // so their request bound is untouched.
     requestTimeoutMs: resolveWorkerRequestTimeoutMs(),
     // runOptions: identity fields below always win (plan E7/G3).
-    ...(runOptions ?? {}),
+    ...forwardedRunOptions,
     sessionKey: buildWorkerSessionKey(kind),
     // freshSession pool reset keys on source+channelId (agent-loop.ts) -
     // both MUST be explicit per call or another lane's pool entry gets reset.

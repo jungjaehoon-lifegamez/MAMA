@@ -15,13 +15,13 @@ function makeManager(): RoleManager {
 
 describe('Story OPS-1: owner_console trust-conditional resolution', () => {
   describe('AC #1: locked allowlist + private DM resolves owner_console', () => {
-    it('escalates only for the allowlisted private chat', () => {
+    it('TG-01 escalates trust without adding ambient private connector tools', () => {
       const rm = makeManager();
       rm.setTelegramTrust(['7777']);
 
       const owner = rm.getRoleForSource('telegram', { channelId: '7777', chatType: 'private' });
       expect(owner.roleName).toBe('owner_console');
-      expect(rm.isToolAllowed(owner.role, 'kagemusha_tasks')).toBe(true);
+      expect(rm.isToolAllowed(owner.role, 'kagemusha_tasks')).toBe(false);
       expect(rm.isToolAllowed(owner.role, 'task_create')).toBe(true);
       expect(rm.isToolAllowed(owner.role, 'mama_save')).toBe(true);
       expect(rm.isToolAllowed(owner.role, 'Bash')).toBe(false);

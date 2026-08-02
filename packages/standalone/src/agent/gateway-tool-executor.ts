@@ -67,6 +67,8 @@ import type {
   ModelRunRecord,
   AppendToolTraceInput,
   TemporalReconcileToolInput,
+  ExternalBindingToolInput,
+  ExternalLifecycleReconcileToolInput,
 } from './types.js';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
@@ -76,6 +78,7 @@ import {
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
+import { validateExternalLifecycleDecision } from '../operator/external-lifecycle-candidates.js';
 import SqliteDatabase from '../sqlite.js';
 import {
   handleSave,
@@ -107,6 +110,21 @@ import {
   mirrorReadScopes,
   writeEligiblePacketScopes,
 } from '../evidence/read.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
+  type PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+type PrivateAwareGatewayToolExecutorOptions = GatewayToolExecutorOptions & {
+  privateConnectorPolicy?: PrivateConnectorPolicy;
+};
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -595,6 +613,7 @@ export class GatewayToolExecutor {
   private slackGateway: SlackGatewayInterface | null = null;
   private telegramGateway: TelegramGatewayInterface | null = null;
   private roleManager: RoleManager;
+  private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly channelGrantProvider: () => Record<string, readonly string[]>;
@@ -847,7 +866,7 @@ export class GatewayToolExecutor {
 
   /** Check if delegate tool support is available (multi-agent wired). */
 
-  constructor(options: GatewayToolExecutorOptions = {}) {
+  constructor(options: PrivateAwareGatewayToolExecutorOptions = {}) {
     this.channelGrantProvider = options.channelGrantProvider ?? liveBoundaryChannels;
     const privateWorkspaceRoot = resolve(
       process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace')
@@ -879,6 +898,8 @@ export class GatewayToolExecutor {
     this.roleManager = getRoleManager(
       options.rolesConfig ? { rolesConfig: options.rolesConfig } : undefined
     );
+    this.privateConnectorPolicy =
+      options.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -1035,29 +1056,36 @@ export class GatewayToolExecutor {
    * @returns Object with allowed status and optional error message
    */
   private checkToolPermission(toolName: string): { allowed: boolean; error?: string } {
-    // If no context set, allow all tools (backward compatibility)
     const context = this.getActiveContext();
-    if (!context) {
-      if (toolName === 'code_act') {
-        return {
-          allowed: false,
-          error: 'Permission denied: code_act requires an active agent role',
-        };
-      }
-
-      return { allowed: true };
+    if (!context && toolName === 'code_act') {
+      return {
+        allowed: false,
+        error: 'Permission denied: code_act requires an active agent role',
+      };
     }
-
-    const role = context.role;
+    const role = context
+      ? this.projectPrivateAgentContext(context).role
+      : this.privateConnectorPolicy.projectRole('legacy-unbound', { allowedTools: ['*'] });
 
     if (!this.roleManager.isToolAllowed(role, toolName)) {
       return {
         allowed: false,
-        error: `Permission denied: ${toolName} is not allowed for role "${context.roleName}"`,
+        error: `Permission denied: ${toolName} is not allowed for role "${context?.roleName ?? 'legacy-unbound'}"`,
       };
     }
 
     return { allowed: true };
+  }
+
+  projectPrivateAgentContext(context: AgentContext): AgentContext {
+    const surface = resolvePrivatePrincipalSurface({ agentContext: context });
+    const role = this.privateConnectorPolicy.projectRole(surface, context.role);
+    return {
+      ...context,
+      role,
+      capabilities: this.roleManager.getCapabilities(role),
+      limitations: this.roleManager.getLimitations(role),
+    };
   }
 
   /**
@@ -1418,6 +1446,63 @@ export class GatewayToolExecutor {
       this.alarmScopeMismatch(activeCtx, toolName);
     }
     return result;
+  }
+
+  /**
+   * External lifecycle decisions are only valid while the host-created model run that owns the
+   * claimed board attempt is still running. Tool input cannot name either authority.
+   */
+  private async requireExternalLifecycleModelRun(attemptId: number): Promise<string> {
+    const modelRunId = this.getExecutionState().modelRunId;
+    if (
+      typeof modelRunId !== 'string' ||
+      modelRunId.trim().length === 0 ||
+      modelRunId.trim() !== modelRunId
+    ) {
+      throw new AgentError(
+        'External lifecycle authority requires a current host-issued model run',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    const api = await this.initializeMAMAApi();
+    if (!api.getModelRun) {
+      throw new AgentError(
+        'External lifecycle model-run authority is unavailable',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    let modelRun: ModelRunRecord | null;
+    try {
+      modelRun = await api.getModelRun(modelRunId);
+    } catch (error) {
+      throw new AgentError(
+        'External lifecycle model-run authority could not be verified',
+        'WORKORDER_SUPERSEDED',
+        error instanceof Error ? error : undefined,
+        false
+      );
+    }
+
+    if (
+      !modelRun ||
+      modelRun.status !== 'running' ||
+      modelRun.input_refs?.workorderAttemptId !== attemptId
+    ) {
+      throw new AgentError(
+        'External lifecycle authority is no longer current for this claimed attempt',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+
+    return modelRunId;
   }
 
   private async beginTraceIfNeeded(
@@ -2002,12 +2087,7 @@ export class GatewayToolExecutor {
   ): Promise<GatewayToolResult> {
     this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
-      throw new AgentError(
-        `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
-        'UNKNOWN_TOOL',
-        undefined,
-        false
-      );
+      throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
     }
 
     if (
@@ -2766,6 +2846,126 @@ export class GatewayToolExecutor {
             };
           }
         }
+        case 'task_external_bind': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const state = this.getExecutionState();
+          const attemptId = state.workorderAttemptId;
+          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
+            throw new AgentError(
+              'task_external_bind requires a trusted claimed board attempt',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          try {
+            validateExternalLifecycleDecision('binding', input);
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'task_external_bind input is invalid',
+              'TOOL_ERROR',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
+          let candidate;
+          try {
+            candidate = this.taskLedger.loadBoardCandidate(
+              attemptId,
+              input.candidate_id,
+              'binding'
+            );
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error
+                ? error.message
+                : 'task_external_bind candidate is unavailable',
+              'WORKORDER_SUPERSEDED',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const receipt = this.taskLedger.applyExternalBindingDecision(
+            attemptId,
+            input as ExternalBindingToolInput,
+            {
+              runId: modelRunId,
+              workOrderAttemptId: attemptId,
+              causeEventIds: [candidate.eventId],
+            }
+          );
+          return {
+            success: true,
+            receipt: {
+              taskId: receipt.taskId,
+              workorderAttemptId: receipt.workOrderAttemptId,
+              outcome: receipt.outcome,
+            },
+          } as GatewayToolResult;
+        }
+        case 'task_lifecycle_reconcile': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const state = this.getExecutionState();
+          const attemptId = state.workorderAttemptId;
+          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
+            throw new AgentError(
+              'task_lifecycle_reconcile requires a trusted claimed board attempt',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          try {
+            validateExternalLifecycleDecision('lifecycle', input);
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'task_lifecycle_reconcile input is invalid',
+              'TOOL_ERROR',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
+          let candidate;
+          try {
+            candidate = this.taskLedger.loadBoardCandidate(
+              attemptId,
+              input.candidate_id,
+              'lifecycle'
+            );
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error
+                ? error.message
+                : 'task_lifecycle_reconcile candidate is unavailable',
+              'WORKORDER_SUPERSEDED',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
+          const receipt = this.taskLedger.applyExternalLifecycleDecision(
+            attemptId,
+            input as ExternalLifecycleReconcileToolInput,
+            {
+              runId: modelRunId,
+              workOrderAttemptId: attemptId,
+              causeEventIds: [candidate.eventId],
+            }
+          );
+          return {
+            success: true,
+            receipt: {
+              taskId: receipt.taskId,
+              workorderAttemptId: receipt.workOrderAttemptId,
+              outcome: receipt.outcome,
+            },
+          } as GatewayToolResult;
+        }
         case 'task_create': {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
@@ -2778,6 +2978,7 @@ export class GatewayToolExecutor {
               // else's work with it.
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
+                workOrderAttemptId: this.getExecutionState().workorderAttemptId,
                 causeEventIds: this.getExecutionState().causeEventIds,
                 causeKind:
                   this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
@@ -2802,6 +3003,7 @@ export class GatewayToolExecutor {
           }
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
+            workOrderAttemptId: this.getExecutionState().workorderAttemptId,
             // The batch this run was handed. A bounded run's changes rest on the delta it
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.
@@ -3725,14 +3927,17 @@ export class GatewayToolExecutor {
     } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const state = this.getExecutionState();
-    const contextTier = state.agentContext?.tier;
+    const projectedAgentContext = state.agentContext
+      ? this.projectPrivateAgentContext(state.agentContext)
+      : undefined;
+    const contextTier = projectedAgentContext?.tier;
     const tier = contextTier === undefined ? 1 : contextTier;
     let policy;
     try {
       policy = projectCodeActToolPolicy({
         tier,
-        roleName: state.agentContext?.roleName,
-        role: state.agentContext?.role,
+        roleName: projectedAgentContext?.roleName,
+        role: projectedAgentContext?.role,
         disallowedTools: state.disallowedGatewayTools,
         requestedAllowedTools: input.allowedTools,
         requestedBlockedTools: input.blockedTools,
@@ -3758,6 +3963,10 @@ export class GatewayToolExecutor {
 
     const nestedExecutionContext: GatewayToolExecutionContext = {
       ...state,
+      // Preserve the registry-supplied principal object as provenance. The
+      // policy above and every nested final authorization re-project it from
+      // the immutable boot snapshot; replacing the object would blur which
+      // trusted context the keyed call actually carried.
       agentContext: state.agentContext ?? undefined,
       executionSurface: 'code_act',
       parentToolName: 'code_act',

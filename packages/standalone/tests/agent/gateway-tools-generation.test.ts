@@ -4,8 +4,24 @@
 
 import { describe, it, expect } from 'vitest';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../../src/agent/gateway-tool-catalog.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 describe('Gateway tools generation', () => {
+  it('TG-03/TG-04 builds the public wildcard catalog without private connector text', () => {
+    const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+    const catalog = buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
+      allowedTools: ['*'],
+      privateConnectorPolicy: disabled,
+    });
+
+    expect(catalog.prompt.toLowerCase()).not.toContain('kagemusha');
+    expect(catalog.toolNames).not.toContain('kagemusha_tasks');
+    expect(catalog.cacheKey).toContain(disabled.fingerprint);
+  });
+
   describe('VALID_TOOLS derivation', () => {
     it('should include all expected tools', () => {
       const names = ToolRegistry.getValidToolNames();
@@ -121,10 +137,20 @@ describe('Gateway tools generation', () => {
   it('the checked-in catalog still matches what the registry generates', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
+    const { buildGatewayToolCatalog } = await import('../../src/agent/gateway-tool-catalog.js');
+    const { resolvePrivateConnectorPolicy } =
+      await import('../../src/connectors/private-connector-policy.js');
 
     const checkedIn = readFileSync(join(__dirname, '../../src/agent/gateway-tools.md'), 'utf8');
-    const generated = ToolRegistry.generatePrompt();
+    const generated = buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
+      allowedTools: ['*'],
+      privateConnectorPolicy: resolvePrivateConnectorPolicy({
+        ok: true,
+        config: {},
+        enabledNames: [],
+      }),
+    }).prompt;
 
     // Tool entries only. The file also carries hand-written bullets in the same shape
     // (`- **List jobs**` and friends, describing the cron surface), so match on the

@@ -10,6 +10,7 @@
 import type { GatewayToolName } from './types.js';
 import type { HostToolDefinition } from './model-runner.js';
 import { minimatch } from 'minimatch';
+import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../connectors/private-connector-policy.js';
 
 // ─── Tool Metadata ───────────────────────────────────────────────────────────
 
@@ -64,7 +65,7 @@ register({
 register({
   name: 'mama_search',
   description:
-    'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
+    'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must exactly match granted forms such as channel:<connector>:<channelId> or global:system - guessed ids are denied.',
   category: 'memory',
   params:
     'query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?',
@@ -72,7 +73,7 @@ register({
 register({
   name: 'mama_recall',
   description:
-    'Recall memory bundle with profile, memories, and graph context. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must match granted forms EXACTLY (channel:<connector>:<channelId> as configured - kagemusha rooms are channel:kagemusha:kakao:..., never channel:kakao:...; global:system) - guessed ids are denied.',
+    'Recall memory bundle with profile, memories, and graph context. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must exactly match granted forms such as channel:<connector>:<channelId> or global:system - guessed ids are denied.',
   category: 'memory',
   params: 'query, scopes?, includeProfile?',
 });
@@ -287,32 +288,16 @@ register({
   },
 });
 
-// Business Data — progressive exploration of operational data
-register({
-  name: 'kagemusha_overview',
-  description: 'Get overview: room/task/message counts across all channels',
-  category: 'business_data',
-  params: '(none)',
-});
-register({
-  name: 'kagemusha_entities',
-  description: 'List people and project channels with activity stats',
-  category: 'business_data',
-  params: 'channel?, activeOnly?, limit?',
-});
-register({
-  name: 'kagemusha_tasks',
-  description:
-    'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
-  category: 'business_data',
-  params: 'sourceRoom?, status?, priority?, search?, limit?',
-});
-register({
-  name: 'kagemusha_messages',
-  description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
-  category: 'business_data',
-  params: 'channelId (required), since?, limit?, search?',
-});
+// Private business data remains registered for dispatch, but all metadata is
+// owned by the private policy and projected out of generic catalogs at runtime.
+for (const definition of PRIVATE_CONNECTOR_TOOL_DEFINITIONS) {
+  register({
+    name: definition.name,
+    description: definition.description,
+    category: definition.category,
+    params: definition.params,
+  });
+}
 register({
   name: 'trello_search',
   description:
@@ -339,7 +324,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List work items from YOUR task board - the working tracker you maintain for the owner, who only views it (the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
+    'List work items from YOUR native task board - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. Returns server-derived temporal_state and normalized due_at. Board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)",
@@ -350,6 +335,42 @@ register({
     'Resolve every OPEN native task-ledger row against the live Trello board and return, per row, matched | unmatched | ambiguous | historical_only | not_applicable with a reason code, plus coverage counts and the snapshot health. The join runs on recorded provenance (source_event_id -> connector event index -> board/card id), never on titles: only a "matched" row may carry a factual cross-store statement, and "historical_only" means the item is not in the live OPEN set - archived, deleted, moved, or unread - and is NEVER evidence that the work is finished. Call this before stating any item status that mixes the two stores.',
   category: 'os_monitoring',
   params: '(none)',
+});
+register({
+  name: 'task_external_bind',
+  description:
+    'Record bind or decline for one host-issued external-task binding candidate. Candidate identity and task authority are recovered from this claimed board run; do not supply task or event identifiers.',
+  category: 'os_monitoring',
+  params: 'candidate_id, decision (bind|decline), reason, expected_revision',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      candidate_id: { type: 'string' },
+      decision: { enum: ['bind', 'decline'] },
+      reason: { type: 'string' },
+      expected_revision: { type: 'integer', minimum: 1 },
+    },
+    required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'task_lifecycle_reconcile',
+  description:
+    'Apply or retain one host-issued external lifecycle candidate. Candidate identity, task, event, and proposed lifecycle state are recovered from this claimed board run.',
+  category: 'os_monitoring',
+  params: 'candidate_id, decision (apply|retain), reason, expected_revision',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      candidate_id: { type: 'string' },
+      decision: { enum: ['apply', 'retain'] },
+      reason: { type: 'string' },
+      expected_revision: { type: 'integer', minimum: 1 },
+    },
+    required: ['candidate_id', 'decision', 'reason', 'expected_revision'],
+    additionalProperties: false,
+  },
 });
 register({
   name: 'changes_read',
@@ -433,17 +454,30 @@ export class ToolRegistry {
 
   /**
    * Get tools filtered by allowed list.
-   * If allowedTools is undefined or empty, returns all tools.
+   * If allowedTools is undefined, returns all tools. An empty list returns none.
    * Supports wildcard patterns: "mama_*", "browser_*", "*"
    */
-  static getFilteredTools(allowedTools?: string[]): ToolDefinitionMeta[] {
-    if (!allowedTools || allowedTools.length === 0 || allowedTools.includes('*')) {
+  static getFilteredTools(allowedTools?: readonly string[]): ToolDefinitionMeta[] {
+    if (allowedTools === undefined || allowedTools.includes('*')) {
       return ToolRegistry.getAllTools();
     }
 
     return ToolRegistry.getAllTools().filter((tool) =>
       allowedTools.some((pattern) => matchToolPattern(pattern, tool.name))
     );
+  }
+
+  /** Expand optional exact/glob patterns to canonical registry names. */
+  static expandToolPatterns(patterns?: readonly string[]): string[] {
+    if (patterns === undefined) {
+      return ToolRegistry.getValidToolNames();
+    }
+    if (patterns.length === 0) {
+      return [];
+    }
+    return ToolRegistry.getAllTools()
+      .filter((tool) => patterns.some((pattern) => matchToolPattern(pattern, tool.name)))
+      .map((tool) => tool.name);
   }
 
   /**
@@ -520,7 +554,7 @@ export class ToolRegistry {
   /**
    * Generate a markdown prompt listing all tools (or filtered subset).
    */
-  static generatePrompt(allowedTools?: string[]): string {
+  static generatePrompt(allowedTools?: readonly string[]): string {
     const tools = ToolRegistry.getFilteredTools(allowedTools);
     const grouped = new Map<ToolCategory, ToolDefinitionMeta[]>();
     for (const tool of tools) {
@@ -559,7 +593,7 @@ export class ToolRegistry {
   /**
    * Generate a compact fallback prompt (for when gateway-tools.md is not available).
    */
-  static generateFallbackPrompt(allowedTools?: string[]): string {
+  static generateFallbackPrompt(allowedTools?: readonly string[]): string {
     const tools = ToolRegistry.getFilteredTools(allowedTools);
     const grouped = new Map<ToolCategory, string[]>();
     for (const tool of tools) {

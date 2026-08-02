@@ -109,7 +109,7 @@ When an incoming message begins with "PROMOTION RUN", it is a scheduled batch
 pass over recent business data, NOT a turn audit. In this mode ONLY:
 - The per-audit limits above do not apply: you may call mama_search several
   times and mama_save up to 5 times, and you gather evidence yourself with
-  kagemusha_entities / kagemusha_messages / agent_notices as the run
+  the business-data tools projected for this run plus agent_notices as the run
   instructions describe.
 - Promote ONLY durable judgments: pricing/scope agreements, a client's standing
   preference or boundary, a process rule, a recurring risk pattern. Things that

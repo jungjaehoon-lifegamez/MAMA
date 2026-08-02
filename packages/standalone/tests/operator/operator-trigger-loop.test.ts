@@ -6,6 +6,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
@@ -15,6 +19,46 @@ import type {
 } from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 import type { PendingReportState } from '../../src/operator/pending-report-store.js';
+import {
+  FilePendingReportStore,
+  pendingReportDeliveryPayloadIdentity,
+  pendingReportRequestPayloadIdentity,
+} from '../../src/operator/pending-report-store.js';
+import {
+  createTelegramReportCarryDelivery,
+  createTelegramReportOutput,
+  type ReportCarryDeliveryStore,
+} from '../../src/operator/report-carry-delivery.js';
+import {
+  FileReportCarryStore,
+  type PersistDeliveredInput,
+} from '../../src/operator/report-carry.js';
+import type { SituationReporterSnapshot } from '../../src/operator/situation-report.js';
+
+const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
+
+function testReportOutput(
+  send: (text: string, deliveryId?: string) => Promise<void>,
+  channelId = TEST_REPORT_TARGET.channelId
+) {
+  return {
+    target: { source: 'telegram' as const, channelId },
+    send,
+  };
+}
+
+function bindTestOutput<T extends Partial<ConstructorParameters<typeof OperatorTriggerLoop>[0]>>(
+  over: T
+): T {
+  if (!over.output) return over;
+  return {
+    ...over,
+    output: {
+      target: TEST_REPORT_TARGET,
+      ...over.output,
+    },
+  };
+}
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -93,7 +137,7 @@ describe('OperatorTriggerLoop', () => {
         authorWindowSize: 10,
       },
       log: (line) => logs.push(line),
-      ...over,
+      ...bindTestOutput(over),
     });
   }
 
@@ -738,7 +782,12 @@ describe('Story OPS-1 / S1-T3: on-demand full report + scheduled suppression', (
         authorWindowSize: 10,
       },
       log: (line: string) => logs.push(line),
-      ...over,
+      ...(over.output && typeof over.output === 'object'
+        ? {
+            ...over,
+            output: { target: TEST_REPORT_TARGET, ...(over.output as Record<string, unknown>) },
+          }
+        : over),
     });
   }
 
@@ -878,9 +927,152 @@ describe('TG-06: durable owner-report delivery identity', () => {
         authorWindowSize: 10,
       },
       log: () => {},
-      ...over,
+      ...bindTestOutput(over),
     });
   }
+
+  it('TG-01/TG-06 drives scheduled and on-demand successful sends through one target-scoped production carry assembly', async () => {
+    class CapturingCarryStore extends FileReportCarryStore {
+      readonly persisted: PersistDeliveredInput[] = [];
+
+      override persistDelivered(input: PersistDeliveredInput): void {
+        this.persisted.push(structuredClone(input));
+        super.persistDelivered(input);
+      }
+    }
+
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-carry-delivery-'));
+    const path = join(root, 'carry.json');
+    const carryStore: ReportCarryDeliveryStore & CapturingCarryStore = new CapturingCarryStore(
+      path
+    );
+    const deliverToCarry = createTelegramReportCarryDelivery({
+      reportChatId: 'trusted-owner-chat',
+      carryStore,
+    });
+    const deliveredReports: Array<Parameters<typeof deliverToCarry>[0]> = [];
+    const persistLastFullReport = (report: Parameters<typeof deliverToCarry>[0]): void => {
+      deliveredReports.push(structuredClone(report));
+      deliverToCarry(report);
+    };
+    const sent: Array<{ chatId: string; text: string; deliveryId?: string }> = [];
+    const output = createTelegramReportOutput({
+      reportChatId: 'trusted-owner-chat',
+      telegramSender: {
+        async sendSystemMessage(chatId, text, deliveryId) {
+          sent.push({ chatId, text, deliveryId });
+        },
+      },
+    });
+
+    const onDemand = durableLoop(
+      { current: null },
+      {
+        output,
+        reportAsk: async () => 'on-demand owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_on_demand' }),
+        persistLastFullReport,
+      }
+    );
+    expect(onDemand.startFullReport()).toEqual({ accepted: true });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    const scheduled = durableLoop(
+      { current: null },
+      {
+        output,
+        reportAsk: async () => 'scheduled owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_scheduled' }),
+        persistLastFullReport,
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+    await scheduled.tick();
+
+    expect(sent).toEqual([
+      {
+        chatId: 'trusted-owner-chat',
+        text: 'on-demand owner report',
+        deliveryId: expect.stringMatching(/^operator-report:on_demand_full:/),
+      },
+      {
+        chatId: 'trusted-owner-chat',
+        text: 'scheduled owner report',
+        deliveryId: 'operator-report:scheduled:2026-08-02:09',
+      },
+    ]);
+    expect(carryStore.persisted).toHaveLength(2);
+    expect(carryStore.persisted[0]).toMatchObject({
+      deliveryId: sent[0].deliveryId,
+      target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+      text: sent[0].text,
+      provenance: { status: 'available', modelRunId: 'mr_on_demand' },
+    });
+    expect(carryStore.persisted[1]).toMatchObject({
+      deliveryId: sent[1].deliveryId,
+      target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+      text: sent[1].text,
+      provenance: { status: 'available', modelRunId: 'mr_scheduled' },
+    });
+    expect(carryStore.persisted[1].deliveredAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    );
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+      version: 2,
+      ...carryStore.persisted[1],
+    });
+
+    expect(
+      carryStore.acknowledge({
+        deliveryId: carryStore.persisted[1].deliveryId,
+        target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+        consumingChannelKey: 'telegram:trusted-owner-chat',
+        consumedAtIso: '2026-08-02T00:01:00.000Z',
+      })
+    ).toBe(true);
+    persistLastFullReport(deliveredReports[1]!);
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+      deliveryId: carryStore.persisted[1].deliveryId,
+      consumedAt: '2026-08-02T00:01:00.000Z',
+      consumingChannelKey: 'telegram:trusted-owner-chat',
+    });
+  });
+
+  it('TG-06 leaves the production carry store untouched when a full-report send is rejected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-carry-rejected-'));
+    const path = join(root, 'carry.json');
+    const carryStore = new FileReportCarryStore(path);
+    const loop = durableLoop(
+      { current: null },
+      {
+        output: {
+          send: async () => {
+            throw new Error('telegram rejected');
+          },
+        },
+        reportAsk: async () => 'rejected owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_rejected' }),
+        persistLastFullReport: createTelegramReportCarryDelivery({
+          reportChatId: 'trusted-owner-chat',
+          carryStore,
+        }),
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:10' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+
+    await expect(loop.tick()).rejects.toThrow('telegram rejected');
+    expect(existsSync(path)).toBe(false);
+  });
 
   it('retries the exact persisted report and delivery id after a pre-send restart', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
@@ -929,6 +1121,814 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(scheduler.markSuccess).toHaveBeenCalledOnce();
   });
 
+  it('TG-06 refuses a pending delivery when restart configuration changes from Telegram A to B', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-target-drift-'));
+    const path = join(root, 'pending.json');
+    const firstSend = vi.fn(async () => {
+      throw new Error('telegram unavailable');
+    });
+    const first = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-A',
+          telegramSender: { sendSystemMessage: firstSend },
+        }),
+        reportAsk: async () => 'owner report for A',
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+
+    await expect(first.tick()).rejects.toThrow('telegram unavailable');
+    expect(new FilePendingReportStore(path).load()?.delivery?.target).toEqual({
+      source: 'telegram',
+      channelId: 'owner-chat-A',
+    });
+
+    const secondSend = vi.fn(async () => {});
+    const carryPath = join(root, 'carry-B.json');
+    const second = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-B',
+          telegramSender: { sendSystemMessage: secondSend },
+        }),
+        reportAsk: async () => 'must not regenerate for B',
+        persistLastFullReport: createTelegramReportCarryDelivery({
+          reportChatId: 'owner-chat-B',
+          carryStore: new FileReportCarryStore(carryPath),
+        }),
+      }
+    );
+
+    await expect(second.tick()).rejects.toThrow(/target.*owner-chat-A.*owner-chat-B/i);
+    expect(secondSend).not.toHaveBeenCalled();
+    expect(existsSync(carryPath)).toBe(false);
+    expect(new FilePendingReportStore(path).load()?.delivery?.text).toBe('owner report for A');
+  });
+
+  it('TG-06 refuses a pending accepted request when restart configuration changes from Telegram A to B', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-request-target-drift-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const target = { source: 'telegram', channelId: 'owner-chat-A' } as const;
+    const request = {
+      mode: 'full' as const,
+      deliveryId: 'operator-report:on_demand_full:accepted-for-A',
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-08-02T00:00:00.000Z',
+      },
+      acceptedAtIso: '2026-08-02T00:00:00.000Z',
+      target,
+    };
+    new FilePendingReportStore(path).save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: {
+        ...request,
+        payloadIdentity: pendingReportRequestPayloadIdentity(request),
+      },
+    });
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose for B');
+    const restarted = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-B',
+          telegramSender: { sendSystemMessage: send },
+        }),
+        reportAsk,
+      }
+    );
+
+    await expect(restarted.tick()).rejects.toThrow(/target.*owner-chat-A.*owner-chat-B/i);
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(new FilePendingReportStore(path).load()?.request?.deliveryId).toBe(request.deliveryId);
+  });
+
+  it('TG-06 quarantines an invalid pending full delivery before restart recovery can send or advance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'invalid old report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: '   ',
+          provenance: { status: 'available', modelRunId: 'mr_current_1' },
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired,
+        loadLastSuccess: () => null,
+        markSuccess,
+      },
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'provenance',
+      (delivery: Record<string, unknown>) => {
+        delivery.provenance = { status: 'available', modelRunId: 'mr_mutated' };
+      },
+    ],
+    [
+      'scheduled occurrence',
+      (delivery: Record<string, unknown>) => {
+        delivery.occurrence = {
+          kind: 'scheduled_full',
+          hourKey: '2026-08-02:10',
+          firedAtIso: '2026-08-02T01:00:00.000Z',
+        };
+      },
+    ],
+  ] as const)(
+    'TG-06 quarantines a pending delivery with mutated %s before send, carry, or scheduler mutation',
+    async (_field, mutate) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-identity-mutation-'));
+      const path = join(root, 'pending.json');
+      const snapshot = new (
+        await import('../../src/operator/situation-report.js')
+      ).SituationReporter().snapshot();
+      const delivery = {
+        mode: 'full' as const,
+        text: 'authorized owner report',
+        citedTriggerIds: ['trigger-1'],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'fully-bound-d1',
+        provenance: { status: 'available' as const, modelRunId: 'mr_original' },
+        occurrence: {
+          kind: 'scheduled_full' as const,
+          hourKey: '2026-08-02:09',
+          firedAtIso: '2026-08-02T00:00:00.000Z',
+        },
+        target: TEST_REPORT_TARGET,
+      };
+      const state = {
+        version: 1 as const,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          ...delivery,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+        },
+      };
+      const tampered = structuredClone(state);
+      mutate(tampered.delivery as unknown as Record<string, unknown>);
+      await writeFile(path, JSON.stringify(tampered));
+
+      const send = vi.fn(async () => {});
+      const persistLastFullReport = vi.fn();
+      const reportAsk = vi.fn(async () => 'must not compose replacement');
+      const scheduler = {
+        shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:11' })),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      };
+      const loop = durableLoop(
+        { current: null },
+        {
+          pendingReportStore: new FilePendingReportStore(path),
+          output: testReportOutput(send),
+          persistLastFullReport,
+          reportAsk,
+          reportScheduler: scheduler,
+        }
+      );
+
+      await loop.tick();
+
+      expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+      expect(send).not.toHaveBeenCalled();
+      expect(persistLastFullReport).not.toHaveBeenCalled();
+      expect(reportAsk).not.toHaveBeenCalled();
+      expect(scheduler.shouldFire).not.toHaveBeenCalled();
+      expect(scheduler.markFired).not.toHaveBeenCalled();
+      expect(scheduler.markSuccess).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [
+      'scheduled delivery',
+      (snapshot: SituationReporterSnapshot) => {
+        const delivery = {
+          mode: 'full' as const,
+          text: 'owner report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'unknown-scheduled-key-d1',
+          provenance: { status: 'available' as const, modelRunId: 'mr_original' },
+          occurrence: {
+            kind: 'scheduled_full' as const,
+            hourKey: '2026-08-02:09',
+            unknown: 'substitutes-for-firedAtIso',
+          },
+          target: TEST_REPORT_TARGET,
+        };
+        return {
+          version: 1 as const,
+          digest: snapshot,
+          full: snapshot,
+          delivery: {
+            ...delivery,
+            payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+          },
+        };
+      },
+    ],
+    [
+      'on-demand request',
+      (snapshot: SituationReporterSnapshot) => {
+        const request = {
+          mode: 'full' as const,
+          deliveryId: 'unknown-on-demand-key-d1',
+          occurrence: {
+            kind: 'on_demand_full' as const,
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+            unknown: 'substitutes-for-hourKey',
+          },
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          target: TEST_REPORT_TARGET,
+        };
+        return {
+          version: 1 as const,
+          digest: snapshot,
+          full: snapshot,
+          request: {
+            ...request,
+            payloadIdentity: pendingReportRequestPayloadIdentity(request),
+          },
+        };
+      },
+    ],
+  ] as const)(
+    'TG-06 quarantines a persisted %s with an unknown occurrence key before report side effects',
+    async (_phase, buildState) => {
+      const root = await mkdtemp(join(tmpdir(), 'mama-report-occurrence-schema-'));
+      const path = join(root, 'pending.json');
+      const snapshot = new (
+        await import('../../src/operator/situation-report.js')
+      ).SituationReporter().snapshot();
+      await writeFile(path, JSON.stringify(buildState(snapshot)));
+
+      const send = vi.fn(async () => {});
+      const persistLastFullReport = vi.fn();
+      const reportAsk = vi.fn(async () => 'must not compose replacement');
+      const scheduler = {
+        shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:11' })),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      };
+      const loop = durableLoop(
+        { current: null },
+        {
+          pendingReportStore: new FilePendingReportStore(path),
+          output: testReportOutput(send),
+          persistLastFullReport,
+          reportAsk,
+          reportScheduler: scheduler,
+        }
+      );
+
+      await loop.tick();
+
+      expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+      expect(send).not.toHaveBeenCalled();
+      expect(persistLastFullReport).not.toHaveBeenCalled();
+      expect(reportAsk).not.toHaveBeenCalled();
+      expect(scheduler.shouldFire).not.toHaveBeenCalled();
+      expect(scheduler.markFired).not.toHaveBeenCalled();
+      expect(scheduler.markSuccess).not.toHaveBeenCalled();
+    }
+  );
+
+  it('TG-06 quarantines a state with both pending phases before restart recovery can send or advance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'old digest',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired,
+        loadLastSuccess: () => null,
+        markSuccess,
+      },
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
+  });
+
+  it('TG-06 blocks replacement reports until the same live loop observes explicit recovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'valid but mutually exclusive digest',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'digest-1',
+          occurrence: { kind: 'digest' },
+        },
+        request: {
+          mode: 'full',
+          deliveryId: 'request-1',
+          acceptedAtIso: '2026-08-02T00:00:00.000Z',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-08-02T00:00:00.000Z',
+          },
+        },
+      })
+    );
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose a replacement');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
+    const makeBlockedLoop = () =>
+      new OperatorTriggerLoop({
+        delta: new FakeDelta(),
+        memory: fakeMem(),
+        registry: new TriggerRegistry(new Database(':memory:')),
+        askAgent: async () => '[]',
+        reportAsk,
+        review: async () => ({ action: 'kept' as const }),
+        output: testReportOutput(send),
+        reportScheduler: scheduler,
+        pendingReportStore: new FilePendingReportStore(path),
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+        },
+        log: () => {},
+      });
+
+    const first = makeBlockedLoop();
+    await first.tick();
+    expect(first.startFullReport()).toEqual({ accepted: false, reason: 'unavailable' });
+
+    const restarted = makeBlockedLoop();
+    await restarted.tick();
+    expect(restarted.startFullReport()).toEqual({ accepted: false, reason: 'unavailable' });
+
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+    expect(markSuccess).not.toHaveBeenCalled();
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+
+    new FilePendingReportStore(path).recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+    });
+    await first.tick();
+
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+    expect(markFired).toHaveBeenCalledWith('2026-08-02:09');
+    expect(markSuccess).toHaveBeenCalledOnce();
+  });
+
+  it('TG-06 treats an absent pending outbox as eligible for the scheduled full report', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'normal scheduled full report');
+    const markFired = vi.fn();
+    const markSuccess = vi.fn();
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: testReportOutput(send),
+      reportScheduler: scheduler,
+      pendingReportStore: new FilePendingReportStore(path),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      'normal scheduled full report',
+      'operator-report:scheduled:2026-08-02:09'
+    );
+    expect(markFired).toHaveBeenCalledWith('2026-08-02:09');
+    expect(markSuccess).toHaveBeenCalledOnce();
+  });
+
+  it('TG-06 rehydrates and replays an explicitly recovered d1 in the same live loop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const store = new FilePendingReportStore(path);
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose d2');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: testReportOutput(send),
+      reportScheduler: scheduler,
+      pendingReportStore: store,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    const recoveredDelivery = {
+      mode: 'full' as const,
+      deliveryId: 'd1',
+      target: TEST_REPORT_TARGET,
+      text: 'recovered d1',
+      citedTriggerIds: [],
+      createdAtIso: '2026-08-02T00:00:00.000Z',
+      provenance: { status: 'available' as const, modelRunId: 'mr_d1' },
+      occurrence: { kind: 'scheduled_full' as const, hourKey: '2026-08-02:09' },
+    };
+    store.recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: {
+        ...recoveredDelivery,
+        payloadIdentity: pendingReportDeliveryPayloadIdentity(recoveredDelivery),
+      },
+    });
+
+    await loop.tick();
+
+    expect(send).toHaveBeenCalledWith('recovered d1', 'd1');
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+    expect(store.loadOutcome().status).toBe('ready');
+  });
+
+  it('TG-06 composes an explicitly recovered accepted request once before scheduled work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const store = new FilePendingReportStore(path);
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'recovered request d1');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: testReportOutput(send),
+      reportScheduler: scheduler,
+      pendingReportStore: store,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    const recoveredRequest = {
+      mode: 'full' as const,
+      deliveryId: 'd1-request',
+      acceptedAtIso: '2026-08-02T00:00:00.000Z',
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-08-02T00:00:00.000Z',
+      },
+      target: TEST_REPORT_TARGET,
+    };
+    store.recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: {
+        ...recoveredRequest,
+        payloadIdentity: pendingReportRequestPayloadIdentity(recoveredRequest),
+      },
+    });
+
+    await loop.tick();
+
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith('recovered request d1', 'd1-request');
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+  });
+
+  it('TG-06 fails closed then replays external recovery when a fresh save loses its CAS race', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const fileStore = new FilePendingReportStore(path);
+    const recovered = {
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: (() => {
+        const delivery = {
+          mode: 'digest' as const,
+          text: 'external d1 wins',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'd1',
+          occurrence: { kind: 'digest' as const },
+          target: TEST_REPORT_TARGET,
+        };
+        return {
+          ...delivery,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+        };
+      })(),
+    };
+    let injectRecovery = true;
+    const raceStore = {
+      loadOutcome: () => fileStore.loadOutcome(),
+      load: () => fileStore.load(),
+      loadStatus: () => fileStore.loadStatus(),
+      save: (
+        state: PendingReportState,
+        expected?: Parameters<FilePendingReportStore['save']>[1]
+      ) => {
+        if (injectRecovery) {
+          injectRecovery = false;
+          fileStore.recoverWithValidState(recovered);
+        }
+        fileStore.save(state, expected);
+      },
+    };
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'fresh d2 must not send');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: testReportOutput(send),
+      reportScheduler: scheduler,
+      pendingReportStore: raceStore,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await expect(loop.tick()).rejects.toThrow(
+      'Pending owner-report state changed before normal save'
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(fileStore.loadOutcome()).toMatchObject({
+      status: 'ready',
+      state: { delivery: { deliveryId: 'd1', text: 'external d1 wins' } },
+    });
+
+    await loop.tick();
+
+    expect(send).toHaveBeenCalledWith('external d1 wins', 'd1');
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+  });
+
+  it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
+    const pendingRef: { current: PendingReportState | null } = { current: null };
+    const first = durableLoop(pendingRef, {
+      output: {
+        send: async () => {
+          throw new Error('telegram unavailable');
+        },
+      },
+      reportAsk: async () => 'stable report body',
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_original' }),
+      reportScheduler: {
+        shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      },
+    });
+
+    await expect(first.tick()).rejects.toThrow('telegram unavailable');
+    expect(pendingRef.current?.delivery?.provenance).toEqual({
+      status: 'available',
+      modelRunId: 'mr_original',
+    });
+
+    const persisted: unknown[] = [];
+    const recovered = durableLoop(pendingRef, {
+      output: { send: async () => {} },
+      fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_wrong_process' }),
+      persistLastFullReport: (report) => persisted.push(report),
+      reportScheduler: {
+        shouldFire: () => ({ fire: false, hourKey: '2026-08-02:09' }),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      },
+    });
+
+    await recovered.tick();
+
+    expect(persisted).toHaveLength(1);
+    expect((persisted[0] as { provenance: unknown }).provenance).toEqual({
+      status: 'available',
+      modelRunId: 'mr_original',
+    });
+  });
+
   it('replays the same id after an accepted send whose completion state was not persisted', async () => {
     let durable: PendingReportState | null = null;
     let saveCount = 0;
@@ -951,6 +1951,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       reportAsk: async () => 'accepted report',
       review: async () => ({ action: 'kept' as const }),
       output: {
+        target: TEST_REPORT_TARGET,
         send: async (_text, deliveryId) => {
           expect(deliveryId).toBeTruthy();
           deliveries.push(deliveryId!);
@@ -1043,6 +2044,54 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
+  it('TG-06 passes exact prepared scheduled and on-demand deliveries to the same carry boundary', async () => {
+    const carried: Array<{
+      deliveryId: string;
+      text: string;
+      provenance: unknown;
+    }> = [];
+    const onDemand = durableLoop(
+      { current: null },
+      {
+        output: { send: async () => {} },
+        reportAsk: async () => 'on-demand owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_on_demand' }),
+        persistLastFullReport: (report) => carried.push(report),
+      }
+    );
+    expect(onDemand.startFullReport()).toEqual({ accepted: true });
+    await vi.waitFor(() => expect(carried).toHaveLength(1));
+
+    const scheduled = durableLoop(
+      { current: null },
+      {
+        output: { send: async () => {} },
+        reportAsk: async () => 'scheduled owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_scheduled' }),
+        persistLastFullReport: (report) => carried.push(report),
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+    await scheduled.tick();
+
+    expect(carried).toHaveLength(2);
+    expect(carried[0]).toMatchObject({
+      deliveryId: expect.stringMatching(/^operator-report:on_demand_full:/),
+      text: 'on-demand owner report',
+      provenance: { status: 'available', modelRunId: 'mr_on_demand' },
+    });
+    expect(carried[1]).toMatchObject({
+      deliveryId: 'operator-report:scheduled:2026-08-02:09',
+      text: 'scheduled owner report',
+      provenance: { status: 'available', modelRunId: 'mr_scheduled' },
+    });
+  });
+
   it('persists an accepted on-demand occurrence before report composition completes', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
     let releaseAsk!: (value: string) => void;
@@ -1074,19 +2123,24 @@ describe('TG-06: durable owner-report delivery identity', () => {
       await import('../../src/operator/situation-report.js')
     ).SituationReporter().snapshot();
     const deliveryId = 'operator-report:on_demand_full:accepted-before-crash';
+    const acceptedRequest = {
+      mode: 'full' as const,
+      deliveryId,
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-07-22T04:30:00.000Z',
+      },
+      acceptedAtIso: '2026-07-22T04:30:00.000Z',
+      target: TEST_REPORT_TARGET,
+    };
     const pendingRef: { current: PendingReportState | null } = {
       current: {
         version: 1,
         digest: snapshot,
         full: snapshot,
         request: {
-          mode: 'full',
-          deliveryId,
-          occurrence: {
-            kind: 'on_demand_full',
-            firedAtIso: '2026-07-22T04:30:00.000Z',
-          },
-          acceptedAtIso: '2026-07-22T04:30:00.000Z',
+          ...acceptedRequest,
+          payloadIdentity: pendingReportRequestPayloadIdentity(acceptedRequest),
         },
       },
     };
@@ -1138,18 +2192,23 @@ describe('TG-06: durable owner-report delivery identity', () => {
     const snapshot = new (
       await import('../../src/operator/situation-report.js')
     ).SituationReporter().snapshot();
+    const startupDelivery = {
+      mode: 'digest' as const,
+      deliveryId: 'operator-report:digest:startup-recovery',
+      text: 'startup recovery report',
+      citedTriggerIds: [],
+      createdAtIso: '2026-07-22T03:30:00.000Z',
+      occurrence: { kind: 'digest' as const },
+      target: TEST_REPORT_TARGET,
+    };
     const pendingRef: { current: PendingReportState | null } = {
       current: {
         version: 1,
         digest: snapshot,
         full: snapshot,
         delivery: {
-          mode: 'digest',
-          text: 'startup recovery report',
-          citedTriggerIds: [],
-          createdAtIso: '2026-07-22T03:30:00.000Z',
-          deliveryId: 'operator-report:digest:startup-recovery',
-          occurrence: { kind: 'digest' },
+          ...startupDelivery,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(startupDelivery),
         },
       },
     };

@@ -318,12 +318,16 @@ describe('Story OPS-1 / S1-T2b: owner-console kagemusha scope widening', () => {
     metadata: chatType ? { chatType } : {},
   });
 
-  it('adds kagemusha to rawConnectors for a verified-owner DM', () => {
-    const policy = getReactiveRoutePolicy(ownerMessage('7777', 'private'), ownerConfig(), {
-      HOME: '/tmp/home',
-    });
-    expect(policy.rawConnectors).toContain('telegram');
-    expect(policy.rawConnectors).toContain('kagemusha');
+  it('TG-01/TG-05: grants raw kagemusha scope only to an enabled verified owner', () => {
+    const message = ownerMessage('7777', 'private');
+
+    expect(
+      getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, ['kagemusha'])
+        .rawConnectors
+    ).toContain('kagemusha');
+    expect(
+      getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, []).rawConnectors
+    ).not.toContain('kagemusha');
   });
 
   it('fails closed for groups, non-allowlisted chats, missing chatType, and unlocked config', () => {
@@ -337,7 +341,7 @@ describe('Story OPS-1 / S1-T2b: owner-console kagemusha scope widening', () => {
       ],
     ];
     for (const [message, config] of cases) {
-      const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' });
+      const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' }, ['kagemusha']);
       expect(policy.rawConnectors).toEqual(['telegram']);
     }
   });
@@ -367,7 +371,7 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
       ownerMessage('7777', 'private'),
       ownerConfig(),
       { HOME: '/tmp/home' },
-      Object.freeze(['trello', 'trello', 'telegram'])
+      Object.freeze(['kagemusha', 'trello', 'trello', 'telegram'])
     );
 
     expect(policy.rawConnectors).toEqual(['telegram', 'kagemusha', 'trello']);
@@ -396,10 +400,10 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
 
     expect(
       getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, []).rawConnectors
-    ).toEqual(['telegram', 'kagemusha']);
+    ).toEqual(['telegram']);
     expect(
       getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, ['slack']).rawConnectors
-    ).toEqual(['telegram', 'kagemusha']);
+    ).toEqual(['telegram']);
   });
 
   it('copies enabled connector names so later caller mutation cannot widen scope', () => {
@@ -411,10 +415,7 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
     );
     enabledNames.push('trello');
 
-    expect(reactiveConfig.rawConnectorsFor(ownerMessage('7777', 'private'))).toEqual([
-      'telegram',
-      'kagemusha',
-    ]);
+    expect(reactiveConfig.rawConnectorsFor(ownerMessage('7777', 'private'))).toEqual(['telegram']);
   });
 
   it.each([

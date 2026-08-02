@@ -663,6 +663,11 @@ export class TelegramGateway extends BaseGateway {
     await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, idempotencyKey));
   }
 
+  /** Detached system work must wait behind the normal per-chat delivery queue. */
+  async sendSystemMessage(chatId: string, text: string, deliveryId?: string): Promise<void> {
+    await this.sendMessage(chatId, text, deliveryId);
+  }
+
   async sendMessageFromActiveTurn(
     chatId: string,
     text: string,
@@ -692,9 +697,12 @@ export class TelegramGateway extends BaseGateway {
     }
 
     const ledgerKey = this.outboundLedgerKey(idempotencyKey, 'text');
-    const existing = this.messageLedger.get(ledgerKey);
+    const binding = {
+      deliveryTarget: `telegram:${chatId}`,
+      payloadIdentity: createHash('sha256').update(text).digest('hex'),
+    };
+    const { entry: existing } = this.messageLedger.claim(ledgerKey, binding);
     if (existing?.state === 'delivered') return;
-    if (!existing) this.messageLedger.claim(ledgerKey);
 
     let nextIndex = 0;
     if (existing?.state === 'ready' && existing.response) {
@@ -740,7 +748,7 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot) throw new Error('Telegram gateway not connected');
     const { InputFile } = await import('grammy');
     await this.runInChatQueue(chatId, () =>
-      this.sendOutboundOnce(idempotencyKey, 'file', () =>
+      this.sendOutboundOnce(idempotencyKey, 'file', chatId, `${filePath}\0${caption ?? ''}`, () =>
         this.bot!.api.sendDocument(Number(chatId), new InputFile(filePath), { caption }).then(
           () => {}
         )
@@ -759,7 +767,7 @@ export class TelegramGateway extends BaseGateway {
     await this.runInChatQueue(
       chatId,
       () =>
-        this.sendOutboundOnce(idempotencyKey, 'file', () =>
+        this.sendOutboundOnce(idempotencyKey, 'file', chatId, `${filePath}\0${caption ?? ''}`, () =>
           this.bot!.api.sendDocument(Number(chatId), new InputFile(filePath), { caption }).then(
             () => {}
           )
@@ -777,7 +785,7 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot) throw new Error('Telegram gateway not connected');
     const { InputFile } = await import('grammy');
     await this.runInChatQueue(chatId, () =>
-      this.sendOutboundOnce(idempotencyKey, 'image', () =>
+      this.sendOutboundOnce(idempotencyKey, 'image', chatId, `${imagePath}\0${caption ?? ''}`, () =>
         this.bot!.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption }).then(
           () => {}
         )
@@ -796,10 +804,15 @@ export class TelegramGateway extends BaseGateway {
     await this.runInChatQueue(
       chatId,
       () =>
-        this.sendOutboundOnce(idempotencyKey, 'image', () =>
-          this.bot!.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption }).then(
-            () => {}
-          )
+        this.sendOutboundOnce(
+          idempotencyKey,
+          'image',
+          chatId,
+          `${imagePath}\0${caption ?? ''}`,
+          () =>
+            this.bot!.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption }).then(
+              () => {}
+            )
         ),
       true
     );
@@ -808,6 +821,8 @@ export class TelegramGateway extends BaseGateway {
   private async sendOutboundOnce(
     idempotencyKey: string | undefined,
     kind: string,
+    chatId: string,
+    payload: string,
     send: () => Promise<void>
   ): Promise<void> {
     if (!idempotencyKey) {
@@ -815,9 +830,11 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
     const ledgerKey = this.outboundLedgerKey(idempotencyKey, kind);
-    const existing = this.messageLedger.get(ledgerKey);
-    if (existing?.state === 'delivered') return;
-    if (!existing) this.messageLedger.claim(ledgerKey);
+    const { entry: existing } = this.messageLedger.claim(ledgerKey, {
+      deliveryTarget: `telegram:${chatId}`,
+      payloadIdentity: createHash('sha256').update(payload).digest('hex'),
+    });
+    if (existing.state === 'delivered') return;
     await send();
     this.messageLedger.markDelivered(ledgerKey);
   }

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.32.1] / mama-core [2.1.2] - 2026-08-02
+
+### Fixed
+
+- **Telegram owner turns no longer inherit stale or cross-chat report state.** Report carry is
+  target-bound and one-shot, historical carry records are quarantined before upgrade, and the
+  Telegram delivery ledger binds every replay claim to the exact chat and payload (TG-01, TG-05).
+- **Kagemusha remains a user-private connector.** Signed envelopes expose its capability only to
+  configured owner/report surfaces; generic, wiki, legacy-unbound, and other-user contexts cannot
+  discover or inherit the private connector (TG-05).
+- **External lifecycle evidence updates native tasks exactly once.** Immutable candidates,
+  transactionally committed receipts, mixed-version writer recovery, and production BLOB hash
+  normalization preserve authoritative status changes without replay across restarts (TG-06).
+
 ## mama-os [0.32.0] - 2026-07-31
 
 ### Added

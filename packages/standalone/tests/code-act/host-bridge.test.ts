@@ -98,6 +98,18 @@ describe('HostBridge', () => {
       expect(list?.returnType).toContain('temporal_state');
     });
 
+    it('exposes bound lifecycle mutations to Tier 2 but never Tier 3', () => {
+      const bridge = new HostBridge(makeExecutor());
+      const tier2 = bridge.getAvailableFunctions(2).map((fn) => fn.name);
+      const tier3 = bridge.getAvailableFunctions(3).map((fn) => fn.name);
+
+      expect(tier2).toEqual(
+        expect.arrayContaining(['task_external_bind', 'task_lifecycle_reconcile'])
+      );
+      expect(tier3).not.toContain('task_external_bind');
+      expect(tier3).not.toContain('task_lifecycle_reconcile');
+    });
+
     it('kagemusha query tools are read-only: available at tier 2 AND tier 3', () => {
       // The dashboard agent (tier 2) reads real task lifecycle state through these;
       // they are pure queries against the kagemusha bridge db, so tier 3 gets them too.
@@ -231,6 +243,35 @@ describe('HostBridge', () => {
         expect.objectContaining(executionContext)
       );
       expect(executeFn.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('preserves the claimed attempt id for nested lifecycle mutation calls', async () => {
+      const executeFn = vi.fn().mockResolvedValue({
+        success: true,
+        receipt: { taskId: 42, workorderAttemptId: 77, outcome: 'applied' },
+      });
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }), undefined, {
+        executionSurface: 'code_act',
+        workorderAttemptId: 77,
+      });
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['task_lifecycle_reconcile']);
+
+      const result = await sandbox.execute(
+        "task_lifecycle_reconcile({candidate_id:'c'.repeat(64),decision:'apply',reason:'verified',expected_revision:1})"
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeFn).toHaveBeenCalledWith(
+        'task_lifecycle_reconcile',
+        {
+          candidate_id: 'c'.repeat(64),
+          decision: 'apply',
+          reason: 'verified',
+          expected_revision: 1,
+        },
+        expect.objectContaining({ workorderAttemptId: 77, executionSurface: 'code_act' })
+      );
     });
 
     it('propagates the sandbox deadline and aborts the active host call', async () => {

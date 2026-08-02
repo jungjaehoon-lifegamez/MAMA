@@ -24,12 +24,18 @@ import {
 } from '../../src/agent/types.js';
 import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
-import { summarizeReportToolUse } from '../../src/operator/report-run.js';
+import {
+  createPersonaReportAsk,
+  OPERATOR_REPORT_SESSION_KEY,
+  summarizeReportToolUse,
+} from '../../src/operator/report-run.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 interface CanonicalDeclarationParam {
   name: string;
@@ -160,6 +166,9 @@ const gatewayExecutorFailRuntimeModelRunMock = vi.fn().mockResolvedValue({
   status: 'failed',
 });
 const gatewayExecutorExecuteMock = vi.fn().mockResolvedValue({ success: true });
+const gatewayExecutorProjectPrivateAgentContextMock = vi.fn(
+  (context: AgentContext): AgentContext => context
+);
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -243,6 +252,7 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       commitRuntimeModelRun: gatewayExecutorCommitRuntimeModelRunMock,
       failRuntimeModelRun: gatewayExecutorFailRuntimeModelRunMock,
       execute: gatewayExecutorExecuteMock,
+      projectPrivateAgentContext: gatewayExecutorProjectPrivateAgentContextMock,
     })),
   };
 });
@@ -346,6 +356,7 @@ describe('AgentLoop', () => {
     gatewayExecutorBeginRuntimeModelRunMock.mockClear();
     gatewayExecutorCommitRuntimeModelRunMock.mockClear();
     gatewayExecutorFailRuntimeModelRunMock.mockClear();
+    gatewayExecutorProjectPrivateAgentContextMock.mockClear();
     laneManagerEnqueueWithSessionMock.mockClear();
     persistentSetSystemPromptMock.mockClear();
     persistentCLIAdapterOptionsMock.mockClear();
@@ -594,6 +605,91 @@ describe('AgentLoop', () => {
         expect.any(Object)
       );
     });
+
+    it.each([
+      ['enabled', true, 1],
+      ['disabled', false, 0],
+    ] as const)(
+      'TG-06 report-to-AgentLoop gives a Claude non-Code-Act run the %s private catalog exactly once',
+      async (_label, enabled, expectedDefinitions) => {
+        const userOwnedGatewayExample = [
+          '# User-authored CLAUDE instructions',
+          '',
+          '# Gateway Tools',
+          '',
+          'Call tools via JSON block:',
+          '',
+          '```tool_call',
+          '{"name":"example_only","input":{"path":"/workspace/kagemusha-logo.svg"}}',
+          '```',
+          '',
+          'Keep this trailing user note.  ',
+        ].join('\r\n');
+        let effectivePrompt = '';
+        persistentPromptMock.mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            effectivePrompt = promptOptions?.systemPrompt ?? '';
+            return {
+              response: 'report body',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: `claude-report-${String(enabled)}`,
+            };
+          }
+        );
+        const privateConnectorPolicy = resolvePrivateConnectorPolicy({
+          ok: true,
+          config: {
+            kagemusha: {
+              enabled,
+              pollIntervalMinutes: 60,
+              channels: {},
+              auth: { type: 'none' },
+            },
+          },
+          enabledNames: enabled ? ['kagemusha'] : [],
+        });
+        const reportPolicy = buildOperatorReportAgentPolicy(
+          'claude-sonnet-4-6',
+          'claude',
+          privateConnectorPolicy
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: userOwnedGatewayExample,
+            useCodeAct: false,
+            toolsConfig: { gateway: ['*'], mcp: [] },
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const ask = createPersonaReportAsk({
+          run: async (prompt) => {
+            const result = await agentLoop.runWithContent([{ type: 'text', text: prompt }], {
+              sessionKey: OPERATOR_REPORT_SESSION_KEY,
+              source: 'operator',
+              channelId: 'report',
+              agentContext: reportPolicy.agentContext,
+              gatewayToolsPrompt: reportPolicy.gatewayToolsPrompt,
+              freshSession: true,
+            });
+            return result;
+          },
+          log: () => {},
+          fullReportTag: '[operator_full_report]',
+        });
+
+        await ask('compose the owner report');
+
+        expect(effectivePrompt).toContain(userOwnedGatewayExample);
+        expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
+        expect(effectivePrompt).not.toContain('**drive_download**');
+        expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
+          expectedDefinitions
+        );
+      }
+    );
 
     it('removes disabled code_act guidance from resumed Claude prompts', async () => {
       let effectivePrompt = '';
@@ -2540,6 +2636,7 @@ Skills provide additional tools.
     it('should expose the full gateway tools prompt', () => {
       expect(getGatewayToolsPrompt()).toContain('# Gateway Tools');
       expect(getGatewayToolsPrompt()).toContain('mama_search');
+      expect(getGatewayToolsPrompt().toLowerCase()).not.toContain('kagemusha');
     });
 
     it('filters role-blocked gateway tools out of Code-Act declarations', async () => {
@@ -2598,7 +2695,7 @@ Skills provide additional tools.
       expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
     });
 
-    it('replaces a caller generic gateway catalog with the canonical run policy', async () => {
+    it('replaces an exact canonical gateway catalog with the canonical run policy', async () => {
       const context = {
         ...createChatBotContext(),
         role: {
@@ -2647,16 +2744,7 @@ Skills provide additional tools.
           '',
           '---',
           '',
-          '# Gateway Tools',
-          '',
-          'Call tools via JSON block:',
-          '',
-          '```tool_call',
-          '{"name":"mama_save","input":{}}',
-          '```',
-          '',
-          '- **mama_save**(...) — generic write advertisement',
-          '- **Bash**(...) — generic shell advertisement',
+          getGatewayToolsPrompt(),
         ].join('\n'),
       });
 
@@ -2666,8 +2754,7 @@ Skills provide additional tools.
         .sort();
       expect(effectivePrompt).toContain('Keep this instruction.');
       expect(effectivePrompt).not.toContain('# Gateway Tools');
-      expect(effectivePrompt).not.toContain('Call tools via JSON block:');
-      expect(effectivePrompt).not.toContain('generic shell advertisement');
+      expect(effectivePrompt).not.toContain('- **drive_download**');
       expect(effectivePrompt).toContain('## Code-Act: Gateway Tool Execution via Sandbox');
       expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
       expect(advertised).toEqual(policy.names);
@@ -2739,17 +2826,8 @@ Skills provide additional tools.
     it.each([
       {
         name: 'generic gateway catalog',
-        staleSection: [
-          '# Gateway Tools',
-          '',
-          'Call tools via JSON block:',
-          '',
-          '```tool_call',
-          '{"name":"mama_save","input":{}}',
-          '```',
-          '',
-          '- **mama_save**(...) — stale generic write advertisement',
-        ].join('\n'),
+        staleSection: getGatewayToolsPrompt(),
+        removedText: '- **drive_download**',
       },
       {
         name: 'canonical Code-Act section',
@@ -2762,47 +2840,50 @@ Skills provide additional tools.
           'declare function Bash(command: string): unknown;',
           '```',
         ].join('\n'),
+        removedText: 'Stale canonical guidance.',
       },
-    ])('preserves caller suffix bytes while replacing a legacy $name', async ({ staleSection }) => {
-      const suffix = [
-        '\n\n---\n\n',
-        '## Custom Safety & Provenance',
-        '',
-        'KEEP  trailing spaces  ',
-        'provenance-id: caller-owned\r\n',
-      ].join('');
-      let effectivePrompt = '';
-      persistentPromptMock.mockImplementationOnce(
-        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
-          effectivePrompt = promptOptions?.systemPrompt ?? '';
-          return {
-            response: 'Current policy used',
-            usage: { input_tokens: 10, output_tokens: 5 },
-            session_id: 'codex-thread',
-          };
-        }
-      );
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
-        {},
-        { mamaApi: createMockApi() }
-      );
+    ])(
+      'preserves caller suffix bytes while replacing a canonical $name',
+      async ({ staleSection, removedText }) => {
+        const suffix = [
+          '\n\n---\n\n',
+          '## Custom Safety & Provenance',
+          '',
+          'KEEP  trailing spaces  ',
+          'provenance-id: caller-owned\r\n',
+        ].join('');
+        let effectivePrompt = '';
+        persistentPromptMock.mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            effectivePrompt = promptOptions?.systemPrompt ?? '';
+            return {
+              response: 'Current policy used',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'codex-thread',
+            };
+          }
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
+          {},
+          { mamaApi: createMockApi() }
+        );
 
-      await agentLoop.run('Search', {
-        source: 'telegram',
-        channelId: '5551000001',
-        agentContext: withOuterCodeAct(createCodexContext()),
-        systemPrompt: `# Caller Persona\n\n${staleSection}${suffix}`,
-      });
+        await agentLoop.run('Search', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          systemPrompt: `# Caller Persona\n\n---\n\n${staleSection}${suffix}`,
+        });
 
-      expect(effectivePrompt).not.toContain('Stale canonical guidance.');
-      expect(effectivePrompt).not.toContain('stale generic write advertisement');
-      expect(effectivePrompt).toContain(suffix);
-      expect(effectivePrompt).toContain(
-        `${suffix}\n\n---\n\n<!-- MAMA_GENERATED_CODE_ACT_START -->`
-      );
-    });
+        expect(effectivePrompt).not.toContain(removedText);
+        expect(effectivePrompt).toContain(suffix);
+        expect(effectivePrompt).toContain(
+          `${suffix}\n\n---\n\n<!-- MAMA_GENERATED_CODE_ACT_START -->`
+        );
+      }
+    );
 
     it('wraps newly generated Code-Act instructions in explicit replacement boundaries', async () => {
       let effectivePrompt = '';
@@ -3203,6 +3284,71 @@ Skills provide additional tools.
         expect(onCliSessionReset).toHaveBeenCalledWith('fresh-test-session');
         expect(onError).not.toHaveBeenCalled();
         expect(result.response).toBe('Started with the current policy');
+      }
+    );
+
+    it.each([
+      {
+        direction: 'disabled to enabled',
+        fingerprint: 'private-policy-enabled',
+        fullPolicy: 'TG-05 full enabled policy with kagemusha_overview',
+      },
+      {
+        direction: 'enabled to disabled',
+        fingerprint: 'private-policy-disabled',
+        fullPolicy: 'TG-05 full disabled policy without private definitions',
+      },
+    ])(
+      'TG-05 replaces the durable thread once for $direction, then resumes minimally',
+      async ({ fingerprint, fullPolicy }) => {
+        codexSessionPolicyStatusMock.mockReturnValueOnce('mismatch').mockReturnValue('compatible');
+        const freshSessionSystemPrompt = vi.fn().mockResolvedValue(fullPolicy);
+        const deliveredPolicies: Array<{ resume: boolean; prompt: string }> = [];
+        persistentPromptMock.mockImplementation(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            deliveredPolicies.push({
+              resume: promptOptions?.resumeSession ?? true,
+              prompt: promptOptions?.systemPrompt ?? '',
+            });
+            return {
+              response: 'policy-consistent response',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'tg-05-replacement-thread',
+            };
+          }
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const commonOptions = {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          sessionPolicyFingerprint: fingerprint,
+          freshSessionSystemPrompt,
+        } as const;
+
+        await agentLoop.run('first changed-policy turn', {
+          ...commonOptions,
+          systemPrompt: 'minimal stale-policy continuation',
+        });
+        await agentLoop.run('next unchanged-policy turn', {
+          ...commonOptions,
+          systemPrompt: 'minimal current-policy continuation',
+        });
+
+        expect(deliveredPolicies).toHaveLength(2);
+        expect(deliveredPolicies[0]).toMatchObject({ resume: false });
+        expect(deliveredPolicies[0]?.prompt).toContain(fullPolicy);
+        expect(deliveredPolicies[0]?.prompt).not.toContain('minimal stale-policy continuation');
+        expect(deliveredPolicies[1]).toMatchObject({ resume: true });
+        expect(deliveredPolicies[1]?.prompt).toContain('minimal current-policy continuation');
+        expect(deliveredPolicies[1]?.prompt).not.toContain(fullPolicy);
+        expect(freshSessionSystemPrompt).toHaveBeenCalledTimes(1);
       }
     );
 

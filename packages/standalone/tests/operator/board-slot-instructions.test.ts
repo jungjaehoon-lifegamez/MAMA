@@ -1,5 +1,5 @@
 /**
- * Board slot authoring vocabulary (Kagemusha mechanism port) -- the shared
+ * Board slot authoring vocabulary -- the shared
  * instruction text that makes every report producer publish the same 4-slot,
  * card-based board HTML. Generic mechanism only; no personal strings.
  */
@@ -60,7 +60,7 @@ describe('board slot instructions', () => {
     expect(lines).toContain('Workflow judgment');
     expect(lines).toContain('System condition');
     expect(lines).toContain('calendar disappearance');
-    expect(lines).toContain('Never copy Trello or Kagemusha lifecycle status');
+    expect(lines).toContain('Never copy external connector lifecycle status');
     expect(lines).toContain('D-day is an optional display aid');
     expect(lines).toContain('never use it');
     expect(lines).not.toContain('blocked/overdue');

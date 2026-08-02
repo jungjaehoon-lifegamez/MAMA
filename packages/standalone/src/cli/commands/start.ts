@@ -24,6 +24,7 @@ import { createContextCompileService } from '../../agent/context-compile-service
 import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
@@ -67,6 +68,14 @@ import { registerApiRoutes } from '../runtime/api-routes-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
+import { loadConnectorConfig } from '../../connectors/config-loader.js';
+import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolveWorkOrderPrivateSurface,
+  type ConnectorCapabilitySurface,
+  type PrivateConnectorPolicy,
+} from '../../connectors/private-connector-policy.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
@@ -86,6 +95,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
+import { FileReportCarryStore } from '../../operator/report-carry.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { ConductorInbox } from '../../operator/conductor-inbox.js';
@@ -113,6 +123,11 @@ const { DebugLogger } = debugLogger as unknown as {
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 type RuntimeBackend = 'claude' | 'codex';
+const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
   if (value === 'claude' || value === 'codex') {
@@ -385,10 +400,11 @@ export function causeEventIdsFromPayload(payload: unknown): string[] {
 }
 
 export function workOrderEnvelopeScope(input: {
-  workKind: string;
+  workKind: WorkOrderKind;
   projectId: string;
   laneConnectors: string[];
   temporalBinding: { connector: string; channel: string } | null;
+  privateConnectorPolicy: PrivateConnectorPolicy;
 }): {
   project_refs: Array<{ kind: 'project'; id: string }>;
   raw_connectors: string[];
@@ -396,15 +412,19 @@ export function workOrderEnvelopeScope(input: {
   allowed_destinations: never[];
 } {
   const isTemporal = input.workKind === 'temporal';
+  const surface = resolveWorkOrderPrivateSurface(input.workKind);
+  const candidateConnectors = isTemporal
+    ? input.temporalBinding
+      ? [input.temporalBinding.connector]
+      : []
+    : input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
     // A temporal run reads its task's connector or nothing. Every other lane keeps the
     // connectors it was configured with.
-    raw_connectors: isTemporal
-      ? input.temporalBinding
-        ? [input.temporalBinding.connector]
-        : []
-      : input.laneConnectors,
+    raw_connectors: [
+      ...input.privateConnectorPolicy.projectRawConnectors(surface, candidateConnectors),
+    ],
     memory_scopes: [
       ...deriveMemoryScopes({
         source: 'operator',
@@ -475,13 +495,11 @@ export const WORKORDER_TOOL_POLICIES = {
       'changes_read',
       'context_compile',
       'contract_no_update',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'kagemusha_overview',
-      'kagemusha_tasks',
       'mama_search',
       'report_publish',
       'task_create',
+      'task_external_bind',
+      'task_lifecycle_reconcile',
       'task_list',
       'task_update',
       'trello_card',
@@ -495,23 +513,13 @@ export const WORKORDER_TOOL_POLICIES = {
   },
   'memory-curation': {
     roleName: 'workorder-memory-curation',
-    allowedTools: [
-      'agent_notices',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'mama_save',
-      'mama_search',
-    ],
+    allowedTools: ['agent_notices', 'mama_save', 'mama_search'],
   },
   temporal: {
     roleName: 'workorder-temporal',
     allowedTools: [
       'agent_notices',
       'context_compile',
-      'kagemusha_entities',
-      'kagemusha_messages',
-      'kagemusha_overview',
-      'kagemusha_tasks',
       'schedule_upcoming',
       'task_list',
       'task_temporal_reconcile',
@@ -550,10 +558,6 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
     // answer that was to re-read current state and infer the delta, which is how a
     // report ends up restating the board instead of naming the change.
     'changes_read',
-    'kagemusha_entities',
-    'kagemusha_messages',
-    'kagemusha_overview',
-    'kagemusha_tasks',
     'mama_provenance',
     'mama_recall',
     'mama_save',
@@ -569,6 +573,42 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
 export interface WorkOrderAgentPolicy {
   agentContext: AgentContext;
   gatewayToolsPrompt: string;
+  briefProjectionPolicy: PrivateConnectorPolicy;
+}
+
+function requirePrivateConnectorPolicy(
+  privateConnectorPolicy: PrivateConnectorPolicy | undefined
+): PrivateConnectorPolicy {
+  if (!privateConnectorPolicy) {
+    throw new Error('privateConnectorPolicy is required');
+  }
+  return privateConnectorPolicy;
+}
+
+function buildProjectedLaneRole(
+  surface: ConnectorCapabilitySurface,
+  allowedTools: readonly string[],
+  privateConnectorPolicy: PrivateConnectorPolicy
+): RoleConfig {
+  return privateConnectorPolicy.projectRole(surface, {
+    allowedTools: [...allowedTools],
+    blockedTools: [],
+    allowedPaths: [],
+    systemControl: false,
+    sensitiveAccess: false,
+  });
+}
+
+function buildProjectedLanePrompt(
+  innerTools: readonly string[],
+  surface: ConnectorCapabilitySurface,
+  privateConnectorPolicy: PrivateConnectorPolicy
+): string {
+  return buildGatewayToolCatalog({
+    surface,
+    allowedTools: innerTools,
+    privateConnectorPolicy,
+  }).prompt;
 }
 
 /**
@@ -595,7 +635,8 @@ export const CONDUCTOR_TOOL_POLICY = {
 /** Mirrors buildOperatorReportAgentPolicy - same shape, conductor grant. */
 export function buildConductorAgentPolicy(
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): WorkOrderAgentPolicy {
   const blockedTools: string[] = [];
   const innerTools = uniqueToolList(CONDUCTOR_TOOL_POLICY.allowedTools);
@@ -623,7 +664,15 @@ export function buildConductorAgentPolicy(
     tier: 2,
     backend,
   };
-  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+  return {
+    agentContext,
+    gatewayToolsPrompt: buildGatewayToolCatalog({
+      surface: 'multi-agent-generic',
+      allowedTools: innerTools,
+      privateConnectorPolicy,
+    }).prompt,
+    briefProjectionPolicy: DISABLED_PRIVATE_CONNECTOR_POLICY,
+  };
 }
 
 /**
@@ -663,23 +712,24 @@ export function resolveConductorConfig(
  */
 export function buildOperatorReportAgentPolicy(
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): WorkOrderAgentPolicy {
-  const blockedTools: string[] = [];
-  const innerTools = uniqueToolList(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
+  const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
+  const surface = 'operator-report';
+  const projectedRole = buildProjectedLaneRole(
+    surface,
+    OPERATOR_REPORT_TOOL_POLICY.allowedTools,
+    requiredPrivatePolicy
+  );
+  const blockedTools = [...(projectedRole.blockedTools ?? [])];
+  const innerTools = uniqueToolList(projectedRole.allowedTools);
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: OPERATOR_REPORT_TOOL_POLICY.roleName,
-    role: {
-      allowedTools,
-      blockedTools,
-      allowedPaths: [],
-      systemControl: false,
-      sensitiveAccess: false,
-      model,
-    },
+    role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: OPERATOR_REPORT_SESSION_KEY,
       channelId: 'report',
@@ -692,33 +742,46 @@ export function buildOperatorReportAgentPolicy(
     tier: 2,
     backend,
   };
-  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+  return {
+    agentContext,
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, requiredPrivatePolicy),
+    briefProjectionPolicy: requiredPrivatePolicy,
+  };
 }
 
 export function buildWorkOrderAgentPolicy(
   kind: WorkOrderKind,
   model: string,
-  backend: RuntimeBackend
+  backend: RuntimeBackend,
+  privateConnectorPolicy: PrivateConnectorPolicy,
+  rawConnectorScope: readonly string[]
 ): WorkOrderAgentPolicy {
+  const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
+  if (!rawConnectorScope) {
+    throw new Error('rawConnectorScope is required');
+  }
   const policy = WORKORDER_TOOL_POLICIES[kind];
   if (!policy) {
     throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
   }
-  const blockedTools: string[] = [];
-  const innerTools = uniqueToolList(policy.allowedTools);
+  const surface = resolveWorkOrderPrivateSurface(kind);
+  const scopedSurface: ConnectorCapabilitySurface =
+    requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
+      ? surface
+      : 'multi-agent-generic';
+  const projectedRole = buildProjectedLaneRole(
+    scopedSurface,
+    policy.allowedTools,
+    requiredPrivatePolicy
+  );
+  const blockedTools = [...(projectedRole.blockedTools ?? [])];
+  const innerTools = uniqueToolList(projectedRole.allowedTools);
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: policy.roleName,
-    role: {
-      allowedTools,
-      blockedTools,
-      allowedPaths: [],
-      systemControl: false,
-      sensitiveAccess: false,
-      model,
-    },
+    role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: `operator:worker:${kind}`,
       channelId: `worker:${kind}`,
@@ -731,7 +794,11 @@ export function buildWorkOrderAgentPolicy(
   };
   return {
     agentContext,
-    gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools),
+    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, scopedSurface, requiredPrivatePolicy),
+    briefProjectionPolicy:
+      scopedSurface === 'multi-agent-generic'
+        ? DISABLED_PRIVATE_CONNECTOR_POLICY
+        : requiredPrivatePolicy,
   };
 }
 
@@ -968,9 +1035,17 @@ export async function runAgentLoop(
   const temporalStartup = preflightTemporalStartup(process.env);
 
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
+  const { connectorConfigLoadResult, privateConnectorPolicy } =
+    resolveRuntimeConnectorBootstrap(loadConnectorConfig());
   const temporalPolicy =
     temporalStartup.temporalFlag === 'on'
-      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
+      ? buildWorkOrderAgentPolicy(
+          'temporal',
+          config.agent.model,
+          runtimeBackend,
+          privateConnectorPolicy,
+          []
+        )
       : null;
   const temporalEffectiveTools = temporalPolicy
     ? projectCodeActToolPolicy({
@@ -1031,7 +1106,12 @@ export async function runAgentLoop(
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
 
-  const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(db, config, process.env);
+  const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(
+    db,
+    config,
+    process.env,
+    connectorConfigLoadResult
+  );
   const mamaDbPath = expandPath(config.database.path);
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
@@ -1039,6 +1119,7 @@ export async function runAgentLoop(
     rolesConfig: config.roles, // Pass roles from config.yaml
     envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     metricsStore,
+    privateConnectorPolicy,
   });
 
   process.env.MAMA_BACKEND = runtimeBackend;
@@ -1088,7 +1169,8 @@ export async function runAgentLoop(
     mamaApiClient,
     resolveMessageRouterConfig(config, runtimeBackend),
     envelopeBootstrap.envelopeConfig,
-    envelopeBootstrap.envelopeAuthority
+    envelopeBootstrap.envelopeAuthority,
+    { privateConnectorPolicy, reportCarry: new FileReportCarryStore() }
   );
   messageRouter.setSessionsDb(db);
 
@@ -1117,7 +1199,7 @@ export async function runAgentLoop(
     sessionsDb: db,
     uiCommandQueue,
   };
-  let codeActRawConnectors: string[] = [];
+  const codeActRawConnectors = resolveCodeActRawConnectors(connectorConfigLoadResult.enabledNames);
 
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
@@ -1134,8 +1216,11 @@ export async function runAgentLoop(
   ): Promise<CodeActResult> => {
     const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
     const sandbox = new CodeActSandbox();
+    const legacyRequestContext = codeActContext
+      ? { ...codeActContext, agentId: undefined }
+      : undefined;
     const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
-      codeActContext,
+      legacyRequestContext,
       config.multi_agent?.agents,
       config.multi_agent?.default_agent || 'conductor'
     );
@@ -1144,7 +1229,10 @@ export async function runAgentLoop(
     }
     const codeActAgentId = resolvedCodeActPolicy.agentId;
     const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
-    const codeActRole = buildCodeActRole(codeActPolicy);
+    const codeActRole = privateConnectorPolicy.projectRole(
+      'legacy-unbound',
+      buildCodeActRole(codeActPolicy)
+    );
     const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
     const codeActTier = codeActReadOnly ? 3 : 2;
     const instanceId = randomUUID();
@@ -1172,7 +1260,9 @@ export async function runAgentLoop(
         trigger_context: { user_text: '<api-code-act invocation>' },
         scope: {
           project_refs: [projectRef],
-          raw_connectors: codeActRawConnectors,
+          raw_connectors: [
+            ...privateConnectorPolicy.projectRawConnectors('legacy-unbound', codeActRawConnectors),
+          ],
           memory_scopes: memoryScopes,
           allowed_destinations: [],
         },
@@ -1424,6 +1514,7 @@ export async function runAgentLoop(
       {
         backend: runtimeBackend,
         model: config.agent.model,
+        privateConnectorPolicy,
       }
     );
     toolExecutor.setAgentProcessManager(pm);
@@ -1614,6 +1705,26 @@ export async function runAgentLoop(
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
+        // Resolve the run's raw binding before constructing either backend's
+        // role/catalog. The catalog and execution envelope must use the same
+        // projection so an unbound or non-private run never advertises private
+        // connector tools it cannot execute.
+        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
+        let temporalContext: ReturnType<typeof buildTemporalWorkerContext> | undefined;
+        let temporalBinding: { connector: string; channel: string } | null = null;
+        if (wo.workKind === 'temporal') {
+          temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
+        }
+        const projectId = resolveReactiveProjectRoot(config, process.env);
+        const workOrderScope = workOrderEnvelopeScope({
+          workKind: wo.workKind,
+          projectId,
+          laneConnectors: codeActRawConnectors,
+          temporalBinding,
+          privateConnectorPolicy,
+        });
+
         // Worker prompt selects the provider's supported tool path: Claude's
         // text gateway or Codex's injected native host tools. Both avoid the
         // spawn-default code-act path, where per-run envelope/capture overrides
@@ -1622,7 +1733,9 @@ export async function runAgentLoop(
         const workOrderPolicy = buildWorkOrderAgentPolicy(
           wo.workKind,
           config.agent.model,
-          runtimeBackend
+          runtimeBackend,
+          privateConnectorPolicy,
+          workOrderScope.raw_connectors
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
@@ -1632,6 +1745,7 @@ export async function runAgentLoop(
               wo.workKind
             ),
             agentContext: workOrderPolicy.agentContext,
+            workOrderBriefProjectionPolicy: workOrderPolicy.briefProjectionPolicy,
           },
           wo.id
         );
@@ -1652,15 +1766,11 @@ export async function runAgentLoop(
         // durable change the run produces rest on it WITHOUT the agent restating anything -
         // the system knew the batch before the run began. This is the whole difference
         // between a bounded run and an unbounded one.
-        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
         if (workOrderBatch.length > 0) {
           runOptions.causeEventIds = workOrderBatch;
         }
-        let temporalBinding: { connector: string; channel: string } | null = null;
-        if (wo.workKind === 'temporal') {
-          const temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+        if (temporalContext) {
           runOptions.temporalWorkContext = temporalContext;
-          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
@@ -1669,7 +1779,6 @@ export async function runAgentLoop(
         // lane's issuance (createPersonaReportAsk wiring below); issuance
         // failure rejects -> failWorkOrder (no envelope-less fallback run).
         if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
-          const projectId = resolveReactiveProjectRoot(config, process.env);
           const wallSeconds = Math.min(
             Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
             1800
@@ -1682,16 +1791,8 @@ export async function runAgentLoop(
             source: 'watch',
             channel_id: `worker:${wo.workKind}`,
             trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
-            scope: (() => {
-              const scope = workOrderEnvelopeScope({
-                workKind: wo.workKind,
-                projectId,
-                laneConnectors: codeActRawConnectors,
-                temporalBinding,
-              });
-              // Identity scopes only - the read mirror is enforcement-layer.
-              return scope;
-            })(),
+            // Identity scopes only - the read mirror is enforcement-layer.
+            scope: workOrderScope,
             tier: 2,
             budget: { wall_seconds: wallSeconds },
             expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
@@ -1787,10 +1888,11 @@ export async function runAgentLoop(
   temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
-    { nudge: () => triggerLoopNudge.current?.() }
+    {
+      connectorConfigLoadResult,
+      nudge: () => triggerLoopNudge.current?.(),
+    }
   );
-  codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
-
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {
     toolExecutor.setRawStore(rawStoreForApi);
@@ -1830,7 +1932,8 @@ export async function runAgentLoop(
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
-      const { persistLastFullReport } = await import('../../operator/report-carry.js');
+      const { createTelegramReportCarryDelivery, createTelegramReportOutput } =
+        await import('../../operator/report-carry-delivery.js');
       type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
       // Set when a report is composed, read when that same report is delivered. Safe
       // because ALL operator work serializes on the operator lane (SOURCE_GLOBAL_LANES),
@@ -1849,16 +1952,15 @@ export async function runAgentLoop(
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = resolveOperatorReportChatId(process.env, config.telegram?.allowed_chats);
+      const persistReportCarry = reportChatId
+        ? createTelegramReportCarryDelivery({
+            reportChatId,
+            carryStore: new FileReportCarryStore(),
+          })
+        : undefined;
       const reportOutput =
         reportChatId && telegramGateway
-          ? {
-              send: (text: string, deliveryId?: string) =>
-                telegramGateway.sendMessage(
-                  reportChatId,
-                  text,
-                  deliveryId ?? `operator-report:legacy:${randomUUID()}`
-                ),
-            }
+          ? createTelegramReportOutput({ reportChatId, telegramSender: telegramGateway })
           : undefined;
       // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
       // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
@@ -1936,7 +2038,12 @@ export async function runAgentLoop(
                       // read authority is bounded per tool by envelope/tool-connector-scope.ts
                       // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
-                      raw_connectors: codeActRawConnectors,
+                      raw_connectors: [
+                        ...privateConnectorPolicy.projectRawConnectors(
+                          'operator-report',
+                          codeActRawConnectors
+                        ),
+                      ],
                       memory_scopes: uniqueMemoryScopes(
                         deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
                       ),
@@ -1949,6 +2056,11 @@ export async function runAgentLoop(
                 }
               : undefined,
           run: async (prompt, envelope) => {
+            const reportAgentPolicy = buildOperatorReportAgentPolicy(
+              config.agent.model,
+              runtimeBackend,
+              privateConnectorPolicy
+            );
             const result = await agentLoop.runWithContent(
               [{ type: 'text' as const, text: prompt }],
               {
@@ -1960,8 +2072,8 @@ export async function runAgentLoop(
                 // gather no matter what the prompt instructs (roleAllowsOuterCodeAct
                 // fails closed on an absent role - agent-loop.ts). Same built-in
                 // least-privilege treatment the Stage-2 workers get.
-                agentContext: buildOperatorReportAgentPolicy(config.agent.model, runtimeBackend)
-                  .agentContext,
+                agentContext: reportAgentPolicy.agentContext,
+                gatewayToolsPrompt: reportAgentPolicy.gatewayToolsPrompt,
                 // Stateless report lane: each run starts on a fresh session so the
                 // continuous session no longer accumulates every run's gather dumps
                 // (measured 146s -> 521s growth over 3 days). Continuity comes from
@@ -1999,11 +2111,15 @@ export async function runAgentLoop(
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
-        // S1-T4 context carry: the delivered FULL report persists so the owner
-        // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) => {
+        // TG-06: composition supplies provenance immediately to the prepared
+        // delivery; this callback receives that durable artifact only after send success.
+        fullReportProvenance: () => lastReportProvenance,
+        persistLastFullReport: (report) => {
           getLegCadence()?.beat('full-report');
-          return persistLastFullReport(iso, text, lastReportProvenance);
+          if (!persistReportCarry) {
+            throw new Error('Cannot persist full report carry without a Telegram report chat');
+          }
+          persistReportCarry(report);
         },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
@@ -2066,7 +2182,11 @@ export async function runAgentLoop(
           maxTurns: conductorConfig.maxTurns,
           maxTokens: conductorConfig.maxTokens,
         });
-        const conductorPolicy = buildConductorAgentPolicy(config.agent.model, runtimeBackend);
+        const conductorPolicy = buildConductorAgentPolicy(
+          config.agent.model,
+          runtimeBackend,
+          privateConnectorPolicy
+        );
         // Per-run envelope, mirroring the report lane: without it every
         // model_tool call dies 'envelope_missing' while the run resolves and
         // acks the batch - zero work, green ledger (review F2).
@@ -2168,6 +2288,8 @@ export async function runAgentLoop(
     envelopeMetadata: envelopeBootstrap.metadata,
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
     contextCompileService,
+    connectorConfigLoadResult,
+    privateConnectorPolicy,
   });
 
   channelDeltaSink.current = (channelKey, lines, eventIds) =>
@@ -2186,6 +2308,10 @@ export async function runAgentLoop(
     slackGateway,
     graphHandler,
     getAdapter,
+    privateConnectorPolicy,
+    rawConnectorScope: [
+      ...privateConnectorPolicy.projectRawConnectors('workorder-board', codeActRawConnectors),
+    ],
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
   });
