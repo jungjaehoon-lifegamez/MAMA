@@ -31,8 +31,10 @@ import type { BackendType } from '../agent/model-runner.js';
 import { randomUUID } from 'node:crypto';
 import type {
   PendingReportDelivery,
+  PendingReportLoadOutcome,
   PendingReportOccurrence,
   PendingReportRequest,
+  PendingReportSaveExpectation,
   PendingReportStore,
 } from './pending-report-store.js';
 import type { ReportMode } from './situation-report.js';
@@ -150,6 +152,8 @@ export class OperatorTriggerLoop {
   private fullReporter: SituationReporter;
   private pendingDelivery: PendingReportDelivery | undefined;
   private pendingRequest: PendingReportRequest | undefined;
+  private pendingReportExpectation: PendingReportSaveExpectation | undefined;
+  private pendingReportLegacyLoaded = false;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -187,35 +191,79 @@ export class OperatorTriggerLoop {
       fullReportProvenance: deps.fullReportProvenance,
       persistLastFullReport: deps.persistLastFullReport,
     });
-    const pendingStore = deps.output ? deps.pendingReportStore : undefined;
-    const pending = pendingStore?.load() ?? null;
-    if (pending) {
-      this.digest.restore(pending.digest);
-      this.fullReporter.restore(pending.full);
-      this.pendingDelivery = pending.delivery;
-      this.pendingRequest = pending.request;
-      deps.log('[trigger-loop] restored pending owner-report buffer');
-    } else if (pendingStore?.loadStatus?.() === 'quarantined') {
+    if (this.refreshPendingReportState() === 'quarantined') {
       deps.log(
         '[trigger-loop] owner-report work blocked until pending outbox quarantine is cleared'
       );
     }
   }
 
-  /** Consult durable state for every report operation; recovery may happen while this loop lives. */
-  private isPendingReportWorkBlocked(): boolean {
-    return this.deps.pendingReportStore?.loadStatus?.() === 'quarantined';
+  /** Reloads one durable outcome so recovery can hydrate this live loop before report work. */
+  private refreshPendingReportState(): PendingReportLoadOutcome['status'] | 'unavailable' {
+    if (!this.deps.output) {
+      return 'unavailable';
+    }
+    const store = this.deps.pendingReportStore;
+    if (!store?.loadOutcome) {
+      if (store?.loadStatus?.() === 'quarantined') {
+        return 'quarantined';
+      }
+      if (!this.pendingReportLegacyLoaded) {
+        const pending = store?.load() ?? null;
+        this.pendingReportLegacyLoaded = true;
+        if (pending) {
+          this.digest.restore(pending.digest);
+          this.fullReporter.restore(pending.full);
+          this.pendingDelivery = pending.delivery;
+          this.pendingRequest = pending.request;
+          return 'ready';
+        }
+        this.pendingReportExpectation = { status: 'empty', revision: null };
+      }
+      return this.pendingDelivery || this.pendingRequest ? 'ready' : 'empty';
+    }
+    const outcome = store.loadOutcome();
+    if (outcome.status === 'quarantined') {
+      this.pendingReportExpectation = undefined;
+      return 'quarantined';
+    }
+    if (outcome.status === 'empty') {
+      this.pendingReportExpectation = outcome;
+      return 'empty';
+    }
+    if (this.pendingReportExpectation?.revision !== outcome.revision) {
+      this.digest.restore(outcome.state.digest);
+      this.fullReporter.restore(outcome.state.full);
+      this.pendingDelivery = outcome.state.delivery;
+      this.pendingRequest = outcome.state.request;
+      this.deps.log('[trigger-loop] refreshed durable pending owner-report buffer');
+    }
+    this.pendingReportExpectation = outcome;
+    return 'ready';
   }
 
-  private persistPendingReports(): void {
-    if (!this.deps.output) return;
-    this.deps.pendingReportStore?.save({
+  private isPendingReportWorkBlocked(): boolean {
+    return this.refreshPendingReportState() === 'quarantined';
+  }
+
+  private persistPendingReports(): boolean {
+    if (!this.deps.output) return false;
+    if (this.refreshPendingReportState() === 'quarantined') return false;
+    const state = {
       version: 1,
       digest: this.digest.snapshot(),
       full: this.fullReporter.snapshot(),
       ...(this.pendingDelivery ? { delivery: this.pendingDelivery } : {}),
       ...(this.pendingRequest ? { request: this.pendingRequest } : {}),
-    });
+    } as const;
+    try {
+      this.deps.pendingReportStore?.save(state, this.pendingReportExpectation);
+      this.refreshPendingReportState();
+      return true;
+    } catch (error) {
+      this.refreshPendingReportState();
+      throw error;
+    }
   }
 
   private reporterFor(mode: ReportMode): SituationReporter {
@@ -279,7 +327,9 @@ export class OperatorTriggerLoop {
     };
     // Persist the exact owner-visible text and operation identity before the
     // first external send. A restart replays this record, never a regeneration.
-    this.persistPendingReports();
+    if (!this.persistPendingReports()) {
+      return false;
+    }
     await this.deliverPendingReport(false);
     return true;
   }
@@ -307,20 +357,25 @@ export class OperatorTriggerLoop {
       occurrence: request.occurrence,
     };
     this.pendingRequest = undefined;
-    this.persistPendingReports();
+    if (!this.persistPendingReports()) {
+      return false;
+    }
     await this.deliverPendingReport(false);
     return true;
   }
 
-  private async recoverPendingReportWork(): Promise<void> {
-    if (this.isPendingReportWorkBlocked()) return;
-    await this.deliverPendingReport(true);
+  private async recoverPendingReportWork(): Promise<boolean> {
+    if (this.isPendingReportWorkBlocked()) return false;
+    const delivered = await this.deliverPendingReport(true);
+    let recovered = delivered !== null;
     if (this.pendingRequest) {
       const sent = await this.preparePendingRequest();
+      recovered = true;
       this.deps.log(
         `[trigger-loop] recovered on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
       );
     }
+    return recovered;
   }
 
   async tick(): Promise<TickResult> {
@@ -333,7 +388,8 @@ export class OperatorTriggerLoop {
     // Outbox recovery is the first effect in a tick. It reuses the persisted
     // delivery id, allowing Telegram's confirmed-chunk ledger to suppress a
     // send that was accepted just before the prior daemon stopped.
-    await this.recoverPendingReportWork();
+    this.refreshPendingReportState();
+    const recoveredPendingWork = await this.recoverPendingReportWork();
 
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
@@ -521,7 +577,7 @@ export class OperatorTriggerLoop {
     //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
     //    so the next tick retries with the buffer intact.
     let fullReported = false;
-    if (!this.isPendingReportWorkBlocked() && output && reportScheduler) {
+    if (!recoveredPendingWork && !this.isPendingReportWorkBlocked() && output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
         // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
@@ -604,7 +660,10 @@ export class OperatorTriggerLoop {
       acceptedAtIso: firedAtIso,
     };
     try {
-      this.persistPendingReports();
+      if (!this.persistPendingReports()) {
+        this.pendingRequest = undefined;
+        return { accepted: false, reason: 'unavailable' };
+      }
     } catch (error) {
       this.pendingRequest = undefined;
       this.deps.log(

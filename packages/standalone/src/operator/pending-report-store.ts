@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
 import { isArtifactProvenance } from './report-carry.js';
@@ -42,14 +42,39 @@ export interface PendingReportState {
   request?: PendingReportRequest;
 }
 
+export interface PendingReportEmptyOutcome {
+  status: 'empty';
+  revision: null;
+}
+
+export interface PendingReportQuarantinedOutcome {
+  status: 'quarantined';
+}
+
+export interface PendingReportReadyOutcome {
+  status: 'ready';
+  /** SHA-256 of the exact validated source bytes used for a later CAS save. */
+  revision: string;
+  state: PendingReportState;
+}
+
+export type PendingReportLoadOutcome =
+  | PendingReportEmptyOutcome
+  | PendingReportQuarantinedOutcome
+  | PendingReportReadyOutcome;
+
+export type PendingReportSaveExpectation = PendingReportEmptyOutcome | PendingReportReadyOutcome;
+
 export interface PendingReportStore {
+  /** One transactionally consistent durable read, including any quarantine decision. */
+  loadOutcome?(): PendingReportLoadOutcome;
   load(): PendingReportState | null;
   /**
    * A quarantined outbox is distinct from an absent outbox: callers must not
    * replace an operation whose persisted intent could not be safely decoded.
    */
   loadStatus?(): 'empty' | 'ready' | 'quarantined';
-  save(state: PendingReportState): void;
+  save(state: PendingReportState, expected?: PendingReportSaveExpectation): void;
   /** Explicit operator/API repair for a quarantined outbox. */
   recoverWithValidState?(state: PendingReportState): void;
 }
@@ -243,6 +268,10 @@ function isNonEmptyBoundedString(value: unknown, maxLength: number): value is st
   return isBoundedString(value, maxLength) && value.trim().length > 0;
 }
 
+function revisionFor(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex');
+}
+
 function isErrno(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
@@ -303,10 +332,16 @@ function writeTextAtomically(path: string, text: string): void {
   }
 }
 
+interface PendingReportStoreTestHooks {
+  /** Test-only synchronous barrier after invalid bytes are read but before marker+move. */
+  afterInvalidReadBeforeQuarantine?: () => void;
+}
+
 export class FilePendingReportStore implements PendingReportStore {
   constructor(
     private readonly path: string,
-    private readonly log: (line: string) => void = () => {}
+    private readonly log: (line: string) => void = () => {},
+    private readonly testHooks?: PendingReportStoreTestHooks
   ) {}
 
   private quarantineMarkerPath(): string {
@@ -314,62 +349,34 @@ export class FilePendingReportStore implements PendingReportStore {
   }
 
   loadStatus(): 'empty' | 'ready' | 'quarantined' {
-    return withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
-      if (existsSync(this.quarantineMarkerPath())) {
-        return 'quarantined';
-      }
-      return existsSync(this.path) ? 'ready' : 'empty';
-    });
+    return this.loadOutcome().status;
+  }
+
+  loadOutcome(): PendingReportLoadOutcome {
+    return withFileCoordinationTransaction(this.path, 'pending owner-report state', () =>
+      this.readOutcomeInsideTransaction()
+    );
   }
 
   load(): PendingReportState | null {
-    return withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
-      if (existsSync(this.quarantineMarkerPath())) {
-        this.log(
-          `[trigger-loop] pending owner-report state remains quarantined at ${this.quarantineMarkerPath()}`
-        );
-        return null;
-      }
-      if (!existsSync(this.path)) return null;
-      const size = statSync(this.path).size;
-      const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
-      try {
-        const parsed: unknown = raw === null ? null : JSON.parse(raw);
-        if (!isPendingReportState(parsed, true)) {
-          throw new Error(
-            size > MAX_PENDING_REPORT_BYTES
-              ? 'Pending operator report state exceeds its size limit'
-              : 'Pending operator report state is invalid'
-          );
-        }
-        return normalizeLegacyFullDelivery(parsed);
-      } catch (error) {
-        const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;
-        const reason = error instanceof Error ? error.message : String(error);
-        // Re-read and move the exact invalid source while the same process-wide
-        // transaction also excludes a concurrent valid recovery.
-        writeTextAtomically(
-          this.quarantineMarkerPath(),
-          `${JSON.stringify({ version: 1, quarantinePath, reason })}\n`
-        );
-        renameSync(this.path, quarantinePath);
-        this.log(
-          `[trigger-loop] invalid pending owner-report state quarantined at ${quarantinePath}: ${
-            reason
-          }`
-        );
-        return null;
-      }
-    });
+    const outcome = this.loadOutcome();
+    return outcome.status === 'ready' ? outcome.state : null;
   }
 
-  save(state: PendingReportState): void {
+  save(state: PendingReportState, expected?: PendingReportSaveExpectation): void {
     if (!isPendingReportState(state, false)) {
       throw new Error('Refusing to persist invalid pending operator report state');
     }
     withFileCoordinationTransaction(this.path, 'pending owner-report state', () => {
-      if (existsSync(this.quarantineMarkerPath())) {
+      const current = this.readOutcomeInsideTransaction();
+      if (current.status === 'quarantined') {
         throw new Error('Pending owner-report state is quarantined; explicit recovery is required');
+      }
+      if (
+        expected !== undefined &&
+        (current.status !== expected.status || current.revision !== expected.revision)
+      ) {
+        throw new Error('Pending owner-report state changed before normal save');
       }
       writeTextAtomically(this.path, `${JSON.stringify(state)}\n`);
     });
@@ -386,5 +393,50 @@ export class FilePendingReportStore implements PendingReportStore {
         unlinkSync(markerPath);
       }
     });
+  }
+
+  private readOutcomeInsideTransaction(): PendingReportLoadOutcome {
+    if (existsSync(this.quarantineMarkerPath())) {
+      this.log(
+        `[trigger-loop] pending owner-report state remains quarantined at ${this.quarantineMarkerPath()}`
+      );
+      return { status: 'quarantined' };
+    }
+    if (!existsSync(this.path)) {
+      return { status: 'empty', revision: null };
+    }
+    const size = statSync(this.path).size;
+    const raw = size <= MAX_PENDING_REPORT_BYTES ? readFileSync(this.path, 'utf8') : null;
+    try {
+      if (raw === null) {
+        throw new Error('Pending operator report state exceeds its size limit');
+      }
+      const parsed: unknown = JSON.parse(raw);
+      if (!isPendingReportState(parsed, true)) {
+        throw new Error(
+          size > MAX_PENDING_REPORT_BYTES
+            ? 'Pending operator report state exceeds its size limit'
+            : 'Pending operator report state is invalid'
+        );
+      }
+      return {
+        status: 'ready',
+        revision: revisionFor(raw),
+        state: normalizeLegacyFullDelivery(parsed),
+      };
+    } catch (error) {
+      const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.testHooks?.afterInvalidReadBeforeQuarantine?.();
+      writeTextAtomically(
+        this.quarantineMarkerPath(),
+        `${JSON.stringify({ version: 1, quarantinePath, reason })}\n`
+      );
+      renameSync(this.path, quarantinePath);
+      this.log(
+        `[trigger-loop] invalid pending owner-report state quarantined at ${quarantinePath}: ${reason}`
+      );
+      return { status: 'quarantined' };
+    }
   }
 }

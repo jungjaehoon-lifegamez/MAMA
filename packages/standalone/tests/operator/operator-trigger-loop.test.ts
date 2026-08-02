@@ -1196,6 +1196,205 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(markSuccess).toHaveBeenCalledOnce();
   });
 
+  it('TG-06 rehydrates and replays an explicitly recovered d1 in the same live loop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const store = new FilePendingReportStore(path);
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose d2');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: scheduler,
+      pendingReportStore: store,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    store.recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: {
+        mode: 'full',
+        text: 'recovered d1',
+        citedTriggerIds: [],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'd1',
+        provenance: { status: 'available', modelRunId: 'mr_d1' },
+        occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+      },
+    });
+
+    await loop.tick();
+
+    expect(send).toHaveBeenCalledWith('recovered d1', 'd1');
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+    expect(store.loadOutcome().status).toBe('ready');
+  });
+
+  it('TG-06 composes an explicitly recovered accepted request once before scheduled work', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, digest: snapshot, full: { invalid: true } })
+    );
+    const store = new FilePendingReportStore(path);
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'recovered request d1');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: scheduler,
+      pendingReportStore: store,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    store.recoverWithValidState({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: {
+        mode: 'full',
+        deliveryId: 'd1-request',
+        acceptedAtIso: '2026-08-02T00:00:00.000Z',
+        occurrence: { kind: 'on_demand_full', firedAtIso: '2026-08-02T00:00:00.000Z' },
+      },
+    });
+
+    await loop.tick();
+
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith('recovered request d1', 'd1-request');
+    expect(scheduler.shouldFire).not.toHaveBeenCalled();
+  });
+
+  it('TG-06 fails closed then replays external recovery when a fresh save loses its CAS race', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const fileStore = new FilePendingReportStore(path);
+    const recovered = {
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: {
+        mode: 'digest' as const,
+        text: 'external d1 wins',
+        citedTriggerIds: [],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'd1',
+        occurrence: { kind: 'digest' as const },
+      },
+    };
+    let injectRecovery = true;
+    const raceStore = {
+      loadOutcome: () => fileStore.loadOutcome(),
+      load: () => fileStore.load(),
+      loadStatus: () => fileStore.loadStatus(),
+      save: (
+        state: PendingReportState,
+        expected?: Parameters<FilePendingReportStore['save']>[1]
+      ) => {
+        if (injectRecovery) {
+          injectRecovery = false;
+          fileStore.recoverWithValidState(recovered);
+        }
+        fileStore.save(state, expected);
+      },
+    };
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'fresh d2 must not send');
+    const scheduler = {
+      shouldFire: vi.fn(() => ({ fire: true, hourKey: '2026-08-02:09' })),
+      markFired: vi.fn(),
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk,
+      review: async () => ({ action: 'kept' as const }),
+      output: { send },
+      reportScheduler: scheduler,
+      pendingReportStore: raceStore,
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await expect(loop.tick()).rejects.toThrow(
+      'Pending owner-report state changed before normal save'
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(fileStore.loadOutcome()).toMatchObject({
+      status: 'ready',
+      state: { delivery: { deliveryId: 'd1', text: 'external d1 wins' } },
+    });
+
+    await loop.tick();
+
+    expect(send).toHaveBeenCalledWith('external d1 wins', 'd1');
+    expect(scheduler.shouldFire).toHaveBeenCalledOnce();
+  });
+
   it('TG-06 replays the prepared full-report provenance instead of a new process provider', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
     const first = durableLoop(pendingRef, {
