@@ -82,6 +82,7 @@ describe('Story S2-T5: briefs', () => {
         '## Lessons',
         '- Always call kagemusha_messages before publishing the board.',
         '- Query `kagemusha_tasks` for every reconcile.',
+        "- Last year's kagemusha_tasks output used the old status names.",
         '- Historical note: Kagemusha supplied the old board.',
         '- Evidence archive: /workspace/history/kagemusha_tasks-2025.md',
         '',
@@ -94,6 +95,7 @@ describe('Story S2-T5: briefs', () => {
 
       expect(projected).not.toContain('Always call kagemusha_messages');
       expect(projected).not.toContain('Query `kagemusha_tasks`');
+      expect(projected).toContain("Last year's kagemusha_tasks output used the old status names.");
       expect(projected).toContain('Historical note: Kagemusha supplied the old board.');
       expect(projected).toContain('/workspace/history/kagemusha_tasks-2025.md');
       expect(readFileSync(path, 'utf-8')).toBe(raw);

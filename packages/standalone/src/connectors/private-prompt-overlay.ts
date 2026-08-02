@@ -34,19 +34,33 @@ const CANONICAL_PRIVATE_PROMPT_OVERLAYS = new Set([
 ]);
 
 const PRIVATE_TOOL_NAMES = PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) => definition.name);
-const HISTORICAL_REFERENCE_PATTERN =
-  /\b(?:archive|archived|history|historical|migration|migrated|deprecated|predecessor|previously)\b/i;
 const PRIVATE_CONNECTOR_DIRECTIVE_PATTERN =
   /\b(?:always|call|check|fetch|first|gather|inspect|invoke|must|never|query|read|run|should|then|use)\b/i;
 const PATH_REFERENCE_PATTERN = /(?:^|\s)(?:\.{0,2}\/|\/|[A-Za-z]:\\)\S+/g;
 
-function containsPrivatePromptRecipe(line: string): boolean {
-  if (HISTORICAL_REFERENCE_PATTERN.test(line)) {
-    return false;
+function isPrivateToolInvocation(line: string, toolName: string): boolean {
+  let cursor = 0;
+  while (cursor < line.length) {
+    const index = line.indexOf(toolName, cursor);
+    if (index < 0) {
+      return false;
+    }
+    if (/^\s*\(/.test(line.slice(index + toolName.length))) {
+      return true;
+    }
+    cursor = index + toolName.length;
   }
+  return false;
+}
+
+function containsPrivatePromptRecipe(line: string): boolean {
   const withoutPaths = line.replace(PATH_REFERENCE_PATTERN, ' ');
-  if (PRIVATE_TOOL_NAMES.some((name) => withoutPaths.includes(name))) {
-    return true;
+  const mentionedTools = PRIVATE_TOOL_NAMES.filter((name) => withoutPaths.includes(name));
+  if (mentionedTools.length > 0) {
+    return (
+      PRIVATE_CONNECTOR_DIRECTIVE_PATTERN.test(withoutPaths) ||
+      mentionedTools.some((name) => isPrivateToolInvocation(withoutPaths, name))
+    );
   }
   return (
     /\bkagemusha\b/i.test(withoutPaths) && PRIVATE_CONNECTOR_DIRECTIVE_PATTERN.test(withoutPaths)
