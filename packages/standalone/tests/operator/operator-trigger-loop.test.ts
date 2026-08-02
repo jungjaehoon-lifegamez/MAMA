@@ -19,7 +19,11 @@ import type {
 } from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 import type { PendingReportState } from '../../src/operator/pending-report-store.js';
-import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
+import {
+  FilePendingReportStore,
+  pendingReportDeliveryPayloadIdentity,
+  pendingReportRequestPayloadIdentity,
+} from '../../src/operator/pending-report-store.js';
 import {
   createTelegramReportCarryDelivery,
   createTelegramReportOutput,
@@ -29,6 +33,31 @@ import {
   FileReportCarryStore,
   type PersistDeliveredInput,
 } from '../../src/operator/report-carry.js';
+
+const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
+
+function testReportOutput(
+  send: (text: string, deliveryId?: string) => Promise<void>,
+  channelId = TEST_REPORT_TARGET.channelId
+) {
+  return {
+    target: { source: 'telegram' as const, channelId },
+    send,
+  };
+}
+
+function bindTestOutput<T extends Partial<ConstructorParameters<typeof OperatorTriggerLoop>[0]>>(
+  over: T
+): T {
+  if (!over.output) return over;
+  return {
+    ...over,
+    output: {
+      target: TEST_REPORT_TARGET,
+      ...over.output,
+    },
+  };
+}
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -107,7 +136,7 @@ describe('OperatorTriggerLoop', () => {
         authorWindowSize: 10,
       },
       log: (line) => logs.push(line),
-      ...over,
+      ...bindTestOutput(over),
     });
   }
 
@@ -752,7 +781,12 @@ describe('Story OPS-1 / S1-T3: on-demand full report + scheduled suppression', (
         authorWindowSize: 10,
       },
       log: (line: string) => logs.push(line),
-      ...over,
+      ...(over.output && typeof over.output === 'object'
+        ? {
+            ...over,
+            output: { target: TEST_REPORT_TARGET, ...(over.output as Record<string, unknown>) },
+          }
+        : over),
     });
   }
 
@@ -892,7 +926,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
         authorWindowSize: 10,
       },
       log: () => {},
-      ...over,
+      ...bindTestOutput(over),
     });
   }
 
@@ -1000,6 +1034,12 @@ describe('TG-06: durable owner-report delivery identity', () => {
       deliveredAtIso: carryStore.persisted[1].deliveredAt,
       text: carryStore.persisted[1].text,
       provenance: carryStore.persisted[1].provenance,
+      target: carryStore.persisted[1].target,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity({
+        deliveryId: carryStore.persisted[1].deliveryId,
+        target: carryStore.persisted[1].target,
+        text: carryStore.persisted[1].text,
+      }),
     });
     expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
       deliveryId: carryStore.persisted[1].deliveryId,
@@ -1084,6 +1124,106 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(attempts[1]).toEqual(attempts[0]);
     expect(pendingRef.current?.delivery).toBeUndefined();
     expect(scheduler.markSuccess).toHaveBeenCalledOnce();
+  });
+
+  it('TG-06 refuses a pending delivery when restart configuration changes from Telegram A to B', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-target-drift-'));
+    const path = join(root, 'pending.json');
+    const firstSend = vi.fn(async () => {
+      throw new Error('telegram unavailable');
+    });
+    const first = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-A',
+          telegramSender: { sendSystemMessage: firstSend },
+        }),
+        reportAsk: async () => 'owner report for A',
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+
+    await expect(first.tick()).rejects.toThrow('telegram unavailable');
+    expect(new FilePendingReportStore(path).load()?.delivery?.target).toEqual({
+      source: 'telegram',
+      channelId: 'owner-chat-A',
+    });
+
+    const secondSend = vi.fn(async () => {});
+    const carryPath = join(root, 'carry-B.json');
+    const second = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-B',
+          telegramSender: { sendSystemMessage: secondSend },
+        }),
+        reportAsk: async () => 'must not regenerate for B',
+        persistLastFullReport: createTelegramReportCarryDelivery({
+          reportChatId: 'owner-chat-B',
+          carryStore: new FileReportCarryStore(carryPath),
+        }),
+      }
+    );
+
+    await expect(second.tick()).rejects.toThrow(/target.*owner-chat-A.*owner-chat-B/i);
+    expect(secondSend).not.toHaveBeenCalled();
+    expect(existsSync(carryPath)).toBe(false);
+    expect(new FilePendingReportStore(path).load()?.delivery?.text).toBe('owner report for A');
+  });
+
+  it('TG-06 refuses a pending accepted request when restart configuration changes from Telegram A to B', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-request-target-drift-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const target = { source: 'telegram', channelId: 'owner-chat-A' } as const;
+    const request = {
+      mode: 'full' as const,
+      deliveryId: 'operator-report:on_demand_full:accepted-for-A',
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-08-02T00:00:00.000Z',
+      },
+      acceptedAtIso: '2026-08-02T00:00:00.000Z',
+      target,
+    };
+    new FilePendingReportStore(path).save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: {
+        ...request,
+        payloadIdentity: pendingReportRequestPayloadIdentity(request),
+      },
+    });
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not compose for B');
+    const restarted = durableLoop(
+      { current: null },
+      {
+        pendingReportStore: new FilePendingReportStore(path),
+        output: createTelegramReportOutput({
+          reportChatId: 'owner-chat-B',
+          telegramSender: { sendSystemMessage: send },
+        }),
+        reportAsk,
+      }
+    );
+
+    await expect(restarted.tick()).rejects.toThrow(/target.*owner-chat-A.*owner-chat-B/i);
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(new FilePendingReportStore(path).load()?.request?.deliveryId).toBe(request.deliveryId);
   });
 
   it('TG-06 quarantines an invalid pending full delivery before restart recovery can send or advance', async () => {
@@ -1263,7 +1403,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
         askAgent: async () => '[]',
         reportAsk,
         review: async () => ({ action: 'kept' as const }),
-        output: { send },
+        output: testReportOutput(send),
         reportScheduler: scheduler,
         pendingReportStore: new FilePendingReportStore(path),
         config: {
@@ -1324,7 +1464,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       askAgent: async () => '[]',
       reportAsk,
       review: async () => ({ action: 'kept' as const }),
-      output: { send },
+      output: testReportOutput(send),
       reportScheduler: scheduler,
       pendingReportStore: new FilePendingReportStore(path),
       config: {
@@ -1375,7 +1515,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       askAgent: async () => '[]',
       reportAsk,
       review: async () => ({ action: 'kept' as const }),
-      output: { send },
+      output: testReportOutput(send),
       reportScheduler: scheduler,
       pendingReportStore: store,
       config: {
@@ -1388,6 +1528,11 @@ describe('TG-06: durable owner-report delivery identity', () => {
       log: () => {},
     });
 
+    const recoveredDelivery = {
+      deliveryId: 'd1',
+      target: TEST_REPORT_TARGET,
+      text: 'recovered d1',
+    };
     store.recoverWithValidState({
       version: 1,
       digest: snapshot,
@@ -1400,6 +1545,8 @@ describe('TG-06: durable owner-report delivery identity', () => {
         deliveryId: 'd1',
         provenance: { status: 'available', modelRunId: 'mr_d1' },
         occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+        target: TEST_REPORT_TARGET,
+        payloadIdentity: pendingReportDeliveryPayloadIdentity(recoveredDelivery),
       },
     });
 
@@ -1437,7 +1584,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       askAgent: async () => '[]',
       reportAsk,
       review: async () => ({ action: 'kept' as const }),
-      output: { send },
+      output: testReportOutput(send),
       reportScheduler: scheduler,
       pendingReportStore: store,
       config: {
@@ -1450,15 +1597,23 @@ describe('TG-06: durable owner-report delivery identity', () => {
       log: () => {},
     });
 
+    const recoveredRequest = {
+      mode: 'full' as const,
+      deliveryId: 'd1-request',
+      acceptedAtIso: '2026-08-02T00:00:00.000Z',
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-08-02T00:00:00.000Z',
+      },
+      target: TEST_REPORT_TARGET,
+    };
     store.recoverWithValidState({
       version: 1,
       digest: snapshot,
       full: snapshot,
       request: {
-        mode: 'full',
-        deliveryId: 'd1-request',
-        acceptedAtIso: '2026-08-02T00:00:00.000Z',
-        occurrence: { kind: 'on_demand_full', firedAtIso: '2026-08-02T00:00:00.000Z' },
+        ...recoveredRequest,
+        payloadIdentity: pendingReportRequestPayloadIdentity(recoveredRequest),
       },
     });
 
@@ -1487,6 +1642,12 @@ describe('TG-06: durable owner-report delivery identity', () => {
         createdAtIso: '2026-08-02T00:00:00.000Z',
         deliveryId: 'd1',
         occurrence: { kind: 'digest' as const },
+        target: TEST_REPORT_TARGET,
+        payloadIdentity: pendingReportDeliveryPayloadIdentity({
+          deliveryId: 'd1',
+          text: 'external d1 wins',
+          target: TEST_REPORT_TARGET,
+        }),
       },
     };
     let injectRecovery = true;
@@ -1520,7 +1681,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       askAgent: async () => '[]',
       reportAsk,
       review: async () => ({ action: 'kept' as const }),
-      output: { send },
+      output: testReportOutput(send),
       reportScheduler: scheduler,
       pendingReportStore: raceStore,
       config: {
@@ -1616,6 +1777,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
       reportAsk: async () => 'accepted report',
       review: async () => ({ action: 'kept' as const }),
       output: {
+        target: TEST_REPORT_TARGET,
         send: async (_text, deliveryId) => {
           expect(deliveryId).toBeTruthy();
           deliveries.push(deliveryId!);
@@ -1787,19 +1949,24 @@ describe('TG-06: durable owner-report delivery identity', () => {
       await import('../../src/operator/situation-report.js')
     ).SituationReporter().snapshot();
     const deliveryId = 'operator-report:on_demand_full:accepted-before-crash';
+    const acceptedRequest = {
+      mode: 'full' as const,
+      deliveryId,
+      occurrence: {
+        kind: 'on_demand_full' as const,
+        firedAtIso: '2026-07-22T04:30:00.000Z',
+      },
+      acceptedAtIso: '2026-07-22T04:30:00.000Z',
+      target: TEST_REPORT_TARGET,
+    };
     const pendingRef: { current: PendingReportState | null } = {
       current: {
         version: 1,
         digest: snapshot,
         full: snapshot,
         request: {
-          mode: 'full',
-          deliveryId,
-          occurrence: {
-            kind: 'on_demand_full',
-            firedAtIso: '2026-07-22T04:30:00.000Z',
-          },
-          acceptedAtIso: '2026-07-22T04:30:00.000Z',
+          ...acceptedRequest,
+          payloadIdentity: pendingReportRequestPayloadIdentity(acceptedRequest),
         },
       },
     };
@@ -1851,6 +2018,11 @@ describe('TG-06: durable owner-report delivery identity', () => {
     const snapshot = new (
       await import('../../src/operator/situation-report.js')
     ).SituationReporter().snapshot();
+    const startupDelivery = {
+      deliveryId: 'operator-report:digest:startup-recovery',
+      text: 'startup recovery report',
+      target: TEST_REPORT_TARGET,
+    };
     const pendingRef: { current: PendingReportState | null } = {
       current: {
         version: 1,
@@ -1863,6 +2035,8 @@ describe('TG-06: durable owner-report delivery identity', () => {
           createdAtIso: '2026-07-22T03:30:00.000Z',
           deliveryId: 'operator-report:digest:startup-recovery',
           occurrence: { kind: 'digest' },
+          target: TEST_REPORT_TARGET,
+          payloadIdentity: pendingReportDeliveryPayloadIdentity(startupDelivery),
         },
       },
     };

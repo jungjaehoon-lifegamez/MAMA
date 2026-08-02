@@ -879,6 +879,35 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  it('TG-01/TG-06 rejects reuse of one delivery ID for a different Telegram chat', async () => {
+    const gateway = await makeGateway();
+    const deliveryId = 'operator-report:scheduled:target-binding';
+
+    await gateway.sendSystemMessage('7777', 'bound owner report', deliveryId);
+    await expect(
+      gateway.sendSystemMessage('8888', 'bound owner report', deliveryId)
+    ).rejects.toThrow(/delivery.*binding.*mismatch/i);
+
+    expect(
+      mockApi.sendMessage.mock.calls.filter(([, text]) => text === 'bound owner report')
+    ).toEqual([[7777, 'bound owner report']]);
+    await gateway.stop();
+  });
+
+  it('TG-01/TG-06 rejects reuse of one delivery ID for different text', async () => {
+    const gateway = await makeGateway();
+    const deliveryId = 'operator-report:scheduled:payload-binding';
+
+    await gateway.sendSystemMessage('7777', 'original owner report', deliveryId);
+    await expect(
+      gateway.sendSystemMessage('7777', 'different owner report', deliveryId)
+    ).rejects.toThrow(/delivery.*binding.*mismatch/i);
+
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'original owner report');
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'different owner report');
+    await gateway.stop();
+  });
+
   it('TG-01 does not let another chat inherit an active report queue', async () => {
     let releaseTurn!: () => void;
     const blocked = new Promise<void>((resolve) => {

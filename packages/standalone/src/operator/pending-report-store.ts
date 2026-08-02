@@ -12,7 +12,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
-import { isArtifactProvenance } from './report-carry.js';
+import { isArtifactProvenance, type ReportCarryTarget } from './report-carry.js';
 import { withFileCoordinationTransaction } from './file-coordination.js';
 import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
 
@@ -25,6 +25,8 @@ export interface PendingReportOccurrence {
 export interface PendingReportDelivery extends PreparedSituationReport {
   deliveryId: string;
   occurrence: PendingReportOccurrence;
+  target: ReportCarryTarget;
+  payloadIdentity: string;
 }
 
 export interface PendingReportRequest {
@@ -32,6 +34,8 @@ export interface PendingReportRequest {
   deliveryId: string;
   occurrence: PendingReportOccurrence;
   acceptedAtIso: string;
+  target: ReportCarryTarget;
+  payloadIdentity: string;
 }
 
 export interface PendingReportState {
@@ -85,6 +89,64 @@ const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
 
+interface PendingReportRequestIdentityInput {
+  mode: 'full';
+  deliveryId: string;
+  occurrence: PendingReportOccurrence;
+  acceptedAtIso: string;
+  target: ReportCarryTarget;
+}
+
+interface PendingReportDeliveryIdentityInput {
+  deliveryId: string;
+  text: string;
+  target: ReportCarryTarget;
+}
+
+function reportTargetIdentity(target: ReportCarryTarget): string {
+  return JSON.stringify([target.source, target.channelId]);
+}
+
+function occurrenceIdentity(occurrence: PendingReportOccurrence): string {
+  return JSON.stringify([
+    occurrence.kind,
+    occurrence.hourKey ?? null,
+    occurrence.firedAtIso ?? null,
+  ]);
+}
+
+export function pendingReportRequestPayloadIdentity(
+  request: PendingReportRequestIdentityInput
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        'pending-report-request-v1',
+        request.mode,
+        request.deliveryId,
+        request.acceptedAtIso,
+        occurrenceIdentity(request.occurrence),
+        reportTargetIdentity(request.target),
+      ])
+    )
+    .digest('hex');
+}
+
+export function pendingReportDeliveryPayloadIdentity(
+  delivery: PendingReportDeliveryIdentityInput
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        'pending-report-delivery-v1',
+        delivery.deliveryId,
+        reportTargetIdentity(delivery.target),
+        delivery.text,
+      ])
+    )
+    .digest('hex');
+}
+
 function isPendingReportState(
   value: unknown,
   allowLegacyFullProvenance: boolean
@@ -113,11 +175,27 @@ function isPendingReportState(
 function isPendingRequest(value: unknown): value is PendingReportRequest {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (
+    !(
+      record.mode === 'full' &&
+      isNonEmptyBoundedString(record.deliveryId, 512) &&
+      isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
+      isOnDemandFullOccurrence(record.occurrence) &&
+      isReportTarget(record.target) &&
+      isSha256Identity(record.payloadIdentity)
+    )
+  ) {
+    return false;
+  }
   return (
-    record.mode === 'full' &&
-    isNonEmptyBoundedString(record.deliveryId, 512) &&
-    isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
-    isOnDemandFullOccurrence(record.occurrence)
+    record.payloadIdentity ===
+    pendingReportRequestPayloadIdentity({
+      mode: 'full',
+      deliveryId: record.deliveryId,
+      acceptedAtIso: record.acceptedAtIso,
+      occurrence: record.occurrence,
+      target: record.target,
+    })
   );
 }
 
@@ -138,6 +216,18 @@ function isPendingDelivery(
   if (!sharedValid) {
     return false;
   }
+  if (
+    !isReportTarget(record.target) ||
+    !isSha256Identity(record.payloadIdentity) ||
+    record.payloadIdentity !==
+      pendingReportDeliveryPayloadIdentity({
+        deliveryId: record.deliveryId as string,
+        text: record.text as string,
+        target: record.target,
+      })
+  ) {
+    return false;
+  }
   if (record.mode === 'digest') {
     return record.provenance === undefined && isDigestOccurrence(record.occurrence);
   }
@@ -156,11 +246,11 @@ function isDigestOccurrence(value: unknown): boolean {
   return record.kind === 'digest' && Object.keys(record).length === 1;
 }
 
-function isFullOccurrence(value: unknown): boolean {
+function isFullOccurrence(value: unknown): value is PendingReportOccurrence {
   return isScheduledFullOccurrence(value) || isOnDemandFullOccurrence(value);
 }
 
-function isScheduledFullOccurrence(value: unknown): boolean {
+function isScheduledFullOccurrence(value: unknown): value is PendingReportOccurrence {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
@@ -176,7 +266,7 @@ function isScheduledFullOccurrence(value: unknown): boolean {
   );
 }
 
-function isOnDemandFullOccurrence(value: unknown): boolean {
+function isOnDemandFullOccurrence(value: unknown): value is PendingReportOccurrence {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
@@ -258,6 +348,21 @@ function isRecalledSnapshot(value: unknown): boolean {
 
 function isSafeCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isReportTarget(value: unknown): value is ReportCarryTarget {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).length === 2 &&
+    record.source === 'telegram' &&
+    isNonEmptyBoundedString(record.channelId, 512) &&
+    record.channelId.trim() === record.channelId
+  );
+}
+
+function isSha256Identity(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 function isBoundedString(value: unknown, maxLength: number): value is string {

@@ -1,5 +1,6 @@
 import type { PersistDeliveredInput } from './report-carry.js';
 import type { DeliveredFullReport } from './situation-report.js';
+import { pendingReportDeliveryPayloadIdentity } from './pending-report-store.js';
 import { randomUUID } from 'node:crypto';
 
 /** Narrow persistence port so startup wiring stays independent of the concrete file implementation. */
@@ -36,10 +37,12 @@ export function createTelegramReportOutput({
   reportChatId,
   telegramSender,
 }: TelegramReportOutputOptions): {
+  target: { source: 'telegram'; channelId: string };
   send(text: string, deliveryId?: string): Promise<void>;
 } {
   requireCanonicalTelegramReportChatId(reportChatId);
   return {
+    target: { source: 'telegram', channelId: reportChatId },
     send: (text, deliveryId) =>
       telegramSender.sendSystemMessage(
         reportChatId,
@@ -59,9 +62,21 @@ export function createTelegramReportCarryDelivery({
 }: TelegramReportCarryDeliveryOptions): (report: DeliveredFullReport) => void {
   requireCanonicalTelegramReportChatId(reportChatId);
   return (report) => {
+    if (
+      report.target?.source !== 'telegram' ||
+      report.target.channelId !== reportChatId ||
+      report.payloadIdentity !==
+        pendingReportDeliveryPayloadIdentity({
+          deliveryId: report.deliveryId,
+          text: report.text,
+          target: report.target,
+        })
+    ) {
+      throw new Error('Full report carry delivery binding does not match its Telegram target');
+    }
     carryStore.persistDelivered({
       deliveryId: report.deliveryId,
-      target: { source: 'telegram', channelId: reportChatId },
+      target: report.target,
       deliveredAt: report.deliveredAtIso,
       text: report.text,
       provenance: report.provenance,

@@ -7,8 +7,42 @@ import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
+import {
+  FilePendingReportStore,
+  pendingReportDeliveryPayloadIdentity,
+  pendingReportRequestPayloadIdentity,
+  type PendingReportOccurrence,
+} from '../../src/operator/pending-report-store.js';
 import { SituationReporter } from '../../src/operator/situation-report.js';
+
+const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
+
+function bindDelivery<T extends { deliveryId: string; text: string }>(delivery: T) {
+  return {
+    ...delivery,
+    target: TEST_REPORT_TARGET,
+    payloadIdentity: pendingReportDeliveryPayloadIdentity({
+      deliveryId: delivery.deliveryId,
+      text: delivery.text,
+      target: TEST_REPORT_TARGET,
+    }),
+  };
+}
+
+function bindRequest<
+  T extends {
+    mode: 'full';
+    deliveryId: string;
+    occurrence: PendingReportOccurrence;
+    acceptedAtIso: string;
+  },
+>(request: T) {
+  const bound = { ...request, target: TEST_REPORT_TARGET };
+  return {
+    ...bound,
+    payloadIdentity: pendingReportRequestPayloadIdentity(bound),
+  };
+}
 
 interface PendingStoreChild {
   ready: Promise<void>;
@@ -136,7 +170,7 @@ describe('FilePendingReportStore', () => {
       version: 1,
       digest: snapshot,
       full: snapshot,
-      delivery: {
+      delivery: bindDelivery({
         mode: 'full',
         text: 'owner-visible report',
         citedTriggerIds: ['temporal-1'],
@@ -148,7 +182,7 @@ describe('FilePendingReportStore', () => {
           hourKey: '2026-07-22:12',
           firedAtIso: '2026-07-22T03:00:00.000Z',
         },
-      },
+      }),
     });
 
     expect(new FilePendingReportStore(path).load()?.delivery).toMatchObject({
@@ -169,7 +203,7 @@ describe('FilePendingReportStore', () => {
       version: 1,
       digest: snapshot,
       full: snapshot,
-      delivery: {
+      delivery: bindDelivery({
         mode: 'full',
         text: 'owner report',
         citedTriggerIds: [],
@@ -181,7 +215,7 @@ describe('FilePendingReportStore', () => {
           hourKey: '2026-08-02:09',
           firedAtIso: '2026-08-02T00:00:00.000Z',
         },
-      },
+      }),
     });
 
     expect(store.load()?.delivery?.provenance).toEqual(provenance);
@@ -197,14 +231,14 @@ describe('FilePendingReportStore', () => {
         version: 1,
         digest: snapshot,
         full: snapshot,
-        delivery: {
+        delivery: bindDelivery({
           mode: 'full',
           text: 'legacy owner report',
           citedTriggerIds: [],
           createdAtIso: '2026-08-02T00:00:00.000Z',
           deliveryId: 'legacy-d1',
           occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
-        },
+        }),
       })
     );
 
@@ -212,6 +246,68 @@ describe('FilePendingReportStore', () => {
       status: 'unavailable',
       reason: 'legacy_record',
     });
+  });
+
+  it('TG-06 quarantines a pending delivery whose exact payload no longer matches its identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    const store = new FilePendingReportStore(path);
+    store.save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      delivery: bindDelivery({
+        mode: 'full',
+        text: 'authorized payload',
+        citedTriggerIds: [],
+        createdAtIso: '2026-08-02T00:00:00.000Z',
+        deliveryId: 'payload-bound-d1',
+        provenance: { status: 'available', modelRunId: 'mr_payload_1' },
+        occurrence: { kind: 'scheduled_full', hourKey: '2026-08-02:09' },
+      }),
+    });
+    const tampered = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    (tampered.delivery as Record<string, unknown>).text = 'different payload';
+    await writeFile(path, JSON.stringify(tampered));
+
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
+  });
+
+  it('TG-06 quarantines a legacy active delivery without an authorized target binding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'unbound legacy payload',
+          citedTriggerIds: [],
+          createdAtIso: '2026-08-02T00:00:00.000Z',
+          deliveryId: 'legacy-unbound-d1',
+          occurrence: { kind: 'digest' },
+        },
+      })
+    );
+
+    expect(new FilePendingReportStore(path).loadStatus()).toBe('quarantined');
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^pending\.json\.corrupt-/),
+        'pending.json.quarantined',
+      ])
+    );
   });
 
   it('TG-06 quarantines malformed pending full-report provenance', async () => {
@@ -338,14 +434,14 @@ describe('FilePendingReportStore', () => {
       version: 1,
       digest: snapshot,
       full: snapshot,
-      delivery: {
+      delivery: bindDelivery({
         mode: 'digest' as const,
         text: 'externally recovered d1',
         citedTriggerIds: [],
         createdAtIso: '2026-08-02T00:00:00.000Z',
         deliveryId: 'd1',
         occurrence: { kind: 'digest' as const },
-      },
+      }),
     };
     store.recoverWithValidState(recovered);
 
@@ -572,7 +668,7 @@ describe('FilePendingReportStore', () => {
       version: 1,
       digest: snapshot,
       full: snapshot,
-      request: {
+      request: bindRequest({
         mode: 'full',
         deliveryId: 'operator-report:on_demand_full:request-1',
         occurrence: {
@@ -581,7 +677,7 @@ describe('FilePendingReportStore', () => {
           firedAtIso: '2026-07-22T04:00:00.000Z',
         },
         acceptedAtIso: '2026-07-22T04:00:00.000Z',
-      },
+      }),
     });
 
     expect(store.load()?.request).toMatchObject({

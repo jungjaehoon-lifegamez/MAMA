@@ -20,7 +20,11 @@ import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
-import { isArtifactProvenance, type ArtifactProvenance } from './report-carry.js';
+import {
+  isArtifactProvenance,
+  type ArtifactProvenance,
+  type ReportCarryTarget,
+} from './report-carry.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
@@ -45,6 +49,8 @@ export interface PreparedSituationReport {
   createdAtIso: string;
   deliveryId?: string;
   provenance?: ArtifactProvenance;
+  target?: ReportCarryTarget;
+  payloadIdentity?: string;
 }
 
 export interface DeliveredFullReport {
@@ -52,6 +58,8 @@ export interface DeliveredFullReport {
   deliveredAtIso: string;
   text: string;
   provenance: ArtifactProvenance;
+  target?: ReportCarryTarget;
+  payloadIdentity?: string;
 }
 
 /** Deterministic prompt-size bounds (mind memory + prompt length; see plan design decision 4). */
@@ -382,6 +390,8 @@ export class SituationReporter {
           deliveredAtIso: new Date().toISOString(),
           text: prepared.text,
           provenance: prepared.provenance,
+          ...(prepared.target ? { target: prepared.target } : {}),
+          ...(prepared.payloadIdentity ? { payloadIdentity: prepared.payloadIdentity } : {}),
         };
         try {
           this.opts.persistLastFullReport?.(report);

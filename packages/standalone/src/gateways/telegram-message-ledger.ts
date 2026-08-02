@@ -20,6 +20,13 @@ export interface TelegramMessageLedgerEntry {
   response?: string;
   nextChunkIndex?: number;
   deliveryUncertain?: boolean;
+  deliveryTarget?: string;
+  payloadIdentity?: string;
+}
+
+export interface TelegramDeliveryBinding {
+  deliveryTarget: string;
+  payloadIdentity: string;
 }
 
 interface LedgerStateV2 {
@@ -86,15 +93,31 @@ export class TelegramMessageLedger {
     return entry.ownerId === this.ownerId;
   }
 
-  claim(key: string): { claimed: boolean; entry: TelegramMessageLedgerEntry } {
+  claim(
+    key: string,
+    binding?: TelegramDeliveryBinding
+  ): { claimed: boolean; entry: TelegramMessageLedgerEntry } {
     this.prune();
     const existing = this.entries.get(key);
-    if (existing) return { claimed: false, entry: { ...existing } };
+    if (existing) {
+      if (
+        binding &&
+        (existing.deliveryTarget !== binding.deliveryTarget ||
+          existing.payloadIdentity !== binding.payloadIdentity)
+      ) {
+        throw new Error(`Telegram delivery binding mismatch for ${key}`);
+      }
+      return { claimed: false, entry: { ...existing } };
+    }
+    if (binding && !isDeliveryBinding(binding)) {
+      throw new Error(`Telegram delivery binding is invalid for ${key}`);
+    }
     const entry: TelegramMessageLedgerEntry = {
       key,
       state: 'processing',
       updatedAt: this.now(),
       ownerId: this.ownerId,
+      ...(binding ?? {}),
     };
     this.commit(() => {
       this.entries.set(key, entry);
@@ -142,12 +165,15 @@ export class TelegramMessageLedger {
 
   markDelivered(key: string): void {
     this.commit(() => {
+      const existing = this.entries.get(key);
       this.entries.delete(key);
       this.entries.set(key, {
         key,
         state: 'delivered',
         updatedAt: this.now(),
         ownerId: this.ownerId,
+        ...(existing?.deliveryTarget ? { deliveryTarget: existing.deliveryTarget } : {}),
+        ...(existing?.payloadIdentity ? { payloadIdentity: existing.payloadIdentity } : {}),
       });
       this.enforceEntryLimit();
     });
@@ -306,9 +332,27 @@ function isLedgerStateV2(value: unknown, maxEntries: number): value is LedgerSta
         (typeof item.response === 'string' && item.response.length <= MAX_RESPONSE_CHARS)) &&
       (item.nextChunkIndex === undefined ||
         (Number.isSafeInteger(item.nextChunkIndex) && (item.nextChunkIndex as number) >= 0)) &&
-      (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean')
+      (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean') &&
+      ((item.deliveryTarget === undefined && item.payloadIdentity === undefined) ||
+        isDeliveryBinding({
+          deliveryTarget: item.deliveryTarget,
+          payloadIdentity: item.payloadIdentity,
+        }))
     );
   });
+}
+
+function isDeliveryBinding(value: {
+  deliveryTarget: unknown;
+  payloadIdentity: unknown;
+}): value is TelegramDeliveryBinding {
+  return (
+    typeof value.deliveryTarget === 'string' &&
+    value.deliveryTarget.length > 0 &&
+    value.deliveryTarget.length <= 1_024 &&
+    typeof value.payloadIdentity === 'string' &&
+    /^[a-f0-9]{64}$/.test(value.payloadIdentity)
+  );
 }
 
 function isKey(value: unknown): value is string {

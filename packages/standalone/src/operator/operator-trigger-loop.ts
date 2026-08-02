@@ -29,17 +29,19 @@ import { SituationReporter, type DeliveredFullReport } from './situation-report.
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { randomUUID } from 'node:crypto';
-import type {
-  PendingReportDelivery,
-  PendingReportLoadOutcome,
-  PendingReportOccurrence,
-  PendingReportRequest,
-  PendingReportSaveExpectation,
-  PendingReportStore,
+import {
+  pendingReportDeliveryPayloadIdentity,
+  pendingReportRequestPayloadIdentity,
+  type PendingReportDelivery,
+  type PendingReportLoadOutcome,
+  type PendingReportOccurrence,
+  type PendingReportRequest,
+  type PendingReportSaveExpectation,
+  type PendingReportStore,
 } from './pending-report-store.js';
 import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
-import type { ArtifactProvenance } from './report-carry.js';
+import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -87,7 +89,7 @@ export interface TriggerLoopDeps {
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
-  output?: Pick<OutputSink, 'send'>;
+  output?: Pick<OutputSink, 'send'> & { target?: ReportCarryTarget };
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
   /**
@@ -277,6 +279,47 @@ export class OperatorTriggerLoop {
     return `operator-report:${occurrence.kind}:${randomUUID()}`;
   }
 
+  private requireOutputTarget(): ReportCarryTarget {
+    const target = this.deps.output?.target;
+    if (
+      target?.source !== 'telegram' ||
+      target.channelId.length === 0 ||
+      target.channelId.trim() !== target.channelId
+    ) {
+      throw new Error('Owner-report output is missing its canonical Telegram target binding');
+    }
+    return target;
+  }
+
+  private assertPendingTarget(target: ReportCarryTarget, phase: string): void {
+    const configured = this.requireOutputTarget();
+    if (target.source !== configured.source || target.channelId !== configured.channelId) {
+      throw new Error(
+        `Pending owner-report ${phase} target ${target.channelId} does not match configured target ${configured.channelId}`
+      );
+    }
+  }
+
+  private assertPendingDeliveryBinding(delivery: PendingReportDelivery): void {
+    this.assertPendingTarget(delivery.target, 'delivery');
+    const expected = pendingReportDeliveryPayloadIdentity(delivery);
+    if (delivery.payloadIdentity !== expected) {
+      throw new Error(
+        `Pending owner-report delivery ${delivery.deliveryId} payload identity mismatch`
+      );
+    }
+  }
+
+  private assertPendingRequestBinding(request: PendingReportRequest): void {
+    this.assertPendingTarget(request.target, 'request');
+    const expected = pendingReportRequestPayloadIdentity(request);
+    if (request.payloadIdentity !== expected) {
+      throw new Error(
+        `Pending owner-report request ${request.deliveryId} payload identity mismatch`
+      );
+    }
+  }
+
   private async deliverPendingReport(recovered: boolean): Promise<PendingReportDelivery | null> {
     const pending = this.pendingDelivery;
     const output = this.deps.output;
@@ -284,6 +327,7 @@ export class OperatorTriggerLoop {
       return null;
     }
 
+    this.assertPendingDeliveryBinding(pending);
     await this.reporterFor(pending.mode).deliverPrepared(pending, output);
     if (pending.mode === 'full' && this.deps.reportScheduler) {
       if (pending.occurrence.hourKey) {
@@ -314,6 +358,7 @@ export class OperatorTriggerLoop {
     if (this.pendingDelivery) {
       throw new Error('A pending owner report must be recovered before composing another report');
     }
+    const target = this.requireOutputTarget();
     const deliveryId = this.deliveryIdFor(occurrence);
     const prepared = await this.reporterFor(mode).prepareReport(askAgent, mode, deliveryId);
     if (!prepared) {
@@ -324,6 +369,12 @@ export class OperatorTriggerLoop {
       ...prepared,
       deliveryId,
       occurrence,
+      target,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity({
+        deliveryId,
+        target,
+        text: prepared.text,
+      }),
     };
     // Persist the exact owner-visible text and operation identity before the
     // first external send. A restart replays this record, never a regeneration.
@@ -340,6 +391,7 @@ export class OperatorTriggerLoop {
     if (this.pendingDelivery) {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
+    this.assertPendingRequestBinding(request);
     const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
     const prepared = await this.fullReporter.prepareReport(
       reportAsk,
@@ -355,6 +407,12 @@ export class OperatorTriggerLoop {
       ...prepared,
       deliveryId: request.deliveryId,
       occurrence: request.occurrence,
+      target: request.target,
+      payloadIdentity: pendingReportDeliveryPayloadIdentity({
+        deliveryId: request.deliveryId,
+        target: request.target,
+        text: prepared.text,
+      }),
     };
     this.pendingRequest = undefined;
     if (!this.persistPendingReports()) {
@@ -653,11 +711,27 @@ export class OperatorTriggerLoop {
       ...(hourKey ? { hourKey } : {}),
       firedAtIso,
     };
-    this.pendingRequest = {
+    let target: ReportCarryTarget;
+    try {
+      target = this.requireOutputTarget();
+    } catch (error) {
+      this.deps.log(
+        `[trigger-loop] on-demand full report target binding unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return { accepted: false, reason: 'unavailable' };
+    }
+    const request = {
       mode: 'full',
       deliveryId: this.deliveryIdFor(occurrence),
       occurrence,
       acceptedAtIso: firedAtIso,
+      target,
+    } as const;
+    this.pendingRequest = {
+      ...request,
+      payloadIdentity: pendingReportRequestPayloadIdentity(request),
     };
     try {
       if (!this.persistPendingReports()) {
