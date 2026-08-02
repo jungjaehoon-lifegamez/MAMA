@@ -1930,6 +1930,8 @@ export async function runAgentLoop(
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
       const { FileReportCarryStore } = await import('../../operator/report-carry.js');
+      const { createTelegramReportCarryDelivery } =
+        await import('../../operator/report-carry-delivery.js');
       type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
       // Set when a report is composed, read when that same report is delivered. Safe
       // because ALL operator work serializes on the operator lane (SOURCE_GLOBAL_LANES),
@@ -1948,7 +1950,12 @@ export async function runAgentLoop(
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = resolveOperatorReportChatId(process.env, config.telegram?.allowed_chats);
-      const reportCarry = new FileReportCarryStore();
+      const persistReportCarry = reportChatId
+        ? createTelegramReportCarryDelivery({
+            reportChatId,
+            carryStore: new FileReportCarryStore(),
+          })
+        : undefined;
       const reportOutput =
         reportChatId && telegramGateway
           ? {
@@ -2109,16 +2116,10 @@ export async function runAgentLoop(
         fullReportProvenance: () => lastReportProvenance,
         persistLastFullReport: (report) => {
           getLegCadence()?.beat('full-report');
-          if (!reportChatId) {
+          if (!persistReportCarry) {
             throw new Error('Cannot persist full report carry without a Telegram report chat');
           }
-          reportCarry.persistDelivered({
-            deliveryId: report.deliveryId,
-            target: { source: 'telegram', channelId: reportChatId },
-            deliveredAt: report.deliveredAtIso,
-            text: report.text,
-            provenance: report.provenance,
-          });
+          persistReportCarry(report);
         },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),

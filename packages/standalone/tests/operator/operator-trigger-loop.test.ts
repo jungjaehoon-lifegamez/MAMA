@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
@@ -19,6 +20,14 @@ import type {
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 import type { PendingReportState } from '../../src/operator/pending-report-store.js';
 import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
+import {
+  createTelegramReportCarryDelivery,
+  type ReportCarryDeliveryStore,
+} from '../../src/operator/report-carry-delivery.js';
+import {
+  FileReportCarryStore,
+  type PersistDeliveredInput,
+} from '../../src/operator/report-carry.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -885,6 +894,147 @@ describe('TG-06: durable owner-report delivery identity', () => {
       ...over,
     });
   }
+
+  it('TG-01/TG-06 drives scheduled and on-demand successful sends through one target-scoped production carry assembly', async () => {
+    class CapturingCarryStore extends FileReportCarryStore {
+      readonly persisted: PersistDeliveredInput[] = [];
+
+      override persistDelivered(input: PersistDeliveredInput): void {
+        this.persisted.push(structuredClone(input));
+        super.persistDelivered(input);
+      }
+    }
+
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-carry-delivery-'));
+    const path = join(root, 'carry.json');
+    const carryStore: ReportCarryDeliveryStore & CapturingCarryStore = new CapturingCarryStore(
+      path
+    );
+    const persistLastFullReport = createTelegramReportCarryDelivery({
+      reportChatId: 'trusted-owner-chat',
+      carryStore,
+    });
+    const delivered: Array<{ text: string; deliveryId?: string }> = [];
+
+    const onDemand = durableLoop(
+      { current: null },
+      {
+        output: {
+          send: async (text, deliveryId) => {
+            delivered.push({ text, deliveryId });
+          },
+        },
+        reportAsk: async () => 'on-demand owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_on_demand' }),
+        persistLastFullReport,
+      }
+    );
+    expect(onDemand.startFullReport()).toEqual({ accepted: true });
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+
+    const scheduled = durableLoop(
+      { current: null },
+      {
+        output: {
+          send: async (text, deliveryId) => {
+            delivered.push({ text, deliveryId });
+          },
+        },
+        reportAsk: async () => 'scheduled owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_scheduled' }),
+        persistLastFullReport,
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+    await scheduled.tick();
+
+    expect(delivered).toEqual([
+      {
+        text: 'on-demand owner report',
+        deliveryId: expect.stringMatching(/^operator-report:on_demand_full:/),
+      },
+      {
+        text: 'scheduled owner report',
+        deliveryId: 'operator-report:scheduled:2026-08-02:09',
+      },
+    ]);
+    expect(carryStore.persisted).toHaveLength(2);
+    expect(carryStore.persisted[0]).toMatchObject({
+      deliveryId: delivered[0].deliveryId,
+      target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+      text: delivered[0].text,
+      provenance: { status: 'available', modelRunId: 'mr_on_demand' },
+    });
+    expect(carryStore.persisted[1]).toMatchObject({
+      deliveryId: delivered[1].deliveryId,
+      target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+      text: delivered[1].text,
+      provenance: { status: 'available', modelRunId: 'mr_scheduled' },
+    });
+    expect(carryStore.persisted[1].deliveredAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    );
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+      version: 2,
+      ...carryStore.persisted[1],
+    });
+
+    expect(
+      carryStore.acknowledge({
+        deliveryId: carryStore.persisted[1].deliveryId,
+        target: { source: 'telegram', channelId: 'trusted-owner-chat' },
+        consumingChannelKey: 'telegram:trusted-owner-chat',
+        consumedAtIso: '2026-08-02T00:01:00.000Z',
+      })
+    ).toBe(true);
+    persistLastFullReport({
+      deliveryId: carryStore.persisted[1].deliveryId,
+      deliveredAtIso: carryStore.persisted[1].deliveredAt,
+      text: carryStore.persisted[1].text,
+      provenance: carryStore.persisted[1].provenance,
+    });
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+      deliveryId: carryStore.persisted[1].deliveryId,
+      consumedAt: '2026-08-02T00:01:00.000Z',
+      consumingChannelKey: 'telegram:trusted-owner-chat',
+    });
+  });
+
+  it('TG-06 leaves the production carry store untouched when a full-report send is rejected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-carry-rejected-'));
+    const path = join(root, 'carry.json');
+    const carryStore = new FileReportCarryStore(path);
+    const loop = durableLoop(
+      { current: null },
+      {
+        output: {
+          send: async () => {
+            throw new Error('telegram rejected');
+          },
+        },
+        reportAsk: async () => 'rejected owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_rejected' }),
+        persistLastFullReport: createTelegramReportCarryDelivery({
+          reportChatId: 'trusted-owner-chat',
+          carryStore,
+        }),
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:10' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+
+    await expect(loop.tick()).rejects.toThrow('telegram rejected');
+    expect(existsSync(path)).toBe(false);
+  });
 
   it('retries the exact persisted report and delivery id after a pre-send restart', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };

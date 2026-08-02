@@ -17,8 +17,6 @@
  *
  * So these are not tests of behaviour. They are tests that two lists agree.
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   CONDUCTOR_TOOL_POLICY,
@@ -46,10 +44,6 @@ function toolsNamedIn(lines: readonly string[]): Set<string> {
 }
 
 const REPORT_GRANT = new Set<string>(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
-const START_COMMAND_SOURCE = readFileSync(
-  fileURLToPath(new URL('../../src/cli/commands/start.ts', import.meta.url)),
-  'utf8'
-);
 
 describe('report lane: instructions against the grant', () => {
   const instructed = toolsNamedIn(
@@ -112,30 +106,6 @@ describe('report lane: instructions against the grant', () => {
     );
     // No anchor still bounds the window; an unbounded delta is not a delta.
     expect(withoutAnchor).toContain('since');
-  });
-});
-
-describe('TG-01/TG-06 report delivery wiring', () => {
-  it('persists successful full deliveries through the target-scoped carry store', () => {
-    expect(START_COMMAND_SOURCE).toContain(
-      "const { FileReportCarryStore } = await import('../../operator/report-carry.js');"
-    );
-    expect(START_COMMAND_SOURCE).not.toContain(
-      "const { persistLastFullReport } = await import('../../operator/report-carry.js');"
-    );
-    expect(START_COMMAND_SOURCE).toContain('const reportCarry = new FileReportCarryStore();');
-    expect(START_COMMAND_SOURCE).toContain('reportCarry.persistDelivered({');
-    expect(START_COMMAND_SOURCE).toContain("source: 'telegram',");
-    expect(START_COMMAND_SOURCE).toContain('channelId: reportChatId');
-    expect(START_COMMAND_SOURCE).toContain('deliveryId: report.deliveryId,');
-    expect(START_COMMAND_SOURCE).toContain('deliveredAt: report.deliveredAtIso,');
-    expect(START_COMMAND_SOURCE).toContain('text: report.text,');
-    expect(START_COMMAND_SOURCE).toContain('provenance: report.provenance,');
-    const deliveryBoundary = START_COMMAND_SOURCE.slice(
-      START_COMMAND_SOURCE.indexOf('persistLastFullReport: (report) =>'),
-      START_COMMAND_SOURCE.indexOf('pendingReportStore: new FilePendingReportStore')
-    );
-    expect(deliveryBoundary).not.toContain('lastReportProvenance');
   });
 });
 
