@@ -22,6 +22,7 @@ import type { PendingReportState } from '../../src/operator/pending-report-store
 import { FilePendingReportStore } from '../../src/operator/pending-report-store.js';
 import {
   createTelegramReportCarryDelivery,
+  createTelegramReportOutput,
   type ReportCarryDeliveryStore,
 } from '../../src/operator/report-carry-delivery.js';
 import {
@@ -914,32 +915,32 @@ describe('TG-06: durable owner-report delivery identity', () => {
       reportChatId: 'trusted-owner-chat',
       carryStore,
     });
-    const delivered: Array<{ text: string; deliveryId?: string }> = [];
+    const sent: Array<{ chatId: string; text: string; deliveryId?: string }> = [];
+    const output = createTelegramReportOutput({
+      reportChatId: 'trusted-owner-chat',
+      telegramSender: {
+        async sendSystemMessage(chatId, text, deliveryId) {
+          sent.push({ chatId, text, deliveryId });
+        },
+      },
+    });
 
     const onDemand = durableLoop(
       { current: null },
       {
-        output: {
-          send: async (text, deliveryId) => {
-            delivered.push({ text, deliveryId });
-          },
-        },
+        output,
         reportAsk: async () => 'on-demand owner report',
         fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_on_demand' }),
         persistLastFullReport,
       }
     );
     expect(onDemand.startFullReport()).toEqual({ accepted: true });
-    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
 
     const scheduled = durableLoop(
       { current: null },
       {
-        output: {
-          send: async (text, deliveryId) => {
-            delivered.push({ text, deliveryId });
-          },
-        },
+        output,
         reportAsk: async () => 'scheduled owner report',
         fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_scheduled' }),
         persistLastFullReport,
@@ -953,27 +954,29 @@ describe('TG-06: durable owner-report delivery identity', () => {
     );
     await scheduled.tick();
 
-    expect(delivered).toEqual([
+    expect(sent).toEqual([
       {
+        chatId: 'trusted-owner-chat',
         text: 'on-demand owner report',
         deliveryId: expect.stringMatching(/^operator-report:on_demand_full:/),
       },
       {
+        chatId: 'trusted-owner-chat',
         text: 'scheduled owner report',
         deliveryId: 'operator-report:scheduled:2026-08-02:09',
       },
     ]);
     expect(carryStore.persisted).toHaveLength(2);
     expect(carryStore.persisted[0]).toMatchObject({
-      deliveryId: delivered[0].deliveryId,
+      deliveryId: sent[0].deliveryId,
       target: { source: 'telegram', channelId: 'trusted-owner-chat' },
-      text: delivered[0].text,
+      text: sent[0].text,
       provenance: { status: 'available', modelRunId: 'mr_on_demand' },
     });
     expect(carryStore.persisted[1]).toMatchObject({
-      deliveryId: delivered[1].deliveryId,
+      deliveryId: sent[1].deliveryId,
       target: { source: 'telegram', channelId: 'trusted-owner-chat' },
-      text: delivered[1].text,
+      text: sent[1].text,
       provenance: { status: 'available', modelRunId: 'mr_scheduled' },
     });
     expect(carryStore.persisted[1].deliveredAt).toMatch(

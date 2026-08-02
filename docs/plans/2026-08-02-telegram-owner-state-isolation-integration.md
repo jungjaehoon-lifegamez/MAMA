@@ -38,6 +38,7 @@ pass from a clean worktree before PR creation.
 - Test: `packages/standalone/tests/gateways/message-router.test.ts`
 - Test: `packages/standalone/tests/gateways/message-router-turn-save.test.ts`
 - Test: `packages/standalone/tests/gateways/telegram.test.ts`
+- Test: `packages/standalone/tests/operator/operator-trigger-loop.test.ts`
 - Test: `packages/standalone/tests/operator/external-lifecycle-reconcile.test.ts`
 - Test: `packages/standalone/tests/operator/external-lifecycle-workorder-recovery.test.ts`
 
@@ -52,12 +53,13 @@ pass from a clean worktree before PR creation.
 - [ ] **Step 1: Verify the real production seams are covered**
 
 ```text
-TG-01: telegram.test.ts proves same-chat FIFO and the report delivery ID/order.
-TG-05: message-router.test.ts + agent-loop.test.ts + codex-app-server-process.test.ts prove
-       policy mismatch replaces the durable thread once and unchanged policy resumes minimally.
-TG-06: lane-wiring.test.ts proves the real reporter/pending/carry dependencies; router-turn-save
-       proves acknowledgement occurs only after a true session-store write; lifecycle tests prove
-       candidate receipt authority and no replay after ambiguous/partial effects.
+TG-01: telegram.test.ts proves same-chat FIFO and exact-ID transport ordering.
+TG-05: message-router.test.ts proves persistence-before-ack; agent-loop.test.ts +
+       codex-app-server-process.test.ts prove policy mismatch replaces the durable thread once and
+       unchanged policy resumes minimally.
+TG-06: lane-wiring.test.ts is policy/list coherence; operator-trigger-loop.test.ts drives the
+       real reporter/pending/carry/output assemblies for scheduled and on-demand reports;
+       lifecycle tests prove candidate receipt authority and no replay after ambiguous/partial effects.
 ```
 
 - [ ] **Step 2: Run the real boundary suites together**
@@ -68,6 +70,7 @@ pnpm --dir packages/standalone exec vitest run \
   tests/gateways/message-router.test.ts \
   tests/gateways/message-router-turn-save.test.ts \
   tests/gateways/telegram.test.ts \
+  tests/operator/operator-trigger-loop.test.ts \
   tests/agent/agent-loop.test.ts \
   tests/agent/codex-app-server-process.test.ts \
   tests/operator/external-lifecycle-reconcile.test.ts \

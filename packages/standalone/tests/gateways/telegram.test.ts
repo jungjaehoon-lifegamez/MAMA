@@ -864,7 +864,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     mockApi.sendMessage.mockClear();
 
     const deliveryId = 'operator-report:scheduled:2026-08-02:09';
-    const report = gateway.sendMessage('7777', 'scheduled report', deliveryId);
+    const report = gateway.sendSystemMessage('7777', 'scheduled report', deliveryId);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'scheduled report');
 
@@ -872,7 +872,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await Promise.all([turn, report]);
     expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'scheduled report');
 
-    await gateway.sendMessage('7777', 'scheduled report', deliveryId);
+    await gateway.sendSystemMessage('7777', 'scheduled report', deliveryId);
     expect(
       mockApi.sendMessage.mock.calls.filter(([, text]) => text === 'scheduled report')
     ).toHaveLength(1);

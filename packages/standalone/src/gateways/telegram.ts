@@ -663,6 +663,11 @@ export class TelegramGateway extends BaseGateway {
     await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, idempotencyKey));
   }
 
+  /** Detached system work must wait behind the normal per-chat delivery queue. */
+  async sendSystemMessage(chatId: string, text: string, deliveryId?: string): Promise<void> {
+    await this.sendMessage(chatId, text, deliveryId);
+  }
+
   async sendMessageFromActiveTurn(
     chatId: string,
     text: string,

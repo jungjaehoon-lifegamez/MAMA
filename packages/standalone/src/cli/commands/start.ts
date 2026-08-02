@@ -1930,7 +1930,7 @@ export async function runAgentLoop(
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
-      const { createTelegramReportCarryDelivery } =
+      const { createTelegramReportCarryDelivery, createTelegramReportOutput } =
         await import('../../operator/report-carry-delivery.js');
       type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
       // Set when a report is composed, read when that same report is delivered. Safe
@@ -1958,14 +1958,7 @@ export async function runAgentLoop(
         : undefined;
       const reportOutput =
         reportChatId && telegramGateway
-          ? {
-              send: (text: string, deliveryId?: string) =>
-                telegramGateway.sendMessage(
-                  reportChatId,
-                  text,
-                  deliveryId ?? `operator-report:legacy:${randomUUID()}`
-                ),
-            }
+          ? createTelegramReportOutput({ reportChatId, telegramSender: telegramGateway })
           : undefined;
       // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
       // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
