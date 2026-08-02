@@ -120,6 +120,14 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   binding/lifecycle effects and no-replay recovery. This receipt evidence does not assert Telegram
   API recovery, and the common scheduled/on-demand output path does not establish identical
   Code-Act grants. The lifecycle and TG/report reviewers returned clear.
+- **Whole-branch review follow-up (TG-06):** commit `65fe9ef2` made the exact production
+  Kagemusha task metadata shape compatible with fail-closed lifecycle reconciliation; `9dc62450`
+  bound every prepared delivery field into the delivery-v2 semantic identity; and `2790e402`
+  restricted persisted scheduled/on-demand occurrences to their exact documented keys. Their
+  focused gates passed 84, 131, and 83 tests, respectively. The latest commit hook passed 331
+  standalone files and 4,413 tests, with four files and seven tests skipped, and the fresh
+  whole-branch reviewer returned clear. This is focused/full standalone follow-up evidence, not a
+  new root matrix. Kagemusha remains a configured user-private connector.
 - **Current-worktree verification:** at `b8a533ae`, the 31-file state-isolation matrix passed 895
   tests and four later-added test files passed 45 more. The full standalone suite included every
   file from the Task 2 production-boundary gate and passed 331 files and 4,388 tests, with four
@@ -283,11 +291,22 @@ change unless they are release-blocking security or data-loss issues.
       `git diff --check` passed.
 - [x] The 2026-08-02 lifecycle, TG/report, and privacy reviewers returned clear after `9fff93ab`,
       `d035ac21`, and `b8a533ae`, respectively.
+- [x] The 2026-08-02 whole-branch TG-06 follow-up closed production Kagemusha metadata
+      compatibility (`65fe9ef2`), delivery-v2 full semantic identity (`9dc62450`), and exact
+      occurrence keys (`2790e402`). Focused gates passed 84, 131, and 83 tests; the latest full
+      standalone hook passed 4,413 tests with seven skipped, and the fresh reviewer returned
+      clear. No new root matrix is claimed by this follow-up.
 - [x] Branch-touched Prettier verification passes. Root `pnpm format:check` remains exit 1 on 30
       pre-existing branch-unrelated files and is explicitly retained as repository format debt.
 
 ## Change log
 
+- 2026-08-02: Closed the fresh whole-branch TG-06 findings with production Kagemusha metadata
+  compatibility (`65fe9ef2`), delivery-v2 full semantic identity (`9dc62450`), and exact
+  scheduled/on-demand occurrence keys (`2790e402`). Focused gates passed 84, 131, and 83 tests;
+  the latest full standalone hook passed 4,413 tests with seven skipped, and the fresh reviewer
+  returned clear. This follow-up does not claim a new root matrix, preserves the existing root
+  format disclosure, and keeps Kagemusha configured-user-private.
 - 2026-08-02: Recorded TG-01 target/payload-bound report delivery, TG-05 private-policy session
   rotation and prompt/carry isolation, and TG-06 receipted lifecycle authority. Review closure and
   current-worktree gates are recorded with the root 30-file format debt disclosed separately from
