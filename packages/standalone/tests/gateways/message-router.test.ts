@@ -2325,6 +2325,114 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
       sessionStore.close();
     }
   });
+
+  it('acknowledges the immutable target captured before an agent mutates the message', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const originalTarget = { source: 'telegram', channelId: 'immutable-owner' } as const;
+    const mutatedTarget = { source: 'telegram', channelId: 'mutated-owner' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-immutable',
+      target: originalTarget,
+      deliveredAt: new Date().toISOString(),
+      text: 'original report',
+      provenance: { status: 'available', modelRunId: 'report-run-immutable' },
+    });
+    const reportCarry: ReportCarryPort = {
+      peek: carry.peek.bind(carry),
+      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
+    };
+    const message: NormalizedMessage = {
+      source: 'telegram',
+      channelId: originalTarget.channelId,
+      userId: 'owner',
+      text: 'use original report',
+      metadata: { chatType: 'private' },
+    };
+    const agentLoop = {
+      async run(): Promise<{ response: string }> {
+        message.source = 'discord';
+        message.channelId = mutatedTarget.channelId;
+        return { response: 'response' };
+      },
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust([originalTarget.channelId]);
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process(message);
+
+      expect(reportCarry.acknowledge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryId: 'delivery-immutable',
+          target: originalTarget,
+          consumingChannelKey: 'telegram:immutable-owner',
+        })
+      );
+      expect(carry.peek(originalTarget)).toBeNull();
+      expect(carry.peek(mutatedTarget)).toBeNull();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
+  it('does not peek, prefix, acknowledge, or consume Telegram carry on a Discord turn', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const target = { source: 'telegram', channelId: 'telegram-owner-only' } as const;
+    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
+    carry.persistDelivered({
+      deliveryId: 'delivery-non-telegram',
+      target,
+      deliveredAt: new Date().toISOString(),
+      text: 'Telegram-only report',
+      provenance: { status: 'available', modelRunId: 'report-run-non-telegram' },
+    });
+    const reportCarry: ReportCarryPort = {
+      peek: vi.fn(carry.peek.bind(carry)),
+      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
+    };
+    const prompts: string[] = [];
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop((prompt) => {
+        prompts.push(prompt);
+        return 'response';
+      }),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process({
+        source: 'discord',
+        channelId: 'discord-owner',
+        userId: 'owner',
+        text: 'discord request',
+      });
+
+      expect(reportCarry.peek).not.toHaveBeenCalled();
+      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
+      expect(prompts[0]).not.toContain('operator-report-carry');
+      expect(carry.peek(target)?.deliveryId).toBe('delivery-non-telegram');
+    } finally {
+      sessionStore.close();
+    }
+  });
 });
 
 describe('forwarded image provenance', () => {

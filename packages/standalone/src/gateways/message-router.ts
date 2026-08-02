@@ -48,7 +48,11 @@ import {
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
-import type { ReportCarryPeek, ReportCarryPort } from '../operator/report-carry.js';
+import type {
+  ReportCarryPeek,
+  ReportCarryPort,
+  ReportCarryTarget,
+} from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -966,10 +970,16 @@ This protects your credentials from being exposed in chat logs.`;
 
     try {
       const agentContext = this.createAgentContext(message, session.id);
-      const reportCarryPeek: ReportCarryPeek | null =
+      const reportCarryTarget: ReportCarryTarget | null =
         agentContext.roleName === 'owner_console' && message.source === 'telegram'
-          ? (this.reportCarry?.peek({ source: 'telegram', channelId: message.channelId }) ?? null)
+          ? { source: message.source, channelId: message.channelId }
           : null;
+      const reportCarryChannelKey = reportCarryTarget
+        ? buildChannelKey(reportCarryTarget.source, reportCarryTarget.channelId)
+        : null;
+      const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
+        ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
+        : null;
       const mediaInstructions = buildUploadedMediaInstructions(
         message,
         agentContext.role.allowedTools,
@@ -1450,12 +1460,12 @@ This protects your credentials from being exposed in chat logs.`;
       if (!persisted) {
         throw new Error('Unable to persist final assistant response');
       }
-      if (reportCarryPeek) {
+      if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
         try {
           this.reportCarry?.acknowledge({
             deliveryId: reportCarryPeek.deliveryId,
-            target: { source: 'telegram', channelId: message.channelId },
-            consumingChannelKey: channelKey,
+            target: reportCarryTarget,
+            consumingChannelKey: reportCarryChannelKey,
             consumedAtIso: new Date().toISOString(),
           });
         } catch (error) {
