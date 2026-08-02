@@ -40,6 +40,19 @@ const KAGEMUSHA_STATUS_MAP: Readonly<Record<string, ExternalLifecycleStatus>> = 
   dismissed: 'cancelled',
 };
 
+const KAGEMUSHA_METADATA_REQUIRED_KEYS = ['taskId', 'status', 'rawConnector'] as const;
+const KAGEMUSHA_METADATA_OPTIONAL_KEYS = [
+  'priority',
+  'deadline',
+  'sourceRoom',
+  'autoCreated',
+] as const;
+const KAGEMUSHA_METADATA_KEYS = new Set<string>([
+  ...KAGEMUSHA_METADATA_REQUIRED_KEYS,
+  ...KAGEMUSHA_METADATA_OPTIONAL_KEYS,
+]);
+const KAGEMUSHA_TASK_PRIORITIES: readonly string[] = ['urgent', 'high', 'normal', 'low'];
+
 const HEX_SHA256 = /^[a-fA-F0-9]{64}$/;
 
 export interface RawExternalObservation {
@@ -414,16 +427,46 @@ function parseStrictKagemushaMetadata(value: unknown): { taskId: number; status:
   } catch {
     return null;
   }
-  if (!isPlainObject(parsed)) return null;
-  const keys = Object.keys(parsed);
-  if (keys.length !== 3 || !keys.every((key) => ['taskId', 'status', 'rawConnector'].includes(key)))
+  if (!isPlainObject(parsed)) {
     return null;
+  }
+  const keys = Object.keys(parsed);
+  if (
+    !KAGEMUSHA_METADATA_REQUIRED_KEYS.every((key) => hasOwn(parsed, key)) ||
+    !keys.every((key) => KAGEMUSHA_METADATA_KEYS.has(key))
+  ) {
+    return null;
+  }
   if (
     !isPositiveSafeInteger(parsed.taskId) ||
-    typeof parsed.status !== 'string' ||
+    !isBoundedString(parsed.status) ||
     parsed.rawConnector !== 'kagemusha'
-  )
+  ) {
     return null;
+  }
+  if (
+    hasOwn(parsed, 'priority') &&
+    (typeof parsed.priority !== 'string' || !KAGEMUSHA_TASK_PRIORITIES.includes(parsed.priority))
+  ) {
+    return null;
+  }
+  if (
+    hasOwn(parsed, 'deadline') &&
+    parsed.deadline !== null &&
+    !isIsoRenderableTimestamp(parsed.deadline)
+  ) {
+    return null;
+  }
+  if (
+    hasOwn(parsed, 'sourceRoom') &&
+    parsed.sourceRoom !== null &&
+    !isBoundedString(parsed.sourceRoom)
+  ) {
+    return null;
+  }
+  if (hasOwn(parsed, 'autoCreated') && typeof parsed.autoCreated !== 'boolean') {
+    return null;
+  }
   return { taskId: parsed.taskId, status: parsed.status };
 }
 
@@ -453,6 +496,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function isBoundedString(value: unknown): value is string {

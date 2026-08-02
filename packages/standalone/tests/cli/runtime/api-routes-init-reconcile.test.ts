@@ -109,6 +109,7 @@ function insertKagemushaEvent(
     channel?: string;
     status?: string;
     observationSeq?: number;
+    metadata?: Readonly<Record<string, unknown>>;
   }
 ): void {
   db.prepare(`INSERT INTO connector_event_index VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -121,7 +122,13 @@ function insertKagemushaEvent(
     1_775_260_800_000,
     1,
     input.observationSeq ?? 1,
-    JSON.stringify({ taskId: 42, status: input.status ?? 'done', rawConnector: 'kagemusha' })
+    JSON.stringify(
+      input.metadata ?? {
+        taskId: 42,
+        status: input.status ?? 'done',
+        rawConnector: 'kagemusha',
+      }
+    )
   );
 }
 
@@ -354,6 +361,74 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       expect(candidates.lifecycleCandidates).toMatchObject([
         { eventId: 'evt_later', taskId, proposedStatus: 'done' },
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('TG-06 accepts production Kagemusha metadata and applies the receipted native transition', async () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db);
+      const { taskId } = bindExistingTask(ledger);
+      createConnectorEventTable(db);
+      insertKagemushaEvent(db, {
+        eventId: 'evt_production_metadata',
+        channel: 'room-production',
+        observationSeq: 10,
+        metadata: {
+          taskId: 42,
+          status: 'done',
+          priority: 'high',
+          deadline: 1_775_260_800_000,
+          sourceRoom: 'room-production',
+          rawConnector: 'kagemusha',
+          autoCreated: true,
+        },
+      });
+      const { eventBus } = await registerReconcileRuntime({
+        db,
+        ledger,
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+
+      await emitReconcileDelta(eventBus, 'evt_production_metadata', 'kagemusha:room-production');
+
+      const workorder = ledger.claimNextWorkOrder();
+      const candidate = lifecycleCandidates(workorder).lifecycleCandidates[0];
+      if (!workorder || !candidate) throw new Error('production lifecycle candidate expected');
+      expect(candidate).toMatchObject({
+        eventId: 'evt_production_metadata',
+        taskId,
+        proposedStatus: 'done',
+      });
+
+      const receipt = ledger.applyExternalLifecycleDecision(
+        workorder.id,
+        {
+          candidate_id: candidate.candidateId,
+          decision: 'apply',
+          reason: 'TG-06 production Kagemusha lifecycle confirmed',
+          expected_revision: candidate.taskRevision,
+        },
+        {
+          runId: 'test_production_metadata',
+          workOrderAttemptId: workorder.id,
+          causeEventIds: ['evt_production_metadata'],
+        }
+      );
+
+      expect(receipt).toMatchObject({
+        candidateId: candidate.candidateId,
+        outcome: 'applied',
+        taskId,
+      });
+      expect(ledger.getExternalCandidateReceipt(candidate.candidateId)).toEqual(receipt);
+      expect(ledger.getById(taskId)).toMatchObject({
+        status: 'done',
+        revision: candidate.taskRevision + 1,
+        latestEvent: candidate.evidenceSummary,
+      });
     } finally {
       db.close();
     }

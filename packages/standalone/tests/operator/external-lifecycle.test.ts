@@ -237,10 +237,74 @@ describe('TG-01/TG-05/TG-06 Task 2: immutable external lifecycle candidates', ()
   });
 
   it.each([
+    [
+      {
+        taskId: 42,
+        status: 'done',
+        priority: 'urgent',
+        deadline: 1_775_260_800_000,
+        sourceRoom: 'room-a',
+        rawConnector: 'kagemusha',
+        autoCreated: true,
+      },
+    ],
+    [
+      {
+        taskId: 42,
+        status: 'review',
+        priority: 'low',
+        deadline: null,
+        sourceRoom: null,
+        rawConnector: 'kagemusha',
+        autoCreated: false,
+      },
+    ],
+  ])('TG-06 accepts documented production Kagemusha metadata %#', (metadata) => {
+    expect(
+      parseKagemushaObservation({
+        event_index_id: 'evt_1',
+        source_connector: 'kagemusha',
+        source_type: 'kanban_card',
+        source_id: 'task:42',
+        channel: 'room-a',
+        content_hash: 'a'.repeat(64),
+        source_timestamp_ms: 1_775_260_800_000,
+        operator_ingest_seq: 4,
+        operator_observation_seq: 7,
+        metadata_json: JSON.stringify(metadata),
+      })
+    ).not.toBeNull();
+  });
+
+  it.each([
     [{ rawConnector: 'trello', taskId: 42, status: 'done' }],
     [{ rawConnector: 'kagemusha', taskId: '42', status: 'done' }],
     [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', title: 'untrusted' }],
     [{ rawConnector: 'kagemusha', taskId: 42, status: 'unknown' }],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', priority: 'highest' }],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', priority: 1 }],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', deadline: 'tomorrow' }],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', deadline: -1 }],
+    [
+      {
+        rawConnector: 'kagemusha',
+        taskId: 42,
+        status: 'done',
+        deadline: 8_640_000_000_000_001,
+      },
+    ],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', sourceRoom: '' }],
+    [
+      {
+        rawConnector: 'kagemusha',
+        taskId: 42,
+        status: 'done',
+        sourceRoom: 'r'.repeat(1001),
+      },
+    ],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', autoCreated: 1 }],
+    [{ rawConnector: 'kagemusha', taskId: 42, status: 'done', autoCreated: 'true' }],
+    [{ rawConnector: 'kagemusha', taskId: 41, status: 'done' }],
   ])('rejects malformed or non-Kagemusha metadata %#', (metadata) => {
     expect(
       parseKagemushaObservation({
