@@ -432,34 +432,3 @@ export class FileReportCarryStore implements ReportCarryPort {
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-/**
- * Deprecated compatibility surfaces remain fail-closed until callers move to
- * the target-scoped ReportCarryPort in the following integration task.
- */
-export interface LastFullReport {
-  deliveredAt: string;
-  text: string;
-  provenance: ArtifactProvenance;
-}
-
-export function persistLastFullReport(
-  _deliveredAtIso: string,
-  _text: string,
-  _provenance: ArtifactProvenance,
-  _path: string = defaultCarryPath()
-): never {
-  throw new Error(
-    'Unscoped report carry is unsupported; use FileReportCarryStore.persistDelivered'
-  );
-}
-
-export function loadLastFullReport(_path: string = defaultCarryPath()): null {
-  console.warn('[report-carry] unscoped legacy carry load refused');
-  return null;
-}
-
-export function buildReportCarryPrefix(_path: string = defaultCarryPath()): string {
-  console.warn('[report-carry] unscoped legacy carry prefix refused');
-  return '';
-}

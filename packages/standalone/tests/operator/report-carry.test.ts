@@ -24,9 +24,21 @@ const OTHER_TARGET: ReportCarryTarget = { source: 'telegram', channelId: 'C2' };
 const DELIVERED_AT = '2026-08-02T00:00:00.000Z';
 const RUN = { status: 'available' as const, modelRunId: 'mr_1' };
 
+const LEGACY_COMPATIBILITY_EXPORT =
+  /\bexport\s+(?:interface|function)\s+(?:LastFullReport|persistLastFullReport|loadLastFullReport|buildReportCarryPrefix)\b/;
+
 function tempCarryPath(): string {
   return join(mkdtempSync(join(tmpdir(), 'mama-carry-')), 'last-full-report.json');
 }
+
+it('TG-01/TG-05/TG-06 does not expose unscoped legacy report-carry exports', () => {
+  const source = readFileSync(
+    new URL('../../src/operator/report-carry.ts', import.meta.url),
+    'utf8'
+  );
+
+  expect(source).not.toMatch(LEGACY_COMPATIBILITY_EXPORT);
+});
 
 function input(overrides: Partial<PersistDeliveredInput> = {}): PersistDeliveredInput {
   return {
