@@ -37,28 +37,60 @@ const PRIVATE_TOOL_NAMES = PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) =
 const PRIVATE_CONNECTOR_DIRECTIVE_PATTERN =
   /\b(?:always|call|check|fetch|first|gather|inspect|invoke|must|never|query|read|run|should|then|use)\b/i;
 const PATH_REFERENCE_PATTERN = /(?:^|\s)(?:\.{0,2}\/|\/|[A-Za-z]:\\)\S+/g;
-const MARKDOWN_TOOL_NAME_WRAPPERS = ['', '*', '**', '***', '_', '__', '___', '~~'] as const;
+const MARKDOWN_WRAPPER_MARKERS = new Set(['`', '*', '_', '~']);
+
+type MarkdownToolIdentifierSpan = Readonly<{
+  start: number;
+  end: number;
+}>;
 
 function isIdentifierCharacter(character: string | undefined): boolean {
   return character !== undefined && /[A-Za-z0-9_]/.test(character);
 }
 
-function isBacktickWrappedToolInvocation(line: string, index: number, toolName: string): boolean {
-  let wrappedStart = index;
-  while (wrappedStart > 0 && line[wrappedStart - 1] === '`') {
-    wrappedStart -= 1;
-  }
-  const openingLength = index - wrappedStart;
-  if (openingLength === 0 || isIdentifierCharacter(line[wrappedStart - 1])) {
-    return false;
+function expandMatchedMarkdownWrapper(
+  line: string,
+  span: MarkdownToolIdentifierSpan
+): MarkdownToolIdentifierSpan | null {
+  const marker = line[span.start - 1];
+  if (marker === undefined || !MARKDOWN_WRAPPER_MARKERS.has(marker)) {
+    return null;
   }
 
-  const nameEnd = index + toolName.length;
-  let wrappedEnd = nameEnd;
-  while (wrappedEnd < line.length && line[wrappedEnd] === '`') {
-    wrappedEnd += 1;
+  let start = span.start;
+  while (start > 0 && line[start - 1] === marker) {
+    start -= 1;
   }
-  return wrappedEnd - nameEnd === openingLength && /^\s*\(/.test(line.slice(wrappedEnd));
+
+  let end = span.end;
+  while (end < line.length && line[end] === marker) {
+    end += 1;
+  }
+
+  const openingLength = span.start - start;
+  const closingLength = end - span.end;
+  if (openingLength !== closingLength || (marker === '~' && openingLength !== 2)) {
+    return null;
+  }
+  return { start, end };
+}
+
+function normalizeMarkdownToolIdentifier(
+  line: string,
+  index: number,
+  toolName: string
+): MarkdownToolIdentifierSpan {
+  let span: MarkdownToolIdentifierSpan = {
+    start: index,
+    end: index + toolName.length,
+  };
+  let expanded = expandMatchedMarkdownWrapper(line, span);
+  // Every successful layer consumes characters on both sides, bounding the scan by the line.
+  while (expanded !== null) {
+    span = expanded;
+    expanded = expandMatchedMarkdownWrapper(line, span);
+  }
+  return span;
 }
 
 function isPrivateToolInvocation(line: string, toolName: string): boolean {
@@ -68,22 +100,9 @@ function isPrivateToolInvocation(line: string, toolName: string): boolean {
     if (index < 0) {
       return false;
     }
-    if (isBacktickWrappedToolInvocation(line, index, toolName)) {
+    const span = normalizeMarkdownToolIdentifier(line, index, toolName);
+    if (!isIdentifierCharacter(line[span.start - 1]) && /^\s*\(/.test(line.slice(span.end))) {
       return true;
-    }
-
-    for (const wrapper of MARKDOWN_TOOL_NAME_WRAPPERS) {
-      const wrappedStart = index - wrapper.length;
-      const wrappedEnd = index + toolName.length + wrapper.length;
-      if (
-        wrappedStart >= 0 &&
-        line.slice(wrappedStart, index) === wrapper &&
-        line.slice(index + toolName.length, wrappedEnd) === wrapper &&
-        !isIdentifierCharacter(line[wrappedStart - 1]) &&
-        /^\s*\(/.test(line.slice(wrappedEnd))
-      ) {
-        return true;
-      }
     }
     cursor = index + toolName.length;
   }
