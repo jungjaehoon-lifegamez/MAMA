@@ -2983,6 +2983,7 @@ export class GatewayToolExecutor {
               // else's work with it.
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
+                workOrderAttemptId: this.getExecutionState().workorderAttemptId,
                 causeEventIds: this.getExecutionState().causeEventIds,
                 causeKind:
                   this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',

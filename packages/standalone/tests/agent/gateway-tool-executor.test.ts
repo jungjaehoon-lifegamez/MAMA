@@ -384,6 +384,185 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           seeded.db.close();
         }
       );
+
+      it.each([
+        ['binding', 'status'],
+        ['binding', 'latest_event'],
+        ['lifecycle', 'status'],
+        ['lifecycle', 'latest_event'],
+      ] as const)(
+        'blocks direct task_update(%s candidate, %s) outside its receipted decision',
+        async (candidateKind, field) => {
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt()
+              : seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+          const patch = field === 'status' ? { status: 'done' } : { latest_event: 'forged' };
+
+          await expect(
+            executor.execute(
+              'task_update',
+              { id: seeded.candidate.taskId, ...patch },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                causeEventIds: [seeded.candidate.eventId],
+              }
+            )
+          ).rejects.toThrow(/candidate-bound lifecycle/i);
+          expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+            seeded.candidate.taskRevision
+          );
+          seeded.db.close();
+        }
+      );
+
+      it.each([
+        ['binding', 'status'],
+        ['binding', 'latest_event'],
+        ['lifecycle', 'status'],
+        ['lifecycle', 'latest_event'],
+      ] as const)(
+        'blocks nested Code-Act task_update(%s candidate, %s) outside its receipted decision',
+        async (candidateKind, field) => {
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt()
+              : seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+          const mutation = field === 'status' ? "status: 'done'" : "latest_event: 'forged'";
+
+          const result = await executor.execute(
+            'code_act',
+            {
+              code: `task_update({ id: ${seeded.candidate.taskId}, ${mutation} });`,
+              allowedTools: ['task_update'],
+            },
+            {
+              agentContext: createViewerContext(),
+              executionSurface: 'model_tool',
+              workorderAttemptId: seeded.attempt.id,
+              causeEventIds: [seeded.candidate.eventId],
+            }
+          );
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringMatching(/candidate-bound lifecycle/i),
+          });
+          expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+            seeded.candidate.taskRevision
+          );
+          seeded.db.close();
+        }
+      );
+
+      it.each(['binding', 'lifecycle'] as const)(
+        'blocks direct duplicate-source task_create UPSERT for a %s candidate task',
+        async (candidateKind) => {
+          const source = {
+            source_channel: 'telegram:owner',
+            source_event_id: `owner-message-${candidateKind}`,
+          };
+          const taskInput = { title: 'candidate task', latest_event: 'initial', ...source };
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt({ taskInput })
+              : seedLifecycleCandidateAttempt({ taskInput });
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_create',
+              { title: 'duplicate delivery', status: 'done', latest_event: 'forged', ...source },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                causeEventIds: [seeded.candidate.eventId],
+              }
+            )
+          ).rejects.toThrow(/candidate-bound lifecycle/i);
+          expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+            status: seeded.task.status,
+            latestEvent: seeded.task.latestEvent,
+            revision: seeded.candidate.taskRevision,
+          });
+          seeded.db.close();
+        }
+      );
+
+      it.each(['binding', 'lifecycle'] as const)(
+        'blocks nested Code-Act duplicate-source task_create UPSERT for a %s candidate task',
+        async (candidateKind) => {
+          const source = {
+            source_channel: 'telegram:owner',
+            source_event_id: `owner-message-nested-${candidateKind}`,
+          };
+          const taskInput = { title: 'candidate task', latest_event: 'initial', ...source };
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt({ taskInput })
+              : seedLifecycleCandidateAttempt({ taskInput });
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          const result = await executor.execute(
+            'code_act',
+            {
+              code: `task_create({ title: 'duplicate delivery', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
+              allowedTools: ['task_create'],
+            },
+            {
+              agentContext: createViewerContext(),
+              executionSurface: 'model_tool',
+              workorderAttemptId: seeded.attempt.id,
+              causeEventIds: [seeded.candidate.eventId],
+            }
+          );
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringMatching(/candidate-bound lifecycle/i),
+          });
+          expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+            status: seeded.task.status,
+            latestEvent: seeded.task.latestEvent,
+            revision: seeded.candidate.taskRevision,
+          });
+          seeded.db.close();
+        }
+      );
+
+      it('preserves duplicate-source task_create UPSERT for a non-candidate task', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+        const source = {
+          source_channel: 'telegram:owner',
+          source_event_id: 'owner-message-unrelated',
+        };
+        const unrelated = seeded.ledger.create({ title: 'unrelated', ...source });
+
+        const result = await executor.execute(
+          'task_create',
+          { title: 'duplicate delivery', status: 'done', latest_event: 'confirmed', ...source },
+          {
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+            causeEventIds: [seeded.candidate.eventId],
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: true,
+          task: { id: unrelated.id, status: 'done', latestEvent: 'confirmed' },
+        });
+        seeded.db.close();
+      });
     });
 
     describe('save tool', () => {

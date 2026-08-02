@@ -1882,9 +1882,14 @@ export class TaskLedger implements TaskSource {
       return;
     }
     const candidates = payload.candidates as {
+      bindingCandidates: readonly BindingCandidate[];
       lifecycleCandidates: readonly LifecycleCandidate[];
     };
-    if (candidates.lifecycleCandidates.some((candidate) => candidate.taskId === taskId)) {
+    if (
+      [...candidates.bindingCandidates, ...candidates.lifecycleCandidates].some(
+        (candidate) => candidate.taskId === taskId
+      )
+    ) {
       throw new Error(
         `task_update: candidate-bound lifecycle task ${taskId} may change status/latest_event only through its receipted decision`
       );

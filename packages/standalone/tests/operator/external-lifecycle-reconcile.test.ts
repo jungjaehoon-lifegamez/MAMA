@@ -412,6 +412,26 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
     }
   );
 
+  it.each(['status', 'latest_event'] as const)(
+    'blocks binding-candidate task_update(%s) before mutation',
+    (field) => {
+      const seeded = seedBindingCandidateAttempt();
+      databases.push(seeded);
+      if (seeded.candidate.kind !== 'binding') throw new Error('binding fixture required');
+      const patch = field === 'status' ? { status: 'done' as const } : { latest_event: 'forged' };
+
+      expect(() =>
+        seeded.ledger.update(seeded.candidate.taskId, patch, {
+          workOrderAttemptId: seeded.attempt.id,
+          causeEventIds: [seeded.candidate.eventId],
+        })
+      ).toThrow(/candidate-bound lifecycle/i);
+      expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+        seeded.candidate.taskRevision
+      );
+    }
+  );
+
   it('rolls task state and watermark back when its lifecycle receipt cannot commit', () => {
     const seeded = seedLifecycleCandidateAttempt();
     databases.push(seeded);
