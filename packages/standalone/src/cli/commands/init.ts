@@ -7,6 +7,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile, readdir, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import {
   createDefaultConfig,
@@ -18,6 +19,7 @@ import {
 } from '../config/config-manager.js';
 import { BOOTSTRAP_TEMPLATE } from '../../onboarding/bootstrap-template.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
+import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
 
 /**
  * CLAUDE.md template for workspace documentation
@@ -92,30 +94,47 @@ export interface InitOptions {
   /** Skip Claude Code authentication check (for testing) */
   skipAuthCheck?: boolean;
   /** Preferred backend selection mode */
-  backend?: 'auto' | 'claude' | 'codex';
+  backend?: 'auto' | 'claude' | 'codex' | 'cline';
 }
 
 interface BackendResolution {
-  backend: 'claude' | 'codex';
+  backend: 'claude' | 'codex' | 'cline';
   codexAuthPath?: string;
 }
 
 const DEFAULT_MODEL_BY_BACKEND: Record<BackendResolution['backend'], string> = {
   claude: 'claude-sonnet-4-6',
   codex: 'gpt-5.4',
+  cline: 'deepseek/deepseek-v4-flash',
 };
 
-function resolvePreferredBackend(
+function isClineAvailable(command: string): boolean {
+  const result = spawnSync(command, ['--version'], { stdio: 'ignore', timeout: 5_000 });
+  return !result.error && result.status === 0;
+}
+
+async function resolvePreferredBackend(
   preferredBackend: InitOptions['backend']
-): BackendResolution | null {
+): Promise<BackendResolution | null> {
   const requestedBackend = resolveRequestedBackend(preferredBackend);
 
   const codexAuthPaths = [expandPath('~/.mama/.codex/auth.json'), expandPath('~/.codex/auth.json')];
   const codexAuthPath = codexAuthPaths.find((p) => existsSync(p));
   const hasCodexAuth = Boolean(codexAuthPath);
   const hasClaudeAuth = getClaudeCodeAuthStatus().loggedIn;
+  const clineCommand = process.env.MAMA_CLINE_COMMAND ?? process.env.CLINE_COMMAND ?? 'cline';
+
+  const resolveCline = async (): Promise<BackendResolution | null> => {
+    if (!isClineAvailable(clineCommand)) return null;
+    return (await hasPersistedClineCredential({ command: clineCommand }))
+      ? { backend: 'cline' }
+      : null;
+  };
 
   if (requestedBackend) {
+    if (requestedBackend === 'cline') {
+      return await resolveCline();
+    }
     if (requestedBackend === 'codex') {
       return hasCodexAuth ? { backend: 'codex', codexAuthPath } : null;
     }
@@ -123,27 +142,31 @@ function resolvePreferredBackend(
   }
 
   // Neutral auto resolution:
-  // - if only one backend is authenticated, use it
-  // - if both are authenticated, keep compatibility default (claude)
+  // Deterministic compatibility precedence: Claude, then Codex, then Cline.
+  // Cline remains a full auto candidate when it is the only authenticated backend.
   if (hasCodexAuth && !hasClaudeAuth) {
     return { backend: 'codex', codexAuthPath };
   }
   if (hasClaudeAuth) {
     return { backend: 'claude' };
   }
-
-  return null;
+  return await resolveCline();
 }
 
 function resolveRequestedBackend(
   preferredBackend: InitOptions['backend']
-): 'claude' | 'codex' | undefined {
-  if (preferredBackend === 'claude' || preferredBackend === 'codex') {
+): 'claude' | 'codex' | 'cline' | undefined {
+  if (
+    preferredBackend === 'claude' ||
+    preferredBackend === 'codex' ||
+    preferredBackend === 'cline'
+  ) {
     return preferredBackend;
   }
   return process.env.MAMA_DEFAULT_BACKEND === 'codex' ||
-    process.env.MAMA_DEFAULT_BACKEND === 'claude'
-    ? (process.env.MAMA_DEFAULT_BACKEND as 'claude' | 'codex')
+    process.env.MAMA_DEFAULT_BACKEND === 'claude' ||
+    process.env.MAMA_DEFAULT_BACKEND === 'cline'
+    ? (process.env.MAMA_DEFAULT_BACKEND as 'claude' | 'codex' | 'cline')
     : undefined;
 }
 
@@ -155,11 +178,11 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
 
   const requestedBackend = resolveRequestedBackend(options.backend);
   let selectedBackend: BackendResolution = {
-    backend: requestedBackend === 'codex' ? 'codex' : 'claude',
+    backend: requestedBackend ?? 'claude',
   };
   if (!options.skipAuthCheck) {
-    process.stdout.write('Checking backend authentication (Codex/Claude)... ');
-    const resolved = resolvePreferredBackend(options.backend);
+    process.stdout.write('Checking backend availability and authentication... ');
+    const resolved = await resolvePreferredBackend(options.backend);
     if (!resolved) {
       console.log('❌');
       if (requestedBackend === 'codex') {
@@ -181,6 +204,11 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
         }
         process.exit(1);
       }
+      if (requestedBackend === 'cline') {
+        console.error('\n⚠️  Requested backend "cline" is unavailable or not authenticated.');
+        console.error('   Install Cline CLI, then run: cline auth cline\n');
+        process.exit(1);
+      }
       console.error('\n⚠️  No authenticated backend found.');
       console.error(
         `   Codex auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
@@ -190,7 +218,8 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       );
       console.error('\n   Please authenticate one backend first:');
       console.error('   - Codex: codex login');
-      console.error('   - Claude: claude auth login (or install from https://claude.ai/code)\n');
+      console.error('   - Claude: claude auth login (or install from https://claude.ai/code)');
+      console.error('   - Cline: cline auth cline\n');
       process.exit(1);
     }
     selectedBackend = resolved;
@@ -202,6 +231,8 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       ? ` (auth detected at ${selectedBackend.codexAuthPath})`
       : '';
     console.log(`Selected backend: codex${authPathMsg}`);
+  } else if (selectedBackend.backend === 'cline') {
+    console.log('Selected backend: cline');
   } else {
     console.log('Selected backend: claude');
   }
@@ -221,6 +252,9 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
     const defaultModel = DEFAULT_MODEL_BY_BACKEND[selectedBackend.backend];
     config.agent.backend = selectedBackend.backend;
     config.agent.model = defaultModel;
+    if (selectedBackend.backend === 'cline') {
+      config.agent.cline_provider = 'cline';
+    }
     for (const role of Object.values(config.roles?.definitions ?? {})) {
       role.model = defaultModel;
     }

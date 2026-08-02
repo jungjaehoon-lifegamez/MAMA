@@ -31,7 +31,7 @@ import {
 
 const logger = new DebugLogger('Settings');
 
-export type AgentBackend = 'claude' | 'codex';
+export type AgentBackend = 'claude' | 'codex' | 'cline';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
@@ -118,6 +118,13 @@ const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
     'claude-3-7-sonnet-20250219',
     'claude-3-haiku-20240307',
   ],
+  cline: ['deepseek/deepseek-v4-flash'],
+};
+
+const DEFAULT_MODEL: Record<AgentBackend, string> = {
+  claude: 'claude-sonnet-4-6',
+  codex: 'gpt-5.4',
+  cline: 'deepseek/deepseek-v4-flash',
 };
 
 export function getSettingsModelOptions(backend: AgentBackend, currentModel?: string): string[] {
@@ -819,14 +826,31 @@ export class SettingsModule {
    * Collect form data into config update object
    */
   collectFormData(): SettingsPayload {
-    const backend = (this.getSelectValue('settings-agent-backend') || 'claude') as AgentBackend;
-    const model = this.getSelectValue('settings-agent-model');
-    const effort = (this.getSelectValue('settings-agent-effort') || 'medium') as EffortLevel;
+    const backend = (this.getSelectValue('settings-agent-backend') ||
+      this.config?.agent?.backend ||
+      'claude') as AgentBackend;
+    const model = this.getSelectValue('settings-agent-model') || this.config?.agent?.model || '';
+    const effort = (this.getSelectValue('settings-agent-effort') ||
+      this.config?.agent?.effort ||
+      'medium') as EffortLevel;
     const useClaudeCli = backend === 'claude';
-    const resolvedModel = model || (backend === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-6');
+    const resolvedModel = this.getNormalizedModelForBackend(backend, model);
     const normalizedEffort = this.supportsEffortModel(resolvedModel)
       ? this.normalizeEffortForModel(resolvedModel, effort)
       : undefined;
+    const hasToolControls =
+      document.querySelectorAll<HTMLInputElement>('.gateway-tool, .mcp-tool').length > 0;
+    const configuredTools = this.config?.agent?.tools;
+    const tools: SettingsPayloadToolConfig = hasToolControls
+      ? this.collectToolModeData()
+      : {
+          gateway: configuredTools?.gateway ?? [],
+          mcp: configuredTools?.mcp ?? [],
+          mcp_config:
+            typeof configuredTools?.mcp_config === 'string'
+              ? configuredTools.mcp_config
+              : '~/.mama/mama-mcp-config.json',
+        };
 
     // Get token values - if empty and original was masked, keep original
     const discordToken = this.getTokenValue('settings-discord-token', this.config?.discord?.token);
@@ -878,9 +902,20 @@ export class SettingsModule {
         model: resolvedModel,
         // Effort for Claude 4.6 models (adaptive thinking). 'max' is Opus-only.
         effort: normalizedEffort,
-        max_turns: this.parseIntegerInput('settings-agent-max-turns', 1, 100, 10),
-        timeout: this.parseIntegerInput('settings-agent-timeout', 1, 600, 300) * 1000,
-        tools: this.collectToolModeData(),
+        max_turns: this.parseIntegerInput(
+          'settings-agent-max-turns',
+          1,
+          100,
+          this.config?.agent?.max_turns ?? 10
+        ),
+        timeout:
+          this.parseIntegerInput(
+            'settings-agent-timeout',
+            1,
+            600,
+            Math.round((this.config?.agent?.timeout ?? 300000) / 1000)
+          ) * 1000,
+        tools,
       },
       token_budget: {
         // Keep existing integer constraint for daily limit to avoid partial values.
@@ -985,14 +1020,17 @@ export class SettingsModule {
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
     const isCodexBackend = backend === 'codex';
     if (!model) {
-      return isCodexBackend ? 'gpt-5.4' : 'claude-sonnet-4-6';
+      return DEFAULT_MODEL[backend];
     }
     const isClaudeModel = /^claude-/i.test(model);
     if (isCodexBackend && isClaudeModel) {
-      return 'gpt-5.4';
+      return DEFAULT_MODEL.codex;
+    }
+    if (backend === 'cline' && (isClaudeModel || /^gpt-/i.test(model))) {
+      return DEFAULT_MODEL.cline;
     }
     if (backend === 'claude' && !isClaudeModel) {
-      return 'claude-sonnet-4-20250514';
+      return DEFAULT_MODEL.claude;
     }
     return model;
   }

@@ -15,14 +15,19 @@ import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
+import { ClineCLIAdapter } from './cline-cli-adapter.js';
+import { projectClineNativeTools } from './cline-native-tool-policy.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import {
+  HostToolAbortError,
   HostToolTerminalError,
   isHostToolTerminalCode,
+  ModelRunnerError,
   type HostToolBridge,
   type HostToolCall,
   type HostToolTerminalCode,
   type IModelRunner,
+  type ModelRunnerErrorCode,
 } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { envelopeExpired } from '../envelope/run-guard.js';
@@ -67,6 +72,7 @@ import type {
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
   BackgroundTaskRegistry,
+  AgentErrorCode,
   ModelRunProvenance,
 } from './types.js';
 import {
@@ -91,6 +97,15 @@ const { DebugLogger } = debugLogger as {
 };
 
 const logger = new DebugLogger('AgentLoop');
+
+const MODEL_RUNNER_AGENT_ERROR_CODES: Record<ModelRunnerErrorCode, AgentErrorCode> = {
+  timeout: 'NETWORK_ERROR',
+  crash: 'CLI_ERROR',
+  context_overflow: 'MAX_TOKENS',
+  auth_failure: 'AUTH_ERROR',
+  rate_limit: 'RATE_LIMIT',
+  unknown: 'CLI_ERROR',
+};
 
 /**
  * Default configuration
@@ -621,7 +636,7 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly useCodeAct: boolean;
-  private readonly backend: 'claude' | 'codex';
+  private readonly backend: 'claude' | 'codex' | 'cline';
   private readonly defaultSystemPrompt: string;
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
@@ -632,6 +647,11 @@ export class AgentLoop {
   // overlapping owner chat) would steal each other's callbacks and leak tiers
   // if these were instance fields.
   private readonly disallowedTools?: string[];
+  private readonly clineNativeAllowedTools: string[];
+  private readonly clineNativeDisallowedTools: string[];
+  private readonly clineNativePolicyConfigured: boolean;
+  private readonly clineAllowSpawnAgent: boolean;
+  private readonly clineAllowAgentTeams: boolean;
 
   constructor(
     _oauthManager: OAuthManager | null,
@@ -661,7 +681,9 @@ export class AgentLoop {
     const useGatewayMode = gatewayTools.includes('*') || gatewayTools.length > 0;
     const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.useCodeAct = options.useCodeAct ?? false;
-    this.isGatewayMode = useGatewayMode || (options.backend === 'codex' && this.useCodeAct);
+    this.isGatewayMode =
+      useGatewayMode ||
+      ((options.backend === 'codex' || options.backend === 'cline') && this.useCodeAct);
     this.disallowedTools = this.useCodeAct
       ? options.disallowedTools
       : [
@@ -671,6 +693,13 @@ export class AgentLoop {
             CODE_ACT_MCP_COMPAT_NAME,
           ]),
         ];
+    this.clineNativeAllowedTools = [...(options.clineNativeAllowedTools ?? [])];
+    this.clineNativeDisallowedTools = [...(options.clineNativeDisallowedTools ?? [])];
+    this.clineNativePolicyConfigured =
+      options.clineNativeAllowedTools !== undefined ||
+      options.clineNativeDisallowedTools !== undefined;
+    this.clineAllowSpawnAgent = options.clineAllowSpawnAgent ?? false;
+    this.clineAllowAgentTeams = options.clineAllowAgentTeams ?? false;
 
     if (useGatewayMode && useMCPMode) {
       logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
@@ -849,6 +878,24 @@ export class AgentLoop {
           : (options.mcpConfigPath ?? (useMCPMode ? mcpConfigPath : undefined)),
       });
       logger.debug('Codex app-server backend enabled');
+    } else if (this.backend === 'cline') {
+      const workspaceDir = options.clineCwd ?? join(homedir(), '.mama', 'workspace');
+      if (!existsSync(workspaceDir)) {
+        mkdirSync(workspaceDir, { recursive: true });
+      }
+      this.agent = new ClineCLIAdapter({
+        command: options.clineCommand,
+        provider: options.clineProvider ?? 'cline',
+        model: options.model,
+        systemPrompt: defaultSystemPrompt,
+        cwd: workspaceDir,
+        // Cline receives MAMA CodeAct as a session-bound Hub custom tool.
+        // Its shared daemon owns native MCP settings independently.
+        dataDir: options.clineDataDir,
+        requestTimeout: options.timeoutMs,
+        sessionId,
+      });
+      logger.debug('Cline CLI backend enabled');
     } else {
       // Claude backend: always use PersistentCLI for fast responses (~2-3s vs ~16-30s)
       this.persistentCLI = new PersistentCLIAdapter({
@@ -1227,8 +1274,20 @@ export class AgentLoop {
 
     // Set session ID on the agent
     // Claude PersistentCLI: process alive → CONTINUE (stdin message), process dead → NEW (spawn with --session-id)
-    // Codex: threadId alive → CONTINUE (codex-reply), threadId null → NEW (codex tool)
+    // Codex/Cline: durable runtime session alive → CONTINUE, missing → NEW.
     const isCodex = this.backend === 'codex';
+    const isCline = this.backend === 'cline';
+    const isDurableRuntime = isCodex || isCline;
+    const clineRole = options?.agentContext?.role;
+    const clineAllowedTools = this.clineNativePolicyConfigured
+      ? this.clineNativeAllowedTools
+      : projectClineNativeTools(clineRole?.allowedTools);
+    const clineDisallowedTools = this.clineNativePolicyConfigured
+      ? this.clineNativeDisallowedTools
+      : projectClineNativeTools(clineRole?.blockedTools);
+    const clineDelegationBlocked = clineRole?.blockedTools?.includes('delegate') ?? false;
+    const clineAllowSpawnAgent = this.clineAllowSpawnAgent && !clineDelegationBlocked;
+    const clineAllowAgentTeams = this.clineAllowAgentTeams && !clineDelegationBlocked;
     const codeActPolicy = this.useCodeAct
       ? projectCodeActToolPolicy({
           tier: runScope.tier,
@@ -1244,13 +1303,13 @@ export class AgentLoop {
     const outerCodeActAllowed =
       this.useCodeAct && roleAllowsOuterCodeAct(options?.agentContext?.role, this.disallowedTools);
     const effectiveSessionPolicyFingerprint =
-      isCodex && codeActPolicy
+      isDurableRuntime && codeActPolicy
         ? combineCodeActSessionPolicyFingerprint(options?.sessionPolicyFingerprint, codeActPolicy)
         : options?.sessionPolicyFingerprint;
     let resolvedCliSessionId: string | null = options?.cliSessionId ?? null;
 
     const sessionLabel = (isNew: boolean): string => {
-      if (isCodex) {
+      if (isDurableRuntime) {
         return isNew ? 'NEW thread' : 'CONTINUE thread';
       }
       return isNew ? 'NEW process' : 'CONTINUE session';
@@ -1260,9 +1319,7 @@ export class AgentLoop {
       // Session routing travels per prompt() call via resolvedCliSessionId - no
       // shared-adapter mutation (setSessionId re-pointed channelKey/currentProcess
       // across awaits, cross-wiring concurrent lanes).
-      console.log(
-        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(sessionIsNew)})`
-      );
+      console.log(`[AgentLoop] [${this.backend}] ${channelKey} (${sessionLabel(sessionIsNew)})`);
     } else if (options?.freshSession) {
       // Stateless lanes (operator reports): session context is a cache, not
       // persistence - every run self-gathers and recalls; carrying prior runs'
@@ -1272,9 +1329,7 @@ export class AgentLoop {
       sessionIsNew = true;
       ownedSession = true;
       resolvedCliSessionId = cliSessionId;
-      console.log(
-        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (FRESH session - stateless lane)`
-      );
+      console.log(`[AgentLoop] [${this.backend}] ${channelKey} (FRESH session - stateless lane)`);
     } else {
       // Fallback: get session from pool (for direct AgentLoop usage)
       // getSession() returns immediately - if busy, we create a new session
@@ -1286,9 +1341,7 @@ export class AgentLoop {
       ownedSession = true;
       resolvedCliSessionId = cliSessionId;
       // Per-call routing via resolvedCliSessionId - no shared-adapter mutation.
-      console.log(
-        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
-      );
+      console.log(`[AgentLoop] [${this.backend}] ${channelKey} (${sessionLabel(isNew)})`);
     }
 
     try {
@@ -1310,7 +1363,7 @@ export class AgentLoop {
       let nativeConsecutiveToolCalls = 0;
       let nativeLastToolSignature = '';
       const hostToolBridge: HostToolBridge | undefined =
-        isCodex && this.isGatewayMode
+        isDurableRuntime && this.isGatewayMode
           ? {
               tools: this.useCodeAct
                 ? outerCodeActAllowed
@@ -1356,13 +1409,18 @@ export class AgentLoop {
                   name: call.name,
                   input: call.input,
                 };
-                history.push({ role: 'assistant', content: [toolUse] });
-                runScope.onTurn?.({
-                  turn,
-                  role: 'assistant',
-                  content: [toolUse],
-                  stopReason: 'tool_use',
-                });
+                // Codex does not return completed host exchanges, so record them
+                // here. Cline reports the paired custom-tool exchange from its Hub
+                // event stream and AgentLoop appends it exactly once below.
+                if (isCodex) {
+                  history.push({ role: 'assistant', content: [toolUse] });
+                  runScope.onTurn?.({
+                    turn,
+                    role: 'assistant',
+                    content: [toolUse],
+                    stopReason: 'tool_use',
+                  });
+                }
                 const callExecutionContext = toolExecutionContext
                   ? {
                       ...toolExecutionContext,
@@ -1387,13 +1445,15 @@ export class AgentLoop {
                 if (!toolResult.terminalCode) {
                   callSignal.throwIfAborted();
                 }
-                const persistedToolResult = historyToolResult(toolResult);
-                history.push({ role: 'user', content: [persistedToolResult] });
-                runScope.onTurn?.({
-                  turn,
-                  role: 'user',
-                  content: [persistedToolResult],
-                });
+                if (isCodex) {
+                  const persistedToolResult = historyToolResult(toolResult);
+                  history.push({ role: 'user', content: [persistedToolResult] });
+                  runScope.onTurn?.({
+                    turn,
+                    role: 'user',
+                    content: [persistedToolResult],
+                  });
+                }
                 return {
                   content: toolResult.content,
                   isError: toolResult.is_error === true,
@@ -1422,7 +1482,7 @@ export class AgentLoop {
             const typeDefs = TypeDefinitionGenerator.generate(policy);
             gatewayToolsPrompt = wrapGeneratedPromptSection(
               'codeAct',
-              getCodeActInstructions(isCodex ? 'codex' : 'claude', policy.names) +
+              getCodeActInstructions(this.backend, policy.names) +
                 '\n```typescript\n' +
                 typeDefs +
                 '\n```'
@@ -1498,7 +1558,12 @@ export class AgentLoop {
       };
 
       let perCallSystemPrompt: string;
-      if (
+      if (isCline && this.isGatewayMode && this.useCodeAct && !sessionIsNew) {
+        // TG-05: a compatible Cline Hub session ignores the per-call system prompt.
+        // Keep the continuation stub cheap; missing/mismatched sessions rebuild the
+        // complete policy lazily through freshSessionSystemPrompt below.
+        perCallSystemPrompt = options?.systemPrompt ?? this.defaultSystemPrompt;
+      } else if (
         options?.systemPrompt ||
         options?.gatewayToolsPrompt !== undefined ||
         (this.isGatewayMode && this.useCodeAct)
@@ -1512,8 +1577,8 @@ export class AgentLoop {
         console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
       }
 
-      // Codex re-anchors a rehydrated durable thread through thread/resume's
-      // baseInstructions rather than replaying instructions as user text. A CONTINUE
+      // Durable backends re-anchor a lost session with the complete current policy.
+      // A CONTINUE
       // turn's per-call prompt is deliberately minimal (message-router
       // buildMinimalResumePrompt), so resuming with it would REPLACE the thread's full
       // policy with a stub - only freshSessionSystemPrompt rebuilds the complete one.
@@ -1521,7 +1586,7 @@ export class AgentLoop {
       // invokes only inside the resume branch; a live thread never pays for it.
       const freshSystemPromptBuilder = options?.freshSessionSystemPrompt;
       const resumeInstructions =
-        isCodex && freshSystemPromptBuilder
+        isDurableRuntime && freshSystemPromptBuilder
           ? async (): Promise<string> =>
               prepareSystemPrompt(await freshSystemPromptBuilder(), false)
           : undefined;
@@ -1602,17 +1667,21 @@ export class AgentLoop {
 
         let piResult;
         // Claude: First turn → --session-id (inject system prompt), subsequent → --resume
-        // Codex: resumeSession only controls threadId reset (false=new thread, true=continue)
-        let shouldResume = isCodex
+        // Codex/Cline: resumeSession controls durable session reset/continuation.
+        let shouldResume = isDurableRuntime
           ? turn > 1 || (options?.freshSession === true ? false : (options?.resumeSession ?? true))
           : !sessionIsNew || turn > 1;
         let requestSystemPrompt = perCallSystemPrompt;
-        let provisionalCodexSessionId: string | undefined;
-        // Both Claude PersistentCLI and Codex app-server preserve context - only send new messages
+        let provisionalDurableSessionId: string | undefined;
+        // All three backends preserve context and receive only the new user message.
         const promptText = this.formatLastMessageOnly(history);
         const promptStart = Date.now();
         const throwFinalCliError = (error: unknown): never => {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
+          const modelRunnerErrorCode =
+            normalizedError instanceof ModelRunnerError
+              ? MODEL_RUNNER_AGENT_ERROR_CODES[normalizedError.code]
+              : undefined;
           const errorType =
             normalizedError instanceof McpResultMissingError ||
             normalizedError instanceof McpCompletedMutationInterruptedError ||
@@ -1620,7 +1689,7 @@ export class AgentLoop {
               ? normalizedError.code
               : normalizedError instanceof HostToolTerminalError
                 ? normalizedError.terminalCode
-                : 'CLI_ERROR';
+                : (modelRunnerErrorCode ?? 'CLI_ERROR');
           this.onMetric?.('prompt_error', 1, {
             backend: this.backend,
             error_type: errorType,
@@ -1642,6 +1711,9 @@ export class AgentLoop {
               false
             );
           }
+          if (normalizedError instanceof HostToolAbortError) {
+            throw new AgentError(normalizedError.message, 'CLI_ERROR', normalizedError, false);
+          }
           if (
             normalizedError instanceof McpResultMissingError ||
             normalizedError instanceof McpCompletedMutationInterruptedError ||
@@ -1656,9 +1728,9 @@ export class AgentLoop {
           }
           throw new AgentError(
             `CLI error: ${normalizedError.message}`,
-            'CLI_ERROR',
+            modelRunnerErrorCode ?? 'CLI_ERROR',
             normalizedError,
-            true
+            normalizedError instanceof ModelRunnerError ? normalizedError.retryable : true
           );
         };
         const appendCompletedToolExchanges = (
@@ -1685,7 +1757,7 @@ export class AgentLoop {
         };
         try {
           const durablePolicyStatus =
-            isCodex && turn === 1 && shouldResume
+            isDurableRuntime && turn === 1 && shouldResume
               ? this.agent.getSessionPolicyStatus?.({
                   model: options?.model,
                   resumeSession: true,
@@ -1695,17 +1767,25 @@ export class AgentLoop {
                   sessionId: resolvedCliSessionId ?? undefined,
                   requestTimeout: options?.requestTimeoutMs,
                   hostToolBridge,
+                  ...(isCline
+                    ? {
+                        allowedTools: clineAllowedTools,
+                        disallowedTools: clineDisallowedTools,
+                        allowSpawnAgent: clineAllowSpawnAgent,
+                        allowAgentTeams: clineAllowAgentTeams,
+                      }
+                    : {}),
                 })
               : undefined;
           if (durablePolicyStatus === 'mismatch' || durablePolicyStatus === 'missing') {
             console.log(
-              `[AgentLoop] Codex durable session ${durablePolicyStatus}; ` +
+              `[AgentLoop] ${this.backend} durable session ${durablePolicyStatus}; ` +
                 'opening the full policy before model request'
             );
             const newSessionId = this.sessionPool.resetSession(channelKey);
             options?.onCliSessionReset?.(newSessionId);
             resolvedCliSessionId = newSessionId;
-            provisionalCodexSessionId = newSessionId;
+            provisionalDurableSessionId = newSessionId;
             try {
               if (options?.freshSessionSystemPrompt) {
                 requestSystemPrompt = prepareSystemPrompt(
@@ -1715,7 +1795,7 @@ export class AgentLoop {
               }
             } catch (rebuildError) {
               this.sessionPool.invalidateSession(channelKey, newSessionId);
-              provisionalCodexSessionId = undefined;
+              provisionalDurableSessionId = undefined;
               attemptReportedError =
                 rebuildError instanceof Error ? rebuildError : new Error(String(rebuildError));
               throw rebuildError;
@@ -1735,12 +1815,20 @@ export class AgentLoop {
             requestTimeout: options?.requestTimeoutMs,
             hostToolBridge,
             toolExecutionContext,
+            ...(isCline
+              ? {
+                  allowedTools: clineAllowedTools,
+                  disallowedTools: clineDisallowedTools,
+                  allowSpawnAgent: clineAllowSpawnAgent,
+                  allowAgentTeams: clineAllowAgentTeams,
+                }
+              : {}),
           });
-          provisionalCodexSessionId = undefined;
+          provisionalDurableSessionId = undefined;
         } catch (error) {
-          if (provisionalCodexSessionId) {
-            this.sessionPool.invalidateSession(channelKey, provisionalCodexSessionId);
-            provisionalCodexSessionId = undefined;
+          if (provisionalDurableSessionId) {
+            this.sessionPool.invalidateSession(channelKey, provisionalDurableSessionId);
+            provisionalDurableSessionId = undefined;
           }
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
@@ -1753,6 +1841,10 @@ export class AgentLoop {
             appendCompletedToolExchanges(error.completedToolExchanges);
             throwFinalCliError(error);
           }
+          if (error instanceof HostToolAbortError && error.completedToolExchanges.length > 0) {
+            appendCompletedToolExchanges(error.completedToolExchanges);
+            throwFinalCliError(error);
+          }
 
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
@@ -1761,6 +1853,7 @@ export class AgentLoop {
           const isSessionNotFound = errorMessage.includes('No conversation found with session ID');
           const isSessionInUse = errorMessage.includes('is already in use');
           const isPromptTooLong =
+            (error instanceof ModelRunnerError && error.code === 'context_overflow') ||
             errorMessage.includes('Prompt is too long') ||
             errorMessage.includes('prompt is too long') ||
             errorMessage.includes('request_too_large') ||
@@ -1801,16 +1894,16 @@ export class AgentLoop {
             // resolved id so later turns follow it - no shared-adapter mutation.
             resolvedCliSessionId = newSessionId;
 
-            // A policy mismatch can occur on a resumed MessageRouter session,
-            // whose per-call prompt is intentionally minimal. Rebuild the full
-            // policy prompt before opening the replacement durable thread.
+            // A recoverable durable-session error can occur on a resumed
+            // MessageRouter session whose per-call prompt is intentionally minimal.
+            // Rebuild the full policy before opening every replacement session.
             let resetSystemPrompt = perCallSystemPrompt;
             try {
               // Discard the recoverable first-attempt error before any reset
               // preparation. A prompt rebuild or retry failure must surface
               // its own final error, never the mismatch that triggered it.
               attemptReportedError = undefined;
-              if (isCodexPolicyMismatch && options?.freshSessionSystemPrompt) {
+              if (options?.freshSessionSystemPrompt) {
                 resetSystemPrompt = prepareSystemPrompt(
                   await options.freshSessionSystemPrompt(),
                   false
@@ -1828,6 +1921,14 @@ export class AgentLoop {
                 requestTimeout: options?.requestTimeoutMs,
                 hostToolBridge,
                 toolExecutionContext,
+                ...(isCline
+                  ? {
+                      allowedTools: clineAllowedTools,
+                      disallowedTools: clineDisallowedTools,
+                      allowSpawnAgent: clineAllowSpawnAgent,
+                      allowAgentTeams: clineAllowAgentTeams,
+                    }
+                  : {}),
               });
             } catch (retryError) {
               console.error(
@@ -1870,7 +1971,7 @@ export class AgentLoop {
         let parsedToolCalls: ToolUseBlock[] = [];
 
         // Parse tool_call / code_act blocks from text response (Gateway Tools mode ONLY)
-        if (this.isGatewayMode && !isCodex) {
+        if (this.isGatewayMode && !isDurableRuntime) {
           parsedToolCalls = this.parseToolCallsFromText(piResult.response || '');
 
           // Code-Act: parse ```js blocks only if enabled
@@ -1957,12 +2058,12 @@ export class AgentLoop {
           }
         }
 
-        // Track tokens in session pool for auto-reset at 80% context
-        const tokenBackend = this.backend === 'codex' ? 'codex' : 'claude';
+        // Preserve the SessionPool usage-status contract. Billing telemetry is
+        // recorded above; durable runtimes own model-aware compaction.
         const tokenStatus = this.sessionPool.updateTokens(
           channelKey,
           response.usage.input_tokens,
-          tokenBackend
+          this.backend
         );
 
         // Claude's MCP server may already have executed these tool calls while the
@@ -1984,7 +2085,8 @@ export class AgentLoop {
           );
         }
 
-        // PreCompact: inject compaction summary when approaching context limit
+        // PreCompact remains available for a future authoritative occupancy
+        // signal. Runtime-owned sessions do not infer one from usage telemetry.
         if (tokenStatus.nearThreshold && this.preCompactHandler && !runScope.preCompactInjected) {
           runScope.preCompactInjected = true;
           try {
@@ -2559,6 +2661,8 @@ export class AgentLoop {
    * Persistent CLI maintains context automatically, so we only send the new message
    */
   private formatLastMessageOnly(history: Message[]): string {
+    const imageReaderTool =
+      this.backend === 'cline' ? 'read_files' : this.backend === 'codex' ? 'view_image' : 'Read';
     // Find the last user message in the history
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i];
@@ -2578,9 +2682,9 @@ export class AgentLoop {
               parts.push(
                 `⚠️ CRITICAL: The user has uploaded an image file.\n` +
                   `Image path: ${block.localPath}\n` +
-                  `You MUST call the Read tool on "${block.localPath}" to view this image FIRST.\n` +
+                  `You MUST call the ${imageReaderTool} tool on "${block.localPath}" to view this image FIRST.\n` +
                   `DO NOT describe or guess the image contents without reading it.\n` +
-                  `DO NOT say you cannot read images - the Read tool supports image files.`
+                  `DO NOT say you cannot read images - ${imageReaderTool} supports image files.`
               );
             } else if (block.type === 'image' && block.source?.data) {
               // Base64-encoded image — save to disk so persistent CLI can read it
@@ -2608,9 +2712,9 @@ export class AgentLoop {
                 parts.push(
                   `⚠️ CRITICAL: The user has uploaded an image file.\n` +
                     `Image path: ${imagePath}\n` +
-                    `You MUST call the Read tool on "${imagePath}" to view this image FIRST.\n` +
+                    `You MUST call the ${imageReaderTool} tool on "${imagePath}" to view this image FIRST.\n` +
                     `DO NOT describe or guess the image contents without reading it.\n` +
-                    `DO NOT say you cannot read images - the Read tool supports image files.`
+                    `DO NOT say you cannot read images - ${imageReaderTool} supports image files.`
                 );
               } catch {
                 parts.push('[Image attached but could not be processed]');

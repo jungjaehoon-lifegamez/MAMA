@@ -104,6 +104,9 @@ export const DEFAULT_ROLES: RolesConfig = {
         'mama_provenance',
         'context_compile',
         'mama_load_checkpoint',
+        // Durable Cline/Codex runtimes use code_act as the transport for the
+        // role-filtered gateway primitives below; it does not widen the role.
+        'code_act',
         'Read',
         'discord_send',
       ],
@@ -212,10 +215,17 @@ export interface AgentConfig {
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex': Codex app-server
+   * - 'cline': Cline Hub runtime through the installed CLI companion SDK
    */
-  backend: 'claude' | 'codex';
-  /** Claude model to use */
+  backend: 'claude' | 'codex' | 'cline';
+  /** Backend model to use */
   model: string;
+  /** Optional explicit Cline CLI command path. */
+  cline_command?: string;
+  /** Optional Cline provider id (defaults to "cline"). */
+  cline_provider?: string;
+  /** Optional isolated Cline state directory. */
+  cline_data_dir?: string;
   /**
    * Effort level for Opus 4.6 adaptive thinking
    * Only applies when model is 'claude-opus-4-6'
@@ -401,7 +411,7 @@ export interface AgentPersonaConfig {
   /** Cooldown between responses in milliseconds */
   cooldown_ms?: number;
   /** Backend for this agent (inherits from agent.backend if not set) */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'cline';
   /** Claude model to use for this agent */
   model?: string;
   /** Maximum turns for this agent */
@@ -617,9 +627,9 @@ export interface IOConfig {
   max_read_bytes: number;
   /** Max chars for dynamic context injection @default 4000 */
   max_dynamic_context_chars: number;
-  /** Context warning threshold in tokens @default 160000 */
+  /** @deprecated Retained for config compatibility; durable runtimes own compaction. */
   context_threshold_tokens: number;
-  /** Max context tokens before forced rotation @default 200000 */
+  /** @deprecated Retained for config compatibility; durable runtimes own compaction. */
   max_context_tokens: number;
 }
 

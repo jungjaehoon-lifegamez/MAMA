@@ -66,6 +66,9 @@ export async function statusCommand(): Promise<void> {
       console.log(`Backend: ${backend}`);
       if (backend === 'codex') {
         console.log('Codex transport: app-server');
+      } else if (backend === 'cline') {
+        console.log('Cline transport: Hub runtime');
+        console.log(`Cline provider: ${config.agent.cline_provider ?? 'cline'}`);
       } else {
         const authStatus = getClaudeCodeAuthStatus();
         process.stdout.write('Claude Code auth: ');

@@ -107,7 +107,7 @@ export function initMainAgentLoop(
   oauthManager: OAuthManager,
   db: SQLiteDatabase,
   metricsStore: MetricsStore | null,
-  runtimeBackend: 'claude' | 'codex',
+  runtimeBackend: 'claude' | 'codex' | 'cline',
   toolExecutor: GatewayToolExecutor,
   options?: {
     osAgentMode?: boolean;
@@ -159,12 +159,13 @@ export function initMainAgentLoop(
   // persona-locked (--tools "", no MCP config), so outer Code-Act has NO
   // transport there - its instructions tell the model to call an MCP tool
   // that does not exist, and the model answers with the tool NAME as text.
-  // Codex injects code_act natively, so it stays the default only there.
+  // Codex and Cline inject code_act through their native runtimes, so it stays
+  // the default for those backends.
   // An explicit per-agent useCodeAct in config still wins in both directions.
   const useCodeAct =
     options?.osAgentMode === true
       ? false
-      : (osAgentUseCodeAct ?? conductorUseCodeAct ?? runtimeBackend === 'codex');
+      : (osAgentUseCodeAct ?? conductorUseCodeAct ?? runtimeBackend !== 'claude');
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.
@@ -177,6 +178,10 @@ export function initMainAgentLoop(
     {
       backend: runtimeBackend,
       model: config.agent.model,
+      clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
+      clineCwd: process.env.MAMA_WORKSPACE,
+      clineProvider: config.agent.cline_provider,
+      clineDataDir: config.agent.cline_data_dir,
       timeoutMs: config.agent.timeout,
       maxTurns: config.agent.max_turns,
       useCodeAct,
@@ -247,7 +252,7 @@ export function initMainAgentLoop(
   );
   if (runtimeBackend !== 'claude') {
     console.log(
-      '[agent-loop-init] builtinTools lockdown is a no-op on the codex backend (native-tool surface is claude CLI only)'
+      `[agent-loop-init] builtinTools lockdown is a no-op on the ${runtimeBackend} backend (native-tool surface is claude CLI only)`
     );
   }
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');

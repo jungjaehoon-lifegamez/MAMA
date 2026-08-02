@@ -54,6 +54,7 @@ _Step-by-step instructions for specific tasks_
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
 - [Codex Backend](guides/codex-backend.md) - Codex app-server setup and per-agent backend selection
+- [Cline Backend](guides/cline-backend.md) - Cline CLI and DeepSeek backend setup
 - [Multi-Agent Personas](guides/multi-agent-advanced.md) - Personas, tool tiers, hot-reload
 - [Code-Act Sandbox](guides/code-act-sandbox.md) - QuickJS/WASM isolated code execution
 
@@ -87,8 +88,6 @@ _Contributing, testing, and development guidelines_
 - [Testing Guide](development/testing.md) - Test suite and testing practices
 - [Code Standards](development/code-standards.md) - Coding conventions
 - [Release Process](development/release-process.md) - How releases are created
-- [Kagemusha Telegram Parity Contract](development/kagemusha-telegram-parity.md) -
-  End-to-end owner-console behavior, evidence, and review scenarios
 
 ---
 
@@ -158,10 +157,8 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.32.0 — persistent Claude Code-Act processes follow the exact active
-principal, completed mutations are not replayed after terminal transport failures, and report
-audit uses host-authored nested-tool evidence. Every durable change still names its cause KIND or
-says it cannot; failures carry the thrower's code; a silent scheduled leg pages the owner; memory
-reads follow the channel grant. Conductor foundations ship dark behind `conductor.enabled`,
-measured against a six-item parity rubric before taking authority.
-**Last Updated:** 2026-07-31
+**Status:** MAMA OS v0.32.2 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
+backends with backend-owned durable context, role-scoped Code-Act projection, bounded recovery,
+and explicit non-replayable mutation outcomes. Configured private connectors remain installation-
+local and are never promoted into generic catalogs or prompts.
+**Last Updated:** 2026-08-02

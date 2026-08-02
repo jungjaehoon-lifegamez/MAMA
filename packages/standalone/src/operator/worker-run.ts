@@ -131,10 +131,16 @@ export function buildWorkerSystemPrompt(
           'Follow the brief in the user message. Use the injected native host tools directly.',
           'Call them through the model tool interface; never emit Markdown or JavaScript substitutes.',
         ]
-      : [
-          'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
-          'blocks documented below - no other execution mechanism exists in this session.',
-        ];
+      : backend === 'cline'
+        ? [
+            'Follow the brief in the user message. Use the injected mcp__code-act__code_act Hub tool.',
+            'Write JavaScript that calls only the injected TypeScript-declared gateway functions;',
+            'never emit fenced tool_call JSON or pretend a tool ran in prose.',
+          ]
+        : [
+            'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
+            'blocks documented below - no other execution mechanism exists in this session.',
+          ];
   return [
     'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
     ...toolInstructions,

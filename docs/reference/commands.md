@@ -174,6 +174,7 @@ mama init [options]
 
 - `-f, --force` - Overwrite existing configuration
 - `--skip-auth-check` - Skip API key validation (testing only)
+- `--backend <auto|claude|codex|cline>` - Select or auto-detect the authenticated backend
 
 **Examples:**
 
@@ -181,6 +182,7 @@ mama init [options]
 mama init                    # Initialize with prompts
 mama init --force            # Overwrite existing config
 mama init --skip-auth-check  # Skip API validation
+mama init --backend cline    # Select authenticated Cline Hub backend
 ```
 
 **What it does:**
@@ -188,13 +190,13 @@ mama init --skip-auth-check  # Skip API validation
 - Creates `~/.mama/workspace`
 - Generates default `config.yaml`
 - Initializes SQLite database
-- Validates available backend login state (`claude auth status` / Codex auth) unless skipped
+- Validates available backend login state (Claude, Codex, or Cline) unless skipped
 
 ---
 
 ### `mama setup`
 
-Interactive setup wizard powered by Claude.
+Interactive setup wizard powered by the configured Claude, Codex, or Cline backend.
 
 **Usage:**
 
@@ -217,8 +219,8 @@ mama setup --no-browser   # Don't open browser
 
 **What it does:**
 
-- Checks Claude Code login state with `claude auth status` (or legacy fallback)
-- Launches 9-phase onboarding wizard
+- Checks the backend selected in `config.yaml` (Claude, Codex, or Cline)
+- Launches the 10-phase onboarding wizard on a nonce-protected localhost connection
 - Configures gateway integrations (Discord, Slack, Telegram)
 - Sets up personality and preferences
 - Opens MAMA OS web interface for interactive setup
@@ -322,7 +324,7 @@ mama run "Analyze this project" --verbose
 
 **What it does:**
 
-- Sends single prompt to Claude API
+- Sends one prompt through the configured Claude CLI, Codex app-server, or Cline Hub backend
 - Executes agent loop once
 - Prints response and exits
 - Useful for testing configuration

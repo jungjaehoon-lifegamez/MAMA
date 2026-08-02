@@ -155,6 +155,7 @@ export interface ApiHeartbeatConfig {
 export interface ApiAgentToolsConfig {
   gateway?: string[];
   mcp?: string[];
+  mcp_config?: string;
   [key: string]: unknown;
 }
 
@@ -162,7 +163,7 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 export type ApiValidationTriggerType = 'agent_test' | 'delegate_run' | 'system_run' | 'audit';
 
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex' | 'gemini';
+  backend?: 'claude' | 'codex' | 'cline';
   model?: string;
   effort?: EffortLevel;
   tools?: ApiAgentToolsConfig;
@@ -220,7 +221,7 @@ export interface MultiAgentAgent {
   status?: string;
   model?: string;
   effort?: EffortLevel;
-  backend?: 'claude' | 'codex' | 'gemini';
+  backend?: 'claude' | 'codex' | 'cline';
   bot_token?: string;
   slack_bot_token?: string | null;
   slack_app_token?: string | null;

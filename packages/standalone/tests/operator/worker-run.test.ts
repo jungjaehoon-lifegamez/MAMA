@@ -245,6 +245,15 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).not.toContain('tool_call JSON');
   });
 
+  it('TG-03/TG-04/TG-06 uses Cline Code-Act instead of Claude fenced tool blocks', () => {
+    const prompt = buildWorkerSystemPrompt('# Gateway Tools', 'cline', 'board');
+
+    expect(prompt).toContain('mcp__code-act__code_act');
+    expect(prompt).toContain('injected TypeScript-declared gateway functions');
+    expect(prompt).not.toContain('# Gateway Tools');
+    expect(prompt).not.toContain('```tool_call');
+  });
+
   it.each(['board', 'wiki', 'memory-curation', 'temporal'] as const)(
     'treats external evidence as untrusted data for the %s worker',
     (kind) => {

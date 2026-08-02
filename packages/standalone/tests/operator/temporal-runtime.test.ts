@@ -114,6 +114,12 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(transport.options.createScheduler).not.toHaveBeenCalled();
   });
 
+  it('accepts Cline when the trusted temporal Code-Act transport is ready', () => {
+    const runtime = dependencies({ backend: 'cline' });
+
+    expect(() => createTemporalRuntime(runtime.options)).not.toThrow();
+  });
+
   it('rejects disabled envelope issuance before registering the temporal role', () => {
     const ctx = dependencies({ envelopeIssuanceMode: 'off' });
 

@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
+import { ClineCLIAdapter } from '../agent/cline-cli-adapter.js';
 import type { CodexRuntimeProcessOptions } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from '../agent/model-runner.js';
 import type { OperatorChannelEvent } from './operator-interfaces.js';
@@ -47,12 +48,15 @@ export interface AuthorOptions {
 }
 
 type TriggerCodexRunner = Pick<IModelRunner, 'prompt' | 'stop'>;
+type TriggerClineRunner = Pick<IModelRunner, 'prompt' | 'stop'>;
 
 export interface TriggerAgentRuntimeOptions {
   model?: string;
   cwd?: string;
   command?: string;
   requestTimeout?: number;
+  provider?: string;
+  dataDir?: string;
 }
 
 export interface TriggerAgentRuntime {
@@ -64,6 +68,15 @@ export interface TriggerAgentRuntime {
 export interface TriggerAgentRuntimeDependencies {
   askClaude?: AskAgent;
   createCodexRuntime?: (options: CodexRuntimeProcessOptions) => TriggerCodexRunner;
+  createClineRuntime?: (options: {
+    command?: string;
+    provider?: string;
+    model?: string;
+    systemPrompt?: string;
+    cwd?: string;
+    dataDir?: string;
+    requestTimeout?: number;
+  }) => TriggerClineRunner;
 }
 
 export type ClaudeCliExecutor = (
@@ -290,7 +303,7 @@ export const askAgentCLI: AskAgent = createAskAgentCLI();
  * session and advertises no host tools.
  */
 export function createTriggerAgentRuntime(
-  backend: 'claude' | 'codex',
+  backend: 'claude' | 'codex' | 'cline',
   options: TriggerAgentRuntimeOptions = {},
   dependencies: TriggerAgentRuntimeDependencies = {}
 ): TriggerAgentRuntime {
@@ -300,6 +313,44 @@ export function createTriggerAgentRuntime(
       askAuthor: askClaude,
       askReview: askClaude,
       stop: async () => undefined,
+    };
+  }
+
+  if (backend === 'cline') {
+    const createClineRuntime =
+      dependencies.createClineRuntime ?? ((runtimeOptions) => new ClineCLIAdapter(runtimeOptions));
+    const runner = createClineRuntime({
+      command: options.command,
+      provider: options.provider ?? 'cline',
+      model: options.model,
+      systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
+      cwd: options.cwd,
+      dataDir: options.dataDir,
+      requestTimeout: options.requestTimeout,
+    });
+    const askInSession =
+      (sessionKey: string): AskAgent =>
+      async (prompt) => {
+        const result = await runner.prompt(prompt, undefined, {
+          sessionKey,
+          resumeSession: false,
+          systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
+        });
+        if (typeof result.response !== 'string') {
+          throw new Error('Cline trigger agent did not return a text result');
+        }
+        return result.response;
+      };
+    let stopPromise: Promise<void> | undefined;
+    return {
+      askAuthor: askInSession(TRIGGER_AUTHOR_SESSION_KEY),
+      askReview: askInSession(TRIGGER_REVIEW_SESSION_KEY),
+      stop: () => {
+        stopPromise ??= Promise.resolve().then(async () => {
+          await runner.stop();
+        });
+        return stopPromise;
+      },
     };
   }
 

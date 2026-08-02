@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+import { SessionPool } from '../../src/agent/session-pool.js';
 import type { AgentContext, GatewayToolInput, MAMAApiInterface } from '../../src/agent/types.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import { makeSignedEnvelope } from './fixtures.js';
@@ -194,9 +195,13 @@ describe('Story M1R: AgentLoop internal tool context propagation', () => {
 
   describe('AC: pre-compact path carries the reactive internal surface', () => {
     it('passes active execution context to PreCompactHandler when compaction check runs', async () => {
+      vi.spyOn(SessionPool.prototype, 'updateTokens').mockReturnValue({
+        totalTokens: 900_000,
+        nearThreshold: true,
+      });
       promptSpy.mockResolvedValueOnce({
         response: 'Done',
-        usage: { input_tokens: 200_000, output_tokens: 5 },
+        usage: { input_tokens: 10, output_tokens: 5 },
       });
       const options = createExecutionOptions(tempDir);
       delete options.cliSessionId;

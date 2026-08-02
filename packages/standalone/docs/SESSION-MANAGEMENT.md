@@ -1,6 +1,6 @@
 # Session Management Architecture
 
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-08-02
 
 This document explains how MAMA Standalone manages CLI sessions for optimal token efficiency.
 
@@ -8,13 +8,20 @@ This document explains how MAMA Standalone manages CLI sessions for optimal toke
 
 ## Overview
 
-MAMA Standalone uses Claude CLI as its LLM interface. Each CLI process maintains its own conversation context, but spawning a new process for each message would lose that context.
+MAMA Standalone uses durable Claude Code, Codex app-server, or Cline Hub sessions as its LLM
+interface. Each runtime maintains its own conversation context, but opening a new session for each
+message would lose that context.
 
-**Solution:** Session Pool + `--resume` flag for 99.9% token savings.
+**Solution:** a channel-scoped Session Pool routes each conversation to the selected backend's
+native continuity mechanism. Only Claude uses CLI `--resume`; Codex uses app-server threads and
+Cline uses Hub sessions.
 
 ---
 
 ## Architecture
+
+The following diagram is the Claude Code transport path. Codex and Cline use the same channel and
+policy decision above the transport boundary, but not Claude CLI flags.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -77,7 +84,7 @@ interface SessionEntry {
   messageCount: number; // Messages in this session
   createdAt: number; // Session creation time
   inUse: boolean; // Lock flag
-  totalInputTokens: number; // Cumulative token usage
+  totalInputTokens: number; // Legacy field; zero while the runtime owns compaction
 }
 ```
 
@@ -86,9 +93,22 @@ interface SessionEntry {
 1. **Creation** - First message to a channel
 2. **Reuse** - Subsequent messages within timeout
 3. **Expiration** - 30 minutes of inactivity
-4. **Reset** - Context reaches 80% of 200K tokens
+4. **Compaction** - The selected runtime compacts against the active model's actual context window;
+   MAMA does not infer occupancy from billing or per-run usage telemetry
 
 ---
+
+## Backend continuity
+
+| Backend | Durable unit      | Continuation transport                        | Missing or incompatible unit                                                                    |
+| ------- | ----------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Claude  | CLI session       | `--resume UUID`                               | Start with `--session-id UUID` and the full current prompt                                      |
+| Codex   | app-server thread | Resume the thread with incremental user input | Start a replacement thread with the full current policy and bounded persisted conversation      |
+| Cline   | Hub session       | `client.send()` to the bound Hub session      | Start a replacement Hub session with the full current policy and bounded persisted conversation |
+
+Timeouts and policy mismatches invalidate the volatile Session Pool entry. Codex and Cline also
+quarantine the exact backend session before a replacement can be used. Cline serializes prompts
+per stable route and preserves the queue barrier when a waiting prompt times out.
 
 ## Token Optimization
 
@@ -102,7 +122,7 @@ Every message spawned a fresh CLI process with:
 
 **Result:** ~8,600 tokens per message
 
-### After (v0.3.2)
+### Claude after v0.3.2
 
 First message uses `--session-id`, subsequent messages use `--resume`:
 
@@ -113,11 +133,14 @@ First message uses `--session-id`, subsequent messages use `--resume`:
 
 **Note:** System prompt is always passed for safety (ensures Gateway Tools and AgentContext are available even if CLI session was lost due to daemon restart, timeout, etc.). CLI will use cached context when available, only falling back to the provided prompt if needed.
 
-**Result:** Token savings depend on CLI session validity. Best case maintains 90%+ savings when CLI cache hits.
+Codex and Cline do not replay the complete startup prompt on a compatible continuation. They send
+only the new user input while retaining the policy installed on the durable backend session.
+If that session is missing or its policy fingerprint changed, MAMA lazily rebuilds the complete
+current prompt exactly for the replacement.
 
 ---
 
-## CLI Flags
+## Claude CLI Flags
 
 ### `--session-id UUID`
 
@@ -190,13 +213,13 @@ interface SessionPoolConfig {
 }
 ```
 
-### Context Threshold
+### Context compaction
 
-```typescript
-const CONTEXT_THRESHOLD_TOKENS = 160000; // 80% of 200K
-```
-
-When a session exceeds this threshold, it's automatically reset on the next message.
+MAMA does not estimate context occupancy from per-run billing telemetry. Aggregate input-token
+usage includes cached and replayed tokens and is not a reliable measure of remaining context.
+Claude Code, Codex app-server, and Cline Hub therefore compact according to the active model and
+runtime instead of inheriting a fixed 160K/200K reset threshold. This remains correct when the
+selected model exposes a larger context window.
 
 ---
 
@@ -215,8 +238,9 @@ DEBUG=mama:* mama start
 [SessionPool] Reusing session for discord:123: abc-def-... (msg #5, 45% context)
 [MessageRouter] New CLI session (injecting 4045 chars of system prompt)
 [MessageRouter] Resuming CLI session (skipping 4045 chars of system prompt)
-[ClaudeCLI] New session: abc-def-...
-[ClaudeCLI] Resuming session: abc-def-...
+[AgentLoop] [claude] discord:123 (NEW process)
+[AgentLoop] [codex] telegram:456 (CONTINUE thread)
+[AgentLoop] [cline] telegram:789 (CONTINUE thread)
 ```
 
 ---
@@ -234,7 +258,7 @@ pnpm test tests/agent/session-pool.test.ts
 ### Test Cases
 
 1. First message injects system prompt
-2. Second message uses resume (no system prompt)
+2. Claude uses resume; Codex and Cline reuse their native durable session
 3. Session expires after timeout
-4. Session resets at context threshold
+4. A missing, timed-out, or policy-incompatible durable session is rebuilt with full current policy
 5. Different channels have independent sessions
