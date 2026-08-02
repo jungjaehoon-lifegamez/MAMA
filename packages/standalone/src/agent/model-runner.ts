@@ -90,6 +90,19 @@ export class HostToolTerminalError extends Error {
   }
 }
 
+/** A host tool deliberately stopped a run without claiming a terminal mutation outcome. */
+export class HostToolAbortError extends Error {
+  readonly retryable = false;
+
+  constructor(
+    message: string,
+    readonly completedToolExchanges: readonly CompletedToolExchange[]
+  ) {
+    super(message);
+    this.name = 'HostToolAbortError';
+  }
+}
+
 /**
  * Options passed to prompt() that are backend-agnostic.
  */
@@ -98,6 +111,10 @@ export interface PromptOptions {
   resumeSession?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
+  /** Allow the backend's native single-agent delegation primitive for this route. */
+  allowSpawnAgent?: boolean;
+  /** Allow the backend's native multi-agent team primitive for this route. */
+  allowAgentTeams?: boolean;
   hostToolBridge?: HostToolBridge;
   systemPrompt?: string;
   /** Stable source/channel route used by persistent backends across daemon restarts. */
@@ -176,7 +193,7 @@ export class ModelRunnerError extends Error {
 /**
  * Backend type identifier.
  */
-export type BackendType = 'claude' | 'codex';
+export type BackendType = 'claude' | 'codex' | 'cline';
 
 /**
  * Unified model runner interface.

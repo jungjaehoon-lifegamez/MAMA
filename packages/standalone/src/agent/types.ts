@@ -128,7 +128,7 @@ export interface AgentContext {
    * Backend type for this agent context
    * Used for backend-specific AGENTS.md injection
    */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'cline';
 }
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
@@ -888,7 +888,7 @@ export interface AgentLoopOptions {
    * - 'codex': Codex app-server
    * Required at construction time (validated by config-manager)
    */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'cline';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Exact policy-keyed Gateway Tools catalog for this run (Claude non-Code-Act only). */
@@ -953,6 +953,22 @@ export interface AgentLoopOptions {
   };
   /** Explicit MCP config path for runtimes that consume an external MCP config directly. */
   mcpConfigPath?: string;
+  /** Explicit Cline CLI command path. */
+  clineCommand?: string;
+  /** Cline CLI working directory. */
+  clineCwd?: string;
+  /** Cline provider id (defaults to Cline's hosted provider). */
+  clineProvider?: string;
+  /** Isolated Cline state directory. */
+  clineDataDir?: string;
+  /** Cline native tools explicitly exposed to this loop; omitted means fail-closed except owner. */
+  clineNativeAllowedTools?: string[];
+  /** Cline native tools explicitly denied even when another policy allows them. */
+  clineNativeDisallowedTools?: string[];
+  /** Permit Cline's native spawn-agent primitive for this loop. */
+  clineAllowSpawnAgent?: boolean;
+  /** Permit Cline's native agent-team primitive for this loop. */
+  clineAllowAgentTeams?: boolean;
   /** Codex app-server working directory (managed runtime construction only). */
   codexCwd?: string;
   /** Explicit Codex app-server command path (managed runtime/tests). */

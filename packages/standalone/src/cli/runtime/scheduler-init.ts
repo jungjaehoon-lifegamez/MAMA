@@ -21,9 +21,13 @@ import { EventEmitter } from 'node:events';
 
 import type { MAMAConfig } from '../config/types.js';
 import { CronScheduler, CronWorker, TokenKeepAlive } from '../../scheduler/index.js';
+import { cronSystemPromptForBackend } from '../../scheduler/cron-worker.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { DiscordGateway } from '../../gateways/index.js';
 import type { AgentLoop } from '../../agent/index.js';
+import { createBackendModelRunner } from '../../agent/backend-model-runner-factory.js';
+import type { BackendModelRunnerFactories } from '../../agent/backend-model-runner-factory.js';
+import type { IModelRunner } from '../../agent/model-runner.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -56,6 +60,25 @@ export interface HeartbeatResult {
   healthWarningInterval: ReturnType<typeof setInterval> | null;
 }
 
+export function shouldStartClaudeTokenKeepAlive(config: MAMAConfig): boolean {
+  return config.agent.backend === 'claude';
+}
+
+export function createCronBackendRunner(
+  config: MAMAConfig,
+  factories?: BackendModelRunnerFactories
+): IModelRunner {
+  return createBackendModelRunner(
+    config,
+    {
+      sessionId: 'system-cron',
+      systemPrompt: cronSystemPromptForBackend(config.agent.backend),
+      allowedTools: ['Bash', 'Read', 'Write', 'Glob', 'Grep'],
+    },
+    factories
+  );
+}
+
 /**
  * Initialize cron scheduler with a dedicated CronWorker and EventEmitter.
  *
@@ -65,7 +88,11 @@ export interface HeartbeatResult {
 export function initCronScheduler(config: MAMAConfig): CronSchedulerResult {
   // Initialize cron scheduler with dedicated CronWorker (isolated from OS agent)
   const cronEmitter = new EventEmitter();
-  const cronWorker = new CronWorker({ emitter: cronEmitter });
+  const cronWorker = new CronWorker({
+    emitter: cronEmitter,
+    systemPrompt: cronSystemPromptForBackend(config.agent.backend),
+    runnerFactory: () => createCronBackendRunner(config),
+  });
   const scheduler = new CronScheduler();
 
   scheduler.setExecuteCallback(async (prompt, job) => {
@@ -190,8 +217,11 @@ export function initHeartbeat(
     5 * 60 * 1000
   );
 
-  // Initialize token keep-alive (prevents OAuth token expiration)
-  tokenKeepAlive.start();
+  // Claude CLI benefits from periodic OAuth refresh. Other backends own their
+  // credentials and must not execute `claude --version` as a hidden dependency.
+  if (shouldStartClaudeTokenKeepAlive(config)) {
+    tokenKeepAlive.start();
+  }
 
   return { heartbeatScheduler, tokenKeepAlive, healthWarningInterval };
 }

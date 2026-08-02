@@ -10,6 +10,10 @@ import type {
   PromptOptions,
   SessionPolicyStatus,
 } from '../agent/model-runner.js';
+import {
+  createCodexAuxiliaryToolBridge,
+  type CodexAuxiliaryToolPolicy,
+} from '../agent/codex-auxiliary-tools.js';
 
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
@@ -31,6 +35,7 @@ export interface CodexRuntimeProcessOptions {
   registryRoot?: string;
   mcpConfigPath?: string;
   command?: string;
+  auxiliaryToolPolicy?: CodexAuxiliaryToolPolicy;
 }
 
 /**
@@ -47,6 +52,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
 
   private readonly options: CodexRuntimeProcessOptions;
   private readonly appServer: CodexAppServerProcess;
+  private readonly auxiliaryToolBridge;
   private defaultSessionKey: string;
   private systemPrompt: string;
   private stopped = false;
@@ -76,6 +82,13 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       registryRoot: options.registryRoot,
       mcpConfigPath: options.mcpConfigPath,
     });
+    this.auxiliaryToolBridge = options.auxiliaryToolPolicy
+      ? createCodexAuxiliaryToolBridge({
+          ...options.auxiliaryToolPolicy,
+          executeCommand: (command, cwd, roots, signal) =>
+            this.appServer.executeSandboxedCommand(command, cwd, roots, signal),
+        })
+      : undefined;
   }
 
   // ─── IModelRunner.prompt() ─────────────────────────────────────────────
@@ -96,7 +109,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       requestTimeout: options.requestTimeout ?? this.options.requestTimeout,
       policyFingerprint: options.sessionPolicyFingerprint,
       resumeSession: options.resumeSession,
-      hostToolBridge: options.hostToolBridge,
+      hostToolBridge: options.hostToolBridge ?? this.auxiliaryToolBridge,
     });
   }
 
@@ -131,7 +144,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
         requestTimeout: promptOptions?.requestTimeout ?? this.options.requestTimeout,
         policyFingerprint: promptOptions?.sessionPolicyFingerprint,
         resumeSession: promptOptions?.resumeSession,
-        hostToolBridge: promptOptions?.hostToolBridge,
+        hostToolBridge: promptOptions?.hostToolBridge ?? this.auxiliaryToolBridge,
         resumeInstructions: promptOptions?.resumeInstructions,
       });
 

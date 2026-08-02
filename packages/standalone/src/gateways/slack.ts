@@ -277,7 +277,10 @@ export class SlackGateway extends BaseGateway {
     }
 
     // Pre-analyze images for text enrichment (multi-agent gets text only)
-    if (contentBlocks.some((b) => b.type === 'image')) {
+    const shouldPreAnalyzeImages = contentBlocks.some((b) => b.type === 'image')
+      ? (await import('./image-analyzer.js')).shouldUseClaudeImagePreanalysis()
+      : false;
+    if (shouldPreAnalyzeImages) {
       const { getImageAnalyzer } = await import('./image-analyzer.js');
       const analysisText = await getImageAnalyzer().processContentBlocks(contentBlocks);
       if (analysisText) {
@@ -302,7 +305,10 @@ export class SlackGateway extends BaseGateway {
       },
     };
     // Clear image contentBlocks after analysis to prevent double processing in message-router
-    if (normalizedMessage.contentBlocks?.some((b) => b.type === 'image')) {
+    if (
+      shouldPreAnalyzeImages &&
+      normalizedMessage.contentBlocks?.some((b) => b.type === 'image')
+    ) {
       normalizedMessage.contentBlocks = undefined;
     }
 

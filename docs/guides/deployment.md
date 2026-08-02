@@ -11,7 +11,7 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.32.1  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.32.2  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
 | MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.1.2   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
@@ -61,7 +61,7 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.32.1          |
+| `packages/standalone/package.json`                       | `version` | 0.32.2          |
 | `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
 | `packages/mama-core/package.json`                        | `version` | 2.1.2           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
@@ -167,7 +167,8 @@ For a MAMA OS release, install the exact published version, restart the local da
 both the process and HTTP health before enabling a new opt-in runtime:
 
 ```bash
-npm install -g @jungjaehoon/mama-os@0.27.1
+MAMA_OS_RELEASE=$(npm info @jungjaehoon/mama-os version)
+npm install -g @jungjaehoon/mama-os@"$MAMA_OS_RELEASE"
 mama stop
 mama start
 mama status

@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.32.2] - 2026-08-02
+
+### Added
+
+- **Cline is a first-class MAMA backend alongside Claude and Codex.** The standalone runtime uses
+  Cline's official Hub API, persists routed sessions, projects role-scoped native tools and the
+  shared Code-Act gateway, and keeps compaction under the selected model runtime (TG-03, TG-04,
+  TG-05).
+
+### Fixed
+
+- **Cline provider failures remain actionable without leaking provider payloads.** Hosted quota
+  exhaustion now reports a bounded `rate_limit` classification and retry hint instead of being
+  mistaken for context overflow, while raw transport errors and provider details are redacted.
+- **Timeouts and shutdown cannot replay ambiguous mutations.** Route ownership, mutation
+  settlement, session quarantine, capacity admission, and bounded runtime disposal preserve
+  already-started side effects and force a full policy rebuild before the next turn (TG-05,
+  TG-06).
+- **Managed Cline tools follow the same authority boundary as the other backends.** Native tool
+  projection is role-aware, explicit managed permissions remain separate from narrowed Code-Act
+  roles, and the owner role no longer gains a wildcard bypass (TG-04).
+
 ## mama-os [0.32.1] / mama-core [2.1.2] - 2026-08-02
 
 ### Fixed

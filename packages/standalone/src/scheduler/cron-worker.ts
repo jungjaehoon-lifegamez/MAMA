@@ -1,20 +1,20 @@
 import { EventEmitter } from 'events';
-import { randomUUID } from 'node:crypto';
-import { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
+import type { IModelRunner } from '../agent/model-runner.js';
 
-const CRON_SYSTEM_PROMPT = `You are a cron job executor. Execute the given task and return the result.
-Available tools: Bash, Read, Write, Glob, Grep.
+export function cronSystemPromptForBackend(backend: IModelRunner['backendType']): string {
+  const tools =
+    backend === 'cline'
+      ? 'run_commands, read_files, apply_patch/editor, search_codebase'
+      : 'Bash, Read, Write, Glob, Grep';
+  return `You are a cron job executor. Execute the given task and return the result.
+Available tools: ${tools}.
 Be concise. Return only the result.`;
-
-const CRON_MODEL = 'claude-haiku-4-5-20251001';
-
-// Restrict cron worker to safe tools only (prevents RCE via prompt injection)
-const CRON_ALLOWED_TOOLS = ['Bash', 'Read', 'Write', 'Glob', 'Grep'];
+}
 
 export interface CronWorkerOptions {
   emitter: EventEmitter;
-  model?: string;
   systemPrompt?: string;
+  runnerFactory: () => IModelRunner;
 }
 
 export interface CronJobContext {
@@ -40,45 +40,44 @@ export interface CronFailedEvent {
 }
 
 export class CronWorker {
-  private cli: PersistentClaudeProcess | null = null;
+  private runner: IModelRunner | null = null;
   private readonly emitter: EventEmitter;
-  private readonly model: string;
   private readonly systemPrompt: string;
+  private readonly runnerFactory: () => IModelRunner;
   private executionQueue: Promise<void> = Promise.resolve();
+  private accepting = true;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(options: CronWorkerOptions) {
     this.emitter = options.emitter;
-    this.model = options.model ?? CRON_MODEL;
-    this.systemPrompt = options.systemPrompt ?? CRON_SYSTEM_PROMPT;
+    this.systemPrompt = options.systemPrompt ?? cronSystemPromptForBackend('claude');
+    this.runnerFactory = options.runnerFactory;
   }
 
-  private ensureCLI(): PersistentClaudeProcess {
-    if (!this.cli) {
-      this.cli = new PersistentClaudeProcess({
-        // Claude CLI validates --session-id as a UUID; anything else fails every run
-        sessionId: randomUUID(),
-        model: this.model,
-        systemPrompt: this.systemPrompt,
-        dangerouslySkipPermissions: true,
-        allowedTools: CRON_ALLOWED_TOOLS,
-        pluginDir: undefined,
-      });
+  private ensureRunner(): IModelRunner {
+    if (!this.accepting) {
+      throw new Error('Cron worker is stopping');
     }
-    return this.cli;
+    this.runner ??= this.runnerFactory();
+    return this.runner;
   }
 
   async execute(prompt: string, context: CronJobContext = {}): Promise<string> {
-    // Serialize execution to prevent race conditions on shared CLI instance
-    return new Promise<string>((resolve, reject) => {
-      this.executionQueue = this.executionQueue.then(async () => {
-        try {
-          const result = await this.executeInternal(prompt, context);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
+    if (!this.accepting) {
+      throw new Error('Cron worker is stopping');
+    }
+    // Serialize execution to prevent races on one durable backend session.
+    const execution = this.executionQueue.then(async () => {
+      if (!this.accepting) {
+        throw new Error('Cron worker is stopping');
+      }
+      return await this.executeInternal(prompt, context);
     });
+    this.executionQueue = execution.then(
+      () => undefined,
+      () => undefined
+    );
+    return await execution;
   }
 
   private async executeInternal(prompt: string, context: CronJobContext): Promise<string> {
@@ -86,8 +85,12 @@ export class CronWorker {
     const startTime = Date.now();
 
     try {
-      const cli = this.ensureCLI();
-      const result = await cli.sendMessage(prompt);
+      const runner = this.ensureRunner();
+      const result = await runner.prompt(prompt, undefined, {
+        sessionKey: 'system:cron',
+        resumeSession: true,
+        systemPrompt: this.systemPrompt,
+      });
       const duration = Date.now() - startTime;
 
       this.emitter.emit('cron:completed', {
@@ -116,9 +119,26 @@ export class CronWorker {
   }
 
   async stop(): Promise<void> {
-    if (this.cli) {
-      await this.cli.stop();
-      this.cli = null;
+    if (!this.stopPromise) {
+      this.accepting = false;
+      const ownedRunner = this.runner;
+      this.runner = null;
+      this.stopPromise = (async () => {
+        const stopRunner = Promise.resolve(ownedRunner?.stop()).then(() => undefined);
+        const drained = Promise.allSettled([stopRunner, this.executionQueue]).then(() => undefined);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          drained,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 5_000);
+            timer.unref();
+          }),
+        ]);
+        if (timer) {
+          clearTimeout(timer);
+        }
+      })();
     }
+    await this.stopPromise;
   }
 }

@@ -5,9 +5,12 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
-import { expandPath } from '../config/config-manager.js';
+import { expandPath, initConfig } from '../config/config-manager.js';
+import type { MAMAConfig } from '../config/types.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
+import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
 import { startSetupServer } from '../../setup/setup-server.js';
 
 /**
@@ -20,41 +23,94 @@ export interface SetupOptions {
   noBrowser?: boolean;
 }
 
+interface SetupBackendCheckDependencies {
+  getClaudeStatus: typeof getClaudeCodeAuthStatus;
+  hasClineCredential: typeof hasPersistedClineCredential;
+  exists: typeof existsSync;
+}
+
+export interface SetupBackendStatus {
+  ok: boolean;
+  detail?: string;
+  error?: string;
+}
+
+export async function checkSetupBackend(
+  config: MAMAConfig,
+  dependencies: SetupBackendCheckDependencies = {
+    getClaudeStatus: getClaudeCodeAuthStatus,
+    hasClineCredential: hasPersistedClineCredential,
+    exists: existsSync,
+  }
+): Promise<SetupBackendStatus> {
+  if (config.agent.backend === 'cline') {
+    const command =
+      config.agent.cline_command ??
+      process.env.MAMA_CLINE_COMMAND ??
+      process.env.CLINE_COMMAND ??
+      'cline';
+    try {
+      const authenticated = await dependencies.hasClineCredential({
+        command,
+        provider: config.agent.cline_provider,
+        dataDir: config.agent.cline_data_dir,
+      });
+      return authenticated
+        ? { ok: true, detail: `Cline Hub (${command})` }
+        : { ok: false, error: 'Cline credentials are unavailable. Run: cline auth cline' };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Cline backend is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  if (config.agent.backend === 'codex') {
+    const authPaths = [expandPath('~/.mama/.codex/auth.json'), expandPath('~/.codex/auth.json')];
+    const authPath = authPaths.find((candidate) => dependencies.exists(candidate));
+    return authPath
+      ? { ok: true, detail: `Codex app-server (${authPath})` }
+      : { ok: false, error: 'Codex credentials are unavailable. Run: codex login' };
+  }
+
+  const authStatus = dependencies.getClaudeStatus();
+  if (!authStatus.loggedIn) {
+    return {
+      ok: false,
+      error: authStatus.cliInstalled
+        ? 'Claude Code is installed but not logged in. Run: claude auth login'
+        : 'Claude Code CLI not found. Install it from https://claude.ai/code',
+    };
+  }
+  const detail = authStatus.subscriptionType
+    ? `Claude Code (${authStatus.subscriptionType})`
+    : 'Claude Code';
+  return { ok: true, detail };
+}
+
 /**
  * Execute setup command
  */
 export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   console.log('\n🚀 MAMA Standalone Setup Wizard\n');
 
-  // 1. Check Claude Code authentication
-  console.log('Step 1: Checking Claude Code authentication');
-  process.stdout.write('  Checking Claude Code login... ');
+  const config = await initConfig();
 
-  const authStatus = getClaudeCodeAuthStatus();
-  if (!authStatus.loggedIn) {
+  // 1. Check the configured backend only
+  console.log(`Step 1: Checking ${config.agent.backend} backend authentication`);
+  process.stdout.write(`  Checking ${config.agent.backend} backend... `);
+
+  const backendStatus = await checkSetupBackend(config);
+  if (!backendStatus.ok) {
     console.log('❌\n');
-    if (!authStatus.cliInstalled) {
-      console.error('⚠️  Claude Code CLI not found.');
-      console.error('\n   Please install and log in to Claude Code first:');
-      console.error('   https://claude.ai/code\n');
-    } else {
-      console.error('⚠️  Claude Code is installed but not logged in.');
-      console.error('   Please run:\n');
-      console.error('   claude auth login\n');
-    }
+    console.error(`⚠️  ${backendStatus.error}\n`);
     process.exit(1);
   }
 
   console.log('✓');
-  if (authStatus.subscriptionType) {
-    console.log(`  Subscription type: ${authStatus.subscriptionType}`);
-  }
-  if (authStatus.source === 'legacy_credentials') {
-    console.log(`  Legacy credentials file detected: ${expandPath('~/.claude/.credentials.json')}`);
-  }
-  if (authStatus.subscriptionType && authStatus.subscriptionType !== 'max') {
-    console.log('\n⚠️  Warning: Claude Pro (Max) subscription is recommended.');
-    console.log(`   Current subscription: ${authStatus.subscriptionType}\n`);
+  if (backendStatus.detail) {
+    console.log(`  Backend: ${backendStatus.detail}`);
   }
 
   // 2. Start setup server
@@ -95,7 +151,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('✨ Setup Wizard has started!');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  console.log(`Complete the setup by chatting with Claude in your browser:`);
+  console.log(`Complete the setup by chatting with MAMA in your browser:`);
   console.log(`👉 ${setupUrl}\n`);
   console.log(`When setup is complete, return to this terminal and press Ctrl+C to exit.\n`);
 
@@ -136,14 +192,27 @@ async function openBrowser(url: string): Promise<void> {
 /**
  * Wait for user to press Ctrl+C
  */
-async function waitForExit(server: { close: (callback: () => void) => void }): Promise<void> {
-  return new Promise(() => {
+export async function waitForExit(server: { close: () => Promise<void> }): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let closing = false;
     const cleanup = () => {
+      if (closing) return;
+      closing = true;
       console.log('\n\n🛑 Shutting down setup server...');
-      server.close(() => {
-        console.log('✓ Shutdown complete\n');
-        process.exit(0);
-      });
+      void server
+        .close()
+        .then(() => {
+          console.log('✓ Shutdown complete\n');
+          process.exitCode = 0;
+          process.off('SIGINT', cleanup);
+          process.off('SIGTERM', cleanup);
+          resolve();
+        })
+        .catch((error) => {
+          process.off('SIGINT', cleanup);
+          process.off('SIGTERM', cleanup);
+          reject(error);
+        });
     };
 
     process.on('SIGINT', cleanup);

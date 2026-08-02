@@ -33,7 +33,8 @@ Before installing MAMA Standalone, ensure you have:
 - **Node.js >= 22.13.0** (Standalone, plugin, MCP server, and core all require unflagged `node:sqlite`)
 - **At least one authenticated backend CLI**
   - Codex CLI (`codex login`) or
-  - Claude CLI (`claude` OAuth login)
+  - Claude CLI (`claude` OAuth login) or
+  - Cline CLI (`cline auth cline`)
 - **500MB free disk space** (embedding model cache + database)
 
 ### Optional (for gateway integrations)
@@ -55,6 +56,9 @@ ls ~/.mama/.codex/auth.json ~/.codex/auth.json
 # Check Claude CLI (alternative backend)
 claude --version
 claude auth status
+
+# Check Cline CLI (alternative backend)
+cline --version
 ```
 
 **If Codex CLI is not installed:**
@@ -69,6 +73,13 @@ codex login
 ```bash
 npm install -g @anthropic-ai/claude-code
 claude  # Follow OAuth prompts in browser
+```
+
+**If Cline CLI is not installed (alternative):**
+
+```bash
+npm install -g cline
+cline auth cline
 ```
 
 ---
@@ -94,7 +105,7 @@ npm install -g @jungjaehoon/mama-os
 
 ```bash
 mama --version
-# Should output: @jungjaehoon/mama-os v0.20.x
+# Should output: 0.32.2
 
 mama --help
 # Should show available commands
@@ -127,10 +138,11 @@ mama init
 
 `mama init` auto-selects the default backend:
 
-- Uses `codex` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
-- Falls back to `claude` if `claude auth status` reports a logged-in session
+- Uses `claude` first if `claude auth status` reports a logged-in session
+- Otherwise uses `codex` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
+- Otherwise uses Cline when the CLI and its persisted hosted credential are available
 - Legacy fallback: older Claude Code installs may still be detected via `~/.claude/.credentials.json`
-- Fails with guidance if neither backend is authenticated
+- Fails with guidance if no supported backend is authenticated
 
 You can override this per user/environment:
 
@@ -138,6 +150,7 @@ You can override this per user/environment:
 mama init --backend auto    # default: detect installed/authenticated backend
 mama init --backend claude  # force Claude backend if authenticated
 mama init --backend codex  # force Codex app-server backend if authenticated
+mama init --backend cline  # use Cline CLI after `cline auth cline`
 ```
 
 **Expected output:**
@@ -170,9 +183,14 @@ BOOTSTRAP.md 생성 중... ✓
 mama setup
 ```
 
+The interactive wizard uses the backend selected in `config.yaml`.
+It does not switch `agent.backend` or `agent.model`; change providers with `mama init --force
+--backend ...` after authenticating the target CLI. Setup mutations use a localhost host-action
+boundary protected by an exact Origin check and a one-time page nonce.
+
 **What the setup wizard does:**
 
-1. **Checks Claude Code login** - Uses `claude auth status` (with legacy credentials fallback)
+1. **Checks the configured backend login** - Uses Claude auth status, Codex auth files, or the persisted Cline Hub credential as appropriate.
 2. **Starts setup server** - Launches web interface on port 3848
 3. **Opens browser** - Guides you through 10-phase onboarding
 4. **Configures integrations** - Helps set up Discord/Slack/Telegram bots
@@ -273,7 +291,7 @@ mama start
 The daemon validates the complete path before starting the scanner. `on` requires:
 
 - signed envelope issuance enabled (the default, or `MAMA_ENVELOPE_ISSUANCE=enabled|required`);
-- a Claude or Codex backend;
+- a Claude, Codex, or Cline backend;
 - the built-in temporal worker policy with `task_temporal_reconcile` available through the
   active transport; and
 - a working Stage-2 consumer.
@@ -299,9 +317,9 @@ Time precision and workflow state are separate:
 - `temporal_state` is derived for display and scanning; overdue never means `blocked`, and elapsed
   time alone never means `done`.
 
-Trello is connector evidence read through `context_compile`, Kagemusha is read-only project-task
-truth, and the native task ledger owns owner-console workflow state. This feature does not write
-Trello, copy Kagemusha/Trello lifecycle state into native tasks, or infer completion from a missing
+Trello and configured private connectors are read-only evidence accessed through `context_compile`,
+while the native task ledger owns owner-console workflow state. This feature does not write
+connectors, copy external lifecycle state into native tasks, or infer completion from a missing
 calendar event.
 
 Temporal model responses are not written to daemon logs. Receipt reason/evidence and worker-error
@@ -372,7 +390,7 @@ version: 1
 
 # Agent settings
 agent:
-  backend: claude # claude | codex (set by init auto/override)
+  backend: claude # claude | codex | cline (set by init auto/override)
   model: claude-sonnet-4-20250514 # Claude model to use
   max_turns: 10 # Maximum conversation turns
   timeout: 300000 # Request timeout (5 minutes)
@@ -479,20 +497,20 @@ Notes:
 
 #### Agent Settings
 
-| Option                      | Type   | Default                  | Description                          |
-| --------------------------- | ------ | ------------------------ | ------------------------------------ |
-| `backend`                   | string | claude                   | Agent backend (`claude` or `codex`)  |
-| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend      |
-| `max_turns`                 | number | 10                       | Maximum conversation turns           |
-| `timeout`                   | number | 300000                   | Request timeout in milliseconds      |
-| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory         |
-| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory              |
-| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                   |
-| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard      |
-| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`       |
-| `codex_ephemeral`           | bool   | false                    | Disable session persistence          |
-| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex |
-| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides   |
+| Option                      | Type   | Default                  | Description                                   |
+| --------------------------- | ------ | ------------------------ | --------------------------------------------- |
+| `backend`                   | string | claude                   | Agent backend (`claude`, `codex`, or `cline`) |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend               |
+| `max_turns`                 | number | 10                       | Maximum conversation turns                    |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds               |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory                  |
+| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory                       |
+| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                            |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard               |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`                |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence                   |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex          |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides            |
 
 ### Codex external MCP notes (Brave)
 

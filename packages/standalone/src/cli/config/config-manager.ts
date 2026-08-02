@@ -4,14 +4,16 @@
  * Manages YAML configuration file at ~/.mama/config.yaml
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 
-import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig } from './types.js';
+import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig, RoleConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
+import { resolveBackendScopedModel } from '../../agent/backend-model-policy.js';
 // ============================================================================
 // Sync Config Cache (STORY-002)
 // ============================================================================
@@ -196,7 +198,7 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
   const errors: string[] = [];
 
   if (!config.agent.backend) {
-    errors.push("agent.backend is required. Valid: 'claude' | 'codex'");
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'cline'");
   }
   if (!config.agent.model) {
     errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
@@ -217,7 +219,14 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
       if (agent.enabled === false) continue;
       // Agents inherit from global config, so only error if neither agent nor global has it
       const effectiveBackend = agent.backend ?? config.agent.backend;
-      const effectiveModel = agent.model ?? config.agent.model;
+      const effectiveModel = effectiveBackend
+        ? resolveBackendScopedModel({
+            backend: effectiveBackend,
+            model: agent.model,
+            inheritedBackend: config.agent.backend,
+            inheritedModel: config.agent.model,
+          })
+        : undefined;
       if (!effectiveBackend) {
         errors.push(`multi_agent.agents.${id}: no backend. Set in agent config or agent.backend`);
       }
@@ -359,7 +368,10 @@ function pruneDefaultRolesForSave(config: MAMAConfig): MAMAConfig {
   const definitions: Record<string, unknown> = {};
   for (const [name, def] of Object.entries(config.roles.definitions ?? {})) {
     const defaultDef = defaults.definitions[name];
-    if (!defaultDef || canonicalJson(def) !== canonicalJson(defaultDef)) {
+    const inheritedDefaultDef = defaultDef
+      ? { ...defaultDef, model: config.agent.model }
+      : undefined;
+    if (!inheritedDefaultDef || canonicalJson(def) !== canonicalJson(inheritedDefaultDef)) {
       definitions[name] = def;
     }
   }
@@ -401,7 +413,33 @@ export async function saveConfig(config: MAMAConfig): Promise<void> {
 
 ${content}`;
 
-  await writeFile(configPath, fileContent, 'utf-8');
+  const temporaryPath = join(configDir, `.config.yaml.${process.pid}.${randomUUID()}.tmp`);
+  const mode = 0o600;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(temporaryPath, 'wx', mode);
+    await handle.writeFile(fileContent, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporaryPath, configPath);
+    try {
+      const directory = await open(configDir, 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } catch {
+      // The rename is already the commit point. Some platforms do not support
+      // opening/fsyncing directories, so a post-commit durability hint cannot
+      // be reported as a failed save.
+    }
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -438,16 +476,23 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     config.agent && (config.agent.backend as string) === 'codex-mcp'
       ? { ...config.agent, backend: 'codex' as const }
       : config.agent;
+  const mergedAgent = {
+    ...DEFAULT_CONFIG.agent,
+    ...agent,
+  };
+  const inheritedRoleDefinitions = Object.fromEntries(
+    Object.entries(DEFAULT_CONFIG.roles?.definitions ?? {}).map(([name, role]) => [
+      name,
+      { ...role, model: mergedAgent.model },
+    ])
+  ) as Record<string, RoleConfig>;
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
     ...config,
     // Deep-merge known structured fields with defaults
     version: config.version ?? DEFAULT_CONFIG.version,
-    agent: {
-      ...DEFAULT_CONFIG.agent,
-      ...agent,
-    },
+    agent: mergedAgent,
     database: {
       ...DEFAULT_CONFIG.database,
       ...config.database,
@@ -460,13 +505,15 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     // older version lacks newer role definitions (owner_console), and a plain
     // override would silently disable trust-conditional escalation on every
     // real deployment. User-defined roles and sourceMapping still win.
-    roles:
-      config.roles && DEFAULT_CONFIG.roles
-        ? {
-            definitions: { ...DEFAULT_CONFIG.roles.definitions, ...config.roles.definitions },
-            sourceMapping: { ...DEFAULT_CONFIG.roles.sourceMapping, ...config.roles.sourceMapping },
-          }
-        : (config.roles ?? DEFAULT_CONFIG.roles),
+    roles: DEFAULT_CONFIG.roles
+      ? {
+          definitions: { ...inheritedRoleDefinitions, ...config.roles?.definitions },
+          sourceMapping: {
+            ...DEFAULT_CONFIG.roles.sourceMapping,
+            ...config.roles?.sourceMapping,
+          },
+        }
+      : config.roles,
     use_claude_cli: config.use_claude_cli ?? DEFAULT_CONFIG.use_claude_cli,
     discord: config.discord ?? DEFAULT_CONFIG.discord,
     slack: config.slack ?? DEFAULT_CONFIG.slack,
@@ -730,8 +777,8 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude" or "codex"');
+  if (config.agent.backend && !['claude', 'codex', 'cline'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude", "codex", or "cline"');
   }
 
   if (Object.hasOwn(config.agent, 'codex_transport')) {

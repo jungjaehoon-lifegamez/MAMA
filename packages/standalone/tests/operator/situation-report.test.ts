@@ -324,6 +324,9 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const codex = new SituationReporter({ backend: 'codex', selfGatherLines: gather }).buildPrompt(
       'full'
     );
+    const cline = new SituationReporter({ backend: 'cline', selfGatherLines: gather }).buildPrompt(
+      'full'
+    );
 
     expect(claude).toContain('```tool_call');
     expect(claude).toContain('fenced tool_call JSON block');
@@ -333,6 +336,10 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(codex).not.toContain('```tool_call');
     expect(codex).not.toContain('fenced tool_call JSON block');
     expect(codex).toContain(gather[0]);
+    expect(cline).toContain('mcp__code-act__code_act');
+    expect(cline).toContain('injected TypeScript-declared gateway functions');
+    expect(cline).not.toContain('```tool_call');
+    expect(cline).toContain(gather[0]);
   });
 
   it('full mode injects board publish lines when configured; digest never does', () => {

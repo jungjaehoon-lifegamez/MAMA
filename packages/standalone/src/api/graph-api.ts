@@ -14,6 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
 import { isProcessContextKey } from '../agent/code-act/run-context-registry.js';
+import { defaultModelForBackend } from '../agent/backend-model-policy.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
@@ -160,7 +161,7 @@ const codeActRateBuckets = new Map<
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
-const supportedManagedBackends = ['claude', 'codex'];
+const supportedManagedBackends = ['claude', 'codex', 'cline'];
 const isCodexFamilyBackend = (backend: string): boolean => backend === 'codex';
 const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
   'agent_test',
@@ -3284,7 +3285,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       config.agent.backend &&
       !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude" or "codex"');
+      errors.push('agent.backend must be "claude", "codex", or "cline"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -3323,7 +3324,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
         if (!supportedManagedBackends.includes(backend)) {
-          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
+          errors.push(
+            `multi_agent.agents.${agentId}.backend must be "claude", "codex", or "cline"`
+          );
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -3760,15 +3763,22 @@ async function handleMultiAgentUpdateAgentRequest(
       (typeof body.backend !== 'string' ||
         !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude" or "codex"');
+      validationErrors.push('backend must be "claude", "codex", or "cline"');
     }
 
     const nextBackend = (
       body.backend !== undefined ? String(body.backend).toLowerCase() : currentAgent.backend
     ) as string | undefined;
-    const nextModel = (body.model !== undefined ? body.model : currentAgent.model) as
-      | string
-      | undefined;
+    const backendChanged =
+      typeof body.backend === 'string' &&
+      String(body.backend).toLowerCase() !== String(currentAgent.backend ?? config.agent.backend);
+    const nextModel = (
+      body.model !== undefined
+        ? body.model
+        : backendChanged && typeof nextBackend === 'string'
+          ? defaultModelForBackend(nextBackend as 'claude' | 'codex' | 'cline')
+          : currentAgent.model
+    ) as string | undefined;
     if (typeof nextBackend === 'string' && typeof nextModel === 'string' && nextModel.trim()) {
       if (nextBackend === 'claude' && !isClaudeModel(nextModel)) {
         validationErrors.push('model must be a Claude model when backend is "claude"');
@@ -3826,6 +3836,8 @@ async function handleMultiAgentUpdateAgentRequest(
     }
     if (body.model !== undefined) {
       updatedAgent.model = body.model;
+    } else if (backendChanged && typeof nextModel === 'string') {
+      updatedAgent.model = nextModel;
     }
     if (body.enabled !== undefined) {
       updatedAgent.enabled = body.enabled;

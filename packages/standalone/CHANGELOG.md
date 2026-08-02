@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.2] - 2026-08-02
+
+Cline is now a first-class persisted backend with role-scoped native tools and the shared Code-Act
+gateway. Provider quota errors are classified and safely bounded; route timeouts, shutdown,
+capacity admission, mutation settlement, and session quarantine prevent ambiguous side effects
+from being replayed. Runtime-owned model compaction replaces fixed host token thresholds
+(TG-03, TG-04, TG-05, TG-06). See the repository root CHANGELOG.md for full details.
+
 ## [0.27.6] - 2026-07-24
 
 Hotfix: the 0.27.5 token telemetry recorded NULL for every workorder because the

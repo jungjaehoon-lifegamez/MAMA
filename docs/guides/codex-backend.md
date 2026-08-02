@@ -176,7 +176,7 @@ executed by MAMA's canonical executor, while validated external MCP servers run 
 
 ```typescript
 interface AgentConfig {
-  backend: 'claude' | 'codex';
+  backend: 'claude' | 'codex' | 'cline';
   model: string;
   timeout: number;
 
@@ -188,6 +188,10 @@ interface AgentConfig {
   codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   codex_skip_git_repo_check?: boolean;
   codex_ephemeral?: boolean;
+
+  cline_command?: string;
+  cline_provider?: string;
+  cline_data_dir?: string;
 }
 ```
 

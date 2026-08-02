@@ -25,7 +25,7 @@ function isValidToolPermissions(value: unknown): boolean {
   return true;
 }
 
-const SUPPORTED_BACKENDS = new Set(['claude', 'codex']);
+const SUPPORTED_BACKENDS = new Set(['claude', 'codex', 'cline']);
 
 function isSupportedBackend(value: unknown): boolean {
   return typeof value === 'string' && SUPPORTED_BACKENDS.has(value.trim());

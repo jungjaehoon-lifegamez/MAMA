@@ -568,6 +568,50 @@ export class CodexAppServerProcess {
     await this.shutdown(new Error('Codex app-server process stopped'));
   }
 
+  async executeSandboxedCommand(
+    command: string,
+    cwd: string,
+    roots: readonly string[],
+    signal?: AbortSignal
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    signal?.throwIfAborted();
+    if (!this.child) throw new Error('Codex app-server is not connected');
+    const shellCommand =
+      process.platform === 'win32'
+        ? ['cmd.exe', '/d', '/s', '/c', command]
+        : ['/bin/sh', '-c', command];
+    const result = object(
+      await this.request(
+        'command/exec',
+        {
+          command: shellCommand,
+          cwd,
+          sandboxPolicy: {
+            type: 'workspaceWrite',
+            writableRoots: [...roots],
+            readOnlyAccess: {
+              type: 'restricted',
+              includePlatformDefaults: true,
+              readableRoots: [...roots],
+            },
+            networkAccess: false,
+          },
+          timeoutMs: this.options.requestTimeout,
+        },
+        this.options.requestTimeout
+      )
+    );
+    signal?.throwIfAborted();
+    if (
+      typeof result?.exitCode !== 'number' ||
+      typeof result.stdout !== 'string' ||
+      typeof result.stderr !== 'string'
+    ) {
+      throw new Error('Codex app-server returned a malformed command result');
+    }
+    return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+  }
+
   getThreadId(sessionKey = this.options.sessionKey): string | undefined {
     return this.sessions.get(sessionKey)?.threadId || undefined;
   }

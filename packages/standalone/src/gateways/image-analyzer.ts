@@ -6,6 +6,16 @@ const logger = new DebugLogger('ImageAnalyzer');
 // Default model for image analysis (vision-capable)
 const DEFAULT_IMAGE_MODEL = 'claude-sonnet-4-6';
 
+/**
+ * Claude uses the direct vision client. Codex and Cline keep the image block
+ * intact so their configured runtime can inspect the workspace media itself.
+ */
+export function shouldUseClaudeImagePreanalysis(
+  backend: string | undefined = process.env.MAMA_BACKEND
+): boolean {
+  return (backend ?? 'claude') === 'claude';
+}
+
 // Define proper types
 interface ClaudeResponse {
   content: Array<{ text: string }>;

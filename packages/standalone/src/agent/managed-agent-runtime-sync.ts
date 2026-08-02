@@ -11,6 +11,7 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
+import { defaultModelForBackend } from './backend-model-policy.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 type LooseConfig = MAMAConfig;
@@ -81,10 +82,15 @@ function normalizeCreateBackend(
   fallback: string | undefined
 ): ManagedAgentConfig['backend'] {
   const candidate = String(backend ?? fallback ?? 'claude').toLowerCase();
-  if (candidate === 'codex') {
-    return 'codex';
+  switch (candidate) {
+    case 'codex':
+      return 'codex';
+    case 'cline':
+      return 'cline';
+    case 'claude':
+    default:
+      return 'claude';
   }
-  return 'claude';
 }
 
 async function applyRuntimeHooks(
@@ -203,6 +209,10 @@ export async function updateManagedAgentRuntime(
     }
 
     const updatedAgent: ManagedAgentConfig = { ...currentAgent };
+    const requestedBackend =
+      typeof input.changes.backend === 'string'
+        ? normalizeCreateBackend(input.changes.backend, updatedAgent.backend)
+        : undefined;
     for (const key of [
       'name',
       'display_name',
@@ -226,6 +236,13 @@ export async function updateManagedAgentRuntime(
             : input.changes[key];
         (updatedAgent as Record<string, unknown>)[key] = value;
       }
+    }
+    if (
+      requestedBackend &&
+      requestedBackend !== currentAgent.backend &&
+      !('model' in input.changes)
+    ) {
+      updatedAgent.model = defaultModelForBackend(requestedBackend);
     }
 
     if (!agents) {

@@ -39,18 +39,9 @@ interface SessionEntry {
   createdAt: number;
   /** Whether session is currently in use (locked) */
   inUse: boolean;
-  /** Cumulative input tokens for this session */
+  /** Legacy context occupancy field; durable runtimes own compaction, so this stays zero */
   totalInputTokens: number;
-  /** Backend type for context threshold selection */
-  backend?: 'claude' | 'codex';
 }
-
-/**
- * Context window threshold (80% of 200K)
- * When exceeded, session will be reset on next request
- * Note: Only applies to Claude CLI backend. Codex app-server handles its own compaction.
- */
-const CONTEXT_THRESHOLD_TOKENS = () => getConfig().io?.context_threshold_tokens ?? 160_000;
 
 /**
  * Session Pool configuration
@@ -98,7 +89,8 @@ export class SessionPool {
    * With --no-session-persistence flag, Claude CLI doesn't lock session IDs.
    * This allows session reuse for conversation continuity.
    *
-   * Auto-resets session when context window reaches 80% (160K tokens).
+   * Durable backends own model-aware context compaction. This pool rotates only
+   * for explicit resets and session-lifecycle expiry.
    * If session is in use, returns busy=true immediately (no waiting).
    *
    * @param channelKey - Channel identifier (format: "{source}:{channelId}")
@@ -115,19 +107,10 @@ export class SessionPool {
     // Check if existing session is still valid
     if (existing) {
       const isExpired = now - existing.lastActive > this.config.sessionTimeoutMs;
-      // Codex app-server handles its own compaction - never reset session based on tokens
-      // Only Claude CLI backend uses token-based session reset
-      const isContextFull =
-        existing.backend !== 'codex' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS();
 
       if (isExpired) {
         this.sessions.delete(channelKey);
         logger.info(`Session expired for ${channelKey}, creating new one`);
-      } else if (isContextFull) {
-        this.sessions.delete(channelKey);
-        logger.info(
-          `Context 80% full (${existing.totalInputTokens} tokens) for ${channelKey}, creating fresh session`
-        );
       } else if (existing.inUse) {
         // Session is currently in use - return busy immediately
         // Still update lastActive and messageCount for queued messages
@@ -140,9 +123,8 @@ export class SessionPool {
         existing.lastActive = now;
         existing.messageCount++;
         existing.inUse = true; // Lock the session
-        const usagePercent = Math.round((existing.totalInputTokens / 200000) * 100);
         logger.debug(
-          `Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount}, ${usagePercent}% context)`
+          `Reusing session for ${channelKey}: ${existing.sessionId} (msg #${existing.messageCount})`
         );
         return { sessionId: existing.sessionId, isNew: false, busy: false };
       }
@@ -169,58 +151,27 @@ export class SessionPool {
   }
 
   /**
-   * Update token usage for a session
-   * Called after each Claude CLI response
+   * Preserve the legacy token-status interface without interpreting billing
+   * usage as context occupancy. Claude Code, Codex app-server, and Cline Hub
+   * each compact from their own model-aware request state.
    *
    * @param channelKey - Channel identifier
-   * @param inputTokens - Input tokens from this request
-   * @returns Current total tokens and whether threshold is approaching
+   * @param _inputTokens - Usage telemetry from this run; recorded separately by AgentLoop
+   * @param _backend - Runtime that owns the durable session
+   * @returns Zero occupancy because the host has no authoritative context-size signal
    */
   updateTokens(
     channelKey: string,
-    inputTokens: number,
-    backend?: 'claude' | 'codex'
+    _inputTokens: number,
+    _backend?: 'claude' | 'codex' | 'cline'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {
       return { totalTokens: 0, nearThreshold: false };
     }
 
-    // Store backend for context threshold selection in getSession()
-    if (backend) {
-      existing.backend = backend;
-    }
-
-    // Codex app-server sessions may accumulate ~20-25K tokens per message
-    // After ~50 messages, context exceeds 200K (max)
-    // Force reset to prevent degraded responses from overflowed context
-    if (backend === 'codex') {
-      const MAX_CONTEXT_TOKENS = getConfig().io?.max_context_tokens ?? 200_000;
-      if (inputTokens > MAX_CONTEXT_TOKENS) {
-        logger.warn(
-          `[Codex] Session overflow: ${inputTokens} tokens > ${MAX_CONTEXT_TOKENS} max, forcing reset`
-        );
-        existing.totalInputTokens = CONTEXT_THRESHOLD_TOKENS();
-        return { totalTokens: existing.totalInputTokens, nearThreshold: true };
-      }
-    }
-
-    // Use latest value, not cumulative - Claude API returns total context tokens per request
-    existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
-
-    // nearThreshold for monitoring (Codex app-server doesn't reset, but we track for UI display)
-    const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS() * 0.9; // 90% of threshold
-
-    if (nearThreshold) {
-      logger.warn(
-        `Context approaching limit: ${existing.totalInputTokens} tokens (${Math.round((existing.totalInputTokens / 200000) * 100)}% of 200K)`
-      );
-    }
-
-    return {
-      totalTokens: existing.totalInputTokens,
-      nearThreshold,
-    };
+    existing.totalInputTokens = 0;
+    return { totalTokens: 0, nearThreshold: false };
   }
 
   /**

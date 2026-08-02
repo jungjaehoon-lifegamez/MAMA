@@ -8,6 +8,22 @@ describe('SessionPool failed-reset invalidation', () => {
     pool?.dispose();
   });
 
+  it.each(['claude', 'codex', 'cline'] as const)(
+    'TG-05 leaves %s compaction ownership with its runtime instead of treating run usage as context occupancy',
+    (backend) => {
+      pool = new SessionPool({ cleanupIntervalMs: 60_000 });
+      const channelKey = `telegram:${backend}-owner`;
+      const initial = pool.getSession(channelKey);
+
+      const tokenStatus = pool.updateTokens(channelKey, 203_698, backend);
+      pool.releaseSession(channelKey, initial.sessionId);
+      const continued = pool.getSession(channelKey);
+
+      expect(tokenStatus).toEqual({ totalTokens: 0, nearThreshold: false });
+      expect(continued).toEqual({ sessionId: initial.sessionId, isNew: false, busy: false });
+    }
+  );
+
   it('makes the request after a failed replacement observe a genuinely new session', () => {
     pool = new SessionPool({ cleanupIntervalMs: 60_000 });
     const channelKey = 'telegram:synthetic-owner';

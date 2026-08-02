@@ -12,6 +12,13 @@ import { readFile } from 'fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { AgentLoop, loadBackendAgentsMd } from '../agent/agent-loop.js';
+import { ClineCLIAdapter } from '../agent/cline-cli-adapter.js';
+import { projectClineNativeTools } from '../agent/cline-native-tool-policy.js';
+import {
+  defaultModelForBackend,
+  resolveBackendScopedModel,
+} from '../agent/backend-model-policy.js';
+export { projectClineNativeTools } from '../agent/cline-native-tool-policy.js';
 import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
@@ -60,7 +67,7 @@ const { DebugLogger } = debugLogger as {
 };
 const processManagerLogger = new DebugLogger('AgentProcessManager');
 
-class ManagedCodexCodeActProcess extends EventEmitter implements AgentRuntimeProcess {
+class ManagedCodeActProcess extends EventEmitter implements AgentRuntimeProcess {
   private stopped = false;
   private activeRequests = 0;
 
@@ -293,12 +300,12 @@ export class AgentProcessManager extends EventEmitter {
   private getAgentBackend(
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     agentId?: string
-  ): 'claude' | 'codex' {
+  ): 'claude' | 'codex' | 'cline' {
     const backend = agentConfig.backend ?? this.runtimeOptions.backend;
     if (!backend) {
       throw new Error(
         `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
-          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex'`
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'cline'`
       );
     }
     return backend;
@@ -326,12 +333,20 @@ export class AgentProcessManager extends EventEmitter {
     return this.config.agents[agentId]?.persona_file === '';
   }
 
-  private personaCacheKey(agentId: string): string {
-    return `${this.privateConnectorPolicy.fingerprint}:${agentId}`;
+  private personaCacheKey(agentId: string, model?: string): string {
+    return `${this.privateConnectorPolicy.fingerprint}\u0000${agentId}\u0000${model ?? ''}`;
   }
 
   private personaCacheAgentId(cacheKey: string): string {
-    return cacheKey.slice(this.privateConnectorPolicy.fingerprint.length + 1);
+    return cacheKey.split('\u0000')[1] ?? '';
+  }
+
+  private clearAgentPersonaCache(agentId: string): void {
+    for (const cacheKey of this.personaCache.keys()) {
+      if (this.personaCacheAgentId(cacheKey) === agentId) {
+        this.personaCache.delete(cacheKey);
+      }
+    }
   }
 
   private clearPersonaCache(preserveEphemeral = false): void {
@@ -384,12 +399,22 @@ export class AgentProcessManager extends EventEmitter {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
     const agentBackend = this.getAgentBackend(agentConfig, agentId);
-    if (agentBackend === 'codex' && agentConfig?.useCodeAct && !this.gatewayToolExecutor) {
+    if (
+      (agentBackend === 'codex' || agentBackend === 'cline') &&
+      agentConfig?.useCodeAct &&
+      !this.gatewayToolExecutor
+    ) {
       throw new Error(
-        `Managed Codex Code-Act agent "${agentId}" cannot start: shared GatewayToolExecutor is not wired`
+        `Managed ${agentBackend} Code-Act agent "${agentId}" cannot start: shared GatewayToolExecutor is not wired`
       );
     }
-    const systemPrompt = await this.loadPersona(agentId);
+    const model = resolveBackendScopedModel({
+      backend: agentBackend,
+      model: agentConfig?.model,
+      inheritedBackend: this.runtimeOptions.backend,
+      inheritedModel: this.runtimeOptions.model ?? this.defaultOptions.model,
+    });
+    const systemPrompt = await this.loadPersona(agentId, model);
     const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
       ...this.defaultOptions,
@@ -401,9 +426,7 @@ export class AgentProcessManager extends EventEmitter {
         900000,
     };
 
-    if (agentConfig?.model) {
-      options.model = agentConfig.model;
-    }
+    options.model = model;
     const effort = agentConfig?.effort || this.runtimeOptions.effort;
     if (effort) {
       options.effort = effort;
@@ -414,7 +437,7 @@ export class AgentProcessManager extends EventEmitter {
     // natively from AgentLoop and must not also load the retired MCP wrapper.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      if (agentConfig?.useCodeAct && agentBackend !== 'codex') {
+      if (agentConfig?.useCodeAct && agentBackend === 'claude') {
         // Claude Code-Act agents: only provide code-act MCP server
         const codeActOnlyConfig = resolve(
           homedir(),
@@ -457,7 +480,7 @@ export class AgentProcessManager extends EventEmitter {
             `Code-Act MCP config unavailable for agent "${agentId}" at ${mcpConfigPath}: ${message}`
           );
         }
-      } else if (!agentConfig?.useCodeAct) {
+      } else if (!agentConfig?.useCodeAct && agentBackend === 'claude') {
         options.mcpConfigPath = mcpConfigPath;
       }
     }
@@ -476,6 +499,8 @@ export class AgentProcessManager extends EventEmitter {
     } as AgentPersonaConfig);
     if (!permissions.allowed.includes('*')) {
       options.allowedTools = permissions.allowed;
+    } else if (agentBackend === 'cline') {
+      options.allowedTools = ['*'];
     }
     if (permissions.blocked.length > 0) {
       options.disallowedTools = permissions.blocked;
@@ -491,7 +516,8 @@ export class AgentProcessManager extends EventEmitter {
       }
 
       const runner = agentConfig.useCodeAct
-        ? this.createCodexCodeActRunner(
+        ? this.createManagedCodeActRunner(
+            'codex',
             options,
             channelKey,
             source,
@@ -501,6 +527,29 @@ export class AgentProcessManager extends EventEmitter {
             this.gatewayToolExecutor!
           )
         : this.createCodexRunner(options, channelKey);
+      this.codexProcessPool.set(channelKey, runner);
+      this.emit('process-created', { agentId, process: runner });
+      return runner;
+    }
+
+    if (agentBackend === 'cline') {
+      await this.waitForCodexShutdown(channelKey);
+      const existing = this.codexProcessPool.get(channelKey);
+      if (existing) {
+        return existing;
+      }
+      const runner = agentConfig.useCodeAct
+        ? this.createManagedCodeActRunner(
+            'cline',
+            options,
+            channelKey,
+            source,
+            channelId,
+            agentId,
+            agentConfig,
+            this.gatewayToolExecutor!
+          )
+        : this.createClineRunner(options, channelKey, agentConfig);
       this.codexProcessPool.set(channelKey, runner);
       this.emit('process-created', { agentId, process: runner });
       return runner;
@@ -554,7 +603,33 @@ export class AgentProcessManager extends EventEmitter {
     });
   }
 
-  private createCodexCodeActRunner(
+  private createClineRunner(
+    options: Partial<PersistentProcessOptions>,
+    sessionKey: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): AgentRuntimeProcess {
+    const allowedTools = projectClineNativeTools(options.allowedTools);
+    const disallowedTools = projectClineNativeTools(options.disallowedTools);
+    const canDelegate = (agentConfig.tier ?? 1) === 1 && agentConfig.can_delegate === true;
+    return new ClineCLIAdapter({
+      command: this.runtimeOptions.clineCommand,
+      provider: this.runtimeOptions.clineProvider ?? 'cline',
+      model: options.model || this.runtimeOptions.model,
+      systemPrompt: options.systemPrompt,
+      cwd: this.runtimeOptions.clineCwd ? resolvePath(this.runtimeOptions.clineCwd) : process.cwd(),
+      dataDir: this.runtimeOptions.clineDataDir,
+      requestTimeout: options.requestTimeout,
+      env: options.env,
+      sessionId: sessionKey,
+      allowedTools,
+      disallowedTools,
+      allowSpawnAgent: canDelegate,
+      allowAgentTeams: canDelegate,
+    });
+  }
+
+  private createManagedCodeActRunner(
+    backend: 'codex' | 'cline',
     options: Partial<PersistentProcessOptions>,
     sessionKey: string,
     source: string,
@@ -599,10 +674,11 @@ export class AgentProcessManager extends EventEmitter {
       capabilities,
       limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
       tier: agentConfig.tier ?? 1,
-      backend: 'codex',
+      backend,
     };
+    const canDelegate = (agentConfig.tier ?? 1) === 1 && agentConfig.can_delegate === true;
     const loop = new AgentLoop(null, {
-      backend: 'codex',
+      backend,
       model: options.model ?? this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
       maxTurns: agentConfig.max_turns,
@@ -612,6 +688,20 @@ export class AgentProcessManager extends EventEmitter {
       agentContext,
       toolsConfig: { gateway: ['*'], mcp: [] },
       executor,
+      ...(backend === 'cline'
+        ? {
+            clineCwd: this.runtimeOptions.clineCwd
+              ? resolvePath(this.runtimeOptions.clineCwd)
+              : undefined,
+            clineCommand: this.runtimeOptions.clineCommand,
+            clineProvider: this.runtimeOptions.clineProvider,
+            clineDataDir: this.runtimeOptions.clineDataDir,
+            clineNativeAllowedTools: projectClineNativeTools(options.allowedTools),
+            clineNativeDisallowedTools: projectClineNativeTools(options.disallowedTools),
+            clineAllowSpawnAgent: canDelegate,
+            clineAllowAgentTeams: canDelegate,
+          }
+        : {}),
       codexCwd: this.runtimeOptions.codexCwd
         ? resolvePath(this.runtimeOptions.codexCwd)
         : undefined,
@@ -621,7 +711,7 @@ export class AgentProcessManager extends EventEmitter {
       codexIsolatedHome: this.runtimeOptions.codexIsolatedHome,
       codexRegistryRoot: this.runtimeOptions.codexRegistryRoot,
     });
-    return new ManagedCodexCodeActProcess(
+    return new ManagedCodeActProcess(
       loop,
       sessionKey,
       source,
@@ -634,7 +724,7 @@ export class AgentProcessManager extends EventEmitter {
   /**
    * Load persona system prompt for an agent
    */
-  async loadPersona(agentId: string): Promise<string> {
+  async loadPersona(agentId: string, resolvedModel?: string): Promise<string> {
     const shouldTrace = this.shouldTracePrompt(agentId);
     const traceCacheKey = agentId.toLowerCase() === 'conductor' ? 'conductor' : agentId;
 
@@ -643,7 +733,7 @@ export class AgentProcessManager extends EventEmitter {
     const hasSkillFile = existsSync(skillPath);
 
     // Check cache first — skip cache if skill file exists to allow hot-reload
-    const cacheKey = this.personaCacheKey(agentId);
+    const cacheKey = this.personaCacheKey(agentId, resolvedModel);
     if (this.personaCache.has(cacheKey) && !hasSkillFile) {
       const cachedPrompt = this.personaCache.get(cacheKey)!;
       if (shouldTrace) {
@@ -686,7 +776,12 @@ export class AgentProcessManager extends EventEmitter {
         );
       }
       const buildStart = Date.now();
-      let systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      let systemPrompt = await this.buildSystemPrompt(
+        agentId,
+        agentConfig,
+        personaContent,
+        resolvedModel
+      );
       if (shouldTrace) {
         processManagerLogger.debug(
           `[Conductor] system prompt built key=${traceCacheKey} build_ms=${Date.now() - buildStart} total_ms=${
@@ -732,7 +827,8 @@ export class AgentProcessManager extends EventEmitter {
   private async buildSystemPrompt(
     agentId: string,
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
-    personaContent: string
+    personaContent: string,
+    resolvedModel?: string
   ): Promise<string> {
     const agent: AgentPersonaConfig = { id: agentId, ...agentConfig };
 
@@ -762,7 +858,7 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Replace model placeholders with actual config values
-    const actualModel = agentConfig.model || this.runtimeOptions.model;
+    const actualModel = resolvedModel || agentConfig.model || this.runtimeOptions.model;
     if (!actualModel) {
       throw new Error(
         `No model configured for agent '${agentId}'. ` +
@@ -877,7 +973,7 @@ ${skillsPrompt}## Guidelines
       });
       const typeDefs = TypeDefinitionGenerator.generate(policy);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
-      const codeActBackend = backend === 'codex' ? 'codex' : ('claude' as const);
+      const codeActBackend = backend;
       return (
         getCodeActInstructions(codeActBackend, policy.names) +
         '\n```typescript\n' +
@@ -981,7 +1077,7 @@ ${skillsPrompt}## Guidelines
   /**
    * Resolve the preferred model ID for a given backend from config.
    * Scans registered agents to find the first model matching the backend.
-   * Falls back to runtimeOptions.model for claude, 'unknown' otherwise.
+   * Falls back to the configured backend default when no registered agent provides one.
    */
   resolveModelForBackend(backend: string): string {
     for (const [, cfg] of Object.entries(this.config.agents)) {
@@ -990,13 +1086,13 @@ ${skillsPrompt}## Guidelines
         return cfg.model;
       }
     }
-    if (backend === 'claude') {
-      if (!this.runtimeOptions.model) {
-        throw new Error(`No model configured for claude backend. Set agent.model in config.yaml`);
-      }
+    if (backend === this.runtimeOptions.backend && this.runtimeOptions.model) {
       return this.runtimeOptions.model;
     }
-    return 'unknown';
+    if (backend === 'claude' || backend === 'codex' || backend === 'cline') {
+      return defaultModelForBackend(backend);
+    }
+    throw new Error(`Unsupported backend: ${backend}`);
   }
 
   /**
@@ -1214,7 +1310,7 @@ Respond to messages in a helpful and professional manner.
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
       persona_file: '', // inline system prompt, no file
-      backend: agentDef.backend as 'claude' | 'codex',
+      backend: agentDef.backend,
       model: agentDef.model,
       tier: agentDef.tier ?? 1,
       tool_permissions: agentDef.tool_permissions,
@@ -1227,7 +1323,7 @@ Respond to messages in a helpful and professional manner.
       agentConfig,
       agentDef.system_prompt
     );
-    this.personaCache.set(this.personaCacheKey(agentDef.id), fullPrompt);
+    this.personaCache.set(this.personaCacheKey(agentDef.id, agentDef.model), fullPrompt);
   }
 
   /**
@@ -1236,7 +1332,7 @@ Respond to messages in a helpful and professional manner.
   unregisterEphemeralAgents(agentDefs: EphemeralAgentDef[]): void {
     for (const { id: agentId } of agentDefs) {
       this.stopAgentProcesses(agentId);
-      this.personaCache.delete(this.personaCacheKey(agentId));
+      this.clearAgentPersonaCache(agentId);
       delete this.config.agents[agentId];
     }
   }
@@ -1245,7 +1341,7 @@ Respond to messages in a helpful and professional manner.
    * Reload persona for an agent (clears cache)
    */
   reloadPersona(agentId: string): void {
-    this.personaCache.delete(this.personaCacheKey(agentId));
+    this.clearAgentPersonaCache(agentId);
     // Stop all processes for this agent to force reload
     this.stopAgentProcesses(agentId);
   }

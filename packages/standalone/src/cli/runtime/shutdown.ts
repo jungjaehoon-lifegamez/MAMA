@@ -57,6 +57,7 @@ export interface ShutdownDeps {
   // Agent loops
   agentLoop: AgentLoop;
   memoryAgentLoop: AgentLoop | null;
+  stopExtraction: () => Promise<void>;
 
   // Session/DB
   sessionStore: SessionStore;
@@ -65,6 +66,38 @@ export interface ShutdownDeps {
   // Metrics
   metricsStore: MetricsStore | null;
   metricsCleanup: { stop: () => void } | null;
+}
+
+type DataStoreShutdownDeps = Pick<
+  ShutdownDeps,
+  'stopExtraction' | 'sessionStore' | 'metricsCleanup' | 'metricsStore' | 'db'
+>;
+
+export async function closeRuntimeDataStores(deps: DataStoreShutdownDeps): Promise<void> {
+  const errors: unknown[] = [];
+  try {
+    await deps.stopExtraction();
+  } catch (error) {
+    errors.push(error);
+  }
+
+  const closeSteps = [
+    () => deps.sessionStore.close(),
+    () => deps.metricsCleanup?.stop(),
+    () => deps.metricsStore?.close(),
+    () => deps.db.close(),
+  ];
+  for (const close of closeSteps) {
+    try {
+      close();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'One or more runtime data stores failed to close');
+  }
 }
 
 // ── Debug helpers ───────────────────────────────────────────────────────────
@@ -213,15 +246,9 @@ export function installShutdownHandlers(deps: ShutdownDeps): void {
       // Release all CLI sessions
       getSessionPool().dispose();
 
-      // Close session database
-      deps.sessionStore.close();
-
-      // Stop metrics cleanup
-      deps.metricsCleanup?.stop();
-
-      deps.metricsStore?.close();
-
-      deps.db.close();
+      // Extraction owns a separate backend runner and can still be using the
+      // memory API. Drain it before closing session or memory databases.
+      await closeRuntimeDataStores(deps);
 
       const { deletePid } = await import('../utils/pid-manager.js');
       await deletePid();

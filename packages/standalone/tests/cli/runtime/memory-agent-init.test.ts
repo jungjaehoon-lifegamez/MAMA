@@ -44,6 +44,7 @@ vi.mock('../../../src/memory/memory-agent-ack.js', () => ({
 import { initMemoryAgent } from '../../../src/cli/runtime/memory-agent-init.js';
 
 const require = createRequire(import.meta.url);
+const originalClineCommand = process.env.MAMA_CLINE_COMMAND;
 
 describe('Story M2.1: Memory Agent Runtime Provenance', () => {
   let tempDir: string;
@@ -63,6 +64,8 @@ describe('Story M2.1: Memory Agent Runtime Provenance', () => {
     const { closeDB } = require('@jungjaehoon/mama-core/db-manager');
     await closeDB();
     delete process.env.MAMA_DB_PATH;
+    if (originalClineCommand === undefined) delete process.env.MAMA_CLINE_COMMAND;
+    else process.env.MAMA_CLINE_COMMAND = originalClineCommand;
     rmSync(tempDir, { recursive: true, force: true });
     vi.clearAllMocks();
   });
@@ -73,7 +76,14 @@ describe('Story M2.1: Memory Agent Runtime Provenance', () => {
       memoryBackend?: string
     ): Promise<MemoryAgentProcessManagerLike | undefined> {
       const config = {
-        agent: { model: runtimeBackend === 'codex' ? 'gpt-5-codex' : 'claude-sonnet-4-6' },
+        agent: {
+          model:
+            runtimeBackend === 'codex'
+              ? 'gpt-5-codex'
+              : runtimeBackend === 'cline'
+                ? 'deepseek/deepseek-v4-flash'
+                : 'claude-sonnet-4-6',
+        },
         workspace: { path: tempDir },
         multi_agent: {
           agents: {
@@ -141,12 +151,40 @@ describe('Story M2.1: Memory Agent Runtime Provenance', () => {
         );
       });
 
+      it('inherits Cline with Code-Act as the bounded memory tool transport', async () => {
+        process.env.MAMA_CLINE_COMMAND = '/resolved/cline';
+        const manager = await initialize('cline');
+
+        await runMemoryAudit(manager);
+
+        expect(mocks.agentLoopOptions[0]).toEqual(
+          expect.objectContaining({
+            backend: 'cline',
+            model: 'deepseek/deepseek-v4-flash',
+            useCodeAct: true,
+            clineCommand: '/resolved/cline',
+          })
+        );
+        expect(mocks.run).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            agentContext: expect.objectContaining({
+              backend: 'cline',
+              capabilities: expect.arrayContaining(['code_act', 'mama_search', 'mama_save']),
+            }),
+          })
+        );
+      });
+
       it('uses an explicit memory-agent backend before the daemon backend', async () => {
         const manager = await initialize('codex', 'claude');
 
         await runMemoryAudit(manager);
 
         expect(mocks.agentLoopOptions[0]).toEqual(expect.objectContaining({ backend: 'claude' }));
+        expect(mocks.agentLoopOptions[0]).toEqual(
+          expect.objectContaining({ model: 'claude-sonnet-4-6' })
+        );
         expect(mocks.run).toHaveBeenCalledWith(
           expect.any(String),
           expect.objectContaining({
@@ -154,6 +192,21 @@ describe('Story M2.1: Memory Agent Runtime Provenance', () => {
           })
         );
       });
+
+      it.each([
+        ['claude', 'cline', 'deepseek/deepseek-v4-flash'],
+        ['cline', 'codex', 'gpt-5.4'],
+        ['codex', 'claude', 'claude-sonnet-4-6'],
+      ])(
+        'uses a %s -> %s backend-scoped model default',
+        async (runtimeBackend, memoryBackend, expectedModel) => {
+          await initialize(runtimeBackend, memoryBackend);
+
+          expect(mocks.agentLoopOptions[0]).toEqual(
+            expect.objectContaining({ backend: memoryBackend, model: expectedModel })
+          );
+        }
+      );
 
       it('falls back to Claude when an unvalidated runtime value crosses the boundary', async () => {
         const manager = await initialize('legacy-backend');

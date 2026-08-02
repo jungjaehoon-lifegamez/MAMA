@@ -88,9 +88,10 @@ export interface AgentPersonaConfig {
    * Runtime backend for this agent.
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex': Codex app-server
+   * - 'cline': Cline Hub runtime through the installed CLI companion SDK
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'cline';
 
   /**
    * Maximum turns for this agent
@@ -329,8 +330,9 @@ export interface MultiAgentRuntimeOptions {
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex': Codex app-server
+   * - 'cline': Cline Hub runtime through the installed CLI companion SDK
    */
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'cline';
   model?: string;
   /** Effort level for Claude 4.6 adaptive thinking */
   effort?: 'low' | 'medium' | 'high' | 'max';
@@ -340,6 +342,14 @@ export interface MultiAgentRuntimeOptions {
   codexCwd?: string;
   /** Explicit Codex binary/command path */
   codexCommand?: string;
+  /** Cline working directory */
+  clineCwd?: string;
+  /** Explicit Cline CLI command path */
+  clineCommand?: string;
+  /** Cline provider id */
+  clineProvider?: string;
+  /** Isolated Cline state directory */
+  clineDataDir?: string;
   /** Codex sandbox mode */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Managed Codex credential/config home. */

@@ -96,7 +96,11 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
     if (options.envelopeIssuanceMode === 'off') {
       throw new Error('temporal reconciliation requires envelope issuance');
     }
-    if (options.backend !== 'claude' && options.backend !== 'codex') {
+    if (
+      options.backend !== 'claude' &&
+      options.backend !== 'codex' &&
+      options.backend !== 'cline'
+    ) {
       throw new Error(`temporal reconciliation backend '${options.backend}' is incompatible`);
     }
     if (!options.effectiveTools.includes('task_temporal_reconcile')) {

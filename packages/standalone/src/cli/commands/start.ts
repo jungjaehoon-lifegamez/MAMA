@@ -52,6 +52,8 @@ import {
   shouldAutoOpenBrowser,
   resolveCodexCommandForStartup,
   hasCodexBackendConfigured,
+  resolveClineCommandForStartup,
+  hasClineBackendConfigured,
   startEmbeddingServerIfAvailable,
 } from '../runtime/utilities.js';
 import { startDaemon } from '../runtime/daemon.js';
@@ -122,7 +124,7 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
-type RuntimeBackend = 'claude' | 'codex';
+type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
   config: {},
@@ -130,10 +132,18 @@ const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 });
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
-  if (value === 'claude' || value === 'codex') {
+  if (value === 'claude' || value === 'codex' || value === 'cline') {
     return value;
   }
   throw new Error(`Unsupported agent backend: ${String(value)}`);
+}
+
+export function assertConductorBackendSupported(enabled: boolean, backend: RuntimeBackend): void {
+  if (enabled && backend === 'codex') {
+    throw new Error(
+      'conductor.enabled requires the claude or cline backend - codex session lifecycle lands in S2'
+    );
+  }
 }
 
 export function serializeCodeActExecutionResult(
@@ -939,6 +949,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
 
   if (backend === 'codex') {
     console.log('✓ Codex app-server backend (authentication handled by Codex login)');
+  } else if (backend === 'cline') {
+    console.log('✓ Cline CLI backend (authentication handled by Cline)');
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -1071,8 +1083,16 @@ export async function runAgentLoop(
     console.log(`✓ Codex CLI backend (command: ${codexCommand})`);
   }
 
-  // Claude CLI is always used (Pi Agent removed for ToS compliance)
-  console.log('✓ Claude CLI mode (ToS compliance)');
+  const usesClineBackend = startupBackend === 'cline' || hasClineBackendConfigured(config);
+  if (usesClineBackend) {
+    const clineCommand = resolveClineCommandForStartup(config.agent.cline_command);
+    process.env.MAMA_CLINE_COMMAND = clineCommand;
+    console.log(`✓ Cline CLI backend (command: ${clineCommand})`);
+  }
+
+  if (startupBackend === 'claude') {
+    console.log('✓ Claude CLI mode (ToS compliance)');
+  }
 
   // Provision default persona templates and multi-agent config on first start
   try {
@@ -1123,7 +1143,7 @@ export async function runAgentLoop(
   });
 
   process.env.MAMA_BACKEND = runtimeBackend;
-  const agentLoopBackend: 'claude' | 'codex' = runtimeBackend;
+  const agentLoopBackend: 'claude' | 'codex' | 'cline' = runtimeBackend;
 
   // Initialize main agent loop + client (reasoning state is closure-scoped inside)
   const { agentLoop, agentLoopClient } = initMainAgentLoop(
@@ -1141,7 +1161,8 @@ export async function runAgentLoop(
 
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
 
-  const { mamaApi, mamaApiClient, connectorExtractionFn } = await initMamaCore(config);
+  const { mamaApi, mamaApiClient, connectorExtractionFn, stopExtraction } =
+    await initMamaCore(config);
   // Wire the boot MAMA API onto the shared executor so it never lazily builds a
   // SECOND API/adapter stack against the same DB (initializeMAMAApi). This also
   // lets the memory agent fold into the shared executor (Task 7) instead of
@@ -1514,6 +1535,10 @@ export async function runAgentLoop(
       {
         backend: runtimeBackend,
         model: config.agent.model,
+        clineCwd: workspaceRoot,
+        clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
+        clineProvider: config.agent.cline_provider,
+        clineDataDir: config.agent.cline_data_dir,
         privateConnectorPolicy,
       }
     );
@@ -1613,13 +1638,11 @@ export async function runAgentLoop(
     }
   }, 60_000);
   const conductorConfig = resolveConductorConfig(config);
-  if (conductorConfig.enabled && runtimeBackend !== 'claude') {
-    // S1 pins the claude backend: codex sessions do not reset on token usage
-    // (session-pool.ts), so the lifecycle contract cannot hold there yet.
+  try {
+    assertConductorBackendSupported(conductorConfig.enabled, runtimeBackend);
+  } catch (error) {
     operatorDb.close();
-    throw new Error(
-      'conductor.enabled requires the claude backend in S1 - codex session lifecycle lands in S2'
-    );
+    throw error;
   }
   // ── Stage-2 workorder consumer (plan S2-T3): the only system run path.
   // Constructed before production runtime assembly registers per-kind
@@ -1980,7 +2003,12 @@ export async function runAgentLoop(
       const triggerAgentRuntime = createTriggerAgentRuntime(runtimeBackend, {
         model: config.agent.model,
         cwd: workspaceRoot,
-        command: process.env.MAMA_CODEX_COMMAND,
+        command:
+          runtimeBackend === 'cline'
+            ? (process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command)
+            : process.env.MAMA_CODEX_COMMAND,
+        provider: config.agent.cline_provider,
+        dataDir: config.agent.cline_data_dir,
       });
       stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();
       const triggerLoop = new OperatorTriggerLoop({
@@ -2341,6 +2369,7 @@ export async function runAgentLoop(
     pluginLoader,
     agentLoop,
     memoryAgentLoop,
+    stopExtraction,
     sessionStore,
     db,
     metricsStore,

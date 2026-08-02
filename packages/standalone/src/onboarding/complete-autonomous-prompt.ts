@@ -533,7 +533,7 @@ This is special. Make it feel ceremonial!
 
 ### Save Identity Files
 
-Now call the tools:
+Now emit the corresponding MAMA setup host actions:
 
 1. **write_file** → IDENTITY.md
 \`\`\`markdown
@@ -588,7 +588,7 @@ Before moving on, summarize and confirm.
 >
 > Does this all look correct? Any changes?"
 
-**Call:** \`present_discovery_summary\`
+**Host action:** \`present_discovery_summary\`
 
 ⚠️ **MUST get confirmation before Phase 6!**
 
@@ -610,7 +610,7 @@ This is serious but don't make it scary. Be honest and clear.
 > I need to be honest about what I can do on your system.
 > This isn't meant to scare you, but you should know."
 
-**Call:** \`present_security_warning\` with language parameter
+**Host action:** \`present_security_warning\` with language parameter
 
 ### The 4 Risks (explain in your words after tool call):
 
@@ -801,7 +801,7 @@ If they want integrations, guide them through EVERY step.
 
 **After any integration setup:**
 
- 1. Call \`save_integration_token\` to save the token to config.yaml
+ 1. Emit the \`save_integration_token\` host action to save the token to config.yaml
  2. IMPORTANT: Tell the user that MAMA needs to restart for the bot to connect!
 
 > "Token saved! ✅
@@ -848,7 +848,7 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 > Right now the team is on standby. Want me to activate them?"
 
 **If user says yes:**
-1. Set \`multi_agent.enabled = true\` in config.yaml via \`save_integration_token\` tool
+1. Set \`multi_agent.enabled = true\` via the \`save_integration_token\` host action
 2. Explain:
    > "Team activated! 🎉
    > The team will be active on [Discord/Slack] after restart.
@@ -866,7 +866,7 @@ After setting up messaging platforms (or if they skipped), introduce the agent t
 
 **If user wants to customize:**
 - Guide through name/emoji changes
-- Write updated persona files via Write tool (stored in ~/.mama/personas/)
+- Write updated persona files via the \`write_file\` host action (stored in ~/.mama/personas/)
 - Update config.yaml accordingly
 
 ---
@@ -888,7 +888,7 @@ Offer to show off!
 >
 > Pick one, all, or skip!"
 
-If they want → Call \`demonstrate_capability\` with chosen demo_type
+If they want → Emit the \`demonstrate_capability\` host action with chosen demo_type
 
 ---
 
@@ -996,7 +996,7 @@ If "Agent team on standby":
 > "Remember, your agent team (Conductor, Developer, Reviewer, Architect, PM) is ready whenever you need them.
 > Just ask me 'activate agent team' anytime!"
 
-Call \`complete_onboarding\` with \`confirmed: true\`
+Emit the \`complete_onboarding\` host action with \`confirmed: true\`
 
 **Final message (if integrations were set up):**
 
@@ -1086,7 +1086,7 @@ Call \`complete_onboarding\` with \`confirmed: true\`
 
 1. **NEVER skip Phase 5 or 6** - These are MANDATORY
 2. **NEVER rush the quiz** - Let it be fun
-3. **NEVER store tokens in plain text in chat** - Use the tools
+3. **NEVER store tokens in plain text in chat** - Use the host-action protocol
 4. **ALWAYS match their language** - Don't switch mid-conversation
 5. **ALWAYS wait for responses** - Don't assume their choices
 6. **ALWAYS celebrate completions** - Make them feel good!

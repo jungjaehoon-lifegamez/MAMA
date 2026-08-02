@@ -27,16 +27,40 @@ Things the old page claimed that DO NOT exist and were never read by any code:
 | `MAMA_SECURITY_LOG_DIR`               | — (env only) | `export MAMA_SECURITY_LOG_DIR=/tmp/x` — redirect security telemetry (events/incidents/denylist). Test suites set this so fixtures never pollute live logs                                                                                                                                                                                                                                                                 |
 | `MAMA_SECURITY_ALERT_CHANNELS`        | — (env only) | `export MAMA_SECURITY_ALERT_CHANNELS="telegram:<chat_id>"` — comma-separated `gateway:channel` targets for security + system-audit MAJOR alerts                                                                                                                                                                                                                                                                           |
 | `MAMA_STAGE2_WORKORDERS`              | — (env only) | RETIRED in v0.28.0 — the workorder pipeline is the only system run path. Unset or `on` boots fine; an explicit `off`/`shadow` (the removed legacy/dual-run modes) fails the boot loudly instead of silently running the pipeline                                                                                                                                                                                          |
-| `MAMA_TEMPORAL_RECONCILE`             | — (env only) | `export MAMA_TEMPORAL_RECONCILE=on` — temporal owner-task reconciliation, `off\|on`, default `off`. `on` requires envelope issuance enabled, a Claude/Codex backend, the trusted `task_temporal_reconcile` transport tool, and the Stage-2 consumer. Malformed flags or disabled envelope issuance fail before timer-bearing daemon services start. `off` pauses open temporal attempts for safe later resume.            |
+| `MAMA_TEMPORAL_RECONCILE`             | — (env only) | `export MAMA_TEMPORAL_RECONCILE=on` — temporal owner-task reconciliation, `off\|on`, default `off`. `on` requires envelope issuance enabled, a Claude/Codex/Cline backend, the trusted `task_temporal_reconcile` transport tool, and the Stage-2 consumer. Malformed flags or disabled envelope issuance fail before timer-bearing daemon services start. `off` pauses open temporal attempts for safe later resume.      |
 | `MAMA_OPS_ALERT_CHAT`                 | — (env only) | `export MAMA_OPS_ALERT_CHAT=<chat_id>` — telegram chat for workorder retries-exhausted/stale-claim alarms. Falls back to `MAMA_TRIGGER_LOOP_REPORT_CHAT`; unset = log-only (boot says so loudly)                                                                                                                                                                                                                          |
 | `MAMA_TRIGGER_LOOP`                   | — (env only) | Proactive connector monitoring is on by default. Set `MAMA_TRIGGER_LOOP=0` only to opt out. When `MAMA_TRIGGER_LOOP_REPORT_CHAT` is absent, the sole positive-ID entry in `telegram.allowed_chats` is used as the private owner report destination; ambiguous/group allowlists require an explicit report chat.                                                                                                           |
 | `MAMA_TRIGGER_LOOP_REPORT_CHAT`       | — (env only) | `export MAMA_TRIGGER_LOOP_REPORT_CHAT=<chat_id>` — explicit Telegram destination for proactive and on-demand owner reports. The value must be a positive private-chat ID present in `telegram.allowed_chats`; it takes precedence over the sole-positive-ID allowlist fallback. If unset, MAMA uses that fallback only when it is unambiguous, otherwise report delivery stays disabled and logs the missing destination. |
-| `MAMA_OCR_PYTHON`                     | — (env only) | Python executable for the owner image-translation tools. It must provide EasyOCR and Pillow. Resolution otherwise checks `~/.mama/ocr-env/bin/python3`, then the legacy Kagemusha environment for migration compatibility, then `python3`.                                                                                                                                                                                |
+| `MAMA_OCR_PYTHON`                     | — (env only) | Python executable for the owner image-translation tools. It must provide EasyOCR and Pillow. Resolution otherwise checks `~/.mama/ocr-env/bin/python3`, then `python3`; legacy local migration paths may also be recognized without being advertised.                                                                                                                                                                     |
 | `MAMA_IMAGE_SCRIPT_DIR`               | — (env only) | Optional override for the packaged `ocr-image.py` and `fb-overlay.py` directory. Normally unset.                                                                                                                                                                                                                                                                                                                          |
 | `MAMA_TELEGRAM_MEDIA_TTL_MS`          | — (env only) | Retention for inbound Telegram documents kept available to the active agent; default 24 hours.                                                                                                                                                                                                                                                                                                                            |
 | `MAMA_TELEGRAM_MEDIA_MAX_TOTAL_BYTES` | — (env only) | Cumulative private Telegram-media quota; default 256 MiB. Expired and oldest files are removed first.                                                                                                                                                                                                                                                                                                                     |
 
 **Priority:** Environment variables override config file.
+
+## Agent backend keys
+
+These keys live under `agent` in `~/.mama/config.yaml`:
+
+| Key              | Values / purpose                                                                |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `backend`        | `claude`, `codex`, or `cline`                                                   |
+| `model`          | Backend model identifier                                                        |
+| `timeout`        | Full prompt-operation deadline in milliseconds                                  |
+| `cline_command`  | Optional absolute Cline CLI executable path                                     |
+| `cline_provider` | Cline provider identifier; defaults to `cline`                                  |
+| `cline_data_dir` | Optional isolated Cline state directory; `~` expands against the real user home |
+
+Managed agents may independently set `backend: cline`. Their `tool_permissions` are translated to
+Cline native tools, while `gateway_tool_permissions` remains the separate Code-Act host-function
+surface. Blocked native permissions take precedence and delegation still requires Tier 1 plus
+`can_delegate: true`.
+
+The legacy `io.context_threshold_tokens` and `io.max_context_tokens` keys (and their
+`MAMA_IO_CONTEXT_THRESHOLD_TOKENS` / `MAMA_IO_MAX_CONTEXT_TOKENS` overrides) remain parseable only
+for configuration compatibility. They are deprecated no-ops: Claude Code, Codex app-server, and
+Cline Hub own compaction for their durable sessions. A future breaking release may remove these
+keys after the compatibility window.
 
 ### Temporal Reconciliation Runtime
 
@@ -57,8 +81,8 @@ configuration knobs:
 reflects `done`/`cancelled`, but no configuration maps overdue to `blocked` or elapsed time to
 `done`.
 
-Trello remains untrusted connector evidence, Kagemusha remains read-only project-task truth, and
-the native task ledger remains owner-task truth. The flag does not enable direct Trello writes,
+Trello and any configured private connector remain untrusted read-only evidence, while the native
+task ledger remains owner-task truth. The flag does not enable direct connector writes,
 cross-store lifecycle copying, or exactly-once external alarm delivery.
 
 ---

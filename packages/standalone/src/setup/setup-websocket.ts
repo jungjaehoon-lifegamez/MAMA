@@ -1,21 +1,34 @@
 /**
- * Setup WebSocket Handler - Claude-powered interactive setup
+ * Setup WebSocket Handler - backend-powered interactive setup
  */
 
+import type { IncomingMessage } from 'node:http';
 import type { WebSocketServer, WebSocket } from 'ws';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { PersistentCLIAdapter } from '../agent/persistent-cli-adapter.js';
+import type { IModelRunner } from '../agent/model-runner.js';
+import {
+  createBackendModelRunner,
+  type BackendModelRunnerOptions,
+} from '../agent/backend-model-runner-factory.js';
+import type { MAMAConfig } from '../cli/config/types.js';
 import { expandPath, getConfig } from '../cli/config/config-manager.js';
 import { SETUP_SYSTEM_PROMPT } from './setup-prompt.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
+import {
+  createSetupActionExecutor,
+  parseSetupActions,
+  SETUP_ACTION_PROTOCOL,
+  type SetupActionExecutor,
+} from './setup-actions.js';
 
 type QuizState = 'idle' | 'awaiting_name' | 'quiz_in_progress' | 'quiz_complete';
 
 interface ClientInfo {
   ws: WebSocket;
   sessionId: string;
-  cliAdapter: PersistentCLIAdapter | null;
+  modelRunner: IModelRunner | null;
+  actionExecutor: SetupActionExecutor;
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
   language?: string;
   isRitualMode?: boolean;
@@ -29,6 +42,8 @@ interface ClientInfo {
   personalityScores?: Record<string, number>;
   useCaseInsights?: string[];
   capturedInsights?: string[];
+  stopPromise?: Promise<void>;
+  messageTail: Promise<void>;
 }
 
 interface QuizChoice {
@@ -36,7 +51,35 @@ interface QuizChoice {
   text: string;
 }
 
-const clients = new Map<WebSocket, ClientInfo>();
+export interface SetupWebSocketLifecycle {
+  close(): Promise<void>;
+}
+
+export interface SetupWebSocketSecurity {
+  allowedOrigins: readonly string[];
+  consumeNonce(nonce: string): boolean;
+}
+
+const SETUP_RUNNER_STOP_TIMEOUT_MS = 5_000;
+const MAX_SETUP_ACTION_ROUNDS = 8;
+
+export function createSetupModelRunner(
+  config: MAMAConfig,
+  sessionId: string,
+  createRunner: (
+    config: MAMAConfig,
+    options: BackendModelRunnerOptions
+  ) => IModelRunner = createBackendModelRunner
+): IModelRunner {
+  return createRunner(config, {
+    sessionId,
+    model: config.agent.model,
+    systemPrompt: `${SETUP_ACTION_PROTOCOL}\n\n${SETUP_SYSTEM_PROMPT}`,
+    timeoutMs: config.agent.timeout,
+    allowedTools: [],
+    disableNativeTools: true,
+  });
+}
 
 // @ts-expect-error - Keeping for future use, currently unused after autonomous discovery migration
 function _extractName(input: string): string {
@@ -121,18 +164,40 @@ function detectProgress(
   return null;
 }
 
-async function processClaudeResponse(clientInfo: ClientInfo, userMessage: string): Promise<string> {
-  if (!clientInfo.cliAdapter) {
-    throw new Error('CLI adapter not initialized');
+async function processModelResponse(clientInfo: ClientInfo, userMessage: string): Promise<string> {
+  if (!clientInfo.modelRunner) {
+    throw new Error('Model runner not initialized');
   }
 
-  const result = await clientInfo.cliAdapter.prompt(userMessage);
-  const assistantText = result.response || '';
+  let prompt = userMessage;
+  let assistantText = '';
+  for (let round = 0; round < MAX_SETUP_ACTION_ROUNDS; round += 1) {
+    const result = await clientInfo.modelRunner.prompt(prompt, undefined, {
+      sessionKey: clientInfo.sessionId,
+      resumeSession: true,
+    });
+    const parsed = parseSetupActions(result.response || '');
+    if (parsed.actions.length === 0) {
+      assistantText = parsed.visibleText;
+      break;
+    }
+    const actionResults = await clientInfo.actionExecutor.executeBatch(parsed.actions);
+    prompt =
+      'Trusted MAMA setup host action results:\n' +
+      JSON.stringify(actionResults) +
+      '\nContinue from these results. Do not repeat successful actions.';
+    if (round === MAX_SETUP_ACTION_ROUNDS - 1) {
+      throw new Error('Setup action loop exceeded its round limit');
+    }
+  }
 
   // Check if onboarding completed (CLI wrote USER.md + SOUL.md via Write tool)
   const mamaHome = expandPath('~/.mama');
   const onboardingDone =
-    existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
+    existsSync(join(mamaHome, 'IDENTITY.md')) &&
+    existsSync(join(mamaHome, 'USER.md')) &&
+    existsSync(join(mamaHome, 'SOUL.md')) &&
+    existsSync(join(mamaHome, 'setup-complete.json'));
 
   if (onboardingDone && clientInfo.isRitualMode) {
     clientInfo.ws.send(
@@ -198,28 +263,59 @@ async function sendInitialGreeting(clientInfo: ClientInfo): Promise<void> {
   );
 }
 
-export function createSetupWebSocketHandler(wss: WebSocketServer): void {
-  wss.on('connection', async (ws) => {
+export function createSetupWebSocketHandler(
+  wss: WebSocketServer,
+  createRunner: typeof createBackendModelRunner = createBackendModelRunner,
+  createActionExecutor: () => SetupActionExecutor = createSetupActionExecutor,
+  security?: SetupWebSocketSecurity
+): SetupWebSocketLifecycle {
+  const clients = new Map<WebSocket, ClientInfo>();
+
+  const stopClient = (info: ClientInfo): Promise<void> => {
+    if (!info.stopPromise) {
+      const runner = info.modelRunner;
+      info.stopPromise = info.messageTail
+        .catch(() => undefined)
+        .then(async () => {
+          info.modelRunner = null;
+          await runner?.stop();
+        });
+    }
+    return info.stopPromise;
+  };
+
+  wss.on('connection', async (ws, request: IncomingMessage) => {
+    const origin = request?.headers?.origin;
+    let nonce = '';
+    try {
+      nonce = new URL(request?.url ?? '', 'http://127.0.0.1').searchParams.get('nonce') ?? '';
+    } catch {
+      nonce = '';
+    }
+    if (
+      !security ||
+      !origin ||
+      !security.allowedOrigins.includes(origin) ||
+      clients.size > 0 ||
+      !security.consumeNonce(nonce)
+    ) {
+      ws.close(1008, 'Unauthorized setup connection');
+      return;
+    }
     console.log('[Setup] Client connected');
 
     const sessionId = `setup_${Date.now()}`;
 
-    let cliAdapter: PersistentCLIAdapter | null = null;
+    let modelRunner: IModelRunner | null = null;
     try {
       const config = getConfig();
-      cliAdapter = new PersistentCLIAdapter({
-        sessionId,
-        model: config.agent.model,
-        systemPrompt: SETUP_SYSTEM_PROMPT,
-        dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
-        requestTimeout: config.agent.timeout,
-      });
+      modelRunner = createSetupModelRunner(config, sessionId, createRunner);
     } catch (error) {
-      console.error('[Setup] CLI adapter creation failed:', error);
+      console.error('[Setup] model runner creation failed:', error);
       ws.send(
         JSON.stringify({
           type: 'error',
-          message: 'Claude CLI initialization failed. Please verify Claude Code is installed.',
+          message: 'Configured model backend initialization failed. Verify its CLI and login.',
         })
       );
       ws.close();
@@ -229,33 +325,35 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
     const clientInfo: ClientInfo = {
       ws,
       sessionId,
-      cliAdapter,
+      modelRunner,
+      actionExecutor: createActionExecutor(),
       conversationHistory: [],
+      messageTail: Promise.resolve(),
     };
 
     clients.set(ws, clientInfo);
 
-    ws.on('message', async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        await handleClientMessage(clientInfo, message);
-      } catch (error) {
-        console.error('[Setup] Message handling error:', error);
-        ws.send(
-          JSON.stringify({
-            type: 'error',
-            message: error instanceof Error ? error.message : 'Unknown error',
-          })
-        );
-      }
+    ws.on('message', (data) => {
+      clientInfo.messageTail = clientInfo.messageTail
+        .then(async () => {
+          const message = JSON.parse(data.toString());
+          await handleClientMessage(clientInfo, message);
+        })
+        .catch((error: unknown) => {
+          console.error('[Setup] Message handling error:', error);
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              message: error instanceof Error ? error.message : 'Unknown error',
+            })
+          );
+        });
     });
 
     ws.on('close', () => {
       console.log('[Setup] Client disconnected');
       const info = clients.get(ws);
-      if (info?.cliAdapter) {
-        info.cliAdapter.stop();
-      }
+      if (info) void stopClient(info);
       clients.delete(ws);
     });
 
@@ -263,6 +361,27 @@ export function createSetupWebSocketHandler(wss: WebSocketServer): void {
       console.error('[Setup] WebSocket error:', error);
     });
   });
+
+  return {
+    async close() {
+      const stopping = [...clients.values()].map((info) => stopClient(info));
+      for (const info of clients.values()) info.ws.terminate();
+      clients.clear();
+      if (stopping.length === 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled(stopping).then(() => undefined),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, SETUP_RUNNER_STOP_TIMEOUT_MS);
+            timer.unref();
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
+  };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -284,11 +403,11 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
     content: userMessage,
   });
 
-  if (!clientInfo.cliAdapter) {
+  if (!clientInfo.modelRunner) {
     clientInfo.ws.send(
       JSON.stringify({
         type: 'error',
-        message: 'Claude CLI adapter not initialized',
+        message: 'Configured model runner not initialized',
       })
     );
     return;
@@ -302,15 +421,15 @@ async function handleClientMessage(clientInfo: ClientInfo, message: any): Promis
       : '\n\n**IMPORTANT: User browser language is English (en). Respond in English.**';
 
     const systemPrompt = clientInfo.isRitualMode
-      ? COMPLETE_AUTONOMOUS_PROMPT + languageInstruction
-      : SETUP_SYSTEM_PROMPT + languageInstruction;
+      ? `${SETUP_ACTION_PROTOCOL}\n\n${COMPLETE_AUTONOMOUS_PROMPT}${languageInstruction}`
+      : `${SETUP_ACTION_PROTOCOL}\n\n${SETUP_SYSTEM_PROMPT}${languageInstruction}`;
 
     // Update system prompt if needed (ritual vs setup mode)
-    if (clientInfo.cliAdapter) {
-      clientInfo.cliAdapter.setSystemPrompt(systemPrompt);
+    if (clientInfo.modelRunner) {
+      clientInfo.modelRunner.setSystemPrompt(systemPrompt);
     }
 
-    const assistantMessage = await processClaudeResponse(clientInfo, userMessage);
+    const assistantMessage = await processModelResponse(clientInfo, userMessage);
 
     if (assistantMessage) {
       clientInfo.conversationHistory.push({

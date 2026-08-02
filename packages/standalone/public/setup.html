@@ -765,7 +765,8 @@
 
         isConnecting = true;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/setup-ws`;
+        const setupNonce = '__MAMA_SETUP_NONCE__';
+        const wsUrl = `${protocol}//${window.location.host}/setup-ws?nonce=${encodeURIComponent(setupNonce)}`;
 
         ws = new WebSocket(wsUrl);
 
@@ -790,10 +791,7 @@
           } catch (error) {
             console.error('[Setup] Invalid websocket payload:', event.data);
             const preview = String(event.data).slice(0, 200);
-            showStatus(
-              `서버 응답이 JSON이 아닙니다. 응답 미리보기: ${preview}`,
-              'error'
-            );
+            showStatus(`서버 응답이 JSON이 아닙니다. 응답 미리보기: ${preview}`, 'error');
             return;
           }
           handleMessage(data);
@@ -805,10 +803,15 @@
           showStatus('Connection error occurred.', 'error');
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           console.log('WebSocket disconnected');
           isConnecting = false;
           setInputEnabled(false);
+
+          if (event.code === 1008) {
+            showStatus('Setup authorization expired. Refresh this page to reconnect.', 'error');
+            return;
+          }
 
           setTimeout(() => {
             if (!isConnecting) {

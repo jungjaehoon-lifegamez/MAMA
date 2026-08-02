@@ -43,9 +43,10 @@ day, then explain exactly which evidence they used and which permission boundary
 
 ## How It Runs
 
-MAMA OS runs AI agents as **official CLI subprocesses** — the same way you'd use `claude` or `codex` in your terminal. This is the provider-sanctioned execution method, fully compliant with Anthropic and OpenAI Terms of Service.
+MAMA OS runs AI agents through each backend's **supported local runtime path**: Claude CLI,
+Codex app-server, or Cline's official Hub runtime.
 
-Some third-party agent frameworks (OpenClaw, etc.) use unofficial API access, token extraction, or header spoofing — approaches that violate provider policies and risk account suspension. MAMA OS doesn't do any of that. If you have Claude Code or Codex CLI installed and authenticated, MAMA OS just works. No API keys, no workarounds, no risk.
+Some third-party agent frameworks (OpenClaw, etc.) use unofficial API access, token extraction, or header spoofing — approaches that violate provider policies and risk account suspension. MAMA OS doesn't do any of that. If you have Claude Code, Codex CLI, or Cline CLI installed and authenticated, MAMA OS uses that backend's supported local runtime path. No token extraction or header spoofing is required.
 
 ```bash
 # Already have Claude Code installed?
@@ -65,8 +66,8 @@ MAMA OS has full system access — so security is not optional, it's foundationa
 - **Intrusion detection** — Honeypot traps for scanner probes (`.git`, `.env`, `wp-login.php`), per-IP suspicion scoring, automatic tarpit delays, and IP deny-listing when thresholds are exceeded.
 - **Agent permission tiers** — Tier 1 (full access), Tier 2 (read + memory write), Tier 3 (read-only). Each agent only gets the tools it needs.
 - **Owner console (v0.22+)** — the `owner_console` role is granted ONLY in an allowlisted telegram chat's 1:1 DM (`telegram.allowed_chats` is the trust anchor). It reads operational artifacts (`board_read`, `audit_findings_read`, `workorder_status`), can browse/download/upload Drive files, OCR and overlay translated image text, send files back to the current Telegram chat, and issue work (`report_request`, `workorder_request`) fire-and-forget. The verified owner gets the complete Drive composition surface and may upload to the folder selected in the active request even when it is not a configured deliverable root. Configured-root capabilities remain available and are validated when supplied; non-owner Drive operations require role permission and configured connector/envelope scope and cannot select arbitrary roots. Uploads and outbound files accept only regular non-symlink files in the private MAMA workspace; memory writes refuse secret-shaped content. On a clean installation, prepare the isolated OCR runtime with `pnpm setup:ocr` and verify it with `pnpm check:ocr`; `MAMA_OCR_PYTHON` can select an equivalent managed runtime. Translated overlays also require a Korean/CJK font: macOS uses Apple SD Gothic Neo, while Ubuntu/Debian should install `fonts-noto-cjk`; other systems can set `MAMA_KOREAN_FONT` to a readable `.ttf`/`.ttc` file. The setup check verifies this dependency instead of failing on the first real overlay. DOCX/XLSX extraction runs in a memory- and time-bounded child process. PDF extraction uses PDFKit on macOS and requires Poppler's `pdftotext` on Linux (`apt install poppler-utils` or the distribution equivalent).
-- **Stage-2 workorder pipeline (v0.23, flag-gated)** — `MAMA_STAGE2_WORKORDERS=off|shadow|on` converts the scheduled board/wiki/memory-promotion runs into durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Codex workorders receive built-in, least-privilege Tier-2 Code-Act roles for board, wiki, memory curation, and temporal reconciliation, independent of optional standing-agent configuration. Every worker treats connector evidence as untrusted data rather than instructions. Board workers read enabled Trello evidence through `context_compile`, keep Kagemusha as read-only project-task truth, and use the native ledger for owner tasks and the pipeline. Default `off` = unchanged behavior.
-- **Verified temporal effects (opt-in)** — `MAMA_TEMPORAL_RECONCILE=on` requires `MAMA_STAGE2_WORKORDERS=on`, a Claude or Codex backend, the trusted `task_temporal_reconcile` tool, and a working worker transport. It scans all open scheduled owner rows once per minute before applying bounded admission caps, and exposes a separate temporal projection that never turns overdue into a workflow status (`closed` reflects terminal lifecycle). Fresh evidence may resolve, finalize, or defer one native owner-task occurrence. Task, generation, authoritative receipt, and workorder completion commit atomically; legacy receipts remain quarantined, every temporal gateway call rechecks active authority, and compiled raw evidence must stay bound to the task source. Shutdown durably pauses temporal attempts before waiting for worker drainage. Model prose is represented in audit rows only by length/SHA-256 references. Default `off` pauses temporal work and preserves existing behavior.
+- **Stage-2 workorder pipeline (v0.28+, always on)** — scheduled board/wiki/memory-promotion runs become durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Workers receive built-in, least-privilege Tier-2 Code-Act roles for board, wiki, memory curation, and temporal reconciliation, independent of optional standing-agent configuration. Every worker treats connector evidence as untrusted data rather than instructions. The native ledger remains authoritative for owner tasks and pipeline state. `MAMA_STAGE2_WORKORDERS` is retired: leave it unset (or set `on` for compatibility); explicit `off` or `shadow` values fail startup.
+- **Verified temporal effects (opt-in)** — `MAMA_TEMPORAL_RECONCILE=on` requires the always-on workorder consumer, a Claude, Codex, or Cline backend, the trusted `task_temporal_reconcile` tool, and a working worker transport. It scans all open scheduled owner rows once per minute before applying bounded admission caps, and exposes a separate temporal projection that never turns overdue into a workflow status (`closed` reflects terminal lifecycle). Fresh evidence may resolve, finalize, or defer one native owner-task occurrence. Task, generation, authoritative receipt, and workorder completion commit atomically; legacy receipts remain quarantined, every temporal gateway call rechecks active authority, and compiled raw evidence must stay bound to the task source. Shutdown durably pauses temporal attempts before waiting for worker drainage. Model prose is represented in audit rows only by length/SHA-256 references. Default `off` pauses temporal work and preserves existing behavior.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts itself down gracefully rather than operating in a compromised state.
 
 These aren't theoretical protections. The prompt injection defense was built after a real attack where an adversary injected a fake "server failure" message into a monitored channel, causing the AI agent to voluntarily expose system configuration. The IP banning system has blocked actual intrusion attempts in production.
@@ -76,20 +77,21 @@ See the full [Security Guide](../../docs/guides/security.md) for Cloudflare Zero
 ## Quick Start
 
 ```bash
-# 1. Authenticate a backend CLI (one-time)
+# 1. Authenticate one backend (one-time)
 claude auth login   # or: codex login
+cline auth cline    # for the hosted Cline backend
 
 # 2. Install and start
-npx @jungjaehoon/mama-os init
+npx @jungjaehoon/mama-os init --backend cline  # or claude / codex / auto
 mama start
 
 # 3. Open the operator board
 open http://localhost:3847/ui
 ```
 
-**Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude or Codex), 500MB disk space.
+**Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude, Codex, or Cline), 500MB disk space.
 
-## Connectors (15)
+## Connectors (13)
 
 MAMA connects to your apps and extracts structured facts into the memory graph.
 
@@ -112,7 +114,6 @@ mama connector list           # Status of all connectors
 | **Notion**      | Integration Token (notion.so/my-integrations)                                                                                        | `api_token`, `database_ids`      |
 | **Obsidian**    | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled     | `vault_path` in config.yaml      |
 | **Trello**      | API Key + Token (trello.com/app-key)                                                                                                 | `api_key`, `token`, `board_ids`  |
-| **Kagemusha**   | Kagemusha running locally                                                                                                            | Reads `kagemusha.db` directly    |
 | **Claude Code** | Claude Code plugin installed                                                                                                         | Automatic via hooks              |
 
 **Google Workspace connectors** (Gmail, Calendar, Drive, Sheets) require the [gws CLI](https://github.com/nicholasgasior/gws) — a Google Workspace command-line tool. Install it, run `gws auth` once for OAuth, then MAMA polls via CLI.
@@ -178,12 +179,13 @@ Floating chat panel on every tab — voice input, TTS, slash commands.
 
 ## Gateway Integrations
 
-Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure via `mama setup` or edit `~/.mama/config.yaml` directly.
+Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure via `mama setup` or edit
+`~/.mama/config.yaml` directly.
 
 ## Architecture
 
 ```
-Connectors (15)              Gateways (4)
+Connectors (13)              Gateways (4)
 Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
        |                            |
        v                            v
@@ -220,14 +222,14 @@ Main config: `~/.mama/config.yaml`
 | `MAMA_DB_PATH`            | `~/.mama/mama-memory.db` |
 | `MAMA_HTTP_PORT`          | `3847`                   |
 | `MAMA_WORKSPACE`          | `~/.mama/workspace`      |
-| `MAMA_STAGE2_WORKORDERS`  | `off`                    |
+| `MAMA_STAGE2_WORKORDERS`  | retired; unset or `on`   |
 | `MAMA_TEMPORAL_RECONCILE` | `off`                    |
 
 Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI process pool supports:
 
 | Option                               | Default                     | Purpose                                     |
 | ------------------------------------ | --------------------------- | ------------------------------------------- |
-| `persistent_process_idle_ms`         | `session_ms`                | Reclaim idle Claude/Codex CLI processes     |
+| `persistent_process_idle_ms`         | `session_ms`                | Reclaim idle backend sessions/processes     |
 | `persistent_process_cleanup_ms`      | `session_cleanup_ms`        | How often idle-process cleanup runs         |
 | `persistent_process_pending_tool_ms` | `max(4 * idle, 30 minutes)` | Max wait for pending tool-result handshakes |
 

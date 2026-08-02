@@ -59,12 +59,14 @@ function createOptions(): AgentLoopOptions {
 
 describe('Story M1R: initMainAgentLoop envelope options', () => {
   let previousHome: string | undefined;
+  let previousClineCommand: string | undefined;
   let tempHome: string;
   let runSpy: ReturnType<typeof vi.spyOn>;
   let runWithContentSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     previousHome = process.env.HOME;
+    previousClineCommand = process.env.MAMA_CLINE_COMMAND;
     tempHome = mkdtempSync(join(tmpdir(), 'mama-agent-loop-init-'));
     process.env.HOME = tempHome;
     runSpy = vi.spyOn(AgentLoop.prototype, 'run').mockResolvedValue({
@@ -90,6 +92,8 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
     } else {
       process.env.HOME = previousHome;
     }
+    if (previousClineCommand === undefined) delete process.env.MAMA_CLINE_COMMAND;
+    else process.env.MAMA_CLINE_COMMAND = previousClineCommand;
     rmSync(tempHome, { recursive: true, force: true });
   });
 
@@ -129,6 +133,26 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
   });
 
   describe('AC: front-door Code-Act defaults', () => {
+    it('passes the startup-resolved Cline command into the main runtime adapter', () => {
+      process.env.MAMA_CLINE_COMMAND = '/resolved/cline';
+      const config = createConfig();
+      config.agent.backend = 'cline';
+      config.agent.model = 'deepseek/deepseek-v4-flash';
+
+      const { agentLoop } = initMainAgentLoop(
+        config,
+        { getToken: vi.fn() } as unknown as OAuthManager,
+        {} as SQLiteDatabase,
+        null as MetricsStore | null,
+        'cline',
+        new GatewayToolExecutor({})
+      );
+      const adapterOptions = (agentLoop as unknown as { agent: { options: { command?: string } } })
+        .agent.options;
+
+      expect(adapterOptions.command).toBe('/resolved/cline');
+    });
+
     it('honors legacy conductor false after load normalizes an os-agent without a value', async () => {
       const mamaDir = join(tempHome, '.mama');
       mkdirSync(mamaDir, { recursive: true });

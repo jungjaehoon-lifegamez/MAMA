@@ -473,6 +473,29 @@ export function resolveCodexCommandForStartup(): string {
   );
 }
 
+export function resolveClineCommandForStartup(configuredCommand?: string): string {
+  const candidates = [configuredCommand, process.env.MAMA_CLINE_COMMAND, process.env.CLINE_COMMAND];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const trimmed = candidate.trim();
+    if (trimmed && isExecutable(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  const fromPath = findExecutableInPath('cline');
+  if (fromPath) {
+    return fromPath;
+  }
+
+  throw new Error(
+    'Cline command not found. Set agent.cline_command, MAMA_CLINE_COMMAND, or CLINE_COMMAND ' +
+      'to an executable path, or install cline and ensure PATH includes the binary.'
+  );
+}
+
 export function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
   if (config.agent.backend === 'codex') {
     return true;
@@ -493,4 +516,23 @@ export function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof load
   }
 
   return false;
+}
+
+export function hasClineBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
+  if (config.agent.backend === 'cline') {
+    return true;
+  }
+
+  const agents = config.multi_agent?.agents;
+  if (!agents || typeof agents !== 'object') {
+    return false;
+  }
+
+  return Object.values(agents).some(
+    (raw) =>
+      raw !== null &&
+      typeof raw === 'object' &&
+      !Array.isArray(raw) &&
+      (raw as { backend?: string }).backend === 'cline'
+  );
 }

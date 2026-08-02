@@ -1187,9 +1187,9 @@
           <h2>Your records stay on your machine by default.</h2>
           <p>
             MAMA's substrate (SQLite + 1024-dim embeddings) lives on the laptop or server you
-            choose, not in someone else's cloud. Provider-backed agent runs (Claude or Codex CLI
-            subprocess) still transmit selected prompts and compiled context to the chosen model API
-            — but the persistent record stays local.
+            choose, not in someone else's cloud. Provider-backed agent runs (Claude CLI, Codex
+            app-server, or Cline Hub) still transmit selected prompts and compiled context to the
+            chosen model API — but the persistent record stays local.
           </p>
         </div>
         <div class="local-grid">
@@ -1203,10 +1203,10 @@
           </article>
           <article class="local-card">
             <span class="num">02 · EXECUTION</span>
-            <h3>Official CLI subprocess</h3>
+            <h3>Supported local runtime</h3>
             <p>
-              The agent runs as <code>claude</code> or <code>codex</code> under your existing
-              authenticated CLI. No API keys to manage. No header spoofing. ToS-compliant.
+              The agent runs through Claude CLI, Codex app-server, or Cline's official Hub under
+              your existing authenticated account. No token extraction or header spoofing.
             </p>
           </article>
           <article class="local-card">
@@ -1221,8 +1221,8 @@
             <span class="num">04 · COST</span>
             <h3>No cloud bill for memory</h3>
             <p>
-              No per-query billing for the substrate. Your existing Claude Code or Codex
-              subscription covers the model. Embeddings run locally on a 560 MB model.
+              No per-query billing for the substrate. Your authenticated Claude, Codex, or Cline
+              account covers the model runtime. Embeddings run locally on a 560 MB model.
             </p>
           </article>
         </div>
@@ -1323,17 +1323,17 @@
           <span class="eyebrow">Install</span>
           <h2>Start local. Keep the record yours.</h2>
           <p>
-            Runs through your existing Claude Code or Codex CLI auth — no API keys to manage and no
-            third-party cloud holding your substrate. Agent runs still send the selected prompt and
-            compiled context to whichever model you point at (Claude or Codex).
+            Runs through your existing Claude, Codex, or Cline authentication — no token extraction
+            and no third-party cloud holding your substrate. Agent runs still send the selected
+            prompt and compiled context to the model backend you choose.
           </p>
         </div>
         <p class="install-warning">
-          <strong>⚠ Run inside an isolated environment.</strong> A Claude / Codex CLI MAMA process
-          you spawn has the same filesystem and network access as the shell that started it. For
-          shared or production setups, run MAMA OS inside Docker, a dedicated VM, or a
-          non-privileged user account so its agents cannot reach files or services you don't intend
-          to expose.
+          <strong>⚠ Run inside an isolated environment.</strong> A Claude, Codex, or Cline-backed
+          MAMA process has the filesystem and network authority granted by its host runtime and MAMA
+          role policy. For shared or production setups, run MAMA OS inside Docker, a dedicated VM,
+          or a non-privileged user account so its agents cannot reach files or services you don't
+          intend to expose.
         </p>
         <div class="install-grid">
           <div class="step">

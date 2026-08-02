@@ -6,7 +6,7 @@
  *
  * Responsibilities:
  *   1. Dynamically require mama-core (initDB, getAdapter, mamaCore)
- *   2. Wire up connectorExtractionFn via PersistentClaudeProcess (lazy-init + lifecycle)
+ *   2. Wire up connectorExtractionFn through the configured backend (lazy-init + lifecycle)
  *   3. Normalize the MAMA API shape into mamaApi
  *   4. Build search() / searchForContext() wrapper functions with fallback handling
  *   5. Build loadCheckpointForContext / listDecisionsForContext wrappers
@@ -15,6 +15,8 @@
 
 import type { MAMAConfig } from '../config/types.js';
 import { expandPath } from '../config/config-manager.js';
+import { createBackendModelRunner } from '../../agent/backend-model-runner-factory.js';
+import type { IModelRunner } from '../../agent/model-runner.js';
 import type {
   Checkpoint,
   Decision,
@@ -48,6 +50,52 @@ export interface MamaCoreInitResult {
   mamaApi: MAMAApiSetInput;
   mamaApiClient: MamaApiClient;
   connectorExtractionFn: ((prompt: string) => Promise<string>) | null;
+  stopExtraction: () => Promise<void>;
+}
+
+export interface BackendExtractionSession {
+  extractParsed(prompt: string): Promise<unknown>;
+  extractRaw(prompt: string): Promise<string>;
+  stop(): Promise<void>;
+}
+
+export function createBackendExtractionSession(
+  createRunner: () => IModelRunner,
+  parseResponse: (response: string) => unknown
+): BackendExtractionSession {
+  let runner: IModelRunner | null = null;
+  let stopPromise: Promise<void> | null = null;
+  const getRunner = (): IModelRunner => {
+    if (stopPromise) {
+      throw new Error('Extraction session is stopping');
+    }
+    runner ??= createRunner();
+    return runner;
+  };
+  return {
+    async extractParsed(prompt) {
+      const result = await getRunner().prompt(prompt, undefined, {
+        sessionKey: 'system:memory-extraction',
+        resumeSession: true,
+      });
+      return parseResponse(result.response);
+    },
+    async extractRaw(prompt) {
+      const result = await getRunner().prompt(prompt, undefined, {
+        sessionKey: 'system:connector-extraction',
+        resumeSession: true,
+      });
+      return result.response;
+    },
+    async stop() {
+      if (!stopPromise) {
+        const ownedRunner = runner;
+        runner = null;
+        stopPromise = Promise.resolve(ownedRunner?.stop()).then(() => undefined);
+      }
+      await stopPromise;
+    },
+  };
 }
 
 /**
@@ -57,7 +105,16 @@ export interface MamaCoreInitResult {
  * connector extraction process (if supported), normalises the API shape,
  * and returns the three values that the rest of runAgentLoop() consumes.
  */
-export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResult> {
+export async function initMamaCore(
+  config: MAMAConfig,
+  createExtractionRunner: () => IModelRunner = () =>
+    createBackendModelRunner(config, {
+      sessionId: crypto.randomUUID(),
+      systemPrompt:
+        'You are a memory extraction assistant. Extract structured memory units from conversations.',
+      allowedTools: [],
+    })
+): Promise<MamaCoreInitResult> {
   // Initialize message router with MAMA database
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
@@ -67,79 +124,25 @@ export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResu
   // Suppress unused variable warning — getAdapter may be used by mama-core internally
   void getAdapter;
 
-  // Connector extraction function — set when Claude CLI extraction process is ready
+  // Connector extraction function — set when the configured backend runner is ready
   let connectorExtractionFn: ((prompt: string) => Promise<string>) | null = null;
+  let stopExtraction = async (): Promise<void> => {};
 
-  // Set extraction backend to Claude CLI persistent session (no API key needed)
+  // Use an isolated runner from the configured primary backend. Cline/Codex-only
+  // installations must never acquire a hidden Claude dependency here.
   if (mamaCore.setExtractionFn) {
-    const { PersistentClaudeProcess } = await import('../../agent/persistent-cli-process.js');
     const { parseExtractionResponse } = mamaCore;
-    let extractionProcess: InstanceType<typeof PersistentClaudeProcess> | null = null;
-    let extractionInitPromise: Promise<InstanceType<typeof PersistentClaudeProcess>> | null = null;
-    let extractionInitLock = false;
+    const extractionSession = createBackendExtractionSession(
+      createExtractionRunner,
+      parseExtractionResponse
+    );
 
-    const getExtractionProcess = async (): Promise<
-      InstanceType<typeof PersistentClaudeProcess>
-    > => {
-      if (extractionProcess) return extractionProcess;
-      if (extractionInitPromise) return extractionInitPromise;
-      if (extractionInitLock) {
-        // Another call is between attempts; wait a tick and retry
-        await new Promise((r) => setTimeout(r, 50));
-        return getExtractionProcess();
-      }
-      extractionInitLock = true;
-      extractionInitPromise = (async () => {
-        const proc = new PersistentClaudeProcess({
-          sessionId: `${crypto.randomUUID()}`,
-          model: 'sonnet',
-          systemPrompt:
-            'You are a memory extraction assistant. Extract structured memory units from conversations.',
-          dangerouslySkipPermissions: true,
-        });
-        await proc.start();
-        extractionProcess = proc;
-        return proc;
-      })();
-      try {
-        return await extractionInitPromise;
-      } catch (err) {
-        extractionProcess = null;
-        extractionInitPromise = null;
-        throw err;
-      } finally {
-        extractionInitLock = false;
-      }
-    };
+    stopExtraction = () => extractionSession.stop();
 
-    // Cleanup extraction process on exit
-    const cleanupExtraction = () => {
-      if (extractionProcess) {
-        try {
-          extractionProcess.stop?.();
-        } catch {
-          /* best-effort */
-        }
-        extractionProcess = null;
-        extractionInitPromise = null;
-      }
-    };
-    process.on('exit', cleanupExtraction);
-    process.on('SIGINT', cleanupExtraction);
-    process.on('SIGTERM', cleanupExtraction);
-
-    mamaCore.setExtractionFn(async (prompt: string) => {
-      const proc = await getExtractionProcess();
-      const result = await proc.sendMessage(prompt);
-      return parseExtractionResponse(result.response);
-    });
+    mamaCore.setExtractionFn(extractionSession.extractParsed);
 
     // Expose extraction for connector pipeline
-    connectorExtractionFn = async (prompt: string): Promise<string> => {
-      const proc = await getExtractionProcess();
-      const result = await proc.sendMessage(prompt);
-      return result.response;
-    };
+    connectorExtractionFn = extractionSession.extractRaw;
   }
 
   const mamaApi = (
@@ -286,5 +289,6 @@ export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResu
     mamaApi,
     mamaApiClient,
     connectorExtractionFn,
+    stopExtraction,
   };
 }

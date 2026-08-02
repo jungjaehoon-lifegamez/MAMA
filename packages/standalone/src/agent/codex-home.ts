@@ -406,6 +406,7 @@ export function buildMAMACodexAppServerConfig(): string {
     'enabled = false',
     '',
     '[features]',
+    'multi_agent = false',
     'plugins = false',
     'apps = false',
     'tool_search = false',

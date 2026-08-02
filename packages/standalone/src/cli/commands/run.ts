@@ -7,6 +7,7 @@
 import { initConfig, configExists } from '../config/config-manager.js';
 import { OAuthManager, getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
+import { resolveClineCommandForStartup } from '../runtime/utilities.js';
 
 /**
  * Options for run command
@@ -49,6 +50,11 @@ export async function runCommand(options: RunOptions): Promise<void> {
   if (backend === 'codex') {
     console.log('✓ Codex app-server backend (authentication handled by Codex login)');
     oauthManager = new OAuthManager();
+  } else if (backend === 'cline') {
+    const clineCommand = resolveClineCommandForStartup(config.agent.cline_command);
+    process.env.MAMA_CLINE_COMMAND = clineCommand;
+    console.log(`✓ Cline CLI backend (command: ${clineCommand})`);
+    oauthManager = new OAuthManager();
   } else {
     process.stdout.write('Checking Claude Code login... ');
     const authStatus = getClaudeCodeAuthStatus();
@@ -73,6 +79,11 @@ export async function runCommand(options: RunOptions): Promise<void> {
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
+    useCodeAct: backend === 'cline',
+    toolsConfig: config.agent.tools,
+    clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
+    clineProvider: config.agent.cline_provider,
+    clineDataDir: config.agent.cline_data_dir,
     onTurn: options.verbose
       ? (turn) => {
           console.log(`\n--- Turn ${turn.turn} (${turn.role}) ---`);

@@ -1,5 +1,5 @@
 /**
- * MAMA Standalone - Always-on AI assistant powered by Claude Pro
+ * MAMA Standalone - Always-on AI assistant with pluggable local model backends
  */
 
 // Auth module
