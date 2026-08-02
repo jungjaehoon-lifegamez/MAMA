@@ -10,7 +10,29 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
-import type { MAMAApiInterface } from '../../src/agent/types.js';
+import type { MAMAApiInterface, ModelRunRecord } from '../../src/agent/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import {
+  seedBindingCandidateAttempt,
+  seedLifecycleCandidateAttempt,
+} from '../operator/external-lifecycle-fixtures.js';
+
+function privatePolicy(enabled: boolean) {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
 
 describe('STORY-V019 - GatewayToolExecutor', () => {
   const createMockApi = (): MAMAApiInterface => {
@@ -76,8 +98,33 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       success: true,
       id: 'trusted_ingest_123',
     });
+    api.appendToolTrace = vi.fn().mockResolvedValue({});
     return api;
   };
+
+  const modelRunForAttempt = (attemptId: number, status: ModelRunRecord['status'] = 'running') =>
+    ({
+      model_run_id: `mr_board_${attemptId}`,
+      model_id: null,
+      model_provider: 'test',
+      prompt_version: null,
+      tool_manifest_version: null,
+      output_schema_version: null,
+      agent_id: 'workorder-board',
+      instance_id: null,
+      envelope_hash: null,
+      parent_model_run_id: null,
+      input_snapshot_ref: null,
+      input_refs_json: JSON.stringify({ workorderAttemptId: attemptId }),
+      input_refs: { workorderAttemptId: attemptId },
+      completion_summary: null,
+      status,
+      error_summary: null,
+      token_count: 0,
+      cost_estimate: null,
+      created_at: 1,
+      completed_at: null,
+    }) satisfies ModelRunRecord;
 
   // Shared context helpers (used by multiple test suites)
   const createViewerContext = () => ({
@@ -124,6 +171,435 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         await expect(executor.execute('unknown_tool', {})).rejects.toMatchObject({
           code: 'UNKNOWN_TOOL',
         });
+      });
+
+      it('TG-05/TG-06 does not disclose private tools in unknown-tool errors', async () => {
+        const cases = [
+          new GatewayToolExecutor({ mamaApi: createMockApi() }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(false),
+          }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(true),
+          }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(true),
+          }),
+        ];
+        cases[1]!.setAgentContext({
+          ...createViewerContext(),
+          source: 'telegram',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        });
+        cases[2]!.setAgentContext({
+          ...createDiscordContext(),
+          roleName: 'generic_worker',
+          role: { allowedTools: ['*'], systemControl: false, sensitiveAccess: false },
+        });
+
+        for (const executor of cases) {
+          const error = await executor
+            .execute('unknown_tool', {})
+            .catch((reason: unknown) => reason);
+          expect(error).toMatchObject({ code: 'UNKNOWN_TOOL' });
+          expect(String(error)).not.toContain('kagemusha');
+          expect(String(error)).not.toContain('Valid tools:');
+        }
+      });
+    });
+
+    describe('bound external lifecycle mutations', () => {
+      it('fails closed without a host-issued claimed attempt', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        await expect(
+          executor.execute('task_external_bind', {
+            candidate_id: seeded.candidate.candidateId,
+            decision: 'bind',
+            reason: 'exact task identity confirmed',
+            expected_revision: seeded.candidate.taskRevision,
+          })
+        ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+        seeded.db.close();
+      });
+
+      it('applies the exact lifecycle candidate from trusted attempt state only', async () => {
+        const seeded = seedLifecycleCandidateAttempt();
+        const api = createMockApi();
+        const run = modelRunForAttempt(seeded.attempt.id);
+        api.getModelRun = vi.fn().mockResolvedValue(run);
+        const executor = new GatewayToolExecutor({ mamaApi: api });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'task_lifecycle_reconcile',
+          {
+            candidate_id: seeded.candidate.candidateId,
+            decision: 'apply',
+            reason: 'verified',
+            expected_revision: seeded.candidate.taskRevision,
+          },
+          {
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+            modelRunId: run.model_run_id,
+          }
+        );
+
+        expect(result).toEqual({
+          success: true,
+          receipt: {
+            taskId: seeded.task.id,
+            workorderAttemptId: seeded.attempt.id,
+            outcome: 'applied',
+          },
+        });
+        seeded.db.close();
+      });
+
+      it.each([
+        ['missing', undefined, null],
+        ['blank', '   ', null],
+        ['unknown', 'mr_unknown', null],
+        ['committed', 'mr_committed', 'committed'],
+        ['cross-attempt', 'mr_other_attempt', 'running'],
+      ] as const)(
+        'fails closed for a %s direct lifecycle run authority',
+        async (_caseName, modelRunId, status) => {
+          const seeded = seedLifecycleCandidateAttempt();
+          const api = createMockApi();
+          const run = modelRunForAttempt(
+            status === 'running' ? seeded.attempt.id + 1 : seeded.attempt.id,
+            status ?? 'running'
+          );
+          api.getModelRun = vi.fn().mockResolvedValue(modelRunId === 'mr_unknown' ? null : run);
+          const executor = new GatewayToolExecutor({ mamaApi: api });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_lifecycle_reconcile',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'apply',
+                reason: 'verified',
+                expected_revision: seeded.candidate.taskRevision,
+              },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                ...(modelRunId === undefined ? {} : { modelRunId }),
+              }
+            )
+          ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+          expect(
+            seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)
+          ).toBeNull();
+          seeded.db.close();
+        }
+      );
+
+      it.each([
+        ['missing', undefined, null],
+        ['blank', '   ', null],
+        ['unknown', 'mr_unknown', null],
+        ['committed', 'mr_committed', 'committed'],
+        ['cross-attempt', 'mr_other_attempt', 'running'],
+      ] as const)(
+        'fails closed for a %s direct binding run authority',
+        async (_caseName, modelRunId, status) => {
+          const seeded = seedBindingCandidateAttempt();
+          const api = createMockApi();
+          const run = modelRunForAttempt(
+            status === 'running' ? seeded.attempt.id + 1 : seeded.attempt.id,
+            status ?? 'running'
+          );
+          api.getModelRun = vi.fn().mockResolvedValue(modelRunId === 'mr_unknown' ? null : run);
+          const executor = new GatewayToolExecutor({ mamaApi: api });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_external_bind',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'bind',
+                reason: 'exact task identity confirmed',
+                expected_revision: seeded.candidate.taskRevision,
+              },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                ...(modelRunId === undefined ? {} : { modelRunId }),
+              }
+            )
+          ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+          expect(
+            seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)
+          ).toBeNull();
+          seeded.db.close();
+        }
+      );
+
+      it('fails closed for a nested lifecycle call without current run authority', async () => {
+        const seeded = seedLifecycleCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'code_act',
+          {
+            code: `task_lifecycle_reconcile({ candidate_id: '${seeded.candidate.candidateId}', decision: 'apply', reason: 'verified', expected_revision: ${seeded.candidate.taskRevision} });`,
+            allowedTools: ['task_lifecycle_reconcile'],
+          },
+          {
+            agentContext: createViewerContext(),
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringMatching(/model run/i),
+        });
+        expect(seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)).toBeNull();
+        seeded.db.close();
+      });
+
+      it('fails closed for a nested binding call without current run authority', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+
+        const result = await executor.execute(
+          'code_act',
+          {
+            code: `task_external_bind({ candidate_id: '${seeded.candidate.candidateId}', decision: 'bind', reason: 'exact task identity confirmed', expected_revision: ${seeded.candidate.taskRevision} });`,
+            allowedTools: ['task_external_bind'],
+          },
+          {
+            agentContext: createViewerContext(),
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringMatching(/model run/i),
+        });
+        expect(seeded.ledger.getExternalCandidateReceipt(seeded.candidate.candidateId)).toBeNull();
+        seeded.db.close();
+      });
+
+      it.each(['taskId', 'status', 'eventId', 'unexpected'])(
+        'rejects raw lifecycle authority field %s',
+        async (field) => {
+          const seeded = seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_lifecycle_reconcile',
+              {
+                candidate_id: seeded.candidate.candidateId,
+                decision: 'apply',
+                reason: 'verified',
+                expected_revision: seeded.candidate.taskRevision,
+                [field]: field === 'status' ? 'done' : 42,
+              },
+              { executionSurface: 'model_tool', workorderAttemptId: seeded.attempt.id }
+            )
+          ).rejects.toMatchObject({ code: 'TOOL_ERROR' });
+          seeded.db.close();
+        }
+      );
+
+      it.each([
+        ['binding', 'status'],
+        ['binding', 'latest_event'],
+        ['lifecycle', 'status'],
+        ['lifecycle', 'latest_event'],
+      ] as const)(
+        'blocks direct task_update(%s candidate, %s) outside its receipted decision',
+        async (candidateKind, field) => {
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt()
+              : seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+          const patch = field === 'status' ? { status: 'done' } : { latest_event: 'forged' };
+
+          await expect(
+            executor.execute(
+              'task_update',
+              { id: seeded.candidate.taskId, ...patch },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                causeEventIds: [seeded.candidate.eventId],
+              }
+            )
+          ).rejects.toThrow(/candidate-bound lifecycle/i);
+          expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+            seeded.candidate.taskRevision
+          );
+          seeded.db.close();
+        }
+      );
+
+      it.each([
+        ['binding', 'status'],
+        ['binding', 'latest_event'],
+        ['lifecycle', 'status'],
+        ['lifecycle', 'latest_event'],
+      ] as const)(
+        'blocks nested Code-Act task_update(%s candidate, %s) outside its receipted decision',
+        async (candidateKind, field) => {
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt()
+              : seedLifecycleCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+          const mutation = field === 'status' ? "status: 'done'" : "latest_event: 'forged'";
+
+          const result = await executor.execute(
+            'code_act',
+            {
+              code: `task_update({ id: ${seeded.candidate.taskId}, ${mutation} });`,
+              allowedTools: ['task_update'],
+            },
+            {
+              agentContext: createViewerContext(),
+              executionSurface: 'model_tool',
+              workorderAttemptId: seeded.attempt.id,
+              causeEventIds: [seeded.candidate.eventId],
+            }
+          );
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringMatching(/candidate-bound lifecycle/i),
+          });
+          expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
+            seeded.candidate.taskRevision
+          );
+          seeded.db.close();
+        }
+      );
+
+      it.each(['binding', 'lifecycle'] as const)(
+        'blocks direct duplicate-source task_create UPSERT for a %s candidate task',
+        async (candidateKind) => {
+          const source = {
+            source_channel: 'telegram:owner',
+            source_event_id: `owner-message-${candidateKind}`,
+          };
+          const taskInput = { title: 'candidate task', latest_event: 'initial', ...source };
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt({ taskInput })
+              : seedLifecycleCandidateAttempt({ taskInput });
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          await expect(
+            executor.execute(
+              'task_create',
+              { title: 'duplicate delivery', status: 'done', latest_event: 'forged', ...source },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                causeEventIds: [seeded.candidate.eventId],
+              }
+            )
+          ).rejects.toThrow(/candidate-bound lifecycle/i);
+          expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+            status: seeded.task.status,
+            latestEvent: seeded.task.latestEvent,
+            revision: seeded.candidate.taskRevision,
+          });
+          seeded.db.close();
+        }
+      );
+
+      it.each(['binding', 'lifecycle'] as const)(
+        'blocks nested Code-Act duplicate-source task_create UPSERT for a %s candidate task',
+        async (candidateKind) => {
+          const source = {
+            source_channel: 'telegram:owner',
+            source_event_id: `owner-message-nested-${candidateKind}`,
+          };
+          const taskInput = { title: 'candidate task', latest_event: 'initial', ...source };
+          const seeded =
+            candidateKind === 'binding'
+              ? seedBindingCandidateAttempt({ taskInput })
+              : seedLifecycleCandidateAttempt({ taskInput });
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+
+          const result = await executor.execute(
+            'code_act',
+            {
+              code: `task_create({ title: 'duplicate delivery', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
+              allowedTools: ['task_create'],
+            },
+            {
+              agentContext: createViewerContext(),
+              executionSurface: 'model_tool',
+              workorderAttemptId: seeded.attempt.id,
+              causeEventIds: [seeded.candidate.eventId],
+            }
+          );
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringMatching(/candidate-bound lifecycle/i),
+          });
+          expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
+            status: seeded.task.status,
+            latestEvent: seeded.task.latestEvent,
+            revision: seeded.candidate.taskRevision,
+          });
+          seeded.db.close();
+        }
+      );
+
+      it('preserves duplicate-source task_create UPSERT for a non-candidate task', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+        const source = {
+          source_channel: 'telegram:owner',
+          source_event_id: 'owner-message-unrelated',
+        };
+        const unrelated = seeded.ledger.create({ title: 'unrelated', ...source });
+
+        const result = await executor.execute(
+          'task_create',
+          { title: 'duplicate delivery', status: 'done', latest_event: 'confirmed', ...source },
+          {
+            executionSurface: 'model_tool',
+            workorderAttemptId: seeded.attempt.id,
+            causeEventIds: [seeded.candidate.eventId],
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: true,
+          task: { id: unrelated.id, status: 'done', latestEvent: 'confirmed' },
+        });
+        seeded.db.close();
       });
     });
 
@@ -1031,6 +1507,60 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(directChatResult).toMatchObject({
             success: false,
             error: expect.stringContaining('owner_console'),
+          });
+        });
+
+        it.each([
+          {
+            label: 'default os_agent wildcard',
+            enabled: true,
+            roleName: 'os_agent',
+            source: 'viewer',
+            expected: 'undefined',
+          },
+          {
+            label: 'custom generic wildcard',
+            enabled: true,
+            roleName: 'custom-agent',
+            source: 'discord',
+            expected: 'undefined',
+          },
+          {
+            label: 'disabled owner wildcard',
+            enabled: false,
+            roleName: 'owner_console',
+            source: 'telegram',
+            expected: 'undefined',
+          },
+          {
+            label: 'enabled verified owner',
+            enabled: true,
+            roleName: 'owner_console',
+            source: 'telegram',
+            expected: 'function',
+          },
+        ])('TG-04 final authorization projects private tools for $label', async (scenario) => {
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: privatePolicy(scenario.enabled),
+          });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            source: scenario.source,
+            roleName: scenario.roleName,
+            role: { allowedTools: ['code_act', '*'] },
+          });
+
+          const result = await executor.execute('code_act', {
+            code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, tasks: typeof kagemusha_tasks, messages: typeof kagemusha_messages })`,
+          });
+
+          expect(JSON.parse(String(result.message)).value).toEqual({
+            overview: scenario.expected,
+            entities: scenario.expected,
+            tasks: scenario.expected,
+            messages: scenario.expected,
           });
         });
 

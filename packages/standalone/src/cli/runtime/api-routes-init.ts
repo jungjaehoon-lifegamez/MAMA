@@ -17,7 +17,7 @@ import {
   closeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import express from 'express';
+import express, { type Express } from 'express';
 import path from 'node:path';
 import http from 'node:http';
 
@@ -48,8 +48,14 @@ import {
   promotionKey,
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
-import type { WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
+import type { TaskLedger, WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
+import type { ExternalLifecycleCandidateSet } from '../../operator/external-lifecycle.js';
+import {
+  buildExternalLifecycleCandidateSet,
+  classifyKagemushaObservation,
+  type RawExternalObservation,
+} from '../../operator/external-lifecycle-candidates.js';
 import {
   dispatchSecurityAlertDirect,
   hasSecurityAlertSender,
@@ -57,6 +63,8 @@ import {
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getLegCadence } from '../../operator/leg-cadence.js';
+import type { TaskInfo } from '../../connectors/kagemusha/query-tools.js';
+import type { PrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -67,6 +75,170 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const routesLogger = new DebugLogger('api-routes');
+
+export interface KagemushaTaskQueryInput {
+  sourceRoom?: string;
+  status?: string;
+  priority?: string;
+  search?: string;
+  limit?: number;
+}
+
+export type KagemushaTaskQuery = (input: KagemushaTaskQueryInput) => TaskInfo[];
+export type KagemushaTaskQueryLoader = () => Promise<KagemushaTaskQuery>;
+
+type ConnectorEventAdapter = {
+  prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] };
+};
+
+const MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS = 100;
+
+/**
+ * Construct the only lifecycle authority a reconcile work order may carry.
+ * Connector rows are parsed one by one: malformed/private-unsupported evidence
+ * becomes bounded diagnostics, while a database failure deliberately throws so
+ * the scheduler retains its unconsumed batch for retry.
+ */
+export function buildReconcileExternalLifecycleCandidates(input: {
+  eventIds: readonly string[];
+  getAdapter: () => ConnectorEventAdapter;
+  ledger: TaskLedger;
+  privateConnectorPolicy: PrivateConnectorPolicy;
+  rawConnectorScope: readonly string[];
+}): ExternalLifecycleCandidateSet {
+  const eventIds = [...new Set(input.eventIds)];
+  if (eventIds.length === 0) {
+    return Object.freeze({
+      bindingCandidates: Object.freeze([]),
+      lifecycleCandidates: Object.freeze([]),
+      diagnostics: Object.freeze([]),
+    });
+  }
+  const placeholders = eventIds.map(() => '?').join(',');
+  const rows = input
+    .getAdapter()
+    .prepare(
+      `SELECT event_index_id, source_connector, source_type, source_id, channel, content_hash,
+            source_timestamp_ms, operator_ingest_seq, operator_observation_seq, metadata_json
+       FROM connector_event_index WHERE event_index_id IN (${placeholders})`
+    )
+    .all(...eventIds) as RawExternalObservation[];
+
+  // This is intentionally limited to the boot-owned private capability and
+  // the same raw connector scope projected into worker envelopes. Do not
+  // discover connector state here: a reconcile run must not widen authority
+  // after startup, especially from a historical connector row.
+  const mayProjectKagemushaLifecycle =
+    input.privateConnectorPolicy.isEnabled('kagemusha') &&
+    input.rawConnectorScope.includes('kagemusha');
+  const observations = [] as NonNullable<
+    ReturnType<typeof classifyKagemushaObservation>['observation']
+  >[];
+  const diagnostics: NonNullable<ReturnType<typeof classifyKagemushaObservation>['diagnostic']>[] =
+    [];
+  const invalidEventIds = new Set<string>();
+  const suppressedEventIds = new Set<string>();
+  for (const row of rows) {
+    if (row.source_connector === 'kagemusha' && !mayProjectKagemushaLifecycle) {
+      // Do not emit diagnostics for a denied private row: even a bounded
+      // diagnostic is an unnecessary cross-boundary signal in a generic board
+      // workorder. The scheduler consumes its matching private partition.
+      if (typeof row.event_index_id === 'string') {
+        suppressedEventIds.add(row.event_index_id);
+      }
+      continue;
+    }
+    const classified = classifyKagemushaObservation(row);
+    if (classified.observation) {
+      observations.push(classified.observation);
+    } else if (classified.diagnostic) {
+      diagnostics.push(classified.diagnostic);
+      invalidEventIds.add(classified.diagnostic.eventId);
+    }
+  }
+  const candidateEventIds = eventIds.filter(
+    (eventId) => !invalidEventIds.has(eventId) && !suppressedEventIds.has(eventId)
+  );
+  const support = input.ledger.getExternalLifecycleCandidateSupport(
+    candidateEventIds,
+    observations.map((observation) => observation.externalSourceId)
+  );
+  const unreceipted = buildExternalLifecycleCandidateSet({
+    eventIds: candidateEventIds,
+    observations,
+    ...support,
+    receiptedCandidateIds: new Set(),
+  });
+  const receiptedCandidateIds = input.ledger.getReceiptedExternalCandidateIds([
+    ...unreceipted.bindingCandidates.map((candidate) => candidate.candidateId),
+    ...unreceipted.lifecycleCandidates.map((candidate) => candidate.candidateId),
+  ]);
+  const built = buildExternalLifecycleCandidateSet({
+    eventIds: candidateEventIds,
+    observations,
+    ...support,
+    receiptedCandidateIds,
+  });
+  return Object.freeze({
+    bindingCandidates: built.bindingCandidates,
+    lifecycleCandidates: built.lifecycleCandidates,
+    diagnostics: Object.freeze(
+      [...diagnostics, ...built.diagnostics].slice(0, MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS)
+    ),
+  });
+}
+
+function queryString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function queryLimit(value: unknown): number {
+  if (typeof value !== 'string') {
+    return 30;
+  }
+  const limit = Number(value);
+  return Number.isFinite(limit) ? limit : 30;
+}
+
+export function registerKagemushaTaskRoute(
+  app: Express,
+  policy: PrivateConnectorPolicy,
+  loadQuery: KagemushaTaskQueryLoader = async () =>
+    (await import('../../connectors/kagemusha/query-tools.js')).queryTasks
+): void {
+  if (!policy.isEnabled('kagemusha')) {
+    return;
+  }
+
+  app.get('/api/kagemusha/tasks', requireAuth, async (req, res) => {
+    try {
+      const queryTasks = await loadQuery();
+      const tasks = queryTasks({
+        status: queryString(req.query.status),
+        priority: queryString(req.query.priority),
+        search: queryString(req.query.search),
+        sourceRoom: queryString(req.query.sourceRoom),
+        limit: queryLimit(req.query.limit),
+      });
+
+      if (req.query.filter === 'overdue') {
+        const now = Date.now();
+        const overdue = tasks.filter((task) => {
+          return task.deadline !== null && new Date(task.deadline).getTime() < now;
+        });
+        res.json({ success: true, tasks: overdue, total: overdue.length });
+        return;
+      }
+
+      res.json({ success: true, tasks, total: tasks.length });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
 
 export interface RegisterApiRoutesParams {
   config: MAMAConfig;
@@ -80,6 +252,10 @@ export interface RegisterApiRoutesParams {
   discordGateway: DiscordGateway | null;
   slackGateway: SlackGateway | null;
   graphHandler: (req: express.Request, res: express.Response) => Promise<boolean>;
+  /** Immutable boot snapshot. Private connector access must not be rediscovered per delta. */
+  privateConnectorPolicy: PrivateConnectorPolicy;
+  /** Immutable boot scope used for raw evidence projection in worker envelopes. */
+  rawConnectorScope: readonly string[];
   /** mama-core getAdapter() — used for DB queries */
   getAdapter: () => {
     prepare: (sql: string) => {
@@ -108,6 +284,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     slackGateway,
     graphHandler,
     getAdapter,
+    privateConnectorPolicy,
+    rawConnectorScope,
     sessionsDb,
     workOrderConsumer,
   } = params;
@@ -293,12 +471,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       // (agent_activity has NO channel_id column; json_extract is the only
       // schema-supported key; agent_id re-keying is a green-test trap).
       if (workOrderConsumer) {
-        const { buildWorkerTraceQueries } = await import('../../operator/workorder-hooks.js');
+        const { buildWorkerTraceQueries, boardCandidateReceiptVerdict } =
+          await import('../../operator/workorder-hooks.js');
         const workerVerifierDeps = {
           ...verifierDeps,
           ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
         };
         workOrderConsumer.registerHook('board', {
+          verdictRequired: true,
           before: (wo) => {
             if (wo.payload.mode !== 'reconcile') return null;
             return captureSnapshot(
@@ -312,7 +492,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               if (response.includes('NO_UPDATE')) {
                 console.log('[stage2] board worker: no changes detected, publish skipped');
               }
-              return;
+              return boardCandidateReceiptVerdict(wo, reconcileLedger);
             }
             const scope = `reconcile:${String(wo.payload.channelKey)}`;
             const verdict = verifyAfterRun(
@@ -347,6 +527,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
                 target: String(wo.payload.channelKey),
               });
             }
+            return boardCandidateReceiptVerdict(wo, reconcileLedger);
           },
         });
       }
@@ -360,6 +541,29 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
+            const privateKagemushaPartition = channelKey.startsWith('kagemusha:');
+            const mayProjectKagemushaLifecycle =
+              privateConnectorPolicy.isEnabled('kagemusha') &&
+              rawConnectorScope.includes('kagemusha');
+            if (privateKagemushaPartition && !mayProjectKagemushaLifecycle) {
+              // A private partition that boot did not authorize is consumed
+              // without a generic board workorder. Rejecting would retain and
+              // retry the private delta; enqueuing would leak its prose.
+              return Promise.resolve();
+            }
+            const ledger = toolExecutor.getTaskLedger();
+            if (!ledger) {
+              throw new Error(
+                '[stage2] TaskLedger unavailable - cannot construct lifecycle evidence'
+              );
+            }
+            const candidates = buildReconcileExternalLifecycleCandidates({
+              eventIds,
+              getAdapter,
+              ledger,
+              privateConnectorPolicy,
+              rawConnectorScope,
+            });
             enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
               mode: 'reconcile',
               channelKey,
@@ -367,6 +571,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               // The batch, carried structurally. It was already inside deltaLines as
               // `[id:evt_...]` text and could only be recovered by parsing prose.
               eventIds,
+              // Host-authored structural authority. deltaLines remain untrusted,
+              // human-readable context and never grant lifecycle mutations.
+              candidates,
             });
           } catch (err) {
             routesLogger.error(
@@ -895,36 +1102,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   });
 
-  // ── Kagemusha Tasks endpoint ───────────────────────────────────────────
-  apiServer.app.get('/api/kagemusha/tasks', requireAuth, async (req, res) => {
-    try {
-      const { queryTasks } = await import('../../connectors/kagemusha/query-tools.js');
-      const tasks = queryTasks({
-        status: (req.query.status as string) || undefined,
-        priority: (req.query.priority as string) || undefined,
-        search: (req.query.search as string) || undefined,
-        sourceRoom: (req.query.sourceRoom as string) || undefined,
-        limit: req.query.limit ? Number(req.query.limit) : 30,
-      });
-
-      // Filter for overdue if requested
-      if (req.query.filter === 'overdue') {
-        const now = Date.now();
-        const overdue = tasks.filter(
-          (t: { deadline: string | null }) => t.deadline && new Date(t.deadline).getTime() < now
-        );
-        res.json({ success: true, tasks: overdue, total: overdue.length });
-        return;
-      }
-
-      res.json({ success: true, tasks, total: tasks.length });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
+  registerKagemushaTaskRoute(apiServer.app, apiServer.privateConnectorPolicy);
 
   // ── Agent Notices endpoint ────────────────────────────────────────────
   apiServer.app.get('/api/agent-notices', requireAuth, async (_req, res) => {

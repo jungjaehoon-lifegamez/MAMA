@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +13,36 @@ import {
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { CODE_ACT_MARKER } from '../../src/agent/code-act/index.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import {
+  resolvePrivateConnectorPolicy,
+  type PrivateConnectorPolicy,
+} from '../../src/connectors/private-connector-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
+
+const enabledPrivatePolicy = privatePolicy(true);
+
+type ParameterIsRequired<
+  Params extends readonly unknown[],
+  Index extends number,
+> = undefined extends Params[Index] ? false : true;
 
 describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #1: deriveCodeActToolPolicy enforces configured agent allowlists', () => {
@@ -132,18 +160,14 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
   });
 
-  describe('AC #3: resolveCodeActRawConnectors deduplicates connector visibility', () => {
+  describe('AC #3: resolveCodeActRawConnectors builds the boot connector snapshot', () => {
     it('uses enabled connector names as Code-Act raw connector visibility', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('never filters a connector out of read visibility - reads are not gated', () => {
-      // 2026-07-30 owner rule: enforcement only for irreversible side effects
-      // (sends, gated by allowed_destinations: []); reads are traced, never
-      // denied. The per-principal trello filter this replaces killed 100% of
-      // owner-chat board questions when the 07-28 code-act transport switch
-      // moved chat onto the api-code-act envelope, and the board drifted 3
-      // weeks undetected. If a read filter reappears, it must fail here.
+    it('keeps public and private names in the boot snapshot for downstream surface projection', () => {
+      // This is capability discovery, not a principal grant. Each host envelope
+      // attenuates the snapshot through PrivateConnectorPolicy before execution.
       const enabled = ['trello', 'kagemusha', 'telegram'];
       expect(resolveCodeActRawConnectors(enabled)).toEqual(enabled);
     });
@@ -160,6 +184,32 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
   });
 
   describe('AC #5: workorder runners receive an explicit Code-Act role', () => {
+    it('TG-01/TG-06 requires private boot authority for every lane policy', () => {
+      expectTypeOf<
+        ParameterIsRequired<Parameters<typeof buildWorkOrderAgentPolicy>, 3>
+      >().toEqualTypeOf<true>();
+      expectTypeOf<
+        ParameterIsRequired<Parameters<typeof buildOperatorReportAgentPolicy>, 2>
+      >().toEqualTypeOf<true>();
+
+      const workOrderWithoutPolicy = buildWorkOrderAgentPolicy as unknown as (
+        kind: 'temporal',
+        model: string,
+        backend: 'codex'
+      ) => unknown;
+      const reportWithoutPolicy = buildOperatorReportAgentPolicy as unknown as (
+        model: string,
+        backend: 'codex'
+      ) => unknown;
+
+      expect(() => workOrderWithoutPolicy('temporal', 'worker-model', 'codex')).toThrow(
+        /privateConnectorPolicy is required/
+      );
+      expect(() => reportWithoutPolicy('report-model', 'codex')).toThrow(
+        /privateConnectorPolicy is required/
+      );
+    });
+
     const cases = [
       {
         kind: 'board' as const,
@@ -175,6 +225,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_tasks',
           'mama_search',
           'report_publish',
+          'task_external_bind',
+          'task_lifecycle_reconcile',
           'task_create',
           'task_list',
           'task_update',
@@ -195,6 +247,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'agent_notices',
           'kagemusha_entities',
           'kagemusha_messages',
+          'kagemusha_overview',
+          'kagemusha_tasks',
           'mama_save',
           'mama_search',
         ],
@@ -204,7 +258,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(cases)(
       'uses the built-in least-privilege $kind policy without standing agent config',
       ({ kind, roleName, innerTools }) => {
-        const policy = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex');
+        const policy = buildWorkOrderAgentPolicy(
+          kind,
+          'gpt-5.4',
+          'codex',
+          enabledPrivatePolicy,
+          kind === 'wiki' ? [] : ['kagemusha']
+        );
         const context = policy.agentContext;
         const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
@@ -214,20 +274,35 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           roleName,
           backend: 'codex',
           tier: 2,
-          role: {
-            blockedTools: [],
-            model: 'gpt-5.4',
-          },
+          role: { model: 'gpt-5.4' },
         });
-        expect(context.role.allowedTools).toEqual(['code_act', ...innerTools]);
-        expect(projected.names).toEqual(innerTools);
+        expect([...context.role.allowedTools].sort()).toEqual(['code_act', ...innerTools].sort());
+        expect([...projected.names].sort()).toEqual([...innerTools].sort());
+        if (kind === 'wiki') {
+          expect(context.role.blockedTools).toEqual(
+            expect.arrayContaining([
+              'kagemusha_overview',
+              'kagemusha_entities',
+              'kagemusha_tasks',
+              'kagemusha_messages',
+            ])
+          );
+        } else {
+          expect(context.role.blockedTools).toEqual([]);
+        }
       }
     );
 
     it.each(['codex', 'claude'] as const)(
       'uses one least-privilege temporal catalog for the %s backend',
       (backend) => {
-        const policy = buildWorkOrderAgentPolicy('temporal', 'worker-model', backend);
+        const policy = buildWorkOrderAgentPolicy(
+          'temporal',
+          'worker-model',
+          backend,
+          enabledPrivatePolicy,
+          ['kagemusha']
+        );
         const projected = projectCodeActToolPolicy({
           tier: policy.agentContext.tier,
           role: policy.agentContext.role,
@@ -263,6 +338,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'task_create',
           'task_update',
           'report_publish',
+          'task_external_bind',
+          'task_lifecycle_reconcile',
         ]) {
           expect(projected.names).not.toContain(forbidden);
           expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
@@ -270,8 +347,48 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       }
     );
 
+    it.each(['codex', 'claude'] as const)(
+      'TG-06 removes private temporal tools for an unbound %s run',
+      (backend) => {
+        const policy = buildWorkOrderAgentPolicy(
+          'temporal',
+          'worker-model',
+          backend,
+          enabledPrivatePolicy,
+          []
+        );
+        const projected = projectCodeActToolPolicy({
+          tier: policy.agentContext.tier,
+          role: policy.agentContext.role,
+        });
+
+        expect(projected.names).not.toContain('kagemusha_overview');
+        expect(projected.names).not.toContain('kagemusha_entities');
+        expect(projected.names).not.toContain('kagemusha_tasks');
+        expect(projected.names).not.toContain('kagemusha_messages');
+        expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+      }
+    );
+
+    it('TG-06 keeps private temporal tools out of a Trello-bound run', () => {
+      const policy = buildWorkOrderAgentPolicy(
+        'temporal',
+        'worker-model',
+        'claude',
+        enabledPrivatePolicy,
+        ['trello']
+      );
+      const projected = projectCodeActToolPolicy({
+        tier: policy.agentContext.tier,
+        role: policy.agentContext.role,
+      });
+
+      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toEqual([]);
+      expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+    });
+
     it('gives the operator report lane a Code-Act role so it can execute gather tools', () => {
-      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const context = policy.agentContext;
       const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
@@ -324,7 +441,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
 
     it('covers every gather tool the report audit counts as substance', () => {
-      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const projected = projectCodeActToolPolicy({
         tier: policy.agentContext.tier,
         role: policy.agentContext.role,
@@ -351,17 +468,46 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(projected.names).not.toContain('context_compile');
     });
 
-    it('passes the report role into the report lane run', () => {
-      const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
-      const reportRun = startSource.slice(
-        startSource.indexOf('sessionKey: OPERATOR_REPORT_SESSION_KEY')
-      );
-      // A report run without agentContext is exactly the zero-tool regression; the
-      // freshSession marker anchors the assertion to the report lane's run options.
-      expect(reportRun).toMatch(
-        /agentContext:\s*buildOperatorReportAgentPolicy\([\s\S]{0,120}?\)\s*\.?\s*\n?\s*\.?agentContext/
-      );
-      expect(reportRun.slice(0, reportRun.indexOf('freshSession: true'))).toContain('agentContext');
+    it.each([
+      ['board', 'workorder-board'],
+      ['memory-curation', 'workorder-memory-curation'],
+      ['temporal', 'workorder-temporal'],
+    ] as const)(
+      'TG-04/TG-06 projects the private bundle onto the enabled %s lane only',
+      (kind, roleName) => {
+        const enabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy, [
+          'kagemusha',
+        ]);
+        const disabled = buildWorkOrderAgentPolicy(
+          kind,
+          'gpt-5.4',
+          'codex',
+          privatePolicy(false),
+          []
+        );
+
+        expect(enabled.agentContext.roleName).toBe(roleName);
+        expect(enabled.agentContext.role.allowedTools).toEqual(
+          expect.arrayContaining([
+            'kagemusha_overview',
+            'kagemusha_entities',
+            'kagemusha_tasks',
+            'kagemusha_messages',
+          ])
+        );
+        expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+        expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
+      }
+    );
+
+    it('TG-06 projects the report private bundle in both enabled and disabled directions', () => {
+      const enabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
+      const disabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', privatePolicy(false));
+
+      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_tasks');
+      expect(enabled.gatewayToolsPrompt).toContain('kagemusha_tasks');
+      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+      expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
     });
 
     it('wires one temporal runtime from projected and registered transport tools', () => {

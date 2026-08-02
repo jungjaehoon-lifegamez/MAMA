@@ -1,9 +1,9 @@
 /**
  * Owner-console operating brief - the agent-owned operations manual.
  *
- * Kagemusha's 23.8KB system prompt was not designed upfront: it accreted one
- * line per operational failure and owner correction, compiled into the prompt
- * by the agent across sessions. This module ports the LOOP, not the manual:
+ * A mature operating prompt accretes one line per operational failure and
+ * owner correction. This module preserves that learning LOOP, not a private
+ * deployment's manual:
  * the system seeds a mechanism skeleton once and provides the write path;
  * the agent fills it from experience (console_brief_update, log-loud).
  *
@@ -18,10 +18,24 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { type PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
+import {
+  buildPrivatePromptOverlay,
+  stripDisabledPrivatePromptRecipes,
+  stripMarkedPrivatePromptOverlays,
+} from '../connectors/private-prompt-overlay.js';
 
-/** Full-replace ceiling. Kagemusha's mature manual is ~24KB; leave headroom
- *  while keeping a runaway self-edit from bloating every future prompt. */
+/** Full-replace ceiling with headroom for a mature manual while preventing a
+ * runaway self-edit from bloating every future prompt. */
 export const CONSOLE_BRIEF_MAX_CHARS = 32_000;
+
+const LEGACY_CONSOLE_PRIVATE_LINES = new Set([
+  '- Business data: progressive exploration - kagemusha_overview() then',
+  'kagemusha_entities({activeOnly:true}) then kagemusha_tasks({...}) then',
+  'kagemusha_messages({channelId, since}) on the busiest channels. Never',
+  'widen a since window you were given.',
+  '- Use kagemusha_tasks first.',
+]);
 
 export const CONSOLE_BRIEF_DEFAULT = `# Owner Console Operating Brief
 
@@ -47,10 +61,9 @@ failure.
 
 - Status questions: artifacts first (board_read, workorder_status,
   audit_findings_read), then live queries; memory recall last and cited.
-- Business data: progressive exploration - kagemusha_overview() then
-  kagemusha_entities({activeOnly:true}) then kagemusha_tasks({...}) then
-  kagemusha_messages({channelId, since}) on the busiest channels. Never
-  widen a since window you were given.
+- Business data: use only tools present in the current run catalog. Start with
+  a broad summary, narrow to active entities or tasks, then inspect specific
+  channels without widening a supplied time window.
 - Cross-channel synthesis: anchor items on their task id (relatedTaskId)
   so the same work seen in two rooms stays one item.
 
@@ -92,6 +105,33 @@ export function loadConsoleBrief(homeDir: string = homedir()): string {
   const path = consoleBriefPath(homeDir);
   if (!existsSync(path)) return '';
   return readFileSync(path, 'utf-8');
+}
+
+function removeLegacyConsolePrivateLines(raw: string): string {
+  const parts = raw.split(/(\r?\n)/);
+  let projected = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    if (!LEGACY_CONSOLE_PRIVATE_LINES.has(line)) {
+      projected += line + separator;
+    }
+  }
+  return projected;
+}
+
+/** Project a user-owned brief for one prompt without modifying its file. */
+export function projectConsoleBriefForPrompt(raw: string, policy: PrivateConnectorPolicy): string {
+  const overlay = buildPrivatePromptOverlay('owner_console', policy);
+  const projected = stripDisabledPrivatePromptRecipes(
+    removeLegacyConsolePrivateLines(stripMarkedPrivatePromptOverlays(raw)),
+    overlay.length > 0
+  );
+  if (!overlay) {
+    return projected;
+  }
+  const separator = projected.endsWith('\n\n') ? '' : projected.endsWith('\n') ? '\n' : '\n\n';
+  return `${projected}${separator}${overlay}\n`;
 }
 
 /**

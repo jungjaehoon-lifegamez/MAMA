@@ -846,7 +846,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('serializes an external report behind the active Telegram turn for the same chat', async () => {
+  it('TG-01 serializes the exact external report delivery ID behind an active same-chat turn', async () => {
     let releaseTurn!: () => void;
     const blocked = new Promise<void>((resolve) => {
       releaseTurn = resolve;
@@ -863,13 +863,75 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
     mockApi.sendMessage.mockClear();
 
-    const report = gateway.sendMessage('7777', 'scheduled report');
+    const deliveryId = 'operator-report:scheduled:2026-08-02:09';
+    const report = gateway.sendSystemMessage('7777', 'scheduled report', deliveryId);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'scheduled report');
 
     releaseTurn();
     await Promise.all([turn, report]);
     expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'scheduled report');
+
+    await gateway.sendSystemMessage('7777', 'scheduled report', deliveryId);
+    expect(
+      mockApi.sendMessage.mock.calls.filter(([, text]) => text === 'scheduled report')
+    ).toHaveLength(1);
+    await gateway.stop();
+  });
+
+  it('TG-01/TG-06 rejects reuse of one delivery ID for a different Telegram chat', async () => {
+    const gateway = await makeGateway();
+    const deliveryId = 'operator-report:scheduled:target-binding';
+
+    await gateway.sendSystemMessage('7777', 'bound owner report', deliveryId);
+    await expect(
+      gateway.sendSystemMessage('8888', 'bound owner report', deliveryId)
+    ).rejects.toThrow(/delivery.*binding.*mismatch/i);
+
+    expect(
+      mockApi.sendMessage.mock.calls.filter(([, text]) => text === 'bound owner report')
+    ).toEqual([[7777, 'bound owner report']]);
+    await gateway.stop();
+  });
+
+  it('TG-01/TG-06 rejects reuse of one delivery ID for different text', async () => {
+    const gateway = await makeGateway();
+    const deliveryId = 'operator-report:scheduled:payload-binding';
+
+    await gateway.sendSystemMessage('7777', 'original owner report', deliveryId);
+    await expect(
+      gateway.sendSystemMessage('7777', 'different owner report', deliveryId)
+    ).rejects.toThrow(/delivery.*binding.*mismatch/i);
+
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'original owner report');
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'different owner report');
+    await gateway.stop();
+  });
+
+  it('TG-01 does not let another chat inherit an active report queue', async () => {
+    let releaseTurn!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    mockMessageRouter.processTurn.mockImplementationOnce(async () => {
+      await blocked;
+      return { response: 'turn answer', duration: 1 };
+    });
+    const gateway = await makeGateway();
+    const turn = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 133),
+      text: 'first',
+    });
+    await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
+    mockApi.sendMessage.mockClear();
+
+    await expect(
+      gateway.sendMessage('8888', 'other-chat report', 'operator-report:on-demand:other')
+    ).resolves.toBeUndefined();
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(8888, 'other-chat report');
+
+    releaseTurn();
+    await turn;
     await gateway.stop();
   });
 

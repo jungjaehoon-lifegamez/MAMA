@@ -15,6 +15,7 @@ import {
   buildWorkerTraceQueries,
   LANE_OBLIGATED_TOOLS,
   buildPromotionAfterHook,
+  boardCandidateReceiptVerdict,
   buildTemporalWorkOrderHook,
   buildWikiAfterHook,
 } from '../../src/operator/workorder-hooks.js';
@@ -23,6 +24,42 @@ import type { WorkOrderRecord } from '../../src/operator/task-ledger.js';
 const fakeWo = { workKind: 'memory-curation', id: 1 } as unknown as WorkOrderRecord;
 
 describe('Story S2-T3: extracted workorder hooks', () => {
+  describe('TG-01/TG-05/TG-06 Task 6: board candidate receipt verdict', () => {
+    it('requires a full durable receipt set for a candidate reconcile while leaving ordinary boards complete', () => {
+      const candidateReconcile = {
+        id: 11,
+        workKind: 'board',
+        payload: {
+          attempts: 1,
+          mode: 'reconcile',
+          candidates: {
+            bindingCandidates: [{ candidateId: 'candidate-a' }],
+            lifecycleCandidates: [],
+          },
+        },
+      } as unknown as WorkOrderRecord;
+      const ordinaryBoard = {
+        ...candidateReconcile,
+        payload: { attempts: 1, mode: 'full' },
+      } as unknown as WorkOrderRecord;
+
+      expect(
+        boardCandidateReceiptVerdict(candidateReconcile, {
+          inspectBoardCandidateAttempt: () => ({
+            disposition: 'partial',
+            missingCandidateIds: ['candidate-a'],
+          }),
+        })
+      ).toEqual({
+        disposition: 'fail',
+        reason: 'candidate receipt set partial; missing 1 decision(s)',
+      });
+      expect(boardCandidateReceiptVerdict(ordinaryBoard, null)).toEqual({
+        disposition: 'complete',
+      });
+    });
+  });
+
   describe('AC #1 (G1): worker trace queries see rows written by the REAL executor log path', () => {
     async function runToolAs(
       db: SQLiteDatabase,

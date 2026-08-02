@@ -525,6 +525,29 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
 
+        if (message.includes('duplicate column') && version === 62) {
+          this.recoverConnectorEventSequencesMigration062();
+          info(`[node-sqlite-adapter] Migration ${file} recovered successfully`);
+          continue;
+        }
+
+        if (message.includes('no such column') && version === 62) {
+          warn(
+            `[node-sqlite-adapter] Migration ${file} deferred until connector structure recovery (${message})`
+          );
+          continue;
+        }
+
+        if (
+          version === 63 &&
+          (message.includes('no such column') || message.includes('no such table'))
+        ) {
+          warn(
+            `[node-sqlite-adapter] Migration ${file} deferred until connector structure recovery (${message})`
+          );
+          continue;
+        }
+
         if (message.includes('duplicate column')) {
           warn(
             `[node-sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`
@@ -629,6 +652,34 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       if (hasMissingOperatorSeqFeature) {
         this.recoverConnectorEventOperatorSeqMigration039();
         info('[node-sqlite-adapter] Repaired skipped connector event operator sequence migration');
+      }
+
+      const connectorColumnsAfterOperatorSeqRepair = this.tableColumns('connector_event_index');
+      if (connectorColumnsAfterOperatorSeqRepair.has('source_timestamp_ms')) {
+        const hasMissingObservationSeqFeature =
+          !connectorColumnsAfterOperatorSeqRepair.has('operator_observation_seq') ||
+          !this.tableExists('connector_event_index_observation_cursors') ||
+          !this.indexExists('idx_connector_event_index_observation_seq') ||
+          !this.triggerExists('trg_connector_event_index_operator_ingest_seq_au') ||
+          !this.triggerExists('trg_connector_event_index_observation_seq_ai') ||
+          !this.triggerExists('trg_connector_event_index_observation_seq_au') ||
+          !this.triggerExists('trg_connector_event_index_observation_seq_explicit_ai') ||
+          !this.schemaVersionExists(62);
+
+        if (hasMissingObservationSeqFeature) {
+          this.recoverConnectorEventSequencesMigration062();
+          info(
+            '[node-sqlite-adapter] Repaired skipped connector event observation sequence migration'
+          );
+        }
+
+        const hasMissingLegacyRefreshFeature =
+          !this.triggerExists('trg_connector_event_index_legacy_content_refresh_au') ||
+          !this.schemaVersionExists(63);
+        if (hasMissingLegacyRefreshFeature) {
+          this.recoverConnectorEventLegacyRefreshMigration063();
+          info('[node-sqlite-adapter] Repaired skipped legacy connector event refresh migration');
+        }
       }
     }
 
@@ -1071,6 +1122,249 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         throw new Error(`Migration 039 recovery failed: missing trigger ${triggerName}`);
       }
     }
+  }
+
+  private recoverConnectorEventSequencesMigration062(): void {
+    this.transaction(() => {
+      const columns = this.tableColumns('connector_event_index');
+      if (!columns.has('operator_observation_seq')) {
+        this.exec(`
+          ALTER TABLE connector_event_index
+            ADD COLUMN operator_observation_seq INTEGER CHECK (
+              operator_observation_seq IS NULL OR operator_observation_seq >= 1
+            )
+        `);
+      }
+
+      this.exec(`
+        CREATE TABLE IF NOT EXISTS connector_event_index_observation_cursors (
+          source_connector TEXT PRIMARY KEY,
+          next_seq INTEGER NOT NULL CHECK (next_seq >= 1)
+        )
+      `);
+      this.exec(`
+        WITH existing_max AS (
+          SELECT source_connector, MAX(operator_observation_seq) AS max_seq
+          FROM connector_event_index
+          WHERE operator_observation_seq IS NOT NULL
+          GROUP BY source_connector
+        ), ranked_nulls AS (
+          SELECT event_index_id,
+                 source_connector,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY source_connector
+                   ORDER BY source_timestamp_ms, rowid
+                 ) AS seq
+          FROM connector_event_index
+          WHERE operator_observation_seq IS NULL
+        )
+        UPDATE connector_event_index
+        SET operator_observation_seq = (
+          SELECT COALESCE(existing_max.max_seq, 0) + ranked_nulls.seq
+          FROM ranked_nulls
+          LEFT JOIN existing_max
+            ON existing_max.source_connector = ranked_nulls.source_connector
+          WHERE ranked_nulls.event_index_id = connector_event_index.event_index_id
+        )
+        WHERE operator_observation_seq IS NULL
+      `);
+      this.exec(`
+        INSERT INTO connector_event_index_observation_cursors (source_connector, next_seq)
+        SELECT source_connector, MAX(operator_observation_seq) + 1
+        FROM connector_event_index
+        GROUP BY source_connector
+        ON CONFLICT(source_connector) DO UPDATE SET next_seq = CASE
+          WHEN connector_event_index_observation_cursors.next_seq < excluded.next_seq
+          THEN excluded.next_seq
+          ELSE connector_event_index_observation_cursors.next_seq
+        END
+      `);
+      this.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_event_index_observation_seq
+          ON connector_event_index(source_connector, operator_observation_seq)
+          WHERE operator_observation_seq IS NOT NULL
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_operator_ingest_seq_au
+        AFTER UPDATE OF operator_ingest_seq ON connector_event_index
+        WHEN NEW.operator_ingest_seq IS NULL AND OLD.operator_ingest_seq IS NOT NULL
+        BEGIN
+          INSERT INTO connector_event_index_operator_seq_cursors
+            (source_connector, channel, next_seq)
+          VALUES (NEW.source_connector, COALESCE(NEW.channel, ''), 1)
+          ON CONFLICT(source_connector, channel) DO NOTHING;
+          UPDATE connector_event_index
+          SET operator_ingest_seq = (
+            SELECT next_seq FROM connector_event_index_operator_seq_cursors
+            WHERE source_connector = NEW.source_connector
+              AND channel = COALESCE(NEW.channel, '')
+          )
+          WHERE event_index_id = NEW.event_index_id;
+          UPDATE connector_event_index_operator_seq_cursors
+          SET next_seq = next_seq + 1
+          WHERE source_connector = NEW.source_connector
+            AND channel = COALESCE(NEW.channel, '');
+        END
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_ai
+        AFTER INSERT ON connector_event_index
+        WHEN NEW.operator_observation_seq IS NULL
+        BEGIN
+          INSERT INTO connector_event_index_observation_cursors
+            (source_connector, next_seq)
+          VALUES (NEW.source_connector, 1)
+          ON CONFLICT(source_connector) DO NOTHING;
+          UPDATE connector_event_index
+          SET operator_observation_seq = (
+            SELECT next_seq FROM connector_event_index_observation_cursors
+            WHERE source_connector = NEW.source_connector
+          )
+          WHERE event_index_id = NEW.event_index_id;
+          UPDATE connector_event_index_observation_cursors
+          SET next_seq = next_seq + 1
+          WHERE source_connector = NEW.source_connector;
+        END
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_au
+        AFTER UPDATE OF operator_observation_seq ON connector_event_index
+        WHEN NEW.operator_observation_seq IS NULL AND OLD.operator_observation_seq IS NOT NULL
+        BEGIN
+          INSERT INTO connector_event_index_observation_cursors
+            (source_connector, next_seq)
+          VALUES (NEW.source_connector, 1)
+          ON CONFLICT(source_connector) DO NOTHING;
+          UPDATE connector_event_index
+          SET operator_observation_seq = (
+            SELECT next_seq FROM connector_event_index_observation_cursors
+            WHERE source_connector = NEW.source_connector
+          )
+          WHERE event_index_id = NEW.event_index_id;
+          UPDATE connector_event_index_observation_cursors
+          SET next_seq = next_seq + 1
+          WHERE source_connector = NEW.source_connector;
+        END
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_observation_seq_explicit_ai
+        AFTER INSERT ON connector_event_index
+        WHEN NEW.operator_observation_seq IS NOT NULL
+        BEGIN
+          INSERT INTO connector_event_index_observation_cursors
+            (source_connector, next_seq)
+          VALUES (NEW.source_connector, 1)
+          ON CONFLICT(source_connector) DO NOTHING;
+          UPDATE connector_event_index_observation_cursors
+          SET next_seq = CASE
+            WHEN next_seq <= NEW.operator_observation_seq THEN NEW.operator_observation_seq + 1
+            ELSE next_seq
+          END
+          WHERE source_connector = NEW.source_connector;
+        END
+      `);
+
+      this.assertMigration062Complete();
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        62,
+        'Refresh connector event delivery and observation sequences'
+      );
+    });
+  }
+
+  private assertMigration062Complete(): void {
+    const columns = this.tableColumns('connector_event_index');
+    if (!columns.has('operator_observation_seq')) {
+      throw new Error(
+        'Migration 062 recovery failed: missing connector_event_index.operator_observation_seq'
+      );
+    }
+    if (!this.tableExists('connector_event_index_observation_cursors')) {
+      throw new Error(
+        'Migration 062 recovery failed: missing connector_event_index_observation_cursors'
+      );
+    }
+    const cursorColumns = this.tableColumns('connector_event_index_observation_cursors');
+    for (const columnName of ['source_connector', 'next_seq']) {
+      if (!cursorColumns.has(columnName)) {
+        throw new Error(
+          `Migration 062 recovery failed: missing connector_event_index_observation_cursors.${columnName}`
+        );
+      }
+    }
+    if (!this.indexExists('idx_connector_event_index_observation_seq')) {
+      throw new Error(
+        'Migration 062 recovery failed: missing index idx_connector_event_index_observation_seq'
+      );
+    }
+    for (const triggerName of [
+      'trg_connector_event_index_operator_ingest_seq_au',
+      'trg_connector_event_index_observation_seq_ai',
+      'trg_connector_event_index_observation_seq_au',
+      'trg_connector_event_index_observation_seq_explicit_ai',
+    ]) {
+      if (!this.triggerExists(triggerName)) {
+        throw new Error(`Migration 062 recovery failed: missing trigger ${triggerName}`);
+      }
+    }
+  }
+
+  private recoverConnectorEventLegacyRefreshMigration063(): void {
+    this.transaction(() => {
+      this.assertMigration062Complete();
+      const connectorColumns = this.tableColumns('connector_event_index');
+      for (const columnName of [
+        'content_hash',
+        'metadata_json',
+        'source_timestamp_ms',
+        'source_type',
+        'channel',
+        'operator_ingest_seq',
+        'operator_observation_seq',
+      ]) {
+        if (!connectorColumns.has(columnName)) {
+          throw new Error(
+            `Migration 063 recovery failed: missing connector_event_index.${columnName}`
+          );
+        }
+      }
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_legacy_content_refresh_au
+        AFTER UPDATE OF content_hash, metadata_json, source_timestamp_ms, source_type, channel
+        ON connector_event_index
+        WHEN (
+          OLD.content_hash IS NOT NEW.content_hash
+          OR OLD.metadata_json IS NOT NEW.metadata_json
+          OR OLD.source_timestamp_ms IS NOT NEW.source_timestamp_ms
+          OR OLD.source_type IS NOT NEW.source_type
+          OR OLD.channel IS NOT NEW.channel
+        ) AND (
+          NEW.operator_ingest_seq IS OLD.operator_ingest_seq
+          OR NEW.operator_observation_seq IS OLD.operator_observation_seq
+        )
+        BEGIN
+          UPDATE connector_event_index
+          SET operator_ingest_seq = CASE
+                WHEN NEW.operator_ingest_seq IS OLD.operator_ingest_seq THEN NULL
+                ELSE NEW.operator_ingest_seq
+              END,
+              operator_observation_seq = CASE
+                WHEN NEW.operator_observation_seq IS OLD.operator_observation_seq THEN NULL
+                ELSE NEW.operator_observation_seq
+              END
+          WHERE event_index_id = NEW.event_index_id;
+        END
+      `);
+      if (!this.triggerExists('trg_connector_event_index_legacy_content_refresh_au')) {
+        throw new Error(
+          'Migration 063 recovery failed: missing trigger trg_connector_event_index_legacy_content_refresh_au'
+        );
+      }
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        63,
+        'Refresh sequences for legacy connector event updates'
+      );
+    });
   }
 
   private tableColumns(tableName: string): Set<string> {

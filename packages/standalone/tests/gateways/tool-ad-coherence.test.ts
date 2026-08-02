@@ -5,28 +5,55 @@
  * execute. Advertising the full catalog taught the model to call tools the
  * executor then denied (live: 47 denials/day). The composition under test is
  * exactly what MessageRouter.buildSystemPrompt wires: registry names filtered
- * through RoleManager into getGatewayToolsPrompt(disallowed).
+ * through the policy-keyed gateway catalog builder.
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
-import { getRoleManager, resetRoleManager, RoleManager } from '../../src/agent/role-manager.js';
-import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../../src/agent/gateway-tool-catalog.js';
+import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import Database from '../../src/sqlite.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import type { AgentContext } from '../../src/agent/types.js';
+import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
-function promptForRole(roleName: 'chat_bot' | 'owner_console'): string {
-  const rm = new RoleManager({ rolesConfig: DEFAULT_ROLES });
+function enabledPrivatePolicy() {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled: true,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: ['kagemusha'],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
+
+const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+function promptForRole(
+  roleName: 'chat_bot' | 'owner_console',
+  privateConnectorPolicy = disabledPrivatePolicy
+): string {
   const role = DEFAULT_ROLES.definitions[roleName];
-  const disallowed = ToolRegistry.getValidToolNames().filter(
-    (name) => !rm.isToolAllowed(role, name)
-  );
-  return getGatewayToolsPrompt(disallowed) || '';
+  return buildGatewayToolCatalog({
+    surface: roleName === 'owner_console' ? 'owner_console' : 'multi-agent-generic',
+    allowedTools: role.allowedTools,
+    blockedTools: role.blockedTools,
+    privateConnectorPolicy,
+  }).prompt;
 }
 
 describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
@@ -40,9 +67,9 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(prompt).not.toContain('os_restart_bot');
     });
 
-    it('owner_console prompt includes its business tools but never execution tools', () => {
+    it('owner_console static prompt excludes private tools and execution tools', () => {
       const prompt = promptForRole('owner_console');
-      expect(prompt).toContain('kagemusha_tasks');
+      expect(prompt).not.toContain('kagemusha_tasks');
       expect(prompt).toContain('task_create');
       expect(prompt).toContain('schedule_upcoming');
       expect(prompt).toContain('mama_save');
@@ -51,6 +78,14 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(prompt).not.toContain('os_restart_bot');
       expect(prompt).not.toContain('delegate');
       expect(prompt).not.toContain('browser_navigate');
+    });
+
+    it('TG-03/TG-04 advertises private tools only to an enabled eligible owner catalog', () => {
+      const owner = promptForRole('owner_console', enabledPrivatePolicy());
+      const chat = promptForRole('chat_bot', enabledPrivatePolicy());
+
+      expect(owner.match(/\*\*kagemusha_tasks\*\*/g)).toHaveLength(1);
+      expect(chat).not.toContain('kagemusha_tasks');
     });
   });
 
@@ -71,7 +106,7 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       const chatSecond = promptForRole('chat_bot');
       expect(ownerFirst).not.toBe(chatFirst);
       expect(chatSecond).toBe(chatFirst);
-      expect(ownerFirst).toContain('kagemusha_tasks');
+      expect(ownerFirst).not.toContain('kagemusha_tasks');
       expect(chatSecond).not.toContain('kagemusha_tasks');
     });
   });
@@ -84,7 +119,10 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
         store,
         { run },
         { search: async () => [] },
-        { backend: 'codex' }
+        { backend: 'codex' },
+        undefined,
+        undefined,
+        { privateConnectorPolicy: enabledPrivatePolicy() }
       );
       const roleManager = getRoleManager();
       roleManager.updateRolesConfig(DEFAULT_ROLES);
@@ -102,6 +140,14 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
 
         expect(context.roleName).toBe('owner_console');
         expect(context.role.allowedTools).toContain('code_act');
+        expect(context.role.allowedTools).toEqual(
+          expect.arrayContaining([
+            'kagemusha_overview',
+            'kagemusha_entities',
+            'kagemusha_tasks',
+            'kagemusha_messages',
+          ])
+        );
         expect(context.role.blockedTools).toEqual([
           'Bash',
           'Write',

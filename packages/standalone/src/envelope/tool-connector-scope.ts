@@ -20,6 +20,10 @@
 
 /** Tools that read a raw connector directly, mapped to the connector they read. */
 const DIRECT_CONNECTOR_READ_TOOLS: ReadonlyMap<string, string> = new Map([
+  ['kagemusha_overview', 'kagemusha'],
+  ['kagemusha_entities', 'kagemusha'],
+  ['kagemusha_tasks', 'kagemusha'],
+  ['kagemusha_messages', 'kagemusha'],
   ['trello_card', 'trello'],
   ['trello_kanban', 'trello'],
   ['trello_search', 'trello'],

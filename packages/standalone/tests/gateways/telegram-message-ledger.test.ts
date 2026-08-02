@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -50,6 +50,125 @@ describe('TelegramMessageLedger', () => {
     });
     expect(new TelegramMessageLedger(path).get('7777:201')).not.toHaveProperty('response');
     expect(await readFile(path, 'utf8')).not.toContain('durable response');
+  });
+
+  it('preserves TG-01/TG-06 outbound delivery bindings across restarts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    const key = 'outbound:report-1:text';
+    const binding = {
+      deliveryTarget: 'telegram:7777',
+      payloadIdentity: 'a'.repeat(64),
+    };
+    const first = new TelegramMessageLedger(path);
+
+    first.claim(key, binding);
+    first.markDelivered(key);
+
+    const restarted = new TelegramMessageLedger(path);
+    expect(restarted.claim(key, binding)).toMatchObject({
+      claimed: false,
+      entry: { state: 'delivered', ...binding },
+    });
+    expect(() => restarted.claim(key, { ...binding, deliveryTarget: 'telegram:8888' })).toThrow(
+      /delivery binding mismatch/i
+    );
+    expect(() => restarted.claim(key, { ...binding, payloadIdentity: 'b'.repeat(64) })).toThrow(
+      /delivery binding mismatch/i
+    );
+  });
+
+  it('TG-01/TG-06 migrates unbound V2 outbound work to safe versioned identities', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    const readyKey = 'outbound:legacy-ready';
+    const deliveredKey = 'outbound:legacy-delivered';
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            key: readyKey,
+            state: 'ready',
+            updatedAt: 1_000,
+            ownerId: 'legacy-owner',
+            response: JSON.stringify({ version: 1, nextIndex: 1, uncertain: true }),
+            nextChunkIndex: 0,
+            deliveryUncertain: false,
+          },
+          {
+            key: deliveredKey,
+            state: 'delivered',
+            updatedAt: 1_001,
+            ownerId: 'legacy-owner',
+          },
+        ],
+      })
+    );
+    const logs: string[] = [];
+    const ledger = new TelegramMessageLedger(path, {
+      now: () => 2_000,
+      log: (line) => logs.push(line),
+    });
+    const binding = {
+      deliveryTarget: 'telegram:7777',
+      payloadIdentity: 'c'.repeat(64),
+    };
+
+    expect(ledger.claim(readyKey, binding)).toMatchObject({
+      claimed: true,
+      entry: { state: 'processing', ...binding },
+    });
+    expect(ledger.claim(deliveredKey, binding)).toMatchObject({
+      claimed: true,
+      entry: { state: 'processing', ...binding },
+    });
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as {
+      version: number;
+      entries: Array<{ key: string; state: string; deliveryTarget?: string }>;
+    };
+    expect(persisted.version).toBe(3);
+    expect(
+      persisted.entries.filter((entry) => entry.key.startsWith('outbound:legacy-unbound:'))
+    ).toHaveLength(2);
+    expect(
+      persisted.entries.filter((entry) => entry.key.startsWith('outbound:legacy-unbound:'))
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ state: 'delivered' })]));
+    expect(persisted.entries.find((entry) => entry.key === readyKey)).toMatchObject(binding);
+    expect(persisted.entries.find((entry) => entry.key === deliveredKey)).toMatchObject(binding);
+    expect(logs).toContainEqual(expect.stringMatching(/migrated 2 unbound outbound entr/));
+  });
+
+  it('TG-01/TG-06 preserves a valid V2 ledger and fails closed when V3 persistence fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    const original = JSON.stringify({
+      version: 2,
+      entries: [
+        {
+          key: '7777:legacy-inbound',
+          state: 'delivered',
+          updatedAt: 1_000,
+          ownerId: 'legacy-owner',
+        },
+        {
+          key: 'outbound:legacy-ready',
+          state: 'ready',
+          updatedAt: 1_001,
+          ownerId: 'legacy-owner',
+          response: 'prepared response',
+        },
+      ],
+    });
+    await writeFile(path, original);
+    await mkdir(`${path}.tmp`);
+    const logs: string[] = [];
+
+    expect(() => new TelegramMessageLedger(path, { log: (line) => logs.push(line) })).toThrow();
+    expect(await readFile(path, 'utf8')).toBe(original);
+    expect((await readdir(root)).filter((entry) => entry.includes('.corrupt-'))).toHaveLength(0);
+    expect(logs).toContainEqual(expect.stringMatching(/schema upgrade failed; preserved/));
   });
 
   it('does not grant a second execution claim for an in-progress message', async () => {

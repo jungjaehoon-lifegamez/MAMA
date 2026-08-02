@@ -3,8 +3,68 @@ import { describe, expect, it, vi } from 'vitest';
 import { RunContextRegistry } from '../../../src/agent/code-act/run-context-registry.js';
 import type { GatewayToolExecutionContext } from '../../../src/agent/types.js';
 import { createCodeActExecutor } from '../../../src/cli/runtime/code-act-executor.js';
+import { GatewayToolExecutor } from '../../../src/agent/gateway-tool-executor.js';
+import type { ConnectorConfigLoadResult } from '../../../src/connectors/config-loader.js';
+import { resolvePrivateConnectorPolicy } from '../../../src/connectors/private-connector-policy.js';
 
 const CONTEXT_KEY = 'A'.repeat(43);
+
+function privatePolicy(enabled: boolean) {
+  const result: ConnectorConfigLoadResult = {
+    ok: true,
+    config: {
+      kagemusha: {
+        enabled,
+        pollIntervalMinutes: 60,
+        channels: {},
+        auth: { type: 'none' },
+      },
+    },
+    enabledNames: enabled ? ['kagemusha'] : [],
+  };
+  return resolvePrivateConnectorPolicy(result);
+}
+
+function makeTrustedContext(roleName: string): GatewayToolExecutionContext {
+  return {
+    agentId: roleName,
+    source:
+      roleName.startsWith('workorder-') || roleName === 'operator-report' ? 'operator' : 'telegram',
+    channelId: roleName,
+    executionSurface: 'model_tool',
+    envelope: {
+      agent_id: roleName,
+      instance_id: `${roleName}:instance`,
+      source: 'telegram',
+      channel_id: roleName,
+      trigger_context: {},
+      scope: {
+        project_refs: [],
+        raw_connectors: ['kagemusha'],
+        memory_scopes: [],
+        allowed_destinations: [],
+      },
+      tier: 2,
+      budget: { wall_seconds: 60 },
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      envelope_hash: 'trusted-private-test-envelope',
+    },
+    agentContext: {
+      source:
+        roleName.startsWith('workorder-') || roleName === 'operator-report'
+          ? 'operator'
+          : 'telegram',
+      platform: 'cli',
+      roleName,
+      role: { allowedTools: ['code_act', '*'] },
+      session: { sessionId: roleName, startedAt: new Date() },
+      capabilities: ['code_act'],
+      limitations: [],
+      tier: 2,
+      backend: 'codex',
+    },
+  };
+}
 
 function makeContext(): GatewayToolExecutionContext {
   return {
@@ -117,5 +177,63 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
     });
     expect(executeLegacy).toHaveBeenCalledWith('legacy()', { agentId: 'dashboard-agent' });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['owner_console', 'operator-report'])(
+    'TG-04/TG-06 preserves the enabled trusted %s private surface by registry key',
+    async (roleName) => {
+      const registry = new RunContextRegistry();
+      registry.register(CONTEXT_KEY, makeTrustedContext(roleName));
+      const executor = new GatewayToolExecutor({
+        envelopeIssuanceMode: 'off',
+        privateConnectorPolicy: privatePolicy(true),
+      });
+      const executeCodeAct = createCodeActExecutor({
+        registry,
+        gatewayToolExecutor: executor,
+        executeLegacy: vi.fn(),
+      });
+
+      const result = await executeCodeAct('typeof kagemusha_tasks', {
+        contextKey: CONTEXT_KEY,
+        agentId: 'http-supplied-generic',
+      });
+
+      expect(result).toMatchObject({ success: true, value: 'function' });
+    }
+  );
+
+  it('TG-04 rejects the disabled trusted owner surface and an HTTP role upgrade', async () => {
+    const registry = new RunContextRegistry();
+    registry.register(CONTEXT_KEY, makeTrustedContext('chat_bot'));
+    const executor = new GatewayToolExecutor({
+      envelopeIssuanceMode: 'off',
+      privateConnectorPolicy: privatePolicy(true),
+    });
+    const executeCodeAct = createCodeActExecutor({
+      registry,
+      gatewayToolExecutor: executor,
+      executeLegacy: vi.fn(),
+    });
+
+    const generic = await executeCodeAct('typeof kagemusha_tasks', {
+      contextKey: CONTEXT_KEY,
+      agentId: 'owner_console',
+    });
+    expect(generic).toMatchObject({ success: true, value: 'undefined' });
+
+    const disabledRegistry = new RunContextRegistry();
+    disabledRegistry.register(CONTEXT_KEY, makeTrustedContext('owner_console'));
+    const disabled = createCodeActExecutor({
+      registry: disabledRegistry,
+      gatewayToolExecutor: new GatewayToolExecutor({
+        envelopeIssuanceMode: 'off',
+        privateConnectorPolicy: privatePolicy(false),
+      }),
+      executeLegacy: vi.fn(),
+    });
+    await expect(
+      disabled('typeof kagemusha_tasks', { contextKey: CONTEXT_KEY })
+    ).resolves.toMatchObject({ success: true, value: 'undefined' });
   });
 });

@@ -605,4 +605,155 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 062 connector-wide observation sequences', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(columnExists(db, 'connector_event_index', 'operator_observation_seq')).toBe(true);
+    expect(tableExists(db, 'connector_event_index_observation_cursors')).toBe(true);
+    expect(indexExists(db, 'idx_connector_event_index_observation_seq')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_operator_ingest_seq_au')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_ai')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_au')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_observation_seq_explicit_ai')).toBe(true);
+
+    const insert = db.prepare(
+      `INSERT INTO connector_event_index (
+        event_index_id, source_connector, source_type, source_id, content,
+        source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    insert.run(
+      'evt-observation-a',
+      'kagemusha',
+      'kanban_card',
+      'task:99:a',
+      'pending',
+      1_775_260_800_000,
+      '{}',
+      Buffer.alloc(32, 9),
+      '2026-08-02T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z'
+    );
+    insert.run(
+      'evt-observation-b',
+      'kagemusha',
+      'kanban_card',
+      'task:99:b',
+      'done',
+      1_775_260_800_000,
+      '{}',
+      Buffer.alloc(32, 10),
+      '2026-08-02T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z'
+    );
+
+    expect(
+      db
+        .prepare(
+          `SELECT event_index_id, operator_observation_seq
+           FROM connector_event_index
+           WHERE source_connector = 'kagemusha'
+           ORDER BY operator_observation_seq`
+        )
+        .all()
+    ).toEqual([
+      { event_index_id: 'evt-observation-a', operator_observation_seq: 1 },
+      { event_index_id: 'evt-observation-b', operator_observation_seq: 2 },
+    ]);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 62')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(62);
+    expect(row?.description).toContain('observation sequences');
+
+    db.close();
+  });
+
+  it('TG-06 advances connector sequences when a migration-061 writer updates migrated data', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    db.prepare(
+      `INSERT INTO connector_event_index (
+        event_index_id, source_connector, source_type, source_id, channel, content,
+        source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'evt-legacy-writer',
+      'kagemusha',
+      'kanban_card',
+      'task:legacy-writer',
+      'room-a',
+      'pending',
+      1_775_260_800_000,
+      '{"status":"pending"}',
+      Buffer.alloc(32, 11),
+      '2026-08-02T00:00:00.000Z',
+      '2026-08-02T00:00:00.000Z'
+    );
+    const before = db
+      .prepare(
+        `SELECT operator_ingest_seq, operator_observation_seq
+         FROM connector_event_index WHERE event_index_id = ?`
+      )
+      .get('evt-legacy-writer') as {
+      operator_ingest_seq: number;
+      operator_observation_seq: number;
+    };
+
+    // Exact pre-migration-062 writer shape: authoritative fields change while the
+    // sequence columns, which that writer did not know about, remain untouched.
+    db.prepare(
+      `UPDATE connector_event_index
+       SET content = ?, metadata_json = ?, content_hash = ?, updated_at = ?
+       WHERE event_index_id = ?`
+    ).run(
+      'done',
+      '{"status":"done"}',
+      Buffer.alloc(32, 12),
+      '2026-08-02T01:00:00.000Z',
+      'evt-legacy-writer'
+    );
+
+    const after = db
+      .prepare(
+        `SELECT operator_ingest_seq, operator_observation_seq
+         FROM connector_event_index WHERE event_index_id = ?`
+      )
+      .get('evt-legacy-writer') as {
+      operator_ingest_seq: number;
+      operator_observation_seq: number;
+    };
+    expect(after.operator_ingest_seq).toBeGreaterThan(before.operator_ingest_seq);
+    expect(after.operator_observation_seq).toBeGreaterThan(before.operator_observation_seq);
+    db.prepare(
+      `UPDATE connector_event_index
+       SET content = ?, metadata_json = ?, content_hash = ?, updated_at = ?
+       WHERE event_index_id = ?`
+    ).run(
+      'done',
+      '{"status":"done"}',
+      Buffer.alloc(32, 12),
+      '2026-08-02T02:00:00.000Z',
+      'evt-legacy-writer'
+    );
+    expect(
+      db
+        .prepare(
+          `SELECT operator_ingest_seq, operator_observation_seq
+           FROM connector_event_index WHERE event_index_id = ?`
+        )
+        .get('evt-legacy-writer')
+    ).toEqual(after);
+    expect(db.prepare('SELECT version FROM schema_version WHERE version = 63').get()).toMatchObject(
+      { version: 63 }
+    );
+
+    db.close();
+  });
 });

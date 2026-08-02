@@ -36,6 +36,7 @@ import {
   type WorkOrderKind,
   type WorkOrderRecord,
   type EnqueueWorkOrderInput,
+  type BoardCandidateAttemptState,
   type TemporalAttemptState,
   type TemporalWorkFailureResult,
 } from './task-ledger.js';
@@ -49,6 +50,7 @@ export interface WorkOrderLedgerPort {
   /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
   inspectTemporalAttempt(attemptId: number): TemporalAttemptState;
+  inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState;
   failTemporalWorkOrder(
     attemptId: number,
     reason: string,
@@ -126,6 +128,31 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   temporal: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
 };
 
+export interface SafeCandidateRetryEvidence {
+  readonly phase: 'before_runner_call';
+  readonly code: 'before_hook_failed' | 'run_options_failed';
+}
+
+// This is intentionally a runtime capability, rather than a structural
+// TypeScript type. A caller can spell the public fields but cannot add its
+// object to this module-private set, so error text and runner output cannot
+// manufacture candidate retry authority.
+const safeCandidateRetryEvidence = new WeakSet<object>();
+
+function mintSafeCandidateRetryEvidence(
+  code: SafeCandidateRetryEvidence['code']
+): SafeCandidateRetryEvidence {
+  const evidence: SafeCandidateRetryEvidence = { phase: 'before_runner_call', code };
+  safeCandidateRetryEvidence.add(evidence);
+  return evidence;
+}
+
+function hasSafeCandidateRetryEvidence(
+  evidence: SafeCandidateRetryEvidence | undefined
+): evidence is SafeCandidateRetryEvidence {
+  return evidence !== undefined && safeCandidateRetryEvidence.has(evidence);
+}
+
 /**
  * An API failure the CLI printed as response text. Bounded to the head of the
  * response so a report that merely QUOTES an old error is not misclassified -
@@ -155,6 +182,16 @@ export class WorkOrderConsumer {
   private readonly unresolvedTemporalEffects = new Map<
     number,
     { workOrder: WorkOrderRecord; reason: string; allowRetry: boolean; tokensUsed?: number }
+  >();
+  private readonly unresolvedBoardCandidateEffects = new Map<
+    number,
+    {
+      workOrder: WorkOrderRecord;
+      reason: string;
+      retryEvidence?: SafeCandidateRetryEvidence;
+      tokensUsed?: number;
+      completeWhenNoCandidates: boolean;
+    }
   >();
   private timer: NodeJS.Timeout | null = null;
   private consuming = false;
@@ -188,7 +225,8 @@ export class WorkOrderConsumer {
         wo.workKind === 'temporal' ? 'temporal-stale-claim' : wo.workKind
       );
       this.handleFailure(wo, 'stale-claim');
-      if (this.unresolvedTemporalEffects.size > 0) break;
+      if (this.unresolvedTemporalEffects.size > 0 || this.unresolvedBoardCandidateEffects.size > 0)
+        break;
     }
   }
 
@@ -247,8 +285,12 @@ export class WorkOrderConsumer {
     try {
       // Unknown durable state is a hard claim barrier. Recheck it before any
       // new model work so a database outage cannot produce duplicate effects.
-      if (this.unresolvedTemporalEffects.size > 0) {
+      if (
+        this.unresolvedTemporalEffects.size > 0 ||
+        this.unresolvedBoardCandidateEffects.size > 0
+      ) {
         this.recheckUnresolvedTemporalEffects();
+        this.recheckUnresolvedBoardCandidateEffects();
         return 'drained';
       }
       // Drain is BOUNDED by the pending count at tick start: a row requeued
@@ -261,7 +303,11 @@ export class WorkOrderConsumer {
         await this.runOne(wo);
         remaining--;
         if (this.stopping) break;
-        if (this.unresolvedTemporalEffects.size > 0) break;
+        if (
+          this.unresolvedTemporalEffects.size > 0 ||
+          this.unresolvedBoardCandidateEffects.size > 0
+        )
+          break;
       }
       return 'drained';
     } finally {
@@ -296,17 +342,34 @@ export class WorkOrderConsumer {
         beforeState = await hook.before(wo);
       } catch (err) {
         // A broken before-hook must not strand the claim: fail the order loudly.
-        this.handleFailure(wo, `before-hook: ${errMessage(err)}`);
+        this.handleFailure(
+          wo,
+          `before-hook: ${errMessage(err)}`,
+          true,
+          wo.workKind === 'board' ? mintSafeCandidateRetryEvidence('before_hook_failed') : undefined
+        );
         return;
       }
     }
 
     let response: string;
     let tokensUsed: number | undefined;
+    let runOptions: Record<string, unknown> | undefined;
     try {
       // Inside the try: a runOptionsFor throw/reject (envelope issuance
       // failure) fails the order instead of running without an envelope.
-      const runOptions = await this.deps.runOptionsFor?.(wo);
+      runOptions = await this.deps.runOptionsFor?.(wo);
+    } catch (err) {
+      this.handleFailure(
+        wo,
+        `run-options: ${errMessage(err)}`,
+        true,
+        wo.workKind === 'board' ? mintSafeCandidateRetryEvidence('run_options_failed') : undefined
+      );
+      return;
+    }
+
+    try {
       const runResult = await workerRun(this.deps.runner, {
         kind: wo.workKind,
         brief,
@@ -384,6 +447,16 @@ export class WorkOrderConsumer {
       this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing', true, tokensUsed);
       return;
     }
+    if (wo.workKind === 'board') {
+      this.arbitrateBoardCandidateAttempt(
+        wo,
+        'candidate receipt set missing after runner completion',
+        undefined,
+        tokensUsed,
+        true
+      );
+      return;
+    }
     // Shadow-gate diagnostics (§8.2): the worker's actual output decides
     // whether the tool path works - log a bounded head, never the full body.
     this.log(
@@ -407,12 +480,26 @@ export class WorkOrderConsumer {
    * fresh row, same occurrence key - the terminal row freed it) or declare
    * retries-exhausted with an owner alarm.
    */
-  private handleFailure(wo: WorkOrderRecord, reason: string, allowRetry = true): void {
+  private handleFailure(
+    wo: WorkOrderRecord,
+    reason: string,
+    allowRetry = true,
+    retryEvidence?: SafeCandidateRetryEvidence
+  ): void {
     if (wo.workKind === 'temporal') {
       this.arbitrateTemporalAttempt(wo, reason, allowRetry);
       return;
     }
 
+    if (wo.workKind === 'board') {
+      this.arbitrateBoardCandidateAttempt(wo, reason, retryEvidence);
+      return;
+    }
+
+    this.handleOrdinaryFailure(wo, reason, allowRetry);
+  }
+
+  private handleOrdinaryFailure(wo: WorkOrderRecord, reason: string, allowRetry = true): void {
     const maxAttempts = WORKORDER_MAX_ATTEMPTS[wo.workKind];
     if (allowRetry && wo.payload.attempts < maxAttempts) {
       // Atomic fail+requeue (PR bot round): a crash between separate fail and
@@ -440,6 +527,128 @@ export class WorkOrderConsumer {
       wo.workKind,
       `workorder ${wo.workKind}#${wo.id} retries exhausted (${wo.payload.attempts}/${maxAttempts}): ${reason}`
     );
+  }
+
+  /** Durable receipts are the board-candidate completion authority. */
+  private arbitrateBoardCandidateAttempt(
+    wo: WorkOrderRecord,
+    reason: string,
+    retryEvidence?: SafeCandidateRetryEvidence,
+    tokensUsed?: number,
+    completeWhenNoCandidates = false
+  ): void {
+    let state: BoardCandidateAttemptState;
+    try {
+      state = this.deps.ledger.inspectBoardCandidateAttempt(wo.id);
+    } catch (err) {
+      this.deferBoardCandidateArbitration(
+        wo,
+        reason,
+        err,
+        retryEvidence,
+        tokensUsed,
+        completeWhenNoCandidates
+      );
+      return;
+    }
+    this.unresolvedBoardCandidateEffects.delete(wo.id);
+
+    if (state.disposition === 'none') {
+      // Ordinary boards and reconcile boards without candidates retain their
+      // historical one-attempt semantics.
+      if (completeWhenNoCandidates) {
+        this.deps.ledger.completeWorkOrder(wo.id);
+        this.emitEvent({
+          type: 'complete',
+          workKind: 'board',
+          workOrderId: wo.id,
+          ...(tokensUsed === undefined ? {} : { tokensUsed }),
+        });
+        this.log(`[workorder-consumer] completed board#${wo.id}`);
+        return;
+      }
+      this.handleOrdinaryFailure(wo, reason);
+      return;
+    }
+    if (state.disposition === 'complete') {
+      this.deps.ledger.completeWorkOrder(wo.id);
+      this.emitEvent({
+        type: 'complete',
+        workKind: 'board',
+        workOrderId: wo.id,
+        ...(tokensUsed === undefined ? {} : { tokensUsed }),
+      });
+      this.log(
+        `[workorder-consumer] completed board#${wo.id} from candidate receipts (${state.outcomes.join(',')})`
+      );
+      return;
+    }
+
+    if (
+      state.disposition === 'zero' &&
+      hasSafeCandidateRetryEvidence(retryEvidence) &&
+      wo.payload.attempts < 2
+    ) {
+      const requeued = this.deps.ledger.requeueWorkOrder(wo, reason);
+      this.emitEvent({ type: 'failed', workKind: 'board', workOrderId: wo.id, reason });
+      this.emitEvent({ type: 'requeued', workKind: 'board', workOrderId: requeued.id });
+      this.log(
+        `[workorder-consumer] failed board#${wo.id} (${reason}) -> candidate-only requeue #${requeued.id}`
+      );
+      return;
+    }
+
+    const receiptReason =
+      state.disposition === 'partial'
+        ? `candidate receipt set partial; missing ${state.missingCandidateIds.length} decision(s)`
+        : 'candidate receipt set is empty without live pre-run retry authority';
+    this.deps.ledger.failWorkOrder(wo.id, receiptReason);
+    this.emitEvent({
+      type: 'failed',
+      workKind: 'board',
+      workOrderId: wo.id,
+      reason: receiptReason,
+    });
+    this.emitEvent({
+      type: 'exhausted',
+      workKind: 'board',
+      workOrderId: wo.id,
+      reason: receiptReason,
+    });
+    this.alarm('board', `workorder board#${wo.id} ${receiptReason}`, 'board-candidate-receipts');
+    this.log(`[workorder-consumer] failed board#${wo.id}: ${receiptReason}`);
+  }
+
+  private deferBoardCandidateArbitration(
+    wo: WorkOrderRecord,
+    reason: string,
+    err: unknown,
+    retryEvidence?: SafeCandidateRetryEvidence,
+    tokensUsed?: number,
+    completeWhenNoCandidates = false
+  ): void {
+    this.unresolvedBoardCandidateEffects.set(wo.id, {
+      workOrder: wo,
+      reason,
+      retryEvidence,
+      tokensUsed,
+      completeWhenNoCandidates,
+    });
+    const message = `workorder board#${wo.id} candidate receipt state unresolved: ${errMessage(err)}`;
+    this.log(`[workorder-consumer] ${message}`);
+    this.alarm('board', message, 'board-candidate-state-unresolved');
+  }
+
+  private recheckUnresolvedBoardCandidateEffects(): void {
+    for (const pending of [...this.unresolvedBoardCandidateEffects.values()]) {
+      this.arbitrateBoardCandidateAttempt(
+        pending.workOrder,
+        pending.reason,
+        pending.retryEvidence,
+        pending.tokensUsed,
+        pending.completeWhenNoCandidates
+      );
+    }
   }
 
   /** Durable row+generation+receipt state always wins over runner prose/errors. */

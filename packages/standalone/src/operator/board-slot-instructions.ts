@@ -1,5 +1,5 @@
 /**
- * Shared board-authoring vocabulary (Kagemusha mechanism port).
+ * Shared board-authoring vocabulary.
  *
  * Every report producer (dashboard agent persona, its scheduled prompt, the
  * trigger loop's scheduled full report) injects THESE lines so the operator
@@ -54,7 +54,7 @@ export function buildPipelineTrackerInstructions(): string[] {
     '- D-day is an optional display aid computed from deadline and the run date; never use it',
     '  to replace or recompute temporal_state.',
     '- Never infer completion from calendar disappearance.',
-    '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
+    '- Never copy external connector lifecycle status into the native ledger.',
     '- Unassigned AND due within 7 days -> badge-warning with the',
     '  literal word "unassigned" visible.',
     '- Items with auto_created true and confirmed false render "(unconfirmed)" after the title',

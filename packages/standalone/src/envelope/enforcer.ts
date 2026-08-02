@@ -252,14 +252,6 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
     return ['drive'];
   }
 
-  // Direct connector readers answer from a live connector API, so nothing in
-  // their arguments names the connector. Without this, envelope.scope.raw_connectors
-  // never applied to them (tool-connector-scope.ts).
-  const directConnector = directConnectorReadForTool(toolName);
-  if (directConnector !== null) {
-    return [directConnector];
-  }
-
   if (toolName === 'context_compile') {
     return uniqueStrings([
       ...(getStringArrayArg(args, 'connectors') ?? []),
@@ -273,6 +265,15 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
       throw new EnvelopeViolation('kagemusha_messages requires channelId', 'missing_raw_target');
     }
     return ['kagemusha'];
+  }
+
+  // Direct connector readers answer from a live connector API, so nothing in
+  // their arguments names the connector. Without this, envelope.scope.raw_connectors
+  // never applied to them (tool-connector-scope.ts). Keep the messages target
+  // validation above this generic mapping.
+  const directConnector = directConnectorReadForTool(toolName);
+  if (directConnector !== null) {
+    return [directConnector];
   }
 
   if (!toolName.startsWith('raw.')) {

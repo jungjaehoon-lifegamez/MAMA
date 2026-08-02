@@ -21,10 +21,11 @@ import { ContextInjector, type InjectedContext, type MamaApiClient } from './con
 import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
-import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
-import { loadConsoleBrief } from '../operator/console-brief.js';
+import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
+import { loadConsoleBrief, projectConsoleBriefForPrompt } from '../operator/console-brief.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
-import { ToolRegistry } from '../agent/tool-registry.js';
+import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
+import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
@@ -47,7 +48,11 @@ import {
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
-import { buildReportCarryPrefix } from '../operator/report-carry.js';
+import type {
+  ReportCarryPeek,
+  ReportCarryPort,
+  ReportCarryTarget,
+} from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -55,6 +60,14 @@ import {
   type ReactiveEnvelopeConfig,
 } from '../envelope/reactive-config.js';
 import type { Envelope } from '../envelope/types.js';
+import type {
+  ConnectorCapabilitySurface,
+  PrivateConnectorPolicy,
+} from '../connectors/private-connector-policy.js';
+import {
+  resolvePrivateConnectorPolicy,
+  resolvePrivatePrincipalSurface,
+} from '../connectors/private-connector-policy.js';
 
 export type { AgentLoopOptions } from '../agent/types.js';
 export type { ReactiveEnvelopeConfig } from '../envelope/reactive-config.js';
@@ -68,6 +81,16 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('MessageRouter');
+const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: {},
+  enabledNames: [],
+});
+
+export interface MessageRouterDependencies {
+  privateConnectorPolicy?: PrivateConnectorPolicy;
+  reportCarry?: ReportCarryPort;
+}
 
 /**
  * The owner's message, as the cause of whatever the turn it started changes.
@@ -177,6 +200,7 @@ function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
   roleManager: RoleManager,
   trelloAvailable: boolean,
+  privateConnectorPolicy: PrivateConnectorPolicy,
   options: { includeOperatingDiscipline?: boolean } = {}
 ): string {
   if (agentContext.roleName !== 'owner_console') {
@@ -187,9 +211,13 @@ function buildStableRolePolicyInstructions(
     trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
       ? `
 - ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
-- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
+- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that one store is another or substitute lifecycle state across stores.`
       : '';
-  const evidencePolicy = `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the task board (task_list/task_create/task_update) is the tracker YOU maintain - the owner only views it. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
+  const privateStoreBoundary =
+    privateConnectorPolicy.enabledPrivateConnectors.length > 0
+      ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
+      : '';
+  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence; never copy or infer lifecycle state across stores.${privateStoreBoundary}${trelloBoundary}
 - Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
   return includeOperatingDiscipline
     ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
@@ -304,7 +332,9 @@ const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
 
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
-  config: ReactiveEnvelopeConfig
+  config: ReactiveEnvelopeConfig,
+  surface: ConnectorCapabilitySurface,
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): Omit<Envelope, 'envelope_hash' | 'signature'> {
   const policy = getReactiveRoutePolicy(message, config);
   return {
@@ -315,7 +345,9 @@ function buildReactiveEnvelopeInput(
     trigger_context: { user_text: message.text },
     scope: {
       project_refs: policy.projectRefs,
-      raw_connectors: policy.rawConnectors,
+      raw_connectors: [
+        ...privateConnectorPolicy.projectRawConnectors(surface, policy.rawConnectors),
+      ],
       // Identity scopes only - the grant mirror is an enforcement-layer READ
       // allowance, never issued into the envelope (PR #217 review: issuing it
       // here widened this chat's raw narrowing back to every sibling channel
@@ -407,6 +439,8 @@ export class MessageRouter implements TurnProcessor {
   private config: Required<MessageRouterConfig>;
   private envelopeConfig?: ReactiveEnvelopeConfig;
   private envelopeAuthority?: EnvelopeAuthority;
+  private readonly privateConnectorPolicy: PrivateConnectorPolicy;
+  private readonly reportCarry?: ReportCarryPort;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private gatewayRegistry: GatewayRegistry | null = null;
@@ -641,13 +675,17 @@ export class MessageRouter implements TurnProcessor {
     mamaApi: MamaApiClient,
     config: MessageRouterConfig = {},
     envelopeConfig?: ReactiveEnvelopeConfig,
-    envelopeAuthority?: EnvelopeAuthority
+    envelopeAuthority?: EnvelopeAuthority,
+    dependencies: MessageRouterDependencies = {}
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
     this.mamaApi = mamaApi;
     this.envelopeConfig = envelopeConfig;
     this.envelopeAuthority = envelopeAuthority;
+    this.privateConnectorPolicy =
+      dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
+    this.reportCarry = dependencies.reportCarry;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -676,7 +714,10 @@ export class MessageRouter implements TurnProcessor {
     });
   }
 
-  private buildReactiveEnvelope(message: NormalizedMessage): Envelope | undefined {
+  private buildReactiveEnvelope(
+    message: NormalizedMessage,
+    agentContext: AgentContext
+  ): Envelope | undefined {
     const config = this.envelopeConfig;
     const authority = this.envelopeAuthority;
 
@@ -684,7 +725,10 @@ export class MessageRouter implements TurnProcessor {
       return undefined;
     }
 
-    return authority.buildAndPersist(buildReactiveEnvelopeInput(message, config));
+    const surface = resolvePrivatePrincipalSurface({ agentContext });
+    return authority.buildAndPersist(
+      buildReactiveEnvelopeInput(message, config, surface, this.privateConnectorPolicy)
+    );
   }
 
   /**
@@ -699,13 +743,20 @@ export class MessageRouter implements TurnProcessor {
       chatType:
         typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
     });
-    const capabilities = this.roleManager.getCapabilities(role);
-    const limitations = this.roleManager.getLimitations(role);
+    const surface: ConnectorCapabilitySurface =
+      roleName === 'owner_console'
+        ? 'owner_console'
+        : roleName === 'os_agent'
+          ? 'os_agent'
+          : 'multi-agent-generic';
+    const projectedRole = this.privateConnectorPolicy.projectRole(surface, role);
+    const capabilities = this.roleManager.getCapabilities(projectedRole);
+    const limitations = this.roleManager.getLimitations(projectedRole);
 
     const ctx = createAgentContext(
       message.source,
       roleName,
-      role,
+      projectedRole,
       {
         sessionId,
         channelId: message.channelId,
@@ -929,6 +980,16 @@ This protects your credentials from being exposed in chat logs.`;
 
     try {
       const agentContext = this.createAgentContext(message, session.id);
+      const reportCarryTarget: ReportCarryTarget | null =
+        agentContext.roleName === 'owner_console' && message.source === 'telegram'
+          ? { source: message.source, channelId: message.channelId }
+          : null;
+      const reportCarryChannelKey = reportCarryTarget
+        ? buildChannelKey(reportCarryTarget.source, reportCarryTarget.channelId)
+        : null;
+      const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
+        ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
+        : null;
       const mediaInstructions = buildUploadedMediaInstructions(
         message,
         agentContext.role.allowedTools,
@@ -1076,7 +1137,7 @@ This protects your credentials from being exposed in chat logs.`;
         let pendingNotices = false;
         let pendingChannelNoticeCount = 0;
         let pendingBroadcastNoticeCount = 0;
-        const envelope = this.buildReactiveEnvelope(message);
+        const envelope = this.buildReactiveEnvelope(message, agentContext);
         const options: AgentLoopOptions = {
           systemPrompt: effectivePrompt,
           sessionPolicyFingerprint,
@@ -1137,12 +1198,9 @@ This protects your credentials from being exposed in chat logs.`;
           logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
         }
 
-        // Context carry (plan v6 S1-T4): owner console turns reference the last
-        // DELIVERED full report. User-message prefix is the only channel that
-        // reaches the model on EVERY turn including CONTINUE (per-call system
-        // prompts never reach a pooled CLI process).
-        const carryPrefix =
-          agentContext?.roleName === 'owner_console' ? buildReportCarryPrefix() : '';
+        // TG-05/TG-06: carry is captured once before the model call and travels
+        // only in this turn's user message, never in a rebuilt system prompt.
+        const carryPrefix = reportCarryPeek?.prefix ?? '';
 
         try {
           if (shouldResume) {
@@ -1402,13 +1460,31 @@ This protects your credentials from being exposed in chat logs.`;
       // 6. Update session context — finalize assistant response
       // Use flushStreamingResponse first (updates existing turn from periodic flush),
       // fall back to appendMessage if no turn exists yet (non-streaming path)
-      const flushed = this.sessionStore.flushStreamingResponse(session.id, response);
-      if (!flushed) {
+      const persisted =
+        this.sessionStore.flushStreamingResponse(session.id, response) ||
         this.sessionStore.appendMessage(session.id, {
           role: 'assistant',
           content: response,
           timestamp: Date.now(),
         });
+      if (!persisted) {
+        throw new Error('Unable to persist final assistant response');
+      }
+      if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
+        try {
+          this.reportCarry?.acknowledge({
+            deliveryId: reportCarryPeek.deliveryId,
+            target: reportCarryTarget,
+            consumingChannelKey: reportCarryChannelKey,
+            consumedAtIso: new Date().toISOString(),
+          });
+        } catch (error) {
+          logger.warn(
+            `[report-carry] acknowledgement failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
 
       // Release session lock AFTER final persistence to prevent out-of-order turns
@@ -1458,20 +1534,56 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
+    const surface = agentContext
+      ? resolvePrivatePrincipalSurface({ agentContext })
+      : 'multi-agent-generic';
+    const gatewayCatalog = agentContext
+      ? buildGatewayToolCatalog({
+          surface,
+          allowedTools: agentContext.role.allowedTools,
+          blockedTools: agentContext.role.blockedTools,
+          privateConnectorPolicy: this.privateConnectorPolicy,
+        })
+      : null;
+    const privatePolicyPrompt =
+      this.config.backend === 'codex' && surface === 'owner_console'
+        ? projectConsoleBriefForPrompt('', this.privateConnectorPolicy).trim()
+        : '';
     const stableRolePolicy = agentContext
-      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable)
+      ? [
+          buildStableRolePolicyInstructions(
+            agentContext,
+            this.roleManager,
+            trelloAvailable,
+            this.privateConnectorPolicy
+          ),
+          privatePolicyPrompt,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       : '';
     // Onboarding is guided first contact, not operator duty. The awakening persona asks the
     // user's name and runs a personality quiz; ordering it to gather via gateway tools and
     // execute multi-step work would fight that flow and aim it at connectors that do not
     // exist yet. Evidence policy still travels; the operating posture does not.
     const onboardingRolePolicy = agentContext
-      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable, {
-          includeOperatingDiscipline: false,
-        })
+      ? [
+          buildStableRolePolicyInstructions(
+            agentContext,
+            this.roleManager,
+            trelloAvailable,
+            this.privateConnectorPolicy,
+            { includeOperatingDiscipline: false }
+          ),
+          privatePolicyPrompt,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
       : '';
     const appendOnboardingRolePolicy = (basePrompt: string): string =>
-      onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt;
+      this.projectPrivatePromptText(
+        onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt
+      );
 
     if (isOnboarding) {
       // Check if we have existing conversation
@@ -1612,7 +1724,15 @@ ${historyContext}
       if (agentContext.roleName === 'owner_console') {
         const consoleBrief = loadConsoleBrief();
         if (consoleBrief.trim()) {
-          prompt += `\n\n${consoleBrief.trim()}\n`;
+          const projectedBrief = projectConsoleBriefForPrompt(
+            consoleBrief,
+            this.privateConnectorPolicy
+          );
+          prompt += `\n\n${((gatewayCatalog && this.config.backend !== 'codex') ||
+          privatePolicyPrompt
+            ? stripMarkedPrivatePromptOverlays(projectedBrief)
+            : projectedBrief
+          ).trim()}\n`;
         }
       }
     }
@@ -1628,25 +1748,16 @@ ${historyContext}
 
     // Include gateway tools directly in system prompt (priority 1 protection)
     // so they don't get truncated by PromptSizeMonitor as a separate layer.
-    // Prompt-permission coherence: advertise ONLY the tools this role can
-    // execute - the previous role-agnostic single cache advertised the full
-    // catalog, teaching the model to call tools the executor then denied.
-    // getGatewayToolsPrompt keeps its own per-disallowed-key cache, and its
-    // per-bullet filter preserves the '## Gateway Tools' marker - AgentLoop
-    // must keep seeing that marker or it double-injects an UNFILTERED catalog
-    // (agent-loop alreadyHasTools check).
-    const disallowedForRole = agentContext
-      ? ToolRegistry.getValidToolNames().filter(
-          (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
-        )
-      : undefined;
+    // Prompt-permission coherence: the policy-keyed catalog is generated from
+    // the final exact role projection, so cached private text cannot cross a
+    // connector-policy or principal boundary.
     const gatewayToolsPrompt =
-      this.config.backend === 'codex' ? '' : getGatewayToolsPrompt(disallowedForRole) || '';
+      this.config.backend === 'codex' ? '' : (gatewayCatalog?.prompt ?? '');
     if (gatewayToolsPrompt) {
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
 
-    return prompt;
+    return this.projectPrivatePromptText(prompt);
   }
 
   private buildSessionPolicyFingerprint(
@@ -1659,17 +1770,40 @@ ${historyContext}
     const baseInstructions = existsSync(soulPath)
       ? loadComposedSystemPrompt(false, agentContext)
       : COMPLETE_AUTONOMOUS_PROMPT;
+    const surface = resolvePrivatePrincipalSurface({ agentContext });
+    const gatewayCatalog = buildGatewayToolCatalog({
+      surface,
+      allowedTools: agentContext.role.allowedTools,
+      blockedTools: agentContext.role.blockedTools,
+      privateConnectorPolicy: this.privateConnectorPolicy,
+    });
     return hashSessionPolicyFingerprint({
       baseInstructions,
       agentsContent: enhanced.agentsContent,
       rulesContent: enhanced.rulesContent,
       model,
       stableRolePolicy:
-        buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable) +
+        buildStableRolePolicyInstructions(
+          agentContext,
+          this.roleManager,
+          trelloAvailable,
+          this.privateConnectorPolicy
+        ) +
         // Brief edits must rotate the durable-session policy (re-anchor carries
         // the new manual); non-owner roles contribute an empty string.
-        (agentContext.roleName === 'owner_console' ? `\n${loadConsoleBrief()}` : ''),
+        (agentContext.roleName === 'owner_console'
+          ? `\n${projectConsoleBriefForPrompt(loadConsoleBrief(), this.privateConnectorPolicy)}`
+          : '') +
+        `\n${gatewayCatalog.cacheKey}`,
     });
+  }
+
+  /** Remove only a complete, structurally valid host-generated private overlay. */
+  private projectPrivatePromptText(prompt: string): string {
+    if (this.privateConnectorPolicy.enabledPrivateConnectors.length > 0) {
+      return prompt;
+    }
+    return stripMarkedPrivatePromptOverlays(prompt);
   }
 
   /**

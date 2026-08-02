@@ -1,11 +1,6 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
-import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
-
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
-import { loadConnectorConfig } from '../../connectors/config-loader.js';
+import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.js';
 import { applyEnvelopeTablesMigration } from '../../db/migrations/envelope-tables.js';
 import { EnvelopeAuthority } from '../../envelope/authority.js';
 import {
@@ -16,8 +11,6 @@ import {
 import { createDefaultReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import type { EnvLike, ReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import { EnvelopeStore } from '../../envelope/store.js';
-
-const logger = new DebugLogger('envelope-bootstrap');
 
 export type EnvelopeIssuanceMode = 'off' | 'enabled' | 'required';
 
@@ -51,8 +44,12 @@ function parseEnvelopeIssuanceMode(env: EnvLike): EnvelopeIssuanceMode {
 export function buildRuntimeEnvelopeBootstrap(
   db: SQLiteDatabase,
   config: MAMAConfig,
-  env: EnvLike = process.env
+  env: EnvLike,
+  connectorConfigLoadResult: ConnectorConfigLoadResult
 ): RuntimeEnvelopeBootstrap {
+  if (!connectorConfigLoadResult) {
+    throw new Error('[envelope] connectorConfigLoadResult is required');
+  }
   const issuance = parseEnvelopeIssuanceMode(env);
 
   if (issuance === 'off') {
@@ -61,18 +58,10 @@ export function buildRuntimeEnvelopeBootstrap(
     };
   }
 
-  const connectorConfigPath = join(env.HOME?.trim() || homedir(), '.mama', 'connectors.json');
-  const connectorConfig = loadConnectorConfig(connectorConfigPath);
-  if (!connectorConfig.ok) {
-    logger.error(
-      `[envelope] failed to load connector configuration (${connectorConfig.error.code}): ` +
-        connectorConfig.error.message
-    );
-  }
-  const enabledConnectorNames = Object.freeze([...connectorConfig.enabledNames]);
+  const enabledConnectorNames = Object.freeze([...connectorConfigLoadResult.enabledNames]);
   const driveDestinations = Object.freeze(
-    connectorConfig.ok && connectorConfig.config.drive?.enabled
-      ? Object.values(connectorConfig.config.drive.channels)
+    connectorConfigLoadResult.ok && connectorConfigLoadResult.config.drive?.enabled
+      ? Object.values(connectorConfigLoadResult.config.drive.channels)
           .filter((channel) => channel.role === 'deliverable')
           .map((channel) => channel.folderId ?? channel.driveId)
           .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)

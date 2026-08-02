@@ -90,6 +90,24 @@ function flushBackgroundWork(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 120));
 }
 
+const PRIVATE_TOOLS = [
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
+];
+
+function expectFailClosedPrivateProjection(context: unknown): void {
+  expect(context).toEqual(
+    expect.objectContaining({
+      roleName: 'chat_bot',
+      role: expect.objectContaining({
+        blockedTools: expect.arrayContaining(PRIVATE_TOOLS),
+      }),
+    })
+  );
+}
+
 describe('Story M1R: AgentLoop internal tool context propagation', () => {
   let tempDir: string;
   let previousHome: string | undefined;
@@ -152,25 +170,25 @@ describe('Story M1R: AgentLoop internal tool context propagation', () => {
       const writeCall = calls.find((call) => call[0] === 'Write');
       expect(writeCall?.[2]).toEqual(
         expect.objectContaining({
-          agentContext: options.agentContext,
           source: 'telegram',
           channelId: 'tg:1',
           envelope: options.envelope,
           executionSurface: 'model_tool',
         })
       );
+      expectFailClosedPrivateProjection(writeCall?.[2]?.agentContext);
 
       const reactiveCalls = calls.filter((call) => call[0] === 'mama_search');
       expect(reactiveCalls.length).toBeGreaterThan(0);
       expect(reactiveCalls[0][2]).toEqual(
         expect.objectContaining({
-          agentContext: options.agentContext,
           source: 'telegram',
           channelId: 'tg:1',
           envelope: options.envelope,
           executionSurface: 'reactive_internal',
         })
       );
+      expectFailClosedPrivateProjection(reactiveCalls[0][2]?.agentContext);
     });
   });
 
@@ -195,13 +213,13 @@ describe('Story M1R: AgentLoop internal tool context propagation', () => {
       const searchCall = executeSpy.mock.calls.find((call) => call[0] === 'mama_search');
       expect(searchCall?.[2]).toEqual(
         expect.objectContaining({
-          agentContext: options.agentContext,
           source: 'telegram',
           channelId: 'tg:1',
           envelope: options.envelope,
           executionSurface: 'reactive_internal',
         })
       );
+      expectFailClosedPrivateProjection(searchCall?.[2]?.agentContext);
     });
   });
 
@@ -229,13 +247,13 @@ describe('Story M1R: AgentLoop internal tool context propagation', () => {
       const codeActCall = executeSpy.mock.calls.find((call) => call[0] === 'mama_search');
       expect(codeActCall?.[2]).toEqual(
         expect.objectContaining({
-          agentContext: options.agentContext,
           source: 'telegram',
           channelId: 'tg:1',
           envelope: options.envelope,
           executionSurface: 'code_act',
         })
       );
+      expectFailClosedPrivateProjection(codeActCall?.[2]?.agentContext);
     });
   });
 });
