@@ -172,6 +172,44 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           code: 'UNKNOWN_TOOL',
         });
       });
+
+      it('TG-05/TG-06 does not disclose private tools in unknown-tool errors', async () => {
+        const cases = [
+          new GatewayToolExecutor({ mamaApi: createMockApi() }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(false),
+          }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(true),
+          }),
+          new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            privateConnectorPolicy: privatePolicy(true),
+          }),
+        ];
+        cases[1]!.setAgentContext({
+          ...createViewerContext(),
+          source: 'telegram',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        });
+        cases[2]!.setAgentContext({
+          ...createDiscordContext(),
+          roleName: 'generic_worker',
+          role: { allowedTools: ['*'], systemControl: false, sensitiveAccess: false },
+        });
+
+        for (const executor of cases) {
+          const error = await executor
+            .execute('unknown_tool', {})
+            .catch((reason: unknown) => reason);
+          expect(error).toMatchObject({ code: 'UNKNOWN_TOOL' });
+          expect(String(error)).not.toContain('kagemusha');
+          expect(String(error)).not.toContain('Valid tools:');
+        }
+      });
     });
 
     describe('bound external lifecycle mutations', () => {

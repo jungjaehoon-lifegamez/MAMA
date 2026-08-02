@@ -2087,12 +2087,7 @@ export class GatewayToolExecutor {
   ): Promise<GatewayToolResult> {
     this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
-      throw new AgentError(
-        `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
-        'UNKNOWN_TOOL',
-        undefined,
-        false
-      );
+      throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
     }
 
     if (

@@ -69,6 +69,29 @@ describe('owner-console brief substrate', () => {
     expect(loadConsoleBrief(home)).toBe(raw);
   });
 
+  it('TG-05 removes arbitrary disabled private tool recipes but preserves references', () => {
+    const raw = [
+      '# Owner Console Operating Brief',
+      '',
+      '## Lessons',
+      '- Always call kagemusha_messages before answering an owner status question.',
+      '- Invoke `kagemusha_tasks` first, then summarize the result.',
+      '- Historical note: Kagemusha was the predecessor connector.',
+      '- Archive path: /workspace/history/kagemusha_messages-transcript.md',
+      '',
+    ].join('\n');
+    ensureConsoleBrief(home);
+    writeFileSync(consoleBriefPath(home), raw, 'utf-8');
+
+    const projected = projectConsoleBriefForPrompt(raw, disabledPrivatePolicy);
+
+    expect(projected).not.toContain('Always call kagemusha_messages');
+    expect(projected).not.toContain('Invoke `kagemusha_tasks`');
+    expect(projected).toContain('Historical note: Kagemusha was the predecessor connector.');
+    expect(projected).toContain('/workspace/history/kagemusha_messages-transcript.md');
+    expect(loadConsoleBrief(home)).toBe(raw);
+  });
+
   it('TG-05 preserves malformed, spoofed, and nested marker text byte-for-byte', () => {
     const generatedOverlay = projectConsoleBriefForPrompt('', enabledPrivatePolicy).trim();
     const samples = [

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import {
+  PRIVATE_CONNECTOR_TOOL_DEFINITIONS,
   projectPrivateToolPolicy,
   resolvePrivateConnectorPolicy,
   resolvePrivatePrincipalSurface,
@@ -118,6 +121,30 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
     );
     expect(resolvePrivatePrincipalSurface(trustedContext('os_agent', 'viewer'))).toBe('os_agent');
     expect(resolvePrivatePrincipalSurface(trustedContext('chat_bot'))).toBe('multi-agent-generic');
+  });
+
+  it('TG-05/TG-06 keeps direct and Code-Act private metadata coherent with policy', () => {
+    const codeActByName = new Map(HostBridge.getToolRegistry().map((tool) => [tool.name, tool]));
+
+    for (const definition of PRIVATE_CONNECTOR_TOOL_DEFINITIONS) {
+      expect(ToolRegistry.getTool(definition.name)).toMatchObject({
+        name: definition.name,
+        description: definition.description,
+        category: definition.category,
+        params: definition.params,
+      });
+      expect(codeActByName.get(definition.name)).toEqual({
+        name: definition.name,
+        description: definition.description,
+        params: definition.codeAct.params,
+        returnType: definition.codeAct.returnType,
+        category: definition.codeAct.category,
+      });
+    }
+
+    expect(codeActByName.get('kagemusha_tasks')?.description).toContain(
+      'pending|in_progress|review|done|completed|cancelled|dismissed|active'
+    );
   });
 
   it('returns immutable snapshots that cannot mutate a later role projection', () => {

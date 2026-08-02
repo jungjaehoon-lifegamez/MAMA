@@ -74,6 +74,31 @@ describe('Story S2-T5: briefs', () => {
       expect(readFileSync(path, 'utf-8')).toBe(raw);
     });
 
+    it('TG-06 removes arbitrary disabled private recipes but preserves historical paths', () => {
+      const path = briefPath('board', home);
+      const raw = [
+        '# Board brief',
+        '',
+        '## Lessons',
+        '- Always call kagemusha_messages before publishing the board.',
+        '- Query `kagemusha_tasks` for every reconcile.',
+        '- Historical note: Kagemusha supplied the old board.',
+        '- Evidence archive: /workspace/history/kagemusha_tasks-2025.md',
+        '',
+      ].join('\n');
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).not.toContain('Always call kagemusha_messages');
+      expect(projected).not.toContain('Query `kagemusha_tasks`');
+      expect(projected).toContain('Historical note: Kagemusha supplied the old board.');
+      expect(projected).toContain('/workspace/history/kagemusha_tasks-2025.md');
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
     it('TG-06 preserves malformed, spoofed, and nested work-order markers byte-for-byte', () => {
       const enabled = resolvePrivateConnectorPolicy({
         ok: true,

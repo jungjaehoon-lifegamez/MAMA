@@ -4,6 +4,7 @@ import type { CodeActSandbox } from './sandbox.js';
 import type { FunctionDescriptor } from './types.js';
 import type { RoleConfig } from '../../cli/config/types.js';
 import { RoleManager } from '../role-manager.js';
+import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../../connectors/private-connector-policy.js';
 
 /** Tool metadata for .d.ts generation */
 export interface ToolMeta {
@@ -450,87 +451,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
       '{ data: { notices: Array<{ agent: string; action: string; target: string; timestamp: string }> } }',
     category: 'system',
   },
-  // Kagemusha Query — progressive business data exploration
-  {
-    name: 'kagemusha_overview',
-    description:
-      'Get overview of all business data: room counts, task stats, message volume. Start here.',
-    params: [],
-    returnType:
-      '{ rooms: { total: number; byChannel: Record<string, number> }; tasks: { total: number; byStatus: Record<string, number> }; messages: { total: number; recent30d: number } }',
-    category: 'memory',
-  },
-  {
-    name: 'kagemusha_entities',
-    description: 'List people and project channels with activity stats. Like browsing a file tree.',
-    params: [
-      {
-        name: 'channel',
-        type: 'string',
-        required: false,
-        description: "Filter by platform: 'kakao', 'slack', 'chatwork', 'line', 'telegram'",
-      },
-      {
-        name: 'activeOnly',
-        type: 'boolean',
-        required: false,
-        description: 'Only entities active in last 30 days',
-      },
-      { name: 'limit', type: 'number', required: false },
-    ],
-    returnType:
-      '{ entities: Array<{ id: string; name: string; channel: string; type: string; totalMessages: number; recentMessages: number; activeTasks: number; totalTasks: number; lastActive: string }> }',
-    category: 'memory',
-  },
-  {
-    name: 'kagemusha_tasks',
-    description:
-      'Query tasks by room, status, priority, or text search. Like reading type definitions.',
-    params: [
-      {
-        name: 'sourceRoom',
-        type: 'string',
-        required: false,
-        description: 'Room ID from kagemusha_entities (e.g., "slack:CHANNEL_ID")',
-      },
-      {
-        name: 'status',
-        type: 'string',
-        required: false,
-        description: 'pending, in_progress, done, completed, dismissed',
-      },
-      { name: 'priority', type: 'string', required: false, description: 'urgent, high, normal' },
-      { name: 'search', type: 'string', required: false, description: 'Text search in title' },
-      { name: 'limit', type: 'number', required: false },
-    ],
-    returnType:
-      '{ tasks: Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }> }',
-    category: 'memory',
-  },
-  {
-    name: 'kagemusha_messages',
-    description:
-      'Read raw messages from a specific channel. Like reading source code. Follow entity → task → messages.',
-    params: [
-      {
-        name: 'channelId',
-        type: 'string',
-        required: true,
-        description: 'Channel ID from kagemusha_entities result (e.g., "kakao:ROOM_NAME")',
-      },
-      {
-        name: 'since',
-        type: 'string',
-        required: false,
-        description: 'ISO date (default: 7 days ago)',
-      },
-      { name: 'limit', type: 'number', required: false },
-      { name: 'search', type: 'string', required: false, description: 'Text search in content' },
-    ],
-    returnType:
-      '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
-    category: 'memory',
-  },
+  // Private business-data metadata is canonical in private-connector-policy.
+  ...PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+    params: definition.codeAct.params,
+    returnType: definition.codeAct.returnType,
+    category: definition.codeAct.category,
+  })),
   {
     name: 'trello_search',
     description:

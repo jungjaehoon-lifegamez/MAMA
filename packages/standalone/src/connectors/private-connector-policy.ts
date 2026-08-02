@@ -21,6 +21,16 @@ export interface PrivateConnectorToolDefinition {
   readonly description: string;
   readonly category: 'business_data';
   readonly params?: string;
+  readonly codeAct: {
+    readonly params: readonly {
+      readonly name: string;
+      readonly type: string;
+      readonly required: boolean;
+      readonly description?: string;
+    }[];
+    readonly returnType: string;
+    readonly category: 'memory';
+  };
 }
 
 export interface PrivateConnectorPolicy {
@@ -56,12 +66,38 @@ export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
     description: 'Get overview: room/task/message counts across all channels',
     category: 'business_data' as const,
     params: '(none)',
+    codeAct: Object.freeze({
+      params: Object.freeze([]),
+      returnType:
+        '{ rooms: { total: number; byChannel: Record<string, number> }; tasks: { total: number; byStatus: Record<string, number> }; messages: { total: number; recent30d: number } }',
+      category: 'memory' as const,
+    }),
   }),
   Object.freeze({
     name: 'kagemusha_entities' as const,
     description: 'List people and project channels with activity stats',
     category: 'business_data' as const,
     params: 'channel?, activeOnly?, limit?',
+    codeAct: Object.freeze({
+      params: Object.freeze([
+        Object.freeze({
+          name: 'channel',
+          type: 'string',
+          required: false,
+          description: "Filter by platform: 'kakao', 'slack', 'chatwork', 'line', 'telegram'",
+        }),
+        Object.freeze({
+          name: 'activeOnly',
+          type: 'boolean',
+          required: false,
+          description: 'Only entities active in last 30 days',
+        }),
+        Object.freeze({ name: 'limit', type: 'number', required: false }),
+      ]),
+      returnType:
+        '{ entities: Array<{ id: string; name: string; channel: string; type: string; totalMessages: number; recentMessages: number; activeTasks: number; totalTasks: number; lastActive: string }> }',
+      category: 'memory' as const,
+    }),
   }),
   Object.freeze({
     name: 'kagemusha_tasks' as const,
@@ -69,12 +105,71 @@ export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
       'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
     category: 'business_data' as const,
     params: 'sourceRoom?, status?, priority?, search?, limit?',
+    codeAct: Object.freeze({
+      params: Object.freeze([
+        Object.freeze({
+          name: 'sourceRoom',
+          type: 'string',
+          required: false,
+          description: 'Room ID from kagemusha_entities (e.g., "slack:CHANNEL_ID")',
+        }),
+        Object.freeze({
+          name: 'status',
+          type: 'string',
+          required: false,
+          description:
+            'pending, in_progress, review, done, completed, cancelled, dismissed, active',
+        }),
+        Object.freeze({
+          name: 'priority',
+          type: 'string',
+          required: false,
+          description: 'urgent, high, normal',
+        }),
+        Object.freeze({
+          name: 'search',
+          type: 'string',
+          required: false,
+          description: 'Text search in title',
+        }),
+        Object.freeze({ name: 'limit', type: 'number', required: false }),
+      ]),
+      returnType:
+        '{ tasks: Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }> }',
+      category: 'memory' as const,
+    }),
   }),
   Object.freeze({
     name: 'kagemusha_messages' as const,
     description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
     category: 'business_data' as const,
     params: 'channelId (required), since?, limit?, search?',
+    codeAct: Object.freeze({
+      params: Object.freeze([
+        Object.freeze({
+          name: 'channelId',
+          type: 'string',
+          required: true,
+          description: 'Channel ID from kagemusha_entities result (e.g., "kakao:ROOM_NAME")',
+        }),
+        Object.freeze({
+          name: 'since',
+          type: 'string',
+          required: false,
+          description: 'ISO date (default: 7 days ago)',
+        }),
+        Object.freeze({ name: 'limit', type: 'number', required: false }),
+        Object.freeze({
+          name: 'search',
+          type: 'string',
+          required: false,
+          description: 'Text search in content',
+        }),
+      ]),
+      returnType:
+        '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
+      category: 'memory' as const,
+    }),
   }),
 ] satisfies readonly PrivateConnectorToolDefinition[]);
 

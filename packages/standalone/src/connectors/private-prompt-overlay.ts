@@ -33,6 +33,55 @@ const CANONICAL_PRIVATE_PROMPT_OVERLAYS = new Set([
   ),
 ]);
 
+const PRIVATE_TOOL_NAMES = PRIVATE_CONNECTOR_TOOL_DEFINITIONS.map((definition) => definition.name);
+const HISTORICAL_REFERENCE_PATTERN =
+  /\b(?:archive|archived|history|historical|migration|migrated|deprecated|predecessor|previously)\b/i;
+const PRIVATE_CONNECTOR_DIRECTIVE_PATTERN =
+  /\b(?:always|call|check|fetch|first|gather|inspect|invoke|must|never|query|read|run|should|then|use)\b/i;
+const PATH_REFERENCE_PATTERN = /(?:^|\s)(?:\.{0,2}\/|\/|[A-Za-z]:\\)\S+/g;
+
+function containsPrivatePromptRecipe(line: string): boolean {
+  if (HISTORICAL_REFERENCE_PATTERN.test(line)) {
+    return false;
+  }
+  const withoutPaths = line.replace(PATH_REFERENCE_PATTERN, ' ');
+  if (PRIVATE_TOOL_NAMES.some((name) => withoutPaths.includes(name))) {
+    return true;
+  }
+  return (
+    /\bkagemusha\b/i.test(withoutPaths) && PRIVATE_CONNECTOR_DIRECTIVE_PATTERN.test(withoutPaths)
+  );
+}
+
+/**
+ * Remove private call recipes from a disabled surface without rewriting the
+ * user-owned file. Historical prose and path references remain ordinary user
+ * context; malformed host markers remain byte-for-byte fail-closed.
+ */
+export function stripDisabledPrivatePromptRecipes(
+  raw: string,
+  privateToolsEnabled: boolean
+): string {
+  if (
+    privateToolsEnabled ||
+    raw.includes(PRIVATE_PROMPT_OVERLAY_START) ||
+    raw.includes(PRIVATE_PROMPT_OVERLAY_END)
+  ) {
+    return raw;
+  }
+
+  const parts = raw.split(/(\r?\n)/);
+  let projected = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    if (!containsPrivatePromptRecipe(line)) {
+      projected += line + separator;
+    }
+  }
+  return projected;
+}
+
 /**
  * Remove only complete host-generated overlays. Any unmatched, nested, or
  * non-canonical marker text makes cleanup fail closed and preserves every byte.

@@ -25,6 +25,7 @@ import type {
 } from '../connectors/private-connector-policy.js';
 import {
   buildPrivatePromptOverlay,
+  stripDisabledPrivatePromptRecipes,
   stripMarkedPrivatePromptOverlays,
 } from '../connectors/private-prompt-overlay.js';
 
@@ -184,8 +185,11 @@ export function projectWorkOrderBriefForPrompt(
   raw: string,
   policy: PrivateConnectorPolicy
 ): string {
-  const projected = stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw));
   const overlay = buildPrivatePromptOverlay(workOrderSurface(kind), policy);
+  const projected = stripDisabledPrivatePromptRecipes(
+    stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw)),
+    overlay.length > 0
+  );
   if (!overlay) {
     return projected;
   }

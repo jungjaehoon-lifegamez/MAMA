@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { type PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 import {
   buildPrivatePromptOverlay,
+  stripDisabledPrivatePromptRecipes,
   stripMarkedPrivatePromptOverlays,
 } from '../connectors/private-prompt-overlay.js';
 
@@ -121,8 +122,11 @@ function removeLegacyConsolePrivateLines(raw: string): string {
 
 /** Project a user-owned brief for one prompt without modifying its file. */
 export function projectConsoleBriefForPrompt(raw: string, policy: PrivateConnectorPolicy): string {
-  const projected = removeLegacyConsolePrivateLines(stripMarkedPrivatePromptOverlays(raw));
   const overlay = buildPrivatePromptOverlay('owner_console', policy);
+  const projected = stripDisabledPrivatePromptRecipes(
+    removeLegacyConsolePrivateLines(stripMarkedPrivatePromptOverlays(raw)),
+    overlay.length > 0
+  );
   if (!overlay) {
     return projected;
   }

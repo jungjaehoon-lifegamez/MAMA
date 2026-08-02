@@ -10,6 +10,7 @@
 import type { GatewayToolName } from './types.js';
 import type { HostToolDefinition } from './model-runner.js';
 import { minimatch } from 'minimatch';
+import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../connectors/private-connector-policy.js';
 
 // ─── Tool Metadata ───────────────────────────────────────────────────────────
 
@@ -287,32 +288,16 @@ register({
   },
 });
 
-// Business Data — progressive exploration of operational data
-register({
-  name: 'kagemusha_overview',
-  description: 'Get overview: room/task/message counts across all channels',
-  category: 'business_data',
-  params: '(none)',
-});
-register({
-  name: 'kagemusha_entities',
-  description: 'List people and project channels with activity stats',
-  category: 'business_data',
-  params: 'channel?, activeOnly?, limit?',
-});
-register({
-  name: 'kagemusha_tasks',
-  description:
-    'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
-  category: 'business_data',
-  params: 'sourceRoom?, status?, priority?, search?, limit?',
-});
-register({
-  name: 'kagemusha_messages',
-  description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
-  category: 'business_data',
-  params: 'channelId (required), since?, limit?, search?',
-});
+// Private business data remains registered for dispatch, but all metadata is
+// owned by the private policy and projected out of generic catalogs at runtime.
+for (const definition of PRIVATE_CONNECTOR_TOOL_DEFINITIONS) {
+  register({
+    name: definition.name,
+    description: definition.description,
+    category: definition.category,
+    params: definition.params,
+  });
+}
 register({
   name: 'trello_search',
   description:
