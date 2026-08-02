@@ -1555,6 +1555,54 @@ describe('TG-06: durable owner-report delivery identity', () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
+  it('TG-06 passes exact prepared scheduled and on-demand deliveries to the same carry boundary', async () => {
+    const carried: Array<{
+      deliveryId: string;
+      text: string;
+      provenance: unknown;
+    }> = [];
+    const onDemand = durableLoop(
+      { current: null },
+      {
+        output: { send: async () => {} },
+        reportAsk: async () => 'on-demand owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_on_demand' }),
+        persistLastFullReport: (report) => carried.push(report),
+      }
+    );
+    expect(onDemand.startFullReport()).toEqual({ accepted: true });
+    await vi.waitFor(() => expect(carried).toHaveLength(1));
+
+    const scheduled = durableLoop(
+      { current: null },
+      {
+        output: { send: async () => {} },
+        reportAsk: async () => 'scheduled owner report',
+        fullReportProvenance: () => ({ status: 'available', modelRunId: 'mr_scheduled' }),
+        persistLastFullReport: (report) => carried.push(report),
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-08-02:09' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+    await scheduled.tick();
+
+    expect(carried).toHaveLength(2);
+    expect(carried[0]).toMatchObject({
+      deliveryId: expect.stringMatching(/^operator-report:on_demand_full:/),
+      text: 'on-demand owner report',
+      provenance: { status: 'available', modelRunId: 'mr_on_demand' },
+    });
+    expect(carried[1]).toMatchObject({
+      deliveryId: 'operator-report:scheduled:2026-08-02:09',
+      text: 'scheduled owner report',
+      provenance: { status: 'available', modelRunId: 'mr_scheduled' },
+    });
+  });
+
   it('persists an accepted on-demand occurrence before report composition completes', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
     let releaseAsk!: (value: string) => void;
