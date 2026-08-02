@@ -48,7 +48,7 @@ import {
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
-import { buildReportCarryPrefix } from '../operator/report-carry.js';
+import type { ReportCarryPeek, ReportCarryPort } from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -85,6 +85,7 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 
 export interface MessageRouterDependencies {
   privateConnectorPolicy?: PrivateConnectorPolicy;
+  reportCarry?: ReportCarryPort;
 }
 
 /**
@@ -431,6 +432,7 @@ export class MessageRouter implements TurnProcessor {
   private envelopeConfig?: ReactiveEnvelopeConfig;
   private envelopeAuthority?: EnvelopeAuthority;
   private readonly privateConnectorPolicy: PrivateConnectorPolicy;
+  private readonly reportCarry?: ReportCarryPort;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private gatewayRegistry: GatewayRegistry | null = null;
@@ -675,6 +677,7 @@ export class MessageRouter implements TurnProcessor {
     this.envelopeAuthority = envelopeAuthority;
     this.privateConnectorPolicy =
       dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
+    this.reportCarry = dependencies.reportCarry;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -963,6 +966,10 @@ This protects your credentials from being exposed in chat logs.`;
 
     try {
       const agentContext = this.createAgentContext(message, session.id);
+      const reportCarryPeek: ReportCarryPeek | null =
+        agentContext.roleName === 'owner_console' && message.source === 'telegram'
+          ? (this.reportCarry?.peek({ source: 'telegram', channelId: message.channelId }) ?? null)
+          : null;
       const mediaInstructions = buildUploadedMediaInstructions(
         message,
         agentContext.role.allowedTools,
@@ -1171,12 +1178,9 @@ This protects your credentials from being exposed in chat logs.`;
           logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
         }
 
-        // Context carry (plan v6 S1-T4): owner console turns reference the last
-        // DELIVERED full report. User-message prefix is the only channel that
-        // reaches the model on EVERY turn including CONTINUE (per-call system
-        // prompts never reach a pooled CLI process).
-        const carryPrefix =
-          agentContext?.roleName === 'owner_console' ? buildReportCarryPrefix() : '';
+        // TG-05/TG-06: carry is captured once before the model call and travels
+        // only in this turn's user message, never in a rebuilt system prompt.
+        const carryPrefix = reportCarryPeek?.prefix ?? '';
 
         try {
           if (shouldResume) {
@@ -1436,13 +1440,31 @@ This protects your credentials from being exposed in chat logs.`;
       // 6. Update session context — finalize assistant response
       // Use flushStreamingResponse first (updates existing turn from periodic flush),
       // fall back to appendMessage if no turn exists yet (non-streaming path)
-      const flushed = this.sessionStore.flushStreamingResponse(session.id, response);
-      if (!flushed) {
+      const persisted =
+        this.sessionStore.flushStreamingResponse(session.id, response) ||
         this.sessionStore.appendMessage(session.id, {
           role: 'assistant',
           content: response,
           timestamp: Date.now(),
         });
+      if (!persisted) {
+        throw new Error('Unable to persist final assistant response');
+      }
+      if (reportCarryPeek) {
+        try {
+          this.reportCarry?.acknowledge({
+            deliveryId: reportCarryPeek.deliveryId,
+            target: { source: 'telegram', channelId: message.channelId },
+            consumingChannelKey: channelKey,
+            consumedAtIso: new Date().toISOString(),
+          });
+        } catch (error) {
+          logger.warn(
+            `[report-carry] acknowledgement failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
 
       // Release session lock AFTER final persistence to prevent out-of-order turns

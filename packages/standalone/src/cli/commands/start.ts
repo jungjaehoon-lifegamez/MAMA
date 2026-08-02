@@ -94,6 +94,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
+import { FileReportCarryStore } from '../../operator/report-carry.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { ConductorInbox } from '../../operator/conductor-inbox.js';
@@ -1170,7 +1171,7 @@ export async function runAgentLoop(
     resolveMessageRouterConfig(config, runtimeBackend),
     envelopeBootstrap.envelopeConfig,
     envelopeBootstrap.envelopeAuthority,
-    { privateConnectorPolicy }
+    { privateConnectorPolicy, reportCarry: new FileReportCarryStore() }
   );
   messageRouter.setSessionsDb(db);
 
@@ -1929,7 +1930,6 @@ export async function runAgentLoop(
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
-      const { FileReportCarryStore } = await import('../../operator/report-carry.js');
       const { createTelegramReportCarryDelivery } =
         await import('../../operator/report-carry-delivery.js');
       type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
