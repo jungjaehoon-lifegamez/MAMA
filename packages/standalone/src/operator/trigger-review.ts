@@ -18,6 +18,15 @@ import { validateTriggerSpec, askAgentCLI, type AskAgent } from './trigger-autho
 
 export type ReviewDecision = EvolutionDecision;
 
+const REVIEW_PROMPT_MAX_CHARS = 30_000;
+const REVIEW_TRIGGER_ID_CHARS = 512;
+const REVIEW_TRIGGER_KIND_CHARS = 512;
+const REVIEW_TRIGGER_KEYWORDS_CHARS = 8_000;
+const REVIEW_TRIGGER_KEYWORD_CHARS = 256;
+const REVIEW_MEMORY_QUERY_CHARS = 8_000;
+const REVIEW_CONTEXT_CHARS = 8_000;
+const REVIEW_CONTEXT_LINE_CHARS = 500;
+
 export function parseReviewDecision(text: string): ReviewDecision {
   const raw = extractJsonObject(stripCodeFences(text));
   if (raw === null) throw new Error('agent review output contained no JSON object');
@@ -51,13 +60,16 @@ export function parseReviewDecision(text: string): ReviewDecision {
 }
 
 /** Mechanically apply the agent's decision to the registry (mirror of evolveTrigger's apply, minus outcome recording). */
-export function applyReview(decision: ReviewDecision, triggerId: string, registry: TriggerRegistry): EvolutionAction {
+export function applyReview(
+  decision: ReviewDecision,
+  triggerId: string,
+  registry: TriggerRegistry
+): EvolutionAction {
   if (decision.action === 'retired') {
-    registry.disable(triggerId, decision.reason);
+    registry.retireActive(triggerId, decision.reason);
     return 'retired';
   }
   if (decision.action === 'refined') {
-    registry.disable(triggerId, `refined: ${decision.reason}`);
     const spec = decision.newSpec;
     const id = spec.id ?? `${triggerId}.r.${reviewHash(spec.kind, spec.match.keywords)}`;
     const input: CreateTriggerInput = {
@@ -70,26 +82,42 @@ export function applyReview(decision: ReviewDecision, triggerId: string, registr
       authoredBy: 'agent',
       provenance: { createdFrom: `refined-from:${triggerId}`, note: decision.reason },
     };
-    registry.create(input);
+    registry.refine(triggerId, `refined: ${decision.reason}`, input);
     return 'refined';
   }
   return 'kept';
 }
 
 export function buildReviewPrompt(trigger: TriggerRecord, recentContext: string[]): string {
-  return [
-    'You maintain a personal operator\'s library of TRIGGERS (keyword rules that recall a memory',
+  const triggerId = boundedPromptValue(trigger.id, REVIEW_TRIGGER_ID_CHARS);
+  const kind = boundedPromptValue(trigger.kind, REVIEW_TRIGGER_KIND_CHARS);
+  const memoryQuery = boundedPromptValue(trigger.memoryQuery, REVIEW_MEMORY_QUERY_CHARS);
+  const keywords = boundedPromptLines(
+    trigger.match.keywords,
+    REVIEW_TRIGGER_KEYWORD_CHARS,
+    REVIEW_TRIGGER_KEYWORDS_CHARS,
+    ', '
+  );
+  const context = boundedPromptLines(
+    recentContext,
+    REVIEW_CONTEXT_LINE_CHARS,
+    REVIEW_CONTEXT_CHARS,
+    '\n- ',
+    true
+  );
+  const prompt = [
+    "You maintain a personal operator's library of TRIGGERS (keyword rules that recall a memory",
     'when future messages match). Review ONE trigger and decide whether to keep, refine, or',
     'retire it, based on its spec, its fire activity, and recent messages.',
     '',
-    `Trigger id: ${trigger.id}`,
-    `kind: ${trigger.kind}`,
-    `keywords (${trigger.match.keywordMode}): ${trigger.match.keywords.join(', ')}`,
-    `memoryQuery: ${trigger.memoryQuery}`,
+    `Trigger id: ${triggerId}`,
+    `kind: ${kind}`,
+    `keywords (${trigger.match.keywordMode}): ${keywords}`,
+    `memoryQuery: ${memoryQuery}`,
     `stats: fired=${trigger.stats.fired} succeeded=${trigger.stats.succeeded} failed=${trigger.stats.failed}`,
     '',
     'Recent messages (context):',
-    ...recentContext.map((line) => `- ${line}`),
+    context === '' ? '(none)' : `- ${context}`,
     '',
     'Judge for yourself - there is no fixed rule. Firing a lot on irrelevant messages suggests',
     'refine (narrower keywords) or retire; firing usefully suggests keep; never firing may mean',
@@ -102,6 +130,44 @@ export function buildReviewPrompt(trigger: TriggerRecord, recentContext: string[
     '     "match": { "keywords": string[], "keywordMode": "any"|"every", "minConfidence": number },',
     '     "procedure": [{ "action": string, "description": string }], "requiredEvidence": string[] } }',
   ].join('\n');
+  if (prompt.length > REVIEW_PROMPT_MAX_CHARS) {
+    throw new Error(`review prompt exceeded ${REVIEW_PROMPT_MAX_CHARS} character budget`);
+  }
+  return prompt;
+}
+
+function boundedPromptValue(value: string, maxChars: number): string {
+  const sanitized = value.replace(/[\r\n]+/g, ' ');
+  if (sanitized.length <= maxChars) return sanitized;
+  return `${sanitized.slice(0, maxChars - 16)} [...truncated]`;
+}
+
+function boundedPromptLines(
+  values: string[],
+  perValueChars: number,
+  totalChars: number,
+  separator: string,
+  newestFirstBudget = false
+): string {
+  const selected: string[] = [];
+  let used = 0;
+  const candidates = newestFirstBudget ? [...values].reverse() : values;
+  for (const value of candidates) {
+    const bounded = boundedPromptValue(value, perValueChars);
+    const added = bounded.length + (selected.length === 0 ? 0 : separator.length);
+    if (used + added > totalChars) break;
+    selected.push(bounded);
+    used += added;
+  }
+  const ordered = newestFirstBudget ? selected.reverse() : selected;
+  if (selected.length < values.length) {
+    const omitted = `[... ${values.length - selected.length} item(s) omitted]`;
+    if (used + separator.length + omitted.length <= totalChars) {
+      if (newestFirstBudget) ordered.unshift(omitted);
+      else ordered.push(omitted);
+    }
+  }
+  return ordered.join(separator);
 }
 
 /** Real agent review via the local claude CLI. Exercised in the M1-T4 live smoke. */

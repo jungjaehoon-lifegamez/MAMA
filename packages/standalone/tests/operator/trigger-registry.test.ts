@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
@@ -87,5 +90,81 @@ describe('TriggerRegistry', () => {
     expect(all[0].status).toBe('disabled');
     expect(all[0].disabledReason).toBe('noisy');
     expect(all[1].disabledReason).toBeUndefined();
+  });
+
+  it('acquires the migration write lock before inspecting legacy columns', () => {
+    const source = readFileSync(
+      new URL('../../src/operator/trigger-registry.ts', import.meta.url),
+      'utf8'
+    );
+    const migration = source.slice(
+      source.indexOf('private migrateReviewWatermark'),
+      source.indexOf('/** Persist an agent-authored trigger')
+    );
+    expect(migration.indexOf("this.db.exec('BEGIN IMMEDIATE')")).toBeGreaterThan(-1);
+    expect(migration.indexOf("this.db.exec('BEGIN IMMEDIATE')")).toBeLessThan(
+      migration.indexOf('PRAGMA table_info(operator_triggers)')
+    );
+  });
+
+  it('persists the review watermark across a registry restart', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'mama-trigger-watermark-')), 'triggers.db');
+    const first = new TriggerRegistry(new Database(path));
+    first.create(sampleInput('durable'));
+    first.recordFire('durable');
+    first.markReviewed('durable', 1);
+    first.close();
+
+    const restarted = new TriggerRegistry(new Database(path));
+    expect(restarted.listReviewCandidates()).toEqual([]);
+    restarted.recordFire('durable');
+    expect(restarted.listReviewCandidates().map((trigger) => trigger.id)).toEqual(['durable']);
+    restarted.close();
+  });
+
+  it('TG-06 persists failed review backoff and successful clear across restarts', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'mama-trigger-review-retry-')), 'triggers.db');
+    const first = new TriggerRegistry(new Database(path));
+    first.create(sampleInput('retry'));
+    first.recordFire('retry');
+    first.recordReviewFailure('retry', 1_000);
+    first.close();
+
+    const backedOff = new TriggerRegistry(new Database(path));
+    expect(backedOff.listReviewCandidates(8, 1_000 + 60 * 60 * 1000)).toEqual([]);
+    expect(backedOff.listReviewCandidates(8, 1_000 + 6 * 60 * 60 * 1000)).toHaveLength(1);
+    backedOff.markReviewed('retry', 1);
+    backedOff.recordFire('retry');
+    backedOff.close();
+
+    const cleared = new TriggerRegistry(new Database(path));
+    expect(cleared.listReviewCandidates(8, 1_001).map((trigger) => trigger.id)).toEqual(['retry']);
+    cleared.close();
+  });
+
+  it('TG-05 persists author provider backoff across a registry restart', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'mama-trigger-author-retry-')), 'triggers.db');
+    const first = new TriggerRegistry(new Database(path));
+    first.recordAuthorFailure('window-a', 1_000);
+    first.close();
+
+    const restarted = new TriggerRegistry(new Database(path));
+    expect(restarted.canAttemptAuthor(1_000 + 60 * 60 * 1000)).toBe(false);
+    expect(restarted.canAttemptAuthor(1_000 + 6 * 60 * 60 * 1000)).toBe(true);
+    restarted.clearAuthorFailure();
+    restarted.close();
+
+    const cleared = new TriggerRegistry(new Database(path));
+    expect(cleared.canAttemptAuthor(1_001)).toBe(true);
+    cleared.close();
+  });
+
+  it('validates review queue boundaries and rejects inactive failure updates', () => {
+    expect(() => reg.listReviewCandidates(0)).toThrow(/positive integer/);
+    expect(() => reg.listReviewCandidates(1, Number.NaN)).toThrow(/finite/);
+    expect(() => reg.markReviewed('missing', -1)).toThrow(/non-negative integer/);
+    reg.create(sampleInput('disabled-review'));
+    reg.disable('disabled-review', 'owner veto');
+    expect(() => reg.recordReviewFailure('disabled-review')).toThrow(/no active trigger/);
   });
 });
