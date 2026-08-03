@@ -317,6 +317,8 @@ describe('TG-06: versioned one-shot report carry', () => {
   ])(
     'TG-05/TG-06 quarantines an exact V1 carry %s before accepting a target-bound delivery',
     (_variant, legacyCarry) => {
+      vi.useFakeTimers();
+      vi.setSystemTime('2026-08-02T00:00:30.000Z');
       const path = tempCarryPath();
       const store = new FileReportCarryStore(path);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -342,6 +344,7 @@ describe('TG-06: versioned one-shot report carry', () => {
         expect(store.peek(TARGET, Date.parse(DELIVERED_AT))).toBeNull();
       } finally {
         warn.mockRestore();
+        vi.useRealTimers();
       }
     }
   );

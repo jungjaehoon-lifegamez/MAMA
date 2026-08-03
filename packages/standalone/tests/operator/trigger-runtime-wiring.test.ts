@@ -17,10 +17,12 @@ describe('trigger runtime provider wiring', () => {
     );
   });
 
-  it('registers the selected trigger runtime for daemon shutdown', () => {
+  it('TG-06 awaits loop drain and trigger runtime abort together during shutdown', () => {
     const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
 
-    expect(startSource).toContain('await triggerAgentRuntime.stop()');
+    expect(startSource).toContain(
+      'await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()])'
+    );
   });
 
   it('uses one resolved workspace for host policy and the trigger runtime', () => {

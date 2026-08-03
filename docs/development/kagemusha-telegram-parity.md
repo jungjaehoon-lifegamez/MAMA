@@ -60,6 +60,29 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
 `pending-report-store.test.ts`, `message-router.test.ts`, `role-manager.test.ts`,
 `attachment-text-extractor.test.ts`, and `gateway-tool-executor.test.ts`.
 
+### Trigger-loop token-cost closure: 2026-08-03
+
+- **TG-05:** trigger authoring consumes each successful event window once. Provider or parse
+  failures persist a process-independent 6-to-24-hour exponential backoff, so maintenance ticks,
+  connector nudges, new events, and daemon restarts cannot resend a poison window continuously.
+  Author input keeps the newest bounded evidence, caps every new trigger field and collection,
+  and invokes an explicit configured model in a tool-free, non-persistent JSON session.
+- **TG-06:** review advances a durable per-trigger fire watermark only after applying a decision,
+  backs off failed candidates without starving later rows, and reviews one candidate per default
+  maintenance pass. Prompt construction bounds both legacy trigger fields and the newest context
+  through the final provider boundary. Agent retire/refine writes require an active source row, so
+  a late decision cannot overwrite an owner veto; refine replacement remains transactional.
+  Daemon shutdown concurrently drains the active loop tick and aborts author/reviewer provider
+  calls; abort completion cannot start a later review/report leg or create a false provider
+  backoff.
+- Evidence: `operator-trigger-loop.test.ts`, `trigger-author.test.ts`,
+  `trigger-registry.test.ts`, `trigger-review.test.ts`, and `trigger-runtime-wiring.test.ts` cover
+  unchanged-window consumption, failure/restart backoff, newest-context preservation through the
+  final prompt, fixed prompt ceilings, one-pass catch-up after five missed intervals, review
+  isolation, migration locking, owner-state races, refine rollback, provider abort/drain, and
+  shutdown wiring. The focused gate passed 134 tests; the complete standalone gate passed 344
+  files and 4,600 tests with four files and seven tests skipped.
+
 ### Principal-following Code-Act correction: 2026-07-31
 
 - **TG-03/TG-04:** every persistent Claude process generation owns a random 32-byte context key.
@@ -389,8 +412,19 @@ change unless they are release-blocking security or data-loss issues.
       red-team review passed 297 focused tests plus 27 setup/security tests, and independent
       testing review passed 334 focused tests; both returned CLEAR. Root-wide Prettier still
       reports 37 pre-existing branch-unrelated files and is retained as repository format debt.
+- [x] The 2026-08-03 TG-05/TG-06 trigger-loop token-cost gate passed 134 focused tests and the
+      complete standalone suite (344 files, 4,600 tests; 4 files / 7 tests skipped). Durable
+      author/review backoff, newest bounded final prompts, owner-state races, collapsed missed
+      intervals, and shutdown provider abort/drain are covered; security/migration,
+      cost/performance, testing, and final red-team reviewers returned clear.
 
 ## Change log
+
+- 2026-08-03: Closed TG-05/TG-06 trigger-loop token leakage. Author and review calls now consume
+  durable work exactly once, back off provider/parse failures across restarts, keep newest evidence
+  under fixed provider-input ceilings, and cannot overwrite an owner state change. Maintenance
+  overlap collapses to one catch-up pass, and isolated JSON calls use the configured model without
+  tools or session persistence.
 
 - 2026-08-02: Closed the final Cline release review. The setup wizard now uses a backend-neutral,
   nonce-bound host-action protocol, validates Discord/Slack/Telegram credentials through official
