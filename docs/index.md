@@ -161,4 +161,4 @@ _Contributing, testing, and development guidelines_
 backends with backend-owned durable context, role-scoped Code-Act projection, bounded recovery,
 and explicit non-replayable mutation outcomes. Configured private connectors remain installation-
 local and are never promoted into generic catalogs or prompts.
-**Last Updated:** 2026-08-02
+**Last Updated:** 2026-08-03

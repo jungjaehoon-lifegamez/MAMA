@@ -46,7 +46,7 @@ export class TriggerRegistry {
   }
 
   private runMigration(): void {
-    this.db.prepare('PRAGMA busy_timeout = 5000').get();
+    this.db.pragma('busy_timeout = 5000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS operator_triggers (
         id TEXT PRIMARY KEY,
