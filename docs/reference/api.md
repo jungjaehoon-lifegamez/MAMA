@@ -1237,5 +1237,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 
 ---
 
-**Last Updated:** 2026-07-31
-**Version:** mama-server 1.15.0 / mama-os 0.32.0
+**Last Updated:** 2026-08-03
+**Version:** mama-server 1.15.0 / mama-os 0.32.3
