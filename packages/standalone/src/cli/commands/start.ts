@@ -2285,8 +2285,7 @@ export async function runAgentLoop(
           // stays 'claimed', and every launchd restart replays the batch
           // (review F7).
           if (conductorTickPromise) await conductorTickPromise;
-          stopTriggerLoop();
-          await triggerAgentRuntime.stop();
+          await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()]);
           // The shared operator DB handle is closed by the unconditional stop
           // hook above (single owner); nothing to close here.
         },

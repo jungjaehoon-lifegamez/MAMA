@@ -105,7 +105,7 @@ npm install -g @jungjaehoon/mama-os
 
 ```bash
 mama --version
-# Should output: 0.32.2
+# Should output: 0.32.3
 
 mama --help
 # Should show available commands

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
+import { buildReviewPrompt } from '../../src/operator/trigger-review.js';
 import type {
   OperatorChannelEvent,
   OperatorMemoryPort,
@@ -296,6 +297,318 @@ describe('OperatorTriggerLoop', () => {
     expect(review.mock.calls[0][0].id).toBe('fired-one');
     expect(reg.getById('fired-one')?.status).toBe('disabled');
     expect(reg.getById('silent-one')?.status).toBe('active');
+  });
+
+  it('reviews a kept trigger only after a new fire, not forever on every cadence', async () => {
+    seedTrigger(reg, 'review-watermark', 'report');
+    const review = vi.fn(async () => ({ action: 'kept' as const }));
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        authorWindowSize: 10,
+      },
+    });
+
+    delta.queue = [ev(1, 'ch-a', 'report one')];
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(1);
+
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(1);
+
+    delta.queue = [ev(2, 'ch-a', 'report two')];
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it('authors a connector window once until a new event arrives (TG-05)', async () => {
+    const askAgent = vi.fn(async () => '[]');
+    const loop = makeLoop({
+      askAgent,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 1,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+    });
+
+    delta.queue = [ev(1, 'ch-a', 'first window')];
+    await loop.tick();
+    await loop.tick();
+    expect(askAgent).toHaveBeenCalledTimes(1);
+
+    delta.queue = [ev(2, 'ch-a', 'new evidence')];
+    await loop.tick();
+    expect(askAgent).toHaveBeenCalledTimes(2);
+  });
+
+  it('durably backs off a failed author window and consumes it only after success (TG-05)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const askAgent = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('provider malformed JSON'))
+        .mockResolvedValue('[]');
+      const loop = makeLoop({
+        askAgent,
+        config: {
+          tickMs: 1000,
+          drainLimit: 50,
+          authorEveryNTicks: 1,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+        },
+      });
+
+      delta.queue = [ev(1, 'ch-a', 'poison author window')];
+      await expect(loop.tick()).resolves.toMatchObject({ authored: 0 });
+      expect(askAgent).toHaveBeenCalledTimes(1);
+
+      delta.queue = [ev(2, 'ch-a', 'new evidence during provider backoff')];
+      await loop.tick();
+      expect(askAgent).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
+      await loop.tick();
+      expect(askAgent).toHaveBeenCalledTimes(2);
+      await loop.tick();
+      expect(askAgent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('TG-05/TG-06 keeps newest review context through the final provider prompt', async () => {
+    seedTrigger(reg, 'latest-review', 'MATCH_NEWEST_REVIEW');
+    const contexts: string[][] = [];
+    const review = vi.fn(async (_trigger, context: string[]) => {
+      contexts.push(context);
+      return { action: 'kept' as const };
+    });
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        authorWindowSize: 50,
+      },
+    });
+    delta.queue = Array.from({ length: 50 }, (_, index) => {
+      const marker =
+        index === 0
+          ? 'OLDEST_REVIEW_SENTINEL'
+          : index === 49
+            ? 'MATCH_NEWEST_REVIEW NEWEST_REVIEW_SENTINEL'
+            : `MIDDLE_REVIEW_${String(index).padStart(2, '0')}`;
+      return ev(index + 1, 'ch-a', marker.padEnd(151, 'x'));
+    });
+
+    await loop.tick();
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].join('\n')).toContain('NEWEST_REVIEW_SENTINEL');
+    expect(contexts[0].join('\n').length).toBeLessThanOrEqual(8_100);
+    const trigger = reg.getById('latest-review');
+    if (!trigger) throw new Error('latest-review trigger missing');
+    const finalPrompt = buildReviewPrompt(trigger, contexts[0]);
+    expect(finalPrompt).toContain('NEWEST_REVIEW_SENTINEL');
+    expect(finalPrompt).not.toContain('OLDEST_REVIEW_SENTINEL');
+  });
+
+  it('isolates a poison review candidate and backs it off without starving the next one', async () => {
+    seedTrigger(reg, 'poison', 'poison');
+    seedTrigger(reg, 'healthy', 'healthy');
+    reg.recordFire('poison');
+    reg.recordFire('healthy');
+    const review = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('provider malformed JSON'))
+      .mockResolvedValue({ action: 'kept' as const });
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        reviewBatchLimit: 2,
+        authorWindowSize: 10,
+      },
+    });
+
+    await expect(loop.tick()).resolves.toMatchObject({ reviewed: 1 });
+    expect(review).toHaveBeenCalledTimes(2);
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues review when owner state changes before failure backoff is recorded', async () => {
+    seedTrigger(reg, 'owner-disabled', 'disabled');
+    seedTrigger(reg, 'still-reviewable', 'healthy');
+    reg.recordFire('owner-disabled');
+    reg.recordFire('still-reviewable');
+    const review = vi.fn(async (trigger: { id: string }) => {
+      if (review.mock.calls.length === 1) {
+        reg.disable(trigger.id, 'owner veto during review');
+        throw new Error('provider failed after owner veto');
+      }
+      return { action: 'kept' as const };
+    });
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        reviewBatchLimit: 2,
+        authorWindowSize: 10,
+      },
+    });
+
+    await expect(loop.tick()).resolves.toMatchObject({ reviewed: 1 });
+    expect(review).toHaveBeenCalledTimes(2);
+    expect(logs.some((line) => line.includes('state changed before backoff'))).toBe(true);
+  });
+
+  it('uses one review call per maintenance pass by default', async () => {
+    seedTrigger(reg, 'default-cap-a', 'a');
+    seedTrigger(reg, 'default-cap-b', 'b');
+    reg.recordFire('default-cap-a');
+    reg.recordFire('default-cap-b');
+    const review = vi.fn(async () => ({ action: 'kept' as const }));
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        authorWindowSize: 10,
+      },
+    });
+
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(1);
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves a fire that arrives while a kept review is in flight', async () => {
+    seedTrigger(reg, 'concurrent-fire', 'report');
+    reg.recordFire('concurrent-fire');
+    let releaseReview: (() => void) | undefined;
+    const review = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ action: 'kept' }>((resolve) => {
+            releaseReview = () => resolve({ action: 'kept' });
+          })
+      )
+      .mockResolvedValue({ action: 'kept' as const });
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        authorWindowSize: 10,
+      },
+    });
+
+    const firstTick = loop.tick();
+    await vi.waitFor(() => expect(review).toHaveBeenCalledTimes(1));
+    reg.recordFire('concurrent-fire');
+    releaseReview?.();
+    await firstTick;
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(2);
+  });
+
+  it('migrates legacy fired rows as already reviewed before accepting a new fire', () => {
+    const legacyDb = new Database(':memory:');
+    legacyDb.exec(`
+      CREATE TABLE operator_triggers (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        memory_query TEXT NOT NULL,
+        match_json TEXT NOT NULL,
+        procedure_json TEXT NOT NULL,
+        required_evidence_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        authored_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        provenance_json TEXT NOT NULL,
+        disabled_reason TEXT,
+        fired INTEGER NOT NULL DEFAULT 0,
+        succeeded INTEGER NOT NULL DEFAULT 0,
+        failed INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    legacyDb
+      .prepare(`INSERT INTO operator_triggers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        'legacy-fired',
+        'legacy',
+        'query',
+        JSON.stringify({ keywords: ['legacy'], keywordMode: 'any', minConfidence: 0.5 }),
+        '[]',
+        '[]',
+        'active',
+        'agent',
+        1,
+        1,
+        JSON.stringify({ createdFrom: 'legacy', note: '' }),
+        null,
+        7,
+        0,
+        0
+      );
+
+    const migrated = new TriggerRegistry(legacyDb);
+    expect(migrated.listReviewCandidates()).toEqual([]);
+    migrated.recordFire('legacy-fired');
+    expect(migrated.listReviewCandidates().map((trigger) => trigger.id)).toEqual(['legacy-fired']);
+    migrated.close();
+  });
+
+  it('caps each review pass and defers remaining newly-fired triggers', async () => {
+    for (let index = 0; index < 5; index += 1) {
+      const id = `bounded-review-${index}`;
+      seedTrigger(reg, id, `keyword-${index}`);
+      reg.recordFire(id);
+    }
+    const review = vi.fn(async () => ({ action: 'kept' as const }));
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 1,
+        reviewBatchLimit: 2,
+        authorWindowSize: 10,
+      },
+    });
+
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(2);
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(4);
+    await loop.tick();
+    expect(review).toHaveBeenCalledTimes(5);
   });
 
   it('owner report: agent digest sent on cadence when fires accumulated (M1.5)', async () => {
@@ -614,6 +927,256 @@ describe('OperatorTriggerLoop', () => {
       expect(tickSpy).not.toHaveBeenCalled(); // debounced: nothing yet
       await vi.advanceTimersByTimeAsync(15_000);
       expect(tickSpy).toHaveBeenCalledTimes(1); // burst collapsed to a single tick
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('nudge drains fresh data without advancing author maintenance cadence (M2.4/TG-06)', async () => {
+    vi.useFakeTimers();
+    try {
+      const askAgent = vi.fn(async () => '[]');
+      const loop = makeLoop({
+        askAgent,
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 2,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
+      });
+      delta.queue = [ev(1, 'ch-a', 'fresh connector event')];
+
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(askAgent).not.toHaveBeenCalled();
+
+      await loop.tick();
+      expect(askAgent).not.toHaveBeenCalled();
+      await loop.tick();
+      expect(askAgent).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('nudge does not advance review maintenance cadence (TG-05/TG-06)', async () => {
+    vi.useFakeTimers();
+    try {
+      seedTrigger(reg, 'nudge-review', 'report');
+      reg.recordFire('nudge-review');
+      const review = vi.fn(async () => ({ action: 'kept' as const }));
+      const loop = makeLoop({
+        review,
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 2,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
+      });
+
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(review).not.toHaveBeenCalled();
+      await loop.tick();
+      expect(review).not.toHaveBeenCalled();
+      await loop.tick();
+      expect(review).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('TG-05/TG-06 collapses many missed intervals into one deferred maintenance tick', async () => {
+    vi.useFakeTimers();
+    let releaseRecall: (() => void) | undefined;
+    try {
+      seedTrigger(reg, 'slow-nudge', 'report');
+      const askAgent = vi.fn(async () => '[]');
+      const memory: OperatorMemoryPort = {
+        async save() {},
+        recall: vi.fn(
+          () =>
+            new Promise((resolve) => {
+              releaseRecall = () => resolve([]);
+            })
+        ),
+      };
+      const loop = makeLoop({
+        memory,
+        askAgent,
+        config: {
+          tickMs: 100,
+          drainLimit: 50,
+          authorEveryNTicks: 1,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 0,
+        },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      const stop = loop.start();
+      delta.queue = [ev(1, 'ch-a', 'report is slow')];
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(releaseRecall).toBeDefined();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(askAgent).not.toHaveBeenCalled();
+      releaseRecall?.();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(askAgent).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(askAgent).toHaveBeenCalledTimes(1);
+      expect(tickSpy).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('TG-05/TG-06 stop waits for the active tick and suppresses deferred maintenance', async () => {
+    vi.useFakeTimers();
+    let releaseRecall: (() => void) | undefined;
+    try {
+      seedTrigger(reg, 'stop-slow-nudge', 'report');
+      const askAgent = vi.fn(async () => '[]');
+      const memory: OperatorMemoryPort = {
+        async save() {},
+        recall: vi.fn(
+          () =>
+            new Promise((resolve) => {
+              releaseRecall = () => resolve([]);
+            })
+        ),
+      };
+      const loop = makeLoop({
+        memory,
+        askAgent,
+        config: {
+          tickMs: 100,
+          drainLimit: 50,
+          authorEveryNTicks: 1,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 0,
+        },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      const stop = loop.start();
+      delta.queue = [ev(1, 'ch-a', 'report is slow')];
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(500);
+
+      let stopped = false;
+      const stopping = Promise.resolve(stop()).then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+
+      releaseRecall?.();
+      await vi.advanceTimersByTimeAsync(0);
+      await stopping;
+
+      expect(askAgent).not.toHaveBeenCalled();
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(tickSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('TG-05/TG-06 shutdown abort starts no later model leg or retry backoff', async () => {
+    vi.useFakeTimers();
+    let rejectAuthor: ((error: Error) => void) | undefined;
+    try {
+      const askAgent = vi.fn(
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            rejectAuthor = reject;
+          })
+      );
+      const reportAsk = vi.fn(async () => 'must not run');
+      const loop = makeLoop({
+        askAgent,
+        reportAsk,
+        output: { send: vi.fn(async () => {}) },
+        config: {
+          tickMs: 100,
+          drainLimit: 50,
+          authorEveryNTicks: 1,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          reportEveryNTicks: 1,
+        },
+      });
+      delta.queue = [ev(1, 'ch-a', 'activity buffered for a digest')];
+      const stop = loop.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(askAgent).toHaveBeenCalledTimes(1);
+
+      const stopping = stop();
+      rejectAuthor?.(new Error('intentional shutdown abort'));
+      await vi.advanceTimersByTimeAsync(0);
+      await stopping;
+
+      expect(reportAsk).not.toHaveBeenCalled();
+      expect(reg.canAttemptAuthor(0)).toBe(true);
+      expect(logs.some((line) => line.includes('cancelled by shutdown'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('TG-05/TG-06 review shutdown abort preserves the candidate without later model work', async () => {
+    vi.useFakeTimers();
+    let rejectReview: ((error: Error) => void) | undefined;
+    try {
+      seedTrigger(reg, 'shutdown-review', 'report');
+      const review = vi.fn(
+        () =>
+          new Promise<{ action: 'kept' }>((_resolve, reject) => {
+            rejectReview = reject;
+          })
+      );
+      const reportAsk = vi.fn(async () => 'must not run');
+      const loop = makeLoop({
+        review,
+        reportAsk,
+        output: { send: vi.fn(async () => {}) },
+        config: {
+          tickMs: 100,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 1,
+          authorWindowSize: 10,
+          reportEveryNTicks: 1,
+        },
+      });
+      delta.queue = [ev(1, 'ch-a', 'report activity buffered for review')];
+      const stop = loop.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(review).toHaveBeenCalledTimes(1);
+
+      const stopping = stop();
+      rejectReview?.(new Error('intentional review shutdown abort'));
+      await vi.advanceTimersByTimeAsync(0);
+      await stopping;
+
+      expect(reportAsk).not.toHaveBeenCalled();
+      expect(reg.listReviewCandidates().map((trigger) => trigger.id)).toEqual(['shutdown-review']);
+      expect(
+        logs.some((line) => line.includes('review trigger=shutdown-review cancelled by shutdown'))
+      ).toBe(true);
     } finally {
       vi.useRealTimers();
     }

@@ -67,6 +67,7 @@ export interface TriggerAgentRuntime {
 
 export interface TriggerAgentRuntimeDependencies {
   askClaude?: AskAgent;
+  createClaudeAsk?: (options: { model?: string; signal?: AbortSignal }) => AskAgent;
   createCodexRuntime?: (options: CodexRuntimeProcessOptions) => TriggerCodexRunner;
   createClineRuntime?: (options: {
     command?: string;
@@ -82,13 +83,17 @@ export interface TriggerAgentRuntimeDependencies {
 export type ClaudeCliExecutor = (
   file: string,
   args: string[],
-  options: { maxBuffer: number }
+  options: { maxBuffer: number; signal?: AbortSignal }
 ) => Promise<{ stdout: string }>;
 
 const TRIGGER_CODEX_SYSTEM_PROMPT =
   'Return only the requested JSON value, with no prose or code fences.';
 const TRIGGER_AUTHOR_SESSION_KEY = 'operator:trigger-author';
 const TRIGGER_REVIEW_SESSION_KEY = 'operator:trigger-review';
+const AUTHOR_EVENT_CHARS = 500;
+const AUTHOR_EVENT_SECTION_CHARS = 10_000;
+const AUTHOR_TRIGGER_SUMMARY_CHARS = 300;
+const AUTHOR_TRIGGER_SECTION_CHARS = 12_000;
 
 export async function authorTriggers(
   events: OperatorChannelEvent[],
@@ -126,26 +131,34 @@ export async function authorTriggers(
   return created;
 }
 
-/**
- * How much of a trigger's memoryQuery the author pass needs to see.
- *
- * The list exists for ONE job, stated in the prompt itself: do not propose a variant of a
- * trigger that already exists. Keywords decide that; the full recall instruction does not.
- *
- * Measured on the live registry 2026-07-30: 162 active triggers, memoryQuery averaging 1,261
- * characters, 204 KB of the 240 KB prompt - and growing with every trigger the pass authors,
- * which is a loop that feeds itself. One call cost $1.33 at 126,667 cache-creation tokens and
- * took 41 seconds, every 30 minutes.
- */
-const EXISTING_TRIGGER_QUERY_CHARS = 160;
-
 function summarizeExistingTrigger(t: TriggerRecord): string {
-  const query = t.memoryQuery ?? '';
-  const gist =
-    query.length > EXISTING_TRIGGER_QUERY_CHARS
-      ? `${query.slice(0, EXISTING_TRIGGER_QUERY_CHARS).trimEnd()}...`
-      : query;
-  return `- ${t.id}: keywords=[${t.match.keywords.join(', ')}] gist="${gist}"`;
+  const scope = t.match.scopeChannelIds?.length ? t.match.scopeChannelIds.join(', ') : '*';
+  return `- kind=${t.kind} scope=[${scope}] mode=${t.match.keywordMode} keywords=[${t.match.keywords.join(', ')}]`;
+}
+
+function boundedLines(
+  lines: string[],
+  perLineChars: number,
+  sectionChars: number,
+  newestFirstBudget = false
+): string {
+  const selected: string[] = [];
+  let used = 0;
+  const candidates = newestFirstBudget ? [...lines].reverse() : lines;
+  for (const raw of candidates) {
+    const line = raw.replace(/[\r\n]+/g, ' ').slice(0, perLineChars);
+    if (used + line.length + 1 > sectionChars) break;
+    selected.push(line);
+    used += line.length + 1;
+  }
+  const omitted = lines.length - selected.length;
+  const ordered = newestFirstBudget ? selected.reverse() : selected;
+  if (omitted > 0) {
+    const note = `- [... ${omitted} item(s) omitted by input budget]`;
+    if (newestFirstBudget) ordered.unshift(note);
+    else ordered.push(note);
+  }
+  return ordered.join('\n');
 }
 
 export function buildAuthorPrompt(
@@ -153,9 +166,20 @@ export function buildAuthorPrompt(
   existing: TriggerRecord[]
 ): string {
   // English default. Personal phrasing overrides load from ~/.mama/operator/*.json (later refinement).
-  const window = events.map((e) => `- [${e.channelId}] ${e.content}`).join('\n');
+  const window = boundedLines(
+    events.map((e) => `- [${e.channelId}] ${e.content}`),
+    AUTHOR_EVENT_CHARS,
+    AUTHOR_EVENT_SECTION_CHARS,
+    true
+  );
   const existingList =
-    existing.length === 0 ? '(none yet)' : existing.map(summarizeExistingTrigger).join('\n');
+    existing.length === 0
+      ? '(none yet)'
+      : boundedLines(
+          existing.map(summarizeExistingTrigger),
+          AUTHOR_TRIGGER_SUMMARY_CHARS,
+          AUTHOR_TRIGGER_SECTION_CHARS
+        );
   return [
     "You maintain a personal operator's library of TRIGGERS. A trigger fires on future messages",
     'that match its keywords and then recalls a memory to help the operator intervene proactively.',
@@ -201,16 +225,24 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   if (!isObject(spec)) throw new Error('trigger spec must be an object');
   const nonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
-  if (!nonEmptyString(spec.kind)) throw new Error('trigger.kind must be a non-empty string');
-  if (!nonEmptyString(spec.memoryQuery))
-    throw new Error('trigger.memoryQuery must be a non-empty string');
+  const boundedString = (label: string, value: unknown, maxChars: number): string => {
+    if (!nonEmptyString(value) || value.length > maxChars) {
+      throw new Error(`${label} must be a non-empty string of at most ${maxChars} characters`);
+    }
+    return value;
+  };
+
+  const id = spec.id === undefined ? undefined : boundedString('trigger.id', spec.id, 512);
+  const kind = boundedString('trigger.kind', spec.kind, 256);
+  const memoryQuery = boundedString('trigger.memoryQuery', spec.memoryQuery, 4_000);
 
   if (!isObject(spec.match)) throw new Error('trigger.match must be an object');
   const match = spec.match;
   if (
     !Array.isArray(match.keywords) ||
     match.keywords.length === 0 ||
-    !match.keywords.every(nonEmptyString)
+    match.keywords.length > 64 ||
+    !match.keywords.every((keyword) => nonEmptyString(keyword) && keyword.length <= 256)
   ) {
     throw new Error('trigger.match.keywords must be a non-empty string[]');
   }
@@ -222,31 +254,43 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   if (
     match.scopeChannelIds !== undefined &&
     (!Array.isArray(match.scopeChannelIds) ||
-      !match.scopeChannelIds.every((c) => typeof c === 'string'))
+      match.scopeChannelIds.length > 64 ||
+      !match.scopeChannelIds.every(
+        (channelId) => nonEmptyString(channelId) && channelId.length <= 256
+      ))
   ) {
     throw new Error('trigger.match.scopeChannelIds must be string[] when present');
   }
 
   if (
     !Array.isArray(spec.procedure) ||
+    spec.procedure.length > 64 ||
     !spec.procedure.every(
-      (p) => isObject(p) && typeof p.action === 'string' && typeof p.description === 'string'
+      (p) =>
+        isObject(p) &&
+        nonEmptyString(p.action) &&
+        p.action.length <= 256 &&
+        typeof p.description === 'string' &&
+        p.description.length <= 2_000
     )
   ) {
     throw new Error('trigger.procedure must be an array of {action, description}');
   }
   if (
     !Array.isArray(spec.requiredEvidence) ||
-    !spec.requiredEvidence.every((e) => typeof e === 'string')
+    spec.requiredEvidence.length > 64 ||
+    !spec.requiredEvidence.every(
+      (evidence) => typeof evidence === 'string' && evidence.length <= 1_000
+    )
   ) {
     throw new Error('trigger.requiredEvidence must be string[]');
   }
 
   // Deliberately NO check of kind/action VALUES against any catalog (G3 guard).
   return {
-    id: typeof spec.id === 'string' ? spec.id : undefined,
-    kind: spec.kind,
-    memoryQuery: spec.memoryQuery,
+    id,
+    kind,
+    memoryQuery,
     match: {
       keywords: match.keywords as string[],
       keywordMode: match.keywordMode,
@@ -258,9 +302,8 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   };
 }
 
-/** Build the legacy bare-Claude JSON runner while allowing command injection in tests. */
 /**
- * Effort for the bare-CLI structured-JSON calls, named rather than inherited.
+ * Effort for the isolated structured-JSON calls, named rather than inherited.
  *
  * Without this the call inherits `effortLevel` from ~/.claude/settings.json, which on the
  * owner's install is `xhigh` - and the daemon exports MAX_THINKING_TOKENS=0 (added
@@ -279,13 +322,31 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
  */
 const TRIGGER_AUTHOR_EFFORT = 'high';
 
-export function createAskAgentCLI(execute: ClaudeCliExecutor = executeClaudeCLI): AskAgent {
+export function createAskAgentCLI(
+  execute: ClaudeCliExecutor = executeClaudeCLI,
+  options: { model?: string; signal?: AbortSignal } = {}
+): AskAgent {
   return async (prompt) => {
-    const { stdout } = await execute(
-      'claude',
-      ['-p', prompt, '--output-format', 'json', '--effort', TRIGGER_AUTHOR_EFFORT],
-      { maxBuffer: 16 * 1024 * 1024 }
-    );
+    const args = [
+      '-p',
+      prompt,
+      '--output-format',
+      'json',
+      '--effort',
+      TRIGGER_AUTHOR_EFFORT,
+      '--safe-mode',
+      '--tools',
+      '',
+      '--no-session-persistence',
+    ];
+    if (options.model) {
+      args.push('--model', options.model);
+    }
+    const executeOptions = {
+      maxBuffer: 16 * 1024 * 1024,
+      ...(options.signal ? { signal: options.signal } : {}),
+    };
+    const { stdout } = await execute('claude', args, executeOptions);
     const parsed = JSON.parse(stdout) as { type?: string; result?: unknown };
     if (parsed.type === 'result' && typeof parsed.result === 'string') return parsed.result;
     throw new Error('claude CLI did not return a text result');
@@ -298,7 +359,7 @@ export const askAgentCLI: AskAgent = createAskAgentCLI();
 /**
  * Provider boundary for trigger authoring and review.
  *
- * Claude keeps the historical bare CLI path. Codex shares one app-server
+ * Claude keeps an isolated JSON-only CLI path. Codex shares one app-server
  * connection, but every structured task starts a fresh, isolated, read-only
  * session and advertises no host tools.
  */
@@ -308,11 +369,41 @@ export function createTriggerAgentRuntime(
   dependencies: TriggerAgentRuntimeDependencies = {}
 ): TriggerAgentRuntime {
   if (backend === 'claude') {
-    const askClaude = dependencies.askClaude ?? askAgentCLI;
+    const controller = new AbortController();
+    const createClaudeAsk =
+      dependencies.createClaudeAsk ??
+      ((runtimeOptions: { model?: string; signal?: AbortSignal }) =>
+        createAskAgentCLI(executeClaudeCLI, runtimeOptions));
+    const askClaude =
+      dependencies.askClaude ??
+      createClaudeAsk({ model: options.model, signal: controller.signal });
+    const activeCalls = new Set<Promise<string>>();
+    let stopped = false;
+    let stopPromise: Promise<void> | undefined;
+    const askTracked: AskAgent = (prompt) => {
+      if (stopped) return Promise.reject(new Error('Claude trigger runtime has stopped'));
+      let call: Promise<string>;
+      try {
+        call = askClaude(prompt);
+      } catch (error) {
+        call = Promise.reject(error);
+      }
+      activeCalls.add(call);
+      return call.finally(() => {
+        activeCalls.delete(call);
+      });
+    };
     return {
-      askAuthor: askClaude,
-      askReview: askClaude,
-      stop: async () => undefined,
+      askAuthor: askTracked,
+      askReview: askTracked,
+      stop: () => {
+        stopPromise ??= Promise.resolve().then(async () => {
+          stopped = true;
+          controller.abort();
+          await Promise.allSettled([...activeCalls]);
+        });
+        return stopPromise;
+      },
     };
   }
 
@@ -414,7 +505,7 @@ const CLAUDE_CLI_TIMEOUT_MS = 240_000;
 async function executeClaudeCLI(
   file: string,
   args: string[],
-  options: { maxBuffer: number }
+  options: { maxBuffer: number; signal?: AbortSignal }
 ): Promise<{ stdout: string }> {
   try {
     const { stdout } = await execFileAsync(file, args, {

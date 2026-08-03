@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-5005%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Right now, you read every channel yourself so nothing slips past you.
 > MAMA reads them instead, and sends you the few things that need you.
@@ -129,8 +129,8 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.32.0        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
-| [mama-core](packages/mama-core/) 2.1.1        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
+| [mama-os](packages/standalone/) 0.32.3        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-core](packages/mama-core/) 2.1.2        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
 | [memorybench](packages/memorybench/) 1.0.0    | The benchmark harness behind the retrieval numbers.                                                            | To reproduce a score |
@@ -192,7 +192,7 @@ cd MAMA && pnpm install && pnpm build
 pnpm test     # 5,005 tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-07-31_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-03_
 
 ## License
 

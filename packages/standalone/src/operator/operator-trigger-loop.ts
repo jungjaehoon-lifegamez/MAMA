@@ -28,7 +28,7 @@ import { applyReview, type ReviewDecision } from './trigger-review.js';
 import { SituationReporter, type DeliveredFullReport } from './situation-report.js';
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   pendingReportDeliveryPayloadIdentity,
   pendingReportRequestPayloadIdentity,
@@ -54,6 +54,8 @@ export interface TriggerLoopConfig {
   drainLimit: number;
   authorEveryNTicks: number;
   reviewEveryNTicks: number;
+  /** Maximum distinct newly-fired triggers reviewed in one maintenance pass. Default 1. */
+  reviewBatchLimit?: number;
   authorWindowSize: number;
   /** Situational-digest cadence (M1.5 + M2 output leg). Only used when deps.output is set. */
   reportEveryNTicks?: number;
@@ -77,13 +79,13 @@ export interface TriggerLoopDeps {
   delta: DeltaSource;
   memory: OperatorMemoryPort;
   registry: TriggerRegistry;
-  /** Agent for structured-JSON tasks: authorTriggers (real: askAgentCLI - bare CLI parses reliably). */
+  /** Agent for structured-JSON tasks: authorTriggers (isolated JSON-only provider runtime). */
   askAgent: AskAgent;
   /**
    * Agent for REPORT composition (M2.2). Bind this to the daemon's persona AgentLoop
    * (SOUL.md system prompt, pinned model, session continuity) - tone/quality come from the
    * generation inputs, and reports deserve the persona path while JSON tasks stay on the
-   * bare CLI. Absent -> reports use askAgent (explicit config choice, not a failure fallback).
+   * isolated CLI. Absent -> reports use askAgent (explicit config choice, not a failure fallback).
    */
   reportAsk?: AskAgent;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
@@ -144,11 +146,23 @@ export interface TickResult {
   fullReported: boolean;
 }
 
+interface TickOptions {
+  /** Connector freshness ticks drain data but must not accelerate LLM maintenance passes. */
+  advanceMaintenance?: boolean;
+}
+
 export class OperatorTriggerLoop {
   private deps: TriggerLoopDeps;
   private tickCount = 0;
+  private maintenanceTickCount = 0;
+  private authorWindowGeneration = 0;
+  private authoredWindowGeneration = 0;
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
+  private maintenancePending = false;
+  private schedulerActive = false;
+  private stopping = false;
+  private activeRunPromise: Promise<void> | null = null;
   private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
   private digest: SituationReporter;
   private fullReporter: SituationReporter;
@@ -434,18 +448,35 @@ export class OperatorTriggerLoop {
     return recovered;
   }
 
-  async tick(): Promise<TickResult> {
+  async tick(options: TickOptions = {}): Promise<TickResult> {
     const { delta, memory, registry, askAgent, review, config, log } = this.deps;
     const { output, reportScheduler } = this.deps;
     const fullLegOn = Boolean(output && reportScheduler);
     this.tickCount += 1;
     const tick = this.tickCount;
+    const maintenanceTick =
+      options.advanceMaintenance === false ? null : (this.maintenanceTickCount += 1);
+    let fires = 0;
+    let authored = 0;
+    let reviewed = 0;
+    let reported = false;
+    let fullReported = false;
+    const result = (drained = 0): TickResult => ({
+      tick,
+      drained,
+      fires,
+      authored,
+      reviewed,
+      reported,
+      fullReported,
+    });
 
     // Outbox recovery is the first effect in a tick. It reuses the persisted
     // delivery id, allowing Telegram's confirmed-chunk ledger to suppress a
     // send that was accepted just before the prior daemon stopped.
     this.refreshPendingReportState();
     const recoveredPendingWork = await this.recoverPendingReportWork();
+    if (this.stopping) return result();
 
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
@@ -457,11 +488,11 @@ export class OperatorTriggerLoop {
     }
 
     // 2. Match + fire + recordFire, folding fire activity into the report accumulators.
-    let fires = 0;
     for (const event of reportEvents) {
       const signals = matchTriggers(event, registry);
       for (const signal of signals) {
-        const result = await fireTrigger(signal, memory);
+        const fireResult = await fireTrigger(signal, memory);
+        if (this.stopping) return result(events.length);
         fires += 1;
         if (signal.triggerId) {
           registry.recordFire(signal.triggerId);
@@ -472,7 +503,7 @@ export class OperatorTriggerLoop {
             triggerId: signal.triggerId ?? signal.detector,
             kind: signal.kind,
             channelId: signal.channelId,
-            recalled: result.recalled,
+            recalled: fireResult.recalled,
           });
         }
         if (fullLegOn) {
@@ -480,12 +511,12 @@ export class OperatorTriggerLoop {
             triggerId: signal.triggerId ?? signal.detector,
             kind: signal.kind,
             channelId: signal.channelId,
-            recalled: result.recalled,
+            recalled: fireResult.recalled,
           });
         }
         log(
           `[trigger-loop] tick ${tick}: fire trigger=${signal.triggerId ?? signal.detector} ` +
-            `recalled=${result.recalled.length} channel=${signal.channelId}`
+            `recalled=${fireResult.recalled.length} channel=${signal.channelId}`
         );
       }
     }
@@ -499,6 +530,7 @@ export class OperatorTriggerLoop {
         }
       }
       this.recentEvents = [...this.recentEvents, ...reportEvents].slice(-config.authorWindowSize);
+      this.authorWindowGeneration += 1;
       this.persistPendingReports();
     }
     // Group per channel ONCE, before the cursor moves: the conductor inbox
@@ -580,40 +612,93 @@ export class OperatorTriggerLoop {
     }
 
     // 3. Agent authors new triggers from the recent window.
-    let authored = 0;
-    if (tick % config.authorEveryNTicks === 0 && this.recentEvents.length > 0) {
-      const created = await authorTriggers(this.recentEvents, registry, askAgent, {
-        note: `authored at tick ${tick}`,
-      });
-      authored = created.length;
-      if (authored > 0) {
-        if (output) {
-          this.digest.recordAuthored(authored);
+    if (
+      maintenanceTick !== null &&
+      maintenanceTick % config.authorEveryNTicks === 0 &&
+      this.recentEvents.length > 0 &&
+      this.authorWindowGeneration > this.authoredWindowGeneration
+    ) {
+      if (registry.canAttemptAuthor()) {
+        try {
+          const created = await authorTriggers(this.recentEvents, registry, askAgent, {
+            note: `authored at tick ${tick}`,
+          });
+          if (this.stopping) return result(events.length);
+          authored = created.length;
+          registry.clearAuthorFailure();
+          this.authoredWindowGeneration = this.authorWindowGeneration;
+          if (authored > 0) {
+            if (output) {
+              this.digest.recordAuthored(authored);
+            }
+            if (fullLegOn) {
+              this.fullReporter.recordAuthored(authored);
+            }
+            this.persistPendingReports();
+          }
+          log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
+        } catch (error) {
+          if (this.stopping) {
+            log(`[trigger-loop] tick ${tick}: author pass cancelled by shutdown`);
+            return result(events.length);
+          }
+          registry.recordAuthorFailure(authorWindowFingerprint(this.recentEvents));
+          log(
+            `[trigger-loop] tick ${tick}: author pass FAILED; backed off: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
         }
-        if (fullLegOn) {
-          this.fullReporter.recordAuthored(authored);
-        }
-        this.persistPendingReports();
       }
-      log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }
 
     // 4. Agent reviews triggers that have actually fired.
-    let reviewed = 0;
-    if (tick % config.reviewEveryNTicks === 0) {
-      const firedTriggers = registry.listActive().filter((t) => t.stats.fired > 0);
-      const context = this.recentEvents.map((e) => `[${e.channelId}] ${e.content}`);
+    if (this.stopping) return result(events.length);
+    if (maintenanceTick !== null && maintenanceTick % config.reviewEveryNTicks === 0) {
+      const configuredReviewLimit = config.reviewBatchLimit;
+      const reviewBatchLimit =
+        typeof configuredReviewLimit === 'number' &&
+        Number.isInteger(configuredReviewLimit) &&
+        configuredReviewLimit > 0
+          ? configuredReviewLimit
+          : 1;
+      const firedTriggers = registry.listReviewCandidates(reviewBatchLimit);
+      const context = boundedReviewContext(this.recentEvents);
       for (const trigger of firedTriggers) {
-        const decision = await review(trigger, context);
-        const action = applyReview(decision, trigger.id, registry);
-        reviewed += 1;
-        log(`[trigger-loop] tick ${tick}: review trigger=${trigger.id} -> ${action}`);
+        try {
+          const decision = await review(trigger, context);
+          if (this.stopping) return result(events.length);
+          const action = applyReview(decision, trigger.id, registry);
+          if (action === 'kept') {
+            registry.markReviewed(trigger.id, trigger.stats.fired);
+          }
+          reviewed += 1;
+          log(`[trigger-loop] tick ${tick}: review trigger=${trigger.id} -> ${action}`);
+        } catch (error) {
+          if (this.stopping) {
+            log(`[trigger-loop] tick ${tick}: review trigger=${trigger.id} cancelled by shutdown`);
+            return result(events.length);
+          }
+          let backoffNote = 'backed off';
+          try {
+            registry.recordReviewFailure(trigger.id);
+          } catch (stateError) {
+            backoffNote = `state changed before backoff: ${
+              stateError instanceof Error ? stateError.message : String(stateError)
+            }`;
+          }
+          log(
+            `[trigger-loop] tick ${tick}: review trigger=${trigger.id} FAILED; ${backoffNote}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
     }
 
     // 5. Situational digest (M1.5 cadence, M2 window-aware): the agent composes it from the
     //    window + fire activity + recalled memory; the sink delivers it. Agent may reply NOTHING.
-    let reported = false;
+    if (this.stopping) return result(events.length);
     const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (
@@ -624,6 +709,7 @@ export class OperatorTriggerLoop {
       this.digest.hasActivity()
     ) {
       reported = await this.prepareAndDeliverReport(reportAsk, 'digest', { kind: 'digest' });
+      if (this.stopping) return result(events.length);
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
@@ -632,8 +718,13 @@ export class OperatorTriggerLoop {
     //    rely on the scheduled report arriving). Fires once per hour (markFired persists the
     //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
     //    so the next tick retries with the buffer intact.
-    let fullReported = false;
-    if (!recoveredPendingWork && !this.isPendingReportWorkBlocked() && output && reportScheduler) {
+    if (
+      !this.stopping &&
+      !recoveredPendingWork &&
+      !this.isPendingReportWorkBlocked() &&
+      output &&
+      reportScheduler
+    ) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
         // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
@@ -660,6 +751,7 @@ export class OperatorTriggerLoop {
             hourKey,
             firedAtIso,
           });
+          if (this.stopping) return result(events.length);
           log(
             `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
           );
@@ -667,7 +759,7 @@ export class OperatorTriggerLoop {
       }
     }
 
-    return { tick, drained: events.length, fires, authored, reviewed, reported, fullReported };
+    return result(events.length);
   }
 
   /**
@@ -679,8 +771,8 @@ export class OperatorTriggerLoop {
    * a quiet window arms one timer; further nudges while it is armed are ignored, so a burst of poll
    * batches collapses to a single extra tick. Busy-safe (agent-awareness.ts:343-346 mechanism): if a
    * tick is in flight when the timer fires, the nudge is skipped - never concurrent ticks; the
-   * uncommitted deltas simply wait for the next tick. Pure timing assist: it only changes WHEN an
-   * existing tick runs, never WHAT it does.
+   * uncommitted deltas simply wait for the next tick. The extra tick drains and reports, but does
+   * not advance author/review maintenance cadence.
    */
   /**
    * On-demand full report (plan v6 S1-T3): the owner's "give me the full
@@ -694,6 +786,7 @@ export class OperatorTriggerLoop {
    * the delta anchor exactly like a scheduled run.
    */
   startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
+    if (this.stopping) return { accepted: false, reason: 'unavailable' };
     const output = this.deps.output;
     const reportScheduler = this.deps.reportScheduler;
     if (!output || this.isPendingReportWorkBlocked()) {
@@ -745,27 +838,19 @@ export class OperatorTriggerLoop {
       );
       return { accepted: false, reason: 'unavailable' };
     }
-    this.running = true;
-    void this.preparePendingRequest()
-      .then((sent) => {
+    this.launchRun(
+      this.preparePendingRequest().then((sent) => {
         this.deps.log(
           `[trigger-loop] on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
         );
-      })
-      .catch((error: unknown) => {
-        this.deps.log(
-          `[trigger-loop] on-demand full report FAILED: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      })
-      .finally(() => {
-        this.running = false;
-      });
+      }),
+      'on-demand full report FAILED'
+    );
     return { accepted: true };
   }
 
   nudge(): void {
+    if (this.stopping) return;
     if (this.nudgeTimer) return; // already armed - debounce collapses the burst
     const configured = this.deps.config.nudgeDebounceMs;
     const debounceMs =
@@ -780,16 +865,7 @@ export class OperatorTriggerLoop {
         );
         return;
       }
-      this.running = true;
-      void this.tick()
-        .catch((error: unknown) => {
-          this.deps.log(
-            `[trigger-loop] nudge tick failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-        })
-        .finally(() => {
-          this.running = false;
-        });
+      this.launchRun(this.tick({ advanceMaintenance: false }), 'nudge tick failed');
     }, debounceMs);
     this.nudgeTimer.unref?.();
   }
@@ -799,21 +875,12 @@ export class OperatorTriggerLoop {
    * The interval wrapper catches + logs tick errors so one bad tick does not kill the loop
    * (the error is still surfaced loudly in the log - not swallowed).
    */
-  start(): () => void {
+  start(): () => Promise<void> {
     const { config, log } = this.deps;
+    this.stopping = false;
+    this.schedulerActive = true;
     if ((this.pendingDelivery || this.pendingRequest) && !this.running) {
-      this.running = true;
-      void this.recoverPendingReportWork()
-        .catch((error: unknown) => {
-          log(
-            `[trigger-loop] startup report recovery failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        })
-        .finally(() => {
-          this.running = false;
-        });
+      this.launchRun(this.recoverPendingReportWork(), 'startup report recovery failed');
     }
     const handle = setInterval(() => {
       // The INTERVAL is the leg: it beats even while a long tick (full
@@ -821,29 +888,93 @@ export class OperatorTriggerLoop {
       // on live. A loop mid-tick is alive, not silent.
       getLegCadence()?.beat('trigger-loop');
       if (this.running) {
+        this.maintenancePending = true;
         log('[trigger-loop] tick skipped: previous tick still running');
         return;
       }
-      this.running = true;
-      void this.tick()
-        .catch((error: unknown) => {
-          log(
-            `[trigger-loop] tick failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-        })
-        .finally(() => {
-          this.running = false;
-        });
+      this.launchRun(this.tick(), 'tick failed');
     }, config.tickMs);
     handle.unref?.();
     log(`[trigger-loop] started (tick every ${config.tickMs}ms)`);
+    let stopPromise: Promise<void> | undefined;
     return () => {
+      if (stopPromise) return stopPromise;
+      this.stopping = true;
+      this.schedulerActive = false;
+      this.maintenancePending = false;
       clearInterval(handle);
       if (this.nudgeTimer) {
         clearTimeout(this.nudgeTimer);
         this.nudgeTimer = null;
       }
-      log('[trigger-loop] stopped');
+      stopPromise = (async () => {
+        const activeRun = this.activeRunPromise;
+        if (activeRun) await activeRun;
+        log('[trigger-loop] stopped');
+      })();
+      return stopPromise;
     };
   }
+
+  private launchRun(work: Promise<unknown>, failureLabel: string): void {
+    this.running = true;
+    const tracked = work
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        this.deps.log(
+          `[trigger-loop] ${failureLabel}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      })
+      .finally(() => {
+        if (this.activeRunPromise === tracked) this.activeRunPromise = null;
+        this.finishRun();
+      });
+    this.activeRunPromise = tracked;
+  }
+
+  private finishRun(): void {
+    this.running = false;
+    if (!this.schedulerActive || !this.maintenancePending) return;
+    this.maintenancePending = false;
+    this.launchRun(this.tick(), 'deferred maintenance tick failed');
+  }
+}
+
+const REVIEW_CONTEXT_EVENT_CHARS = 500;
+const REVIEW_CONTEXT_TOTAL_CHARS = 8_000;
+
+function boundedReviewContext(events: OperatorChannelEvent[]): string[] {
+  const lines: string[] = [];
+  let used = 0;
+  for (const event of [...events].reverse()) {
+    const content = event.content
+      .trim()
+      .replace(/[\r\n]+/g, ' ')
+      .slice(0, REVIEW_CONTEXT_EVENT_CHARS);
+    const line = `[${event.channelId}] ${content}`;
+    if (used + line.length + 1 > REVIEW_CONTEXT_TOTAL_CHARS) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  const omitted = events.length - lines.length;
+  lines.reverse();
+  if (omitted > 0) lines.unshift(`[... ${omitted} event(s) omitted by review input budget]`);
+  return lines;
+}
+
+function authorWindowFingerprint(events: OperatorChannelEvent[]): string {
+  const hash = createHash('sha256');
+  for (const event of events) {
+    hash.update(event.channel);
+    hash.update('\0');
+    hash.update(event.channelId);
+    hash.update('\0');
+    hash.update(String(event.eventIndexId ?? event.id));
+    hash.update('\0');
+    hash.update(String(event.createdAt));
+    hash.update('\0');
+    hash.update(event.content);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
 }

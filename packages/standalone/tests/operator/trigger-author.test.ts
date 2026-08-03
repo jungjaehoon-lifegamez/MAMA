@@ -144,18 +144,22 @@ describe('authorTriggers', () => {
     expect(prompt).toContain('proposing NOTHING over proposing a variant');
   });
 
-  // The list's job is dedup, and keywords decide that. Carrying the full recall instruction
-  // for every trigger made the prompt grow with every trigger the pass authored - a loop
-  // feeding itself. Measured live 2026-07-30: 162 active triggers, memoryQuery averaging
-  // 1,261 chars, 231 KB of prompt, $1.33 and 41s per call, every 30 minutes.
-  it('carries every existing trigger by keywords, and its recall query only as a gist', async () => {
+  // The list's job is dedup, and keywords + scope decide that. IDs grow on every refinement and
+  // recall queries do not help dedup, so neither belongs in the recurring author prompt.
+  it('carries existing trigger keywords without refinement IDs or recall queries', async () => {
     const { buildAuthorPrompt } = await import('../../src/operator/trigger-author.js');
-    const long = 'x'.repeat(4000);
+    const querySentinel = 'FORBIDDEN_QUERY_SENTINEL';
+    const long = `${querySentinel}${'x'.repeat(4000)}`;
     reg.create({
-      id: 'gist-probe',
+      id: `root${'.r.refinement'.repeat(80)}`,
       kind: 'k',
       memoryQuery: long,
-      match: { keywords: ['unmistakable-keyword'], keywordMode: 'any', minConfidence: 0.5 },
+      match: {
+        keywords: ['unmistakable-keyword'],
+        keywordMode: 'any',
+        minConfidence: 0.5,
+        scopeChannelIds: ['telegram:owner'],
+      },
       procedure: [{ action: 'a', description: 'd' }],
       requiredEvidence: [],
       authoredBy: 'agent',
@@ -166,12 +170,54 @@ describe('authorTriggers', () => {
 
     // Dedup still possible: the keyword is intact.
     expect(prompt).toContain('unmistakable-keyword');
-    // The instruction body is not.
-    expect(prompt).not.toContain(long);
-    expect(prompt).toContain('...');
-    // And the gist is bounded, not merely shorter.
-    const gist = /gist="([^"]*)"/.exec(prompt)?.[1] ?? '';
-    expect(gist.length).toBeLessThanOrEqual(200);
+    expect(prompt).toContain('telegram:owner');
+    // Prompt growth inputs are absent.
+    expect(prompt).not.toContain(querySentinel);
+    expect(prompt).not.toContain(long.slice(0, 160));
+    expect(prompt).not.toContain('.r.refinement');
+  });
+
+  it('TG-05 bounds recurring author input even when events and registry contain large text', async () => {
+    const { buildAuthorPrompt } = await import('../../src/operator/trigger-author.js');
+    for (let index = 0; index < 80; index += 1) {
+      reg.create({
+        id: `bounded-${index}`,
+        kind: `kind-${index}`,
+        memoryQuery: `query-${index}`,
+        match: {
+          keywords: [`keyword-${index}-${'k'.repeat(300)}`],
+          keywordMode: 'any',
+          minConfidence: 0.5,
+        },
+        procedure: [],
+        requiredEvidence: [],
+        authoredBy: 'agent',
+        provenance: { createdFrom: 'seed', note: '' },
+      });
+    }
+
+    const prompt = buildAuthorPrompt(
+      Array.from({ length: 50 }, (_, index) => ev(`event-${index}-${'e'.repeat(4000)}`, index + 1)),
+      reg.listActive()
+    );
+
+    expect(prompt.length).toBeLessThanOrEqual(30_000);
+    expect(prompt).toContain('omitted');
+  });
+
+  it('TG-05 keeps the newest author evidence when the budget omits older messages', async () => {
+    const { buildAuthorPrompt } = await import('../../src/operator/trigger-author.js');
+    const events = Array.from({ length: 30 }, (_, index) =>
+      ev(
+        `${index === 0 ? 'OLDEST_AUTHOR_SENTINEL' : index === 29 ? 'NEWEST_AUTHOR_SENTINEL' : `event-${index}`} ${'x'.repeat(600)}`,
+        index + 1
+      )
+    );
+
+    const prompt = buildAuthorPrompt(events, []);
+
+    expect(prompt).toContain('NEWEST_AUTHOR_SENTINEL');
+    expect(prompt).not.toContain('OLDEST_AUTHOR_SENTINEL');
   });
 
   // 193 failures over the log's lifetime recorded nothing but the 240 KB command line that
@@ -263,10 +309,98 @@ describe('authorTriggers', () => {
       })
     ).toThrow(); // empty kind + empty keywords = malformed shape
   });
+
+  it('TG-05 rejects oversized trigger fields and arrays before persistence', () => {
+    const valid = {
+      kind: 'recurring report',
+      memoryQuery: 'weekly report state',
+      match: { keywords: ['report'], keywordMode: 'any', minConfidence: 0.7 },
+      procedure: [],
+      requiredEvidence: [],
+    };
+
+    expect(() => validateTriggerSpec({ ...valid, memoryQuery: 'x'.repeat(4_001) })).toThrow(
+      /memoryQuery/
+    );
+    expect(() =>
+      validateTriggerSpec({
+        ...valid,
+        match: { ...valid.match, keywords: Array.from({ length: 65 }, () => 'report') },
+      })
+    ).toThrow(/keywords/);
+    expect(() =>
+      validateTriggerSpec({
+        ...valid,
+        procedure: Array.from({ length: 65 }, () => ({ action: 'recall', description: 'x' })),
+      })
+    ).toThrow(/procedure/);
+  });
+
+  it('TG-05 pins every trigger input boundary at max and max plus one', () => {
+    const atLimit = {
+      id: 'i'.repeat(512),
+      kind: 'k'.repeat(256),
+      memoryQuery: 'q'.repeat(4_000),
+      match: {
+        keywords: Array.from({ length: 64 }, () => 'w'.repeat(256)),
+        keywordMode: 'any',
+        minConfidence: 0.7,
+        scopeChannelIds: Array.from({ length: 64 }, () => 's'.repeat(256)),
+      },
+      procedure: Array.from({ length: 64 }, () => ({
+        action: 'a'.repeat(256),
+        description: 'd'.repeat(2_000),
+      })),
+      requiredEvidence: Array.from({ length: 64 }, () => 'e'.repeat(1_000)),
+    };
+    expect(() => validateTriggerSpec(atLimit)).not.toThrow();
+
+    const overLimit: Array<[string, unknown]> = [
+      ['id', { ...atLimit, id: 'i'.repeat(513) }],
+      ['kind', { ...atLimit, kind: 'k'.repeat(257) }],
+      ['memoryQuery', { ...atLimit, memoryQuery: 'q'.repeat(4_001) }],
+      [
+        'keyword count',
+        { ...atLimit, match: { ...atLimit.match, keywords: [...atLimit.match.keywords, 'x'] } },
+      ],
+      ['keyword length', { ...atLimit, match: { ...atLimit.match, keywords: ['w'.repeat(257)] } }],
+      [
+        'scope count',
+        {
+          ...atLimit,
+          match: {
+            ...atLimit.match,
+            scopeChannelIds: [...atLimit.match.scopeChannelIds, 'x'],
+          },
+        },
+      ],
+      [
+        'scope length',
+        { ...atLimit, match: { ...atLimit.match, scopeChannelIds: ['s'.repeat(257)] } },
+      ],
+      [
+        'procedure count',
+        {
+          ...atLimit,
+          procedure: [...atLimit.procedure, { action: 'a', description: 'd' }],
+        },
+      ],
+      ['action length', { ...atLimit, procedure: [{ action: 'a'.repeat(257), description: 'd' }] }],
+      [
+        'description length',
+        { ...atLimit, procedure: [{ action: 'a', description: 'd'.repeat(2_001) }] },
+      ],
+      ['evidence count', { ...atLimit, requiredEvidence: [...atLimit.requiredEvidence, 'x'] }],
+      ['evidence length', { ...atLimit, requiredEvidence: ['e'.repeat(1_001)] }],
+    ];
+    for (const [label, spec] of overLimit) {
+      expect(() => validateTriggerSpec(spec), label).toThrow();
+    }
+  });
 });
 
 describe('trigger agent provider boundary', () => {
-  it('keeps the Claude CLI command, arguments, and JSON result parsing unchanged', async () => {
+  it('uses a customization-free, tool-free, non-persistent Claude JSON session (TG-05)', async () => {
     const execute = vi.fn().mockResolvedValue({
       stdout: JSON.stringify({ type: 'result', result: '[{"kind":"k"}]' }),
     });
@@ -275,9 +409,52 @@ describe('trigger agent provider boundary', () => {
     await expect(askAgent('author prompt')).resolves.toBe('[{"kind":"k"}]');
     expect(execute).toHaveBeenCalledWith(
       'claude',
-      ['-p', 'author prompt', '--output-format', 'json', '--effort', 'high'],
+      [
+        '-p',
+        'author prompt',
+        '--output-format',
+        'json',
+        '--effort',
+        'high',
+        '--safe-mode',
+        '--tools',
+        '',
+        '--no-session-persistence',
+      ],
       { maxBuffer: 16 * 1024 * 1024 }
     );
+  });
+
+  it('constructs the Claude trigger runner with the configured model (TG-06)', async () => {
+    const askClaude = vi.fn().mockResolvedValue('[]');
+    const createClaudeAsk = vi.fn(() => askClaude);
+    const dependencies = { createClaudeAsk } as unknown as Parameters<
+      typeof createTriggerAgentRuntime
+    >[2];
+
+    const runtime = createTriggerAgentRuntime('claude', { model: 'claude-sonnet-5' }, dependencies);
+
+    expect(createClaudeAsk).toHaveBeenCalledWith({
+      model: 'claude-sonnet-5',
+      signal: expect.any(AbortSignal),
+    });
+    await expect(runtime.askAuthor('author')).resolves.toBe('[]');
+    await expect(runtime.askReview('review')).resolves.toBe('[]');
+    expect(askClaude).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes the configured model to the Claude CLI instead of inheriting user settings', async () => {
+    const execute = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({ type: 'result', result: '[]' }),
+    });
+    const askAgent = createAskAgentCLI(execute, { model: 'claude-sonnet-5' });
+
+    await askAgent('review prompt');
+
+    const args = execute.mock.calls[0][1];
+    const modelIndex = args.indexOf('--model');
+    expect(modelIndex).toBeGreaterThan(-1);
+    expect(args[modelIndex + 1]).toBe('claude-sonnet-5');
   });
 
   it('does not construct Codex for the Claude backend and propagates Claude failures', async () => {
@@ -289,6 +466,40 @@ describe('trigger agent provider boundary', () => {
     await expect(runtime.askAuthor('prompt')).rejects.toBe(failure);
     expect(createCodexRuntime).not.toHaveBeenCalled();
     await runtime.stop();
+  });
+
+  it('TG-05/TG-06 aborts and drains an in-flight Claude trigger call on stop', async () => {
+    let runtimeSignal: AbortSignal | undefined;
+    let rejectCall: ((error: Error) => void) | undefined;
+    let abortObserved = false;
+    const createClaudeAsk = vi.fn((options: { model?: string; signal?: AbortSignal }) => {
+      runtimeSignal = options.signal;
+      return async () =>
+        new Promise<string>((_resolve, reject) => {
+          rejectCall = reject;
+          options.signal?.addEventListener('abort', () => {
+            abortObserved = true;
+          });
+        });
+    });
+    const runtime = createTriggerAgentRuntime('claude', {}, { createClaudeAsk });
+    const pending = runtime.askAuthor('long author prompt');
+    const rejection = expect(pending).rejects.toThrow('aborted');
+
+    let stopResolved = false;
+    const stopping = Promise.all([runtime.stop(), runtime.stop()]).then(() => {
+      stopResolved = true;
+    });
+    await Promise.resolve();
+    expect(abortObserved).toBe(true);
+    expect(stopResolved).toBe(false);
+
+    rejectCall?.(new Error('claude trigger call aborted after child cleanup'));
+    await stopping;
+    await rejection;
+
+    expect(runtimeSignal?.aborted).toBe(true);
+    expect(createClaudeAsk).toHaveBeenCalledTimes(1);
   });
 
   it('uses one read-only Codex app-server runner with isolated fresh author and review lanes', async () => {
