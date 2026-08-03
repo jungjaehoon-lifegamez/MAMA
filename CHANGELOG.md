@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.32.3] - 2026-08-03
+
+### Fixed
+
+- **Operator trigger maintenance no longer drains Claude usage while idle or failing.** Successful
+  author windows are consumed once, failed author and review calls use durable 6-to-24-hour
+  backoff, missed intervals collapse into one maintenance pass, and review work advances from a
+  persistent watermark.
+- **Trigger authoring and review stay within fixed provider budgets.** MAMA pins the configured
+  model, uses tool-free non-persistent Claude sessions, preserves the newest bounded evidence, and
+  caps both new and legacy trigger fields before the final provider boundary.
+- **Stopping MAMA now cancels and drains trigger-loop provider work.** Shutdown aborts active
+  author and reviewer calls, waits for the running loop, and prevents deferred review or report
+  legs from restarting work or recording false provider failures.
+
 ## mama-os [0.32.2] - 2026-08-02
 
 ### Added
