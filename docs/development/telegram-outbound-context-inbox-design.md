@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 
-**Status:** Revised after subagent review; implementation pending
+**Status:** Implemented (PR #222, 2026-08-06) with adversarial-review fixes; operational Telegram verification pending
 
 **Parity scenarios:** TG-05, TG-06
 

@@ -50,6 +50,11 @@ describe('owner-report delivery wiring (structural)', () => {
     expect(start).toContain('reconcilePins(');
   });
 
+  it('does not wire the V2 carry reader in production (Decision 8: no component reads V2 after migration)', () => {
+    const start = readFileSync(join(SRC, 'cli/commands/start.ts'), 'utf8');
+    expect(start).not.toContain('reportCarry: new FileReportCarryStore()');
+  });
+
   it('exposes the operator recovery surface for definite rejections (review finding #2)', () => {
     const routes = readFileSync(join(SRC, 'cli/runtime/api-routes-init.ts'), 'utf8');
     expect(routes).toContain('/api/operator/report-delivery/reactivate');
