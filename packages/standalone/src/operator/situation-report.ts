@@ -421,6 +421,19 @@ export class SituationReporter {
     this.reset();
   }
 
+  /**
+   * TG-06: called by the report delivery boundary (ReportDeliveryPort) exactly
+   * once per DELIVERED report. Credits the cited triggers and resets the
+   * accumulation window. Retry/rejection/cancellation outcomes must NOT call
+   * this - an undelivered report keeps its window and earns no credit.
+   */
+  markDeliveredOutcome(citedTriggerIds: readonly string[]): void {
+    if (citedTriggerIds.length > 0) {
+      this.opts.recordTriggerUse?.([...citedTriggerIds]);
+    }
+    this.reset();
+  }
+
   async report(
     askAgent: AskAgent,
     output: Pick<OutputSink, 'send'>,
