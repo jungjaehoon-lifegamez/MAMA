@@ -33,6 +33,12 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
+import type {
+  ReportDeliveryBinding,
+  ReportDeliveryLease,
+  TelegramReportDeliveryControl,
+  TypedTelegramDeliveryOutcome,
+} from '../operator/report-delivery-coordinator.js';
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
@@ -64,6 +70,44 @@ function isDefiniteTelegramApiRejection(error: unknown): boolean {
     typeof response === 'object' &&
     Number.isSafeInteger((response as Record<string, unknown>).error_code)
   );
+}
+
+/**
+ * Report-delivery terminal classifier (design Decision 3): ONLY a definite
+ * Telegram non-acceptance may park a report as `prepared_definite_rejection`.
+ * 429 and 5xx (and anything carrying `retry_after`) remain retryable - a
+ * routine rate limit must never permanently silence owner reporting. This is
+ * deliberately narrower than isDefiniteTelegramApiRejection, which answers a
+ * different question (was the chunk send outcome unambiguous?).
+ */
+function isTerminalTelegramRejection(error: unknown): boolean {
+  if (!isDefiniteTelegramApiRejection(error)) return false;
+  const record = error as Record<string, unknown>;
+  const errorCode = Number.isSafeInteger(record.error_code)
+    ? (record.error_code as number)
+    : Number.isSafeInteger((record.response as Record<string, unknown> | undefined)?.error_code)
+      ? ((record.response as Record<string, unknown>).error_code as number)
+      : null;
+  if (errorCode === null) return false;
+  const parameters = record.parameters as Record<string, unknown> | undefined;
+  if (parameters && Number.isSafeInteger(parameters.retry_after)) return false;
+  if (errorCode === 429 || errorCode >= 500) return false;
+  return errorCode >= 400;
+}
+
+function telegramRejectionReason(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    if (typeof record.description === 'string' && record.description.length > 0) {
+      return record.description;
+    }
+    const response = record.response;
+    if (response && typeof response === 'object') {
+      const description = (response as Record<string, unknown>).description;
+      if (typeof description === 'string' && description.length > 0) return description;
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 const EMOTION_EMOJI: Record<string, string[]> = {
@@ -666,6 +710,70 @@ export class TelegramGateway extends BaseGateway {
   /** Detached system work must wait behind the normal per-chat delivery queue. */
   async sendSystemMessage(chatId: string, text: string, deliveryId?: string): Promise<void> {
     await this.sendMessage(chatId, text, deliveryId);
+  }
+
+  /**
+   * TG-05/TG-06: narrow owner-report delivery surface for the report
+   * coordinator. Pins the delivery-ID-bound ledger entry before the first
+   * send so a confirmed-send proof cannot be pruned while the report-context
+   * SQLite row remains nonterminal, and classifies send failures with the
+   * gateway's own definite-rejection test.
+   */
+  createReportDeliveryControl(): TelegramReportDeliveryControl {
+    const pinnedTargets = new Map<string, { chatId: string; text: string }>();
+    const ledgerKey = (deliveryId: string) => this.outboundLedgerKey(deliveryId, 'text');
+
+    return {
+      claimAndPin: async (binding: ReportDeliveryBinding): Promise<ReportDeliveryLease> => {
+        const key = ledgerKey(binding.deliveryId);
+        this.messageLedger.claim(key, {
+          deliveryTarget: `telegram:${binding.target.channelId}`,
+          payloadIdentity: createHash('sha256').update(binding.text).digest('hex'),
+        });
+        this.messageLedger.pin(key);
+        pinnedTargets.set(binding.deliveryId, {
+          chatId: binding.target.channelId,
+          text: binding.text,
+        });
+        return { deliveryId: binding.deliveryId };
+      },
+
+      sendPinned: async (lease: ReportDeliveryLease): Promise<TypedTelegramDeliveryOutcome> => {
+        const pinned = pinnedTargets.get(lease.deliveryId);
+        if (!pinned) {
+          throw new Error(
+            `Owner report delivery ${lease.deliveryId} was not pinned by this control`
+          );
+        }
+        try {
+          await this.sendMessage(pinned.chatId, pinned.text, lease.deliveryId);
+          return { kind: 'confirmed' };
+        } catch (error) {
+          if (isTerminalTelegramRejection(error)) {
+            return { kind: 'definite_rejection', reason: telegramRejectionReason(error) };
+          }
+          return {
+            kind: 'retryable',
+            detail: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+
+      releasePin: async (deliveryId: string): Promise<void> => {
+        this.messageLedger.unpin(ledgerKey(deliveryId));
+        pinnedTargets.delete(deliveryId);
+      },
+
+      reconcilePins: async (nonterminalIds: string[], terminalIds: string[]): Promise<void> => {
+        for (const deliveryId of nonterminalIds) {
+          const key = ledgerKey(deliveryId);
+          if (this.messageLedger.get(key)) this.messageLedger.pin(key);
+        }
+        for (const deliveryId of terminalIds) {
+          this.messageLedger.unpin(ledgerKey(deliveryId));
+        }
+      },
+    };
   }
 
   async sendMessageFromActiveTurn(

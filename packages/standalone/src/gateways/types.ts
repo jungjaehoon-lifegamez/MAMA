@@ -127,6 +127,18 @@ export interface ConversationTurn {
   bot: string;
   /** Timestamp */
   timestamp?: number;
+  /**
+   * TG-05: globally unique inbound reference (`telegram:<channelId>:<messageId>`)
+   * binding this turn to its report-consumption receipt.
+   */
+  sourceMessageRef?: string;
+  /**
+   * TG-05: `provisional` while streaming, `final` after the atomic
+   * turn/receipt commit. Legacy turns without a state are treated as final.
+   */
+  state?: 'provisional' | 'final';
+  /** Lowercase hex SHA-256 of the exact final response (set with state=final). */
+  finalResponseSha256?: string;
 }
 
 /**

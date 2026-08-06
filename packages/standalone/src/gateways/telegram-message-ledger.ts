@@ -22,6 +22,12 @@ export interface TelegramMessageLedgerEntry {
   deliveryUncertain?: boolean;
   deliveryTarget?: string;
   payloadIdentity?: string;
+  /**
+   * TG-05/TG-06: a pinned entry is exempt from TTL pruning and delivered-entry
+   * eviction while the report-context SQLite row remains nonterminal, so a
+   * confirmed-send proof cannot expire before the durable context commit.
+   */
+  pinned?: boolean;
 }
 
 export interface TelegramDeliveryBinding {
@@ -180,8 +186,28 @@ export class TelegramMessageLedger {
         ownerId: this.ownerId,
         ...(existing?.deliveryTarget ? { deliveryTarget: existing.deliveryTarget } : {}),
         ...(existing?.payloadIdentity ? { payloadIdentity: existing.payloadIdentity } : {}),
+        ...(existing?.pinned ? { pinned: true } : {}),
       });
       this.enforceEntryLimit();
+    });
+  }
+
+  /** Pin an existing delivery entry against TTL pruning and eviction. */
+  pin(key: string): void {
+    const entry = this.requireEntry(key);
+    if (entry.pinned) return;
+    this.commit(() => {
+      this.entries.set(key, { ...entry, pinned: true });
+    });
+  }
+
+  /** Idempotently release a pin; a missing or unpinned entry is a no-op. */
+  unpin(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry?.pinned) return;
+    this.commit(() => {
+      const { pinned: _pinned, ...rest } = entry;
+      this.entries.set(key, rest);
     });
   }
 
@@ -305,7 +331,9 @@ export class TelegramMessageLedger {
   private prune(): void {
     const cutoff = this.now() - this.ttlMs;
     for (const [key, entry] of this.entries) {
-      if (entry.state === 'delivered' && entry.updatedAt < cutoff) this.entries.delete(key);
+      if (entry.state === 'delivered' && entry.updatedAt < cutoff && !entry.pinned) {
+        this.entries.delete(key);
+      }
     }
   }
 
@@ -340,7 +368,7 @@ export class TelegramMessageLedger {
 
   private evictOldestDelivered(): boolean {
     for (const [key, entry] of this.entries) {
-      if (entry.state === 'delivered') {
+      if (entry.state === 'delivered' && !entry.pinned) {
         this.entries.delete(key);
         return true;
       }

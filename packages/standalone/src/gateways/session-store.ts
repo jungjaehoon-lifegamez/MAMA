@@ -6,7 +6,7 @@
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { Session, MessageSource, ConversationTurn } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -228,7 +228,8 @@ export class SessionStore {
    */
   appendMessage(
     sessionId: string,
-    msg: { role: 'user' | 'assistant'; content: string; timestamp: number }
+    msg: { role: 'user' | 'assistant'; content: string; timestamp: number },
+    opts: { sourceMessageRef?: string } = {}
   ): boolean {
     const session = this.getById(sessionId);
     if (!session) {
@@ -243,7 +244,16 @@ export class SessionStore {
     }
 
     if (msg.role === 'user') {
-      history.push({ user: msg.content, bot: '', timestamp: msg.timestamp });
+      history.push({
+        user: msg.content,
+        bot: '',
+        timestamp: msg.timestamp,
+        // TG-05: a source-ref-bound turn stays provisional until the atomic
+        // turn/receipt commit; fresh-session formatting excludes it.
+        ...(opts.sourceMessageRef
+          ? { sourceMessageRef: opts.sourceMessageRef, state: 'provisional' as const }
+          : {}),
+      });
     } else {
       const lastTurn = history[history.length - 1];
       if (lastTurn && lastTurn.bot === '') {
@@ -443,8 +453,113 @@ export class SessionStore {
    * Format context as readable string for system prompt
    * Only includes the most recent turns to avoid token bloat
    */
+  /**
+   * TG-05 (design Decision 6): finalize the exact provisional turn, insert its
+   * report-consumption receipt, and mark the selected delivered events
+   * consumed - in ONE SQLite transaction on the shared connection. An exact
+   * replay is a no-op; any divergence is a conflict. A crash before the
+   * transaction leaves the turn provisional and events pending; a crash after
+   * it leaves both final and consumed.
+   */
+  finalizeTurnWithReportReceipt(input: {
+    sessionId: string;
+    sourceMessageRef: string;
+    finalResponse: string;
+    committedAtIso: string;
+    receipt: {
+      deliveryIds: string[];
+      projectionVersion: string;
+      projectionText: string;
+      projectionHash: string;
+    };
+  }): void {
+    if (input.receipt.deliveryIds.length === 0) {
+      throw new Error('A report receipt requires at least one selected delivery ID');
+    }
+    const responseSha = createHash('sha256').update(input.finalResponse, 'utf8').digest('hex');
+
+    const run = this.db.transaction(() => {
+      const existing = this.db
+        .prepare(
+          `SELECT delivery_ids, projection_hash, final_response_sha256
+           FROM telegram_report_context_receipts WHERE source_message_ref = ?`
+        )
+        .get(input.sourceMessageRef) as
+        | { delivery_ids: string; projection_hash: string; final_response_sha256: string }
+        | undefined;
+      if (existing) {
+        if (
+          existing.delivery_ids === JSON.stringify(input.receipt.deliveryIds) &&
+          existing.projection_hash === input.receipt.projectionHash &&
+          existing.final_response_sha256 === responseSha
+        ) {
+          return; // exact replay converges
+        }
+        throw new Error(
+          `Report receipt conflict for ${input.sourceMessageRef}: a different finalization is already committed`
+        );
+      }
+
+      const session = this.getById(input.sessionId);
+      if (!session) {
+        throw new Error(`Unknown session ${input.sessionId}`);
+      }
+      let history: ConversationTurn[];
+      try {
+        history = JSON.parse(session.context || '[]');
+      } catch {
+        history = [];
+      }
+      const turn = history.find(
+        (candidate) =>
+          candidate.sourceMessageRef === input.sourceMessageRef && candidate.state === 'provisional'
+      );
+      if (!turn) {
+        throw new Error(
+          `No provisional turn matches ${input.sourceMessageRef} in session ${input.sessionId}`
+        );
+      }
+      turn.bot = input.finalResponse;
+      turn.state = 'final';
+      turn.finalResponseSha256 = responseSha;
+      this.db
+        .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+        .run(JSON.stringify(history.slice(-this.maxTurns)), Date.now(), input.sessionId);
+
+      this.db
+        .prepare(
+          `INSERT INTO telegram_report_context_receipts
+             (source_message_ref, session_id, delivery_ids, projection_version,
+              projection_text, projection_hash, final_response_sha256, committed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.sourceMessageRef,
+          input.sessionId,
+          JSON.stringify(input.receipt.deliveryIds),
+          input.receipt.projectionVersion,
+          input.receipt.projectionText,
+          input.receipt.projectionHash,
+          responseSha,
+          input.committedAtIso
+        );
+
+      const consume = this.db.prepare(
+        `UPDATE telegram_report_context_events
+         SET disposition = 'consumed_turn', consumed_by_ref = ?, consumed_at = ?
+         WHERE delivery_id = ? AND state = 'delivered' AND disposition = 'pending'`
+      );
+      for (const deliveryId of input.receipt.deliveryIds) {
+        consume.run(input.sourceMessageRef, input.committedAtIso, deliveryId);
+      }
+    });
+    run();
+  }
+
   formatContextForPrompt(sessionId: string, maxTurnsToInject: number = 5): string {
-    const history = this.getHistory(sessionId);
+    // TG-05: provisional turns are uncommitted - a fresh session must never
+    // restore them. Legacy turns without a state are final.
+    const history = this.getHistory(sessionId).filter((turn) => turn.state !== 'provisional');
 
     if (history.length === 0) {
       return 'New conversation';

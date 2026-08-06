@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.33.0] - 2026-08-06
+
+### Added
+
+- **Delivered owner reports become durable model context (TG-05/TG-06).** Digest, scheduled full,
+  and on-demand full reports flow through ONE delivery coordinator: SQLite reservation before any
+  Telegram send, a pinned confirmed-send ledger proof that cannot expire while the row is
+  nonterminal, CAS attempt leases so exactly one executor sends, and typed
+  retry/rejection/cancellation/capacity outcomes. Scheduler success and trigger credit advance
+  only on `delivered`.
+- **A verified owner turn consumes pending reports exactly once.** A bounded deterministic
+  Projection V1 block is prepended to the owner's message; the final turn, its consumption
+  receipt, and the consumed marks commit in one SQLite transaction. An actual backend replacement
+  restores committed projections; successful resume never replays them.
+- **Operator recovery surface for parked deliveries.** A definite Telegram rejection is never
+  retried automatically; `/api/operator/report-delivery/{reactivate,cancel}` (plus a status
+  reader) are the explicit recovery path.
+
+### Changed
+
+- **The legacy one-shot V2 report carry is retired.** `last-full-report.json` migrates one time
+  into the report-context store (exact legacy prefix bytes preserved, consumed records restore as
+  bounded history for 30 days) and no component reads or writes V2 afterward.
+
+### Fixed
+
+- **The confirmed-send/context-persist loss window is closed.** Carry persistence failures were
+  previously swallowed after a successful send; report context is now reserved durably BEFORE the
+  send and consumption is atomic with final-turn persistence.
+- **Telegram 429/5xx can no longer permanently silence owner reporting.** Only definite 4xx
+  non-acceptance parks a report; rate limits and server errors stay retryable with durable
+  1m-to-12h backoff that the attempt lease actually honors.
+
 ## mama-os [0.32.3] - 2026-08-03
 
 ### Fixed
