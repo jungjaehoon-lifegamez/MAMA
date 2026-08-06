@@ -896,6 +896,18 @@ The authenticated native task ledger is exposed separately by
 - `PATCH /api/operator/tasks/:id` — update an owner task with a non-empty subset of `status`,
   `priority`, `assignee`, `due_date`, `due_at`, and `confirmed`.
 
+Owner-report delivery recovery (TG-05/TG-06, v0.33): a definite Telegram rejection is never
+retried automatically; these explicit operator actions are the only recovery path. The trigger
+loop observes the resulting state on its next tick.
+
+- `GET /api/operator/report-delivery/:deliveryId` — one delivery's state, attempt count,
+  next attempt time, and terminal reasons (404 for an unknown ID).
+- `POST /api/operator/report-delivery/reactivate` — `{ deliveryId }`; moves a
+  `prepared_definite_rejection` row back to retryable for the same delivery ID (409 when the
+  state forbids it).
+- `POST /api/operator/report-delivery/cancel` — `{ deliveryId, reason }`; permitted only for a
+  proven definite rejection, records the operator audit, releases live capacity.
+
 `due_date` is a real `YYYY-MM-DD` calendar date and preserves date-only precision. `due_at` is
 either `null` or valid RFC 3339 with `Z` or an explicit numeric offset; offset-free local times are
 rejected. When present, `due_at` is returned as a normalized UTC ISO string and the original offset

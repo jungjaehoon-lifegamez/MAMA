@@ -349,10 +349,13 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       res.json({ ok: true, event });
     });
 
+    const isProtocolRefusal = (error: unknown): boolean =>
+      error instanceof Error && /cannot be (cancelled|reactivated)/i.test(error.message);
+
     apiServer.app.post('/api/operator/report-delivery/reactivate', requireAuth, (req, res) => {
-      const { deliveryId } = (req.body ?? {}) as { deliveryId?: string };
-      if (!deliveryId) {
-        res.status(400).json({ ok: false, error: 'deliveryId is required' });
+      const deliveryId = ((req.body ?? {}) as Record<string, unknown>).deliveryId;
+      if (typeof deliveryId !== 'string' || deliveryId.length === 0) {
+        res.status(400).json({ ok: false, error: 'deliveryId must be a non-empty string' });
         return;
       }
       try {
@@ -362,7 +365,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           message: `delivery ${deliveryId} reactivated; next due tick retries`,
         });
       } catch (error) {
-        res.status(409).json({
+        res.status(isProtocolRefusal(error) ? 409 : 500).json({
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -370,16 +373,25 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     });
 
     apiServer.app.post('/api/operator/report-delivery/cancel', requireAuth, (req, res) => {
-      const { deliveryId, reason } = (req.body ?? {}) as { deliveryId?: string; reason?: string };
-      if (!deliveryId || !reason) {
-        res.status(400).json({ ok: false, error: 'deliveryId and reason are required' });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const deliveryId = body.deliveryId;
+      const reason = body.reason;
+      if (
+        typeof deliveryId !== 'string' ||
+        deliveryId.length === 0 ||
+        typeof reason !== 'string' ||
+        reason.length === 0
+      ) {
+        res
+          .status(400)
+          .json({ ok: false, error: 'deliveryId and reason must be non-empty strings' });
         return;
       }
       try {
         reportContextStore.cancel(deliveryId, reason, new Date().toISOString());
         res.json({ ok: true, message: `delivery ${deliveryId} cancelled` });
       } catch (error) {
-        res.status(409).json({
+        res.status(isProtocolRefusal(error) ? 409 : 500).json({
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         });

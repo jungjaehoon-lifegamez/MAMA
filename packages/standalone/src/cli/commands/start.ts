@@ -103,7 +103,6 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
-import { FileReportCarryStore } from '../../operator/report-carry.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { ConductorInbox } from '../../operator/conductor-inbox.js';
@@ -1208,8 +1207,10 @@ export async function runAgentLoop(
     envelopeBootstrap.envelopeAuthority,
     {
       privateConnectorPolicy,
-      reportCarry: new FileReportCarryStore(),
-      // TG-05: verified owner turns consume delivered-pending reports.
+      // TG-05 (design Decision 8): the V2 carry reader is NOT wired - the
+      // boot-time migration owns last-full-report.json, and no component
+      // reads or writes V2 afterward. Wiring FileReportCarryStore here would
+      // couple two owners to one file behind an implicit construction order.
       ownerReportInbox: new OwnerReportInbox(reportContextStore),
     }
   );
