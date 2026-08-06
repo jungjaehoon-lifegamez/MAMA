@@ -26,6 +26,7 @@ import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
 import { SituationReporter, type DeliveredFullReport } from './situation-report.js';
+import type { ReportDeliveryPort } from './report-delivery-coordinator.js';
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -90,8 +91,20 @@ export interface TriggerLoopDeps {
   reportAsk?: AskAgent;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
-  /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
+  /**
+   * LEGACY owner-report sink (V2 compatibility tests only). Production
+   * assembly wires `reportDelivery` instead; the two are mutually exclusive.
+   */
   output?: Pick<OutputSink, 'send'> & { target?: ReportCarryTarget };
+  /**
+   * TG-05/TG-06: the single owner-report delivery boundary. The loop submits
+   * the persisted artifact and observes typed outcomes; it never calls
+   * Telegram itself and never advances scheduler/trigger credit except on
+   * `delivered`.
+   */
+  reportDelivery?: ReportDeliveryPort;
+  /** Owner-report target binding pending artifacts when reportDelivery is set. */
+  reportTarget?: ReportCarryTarget;
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
   /**
@@ -172,6 +185,16 @@ export class OperatorTriggerLoop {
   private pendingReportLegacyLoaded = false;
 
   constructor(deps: TriggerLoopDeps) {
+    // Design Decision 1: exactly one delivery executor. The legacy OutputSink
+    // report path cannot run beside the coordinator port.
+    if (deps.reportDelivery && deps.output) {
+      throw new Error(
+        'OperatorTriggerLoop: legacy report output cannot run beside ReportDeliveryPort'
+      );
+    }
+    if (deps.reportDelivery && !deps.reportTarget) {
+      throw new Error('OperatorTriggerLoop: reportDelivery requires reportTarget');
+    }
     this.deps = deps;
     // G2 success signal: when a sent report cites fired triggers (USED_TRIGGERS
     // trailer, window-validated), record 'succeeded' on each. Uncited fires stay
@@ -216,7 +239,7 @@ export class OperatorTriggerLoop {
 
   /** Reloads one durable outcome so recovery can hydrate this live loop before report work. */
   private refreshPendingReportState(): PendingReportLoadOutcome['status'] | 'unavailable' {
-    if (!this.deps.output) {
+    if (!this.hasReportSink()) {
       return 'unavailable';
     }
     const store = this.deps.pendingReportStore;
@@ -263,7 +286,7 @@ export class OperatorTriggerLoop {
   }
 
   private persistPendingReports(): boolean {
-    if (!this.deps.output) return false;
+    if (!this.hasReportSink()) return false;
     if (this.refreshPendingReportState() === 'quarantined') return false;
     const state = {
       version: 1,
@@ -286,6 +309,11 @@ export class OperatorTriggerLoop {
     return mode === 'full' ? this.fullReporter : this.digest;
   }
 
+  /** A report sink exists: either the coordinator port or the legacy test sink. */
+  private hasReportSink(): boolean {
+    return Boolean(this.deps.reportDelivery ?? this.deps.output);
+  }
+
   private deliveryIdFor(occurrence: PendingReportOccurrence): string {
     if (occurrence.kind === 'scheduled_full' && occurrence.hourKey) {
       return `operator-report:scheduled:${occurrence.hourKey}`;
@@ -294,7 +322,7 @@ export class OperatorTriggerLoop {
   }
 
   private requireOutputTarget(): ReportCarryTarget {
-    const target = this.deps.output?.target;
+    const target = this.deps.reportTarget ?? this.deps.output?.target;
     if (
       target?.source !== 'telegram' ||
       target.channelId.length === 0 ||
@@ -336,21 +364,67 @@ export class OperatorTriggerLoop {
 
   private async deliverPendingReport(recovered: boolean): Promise<PendingReportDelivery | null> {
     const pending = this.pendingDelivery;
-    const output = this.deps.output;
-    if (!pending || !output) {
+    if (!pending || !this.hasReportSink()) {
       return null;
     }
 
     this.assertPendingDeliveryBinding(pending);
-    await this.reporterFor(pending.mode).deliverPrepared(pending, output);
-    if (pending.mode === 'full' && this.deps.reportScheduler) {
-      if (pending.occurrence.hourKey) {
-        this.deps.reportScheduler.markFired(pending.occurrence.hourKey);
+
+    const port = this.deps.reportDelivery;
+    if (port) {
+      // TG-05/TG-06: submit the persisted artifact and observe the typed
+      // outcome. Only `delivered` advances scheduler success, trigger credit,
+      // and pending-file cleanup; retry/rejection retain the artifact for the
+      // coordinator to drive to terminal; cancellation cleans up with an
+      // audit record and no credit.
+      const outcome = await port.deliverPrepared(pending);
+      if (outcome.status === 'delivered') {
+        this.reporterFor(pending.mode).markDeliveredOutcome(pending.citedTriggerIds);
+        this.markScheduledFullOutcome(pending);
+        this.pendingDelivery = undefined;
+        this.persistPendingReports();
+        if (recovered) {
+          this.deps.log(
+            `[trigger-loop] recovered pending ${pending.mode} owner report delivery=${pending.deliveryId}`
+          );
+        }
+        return pending;
       }
-      if (pending.occurrence.firedAtIso) {
-        this.deps.reportScheduler.markSuccess(pending.occurrence.firedAtIso);
+      if (outcome.status === 'cancelled') {
+        this.pendingDelivery = undefined;
+        this.persistPendingReports();
+        this.deps.log(
+          `[trigger-loop] owner report delivery=${pending.deliveryId} cancelled without credit: ${outcome.reason}`
+        );
+        return null;
       }
+      if (outcome.status === 'capacity_full') {
+        // Loud degradation, never a wedge: the durable artifact is retained,
+        // the tick continues, and recovery only needs consumption or an
+        // explicit operator archive to reopen capacity.
+        this.persistPendingReports();
+        this.deps.log(
+          `[trigger-loop] owner report delivery=${pending.deliveryId} BLOCKED by report-context capacity: ${outcome.reason}`
+        );
+        return null;
+      }
+      this.persistPendingReports();
+      this.deps.log(
+        outcome.status === 'retry_scheduled'
+          ? `[trigger-loop] owner report delivery=${pending.deliveryId} retry scheduled at ${outcome.nextAttemptAt}`
+          : `[trigger-loop] owner report delivery=${pending.deliveryId} definitively rejected: ${outcome.reason}`
+      );
+      return null;
     }
+
+    // LEGACY OutputSink path - V2 compatibility tests only; the constructor
+    // guard keeps it out of any assembly that wires the coordinator port.
+    const output = this.deps.output;
+    if (!output) {
+      return null;
+    }
+    await this.reporterFor(pending.mode).deliverPrepared(pending, output);
+    this.markScheduledFullOutcome(pending);
     this.pendingDelivery = undefined;
     this.persistPendingReports();
     if (recovered) {
@@ -361,12 +435,24 @@ export class OperatorTriggerLoop {
     return pending;
   }
 
+  private markScheduledFullOutcome(pending: PendingReportDelivery): void {
+    if (pending.mode !== 'full' || !this.deps.reportScheduler) {
+      return;
+    }
+    if (pending.occurrence.hourKey) {
+      this.deps.reportScheduler.markFired(pending.occurrence.hourKey);
+    }
+    if (pending.occurrence.firedAtIso) {
+      this.deps.reportScheduler.markSuccess(pending.occurrence.firedAtIso);
+    }
+  }
+
   private async prepareAndDeliverReport(
     askAgent: AskAgent,
     mode: ReportMode,
     occurrence: PendingReportOccurrence
   ): Promise<boolean> {
-    if (!this.deps.output || this.isPendingReportWorkBlocked()) {
+    if (!this.hasReportSink() || this.isPendingReportWorkBlocked()) {
       return false;
     }
     if (this.pendingDelivery) {
@@ -400,7 +486,7 @@ export class OperatorTriggerLoop {
 
   private async preparePendingRequest(): Promise<boolean> {
     const request = this.pendingRequest;
-    if (!request || !this.deps.output || this.isPendingReportWorkBlocked()) return false;
+    if (!request || !this.hasReportSink() || this.isPendingReportWorkBlocked()) return false;
     if (this.pendingDelivery) {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
@@ -450,8 +536,9 @@ export class OperatorTriggerLoop {
 
   async tick(options: TickOptions = {}): Promise<TickResult> {
     const { delta, memory, registry, askAgent, review, config, log } = this.deps;
-    const { output, reportScheduler } = this.deps;
-    const fullLegOn = Boolean(output && reportScheduler);
+    const { reportScheduler } = this.deps;
+    const reportSink = this.hasReportSink();
+    const fullLegOn = Boolean(reportSink && reportScheduler);
     this.tickCount += 1;
     const tick = this.tickCount;
     const maintenanceTick =
@@ -480,7 +567,7 @@ export class OperatorTriggerLoop {
 
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
-    const reportEvents = output
+    const reportEvents = reportSink
       ? events.filter((event) => !this.digest.hasRecordedEvent(event))
       : events;
     if (events.length > 0) {
@@ -498,7 +585,7 @@ export class OperatorTriggerLoop {
           registry.recordFire(signal.triggerId);
         }
         // Carry the recalled {topic, content} (agent-authored memoryQuery drove it) into the report.
-        if (output) {
+        if (reportSink) {
           this.digest.recordFire({
             triggerId: signal.triggerId ?? signal.detector,
             kind: signal.kind,
@@ -523,7 +610,7 @@ export class OperatorTriggerLoop {
     // Persist the report window BEFORE advancing the connector cursor. A daemon
     // crash may repeat an event, but it cannot silently lose an owner update.
     if (reportEvents.length > 0) {
-      if (output) {
+      if (reportSink) {
         this.digest.recordWindow(reportEvents);
         if (fullLegOn) {
           this.fullReporter.recordWindow(reportEvents);
@@ -628,7 +715,7 @@ export class OperatorTriggerLoop {
           registry.clearAuthorFailure();
           this.authoredWindowGeneration = this.authorWindowGeneration;
           if (authored > 0) {
-            if (output) {
+            if (reportSink) {
               this.digest.recordAuthored(authored);
             }
             if (fullLegOn) {
@@ -703,7 +790,8 @@ export class OperatorTriggerLoop {
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (
       !this.isPendingReportWorkBlocked() &&
-      output &&
+      !this.pendingDelivery &&
+      reportSink &&
       reportEvery > 0 &&
       tick % reportEvery === 0 &&
       this.digest.hasActivity()
@@ -722,7 +810,11 @@ export class OperatorTriggerLoop {
       !this.stopping &&
       !recoveredPendingWork &&
       !this.isPendingReportWorkBlocked() &&
-      output &&
+      // An outstanding delivery (retry backoff or definite rejection) parks
+      // the scheduled leg WITHOUT consuming the hour: the coordinator drives
+      // the pending artifact to terminal, then the next due tick fires.
+      !this.pendingDelivery &&
+      reportSink &&
       reportScheduler
     ) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
@@ -787,9 +879,8 @@ export class OperatorTriggerLoop {
    */
   startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
     if (this.stopping) return { accepted: false, reason: 'unavailable' };
-    const output = this.deps.output;
     const reportScheduler = this.deps.reportScheduler;
-    if (!output || this.isPendingReportWorkBlocked()) {
+    if (!this.hasReportSink() || this.isPendingReportWorkBlocked()) {
       return { accepted: false, reason: 'unavailable' };
     }
     if (this.running || this.pendingDelivery || this.pendingRequest) {

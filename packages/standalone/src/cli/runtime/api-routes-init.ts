@@ -268,6 +268,8 @@ export interface RegisterApiRoutesParams {
   sessionsDb?: SQLiteDatabase;
   /** Stage-2 consumer: per-kind completion hooks register here (started by start.ts AFTER this returns). */
   workOrderConsumer?: WorkOrderConsumer;
+  /** TG-05/TG-06: owner-report context store for the operator recovery surface. */
+  reportContextStore?: import('../../gateways/telegram-report-context-store.js').TelegramReportContextStore;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -330,6 +332,72 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   apiServer.app.post('/api/report/refresh', requireAuth, (_req, res) => {
     res.json({ ok: true, message: 'Viewer now renders data directly from Intelligence API' });
   });
+
+  // -- TG-05/TG-06 owner-report delivery recovery (design Decision 3) --
+  // A definite rejection is never retried automatically; these explicit
+  // operator actions are the ONLY way to reactivate the same delivery ID or
+  // to cancel a proven-unaccepted occurrence. The trigger loop observes the
+  // resulting terminal/retryable state on its next tick.
+  const reportContextStore = params.reportContextStore;
+  if (reportContextStore) {
+    apiServer.app.get('/api/operator/report-delivery/:deliveryId', requireAuth, (req, res) => {
+      const event = reportContextStore.getEvent(String(req.params.deliveryId));
+      if (!event) {
+        res.status(404).json({ ok: false, error: 'unknown delivery ID' });
+        return;
+      }
+      res.json({ ok: true, event });
+    });
+
+    const isProtocolRefusal = (error: unknown): boolean =>
+      error instanceof Error && /cannot be (cancelled|reactivated)/i.test(error.message);
+
+    apiServer.app.post('/api/operator/report-delivery/reactivate', requireAuth, (req, res) => {
+      const deliveryId = ((req.body ?? {}) as Record<string, unknown>).deliveryId;
+      if (typeof deliveryId !== 'string' || deliveryId.length === 0) {
+        res.status(400).json({ ok: false, error: 'deliveryId must be a non-empty string' });
+        return;
+      }
+      try {
+        reportContextStore.reactivate(deliveryId);
+        res.json({
+          ok: true,
+          message: `delivery ${deliveryId} reactivated; next due tick retries`,
+        });
+      } catch (error) {
+        res.status(isProtocolRefusal(error) ? 409 : 500).json({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
+    apiServer.app.post('/api/operator/report-delivery/cancel', requireAuth, (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const deliveryId = body.deliveryId;
+      const reason = body.reason;
+      if (
+        typeof deliveryId !== 'string' ||
+        deliveryId.length === 0 ||
+        typeof reason !== 'string' ||
+        reason.length === 0
+      ) {
+        res
+          .status(400)
+          .json({ ok: false, error: 'deliveryId and reason must be non-empty strings' });
+        return;
+      }
+      try {
+        reportContextStore.cancel(deliveryId, reason, new Date().toISOString());
+        res.json({ ok: true, message: `delivery ${deliveryId} cancelled` });
+      } catch (error) {
+        res.status(isProtocolRefusal(error) ? 409 : 500).json({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
 
   if (dashboardAgentConfigured || wikiAgentConfigured) {
     // Merge code-act MCP server into mama-mcp-config.json.

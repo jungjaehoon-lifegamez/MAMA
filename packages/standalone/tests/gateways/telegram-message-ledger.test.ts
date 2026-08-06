@@ -236,3 +236,70 @@ describe('TelegramMessageLedger', () => {
     });
   });
 });
+
+describe('TelegramMessageLedger pinning (TG-05/TG-06)', () => {
+  it('keeps a pinned delivered entry alive past the retention window', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    let now = 1_000;
+    const ledger = new TelegramMessageLedger(path, { ttlMs: 100, now: () => now });
+    ledger.claim('outbound:pinned-report', {
+      deliveryTarget: 'telegram:777001',
+      payloadIdentity: 'a'.repeat(64),
+    });
+    ledger.pin('outbound:pinned-report');
+    ledger.markDelivered('outbound:pinned-report');
+    ledger.record('7777:unpinned');
+    now = 1_201;
+
+    expect(ledger.has('outbound:pinned-report')).toBe(true);
+    expect(ledger.has('7777:unpinned')).toBe(false);
+  });
+
+  it('exempts pinned entries from delivered-entry eviction under the entry cap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    const ledger = new TelegramMessageLedger(path, { maxEntries: 2 });
+    ledger.claim('outbound:pinned-report', {
+      deliveryTarget: 'telegram:777001',
+      payloadIdentity: 'a'.repeat(64),
+    });
+    ledger.pin('outbound:pinned-report');
+    ledger.markDelivered('outbound:pinned-report');
+    ledger.record('7777:evictable');
+    ledger.record('7777:new');
+
+    expect(ledger.has('outbound:pinned-report')).toBe(true);
+    expect(ledger.has('7777:evictable')).toBe(false);
+  });
+
+  it('persists the pin across restarts and unpins idempotently', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    let now = 1_000;
+    const first = new TelegramMessageLedger(path, { ttlMs: 100, now: () => now });
+    first.claim('outbound:pinned-report', {
+      deliveryTarget: 'telegram:777001',
+      payloadIdentity: 'a'.repeat(64),
+    });
+    first.pin('outbound:pinned-report');
+    first.markDelivered('outbound:pinned-report');
+
+    now = 1_201;
+    const second = new TelegramMessageLedger(path, { ttlMs: 100, now: () => now });
+    expect(second.has('outbound:pinned-report')).toBe(true);
+
+    second.unpin('outbound:pinned-report');
+    second.unpin('outbound:pinned-report');
+    second.unpin('outbound:never-existed');
+    expect(second.has('outbound:pinned-report')).toBe(false);
+  });
+
+  it('refuses to pin an unclaimed key so a pin always covers a real delivery entry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-telegram-ledger-'));
+    const path = join(root, 'processed.json');
+    const ledger = new TelegramMessageLedger(path);
+
+    expect(() => ledger.pin('outbound:missing')).toThrow(/has not been claimed/i);
+  });
+});

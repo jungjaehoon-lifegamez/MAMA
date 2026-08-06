@@ -1244,3 +1244,143 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 });
+
+describe('TelegramGateway report delivery control (TG-05/TG-06)', () => {
+  const OWNER_CHAT = '777001';
+
+  async function controlHarness() {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const ledgerPath = join(
+      await mkdtemp(join(tmpdir(), 'mama-telegram-report-control-')),
+      'ledger.json'
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    const control = gateway.createReportDeliveryControl();
+    const binding = {
+      deliveryId: 'operator-report:full:2026-08-06T11',
+      target: { source: 'telegram' as const, channelId: OWNER_CHAT },
+      payloadIdentity: 'b'.repeat(64),
+      text: 'owner report body',
+    };
+    return { gateway, control, binding, ledgerPath };
+  }
+
+  function readLedgerEntries(ledgerPath: string) {
+    const reader = new TelegramMessageLedger(ledgerPath);
+    return reader.listUndelivered();
+  }
+
+  it('claimAndPin persists a pinned target/payload-bound entry before any send', async () => {
+    const { control, binding, ledgerPath } = await controlHarness();
+
+    await control.claimAndPin(binding);
+
+    const entries = readLedgerEntries(ledgerPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      state: 'processing',
+      pinned: true,
+      deliveryTarget: `telegram:${OWNER_CHAT}`,
+    });
+    expect(mockApi.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('sendPinned returns confirmed on success and the ledger proves the confirmed send', async () => {
+    const { control, binding, ledgerPath } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+
+    const outcome = await control.sendPinned(lease);
+
+    expect(outcome).toEqual({ kind: 'confirmed' });
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(Number(OWNER_CHAT), 'owner report body');
+    const reader = new TelegramMessageLedger(ledgerPath);
+    const undelivered = reader.listUndelivered();
+    expect(undelivered).toHaveLength(0);
+  });
+
+  it('sendPinned classifies a Telegram API error_code as definite rejection', async () => {
+    const { control, binding } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+    mockApi.sendMessage.mockRejectedValueOnce({
+      error_code: 403,
+      description: 'Forbidden: bot was blocked by the user',
+    });
+
+    const outcome = await control.sendPinned(lease);
+
+    expect(outcome).toEqual({
+      kind: 'definite_rejection',
+      reason: 'Forbidden: bot was blocked by the user',
+    });
+  });
+
+  it('sendPinned classifies 429 and 5xx as retryable, never definite rejection', async () => {
+    const { control, binding } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+    mockApi.sendMessage.mockRejectedValueOnce(
+      Object.assign(new Error('Too Many Requests: retry after 5'), {
+        error_code: 429,
+        parameters: { retry_after: 5 },
+      })
+    );
+
+    const rateLimited = await control.sendPinned(lease);
+    expect(rateLimited.kind).toBe('retryable');
+
+    mockApi.sendMessage.mockRejectedValueOnce(
+      Object.assign(new Error('Bad Gateway'), { error_code: 502 })
+    );
+    const serverError = await control.sendPinned(lease);
+    expect(serverError.kind).toBe('retryable');
+  });
+
+  it('sendPinned classifies a transport failure as retryable', async () => {
+    const { control, binding } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+    mockApi.sendMessage.mockRejectedValueOnce(new Error('socket hang up'));
+
+    const outcome = await control.sendPinned(lease);
+
+    expect(outcome).toEqual({ kind: 'retryable', detail: 'socket hang up' });
+  });
+
+  it('releasePin unpins idempotently so retention can reclaim the delivered proof', async () => {
+    const { control, binding, ledgerPath } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+    await control.sendPinned(lease);
+
+    await control.releasePin(binding.deliveryId);
+    await control.releasePin(binding.deliveryId);
+    await control.releasePin('never-claimed');
+
+    const reader = new TelegramMessageLedger(ledgerPath);
+    const all = reader.listUndelivered();
+    expect(all.filter((entry) => entry.pinned)).toHaveLength(0);
+  });
+
+  it('reconcilePins pins nonterminal deliveries and unpins terminal ones at startup', async () => {
+    const { control, binding, ledgerPath } = await controlHarness();
+    const lease = await control.claimAndPin(binding);
+    await control.sendPinned(lease);
+    const second = {
+      ...binding,
+      deliveryId: 'operator-report:full:2026-08-06T12',
+      text: 'second report',
+    };
+    await control.claimAndPin(second);
+    await control.releasePin(second.deliveryId);
+
+    await control.reconcilePins([second.deliveryId], [binding.deliveryId]);
+
+    const reader = new TelegramMessageLedger(ledgerPath);
+    const pinnedKeys = [...reader.listUndelivered()]
+      .filter((entry) => entry.pinned)
+      .map((entry) => entry.key);
+    expect(pinnedKeys).toHaveLength(1);
+  });
+});
