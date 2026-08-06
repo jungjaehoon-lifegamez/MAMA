@@ -53,6 +53,7 @@ import type {
   ReportCarryPort,
   ReportCarryTarget,
 } from '../operator/report-carry.js';
+import type { OwnerReportInboxPort } from './owner-report-inbox.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -90,6 +91,8 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 export interface MessageRouterDependencies {
   privateConnectorPolicy?: PrivateConnectorPolicy;
   reportCarry?: ReportCarryPort;
+  /** TG-05/TG-06: delivered-pending owner reports consumed by verified owner turns. */
+  ownerReportInbox?: OwnerReportInboxPort;
 }
 
 /**
@@ -441,6 +444,7 @@ export class MessageRouter implements TurnProcessor {
   private envelopeAuthority?: EnvelopeAuthority;
   private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private readonly reportCarry?: ReportCarryPort;
+  private readonly ownerReportInbox?: OwnerReportInboxPort;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private gatewayRegistry: GatewayRegistry | null = null;
@@ -686,6 +690,7 @@ export class MessageRouter implements TurnProcessor {
     this.privateConnectorPolicy =
       dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
     this.reportCarry = dependencies.reportCarry;
+    this.ownerReportInbox = dependencies.ownerReportInbox;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -990,17 +995,29 @@ This protects your credentials from being exposed in chat logs.`;
       const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
         ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
         : null;
+      // TG-05: inbox lookup only AFTER the owner-console trust check
+      // (reportCarryTarget is non-null only for a verified owner turn). The
+      // snapshot is captured once; its exact ordered IDs are the only
+      // consumable set for this turn.
+      const ownerReportSnapshot = reportCarryTarget
+        ? (this.ownerReportInbox?.snapshot(reportCarryTarget) ?? null)
+        : null;
       const mediaInstructions = buildUploadedMediaInstructions(
         message,
         agentContext.role.allowedTools,
         agentContext.roleName === 'owner_console'
       );
-      // Save user message immediately for crash/refresh resilience
-      this.sessionStore.appendMessage(session.id, {
-        role: 'user',
-        content: [message.text, mediaInstructions].filter(Boolean).join('\n\n'),
-        timestamp: Date.now(),
-      });
+      // Save user message immediately for crash/refresh resilience. A
+      // report-consuming turn is provisional until its atomic final commit.
+      this.sessionStore.appendMessage(
+        session.id,
+        {
+          role: 'user',
+          content: [message.text, mediaInstructions].filter(Boolean).join('\n\n'),
+          timestamp: Date.now(),
+        },
+        ownerReportSnapshot ? { sourceMessageRef } : {}
+      );
 
       let response = '';
       let context: InjectedContext = { prompt: '', decisions: [], hasContext: false };
@@ -1209,6 +1226,7 @@ This protects your credentials from being exposed in chat logs.`;
         // TG-05/TG-06: carry is captured once before the model call and travels
         // only in this turn's user message, never in a rebuilt system prompt.
         const carryPrefix = reportCarryPeek?.prefix ?? '';
+        const inboxPrefix = ownerReportSnapshot ? `${ownerReportSnapshot.text}\n\n` : '';
 
         try {
           if (shouldResume) {
@@ -1300,7 +1318,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
+          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1346,7 +1364,7 @@ This protects your credentials from being exposed in chat logs.`;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         } else {
           const pageCtx = this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
+          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
           const conductorStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -1472,17 +1490,36 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       // 6. Update session context — finalize assistant response
-      // Use flushStreamingResponse first (updates existing turn from periodic flush),
-      // fall back to appendMessage if no turn exists yet (non-streaming path)
-      const persisted =
-        this.sessionStore.flushStreamingResponse(session.id, response) ||
-        this.sessionStore.appendMessage(session.id, {
-          role: 'assistant',
-          content: response,
-          timestamp: Date.now(),
+      if (ownerReportSnapshot) {
+        // TG-05 (design Decision 6): the final turn, its receipt, and the
+        // consumption marks commit in ONE SQLite transaction. A failure here
+        // MUST surface - no report caller may swallow persistence failure and
+        // report success.
+        this.sessionStore.finalizeTurnWithReportReceipt({
+          sessionId: session.id,
+          sourceMessageRef,
+          finalResponse: response,
+          committedAtIso: new Date().toISOString(),
+          receipt: {
+            deliveryIds: ownerReportSnapshot.deliveryIds,
+            projectionVersion: ownerReportSnapshot.version,
+            projectionText: ownerReportSnapshot.text,
+            projectionHash: ownerReportSnapshot.projectionHash,
+          },
         });
-      if (!persisted) {
-        throw new Error('Unable to persist final assistant response');
+      } else {
+        // Use flushStreamingResponse first (updates existing turn from periodic flush),
+        // fall back to appendMessage if no turn exists yet (non-streaming path)
+        const persisted =
+          this.sessionStore.flushStreamingResponse(session.id, response) ||
+          this.sessionStore.appendMessage(session.id, {
+            role: 'assistant',
+            content: response,
+            timestamp: Date.now(),
+          });
+        if (!persisted) {
+          throw new Error('Unable to persist final assistant response');
+        }
       }
       if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
         try {
@@ -1709,6 +1746,28 @@ ${enhanced.rulesContent}
 ${sessionHistory}
 `;
       logger.info(`Injected ${sessionHistory.length} chars of history (new session)`);
+    }
+
+    // TG-05 (design Decision 7): an actual new backend conversation restores
+    // the committed owner-report projections of the SAME final turns the
+    // history window restores. Resume paths never reach this builder with
+    // isNewSession, so a successful resume cannot replay consumed reports.
+    if (isNewSession && this.ownerReportInbox && session.source === 'telegram') {
+      const restoredTurns = this.sessionStore
+        .getHistory(session.id)
+        .filter((turn) => turn.state !== 'provisional')
+        .slice(-5);
+      const reportHistory = this.ownerReportInbox.historyBlock(
+        { source: 'telegram', channelId: session.channelId },
+        restoredTurns
+      );
+      if (reportHistory) {
+        prompt += `
+## Previously Consumed Owner Reports (reference only)
+${reportHistory}
+`;
+        logger.info(`Injected ${reportHistory.length} chars of owner-report history (new session)`);
+      }
     }
 
     // Add channel history only for new sessions without DB history
