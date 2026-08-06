@@ -538,3 +538,29 @@ describe('Story SEC-4: window content is wrapped as untrusted data', () => {
     });
   });
 });
+
+describe('markDeliveredOutcome (TG-06 coordinator boundary)', () => {
+  it('credits cited triggers and resets the window exactly once per delivered report', () => {
+    const recordTriggerUse = vi.fn();
+    const reporter = new SituationReporter({ recordTriggerUse });
+    reporter.recordWindow([ev(1, 'owner', 'pending owner update')]);
+    reporter.recordFire(fire('t-1', 'temporal', 'owner'));
+
+    reporter.markDeliveredOutcome(['t-1']);
+
+    expect(recordTriggerUse).toHaveBeenCalledTimes(1);
+    expect(recordTriggerUse).toHaveBeenCalledWith(['t-1']);
+    expect(reporter.hasActivity()).toBe(false);
+  });
+
+  it('resets without crediting when the delivered report cited nothing', () => {
+    const recordTriggerUse = vi.fn();
+    const reporter = new SituationReporter({ recordTriggerUse });
+    reporter.recordWindow([ev(1, 'owner', 'pending owner update')]);
+
+    reporter.markDeliveredOutcome([]);
+
+    expect(recordTriggerUse).not.toHaveBeenCalled();
+    expect(reporter.hasActivity()).toBe(false);
+  });
+});

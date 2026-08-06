@@ -29,6 +29,12 @@ import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-a
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
+import { TelegramReportContextStore } from '../../gateways/telegram-report-context-store.js';
+import { OwnerReportInbox } from '../../gateways/owner-report-inbox.js';
+import {
+  ReportDeliveryCoordinator,
+  type ReportDeliveryPort,
+} from '../../operator/report-delivery-coordinator.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type {
   CodeActExecutionContext,
@@ -1114,6 +1120,15 @@ export async function runAgentLoop(
   // ── Phase 2: Session + Tool + Agent Loop ──────────────────────────────────
 
   const sessionStore = new SessionStore(db);
+  // TG-05/TG-06: the messenger SQLite database is the single owner-report
+  // context authority. One store instance on the SAME connection as
+  // SessionStore, so turn finalization and report consumption share one
+  // transaction (design Decision 4/6).
+  const reportContextStore = new TelegramReportContextStore(db, {
+    // TG-05 Slice K: one-time V2 carry migration; the file is renamed
+    // `.migrated` after commit and no component reads or writes V2 afterward.
+    legacyCarryPath: expandPath('~/.mama/operator/last-full-report.json'),
+  });
 
   // Establish one canonical private workspace for gateway files, OCR, Drive,
   // Telegram media, and the persona runtime. An explicit environment override
@@ -1191,7 +1206,12 @@ export async function runAgentLoop(
     resolveMessageRouterConfig(config, runtimeBackend),
     envelopeBootstrap.envelopeConfig,
     envelopeBootstrap.envelopeAuthority,
-    { privateConnectorPolicy, reportCarry: new FileReportCarryStore() }
+    {
+      privateConnectorPolicy,
+      reportCarry: new FileReportCarryStore(),
+      // TG-05: verified owner turns consume delivered-pending reports.
+      ownerReportInbox: new OwnerReportInbox(reportContextStore),
+    }
   );
   messageRouter.setSessionsDb(db);
 
@@ -1955,8 +1975,6 @@ export async function runAgentLoop(
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
-      const { createTelegramReportCarryDelivery, createTelegramReportOutput } =
-        await import('../../operator/report-carry-delivery.js');
       type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
       // Set when a report is composed, read when that same report is delivered. Safe
       // because ALL operator work serializes on the operator lane (SOURCE_GLOBAL_LANES),
@@ -1975,16 +1993,39 @@ export async function runAgentLoop(
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = resolveOperatorReportChatId(process.env, config.telegram?.allowed_chats);
-      const persistReportCarry = reportChatId
-        ? createTelegramReportCarryDelivery({
-            reportChatId,
-            carryStore: new FileReportCarryStore(),
-          })
-        : undefined;
-      const reportOutput =
+      // TG-05/TG-06 (design Decision 1): ONE production boundary for all
+      // owner-report modes. The legacy OutputSink + V2 carry writer are out of
+      // production assembly; the SQLite report-context store owns carry and
+      // the coordinator owns every Telegram send.
+      let reportDelivery: ReportDeliveryPort | undefined;
+      const reportTarget =
         reportChatId && telegramGateway
-          ? createTelegramReportOutput({ reportChatId, telegramSender: telegramGateway })
+          ? ({ source: 'telegram', channelId: reportChatId } as const)
           : undefined;
+      if (reportChatId && telegramGateway && reportTarget) {
+        const reportControl = telegramGateway.createReportDeliveryControl();
+        const coordinator = new ReportDeliveryCoordinator({
+          store: reportContextStore,
+          control: reportControl,
+          ownerTarget: reportTarget,
+          executorId: `daemon:${process.pid}`,
+        });
+        // Startup reconciliation: every nonterminal SQLite row keeps its
+        // Telegram-ledger pin; every terminal row releases it (Decision 2).
+        const pinState = reportContextStore.listPinReconciliation();
+        await reportControl.reconcilePins(pinState.nonterminal, pinState.terminal);
+        reportDelivery = {
+          deliverPrepared: async (report) => {
+            const outcome = await coordinator.deliverPrepared(report);
+            if (outcome.status === 'delivered' && report.mode === 'full') {
+              // The full-report leg liveness beat moves from the removed V2
+              // carry callback to the delivered outcome.
+              getLegCadence()?.beat('full-report');
+            }
+            return outcome;
+          },
+        };
+      }
       // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
       // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
       const fullReportHours = parseReportHours(
@@ -1994,7 +2035,7 @@ export async function runAgentLoop(
       // hours (empty hours -> shouldFire never fires): on-demand reports
       // (report_request) need the persistent anchor state to load and advance
       // the delta window regardless of the scheduled leg (review PR#153).
-      const reportScheduler = reportOutput
+      const reportScheduler = reportDelivery
         ? new ReportScheduler(
             fullReportHours,
             new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
@@ -2130,7 +2171,8 @@ export async function runAgentLoop(
         }),
         review: (trigger, context) =>
           reviewTriggerCLI(trigger, context, triggerAgentRuntime.askReview),
-        output: reportOutput,
+        reportDelivery,
+        reportTarget,
         reportScheduler,
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
@@ -2142,13 +2184,6 @@ export async function runAgentLoop(
         // TG-06: composition supplies provenance immediately to the prepared
         // delivery; this callback receives that durable artifact only after send success.
         fullReportProvenance: () => lastReportProvenance,
-        persistLastFullReport: (report) => {
-          getLegCadence()?.beat('full-report');
-          if (!persistReportCarry) {
-            throw new Error('Cannot persist full report carry without a Telegram report chat');
-          }
-          persistReportCarry(report);
-        },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)
@@ -2164,8 +2199,8 @@ export async function runAgentLoop(
         },
         log: (line) => console.log(line),
       });
-      if (reportOutput) {
-        console.log('✓ Trigger loop owner-report leg enabled (telegram)');
+      if (reportDelivery) {
+        console.log('[trigger-loop] owner-report leg enabled (telegram, coordinator)');
       }
       if (reportScheduler) {
         console.log(
@@ -2329,6 +2364,7 @@ export async function runAgentLoop(
     oauthManager,
     mamaApi,
     messageRouter,
+    reportContextStore,
     agentLoop,
     toolExecutor,
     discordGateway,
