@@ -76,8 +76,15 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const MAMA_CONFIG_PATH = path.join(os.homedir(), '.mama', 'config.yaml');
 const PACKAGE_ROOT_DIR = path.resolve(__dirname, '../..');
 
-// Paths to viewer files (now in public/viewer/)
+// Paths to viewer files (now in public/viewer/). Resolved per request so the
+// MAMA_VIEWER_DIR override works for tests without module-load ordering games.
 function getViewerDirectory(): string {
+  if (process.env.MAMA_VIEWER_DIR) {
+    // resolve() drops trailing slashes; without it the `operatorRoot + path.sep`
+    // traversal guard in the /viewer/operator route would 404 every request for
+    // '/foo/bar/'-style values.
+    return path.resolve(process.env.MAMA_VIEWER_DIR);
+  }
   const packagePublicViewer = path.join(PACKAGE_ROOT_DIR, 'public', 'viewer');
   const candidateDirs = [
     path.join(process.cwd(), 'public', 'viewer'),
@@ -97,54 +104,20 @@ function getViewerDirectory(): string {
   return path.join(process.cwd(), 'public', 'viewer');
 }
 
-const VIEWER_DIR = getViewerDirectory();
-const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
-const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
-const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
-const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
-const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
-const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
+const viewerHtmlPath = (): string => path.join(getViewerDirectory(), 'viewer.html');
+const viewerCssPath = (): string => path.join(getViewerDirectory(), 'viewer.css');
+const swJsPath = (): string => path.join(getViewerDirectory(), 'sw.js');
+const manifestJsonPath = (): string => path.join(getViewerDirectory(), 'manifest.json');
+const viewerIconDir = (): string => path.join(getViewerDirectory(), 'icons');
+const viewerFaviconPath = (): string => path.join(getViewerDirectory(), '..', 'favicon.ico');
+const viewerOperatorDir = (): string => path.join(getViewerDirectory(), 'operator');
 
-// Operator viewer SPA (built from ui/ into public/ui/). Resolved per request so
-// the MAMA_UI_DIR override works for tests without module-load ordering games.
-function getUiDirectory(): string {
-  if (process.env.MAMA_UI_DIR) {
-    // resolve() drops trailing slashes; without it the `uiRoot + path.sep`
-    // traversal guard below would 404 every request for '/foo/bar/'-style values.
-    return path.resolve(process.env.MAMA_UI_DIR);
-  }
-  const candidateDirs = [
-    path.join(process.cwd(), 'public', 'ui'),
-    path.join(PACKAGE_ROOT_DIR, 'public', 'ui'),
-    path.join(__dirname, '../../public/ui'),
-    path.join(__dirname, '../../../public/ui'),
-    path.join(process.cwd(), 'packages', 'standalone', 'public', 'ui'),
-  ];
-  for (const candidate of candidateDirs) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-      return candidate;
-    }
-  }
-  return path.join(process.cwd(), 'public', 'ui');
-}
-
-// serveStaticFile requires an explicit content type and only reads bytes (not
-// utf-8) for image/* or octet-stream -- fonts map to octet-stream for integrity.
-const UI_STATIC_MIME: Record<string, string> = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
+// Operator bundle assets live under public/viewer/operator/ and are the only
+// extensions that route serves.
+const VIEWER_OPERATOR_MIME: Record<string, string> = {
+  '.js': 'application/javascript',
   '.css': 'text/css',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.woff2': 'application/octet-stream',
 };
-
-// Agent-authored slot HTML renders inside this SPA. Two independent XSS layers:
-// DOMPurify at render (ui/src/api/report.ts) + this CSP on the document.
-const UI_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
 
 const DEFAULT_GRAPH_LIMIT = 300;
 const MAX_GRAPH_LIMIT = 2000;
@@ -633,11 +606,11 @@ function serveStaticFile(
 }
 
 function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, VIEWER_HTML_PATH, 'text/html');
+  serveStaticFile(res, viewerHtmlPath(), 'text/html');
 }
 
 function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, VIEWER_CSS_PATH, 'text/css');
+  serveStaticFile(res, viewerCssPath(), 'text/css');
 }
 
 async function handleGraphRequest(
@@ -1350,11 +1323,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET / - redirect to the operator board (M7 phase 2: /ui is the
-    // default face; the legacy viewer stays reachable at /viewer)
+    // Route: GET / - redirect to /viewer, the ONE public shell. The temporary
+    // /ui SPA route was retired; there is no second face to fall back to.
     if (pathname === '/' && req.method === 'GET') {
-      console.log('[GraphHandler] Redirecting / to /ui');
-      res.writeHead(302, { Location: '/ui' });
+      console.log('[GraphHandler] Redirecting / to /viewer');
+      res.writeHead(302, { Location: '/viewer' });
       res.end();
       return true;
     }
@@ -1377,53 +1350,44 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: GET/HEAD /sw.js - serve Service Worker
     if (pathname === '/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      serveStaticFile(res, swJsPath(), 'application/javascript');
       return true;
     }
 
     // Route: GET/HEAD /viewer/sw.js - serve Service Worker (alternative path)
     if (pathname === '/viewer/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, SW_JS_PATH, 'application/javascript');
+      serveStaticFile(res, swJsPath(), 'application/javascript');
       return true;
     }
 
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
+      serveStaticFile(res, manifestJsonPath(), 'application/json');
       return true;
     }
 
     // Route: GET/HEAD /favicon.ico - serve favicon
     if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, VIEWER_FAVICON_PATH, 'image/x-icon');
+      serveStaticFile(res, viewerFaviconPath(), 'image/x-icon');
       return true;
     }
 
-    // Route: GET/HEAD /ui/* - operator viewer SPA (public/ui, Vite build)
+    // Route: GET/HEAD /viewer/operator/*.{js,css} - operator bundle assets.
+    // Traversal-safe and extension-allowlisted: this route must never become a
+    // generic file server rooted at the viewer directory.
     if (
-      (pathname === '/ui' || pathname.startsWith('/ui/')) &&
+      pathname.startsWith('/viewer/operator/') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
-      const uiRoot = getUiDirectory();
-      // '/ui' and '/ui/' both mean the SPA shell; slicing '/ui/' yields '' which
-      // resolves to uiRoot itself and would fail the traversal guard below.
-      const rel =
-        pathname === '/ui' || pathname === '/ui/' ? 'index.html' : pathname.slice('/ui/'.length);
-      const resolved = path.resolve(uiRoot, rel);
-      if (!resolved.startsWith(uiRoot + path.sep)) {
+      const operatorRoot = viewerOperatorDir();
+      const resolved = path.resolve(operatorRoot, pathname.slice('/viewer/operator/'.length));
+      const contentType = VIEWER_OPERATOR_MIME[path.extname(resolved)];
+      if (!resolved.startsWith(operatorRoot + path.sep) || !contentType) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not found');
         return true;
       }
-      const isAsset = rel.startsWith('assets/');
-      const exists = fs.existsSync(resolved) && fs.statSync(resolved).isFile();
-      // Missing hashed assets must 404 (via serveStaticFile's ENOENT path) -- an
-      // index.html fallback would mask them as 200 text/html.
-      const target = exists || isAsset ? resolved : path.join(uiRoot, 'index.html');
-      const contentType = UI_STATIC_MIME[path.extname(target)] ?? 'application/octet-stream';
-      const extraHeaders: Record<string, string> =
-        contentType === 'text/html' ? { 'Content-Security-Policy': UI_CSP } : {};
-      serveStaticFile(res, target, contentType, extraHeaders);
+      serveStaticFile(res, resolved, contentType);
       return true;
     }
 
@@ -1434,7 +1398,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
       const fileName = path.basename(pathname.split('/').pop() || '');
-      const filePath = path.join(VIEWER_ICON_DIR, fileName);
+      const filePath = path.join(viewerIconDir(), fileName);
       serveStaticFile(res, filePath, 'image/png');
       return true;
     }
@@ -1446,7 +1410,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
       const fileName = path.basename(pathname.split('/').pop() || '');
-      const filePath = path.join(VIEWER_ICON_DIR, fileName);
+      const filePath = path.join(viewerIconDir(), fileName);
       serveStaticFile(res, filePath, 'image/svg+xml');
       return true;
     }
@@ -1458,7 +1422,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
       const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
+      const filePath = path.join(getViewerDirectory(), 'js', 'utils', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
       return true;
     }
@@ -1472,7 +1436,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
       const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', fileName);
+      const filePath = path.join(getViewerDirectory(), 'js', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
       return true;
     }
@@ -1484,7 +1448,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
       const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
+      const filePath = path.join(getViewerDirectory(), 'js', 'modules', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
       return true;
     }
@@ -4243,8 +4207,8 @@ export {
   getUniqueTopics,
   filterNodesByTopic,
   filterEdgesByNodes,
-  VIEWER_HTML_PATH,
-  VIEWER_CSS_PATH,
+  viewerHtmlPath,
+  viewerCssPath,
 };
 
 export type {
