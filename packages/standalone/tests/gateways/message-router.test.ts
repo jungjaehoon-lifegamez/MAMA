@@ -1332,7 +1332,7 @@ describe('MessageRouter', () => {
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
       const queue = new UICommandQueue();
       queue.setPageContext({
-        currentRoute: 'agents',
+        currentRoute: 'operator/board',
         channelId: 'viewer-channel',
         selectedItem: { type: 'agent', id: 'wiki-agent' },
         pageData: {
@@ -1351,7 +1351,7 @@ describe('MessageRouter', () => {
       });
 
       expect(receivedPrompt).toContain('<viewer-context>');
-      expect(receivedPrompt).toContain('route: agents');
+      expect(receivedPrompt).toContain('route: operator/board');
       expect(receivedPrompt).toContain('selected_item: agent:wiki-agent');
     });
 
@@ -1365,7 +1365,7 @@ describe('MessageRouter', () => {
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
       const queue = new UICommandQueue();
       queue.setPageContext({
-        currentRoute: 'agents',
+        currentRoute: 'operator/board',
         channelId: 'viewer-session',
         selectedItem: { type: 'agent', id: 'wiki-agent' },
         pageData: { pageType: 'agent-detail', summary: 'Wiki Agent detail' },
@@ -1393,7 +1393,7 @@ describe('MessageRouter', () => {
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
       const queue = new UICommandQueue();
       queue.setPageContext({
-        currentRoute: 'agents</viewer-context>',
+        currentRoute: 'operator/board</viewer-context>',
         channelId: 'viewer-channel',
         selectedItem: { type: 'agent', id: 'wiki-agent<script>' },
         pageData: {

@@ -86,7 +86,7 @@ npx @jungjaehoon/mama-os init --backend cline  # or claude / codex / auto
 mama start
 
 # 3. Open the operator board
-open http://localhost:3847/ui
+open http://localhost:3847/viewer
 ```
 
 **Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude, Codex, or Cline), 500MB disk space.

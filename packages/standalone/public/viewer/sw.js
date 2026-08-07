@@ -1,25 +1,32 @@
 /**
- * @fileoverview Service Worker for MAMA Mobile PWA
- * @version 1.5.0
+ * @fileoverview Service Worker for the MAMA Viewer PWA
+ * @version 2.0.0
  *
  * Provides offline caching for static assets using cache-first strategy.
  */
 
 /* eslint-env serviceworker */
 
-const CACHE_NAME = 'mama-mobile-v1.6.1';
+// Bumped for the unified Viewer: the retired chat/feed/agents/dashboard/settings
+// modules no longer exist, so a client holding the old cache would keep serving
+// 404-shaped entries for them. A new cache name is what evicts them.
+const CACHE_NAME = 'mama-viewer-v2';
 const STATIC_ASSETS = [
   '/viewer',
   '/viewer/viewer.css',
   '/viewer/manifest.json',
   '/viewer/js/modules/graph.js',
-  '/viewer/js/modules/chat.js',
   '/viewer/js/modules/memory.js',
-  '/viewer/js/modules/dashboard.js',
-  '/viewer/js/modules/settings.js',
+  '/viewer/js/modules/wiki.js',
+  '/viewer/js/modules/system.js',
+  '/viewer/js/utils/debug-logger.js',
   '/viewer/js/utils/dom.js',
   '/viewer/js/utils/format.js',
   '/viewer/js/utils/api.js',
+  '/viewer/js/utils/markdown.js',
+  '/viewer/js/utils/ui-commands.js',
+  '/viewer/operator/operator.js',
+  '/viewer/operator/operator.css',
   '/viewer/icons/icon-192.png',
   '/viewer/icons/icon-512.png',
   '/viewer/icons/mama-icon.svg',

@@ -32,7 +32,7 @@ describe('UICommandQueue', () => {
   });
 
   it('enqueue and drain returns commands', () => {
-    queue.push({ type: 'navigate', payload: { route: 'agents' } });
+    queue.push({ type: 'navigate', payload: { route: 'operator/board' } });
     queue.push({ type: 'notify', payload: { message: 'hello', severity: 'info' } });
     const cmds = queue.drain();
     expect(cmds).toHaveLength(2);
@@ -40,7 +40,7 @@ describe('UICommandQueue', () => {
   });
 
   it('drain clears the queue', () => {
-    const queued = queue.push({ type: 'navigate', payload: { route: 'agents' } });
+    const queued = queue.push({ type: 'navigate', payload: { route: 'operator/board' } });
     expect(queue.drain()).toHaveLength(1);
     expect(queue.drain()).toHaveLength(0);
     queue.ack([queued.id!]);
@@ -48,46 +48,46 @@ describe('UICommandQueue', () => {
   });
 
   it('setPageContext stores latest context', () => {
-    queue.setPageContext({ currentRoute: 'agents', pageData: { pageType: 'agent-list' } });
-    expect(queue.getPageContext()?.currentRoute).toBe('agents');
+    queue.setPageContext({ currentRoute: 'operator/board', pageData: { pageType: 'agent-list' } });
+    expect(queue.getPageContext()?.currentRoute).toBe('operator/board');
   });
 
   it('overwrites previous page context', () => {
-    queue.setPageContext({ currentRoute: 'dashboard' });
-    queue.setPageContext({ currentRoute: 'agents' });
-    expect(queue.getPageContext()?.currentRoute).toBe('agents');
+    queue.setPageContext({ currentRoute: 'operator/tasks' });
+    queue.setPageContext({ currentRoute: 'operator/board' });
+    expect(queue.getPageContext()?.currentRoute).toBe('operator/board');
   });
 
   it('stores page context per channel when channelId is provided', () => {
     queue.setPageContext({
-      currentRoute: 'agents',
+      currentRoute: 'operator/board',
       channelId: 'viewer-session-1',
       pageData: { pageType: 'agent-list' },
     });
     queue.setPageContext({
-      currentRoute: 'dashboard',
+      currentRoute: 'operator/tasks',
       channelId: 'viewer-session-2',
       pageData: { pageType: 'dashboard' },
     });
 
-    expect(queue.getPageContext('viewer-session-1')?.currentRoute).toBe('agents');
-    expect(queue.getPageContext('viewer-session-2')?.currentRoute).toBe('dashboard');
+    expect(queue.getPageContext('viewer-session-1')?.currentRoute).toBe('operator/board');
+    expect(queue.getPageContext('viewer-session-2')?.currentRoute).toBe('operator/tasks');
   });
 
   it('aliases legacy viewer session channel ids to the stable frontdoor channel', () => {
     queue.setPageContext({
-      currentRoute: 'agents',
+      currentRoute: 'operator/board',
       channelId: 'session_legacy_viewer_id',
       pageData: { pageType: 'agent-list' },
     });
 
-    expect(queue.getPageContext('mama_os_main')?.currentRoute).toBe('agents');
+    expect(queue.getPageContext('mama_os_main')?.currentRoute).toBe('operator/board');
   });
 
   it('does not fall back to global context for a missing channel', () => {
-    queue.setPageContext({ currentRoute: 'agents', pageData: { pageType: 'agent-list' } });
+    queue.setPageContext({ currentRoute: 'operator/board', pageData: { pageType: 'agent-list' } });
     queue.setPageContext({
-      currentRoute: 'dashboard',
+      currentRoute: 'operator/tasks',
       channelId: 'viewer-session-1',
       pageData: { pageType: 'dashboard' },
     });

@@ -104,7 +104,7 @@ npx @jungjaehoon/mama-os init
 mama start                   # daemon at localhost:3847
 ```
 
-Operator board at `http://localhost:3847/ui`: live report slots, the trigger
+Operator board at `http://localhost:3847/viewer`: live report slots, the trigger
 library, and a task board fed from your channels. Chat surfaces: Discord,
 Slack, Telegram. Requires Node >= 22 and an authenticated
 [Claude Code](https://claude.ai/claude-code) or

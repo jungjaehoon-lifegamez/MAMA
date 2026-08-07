@@ -640,9 +640,8 @@ Gateways:
   Telegram: ⚪ Disabled
 
 HTTP Server: http://localhost:3847
-  Graph Viewer: http://localhost:3847/viewer
-  Chat Shell: http://localhost:3847/viewer (floating overlay)
-  Operator Board: http://localhost:3847/ui
+  Viewer: http://localhost:3847/viewer
+  Operator Board: http://localhost:3847/viewer#operator/board
 ```
 
 The Operator Board is the primary operating surface: four agent-published report

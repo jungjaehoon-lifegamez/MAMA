@@ -32,7 +32,7 @@ overlay:
 Think of it as your **personal AI operating system** - accessible from any browser, optimized for
 mobile, and designed to keep you connected to your AI assistant wherever you are.
 
-**Access:** `http://localhost:3847/ui` (operator board; `/` redirects here) or `http://localhost:3847/viewer` (legacy viewer)
+**Access:** `http://localhost:3847/viewer` (the one console: Operator, Knowledge and System; `/` redirects here)
 
 ---
 

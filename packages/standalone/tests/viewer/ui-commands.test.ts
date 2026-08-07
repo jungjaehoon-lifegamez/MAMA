@@ -21,16 +21,10 @@ describe('viewer ui-commands', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    vi.stubGlobal('window', {
-      localStorage: {
-        getItem: vi.fn((key: string) => {
-          if (key === 'mama_chat_session_id') {
-            return 'session_legacy_viewer_id';
-          }
-          return null;
-        }),
-      },
-    });
+    // The module reads no browser storage: the channel id is the fixed
+    // frontdoor constant. A stub that throws on access would prove that, but a
+    // bare object is enough to keep the environment shaped like a browser.
+    vi.stubGlobal('window', {});
   });
 
   afterEach(() => {

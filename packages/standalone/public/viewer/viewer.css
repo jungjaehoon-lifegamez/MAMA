@@ -395,6 +395,29 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
 }
 
 /* ============================================================================
+   MEMORY CONTROL BAR - wraps instead of overflowing
+   ============================================================================
+   The Knowledge > Memory filter bar used to be three fixed-width inputs on one
+   non-wrapping row, so on a narrow viewport the Clear button and Export menu
+   were pushed off-screen. The row wraps and the search field is the elastic
+   one; `min-width: 0` is what lets a flex input shrink below its intrinsic
+   size at all. */
+
+.memory-controls {
+  flex-wrap: wrap;
+}
+
+.memory-controls #topic-filter {
+  min-width: 0;
+  flex: 0 1 10rem;
+}
+
+.memory-controls #search-input {
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+/* ============================================================================
    CHECKPOINT SIDEBAR - Collapsible & Resizable
    ============================================================================ */
 

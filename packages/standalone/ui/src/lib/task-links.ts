@@ -50,7 +50,7 @@ export function linkifyTaskReferences(root: HTMLElement): void {
         continue;
       }
       const anchor = document.createElement('a');
-      anchor.href = `/ui/tasks#task-${segment.taskId}`;
+      anchor.href = `/viewer#operator/tasks?task=${segment.taskId}`;
       anchor.setAttribute('data-task-id', segment.taskId);
       anchor.className = 'task-reference-link';
       anchor.textContent = segment.value;

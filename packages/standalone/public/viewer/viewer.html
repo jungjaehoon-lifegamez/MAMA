@@ -435,7 +435,9 @@
           <div class="tab-content" id="tab-memory">
             <div class="flex-1 flex flex-col min-h-0">
               <!-- Compact Filter Bar (full width, top) -->
-              <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white">
+              <div
+                class="memory-controls flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white"
+              >
                 <!-- Toggle sidebar -->
                 <button
                   id="checkpoint-sidebar-toggle"
@@ -486,7 +488,6 @@
                   id="topic-filter"
                   placeholder="Filter topics..."
                   oninput="filterByTopic(this.value)"
-                  style="width: 160px"
                 />
                 <datalist id="topic-filter-list"></datalist>
                 <select
@@ -508,7 +509,6 @@
                   id="search-input"
                   placeholder="Search content..."
                   onkeyup="handleGraphSearch(event)"
-                  style="width: 160px"
                 />
                 <button
                   onclick="clearFilters()"
@@ -1484,7 +1484,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
 
         if (route.view === 'memory') {
           updateCheckpointSidebarForScreenSize();
-          loadCheckpoints();
           updateMemoryStats();
           if (!STATE.graphLoaded) {
             try {
@@ -1942,11 +1941,17 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         graph.filterByOutcome && graph.filterByOutcome(outcome);
       }
 
+      // Clear is scoped to the Graph module instance that owns the filters. Each
+      // control is looked up defensively: the bar is markup that can be edited,
+      // and one missing input must not take the whole Clear action down.
       function clearFilters() {
-        document.getElementById('topic-filter').value = '';
-        document.getElementById('outcome-filter').value = '';
-        document.getElementById('search-input').value = '';
-        graph.clearFilters && graph.clearFilters();
+        const topicFilter = document.getElementById('topic-filter');
+        const outcomeFilter = document.getElementById('outcome-filter');
+        const searchInput = document.getElementById('search-input');
+        if (topicFilter) topicFilter.value = '';
+        if (outcomeFilter) outcomeFilter.value = '';
+        if (searchInput) searchInput.value = '';
+        graph?.clearFilters?.();
       }
 
       async function exportDecisions(format) {
@@ -2001,79 +2006,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         }
       }
 
-      let checkpointsData = [];
-
-      function renderMarkdown(text) {
-        if (!text) return '';
-        try {
-          if (typeof marked !== 'undefined' && marked.parse) {
-            return marked.parse(text);
-          }
-        } catch (e) {
-          console.error('[MAMA] Markdown parse error:', e);
-        }
-        return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-      }
-
-      async function loadCheckpoints() {
-        const container = document.getElementById('checkpoint-list');
-        if (!container) {
-          console.error('[MAMA] checkpoint-list container not found');
-          return;
-        }
-
-        console.log('[MAMA] Loading checkpoints...');
-
-        try {
-          const data = await API.get('/api/checkpoints');
-          checkpointsData = data.checkpoints || [];
-
-          console.log('[MAMA] Loaded', checkpointsData.length, 'checkpoints');
-
-          if (checkpointsData.length > 0) {
-            container.innerHTML = checkpointsData
-              .map((cp, idx) => {
-                const fullSummary = renderMarkdown(cp.summary || '');
-                return `
-              <div class="checkpoint-item p-3 bg-white bg-white border border-gray-200 border-gray-300 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
-                <div class="text-xs font-semibold text-mama-black text-mama-black mb-1">${new Date(cp.timestamp).toLocaleString()}</div>
-                <div class="checkpoint-summary text-sm text-gray-700 text-gray-700 markdown-content line-clamp-3 overflow-hidden">${fullSummary}</div>
-                <div class="checkpoint-details hidden mt-3 pt-3 border-t border-gray-200 border-gray-300">
-                  <div class="text-sm text-gray-700 text-gray-700 markdown-content max-h-64 overflow-y-auto">${fullSummary}</div>
-                </div>
-              </div>
-            `;
-              })
-              .join('');
-          } else {
-            container.innerHTML =
-              '<div class="text-center text-sm text-gray-500 py-4">No checkpoints found</div>';
-          }
-        } catch (error) {
-          console.error('[MAMA] Failed to load checkpoints:', error);
-          container.innerHTML =
-            '<div class="text-center text-sm text-red-500 py-4">Failed to load checkpoints</div>';
-        }
-      }
-
-      function toggleCheckpoint(idx) {
-        const items = document.querySelectorAll('.checkpoint-item');
-        items.forEach((item, i) => {
-          const details = item.querySelector('.checkpoint-details');
-          const summary = item.querySelector('.checkpoint-summary');
-          if (i === idx) {
-            const isExpanded = !details.classList.contains('hidden');
-            details.classList.toggle('hidden');
-            summary.classList.toggle('hidden', !isExpanded);
-            item.classList.toggle('border-indigo-500', !isExpanded);
-          } else {
-            details.classList.add('hidden');
-            summary.classList.remove('hidden');
-            item.classList.remove('border-indigo-500');
-          }
-        });
-      }
-
       // Expose to window for onclick handlers
       window.switchTab = switchTab;
       window.toggleTheme = toggleTheme;
@@ -2092,8 +2024,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       window.filterByTopic = filterByTopic;
       window.handleGraphSearch = handleGraphSearch;
       window.saveOutcome = saveOutcome;
-      window.loadCheckpoints = loadCheckpoints;
-      window.toggleCheckpoint = toggleCheckpoint;
 
       document.addEventListener('DOMContentLoaded', () => {
         const userLang = navigator.language || navigator.userLanguage;

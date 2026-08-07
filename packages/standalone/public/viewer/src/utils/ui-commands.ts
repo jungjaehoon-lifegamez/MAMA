@@ -26,15 +26,11 @@ type StoredPageContext = {
 let lastReportedPageContext: StoredPageContext | null = null;
 let lastPageContextPublishAt = 0;
 
+// The Viewer always reports into the one frontdoor channel. The per-chat
+// session override this used to read is gone with the Chat tab that wrote it:
+// nothing writes `mama_chat_session_id` any more, so reading it could only ever
+// return a stale value.
 function getViewerChannelId(): string {
-  try {
-    const sessionId = window.localStorage.getItem('mama_chat_session_id');
-    if (sessionId && !sessionId.startsWith('session_')) {
-      return sessionId;
-    }
-  } catch {
-    /* ignore */
-  }
   return VIEWER_FRONTDOOR_CHANNEL_ID;
 }
 
