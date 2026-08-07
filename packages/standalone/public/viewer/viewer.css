@@ -610,6 +610,64 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   content-visibility: visible;
 }
 
+/* The operator bundle stays mounted for the page lifetime; when its route is
+   not active the region is simply display:none via .tab-content above. */
+#tab-operator.active > #operator-mount {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Mobile sub-view chips ──────────────────────────────────────────────────
+   Same hash routes as the desktop rail's sub-entries. Desktop hides the row;
+   the rail already shows the group's views. */
+.mama-subviews {
+  display: none;
+}
+@media (max-width: 767px) {
+  .mama-subviews {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 8px 12px;
+    background: #ffffff;
+    border-bottom: 1px solid #ede9e1;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mama-subviews::-webkit-scrollbar {
+    display: none;
+  }
+}
+.mama-subview-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  background: #f5f2ed;
+  color: #6b6560;
+  font-family: Inter, 'Noto Sans KR', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.mama-subview-chip[hidden] {
+  display: none;
+}
+.mama-subview-chip.mama-nav-active {
+  background: #ffce00;
+  color: #131313;
+}
+
 /* Modal visibility */
 .modal-overlay {
   opacity: 0;

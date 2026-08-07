@@ -104,7 +104,7 @@ describe('viewer ui-commands', () => {
         {
           id: 'ui_1',
           type: 'navigate',
-          payload: { route: 'agents', params: { id: 'wiki-agent', tab: 'activity' } },
+          payload: { route: 'operator/tasks', params: { taskId: '42' } },
         },
       ],
     });
@@ -114,7 +114,7 @@ describe('viewer ui-commands', () => {
 
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(switchTab).toHaveBeenCalledWith('agents', { id: 'wiki-agent', tab: 'activity' });
+    expect(switchTab).toHaveBeenCalledWith('operator/tasks', { taskId: '42' });
     expect(ackUICommands).toHaveBeenCalledWith(['ui_1']);
 
     stopPolling();

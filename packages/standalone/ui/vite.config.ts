@@ -7,6 +7,10 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: '/viewer/operator/',
+  // Library mode leaves `process.env.NODE_ENV` for a downstream bundler to
+  // resolve, but the Viewer loads this file directly in the browser, where
+  // `process` does not exist and React would throw before it renders anything.
+  define: { 'process.env.NODE_ENV': JSON.stringify('production') },
   build: {
     outDir: '../public/viewer/operator',
     emptyOutDir: true,
