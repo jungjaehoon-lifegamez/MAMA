@@ -123,15 +123,16 @@
     color: color-mix(in srgb, currentColor 50%, transparent);
   }
 
-  #operator-root :where(
-    a[href],
-    button,
-    input,
-    select,
-    textarea,
-    summary,
-    [tabindex]:not([tabindex='-1'])
-  ):focus-visible {
+  #operator-root
+    :where(
+      a[href],
+      button,
+      input,
+      select,
+      textarea,
+      summary,
+      [tabindex]:not([tabindex='-1'])
+    ):focus-visible {
     outline: 2px solid var(--color-agent-strong);
     outline-offset: 2px;
   }
@@ -148,7 +149,8 @@
   }
 }
 
-.trigger-drawer {
+.trigger-drawer,
+.task-drawer {
   width: min(100%, 32rem);
   height: 100dvh;
   max-height: 100dvh;
@@ -162,7 +164,8 @@
   overflow: hidden;
 }
 
-.trigger-drawer::backdrop {
+.trigger-drawer::backdrop,
+.task-drawer::backdrop {
   background: color-mix(in srgb, var(--color-text) 38%, transparent);
 }
 

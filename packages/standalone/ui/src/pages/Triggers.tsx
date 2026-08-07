@@ -17,9 +17,12 @@ type TriggerCache = { triggers: OperatorTrigger[] };
 export default function Triggers({
   selectedTriggerId,
   selectionNonce,
+  onSelectTrigger,
 }: {
   selectedTriggerId?: string;
   selectionNonce?: number;
+  /** In-content selection change; the host turns it into `?trigger=<id>`. */
+  onSelectTrigger?: (triggerId: string | undefined) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TriggerStatusFilter>('all');
@@ -93,12 +96,14 @@ export default function Triggers({
     disable.reset();
     setDrawerOpener(opener);
     setSelectedId(id);
+    onSelectTrigger?.(id);
   };
 
   const closeDrawer = () => {
     disable.reset();
     setSelectedId(null);
     setDrawerOpener(null);
+    onSelectTrigger?.(undefined);
   };
 
   const disableError = disable.error

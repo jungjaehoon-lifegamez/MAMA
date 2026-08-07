@@ -70,16 +70,38 @@ export default function OperatorApp({
     [changeView]
   );
 
+  const handleSelectTask = useCallback(
+    (taskId: number | undefined) => {
+      changeView('tasks', taskId === undefined ? undefined : { taskId });
+    },
+    [changeView]
+  );
+
+  const handleSelectTrigger = useCallback(
+    (triggerId: string | undefined) => {
+      changeView('triggers', triggerId === undefined ? undefined : { triggerId });
+    },
+    [changeView]
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
       {/* The bundle's reset and tokens are scoped to this id; see styles/global.css. */}
       <div id="operator-root" className="flex h-full min-w-0 flex-col bg-bg text-text">
         {view === 'board' ? <Board onOpenTask={handleOpenTask} /> : null}
         {view === 'tasks' ? (
-          <Tasks focusTaskId={selection?.taskId} selectionNonce={selectionNonce} />
+          <Tasks
+            focusTaskId={selection?.taskId}
+            selectionNonce={selectionNonce}
+            onSelectTask={handleSelectTask}
+          />
         ) : null}
         {view === 'triggers' ? (
-          <Triggers selectedTriggerId={selection?.triggerId} selectionNonce={selectionNonce} />
+          <Triggers
+            selectedTriggerId={selection?.triggerId}
+            selectionNonce={selectionNonce}
+            onSelectTrigger={handleSelectTrigger}
+          />
         ) : null}
       </div>
     </QueryClientProvider>

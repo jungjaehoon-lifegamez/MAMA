@@ -40,13 +40,25 @@ interface TaskRowProps {
   pending: boolean;
   error?: string;
   onPatch: (task: OperatorTask, patch: TaskPatch) => void;
+  /**
+   * Opening the detail drawer is a dedicated action, never a side effect of
+   * clicking the row: an owner mutation must not ride on a navigation click.
+   */
+  onOpenDetails: (task: OperatorTask, opener: HTMLElement) => void;
 }
 
 function statusLabel(status: TaskStatus): string {
   return status.replace('_', ' ');
 }
 
-export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowProps) {
+export default function TaskRow({
+  task,
+  now,
+  pending,
+  error,
+  onPatch,
+  onOpenDetails,
+}: TaskRowProps) {
   const unconfirmed = task.auto_created && !task.confirmed;
   const temporal = presentTaskTemporal({
     temporalState: task.temporal_state,
@@ -104,9 +116,7 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
         >
           {temporal.badgeLabel}
         </span>
-        <div className="text-[11px] text-text-secondary">
-          {temporal.fact}
-        </div>
+        <div className="text-[11px] text-text-secondary">{temporal.fact}</div>
       </td>
       <td className="px-3 py-3 max-w-48 truncate text-xs text-text-secondary">
         {task.source_channel || '-'}
@@ -115,16 +125,26 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
         {formatRelativeTime(now, task.updated_at)}
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
-        {unconfirmed && (
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={pending}
-            onClick={() => onPatch(task, { confirmed: true })}
-            className="rounded-lg bg-agent px-2.5 py-1.5 text-xs font-medium text-on-agent hover:bg-agent-hover disabled:opacity-50"
+            aria-label={`View details for task ${task.id}`}
+            onClick={(event) => onOpenDetails(task, event.currentTarget)}
+            className="rounded-lg border border-border bg-surface-secondary px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover focus:ring-2 focus:ring-agent-strong"
           >
-            {pending ? 'Saving...' : 'Approve'}
+            View details
           </button>
-        )}
+          {unconfirmed && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onPatch(task, { confirmed: true })}
+              className="rounded-lg bg-agent px-2.5 py-1.5 text-xs font-medium text-on-agent hover:bg-agent-hover disabled:opacity-50 focus:ring-2 focus:ring-agent-strong"
+            >
+              {pending ? 'Saving...' : 'Approve'}
+            </button>
+          )}
+        </div>
         {error && (
           <div
             role="alert"

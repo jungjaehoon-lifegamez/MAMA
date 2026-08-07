@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import type { OperatorTrigger, TriggerStatus } from '../api/client';
+import DrawerDetail from './DrawerDetail';
 import {
   acquireSubmissionLock,
   releaseSubmissionLock,
@@ -26,17 +27,6 @@ interface TriggerDrawerProps {
 
 function absoluteTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString();
-}
-
-function Detail({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-        {label}
-      </dt>
-      <dd className="mt-1 break-words text-sm text-text">{children}</dd>
-    </div>
-  );
 }
 
 export default function TriggerDrawer({
@@ -157,18 +147,18 @@ export default function TriggerDrawer({
               Identity
             </h3>
             <dl className="mt-3 grid grid-cols-2 gap-4">
-              <Detail label="Kind">{trigger.kind}</Detail>
-              <Detail label="ID">
+              <DrawerDetail label="Kind">{trigger.kind}</DrawerDetail>
+              <DrawerDetail label="ID">
                 <span className="break-all">{trigger.id}</span>
-              </Detail>
-              <Detail label="Status">
+              </DrawerDetail>
+              <DrawerDetail label="Status">
                 <span
                   className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_CLASSES[trigger.status]}`}
                 >
                   {trigger.status}
                 </span>
-              </Detail>
-              <Detail label="Author">{trigger.authoredBy}</Detail>
+              </DrawerDetail>
+              <DrawerDetail label="Author">{trigger.authoredBy}</DrawerDetail>
             </dl>
           </section>
 
@@ -177,10 +167,10 @@ export default function TriggerDrawer({
               Timing
             </h3>
             <dl className="mt-3 space-y-3">
-              <Detail label="Created">{absoluteTime(trigger.createdAt)}</Detail>
-              <Detail label="Updated">
+              <DrawerDetail label="Created">{absoluteTime(trigger.createdAt)}</DrawerDetail>
+              <DrawerDetail label="Updated">
                 {absoluteTime(trigger.updatedAt)} ({formatRelativeTime(now, trigger.updatedAt)})
-              </Detail>
+              </DrawerDetail>
             </dl>
           </section>
 
@@ -189,10 +179,10 @@ export default function TriggerDrawer({
               Aggregate activity
             </h3>
             <dl className="mt-3 grid grid-cols-2 gap-4">
-              <Detail label="Fired">{trigger.fired}</Detail>
-              <Detail label="Succeeded">{trigger.succeeded}</Detail>
-              <Detail label="Failed">{trigger.failed}</Detail>
-              <Detail label="Neutral / unclassified">{neutral}</Detail>
+              <DrawerDetail label="Fired">{trigger.fired}</DrawerDetail>
+              <DrawerDetail label="Succeeded">{trigger.succeeded}</DrawerDetail>
+              <DrawerDetail label="Failed">{trigger.failed}</DrawerDetail>
+              <DrawerDetail label="Neutral / unclassified">{neutral}</DrawerDetail>
             </dl>
           </section>
 
@@ -210,14 +200,14 @@ export default function TriggerDrawer({
               Match configuration
             </h3>
             <dl className="mt-3 space-y-3">
-              <Detail label="Keywords">
+              <DrawerDetail label="Keywords">
                 {trigger.match.keywords.length > 0 ? trigger.match.keywords.join(', ') : 'None'}
-              </Detail>
-              <Detail label="Keyword mode">{trigger.match.keywordMode}</Detail>
-              <Detail label="Minimum confidence">{trigger.match.minConfidence}</Detail>
-              <Detail label="Scope channel IDs">
+              </DrawerDetail>
+              <DrawerDetail label="Keyword mode">{trigger.match.keywordMode}</DrawerDetail>
+              <DrawerDetail label="Minimum confidence">{trigger.match.minConfidence}</DrawerDetail>
+              <DrawerDetail label="Scope channel IDs">
                 {scopeChannels.length > 0 ? scopeChannels.join(', ') : 'All channels'}
-              </Detail>
+              </DrawerDetail>
             </dl>
           </section>
 
@@ -258,11 +248,17 @@ export default function TriggerDrawer({
 
           <section aria-labelledby="trigger-provenance-heading">
             <h3 id="trigger-provenance-heading" className="text-sm font-semibold text-text">
-              Provenance
+              Configuration provenance
             </h3>
+            <p className="mt-2 text-xs text-text-secondary">
+              How this trigger came to be configured. Not conversation history: no channel messages
+              are read here.
+            </p>
             <dl className="mt-3 space-y-3">
-              <Detail label="Created from">{trigger.provenance.createdFrom}</Detail>
-              <Detail label="Note">{trigger.provenance.note || 'None'}</Detail>
+              <DrawerDetail label="Configured from">{trigger.provenance.createdFrom}</DrawerDetail>
+              <DrawerDetail label="Configuration note">
+                {trigger.provenance.note || 'None'}
+              </DrawerDetail>
             </dl>
           </section>
 

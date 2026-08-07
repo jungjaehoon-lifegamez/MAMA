@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type OperatorTask, type TaskPatch, type TaskStatus } from '../api/client';
+import TaskDrawer from '../components/TaskDrawer';
 import TaskRow from '../components/TaskRow';
 import { updateTaskCache, type OperatorTasksCache } from '../lib/task-cache';
 import { scrollTaskHashIntoView } from '../lib/task-scroll';
+import { positiveTaskId } from '../lib/task-selection';
 import {
   finishTaskMutation,
   startTaskMutation,
@@ -28,15 +30,23 @@ interface MutationInput {
 export default function Tasks({
   focusTaskId,
   selectionNonce,
+  onSelectTask,
 }: {
   focusTaskId?: number;
   selectionNonce?: number;
+  /** In-content selection change; the host turns it into `?task=<id>`. */
+  onSelectTask?: (taskId: number | undefined) => void;
 }) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [mutationStates, setMutationStates] = useState<TaskMutationState>(() => new Map());
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(
+    () => positiveTaskId(focusTaskId) ?? null
+  );
+  const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const queryClient = useQueryClient();
   const scrolledHashRef = useRef<string | null>(null);
+  const firstFilterRef = useRef<HTMLButtonElement>(null);
   const query = useQuery({
     queryKey: ['operatorTasks', selectedStatus],
     queryFn: () => api.listTasks({ status: selectedStatus ?? undefined, limit: 50 }),
@@ -92,8 +102,50 @@ export default function Tasks({
     );
   }, [focusTaskId, query.data, selectionNonce]);
 
+  // A host-delivered selection opens the drawer; anything that is not a
+  // positive integer id is ignored, and the same id delivered twice still
+  // counts, hence the nonce. The host cannot deselect: closing is in-content.
+  useEffect(() => {
+    const requested = positiveTaskId(focusTaskId);
+    if (requested !== undefined) {
+      setSelectedTaskId(requested);
+    }
+  }, [focusTaskId, selectionNonce]);
+
+  const tasks = query.data?.tasks ?? [];
+  const selectedTask =
+    selectedTaskId === null ? null : (tasks.find((task) => task.id === selectedTaskId) ?? null);
+
+  // A selected id the loaded page does not answer (filtered out, deleted) must
+  // not leave a phantom selection behind.
+  useEffect(() => {
+    if (!query.data || selectedTaskId === null || selectedTask) {
+      return;
+    }
+    setSelectedTaskId(null);
+    window.queueMicrotask(() => {
+      if (drawerOpener?.isConnected) {
+        drawerOpener.focus();
+      } else {
+        firstFilterRef.current?.focus();
+      }
+    });
+  }, [drawerOpener, query.data, selectedTask, selectedTaskId]);
+
   const patchTask = (task: OperatorTask, patch: TaskPatch) => {
     mutation.mutate({ task, patch });
+  };
+
+  const openDetails = (task: OperatorTask, opener: HTMLElement) => {
+    setDrawerOpener(opener);
+    setSelectedTaskId(task.id);
+    onSelectTask?.(task.id);
+  };
+
+  const closeDetails = () => {
+    setSelectedTaskId(null);
+    setDrawerOpener(null);
+    onSelectTask?.(undefined);
   };
 
   return (
@@ -108,11 +160,12 @@ export default function Tasks({
       <div className="flex-1 p-4">
         <div className="mx-auto max-w-6xl">
           <div className="mb-4 flex flex-wrap gap-2" aria-label="Filter tasks by status">
-            {STATUS_FILTERS.map((filter) => {
+            {STATUS_FILTERS.map((filter, index) => {
               const active = selectedStatus === filter.value;
               return (
                 <button
                   key={filter.label}
+                  ref={index === 0 ? firstFilterRef : undefined}
                   type="button"
                   aria-pressed={active}
                   onClick={() => setSelectedStatus(filter.value)}
@@ -172,6 +225,7 @@ export default function Tasks({
                           pending={mutationState?.pending === true}
                           error={mutationState?.error}
                           onPatch={patchTask}
+                          onOpenDetails={openDetails}
                         />
                       );
                     })}
@@ -182,6 +236,16 @@ export default function Tasks({
           </div>
         </div>
       </div>
+
+      {selectedTask && (
+        <TaskDrawer
+          task={selectedTask}
+          now={now}
+          opener={drawerOpener}
+          fallbackFocusRef={firstFilterRef}
+          onDismiss={closeDetails}
+        />
+      )}
     </div>
   );
 }
