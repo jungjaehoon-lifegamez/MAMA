@@ -99,6 +99,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-first for the operator bundle. It ships under stable filenames
+  // (/viewer/operator/operator.js), so a cache-first hit would pin one build
+  // forever until CACHE_NAME changes. The cache stays the offline fallback.
+  // Must be checked before the generic '/viewer' prefix match below.
+  if (url.pathname.startsWith('/viewer/operator/')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() =>
+          caches.match(request).then((cachedResponse) => cachedResponse || caches.match('/viewer'))
+        )
+    );
+    return;
+  }
+
   // Cache-first for static assets
   if (STATIC_ASSETS.some((asset) => url.pathname.startsWith(asset.split('?')[0]))) {
     event.respondWith(

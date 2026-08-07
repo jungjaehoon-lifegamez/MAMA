@@ -1305,7 +1305,9 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       function parseViewerHash() {
         const raw = String(window.location.hash || '').replace(/^#/, '');
         const [rawPath, query = ''] = raw.split('?');
-        const path = ROUTES[rawPath] ? rawPath : DEFAULT_ROUTE;
+        // Aliases must resolve here too, or a bookmarked '#logs' would land on
+        // the default route while a navigate command for it works.
+        const path = normalizeRoutePath(rawPath);
         const route = ROUTES[path];
         return {
           path,

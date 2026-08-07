@@ -6,6 +6,7 @@ import {
   releaseSubmissionLock,
   shouldShowModal,
 } from '../lib/trigger-drawer-state';
+import { lockScrollBehind } from '../lib/scroll-lock';
 import { formatRelativeTime } from '../lib/time';
 
 const STATUS_CLASSES: Record<TriggerStatus, string> = {
@@ -54,17 +55,7 @@ export default function TriggerDrawer({
       closeButtonRef.current?.focus();
     }
 
-    const scrollContainer = document.getElementById('app-scroll-container');
-    const previousOverflowY = scrollContainer?.style.overflowY ?? '';
-    if (scrollContainer) {
-      scrollContainer.style.overflowY = 'hidden';
-    }
-
-    return () => {
-      if (scrollContainer) {
-        scrollContainer.style.overflowY = previousOverflowY;
-      }
-    };
+    return lockScrollBehind(dialog);
   }, [trigger.id]);
 
   const requestClose = () => {

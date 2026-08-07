@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import type { OperatorTask, TaskStatus } from '../api/client';
 import DrawerDetail from './DrawerDetail';
 import { shouldShowModal } from '../lib/trigger-drawer-state';
+import { lockScrollBehind } from '../lib/scroll-lock';
 import { presentTaskTemporal } from '../lib/task-temporal';
 import { formatRelativeTime } from '../lib/time';
 
@@ -53,17 +54,7 @@ export default function TaskDrawer({
       closeButtonRef.current?.focus();
     }
 
-    const scrollContainer = document.getElementById('app-scroll-container');
-    const previousOverflowY = scrollContainer?.style.overflowY ?? '';
-    if (scrollContainer) {
-      scrollContainer.style.overflowY = 'hidden';
-    }
-
-    return () => {
-      if (scrollContainer) {
-        scrollContainer.style.overflowY = previousOverflowY;
-      }
-    };
+    return lockScrollBehind(dialog);
   }, [task.id]);
 
   const requestClose = () => {

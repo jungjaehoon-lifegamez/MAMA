@@ -128,7 +128,7 @@ export function renderRuntimeSnapshot(snapshot: RuntimeStatusSnapshot): string {
   return (
     '<section class="mama-system-panel">' +
     '<h2 class="mama-system-heading">Runtime</h2>' +
-    '<p class="mama-system-note">Live truth from the running daemon. Configuration is edited via the CLI or the config file.</p>' +
+    '<p class="mama-system-note">Reported by the running daemon; some fields reflect boot-time state. Configuration is edited via the CLI or the config file.</p>' +
     '<div class="mama-system-tiles">' +
     statTile('Daemon', snapshot.running ? 'running' : 'stopped', snapshot.running ? 'ok' : 'bad') +
     statTile('Backend', snapshot.backend) +
@@ -145,6 +145,17 @@ const CONNECTOR_STATE_TONE: Record<RuntimeConnectorState, string> = {
   connected: 'ok',
   disconnected: 'muted',
   unknown: 'warn',
+};
+
+/**
+ * What a connector state actually means. 'connected' is not a live probe: it
+ * says the connector registered when the daemon booted, so the chip carries the
+ * narrower claim rather than letting the word oversell itself.
+ */
+const CONNECTOR_STATE_TITLE: Record<RuntimeConnectorState, string> = {
+  connected: 'Registered at daemon boot',
+  disconnected: 'Disabled in config',
+  unknown: 'Enabled in config but not registered at boot',
 };
 
 export function renderConnectorsSnapshot(snapshot: RuntimeStatusSnapshot): string {
@@ -172,7 +183,9 @@ export function renderConnectorsSnapshot(snapshot: RuntimeStatusSnapshot): strin
       '<span class="mama-system-row-name">' +
       escapeHtml(connector.name) +
       '</span>' +
-      '<span class="mama-system-row-state">' +
+      '<span class="mama-system-row-state" title="' +
+      escapeHtml(CONNECTOR_STATE_TITLE[connector.state] ?? 'State reported at daemon boot') +
+      '">' +
       escapeHtml(connector.state) +
       '</span>' +
       (connector.enabled ? '' : '<span class="mama-system-badge">off</span>') +

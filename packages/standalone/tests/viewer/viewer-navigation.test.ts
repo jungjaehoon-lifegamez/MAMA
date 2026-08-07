@@ -29,14 +29,20 @@ describe('Viewer unified operator navigation', () => {
   function parseHash(hash: string): { path: string; group: string; view: string; params: string } {
     const routes = source.match(/const ROUTES = \{[\s\S]*?\n {6}\};/)?.[0];
     const defaultRoute = source.match(/const DEFAULT_ROUTE = '[^']+';/)?.[0];
+    const aliases = source.match(/const ROUTE_ALIASES = \{[\s\S]*?\n {6}\};/)?.[0];
+    const normalizer = source.match(
+      /function normalizeRoutePath\(target\) \{[\s\S]*?\n {6}\}/
+    )?.[0];
     const parser = source.match(/function parseViewerHash\(\) \{[\s\S]*?\n {6}\}/)?.[0];
     expect(routes).toBeDefined();
     expect(defaultRoute).toBeDefined();
+    expect(aliases).toBeDefined();
+    expect(normalizer).toBeDefined();
     expect(parser).toBeDefined();
 
     const run = new Function(
       'window',
-      `${routes}\n${defaultRoute}\n${parser}\nreturn parseViewerHash();`
+      `${routes}\n${defaultRoute}\n${aliases}\n${normalizer}\n${parser}\nreturn parseViewerHash();`
     ) as (windowValue: { location: { hash: string } }) => {
       path: string;
       group: string;
@@ -91,6 +97,15 @@ describe('Viewer unified operator navigation', () => {
     });
     expect(parseHash('#feed').path).toBe('operator/board');
     expect(parseHash('').path).toBe('operator/board');
+  });
+
+  it('resolves a bare alias, so an old bookmark lands where the rail sends it', () => {
+    expect(parseHash('#logs')).toEqual({
+      path: 'system/logs',
+      group: 'system',
+      view: 'logs',
+      params: '',
+    });
   });
 
   it('uses the shared task/trigger selection params, not the bundle field names', () => {

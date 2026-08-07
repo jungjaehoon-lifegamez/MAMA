@@ -86,14 +86,31 @@ describe('retired console artifacts', () => {
     }
   });
 
-  it('keeps API and WebSocket traffic network-only ahead of the prefix match', () => {
+  it('orders the fetch handler: api/ws bypass, operator network-first, then static cache-first', () => {
     const fetchHandler = sw.slice(sw.indexOf("addEventListener('fetch'"));
     const apiBypass = fetchHandler.indexOf("startsWith('/api/')");
+    const operatorMatch = fetchHandler.indexOf("startsWith('/viewer/operator/')");
     const staticMatch = fetchHandler.indexOf('STATIC_ASSETS.some');
     expect(apiBypass).toBeGreaterThan(-1);
+    expect(operatorMatch).toBeGreaterThan(-1);
     expect(fetchHandler).toContain("startsWith('/ws')");
-    // The static list is prefix-matched, so the bypass must come first.
-    expect(apiBypass).toBeLessThan(staticMatch);
+    // The static list is prefix-matched on '/viewer', so both the bypass and
+    // the operator branch must be decided before it.
+    expect(apiBypass).toBeLessThan(operatorMatch);
+    expect(operatorMatch).toBeLessThan(staticMatch);
+  });
+
+  it('serves the operator bundle network-first with the cache as fallback', () => {
+    const branch = sw.slice(
+      sw.indexOf("startsWith('/viewer/operator/')"),
+      sw.indexOf('STATIC_ASSETS.some')
+    );
+    // Stable filenames: the network must be tried first, the cache refreshed on
+    // success, and the cached copy served only when the network fails.
+    expect(branch).toMatch(/respondWith\(\s*fetch\(request\)/);
+    expect(branch).toContain('cache.put(request, responseClone)');
+    expect(branch).toContain('.catch(');
+    expect(branch).toContain('caches.match(request)');
   });
 
   it('points task references at the unified Viewer operator route', () => {
