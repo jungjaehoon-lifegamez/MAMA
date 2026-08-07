@@ -116,6 +116,19 @@ describe('operator viewer content bundle: source contract', () => {
     );
     expect(unscoped).toEqual([]);
   });
+
+  // Regression: retiring the /ui Layout took `#app-scroll-container` with it,
+  // and nothing in the Viewer host chain scrolls (main is overflow-hidden, the
+  // tab region and #operator-mount are not scrollers). Every page must own its
+  // own scroll region or a list longer than the viewport cannot be scrolled.
+  it('gives every operator page its own scroll region', () => {
+    for (const page of ['Board.tsx', 'Tasks.tsx', 'Triggers.tsx']) {
+      const source = read(uiSrc, 'pages', page);
+      expect(source, `${page} has no scroll region`).toMatch(/flex-1[^"'`]*overflow-y-auto/);
+      // A page root of min-h-full grows instead of scrolling; it must be h-full.
+      expect(source, `${page} root must be h-full`).not.toMatch(/<div className="[^"]*min-h-full/);
+    }
+  });
 });
 
 // The bundle output is gitignored build product. These assertions run only when

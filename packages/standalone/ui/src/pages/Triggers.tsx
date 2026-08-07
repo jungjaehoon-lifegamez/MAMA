@@ -113,15 +113,19 @@ export default function Triggers({
     : null;
 
   return (
-    <div className="flex min-h-full min-w-0 flex-col">
-      <header className="border-b border-border bg-surface px-4 py-4">
+    <div className="flex h-full min-w-0 flex-col">
+      <header className="shrink-0 border-b border-border bg-surface px-4 py-4">
         <h1 className="text-base font-semibold text-text">Triggers</h1>
         <p className="mt-1 text-xs text-text-secondary">
           Search persisted trigger configuration and aggregate outcomes.
         </p>
       </header>
 
-      <div className="flex-1 p-4">
+      {/* The host shell clips at `main.overflow-hidden` and neither the tab
+          region nor #operator-mount scrolls, so this page must own its own
+          scroll region, as Board does. Without it a list longer than the
+          viewport cannot be scrolled at all. */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-6xl">
           <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="w-full sm:max-w-sm">

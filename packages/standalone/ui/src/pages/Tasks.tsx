@@ -154,15 +154,19 @@ export default function Tasks({
   };
 
   return (
-    <div className="flex min-h-full min-w-0 flex-col">
-      <header className="border-b border-border bg-surface px-4 py-4">
+    <div className="flex h-full min-w-0 flex-col">
+      <header className="shrink-0 border-b border-border bg-surface px-4 py-4">
         <h1 className="text-base font-semibold text-text">Tasks</h1>
         <p className="mt-1 text-xs text-text-secondary">
           Native operator ledger with workflow and temporal state shown separately.
         </p>
       </header>
 
-      <div className="flex-1 p-4">
+      {/* The host shell clips at `main.overflow-hidden` and neither the tab
+          region nor #operator-mount scrolls, so this page must own its own
+          scroll region, as Board does. Without it a list longer than the
+          viewport cannot be scrolled at all. */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-6xl">
           <div className="mb-4 flex flex-wrap gap-2" aria-label="Filter tasks by status">
             {STATUS_FILTERS.map((filter, index) => {
