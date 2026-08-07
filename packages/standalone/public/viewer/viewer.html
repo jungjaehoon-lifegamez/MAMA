@@ -294,6 +294,7 @@
         }
         main.flex-1 {
           margin-left: 0 !important;
+          padding-bottom: 64px;
         }
       }
       @media (min-width: 768px) {
@@ -879,6 +880,25 @@
       </div>
       <!-- /content-area -->
 
+      <!-- Mobile group bar. The rail is hidden under 768px, so this is the only
+           way to cross groups on a phone; the chip row above the content stays
+           as sub-navigation WITHIN the active group. Three groups, no overflow
+           menu: there is no fourth item to hide behind one. -->
+      <nav id="mama-mobile-tabs" aria-label="Groups">
+        <a class="mama-mobile-tab" data-group="operator" href="#operator/board">
+          <i data-lucide="zap"></i>
+          <span>Operator</span>
+        </a>
+        <a class="mama-mobile-tab" data-group="knowledge" href="#knowledge/memory">
+          <i data-lucide="brain"></i>
+          <span>Knowledge</span>
+        </a>
+        <a class="mama-mobile-tab" data-group="system" href="#system/runtime">
+          <i data-lucide="settings"></i>
+          <span>System</span>
+        </a>
+      </nav>
+
       <div
         class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
         id="save-decision-modal"
@@ -1322,15 +1342,24 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         return query ? path + '?' + query : path;
       }
 
+      // Hash selection params are `task` and `trigger` (the cross-surface
+      // contract); the mount options keep the bundle's own taskId/triggerId
+      // field names.
       function paramsToSelection(params) {
         const selection = {};
-        const taskId = params.get('taskId');
-        const triggerId = params.get('triggerId');
-        if (taskId && Number.isFinite(Number(taskId))) {
-          selection.taskId = Number(taskId);
+        const rawTask = params.get('task');
+        const trigger = params.get('trigger');
+        if (rawTask !== null && rawTask.trim() !== '') {
+          // A task id is a positive integer. '-1', '0', '3.5', '1e3' and 'abc'
+          // are not ids, and silently coercing them would open a drawer on
+          // whatever row happened to answer.
+          const taskId = Number(rawTask);
+          if (Number.isInteger(taskId) && taskId > 0) {
+            selection.taskId = taskId;
+          }
         }
-        if (triggerId) {
-          selection.triggerId = triggerId;
+        if (trigger) {
+          selection.triggerId = trigger;
         }
         return Object.keys(selection).length > 0 ? selection : undefined;
       }
@@ -1338,10 +1367,10 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       function selectionToParams(selection) {
         const params = new URLSearchParams();
         if (selection && selection.taskId !== undefined && selection.taskId !== null) {
-          params.set('taskId', String(selection.taskId));
+          params.set('task', String(selection.taskId));
         }
         if (selection && selection.triggerId) {
-          params.set('triggerId', selection.triggerId);
+          params.set('trigger', selection.triggerId);
         }
         return params;
       }
@@ -1427,9 +1456,13 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         document.querySelectorAll('[data-route]').forEach((el) => {
           el.classList.toggle('mama-nav-active', el.dataset.route === route.path);
         });
-        // Mobile chips show only the active group's sub-views.
+        // Mobile chips show only the active group's sub-views; the bottom bar
+        // is what crosses groups.
         document.querySelectorAll('.mama-subview-chip').forEach((chip) => {
           chip.hidden = String(chip.dataset.route).split('/')[0] !== route.group;
+        });
+        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach((tab) => {
+          tab.classList.toggle('mama-nav-active', tab.dataset.group === route.group);
         });
 
         const regionId = ROUTES[route.path].region;

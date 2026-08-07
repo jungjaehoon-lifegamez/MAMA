@@ -668,6 +668,57 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   color: #131313;
 }
 
+/* ── Mobile group bar ── */
+#mama-mobile-tabs {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: #ffffff;
+  border-top: 1px solid #ede9e1;
+  z-index: 100;
+  padding: 0 8px;
+  align-items: stretch;
+  justify-content: space-around;
+}
+.mama-mobile-tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: #6b6560;
+  font-size: 10px;
+  font-weight: 600;
+  text-decoration: none;
+  font-family: 'Inter', 'Noto Sans KR', sans-serif;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.mama-mobile-tab i,
+.mama-mobile-tab svg {
+  width: 20px;
+  height: 20px;
+}
+.mama-mobile-tab.mama-nav-active {
+  position: relative;
+  background: #ffce00;
+  color: #131313;
+  border-radius: 8px;
+}
+@media (max-width: 767px) {
+  #mama-mobile-tabs {
+    display: flex;
+  }
+}
+
 /* Modal visibility */
 .modal-overlay {
   opacity: 0;
