@@ -1,7 +1,7 @@
 /**
  * MAMA Graph API
  *
- * HTTP API endpoints for Graph Viewer.
+ * HTTP API endpoints for the Viewer.
  * Provides /graph endpoint for fetching decisions and edges data.
  * Provides /viewer endpoint for serving HTML viewer.
  */

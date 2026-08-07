@@ -17,7 +17,7 @@ Owner: Codex + User
 - MCP server runs stdio tools only by default and does not start HTTP embedding server.
 - Port semantics are explicit:
   - `3847`: Standalone API/UI gateway
-  - `3849`: Embedding HTTP + mobile chat internals
+  - `3849`: Embedding HTTP + chat WebSocket/session internals
 - Shared contract for health fields and takeover behavior remains in `mama-core`.
 
 ## 3) Scope

@@ -6,18 +6,19 @@ Complete guide for accessing the MAMA Viewer from any device.
 
 ## ⚠️ Requirements
 
-| Feature                           | Claude Code Plugin | Claude Desktop (MCP) |
-| --------------------------------- | ------------------ | -------------------- |
-| MCP Tools (/mama-save, etc.)      | ✅                 | ✅                   |
-| Viewer (Knowledge > Memory/Wiki)  | ✅                 | ✅                   |
-| **Operator board and agent runs** | ✅                 | ❌                   |
+| Feature                      | MAMA OS (Standalone) | Claude Desktop (MCP only) |
+| ---------------------------- | -------------------- | ------------------------- |
+| MCP Tools (/mama-save, etc.) | ✅                   | ✅                        |
+| **The Viewer (all groups)**  | ✅                   | ❌                        |
 
-**The Operator group requires the MAMA OS daemon and a backend CLI:**
+**The Viewer requires MAMA OS (Standalone):**
 
-- The daemon runs `claude` (or `codex`/`cline`) as a subprocess to produce the report slots,
-  task board and triggers
-- **Not available under Claude Desktop alone** (MCP servers only, no daemon)
-- Knowledge (Memory, Wiki) and System work in both: they read what is already stored
+- It is served by the Standalone daemon on port 3847
+- **Not available in MCP-only mode.** `http://localhost:3849/viewer` answers with a
+  "Standalone Required" stub, not the Viewer
+- The Operator group additionally needs an authenticated backend CLI (`claude`, `codex` or
+  `cline`): the daemon runs it as a subprocess to produce the report slots, task board and
+  triggers
 
 ---
 

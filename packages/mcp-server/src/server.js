@@ -765,7 +765,7 @@ After failure → save a NEW decision with same topic to create evolution histor
 
       if (!startHttpEmbedding) {
         console.error('[MAMA MCP] HTTP embedding server startup skipped (default behavior)');
-        console.error('[MAMA MCP] Use Standalone for Graph Viewer/Mobile Chat');
+        console.error('[MAMA MCP] Run Standalone (mama start) for the Viewer');
         console.error(
           '[MAMA MCP] To enable legacy MCP-launched HTTP: MAMA_MCP_START_HTTP_EMBEDDING=true'
         );
@@ -777,8 +777,8 @@ After failure → save a NEW decision with same topic to create evolution histor
 
       if (serverAlreadyRunning) {
         console.error(`[MAMA MCP] Embedding server already running on port ${embeddingPort}`);
-        console.error('[MAMA MCP] Using existing server (likely started by Standalone with chat)');
-        console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
+        console.error('[MAMA MCP] Using existing server (likely started by Standalone)');
+        console.error('[MAMA MCP] Viewer: http://localhost:3847/viewer (served by Standalone)');
         return;
       }
 
@@ -788,8 +788,10 @@ After failure → save a NEW decision with same topic to create evolution histor
         .then((httpServer) => {
           if (httpServer) {
             console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
-            console.error(`[MAMA MCP] Graph Viewer: http://localhost:${embeddingPort}/viewer`);
-            console.error('[MAMA MCP] Note: Chat disabled (start Standalone for full features)');
+            console.error(
+              `[MAMA MCP] Note: http://localhost:${embeddingPort}/viewer only serves a "Standalone Required" stub`
+            );
+            console.error('[MAMA MCP] Run Standalone (mama start) for the Viewer on port 3847');
             embeddingServer
               .warmModel()
               .catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
@@ -799,7 +801,7 @@ After failure → save a NEW decision with same topic to create evolution histor
         })
         .catch((err) => {
           console.error('[MAMA MCP] HTTP embedding server error:', err.message);
-          console.error('[MAMA MCP] MCP tools will continue to work without Graph Viewer');
+          console.error('[MAMA MCP] MCP tools will continue to work without the HTTP server');
         });
     } catch (error) {
       console.error('[MAMA MCP] Failed to start server:', error);
