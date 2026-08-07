@@ -30,10 +30,10 @@ import type { EmbeddingRole } from '../embeddings.js';
 import { getModelName, getEmbeddingDim } from '../config-loader.js';
 import { initDB } from '../db-manager.js';
 
-// Import Session API handler (Mobile Chat)
+// Import Session API handler (chat session API)
 import { createSessionHandler } from './mobile/session-api.js';
 
-// Import WebSocket handler (Mobile Chat - V2 with MessageRouter)
+// Import WebSocket handler (chat WebSocket API - V2 with MessageRouter)
 import { createWebSocketHandler } from './mobile/websocket-handler.js';
 
 // Import Session Manager
@@ -152,7 +152,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Security Note: CORS '*' is safe here because:
   // 1. Server binds to localhost only (127.0.0.1)
   // 2. No sensitive data exposed (user's own decisions)
-  // 3. Required for browser-based Graph Viewer
+  // 3. Required for the browser-based Viewer
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -285,7 +285,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  // Session API routes (Mobile Chat)
+  // Session API routes (chat session API)
   try {
     const sessionHandled = await sessionHandler(req, res);
     if (sessionHandled) {
@@ -332,7 +332,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 <body style="font-family: system-ui; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #1a1a2e; color: #eee;">
   <div style="text-align: center; padding: 2rem;">
     <h1>🧠 MAMA Viewer</h1>
-    <p>Viewer and Chat features are only available in <strong>Standalone</strong> mode.</p>
+    <p>The Viewer is only available in <strong>Standalone</strong> mode.</p>
     <p style="color: #888; margin-top: 1rem;">Start Standalone: <code style="background: #333; padding: 0.25rem 0.5rem; border-radius: 4px;">mama start</code></p>
     <p style="color: #666; font-size: 0.9rem; margin-top: 2rem;">Current: MCP Server (embedding only)</p>
   </div>
@@ -395,7 +395,7 @@ export async function startEmbeddingServer(
   // Check if HTTP server is disabled
   if (process.env.MAMA_DISABLE_HTTP_SERVER === 'true') {
     console.error('[EmbeddingHTTP] HTTP server disabled via MAMA_DISABLE_HTTP_SERVER');
-    console.error('[EmbeddingHTTP] Graph Viewer and Mobile Chat will not be available');
+    console.error('[EmbeddingHTTP] The Viewer and the chat WebSocket API will not be available');
     return null;
   }
 

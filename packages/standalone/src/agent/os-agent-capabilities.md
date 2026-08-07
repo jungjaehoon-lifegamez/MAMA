@@ -355,7 +355,7 @@ Restart unnecessary. Continue anyway?
 
 **DO NOT confuse contexts**:
 
-❌ **Wrong** (in Mobile Chat):
+❌ **Wrong** (in a chat gateway conversation):
 
 ```text
 
@@ -365,7 +365,7 @@ Want me to check the system status?" ← Mentioning OS Agent role in normal Chat
 
 ```
 
-✅ **Correct** (in Mobile Chat):
+✅ **Correct** (in a chat gateway conversation):
 
 ```text
 

@@ -86,7 +86,7 @@ npx @jungjaehoon/mama-os init --backend cline  # or claude / codex / auto
 mama start
 
 # 3. Open the operator board
-open http://localhost:3847/ui
+open http://localhost:3847/viewer
 ```
 
 **Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude, Codex, or Cline), 500MB disk space.
@@ -157,25 +157,23 @@ Agents delegate via `delegate()` with skill injection and automatic retry. Confi
 
 ## Viewer
 
-Web UI at `http://localhost:3847` (redirects to the operator board at `/ui`). PWA-enabled for
-mobile (add to home screen).
+One web console at `http://localhost:3847/viewer` (`/` redirects there), opening on the
+operator board. PWA-enabled for mobile (add to home screen).
 
-**Operator board (`/ui`)** — the primary surface: four agent-published report slots (briefing,
-action required, decisions, pipeline) rendered live over SSE, plus a Triggers tab showing the
-trigger loop's library with an owner veto tray.
+Three groups:
 
-**Legacy viewer (`/viewer`)** tabs:
+| Group         | View       | What it shows                                                                                    |
+| ------------- | ---------- | ------------------------------------------------------------------------------------------------ |
+| **Operator**  | Board      | Four agent-published report slots (briefing, action required, decisions, pipeline) live over SSE |
+| **Operator**  | Tasks      | The task board fed from your channels                                                            |
+| **Operator**  | Triggers   | The trigger loop's library with an owner veto tray                                               |
+| **Knowledge** | Memory     | Interactive reasoning graph (1000+ nodes), search, export                                        |
+| **Knowledge** | Wiki       | Knowledge base (syncs with Obsidian vault)                                                       |
+| **System**    | Runtime    | Read-only runtime truth: backend, model, gateways, health                                        |
+| **System**    | Connectors | Connector status and last poll                                                                   |
+| **System**    | Logs       | Daemon logs with filtering, pinning, stats, WebSocket and polling                                |
 
-| Tab           | What it shows                                              |
-| ------------- | ---------------------------------------------------------- |
-| **Dashboard** | Agent activity, memory stats, system health                |
-| **Feed**      | Real-time stream from all connected sources                |
-| **Wiki**      | Knowledge base (syncs with Obsidian vault)                 |
-| **Memory**    | Interactive reasoning graph (1000+ nodes), search, export  |
-| **Logs**      | Daemon logs with filtering, pinning, stats, WebSocket mode |
-| **Settings**  | Connectors, gateways, agents, cron, token budget           |
-
-Floating chat panel on every tab — voice input, TTS, slash commands.
+Each view has its own hash route, e.g. `/viewer#operator/tasks?task=42`.
 
 ## Gateway Integrations
 

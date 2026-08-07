@@ -1,9 +1,10 @@
 # MAMA OS - Unified Web Interface
 
-> **PARTIALLY HISTORICAL (v0.21-era).** The legacy `/viewer` walkthrough below
-> predates the operator runtime. The primary surface today is `/ui` (operator
-> board, four report slots); the workorder pipeline, conductor and effect
-> ledger are documented in [architecture](architecture.md).
+> **PARTIALLY HISTORICAL (v0.21-era).** The walkthrough below predates the
+> operator runtime and the Viewer/operator unification. The one surface today
+> is `/viewer`, opening on the operator board; the workorder pipeline,
+> conductor and effect ledger are documented in
+> [architecture](architecture.md).
 
 **Category:** Explanation (Conceptual Understanding)  
 **Audience:** Users wanting to understand what MAMA OS is and why it exists
@@ -12,27 +13,31 @@
 
 ## What is MAMA OS?
 
-MAMA OS ships two browser surfaces. The **operator board at `/ui`** is the primary one: a React
-viewer with four agent-published report slots (briefing, action required, decisions, pipeline)
-updating live over SSE, plus a Triggers tab showing the trigger loop's own library. `/` redirects
-to `/ui`.
+MAMA OS ships one browser surface: the **Viewer at `/viewer`**, which opens on the operator
+board. `/` redirects there. It is organized as three groups of views:
 
-The **legacy viewer at `/viewer`** remains available, organized as seven tabs plus one global chat
-overlay:
+**Operator** - the primary group:
 
-1. **Dashboard** - System and project overview
-2. **Memory** - Decision graph and memory search
-3. **Feed** - Connector activity stream
-4. **Wiki** - Obsidian-backed document browsing (the vault itself is organized as a daily journal plus lesson pages; see the wiki v5 layout)
-5. **Agents** - Managed-agent config, activity, validation, and history
-6. **Logs** - Runtime and daemon log inspection
-7. **Settings** - Gateway and runtime configuration
-8. **Floating Chat** - Claude Code chat shell available from any tab
+1. **Board** - four agent-published report slots (briefing, action required, decisions,
+   pipeline) updating live over SSE
+2. **Tasks** - the task board fed from your channels
+3. **Triggers** - the trigger loop's own library, with an owner veto tray
+
+**Knowledge**:
+
+4. **Memory** - decision graph and memory search
+5. **Wiki** - Obsidian-backed document browsing (the vault itself is organized as a daily journal plus lesson pages; see the wiki v5 layout)
+
+**System** - read-only truth, not a config editor:
+
+6. **Runtime** - the authoritative runtime snapshot: backend, model, gateways, health
+7. **Connectors** - connector status and last poll
+8. **Logs** - runtime and daemon log inspection
 
 Think of it as your **personal AI operating system** - accessible from any browser, optimized for
 mobile, and designed to keep you connected to your AI assistant wherever you are.
 
-**Access:** `http://localhost:3847/ui` (operator board; `/` redirects here) or `http://localhost:3847/viewer` (legacy viewer)
+**Access:** `http://localhost:3847/viewer` (the one console: Operator, Knowledge and System; `/` redirects here)
 
 ---
 
@@ -149,6 +154,13 @@ Chat is a global overlay opened from a floating control, not a top-level tab.
 ---
 
 ## The Tabs
+
+> **HISTORICAL (v0.21-era) — this section describes surfaces that no longer exist.**
+> The tabs below (Dashboard, Feed, Agents, Settings) and the Floating Chat were retired
+> when the Viewer and the operator board were unified. The shipped surface is described
+> under "What is MAMA OS?" above: Operator (Board, Tasks, Triggers), Knowledge (Memory,
+> Wiki), System (Runtime, Connectors, Logs), with no chat in the browser. The section is
+> kept as a record of what the interface used to be.
 
 ### 1. Dashboard Tab
 

@@ -97,7 +97,7 @@ npm install -g @jungjaehoon/mama-os
 - `mama` CLI command
 - Agent loop and gateway integrations
 - Skills system and cron scheduler
-- MAMA OS viewer (graph viewer + mobile chat)
+- MAMA OS Viewer (operator board, memory graph, wiki, runtime status)
 
 **Installation time:** 1-2 minutes (package download + model cache warm-up)
 
@@ -360,7 +360,7 @@ mama status
 
 Version 0.24.2 ignores and preserves the newer `workorder:temporal` kind. To re-enable the feature,
 install 0.25.0 or newer, restore both live flags, restart, and confirm health before observing a
-non-critical due task in `/ui`:
+non-critical due task in `/viewer#operator/tasks`:
 
 ```bash
 mama stop
@@ -640,9 +640,8 @@ Gateways:
   Telegram: ⚪ Disabled
 
 HTTP Server: http://localhost:3847
-  Graph Viewer: http://localhost:3847/viewer
-  Chat Shell: http://localhost:3847/viewer (floating overlay)
-  Operator Board: http://localhost:3847/ui
+  Viewer: http://localhost:3847/viewer
+  Operator Board: http://localhost:3847/viewer#operator/board
 ```
 
 The Operator Board is the primary operating surface: four agent-published report
@@ -664,10 +663,13 @@ from chat.
 
 **If no gateway is configured:**
 
+Conversation happens on a chat gateway - the Viewer has no chat surface. Configure Discord,
+Slack, Telegram or Chatwork and test there. Without a gateway you can still confirm the agent
+is alive:
+
 1. Open browser: http://localhost:3847/viewer
-2. Open the floating chat button in the viewer shell
-3. Send a message in the web interface
-4. Agent responds in real-time via WebSocket
+2. Check **System > Runtime** for the backend, model and health
+3. Watch **Operator > Board** for the next published report
 
 ---
 
@@ -846,8 +848,11 @@ open http://localhost:3847/viewer
 
 **MAMA OS features:**
 
-- **Memory tab** - Graph viewer for decision evolution
-- **Floating chat shell** - Mobile-optimized chat overlay with voice input
+- **Operator** - Board (four live report slots), Tasks, Triggers
+- **Knowledge** - Memory (decision-evolution graph) and Wiki
+- **System** - Runtime status, Connectors, Logs
+
+Mobile-optimized: install it as a PWA from your phone's browser.
 
 ---
 
@@ -938,7 +943,7 @@ After successful setup:
 2. **Explore skills** - Try `/translate` with an image
 3. **Create custom skills** - Use `/forge` to build new capabilities
 4. **Set up cron jobs** - Schedule automated tasks with `/cron`
-5. **Access mobile chat** - Use MAMA from your phone via the viewer
+5. **Read the board on the go** - Install the Viewer as a PWA on your phone
 
 **Recommended reading:**
 

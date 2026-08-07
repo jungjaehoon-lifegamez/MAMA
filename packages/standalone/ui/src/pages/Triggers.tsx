@@ -14,10 +14,19 @@ const STATUS_FILTERS: Array<{ value: TriggerStatusFilter; label: string }> = [
 
 type TriggerCache = { triggers: OperatorTrigger[] };
 
-export default function Triggers() {
+export default function Triggers({
+  selectedTriggerId,
+  selectionNonce,
+  onSelectTrigger,
+}: {
+  selectedTriggerId?: string;
+  selectionNonce?: number;
+  /** In-content selection change; the host turns it into `?trigger=<id>`. */
+  onSelectTrigger?: (triggerId: string | undefined) => void;
+}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TriggerStatusFilter>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(selectedTriggerId ?? null);
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +61,14 @@ export default function Triggers() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // The host can deep-link a trigger into an already-mounted surface; a repeat
+  // of the same id still counts, hence the nonce.
+  useEffect(() => {
+    if (selectedTriggerId !== undefined) {
+      setSelectedId(selectedTriggerId);
+    }
+  }, [selectedTriggerId, selectionNonce]);
+
   const triggers = query.data?.triggers ?? [];
   const filteredTriggers = useMemo(
     () => filterTriggers(triggers, searchQuery, statusFilter),
@@ -79,12 +96,14 @@ export default function Triggers() {
     disable.reset();
     setDrawerOpener(opener);
     setSelectedId(id);
+    onSelectTrigger?.(id);
   };
 
   const closeDrawer = () => {
     disable.reset();
     setSelectedId(null);
     setDrawerOpener(null);
+    onSelectTrigger?.(undefined);
   };
 
   const disableError = disable.error
@@ -94,15 +113,19 @@ export default function Triggers() {
     : null;
 
   return (
-    <div className="flex min-h-full min-w-0 flex-col">
-      <header className="border-b border-border bg-surface px-4 py-4">
+    <div className="flex h-full min-w-0 flex-col">
+      <header className="shrink-0 border-b border-border bg-surface px-4 py-4">
         <h1 className="text-base font-semibold text-text">Triggers</h1>
         <p className="mt-1 text-xs text-text-secondary">
           Search persisted trigger configuration and aggregate outcomes.
         </p>
       </header>
 
-      <div className="flex-1 p-4">
+      {/* The host shell clips at `main.overflow-hidden` and neither the tab
+          region nor #operator-mount scrolls, so this page must own its own
+          scroll region, as Board does. Without it a list longer than the
+          viewport cannot be scrolled at all. */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-6xl">
           <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="w-full sm:max-w-sm">
@@ -117,7 +140,7 @@ export default function Triggers() {
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search kind or keyword"
-                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-agent"
+                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:ring-2 focus:ring-agent-strong"
               />
             </div>
 
@@ -132,7 +155,7 @@ export default function Triggers() {
                     onClick={() => setStatusFilter(filter.value)}
                     className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                       active
-                        ? 'bg-agent-hover text-on-agent dark:bg-agent'
+                        ? 'bg-agent text-on-agent hover:bg-agent-hover'
                         : 'bg-surface text-text-secondary hover:bg-surface-hover'
                     }`}
                   >

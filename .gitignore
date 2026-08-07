@@ -20,6 +20,7 @@ build/
 
 # Viewer build outputs
 /packages/standalone/public/viewer/js/
+/packages/standalone/public/viewer/operator/
 
 # Tests
 coverage/
@@ -110,7 +111,6 @@ packages/standalone/bench/results/*.json
 
 # PII patterns (local only, never commit)
 .pii-patterns
-/packages/standalone/public/ui/
 
 # Local session artifacts (never publish)
 packages/memorybench/.context/

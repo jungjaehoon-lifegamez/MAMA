@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Standalone HTTP server launcher for MAMA
- * Starts the embedding HTTP server with Graph Viewer and Mobile Chat
+ * Starts the embedding HTTP server (embeddings and the chat WebSocket/session API).
+ * The Viewer itself is served by Standalone on port 3847, not from here.
  */
 
 const { startEmbeddingServer } = require('@jungjaehoon/mama-core/embedding-server');

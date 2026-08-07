@@ -1,5 +1,5 @@
 /**
- * /api/operator -- read-mostly operator surface for the /ui board.
+ * /api/operator -- read-mostly operator surface for the Viewer's operator board.
  *
  * Reads the trigger loop's own store (~/.mama/operator/triggers.db by default)
  * through a second in-process connection. triggers.db uses the default rollback

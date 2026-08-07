@@ -2179,7 +2179,7 @@ export async function runAgentLoop(
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
         // reports "quiet" whenever polling is between batches).
         fullReportSelfGather: buildFullReportGatherLines,
-        // Kagemusha dual output: the same scheduled run updates the /ui operator board
+        // Kagemusha dual output: the same scheduled run updates the /viewer operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
         // TG-06: composition supplies provenance immediately to the prepared

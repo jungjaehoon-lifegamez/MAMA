@@ -153,7 +153,7 @@ describe('linkifyTaskReferences', () => {
     linkify(root);
 
     expect(serialize(root)).toBe(
-      '<div>&lt;img src=x onerror=alert(1)&gt; Review <a href="/ui/tasks#task-7" data-task-id="7" class="task-reference-link">#7</a></div>'
+      '<div>&lt;img src=x onerror=alert(1)&gt; Review <a href="/viewer#operator/tasks?task=7" data-task-id="7" class="task-reference-link">#7</a></div>'
     );
   });
 
@@ -166,7 +166,7 @@ describe('linkifyTaskReferences', () => {
     linkify(root);
 
     expect(serialize(root)).toBe(
-      '<div><span>Open <a href="/ui/tasks#task-12" data-task-id="12" class="task-reference-link">#12</a></span></div>'
+      '<div><span>Open <a href="/viewer#operator/tasks?task=12" data-task-id="12" class="task-reference-link">#12</a></span></div>'
     );
   });
 
@@ -184,7 +184,7 @@ describe('linkifyTaskReferences', () => {
     linkify(root);
 
     expect(serialize(root)).toBe(
-      '<div><a>#1</a><code>#2</code><pre>#3</pre> <a href="/ui/tasks#task-4" data-task-id="4" class="task-reference-link">#4</a></div>'
+      '<div><a>#1</a><code>#2</code><pre>#3</pre> <a href="/viewer#operator/tasks?task=4" data-task-id="4" class="task-reference-link">#4</a></div>'
     );
   });
 });

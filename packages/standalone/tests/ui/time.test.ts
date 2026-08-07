@@ -29,7 +29,9 @@ describe('getFreshnessClass', () => {
   const now = 24 * 60 * 60_000;
 
   it('uses the fresh style until one hour old', () => {
-    expect(getFreshnessClass(now, now - (60 * 60_000 - 1))).toBe('bg-agent-light text-agent');
+    expect(getFreshnessClass(now, now - (60 * 60_000 - 1))).toBe(
+      'bg-agent-light text-agent-strong'
+    );
   });
 
   it('uses the neutral style from one through six hours old', () => {
