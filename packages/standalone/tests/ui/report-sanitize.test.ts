@@ -4,10 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeReportHtml } from '../../ui/src/api/sanitize';
 
 /**
- * Layer 1 of the slot-HTML XSS defence (layer 2 is the script-src 'self' CSP
- * on the /ui document). DOMPurify needs a real DOM, and this suite runs in the
- * node environment the vitest config pins - no jsdom is available, and adding
- * one is out of scope. So this file pins the two things that ARE testable here:
+ * The slot-HTML XSS defence. It used to be layer 1 of two, the other being the
+ * script-src 'self' CSP on the /ui document; that document went with the /ui
+ * route and /viewer sets no CSP, so this is the only layer left.
+ *
+ * DOMPurify needs a real DOM, and this suite runs in the node environment the
+ * vitest config pins - no jsdom is available, and adding one is out of scope.
+ * So this file pins the two things that ARE testable here:
  *
  *  1. the fail-closed contract: with no DOM, sanitizeReportHtml returns an
  *     empty string and never the raw input (DOMPurify's own fallback returns

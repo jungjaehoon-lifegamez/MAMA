@@ -498,8 +498,8 @@ export MAMA_EMBEDDING_PORT="3849"
 
 ## HTTP API Endpoints
 
-MAMA OS exposes HTTP endpoints for the operator board, legacy web dashboard, mobile chat, and
-programmatic access. The lists below cover the commonly used surfaces; the routers in
+MAMA OS exposes HTTP endpoints for the Viewer (operator board, knowledge, system), the chat
+gateways, and programmatic access. The lists below cover the commonly used surfaces; the routers in
 `packages/standalone/src/api/` are the source of truth.
 
 **Base URL:** `http://localhost:3847` (configurable via `MAMA_SERVER_PORT`)
@@ -508,11 +508,11 @@ programmatic access. The lists below cover the commonly used surfaces; the route
 
 **Compatibility:**
 
-| Feature         | MAMA OS | Claude Desktop (MCP) |
-| --------------- | ------- | -------------------- |
-| HTTP Endpoints  | ✅      | ✅                   |
-| Graph Viewer    | ✅      | ✅                   |
-| **Mobile Chat** | ✅      | ❌                   |
+| Feature                | MAMA OS | Claude Desktop (MCP) |
+| ---------------------- | ------- | -------------------- |
+| HTTP Endpoints         | ✅      | ✅                   |
+| Viewer                 | ✅      | ❌                   |
+| **Chat WebSocket API** | ✅      | ❌                   |
 
 ---
 
@@ -1184,12 +1184,12 @@ Read SKILL.md content for a workspace skill.
 
 ### Viewer Routes
 
-| Route     | Description                   |
-| --------- | ----------------------------- |
-| `/viewer` | Graph Viewer + Mobile Chat UI |
-| `/graph`  | Graph data API                |
-| `/setup`  | Setup wizard                  |
-| `/`       | Redirects to `/viewer`        |
+| Route     | Description                             |
+| --------- | --------------------------------------- |
+| `/viewer` | The Viewer: Operator, Knowledge, System |
+| `/graph`  | Graph data API                          |
+| `/setup`  | Setup wizard                            |
+| `/`       | Redirects to `/viewer`                  |
 
 ### Route Aliases
 

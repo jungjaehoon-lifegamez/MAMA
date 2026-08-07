@@ -227,18 +227,20 @@ curl -X POST http://127.0.0.1:3849/embed/batch \
 - **Optional**: Enable only when you explicitly need MCP-launched HTTP mode
 - **Secure**: localhost only (127.0.0.1), no external access
 
-## Graph Viewer
+## Viewer
 
-Interactive visualization of your reasoning graph.
+Interactive visualization of your reasoning graph, under **Knowledge > Memory**.
 
-**Access:** `http://localhost:3847/viewer` (via Standalone) or `http://localhost:3849/viewer` (legacy MCP HTTP mode)
+**Access:** `http://localhost:3847/viewer#knowledge/memory` - Standalone only. In legacy MCP
+HTTP mode `http://localhost:3849/viewer` serves a stub telling you to start Standalone; the
+MCP server has no viewer of its own.
 
 **Features:**
 
 - Network graph with physics simulation
-- Checkpoint timeline sidebar
+- Decision list sidebar
 - Draggable detail panel
-- Topic filtering and search
+- Topic filtering, search, and export (JSON / Markdown / CSV)
 
 ## Environment Variables
 

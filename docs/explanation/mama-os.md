@@ -155,6 +155,13 @@ Chat is a global overlay opened from a floating control, not a top-level tab.
 
 ## The Tabs
 
+> **HISTORICAL (v0.21-era) — this section describes surfaces that no longer exist.**
+> The tabs below (Dashboard, Feed, Agents, Settings) and the Floating Chat were retired
+> when the Viewer and the operator board were unified. The shipped surface is described
+> under "What is MAMA OS?" above: Operator (Board, Tasks, Triggers), Knowledge (Memory,
+> Wiki), System (Runtime, Connectors, Logs), with no chat in the browser. The section is
+> kept as a record of what the interface used to be.
+
 ### 1. Dashboard Tab
 
 **Purpose:** System overview and health monitoring

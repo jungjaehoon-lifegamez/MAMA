@@ -441,7 +441,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   }
 
-  // report_publish is a core surface (feeds the /ui operator board), not a
+  // report_publish is a core surface (feeds the /viewer operator board), not a
   // multi-agent feature: wire it unconditionally. All slot ids are accepted;
   // size/count caps and loud logging live in createReportPublisher.
   {

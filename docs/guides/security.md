@@ -251,12 +251,12 @@ By default, MAMA OS listens on:
 ### Accessing from Your Computer
 
 ```bash
-# Graph Viewer
-http://localhost:3847/viewer
-
-# Mobile chat (same device only)
+# The Viewer (operator board, memory, wiki, runtime status)
 http://localhost:3847/viewer
 ```
+
+Conversation happens on a chat gateway (Discord, Slack, Telegram, Chatwork), not in the
+browser: the Viewer has no chat surface.
 
 ---
 
@@ -836,8 +836,8 @@ The easiest way to configure MAMA security settings is using the `/mama-configur
 /mama-configure --show
 
 # Disable features
-/mama-configure --disable-http              # Disable Graph Viewer + Mobile Chat
-/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --disable-http              # Disable the Viewer and the HTTP API
+/mama-configure --disable-websocket         # Disable the chat WebSocket API only
 /mama-configure --enable-all                # Enable all features
 
 # Set authentication token
@@ -887,13 +887,13 @@ For Claude Desktop, edit `claude_desktop_config.json`:
 You can also set environment variables when running the server directly:
 
 ```bash
-# Disable entire HTTP server (Graph Viewer + Mobile Chat)
+# Disable entire HTTP server (the Viewer and the HTTP API)
 export MAMA_DISABLE_HTTP_SERVER=true
 
-# Disable only WebSocket/Mobile Chat (keep Graph Viewer)
+# Disable only the chat WebSocket API (keep the Viewer)
 export MAMA_DISABLE_WEBSOCKET=true
 
-# Alternative: Disable Mobile Chat specifically
+# Alternative spelling of the same switch
 export MAMA_DISABLE_MOBILE_CHAT=true
 
 # Set authentication token
@@ -910,10 +910,10 @@ export MAMA_DISABLE_HTTP_SERVER=true
 mama start
 ```
 
-**2. Graph Viewer Only**
+**2. Viewer Only**
 
 ```bash
-# Graph Viewer works, Mobile Chat disabled
+# The Viewer works, the chat WebSocket API is closed
 export MAMA_DISABLE_MOBILE_CHAT=true
 mama start
 ```
