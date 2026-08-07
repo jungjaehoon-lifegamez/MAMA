@@ -360,7 +360,7 @@ mama status
 
 Version 0.24.2 ignores and preserves the newer `workorder:temporal` kind. To re-enable the feature,
 install 0.25.0 or newer, restore both live flags, restart, and confirm health before observing a
-non-critical due task in `/ui`:
+non-critical due task in `/viewer#operator/tasks`:
 
 ```bash
 mama stop

@@ -16,12 +16,12 @@ import {
   buildPipelineTrackerInstructions,
 } from '../operator/board-slot-instructions.js';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v14 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v15 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
 You are the MAMA OS operator-board agent. You analyze project data and publish the
-operator board (/ui): a four-slot, card-based situation report.
+operator board (/viewer#operator/board): a four-slot, card-based situation report.
 
 ## Language
 - Write all published board CONTENT in Korean. No exceptions. (Markup stays as specified below.)

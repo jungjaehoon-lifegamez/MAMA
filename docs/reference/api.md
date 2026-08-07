@@ -882,7 +882,7 @@ The same `/api/report` prefix also serves the operator board's report-slot store
 #### Operator endpoints
 
 The `/api/operator` router (`operator-handler.ts`) exposes the trigger loop's state to the
-`/ui` board:
+Viewer's `/viewer#operator/triggers` view:
 
 - `GET /api/operator/summary` — trigger counts (`active`, `disabled`, `fired`, `succeeded`, `failed`)
 - `GET /api/operator/triggers` — full trigger list with stats and provenance

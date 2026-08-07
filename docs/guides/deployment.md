@@ -348,7 +348,7 @@ Verify the following after deployment:
   - [ ] `/mama-resume` - Restore session
 - [ ] GitHub release verification
 - [ ] Release notes published
-- [ ] If temporal reconciliation is being rolled out, verify one non-critical due task in `/ui`:
+- [ ] If temporal reconciliation is being rolled out, verify one non-critical due task in `/viewer#operator/tasks`:
       workflow status remains independent from `temporal_state`, and its temporal workorder reaches a
       receipt-backed terminal result or an explicit bounded deferral.
 ```
