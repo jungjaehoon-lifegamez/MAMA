@@ -21,16 +21,10 @@ describe('viewer ui-commands', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    vi.stubGlobal('window', {
-      localStorage: {
-        getItem: vi.fn((key: string) => {
-          if (key === 'mama_chat_session_id') {
-            return 'session_legacy_viewer_id';
-          }
-          return null;
-        }),
-      },
-    });
+    // The module reads no browser storage: the channel id is the fixed
+    // frontdoor constant. A stub that throws on access would prove that, but a
+    // bare object is enough to keep the environment shaped like a browser.
+    vi.stubGlobal('window', {});
   });
 
   afterEach(() => {
@@ -104,7 +98,7 @@ describe('viewer ui-commands', () => {
         {
           id: 'ui_1',
           type: 'navigate',
-          payload: { route: 'agents', params: { id: 'wiki-agent', tab: 'activity' } },
+          payload: { route: 'operator/tasks', params: { taskId: '42' } },
         },
       ],
     });
@@ -114,7 +108,7 @@ describe('viewer ui-commands', () => {
 
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(switchTab).toHaveBeenCalledWith('agents', { id: 'wiki-agent', tab: 'activity' });
+    expect(switchTab).toHaveBeenCalledWith('operator/tasks', { taskId: '42' });
     expect(ackUICommands).toHaveBeenCalledWith(['ui_1']);
 
     stopPolling();

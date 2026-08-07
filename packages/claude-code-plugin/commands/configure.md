@@ -17,8 +17,8 @@ You are helping the user view or modify MAMA configuration.
    - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-large')
    - `--db-path=X`: Change database location (e.g., '~/.claude/mama-memory.db')
    - `--tier-check`: Re-run tier detection (check SQLite, embeddings availability)
-   - `--disable-http`: Disable HTTP server (Graph Viewer + Mobile Chat)
-   - `--disable-websocket`: Disable WebSocket/Mobile Chat only (keep Graph Viewer)
+   - `--disable-http`: Disable the HTTP server (the Viewer and the HTTP API)
+   - `--disable-websocket`: Disable the chat WebSocket API only (keep the Viewer)
    - `--enable-all`: Enable all features (remove all disable flags)
    - `--set-auth-token=X`: Set MAMA_AUTH_TOKEN for external access
    - `--generate-token`: Generate a strong random auth token
@@ -98,8 +98,8 @@ You are helping the user view or modify MAMA configuration.
 /mama:configure --tier-check
 
 # Security settings
-/mama:configure --disable-http              # Disable Graph Viewer + Mobile Chat
-/mama:configure --disable-websocket         # Disable Mobile Chat only
+/mama:configure --disable-http              # Disable the Viewer and the HTTP API
+/mama:configure --disable-websocket         # Disable the chat WebSocket API only
 /mama:configure --enable-all                # Enable all features
 
 # Authentication token
@@ -125,14 +125,14 @@ You are helping the user view or modify MAMA configuration.
 ## Security Settings
 
 **HTTP Server:** {enabled/disabled}
-**Graph Viewer:** {enabled/disabled}
-**Mobile Chat (WebSocket):** {enabled/disabled}
+**Viewer:** {enabled/disabled}
+**Chat WebSocket API:** {enabled/disabled}
 **Auth Token:** {set/not set}
 
 **Quick Actions:**
 
 - Disable all: `/mama:configure --disable-http`
-- Disable Mobile Chat: `/mama:configure --disable-websocket`
+- Disable the chat WebSocket API: `/mama:configure --disable-websocket`
 - Enable all: `/mama:configure --enable-all`
 - Set auth token: `/mama:configure --generate-token`
 

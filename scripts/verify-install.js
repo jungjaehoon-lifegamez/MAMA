@@ -72,7 +72,7 @@ async function verify() {
     console.log('Next steps:');
     console.log('  • Claude Code: /mama-save to save your first decision');
     console.log('  • Claude Desktop: Use mama_save tool');
-    console.log('  • Graph Viewer: http://localhost:3847/viewer');
+    console.log('  • Viewer: http://localhost:3847/viewer');
     console.log();
     process.exit(0);
   } else {

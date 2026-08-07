@@ -1,22 +1,24 @@
 # MAMA Mobile Access Guide
 
-Complete guide for accessing MAMA's Viewer and floating chat shell from any device.
+Complete guide for accessing the MAMA Viewer from any device.
 
 ---
 
 ## ⚠️ Requirements
 
-| Feature                      | Claude Code Plugin | Claude Desktop (MCP) |
-| ---------------------------- | ------------------ | -------------------- |
-| MCP Tools (/mama-save, etc.) | ✅                 | ✅                   |
-| Graph Viewer                 | ✅                 | ✅                   |
-| **Mobile Chat**              | ✅                 | ❌                   |
+| Feature                      | MAMA OS (Standalone) | Claude Desktop (MCP only) |
+| ---------------------------- | -------------------- | ------------------------- |
+| MCP Tools (/mama-save, etc.) | ✅                   | ✅                        |
+| **The Viewer (all groups)**  | ✅                   | ❌                        |
 
-**Mobile Chat requires Claude Code CLI:**
+**The Viewer requires MAMA OS (Standalone):**
 
-- Uses `claude` command as subprocess for real-time communication
-- **Not available in Claude Desktop** (MCP servers only, no CLI)
-- Graph Viewer works in both (read-only decision visualization)
+- It is served by the Standalone daemon on port 3847
+- **Not available in MCP-only mode.** `http://localhost:3849/viewer` answers with a
+  "Standalone Required" stub, not the Viewer
+- The Operator group additionally needs an authenticated backend CLI (`claude`, `codex` or
+  `cline`): the daemon runs it as a subprocess to produce the report slots, task board and
+  triggers
 
 ---
 
@@ -30,7 +32,7 @@ MAMA is designed for **localhost use only** by default. External access via tunn
 
 When you expose MAMA externally, attackers can access:
 
-- 🔓 Chat sessions with Claude Code
+- 🔓 The agent-driving HTTP and WebSocket APIs (the browser chat UI is gone; the endpoints are not)
 - 🔓 Decision database (`~/.claude/mama-memory.db`)
 - 🔓 **Your local file system** (via Claude Code Read/Write tools)
 - 🔓 **Command execution** (via Claude Code Bash tool)
@@ -57,11 +59,11 @@ mama start
 
 MAMA Mobile provides a web-based interface for:
 
-- **Operator board:** `/ui` with four live report slots (briefing, action required, decisions, pipeline) and a Triggers tab
-- **Legacy viewer tabs:** Dashboard, Memory, Feed, Wiki, Agents, Logs, Settings
-- **Floating Chat:** Real-time chat with Claude Code via WebSocket
+- **Operator:** Board (four live report slots: briefing, action required, decisions, pipeline), Tasks, Triggers
+- **Knowledge:** Memory, Wiki
+- **System:** Runtime, Connectors, Logs
 
-Access both features at `http://localhost:3847/viewer`
+Access all of it at `http://localhost:3847/viewer`, which opens on the operator board.
 
 ---
 
@@ -85,7 +87,7 @@ MAMA OS starts with:
 MAMA_MCP_START_HTTP_EMBEDDING=true npx @jungjaehoon/mama-server
 ```
 
-This mode is for compatibility only. Use MAMA OS for the full Viewer plus floating chat shell.
+This mode is for compatibility only. Use MAMA OS for the full Viewer, including the Operator group.
 
 ### Verify Server is Running
 
@@ -104,9 +106,14 @@ curl http://localhost:3847/health
 ### Desktop Browser
 
 1. Start the HTTP server
-2. Open `http://localhost:3847/viewer`
-3. Navigate between tabs such as **Memory**, **Feed**, **Wiki**, or **Agents**
-4. Open the floating chat button when you want real-time chat with Claude
+2. Open `http://localhost:3847/viewer` - it opens on the operator board
+3. Move between groups in the rail: **Operator** (Board, Tasks, Triggers), **Knowledge**
+   (Memory, Wiki), **System** (Runtime, Connectors, Logs)
+4. Each view has its own hash route, so you can bookmark or share one directly, e.g.
+   `http://localhost:3847/viewer#knowledge/memory`
+
+To talk to MAMA, use a chat gateway (Discord, Slack, Telegram, or Chatwork). The Viewer has no
+chat surface: it shows what the agent has published and what the system holds.
 
 ### Mobile Device (Same Network)
 
@@ -312,8 +319,8 @@ You can disable HTTP server or WebSocket via configuration.
 /mama-configure
 
 # Disable features
-/mama-configure --disable-http              # Disable Graph Viewer + Mobile Chat
-/mama-configure --disable-websocket         # Disable Mobile Chat only
+/mama-configure --disable-http              # Disable the Viewer and the HTTP API
+/mama-configure --disable-websocket         # Disable the WebSocket API only
 /mama-configure --enable-all                # Enable everything
 
 # Set authentication token
@@ -400,24 +407,30 @@ MAMA supports token-based authentication for external access:
 
 ## Features
 
-### Graph Viewer
+### Operator
+
+- **Board:** four agent-published report slots (briefing, action required, decisions,
+  pipeline), updating live over SSE
+- **Tasks:** the task board fed from your connected channels
+- **Triggers:** the trigger loop's library, with an owner veto tray
+
+### Knowledge > Memory
 
 - **Interactive graph:** Pan, zoom, click nodes for details
 - **Search:** Find decisions by topic or content
 - **Filters:** View by topic, confidence, outcome
 - **Node details:** Click any node to see full decision data
+- **Export:** JSON, Markdown, or CSV
 
-### Floating Chat
+### Knowledge > Wiki
 
-- **Real-time messaging:** WebSocket-based chat with Claude Code
-- **Voice input:** Press microphone button to speak (Korean optimized)
-- **Text-to-Speech:** Hear Claude's responses with adjustable speed (1.8x default)
-- **Hands-free mode:** Auto-listen after TTS completes
-- **Slash commands:** `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
-- **Auto-checkpoint:** Saves session state after 5 minutes idle
-- **Session resume:** Automatically detect and resume previous sessions
-- **MCP tool display:** See real-time tool execution (Read, Write, Bash, etc.)
-- **Long press to copy:** Hold message for 750ms to copy
+- **Obsidian-backed browsing:** navigate the vault the agent writes to
+
+### System
+
+- **Runtime:** the authoritative runtime snapshot - backend, model, gateways, health
+- **Connectors:** connector status and last poll time
+- **Logs:** daemon logs with filtering, pinning and stats
 
 ---
 
@@ -441,9 +454,11 @@ mama stop
 mama start
 ```
 
-### WebSocket connection fails
+### Operator board stays empty or stops updating
 
-**Symptoms:** The floating chat shell shows "Not connected" or "Disconnected"
+**Symptoms:** The board shows no slots, or slot content stops changing.
+
+The board is fed by the report SSE stream (`/api/report/events`), not by WebSocket.
 
 **Solutions:**
 
@@ -453,10 +468,11 @@ mama start
    tail -f /tmp/mama-server.log
    ```
 
-2. **Verify WebSocket endpoint:**
+2. **Verify the stream and the API:**
 
    ```bash
-   curl http://localhost:3847/ws
+   curl http://localhost:3847/health
+   curl -N http://localhost:3847/api/report/events
    ```
 
 3. **Clear browser cache:**
@@ -469,6 +485,9 @@ mama start
    sudo ufw allow 3847/tcp
    ```
 
+An empty board can also simply mean the agent has not published yet - the slots show what was
+written, and never invent content.
+
 ### Service Worker errors
 
 **Error:** `Failed to register ServiceWorker: 404`
@@ -478,24 +497,6 @@ mama start
 - Hard refresh browser (Ctrl+Shift+R / Cmd+Shift+R)
 - Restart HTTP server
 - Check server logs for `/viewer/sw.js` requests
-
-### Voice recognition not working
-
-**Requirements:**
-
-- HTTPS connection (or localhost)
-- Microphone permission granted
-- Supported browser (Chrome, Edge, Safari)
-
-**Check:**
-
-```javascript
-// In browser console
-console.log(
-  'Speech Recognition:',
-  'webkitSpeechRecognition' in window || 'SpeechRecognition' in window
-);
-```
 
 ### Cloudflare Tunnel disconnects
 
@@ -515,52 +516,6 @@ For reliable access, use Named Tunnels instead of Quick Tunnels.
 
 ---
 
-## Recent Bug Fixes (v1.5.1)
-
-The following critical bugs were fixed:
-
-### WebSocket Session Management
-
-**Fixed:** Session ID parameter mismatch
-
-- **Issue:** Server looked for `?session=xxx` but client sent `?sessionId=xxx`
-- **Fix:** Updated `websocket-handler.js:45` to use correct parameter name
-- **Impact:** WebSocket connections now properly attach to sessions
-
-### Service Worker 404 Errors
-
-**Fixed:** Missing PWA asset routes
-
-- **Issue:** `/viewer/sw.js` and `/viewer/manifest.json` returned 404
-- **Fix:** Added routes in `graph-api.js:822-846`
-- **Impact:** PWA installation now works correctly
-
-### Unknown Message Type Error
-
-**Fixed:** Missing WebSocket message handler
-
-- **Issue:** `'connected'` message type not recognized by client
-- **Fix:** Added handler in `chat.js:239-241`
-- **Impact:** Eliminates console errors on connection
-
-### Status Display Bug
-
-**Fixed:** Null reference error in status indicator
-
-- **Issue:** `querySelector('span:last-child')` failed due to HTML structure
-- **Fix:** Changed to `querySelector('span:not(.status-indicator)')` in `chat.js:688`
-- **Impact:** Connection status now displays correctly
-
-### Session Error Handling
-
-**Fixed:** Missing error response for expired sessions
-
-- **Issue:** Server didn't notify client when session not found
-- **Fix:** Added error message in `websocket-handler.js:115-127`
-- **Impact:** Client now auto-creates new session when old one expires
-
----
-
 ## Advanced Configuration
 
 ### Environment Variables
@@ -569,7 +524,7 @@ The following critical bugs were fixed:
 # Change database path (default: ~/.claude/mama-memory.db)
 export MAMA_DB_PATH=/custom/path/mama.db
 
-# Set authentication token (future feature)
+# Set authentication token (required before any external tunnel)
 export MAMA_AUTH_TOKEN="your-secret-token"
 ```
 

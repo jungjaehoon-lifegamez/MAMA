@@ -18,7 +18,7 @@ import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loa
 // Port configuration — single source of truth
 /** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
 export const API_PORT = 3847;
-/** Internal embedding server port (model inference, mobile chat, graph) */
+/** Internal embedding server port (model inference, chat WebSocket/session API, graph) */
 export const EMBEDDING_PORT = 3849;
 
 export interface SecurityAlertTarget {
@@ -331,6 +331,8 @@ export async function startEmbeddingServerIfAvailable(
     if (embeddingServer) {
       console.log(`✓ Embedding server started (port ${EMBEDDING_PORT})`);
       if (messageRouter && sessionStore) {
+        // NOTE: 'Mobile Chat' here is the mama-core mobile/ module (session API +
+        // WebSocket handler), which is live. It is not the retired browser chat UI.
         console.log('✓ Mobile Chat integrated with MessageRouter');
       }
       await embeddingServerModule.warmModel();

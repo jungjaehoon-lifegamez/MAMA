@@ -40,6 +40,7 @@ import {
   type AgentContextRouterOptions,
 } from './agent-context-handler.js';
 import { createAgentGraphRouter, type AgentGraphRouterOptions } from './agent-graph-handler.js';
+import { createRuntimeStatusRouter, type RuntimeStatusSnapshot } from './runtime-status-handler.js';
 import { liveBoundaryChannels } from '../evidence/read.js';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -59,6 +60,13 @@ export { InMemoryHeartbeatTracker, DEFAULT_HEARTBEAT_PROMPT } from './heartbeat-
 export { asyncHandler, validateRequired, ApiError } from './error-handler.js';
 export { createTokenRouter, initTokenUsageTable, insertTokenUsage } from './token-handler.js';
 export type { TokenUsageRecord } from './token-handler.js';
+export { createRuntimeStatusRouter } from './runtime-status-handler.js';
+export type {
+  RuntimeStatusSnapshot,
+  RuntimeConnectorStatus,
+  RuntimeConnectorState,
+  RuntimeBackend,
+} from './runtime-status-handler.js';
 
 /**
  * API server options
@@ -126,6 +134,13 @@ export interface ApiServerOptions {
   connectorConfigLoadResult?: ConnectorConfigLoadResult;
   /** Private connector visibility and capability policy captured during runtime boot. */
   privateConnectorPolicy?: PrivateConnectorPolicy;
+  /**
+   * Authoritative runtime snapshot supplier. Injected by the daemon runtime
+   * (api-server-init.ts) from the values it already resolved at boot; without
+   * it `/api/runtime/status` is simply not mounted, so no caller can be served
+   * a guessed backend/model.
+   */
+  getRuntimeStatus?: () => RuntimeStatusSnapshot;
 }
 
 export type ApiEnvelopeMetadata = {
@@ -186,6 +201,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     contextCompileService,
     connectorConfigLoadResult = { ok: true, config: {}, enabledNames: [] },
     privateConnectorPolicy = resolvePrivateConnectorPolicy(connectorConfigLoadResult),
+    getRuntimeStatus,
   } = options;
 
   const app = express();
@@ -338,6 +354,11 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   if (wikiPath) {
     const wikiRouter = createWikiRouter(wikiPath);
     app.use('/api/wiki', wikiRouter);
+  }
+
+  // Authoritative runtime status -- the Viewer's System views read only this.
+  if (getRuntimeStatus) {
+    app.use('/api/runtime', createRuntimeStatusRouter({ getRuntimeStatus }));
   }
 
   // Connector status endpoint -- uses the validated boot snapshot.

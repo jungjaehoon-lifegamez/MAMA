@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.34.0] - 2026-08-08
+
+### Added
+
+- **`/viewer` is MAMA's one web console, defaulting to Operator.** Information architecture is
+  Operator (Board | Tasks | Triggers), Knowledge (Memory | Wiki), System (Runtime | Connectors |
+  Logs). Hash routing (`#operator/board`, `?task=<id>` / `?trigger=<id>` with positive-integer
+  validation and legacy-alias support) makes every destination deep-linkable; browser
+  back/forward restores the active screen and selection. Mobile gets a three-group bottom bar
+  plus a horizontal sub-view chip row (≥44px targets).
+- **Bounded task evidence drawer.** Tasks open a detail drawer built only from serialized
+  operator fields (status, schedule, source channel, latest event) — no raw-message API exists
+  in the client, pinned by mutation-tested import barriers. Trigger provenance is explicitly
+  labeled as configuration provenance. A dropped deep-link (task outside the current filter)
+  shows an honest notice and clears the hash instead of failing silently.
+- **Authoritative runtime status.** New authenticated read-only `GET /api/runtime/status`
+  serves daemon-injected backend/model/uptime/health/connector state through a
+  field-enumerating serializer (credential-leak tested). System views render truthful
+  boot-time captions instead of the legacy Agents registry.
+
+### Changed
+
+- **Viewer-brand token unification.** The operator surface adopts the MAMA palette (yellow
+  `#ffce00` accents with near-black text, lavender secondary, warm off-white surfaces); all
+  interactive pairings verified WCAG AA (`--color-agent-strong #7d5b00`). Light-only v1.
+- **Logs is polling-only.** The unsupported WebSocket subscription control is gone.
+- **Service worker cache `mama-viewer-v2`.** `/api` + `/ws` bypass is pinned by test; the
+  operator bundle is network-first so future releases reach installed PWAs.
+
+### Removed
+
+- **The temporary `/ui` route (404, no redirect), Viewer Chat, Feed, Agents, and the Settings
+  tab.** Config editing (messenger tokens, agent/skill/role forms, cron UI, token budget)
+  leaves the web console entirely — CLI and config files are the only write path; no
+  credential-shaped input renders in any DOM. Legacy modules and their tests were deleted
+  (net −10k lines); docs swept `/ui` → `/viewer` repo-wide. Persisted history, `/ws`,
+  `/api/sessions`, and `/api/cron` remain untouched pending consumer audits.
+
+### Security
+
+- `sanitizeReportHtml` is fail-closed in DOM-less environments (previously returned dirty
+  input via DOMPurify's documented no-DOM fallback) and is pinned by regression tests.
+  DOMPurify remains the deliberate single render-side XSS layer for agent-authored slot HTML
+  (owner risk decision; the retired `/ui` document's CSP did not migrate).
+
 ## mama-os [0.33.0] - 2026-08-06
 
 ### Added

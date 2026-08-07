@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { mergeReportEvent, orderSlots, type ReportSlot, type SlotRecord } from '../api/report';
 import { sanitizeReportHtml } from '../api/sanitize';
@@ -24,14 +23,15 @@ function SlotRenderer({
   now,
   collapsed,
   onToggle,
+  onOpenTask,
 }: {
   slot: ReportSlot;
   now: number;
   collapsed: boolean;
   onToggle: (slotId: string) => void;
+  onOpenTask: (taskId: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const navigate = useNavigate();
   const panelId = useId();
 
   useEffect(() => {
@@ -55,11 +55,11 @@ function SlotRenderer({
         return;
       }
       event.preventDefault();
-      navigate(`/tasks#task-${taskId}`);
+      onOpenTask(Number(taskId));
     };
     element.addEventListener('click', handleClick);
     return () => element.removeEventListener('click', handleClick);
-  }, [navigate, slot.html, slot.slotId]);
+  }, [onOpenTask, slot.html, slot.slotId]);
 
   return (
     <section
@@ -111,7 +111,7 @@ function EmptyState() {
   );
 }
 
-export default function Board() {
+export default function Board({ onOpenTask }: { onOpenTask: (taskId: number) => void }) {
   const [slots, setSlots] = useState<SlotRecord>({});
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -265,6 +265,7 @@ export default function Board() {
                   now={now}
                   collapsed={collapsedSlots.has(slot.slotId)}
                   onToggle={handleToggleSlot}
+                  onOpenTask={onOpenTask}
                 />
               ))}
             </div>

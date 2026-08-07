@@ -255,56 +255,28 @@
         background: #ffce00;
       }
 
-      /* ── Mobile bottom tab bar ── */
-      #mama-mobile-tabs {
-        display: none;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 64px;
-        background: #ffffff;
-        border-top: 1px solid #ede9e1;
-        z-index: 100;
-        padding: 0 8px;
-        align-items: center;
-        justify-content: space-around;
-      }
-      .mama-mobile-tab {
+      /* ── Group headings inside the rail ── */
+      .mama-nav-group {
         display: flex;
         flex-direction: column;
-        align-items: center;
         gap: 2px;
-        padding: 8px 12px;
-        border: none;
-        background: transparent;
-        color: #6b6560;
-        font-size: 10px;
-        font-weight: 600;
-        text-decoration: none;
+        width: 100%;
+        margin-bottom: 10px;
+      }
+      .mama-nav-group-label {
+        padding: 0 12px;
         font-family: 'Inter', 'Noto Sans KR', sans-serif;
-        cursor: pointer;
-        transition: color 0.15s ease;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #9b9389;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.15s ease;
       }
-      .mama-mobile-tab i,
-      .mama-mobile-tab svg {
-        width: 20px;
-        height: 20px;
-      }
-      .mama-mobile-tab.mama-nav-active {
-        color: #ffce00;
-        position: relative;
-      }
-      .mama-mobile-tab.mama-nav-active::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 24px;
-        height: 2px;
-        border-radius: 1px;
-        background: #ffce00;
+      #mama-sidebar:hover .mama-nav-group-label {
+        opacity: 1;
       }
 
       /* ── Slot container ── */
@@ -315,101 +287,14 @@
         min-height: 200px;
       }
 
-      /* ── Settings Sections ── */
-      .mama-settings-section {
-        border-bottom: 1px solid #ede9e1;
-        padding: 16px 0;
-        border-radius: 4px;
-      }
-      .mama-settings-section:last-child {
-        border-bottom: none;
-      }
-      .mama-settings-heading {
-        font-family: 'Inter', 'Noto Sans KR', sans-serif;
-        font-size: 16px;
-        font-weight: 600;
-        color: #1a1a1a;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        user-select: none;
-        padding: 0 0 8px 0;
-        margin: 0;
-        border: none;
-        background: none;
-        width: 100%;
-        text-align: left;
-      }
-      .mama-settings-heading:hover {
-        color: #3d3630;
-      }
-      .mama-collapse-icon {
-        font-size: 14px;
-        color: #9b9389;
-        transition: transform 0.2s ease;
-        display: inline-block;
-      }
-      .mama-settings-section.collapsed .mama-settings-body {
-        display: none;
-      }
-      .mama-settings-section.collapsed .mama-collapse-icon {
-        transform: rotate(-90deg);
-      }
-
       /* ── Responsive ── */
       @media (max-width: 767px) {
         #mama-sidebar {
           display: none;
         }
-        #mama-mobile-tabs {
-          display: flex;
-        }
         main.flex-1 {
           margin-left: 0 !important;
-          padding-bottom: 72px;
-        }
-        /* Hide right panel chat on mobile — use full-screen chat tab instead */
-        #chat-resize-handle-bar {
-          display: none !important;
-        }
-        #chat-panel-wrapper {
-          display: none !important;
-        }
-        #chat-collapsed-bar {
-          display: none !important;
-        }
-        /* Full-screen chat overlay when chat tab is active */
-        #chat-panel-wrapper.mobile-chat-active {
-          display: flex !important;
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 64px;
-          width: 100% !important;
-          height: auto !important;
-          z-index: 90;
-          border-left: none;
-          flex-direction: column;
-        }
-        #chat-panel-wrapper.mobile-chat-active #chat-panel {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          height: 100% !important;
-          min-height: 0;
-          overflow: visible;
-        }
-        #chat-panel-wrapper.mobile-chat-active #chat-messages {
-          flex: 1;
-          min-height: 0;
-          overflow-y: auto;
-        }
-        #chat-panel-wrapper.mobile-chat-active .chat-input-area,
-        #chat-panel-wrapper.mobile-chat-active > div:last-child {
-          flex-shrink: 0;
-          padding-bottom: max(4px, env(safe-area-inset-bottom));
+          padding-bottom: 64px;
         }
       }
       @media (min-width: 768px) {
@@ -420,6 +305,9 @@
     </style>
 
     <link rel="stylesheet" href="/viewer/viewer.css" />
+    <!-- Operator content bundle styles. Its reset is scoped under #operator-root,
+         so it cannot fight the viewer's own global reset. -->
+    <link rel="stylesheet" href="/viewer/operator/operator.css" />
   </head>
   <body class="bg-background text-mama-black font-body">
     <div id="app" class="h-screen flex flex-col">
@@ -429,89 +317,85 @@
           <img src="/viewer/icons/mama-icon.svg" alt="MAMA" width="28" height="28" />
           <span>MAMA</span>
         </a>
+        <!-- Grouped rail. Every entry is a real hash link: the address bar is
+             the single source of truth for which route is showing. -->
         <div class="mama-nav-items">
-          <a class="mama-nav-item" href="/ui" title="Operator Board (beta)">
-            <i data-lucide="zap"></i>
-            <span>Operator (beta)</span>
-          </a>
-          <button
-            class="mama-nav-item mama-nav-active"
-            data-tab="feed"
-            onclick="window.switchTab && window.switchTab('feed')"
-          >
-            <i data-lucide="rss"></i>
-            <span>Feed</span>
-          </button>
-          <button
-            class="mama-nav-item"
-            data-tab="wiki"
-            onclick="window.switchTab && window.switchTab('wiki')"
-          >
-            <i data-lucide="book-open"></i>
-            <span>Wiki</span>
-          </button>
-          <button
-            class="mama-nav-item"
-            data-tab="memory"
-            onclick="window.switchTab && window.switchTab('memory')"
-          >
-            <i data-lucide="brain"></i>
-            <span>Memory</span>
-          </button>
-          <button
-            class="mama-nav-item"
-            data-tab="logs"
-            onclick="window.switchTab && window.switchTab('logs')"
-          >
-            <i data-lucide="terminal"></i>
-            <span>Logs</span>
-          </button>
-          <button
-            class="mama-nav-item"
-            data-tab="agents"
-            onclick="window.switchTab && window.switchTab('agents')"
-          >
-            <i data-lucide="bot"></i>
-            <span>Agents</span>
-          </button>
-          <button
-            class="mama-nav-item"
-            data-tab="settings"
-            onclick="window.switchTab && window.switchTab('settings')"
-          >
-            <i data-lucide="settings"></i>
-            <span>Settings</span>
-          </button>
+          <div class="mama-nav-group">
+            <span class="mama-nav-group-label">Operator</span>
+            <a class="mama-nav-item" data-route="operator/board" href="#operator/board">
+              <i data-lucide="layout-dashboard"></i>
+              <span>Board</span>
+            </a>
+            <a class="mama-nav-item" data-route="operator/tasks" href="#operator/tasks">
+              <i data-lucide="list-checks"></i>
+              <span>Tasks</span>
+            </a>
+            <a class="mama-nav-item" data-route="operator/triggers" href="#operator/triggers">
+              <i data-lucide="zap"></i>
+              <span>Triggers</span>
+            </a>
+          </div>
+          <div class="mama-nav-group">
+            <span class="mama-nav-group-label">Knowledge</span>
+            <a class="mama-nav-item" data-route="knowledge/memory" href="#knowledge/memory">
+              <i data-lucide="brain"></i>
+              <span>Memory</span>
+            </a>
+            <a class="mama-nav-item" data-route="knowledge/wiki" href="#knowledge/wiki">
+              <i data-lucide="book-open"></i>
+              <span>Wiki</span>
+            </a>
+          </div>
+          <div class="mama-nav-group">
+            <span class="mama-nav-group-label">System</span>
+            <a class="mama-nav-item" data-route="system/runtime" href="#system/runtime">
+              <i data-lucide="activity"></i>
+              <span>Runtime</span>
+            </a>
+            <a class="mama-nav-item" data-route="system/connectors" href="#system/connectors">
+              <i data-lucide="plug"></i>
+              <span>Connectors</span>
+            </a>
+            <a class="mama-nav-item" data-route="system/logs" href="#system/logs">
+              <i data-lucide="terminal"></i>
+              <span>Logs</span>
+            </a>
+          </div>
         </div>
       </nav>
 
-      <!-- Content Area: Main + Chat Panel (SmartStore layout) -->
+      <!-- Content Area -->
       <div id="content-area" class="flex-1 flex min-h-0 overflow-hidden">
         <!-- Main Content -->
         <main class="flex-1 overflow-hidden flex flex-col min-w-0">
-          <!-- Dashboard Tab -->
-          <div class="tab-content" id="tab-dashboard">
-            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-              <div id="dashboard-slots" class="mama-slots-container">
-                <div
-                  id="slots-empty"
-                  style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px"
-                >
-                  No briefing yet. Run the orchestrator to generate the first report.
-                </div>
-              </div>
-            </div>
-          </div>
+          <!-- Mobile sub-views: the same hash routes the desktop rail uses. -->
+          <nav id="mama-subviews" class="mama-subviews" aria-label="Sub views">
+            <a class="mama-subview-chip" data-route="operator/board" href="#operator/board"
+              >Board</a
+            >
+            <a class="mama-subview-chip" data-route="operator/tasks" href="#operator/tasks"
+              >Tasks</a
+            >
+            <a class="mama-subview-chip" data-route="operator/triggers" href="#operator/triggers"
+              >Triggers</a
+            >
+            <a class="mama-subview-chip" data-route="knowledge/memory" href="#knowledge/memory"
+              >Memory</a
+            >
+            <a class="mama-subview-chip" data-route="knowledge/wiki" href="#knowledge/wiki">Wiki</a>
+            <a class="mama-subview-chip" data-route="system/runtime" href="#system/runtime"
+              >Runtime</a
+            >
+            <a class="mama-subview-chip" data-route="system/connectors" href="#system/connectors"
+              >Connectors</a
+            >
+            <a class="mama-subview-chip" data-route="system/logs" href="#system/logs">Logs</a>
+          </nav>
 
-          <!-- Feed Tab -->
-          <div class="tab-content" id="tab-feed">
-            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-              <div id="feed-content">
-                <div style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px">
-                  Loading connectors...
-                </div>
-              </div>
-            </div>
+          <!-- Operator: the React content bundle mounts here once and stays
+               mounted; other routes only hide it. -->
+          <div class="tab-content" id="tab-operator">
+            <div id="operator-mount" class="flex-1 min-h-0"></div>
           </div>
 
           <!-- Wiki Tab -->
@@ -525,6 +409,20 @@
             </div>
           </div>
 
+          <!-- Runtime Tab: rendered from /api/runtime/status only. -->
+          <div class="tab-content" id="tab-runtime">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+              <div id="runtime-content"></div>
+            </div>
+          </div>
+
+          <!-- Connectors Tab: read-only state from the same runtime snapshot. -->
+          <div class="tab-content" id="tab-connectors">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+              <div id="connectors-list"></div>
+            </div>
+          </div>
+
           <!-- Logs Tab -->
           <div class="tab-content" id="tab-logs">
             <iframe
@@ -534,236 +432,12 @@
             ></iframe>
           </div>
 
-          <!-- Agents Tab -->
-          <div class="tab-content" id="tab-agents">
-            <div class="flex-1 overflow-y-auto p-4" id="agents-content"></div>
-          </div>
-
-          <!-- Settings Tab -->
-          <div class="tab-content" id="tab-settings">
-            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-2 md:p-3">
-              <!-- Compact Header -->
-              <div class="flex items-center justify-between mb-3">
-                <h1 class="text-sm font-bold text-gray-900">Settings</h1>
-                <span class="text-[10px] text-gray-400">MAMA OS Configuration</span>
-              </div>
-
-              <!-- Section 1: Connectors -->
-              <div class="mama-settings-section">
-                <h3
-                  class="mama-settings-heading"
-                  onclick="this.parentElement.classList.toggle('collapsed')"
-                >
-                  Connectors <span class="mama-collapse-icon">&#9662;</span>
-                </h3>
-                <div class="mama-settings-body">
-                  <p class="text-[10px] text-gray-500 mb-2">
-                    Data source connectors for polling external channels. Configure in
-                    <code>~/.mama/connectors.json</code>.
-                  </p>
-                  <div id="settings-connectors-list" class="space-y-1.5">
-                    <p class="text-[10px] text-gray-400">Loading connectors...</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Section 3: System -->
-              <div class="mama-settings-section">
-                <h3
-                  class="mama-settings-heading"
-                  onclick="this.parentElement.classList.toggle('collapsed')"
-                >
-                  System <span class="mama-collapse-icon">&#9662;</span>
-                </h3>
-                <div class="mama-settings-body">
-                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <!-- Left: Health + DB Info -->
-                    <div class="space-y-3">
-                      <!-- Health Check -->
-                      <section>
-                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Health</h2>
-                        <div
-                          id="settings-system-health"
-                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
-                        >
-                          <p class="text-[10px] text-gray-400">Health status will appear here.</p>
-                        </div>
-                      </section>
-
-                      <!-- Database Info -->
-                      <section>
-                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Database</h2>
-                        <div
-                          id="settings-system-db"
-                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
-                        >
-                          <p class="text-[10px] text-gray-400">Database info will appear here.</p>
-                        </div>
-                      </section>
-                    </div>
-
-                    <!-- Right: Token Usage + Metrics + Cron -->
-                    <div class="space-y-3">
-                      <!-- Token Usage -->
-                      <section>
-                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Token Budget</h2>
-                        <div
-                          id="settings-system-tokens"
-                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
-                        >
-                          <div class="grid grid-cols-2 gap-1.5">
-                            <div>
-                              <label class="block text-[9px] text-gray-500 mb-0.5"
-                                >Daily Limit</label
-                              >
-                              <input
-                                type="number"
-                                id="settings-token-daily-limit"
-                                placeholder="1000000"
-                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
-                              />
-                            </div>
-                            <div>
-                              <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
-                              <input
-                                type="number"
-                                id="settings-token-alert-threshold"
-                                step="0.01"
-                                placeholder="5.00"
-                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-
-                      <!-- Metrics -->
-                      <section>
-                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Metrics</h2>
-                        <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                          <div class="grid grid-cols-2 gap-1.5">
-                            <div>
-                              <label class="block text-[9px] text-gray-500 mb-0.5"
-                                >Enable metrics</label
-                              >
-                              <input
-                                type="checkbox"
-                                id="settings-metrics-enabled"
-                                checked
-                                class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400"
-                              />
-                            </div>
-                            <div>
-                              <label class="block text-[9px] text-gray-500 mb-0.5"
-                                >Retention (days)</label
-                              >
-                              <input
-                                type="number"
-                                id="settings-metrics-retention"
-                                min="1"
-                                max="90"
-                                value="7"
-                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-
-                      <!-- Scheduled Jobs -->
-                      <section>
-                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Scheduled Jobs</h2>
-                        <div
-                          id="settings-cron-container"
-                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5"
-                        >
-                          <p class="text-[10px] text-gray-500">Loading...</p>
-                        </div>
-                        <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
-                          <summary
-                            class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50"
-                          >
-                            + Add New Job
-                          </summary>
-                          <div
-                            class="p-2 border-t border-gray-100 space-y-1.5"
-                            id="settings-cron-form"
-                          >
-                            <div class="grid grid-cols-2 gap-1.5">
-                              <input
-                                type="text"
-                                id="settings-cron-name"
-                                placeholder="Job Name"
-                                aria-label="Cron job name"
-                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
-                              />
-                              <input
-                                type="text"
-                                id="settings-cron-expr"
-                                placeholder="0 * * * *"
-                                aria-label="Cron expression"
-                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
-                              />
-                            </div>
-                            <textarea
-                              id="settings-cron-prompt"
-                              rows="2"
-                              placeholder="Task prompt..."
-                              aria-label="Cron job task prompt"
-                              class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"
-                            ></textarea>
-                            <button
-                              onclick="settingsModule.addCronJob()"
-                              class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded"
-                            >
-                              Add
-                            </button>
-                          </div>
-                        </details>
-                      </section>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Action Buttons -->
-              <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
-                <button
-                  onclick="settingsModule.resetForm()"
-                  class="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                >
-                  Reset
-                </button>
-                <div class="flex items-center gap-2">
-                  <span id="settings-status" class="text-[10px] text-gray-500"></span>
-                  <button
-                    onclick="settingsModule.saveAndRestart()"
-                    class="px-4 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-300 rounded transition-colors flex items-center gap-1.5"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                      <polyline points="17 21 17 13 7 13 7 21" />
-                      <polyline points="7 3 7 8 15 8" />
-                    </svg>
-                    Save &amp; Restart
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div class="tab-content" id="tab-memory">
             <div class="flex-1 flex flex-col min-h-0">
               <!-- Compact Filter Bar (full width, top) -->
-              <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white">
+              <div
+                class="memory-controls flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white"
+              >
                 <!-- Toggle sidebar -->
                 <button
                   id="checkpoint-sidebar-toggle"
@@ -814,7 +488,6 @@
                   id="topic-filter"
                   placeholder="Filter topics..."
                   oninput="filterByTopic(this.value)"
-                  style="width: 160px"
                 />
                 <datalist id="topic-filter-list"></datalist>
                 <select
@@ -836,7 +509,6 @@
                   id="search-input"
                   placeholder="Search content..."
                   onkeyup="handleGraphSearch(event)"
-                  style="width: 160px"
                 />
                 <button
                   onclick="clearFilters()"
@@ -1199,355 +871,27 @@
             ></div>
           </div>
         </main>
-
-        <!-- Chat Resize Handle (SmartStore pattern) -->
-        <div
-          id="chat-resize-handle-bar"
-          class="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-mama-yellow/30 active:bg-mama-yellow/50 transition-colors chat-resize-visible"
-        ></div>
-
-        <!-- Right Chat Panel (always visible, SmartStore Layout pattern) -->
-        <div
-          id="chat-panel-wrapper"
-          class="flex-shrink-0 border-l border-gray-200"
-          style="width: 380px; background: #f5f3ef"
-        >
-          <div id="chat-panel" class="flex flex-col">
-            <!-- Header (SmartStore ChatPanel pattern) -->
-            <div
-              id="chat-header"
-              class="px-4 py-3 border-b border-gray-200 flex items-center gap-2.5 bg-white flex-shrink-0"
-            >
-              <div
-                class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                style="background: #ffce00"
-              >
-                <svg
-                  class="w-4 h-4 text-white"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-                  />
-                </svg>
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[13px] font-semibold text-mama-black">MAMA Chat</span>
-                  <span
-                    id="chat-tab-indicator"
-                    class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md font-medium"
-                    >Feed</span
-                  >
-                  <span
-                    class="status-indicator w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0"
-                    id="chat-status"
-                  ></span>
-                </div>
-              </div>
-              <div class="flex items-center gap-1 flex-shrink-0">
-                <button
-                  class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                  id="chat-clear-btn"
-                  onclick="clearChatHistory()"
-                  title="Clear chat"
-                  style="display: none"
-                >
-                  <svg
-                    class="w-3.5 h-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                    />
-                  </svg>
-                </button>
-                <button
-                  id="chat-collapse-btn"
-                  class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-black hover:bg-gray-100 transition-colors"
-                  title="Collapse chat"
-                  onclick="toggleChatPanel()"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Messages (SmartStore pattern: flex-1 overflow-auto) -->
-            <div
-              class="flex-1 overflow-auto p-4 space-y-3"
-              id="chat-messages"
-              style="background: #f5f3ef"
-            >
-              <div class="flex flex-col items-center justify-center h-full text-center px-6">
-                <div
-                  class="w-12 h-12 rounded-lg bg-mama-yellow/10 flex items-center justify-center mb-4"
-                >
-                  <svg
-                    class="w-6 h-6 text-mama-yellow"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
-                    />
-                  </svg>
-                </div>
-                <p class="text-[13px] text-gray-500 font-medium">Ask MAMA anything</p>
-                <p class="text-[11px] text-gray-400 mt-1">
-                  Current page context is sent automatically
-                </p>
-              </div>
-            </div>
-
-            <!-- Attachment preview -->
-            <div
-              id="chat-attachment-preview"
-              class="hidden px-3 pt-2 border-t border-gray-200 flex items-center gap-2 flex-wrap flex-shrink-0"
-            >
-              <img
-                id="chat-attachment-thumb"
-                class="w-12 h-12 object-cover rounded-lg border border-gray-200"
-                src="data:,"
-                alt="preview"
-              />
-              <span
-                id="chat-attachment-name"
-                class="text-[11px] text-gray-400 truncate max-w-[100px]"
-              ></span>
-              <button
-                class="text-gray-400 hover:text-red-500"
-                onclick="clearAttachment()"
-                title="Remove"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round" />
-                  <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round" />
-                </svg>
-              </button>
-            </div>
-
-            <!-- Input (SmartStore ChatPanel pattern: inline row) -->
-            <div class="p-3 border-t border-gray-200 bg-white flex-shrink-0">
-              <input
-                type="file"
-                id="chat-file-input"
-                class="hidden"
-                accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx"
-                onchange="handleFileSelect(event)"
-              />
-              <div class="flex gap-2">
-                <button
-                  class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all"
-                  id="chat-attach"
-                  onclick="document.getElementById('chat-file-input').click()"
-                  title="Attach file"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"
-                    />
-                  </svg>
-                </button>
-                <button
-                  class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all relative"
-                  id="chat-mic"
-                  onclick="toggleVoiceInput()"
-                  title="Voice input"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
-                    />
-                  </svg>
-                  <span
-                    class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"
-                  ></span>
-                </button>
-                <input
-                  type="text"
-                  id="chat-input"
-                  placeholder="Type your message..."
-                  class="flex-1 bg-gray-100 border-0 rounded-lg px-3.5 py-2 text-[13px] text-mama-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-mama-yellow/20 transition-all disabled:opacity-50"
-                  disabled
-                />
-                <button
-                  id="chat-send"
-                  onclick="sendChatMessage()"
-                  disabled
-                  class="w-9 h-9 rounded-lg bg-mama-yellow text-mama-black flex items-center justify-center flex-shrink-0 hover:bg-mama-yellow-hover disabled:opacity-40 transition-all"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Chat Collapsed Bar (visible when chat is collapsed) -->
-        <div
-          id="chat-collapsed-bar"
-          class="hidden flex-shrink-0 border-l border-gray-200 bg-white flex flex-col items-center py-3 w-10"
-        >
-          <button
-            onclick="toggleChatPanel()"
-            class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-yellow hover:bg-mama-yellow/10 transition-colors"
-            title="Open chat"
-          >
-            <svg
-              class="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              viewBox="0 0 24 24"
-            >
-              <path
-                d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-          <span
-            id="chat-badge-collapsed"
-            class="hidden w-2 h-2 bg-red-500 rounded-full mt-1 animate-pulse"
-          ></span>
-        </div>
       </div>
       <!-- /content-area -->
 
-      <!-- Mobile Bottom Tab Bar -->
-      <div id="mama-mobile-tabs">
-        <button
-          class="mama-mobile-tab"
-          data-tab="chat"
-          onclick="window.switchTab && window.switchTab('chat')"
-        >
-          <i data-lucide="message-circle"></i>
-          <span>Chat</span>
-        </button>
-        <button
-          class="mama-mobile-tab"
-          data-tab="agents"
-          onclick="window.switchTab && window.switchTab('agents')"
-        >
-          <i data-lucide="bot"></i>
-          <span>Agents</span>
-        </button>
-        <button
-          class="mama-mobile-tab"
-          data-tab="memory"
-          onclick="window.switchTab && window.switchTab('memory')"
-        >
+      <!-- Mobile group bar. The rail is hidden under 768px, so this is the only
+           way to cross groups on a phone; the chip row above the content stays
+           as sub-navigation WITHIN the active group. Three groups, no overflow
+           menu: there is no fourth item to hide behind one. -->
+      <nav id="mama-mobile-tabs" aria-label="Groups">
+        <a class="mama-mobile-tab" data-group="operator" href="#operator/board">
+          <i data-lucide="zap"></i>
+          <span>Operator</span>
+        </a>
+        <a class="mama-mobile-tab" data-group="knowledge" href="#knowledge/memory">
           <i data-lucide="brain"></i>
-          <span>Memory</span>
-        </button>
-        <button
-          class="mama-mobile-tab mama-nav-active"
-          data-tab="more"
-          onclick="window.toggleMobileMore && window.toggleMobileMore()"
-        >
-          <i data-lucide="menu"></i>
-          <span>More</span>
-        </button>
-      </div>
-      <!-- Mobile "More" overflow menu -->
-      <div
-        id="mama-mobile-more"
-        style="
-          display: none;
-          position: fixed;
-          bottom: 64px;
-          left: 0;
-          right: 0;
-          background: #fff;
-          border-top: 1px solid #ede9e1;
-          z-index: 99;
-          padding: 8px;
-        "
-      >
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px">
-          <button
-            class="mama-mobile-tab"
-            data-tab="feed"
-            onclick="window.switchTab && window.switchTab('feed')"
-          >
-            <i data-lucide="rss"></i><span>Feed</span>
-          </button>
-          <button
-            class="mama-mobile-tab"
-            data-tab="wiki"
-            onclick="window.switchTab && window.switchTab('wiki')"
-          >
-            <i data-lucide="book-open"></i><span>Wiki</span>
-          </button>
-          <button
-            class="mama-mobile-tab"
-            data-tab="logs"
-            onclick="window.switchTab && window.switchTab('logs')"
-          >
-            <i data-lucide="scroll-text"></i><span>Logs</span>
-          </button>
-          <button
-            class="mama-mobile-tab"
-            data-tab="settings"
-            onclick="window.switchTab && window.switchTab('settings')"
-          >
-            <i data-lucide="settings"></i><span>Settings</span>
-          </button>
-        </div>
-      </div>
+          <span>Knowledge</span>
+        </a>
+        <a class="mama-mobile-tab" data-group="system" href="#system/runtime">
+          <i data-lucide="settings"></i>
+          <span>System</span>
+        </a>
+      </nav>
 
       <div
         class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
@@ -1914,201 +1258,235 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
     </div>
 
     <script type="module">
-      import { ChatModule } from '/viewer/js/modules/chat.js';
       import { GraphModule } from '/viewer/js/modules/graph.js';
       import { MemoryModule } from '/viewer/js/modules/memory.js';
-      import { DashboardModule } from '/viewer/js/modules/dashboard.js';
-      import { SettingsModule } from '/viewer/js/modules/settings.js';
-      import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
-      import { AgentsModule } from '/viewer/js/modules/agents.js';
+      import { renderRuntimeView, renderConnectorsView } from '/viewer/js/modules/system.js';
       import { API } from '/viewer/js/utils/api.js';
       import { startUICommandPolling, reportPageContext } from '/viewer/js/utils/ui-commands.js';
 
       const memory = new MemoryModule();
-      const chat = new ChatModule(memory);
       const graph = new GraphModule();
-      const dashboard = new DashboardModule();
-      const settings = new SettingsModule();
-      const connectorFeed = new ConnectorFeedModule();
       const wiki = new WikiModule();
-      const agentsModule = new AgentsModule();
 
-      // ── Chat Panel: toggle, resize, tab indicator (SmartStore pattern) ──
-      const CHAT_WIDTH_KEY = 'mama-chat-width';
-      const CHAT_COLLAPSED_KEY = 'mama-chat-collapsed';
-      const MIN_CHAT = 280;
-      const MAX_CHAT = 560;
-
-      function toggleChatPanel() {
-        const wrapper = document.getElementById('chat-panel-wrapper');
-        const bar = document.getElementById('chat-collapsed-bar');
-        const handle = document.getElementById('chat-resize-handle-bar');
-        if (!wrapper || !bar) return;
-        const isCollapsed = wrapper.style.display === 'none';
-        if (isCollapsed) {
-          wrapper.style.display = '';
-          bar.classList.add('hidden');
-          if (handle) handle.classList.add('chat-resize-visible');
-          localStorage.setItem(CHAT_COLLAPSED_KEY, 'false');
-        } else {
-          wrapper.style.display = 'none';
-          bar.classList.remove('hidden');
-          if (handle) handle.classList.remove('chat-resize-visible');
-          localStorage.setItem(CHAT_COLLAPSED_KEY, 'true');
-        }
-      }
-      window.toggleChatPanel = toggleChatPanel;
-
-      // Restore collapsed state
-      if (localStorage.getItem(CHAT_COLLAPSED_KEY) === 'true') {
-        toggleChatPanel();
-      }
-
-      // Restore width
-      {
-        const saved = localStorage.getItem(CHAT_WIDTH_KEY);
-        if (saved) {
-          const w = Math.max(MIN_CHAT, Math.min(MAX_CHAT, Number(saved)));
-          const wrapper = document.getElementById('chat-panel-wrapper');
-          if (wrapper) wrapper.style.width = w + 'px';
-        }
-      }
-
-      // Chat resize handle (SmartStore Layout.tsx:158-176 pattern)
-      (function initChatResize() {
-        const handle = document.getElementById('chat-resize-handle-bar');
-        const wrapper = document.getElementById('chat-panel-wrapper');
-        if (!handle || !wrapper) return;
-
-        handle.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          const startX = e.clientX;
-          const startWidth = wrapper.offsetWidth;
-          const onMove = (ev) => {
-            const delta = startX - ev.clientX;
-            const w = Math.max(MIN_CHAT, Math.min(MAX_CHAT, startWidth + delta));
-            wrapper.style.width = w + 'px';
-          };
-          const onUp = () => {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-            localStorage.setItem(CHAT_WIDTH_KEY, String(wrapper.offsetWidth));
-          };
-          document.body.style.cursor = 'col-resize';
-          document.body.style.userSelect = 'none';
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
-        });
-      })();
-
-      // Start UI command polling (SmartStore Layout pattern)
-      startUICommandPolling(switchTab);
-
-      // Expose modules globally for debugging and onclick handlers
-      window.chatModule = chat;
+      // Exposed for inline handlers and debugging.
       window.graphModule = graph;
       window.memoryModule = memory;
-      window.dashboardModule = dashboard;
-      window.settingsModule = settings;
 
-      // Quiz choice button handler
-      window.sendQuizChoice = (choice) => {
-        chat.sendQuizChoice(choice);
+      // ── Routing ─────────────────────────────────────────────────────────────
+      // The hash is the single source of truth: every route is `<group>/<view>`,
+      // with no per-tab implicit defaults. Nav entries are plain hash links, so
+      // back/forward and deep links work without any pushState of our own.
+      const ROUTES = {
+        'operator/board': { group: 'operator', view: 'board', region: 'tab-operator' },
+        'operator/tasks': { group: 'operator', view: 'tasks', region: 'tab-operator' },
+        'operator/triggers': { group: 'operator', view: 'triggers', region: 'tab-operator' },
+        'knowledge/memory': { group: 'knowledge', view: 'memory', region: 'tab-memory' },
+        'knowledge/wiki': { group: 'knowledge', view: 'wiki', region: 'tab-wiki' },
+        'system/runtime': { group: 'system', view: 'runtime', region: 'tab-runtime' },
+        'system/connectors': { group: 'system', view: 'connectors', region: 'tab-connectors' },
+        'system/logs': { group: 'system', view: 'logs', region: 'tab-logs' },
+      };
+      const DEFAULT_ROUTE = 'operator/board';
+
+      // Bare view names an agent navigate command or an old bookmark may carry.
+      // Anything else falls back to the default rather than showing nothing.
+      const ROUTE_ALIASES = {
+        board: 'operator/board',
+        tasks: 'operator/tasks',
+        triggers: 'operator/triggers',
+        memory: 'knowledge/memory',
+        wiki: 'knowledge/wiki',
+        runtime: 'system/runtime',
+        connectors: 'system/connectors',
+        logs: 'system/logs',
       };
 
+      function parseViewerHash() {
+        const raw = String(window.location.hash || '').replace(/^#/, '');
+        const [rawPath, query = ''] = raw.split('?');
+        // Aliases must resolve here too, or a bookmarked '#logs' would land on
+        // the default route while a navigate command for it works.
+        const path = normalizeRoutePath(rawPath);
+        const route = ROUTES[path];
+        return {
+          path,
+          group: route.group,
+          view: route.view,
+          params: new URLSearchParams(query),
+        };
+      }
+
+      function writeViewerHash(path, params) {
+        const query = params ? params.toString() : '';
+        const next = '#' + path + (query ? '?' + query : '');
+        if (window.location.hash !== next) {
+          window.location.hash = next;
+        }
+      }
+
+      function normalizeRoutePath(target) {
+        const raw = String(target || '')
+          .replace(/^#/, '')
+          .trim();
+        if (ROUTES[raw]) return raw;
+        const alias = ROUTE_ALIASES[raw];
+        return alias && ROUTES[alias] ? alias : DEFAULT_ROUTE;
+      }
+
+      function routeKey(path, params) {
+        const query = params ? params.toString() : '';
+        return query ? path + '?' + query : path;
+      }
+
+      // Hash selection params are `task` and `trigger` (the cross-surface
+      // contract); the mount options keep the bundle's own taskId/triggerId
+      // field names.
+      function paramsToSelection(params) {
+        const selection = {};
+        const rawTask = params.get('task');
+        const trigger = params.get('trigger');
+        if (rawTask !== null && rawTask.trim() !== '') {
+          // A task id is a positive integer. '-1', '0', '3.5', '1e3' and 'abc'
+          // are not ids, and silently coercing them would open a drawer on
+          // whatever row happened to answer.
+          const taskId = Number(rawTask);
+          if (Number.isInteger(taskId) && taskId > 0) {
+            selection.taskId = taskId;
+          }
+        }
+        if (trigger) {
+          selection.triggerId = trigger;
+        }
+        return Object.keys(selection).length > 0 ? selection : undefined;
+      }
+
+      function selectionToParams(selection) {
+        const params = new URLSearchParams();
+        if (selection && selection.taskId !== undefined && selection.taskId !== null) {
+          params.set('task', String(selection.taskId));
+        }
+        if (selection && selection.triggerId) {
+          params.set('trigger', selection.triggerId);
+        }
+        return params;
+      }
+
+      function selectedItemFor(selection) {
+        if (!selection) return undefined;
+        if (selection.taskId !== undefined) return { type: 'task', id: String(selection.taskId) };
+        if (selection.triggerId) return { type: 'trigger', id: selection.triggerId };
+        return undefined;
+      }
+
+      // ── Operator content bundle ─────────────────────────────────────────────
+      // Mounted lazily on the first Operator route and then kept for the page
+      // lifetime: unmounting would drop the report SSE stream and the query
+      // cache and force a cold refetch every time the user comes back.
+      let operatorHandle = null;
+      let operatorMountPromise = null;
+
+      function renderOperatorLoadError(root, error) {
+        root.innerHTML =
+          '<div id="operator-load-error" class="m-6 max-w-md rounded-lg border border-gray-200 bg-white p-4 shadow-sm">' +
+          '<p class="text-sm font-semibold text-mama-black">Operator failed to load</p>' +
+          '<p class="mt-1 text-xs text-gray-500" data-detail></p>' +
+          '<button type="button" class="mt-3 rounded bg-mama-yellow px-3 py-1.5 text-xs font-medium text-mama-black" data-reload>Reload</button>' +
+          '</div>';
+        const detail = root.querySelector('[data-detail]');
+        if (detail) {
+          detail.textContent = String((error && error.message) || error || 'Unknown error');
+        }
+        const reload = root.querySelector('[data-reload]');
+        if (reload) {
+          reload.addEventListener('click', () => window.location.reload());
+        }
+      }
+
+      async function ensureOperator(view, selection) {
+        const operatorRoot = document.getElementById('operator-mount');
+        if (!operatorRoot) return;
+
+        if (operatorHandle) {
+          operatorHandle.update(view, selection);
+          return;
+        }
+
+        if (!operatorMountPromise) {
+          operatorMountPromise = import('/viewer/operator/operator.js')
+            .then(({ mountOperator }) => {
+              operatorHandle = mountOperator(operatorRoot, {
+                initialView: view,
+                initialSelection: selection,
+                // In-content navigation is reported back so the address bar
+                // stays truthful; host-driven update() deliberately does not
+                // echo, so there is no loop here.
+                onViewChange: (nextView, nextSelection) => {
+                  switchTab('operator/' + nextView, selectionToParams(nextSelection));
+                },
+              });
+            })
+            .catch((error) => {
+              operatorMountPromise = null;
+              console.error('[MAMA] Operator bundle failed to load:', error);
+              renderOperatorLoadError(operatorRoot, error);
+            });
+        }
+
+        await operatorMountPromise;
+        if (operatorHandle) {
+          operatorHandle.update(view, selection);
+        }
+      }
+
       const STATE = {
-        currentTab: 'feed',
-        theme: 'dark',
+        route: DEFAULT_ROUTE,
+        routeKey: null,
+        theme: 'light',
         graphLoaded: false,
       };
 
-      async function switchTab(tabName, params) {
-        STATE.currentTab = tabName;
+      async function applyRoute(route) {
+        STATE.route = route.path;
+        STATE.routeKey = routeKey(route.path, route.params);
 
-        // Close mobile More menu if open
-        const moreMenu = document.getElementById('mama-mobile-more');
-        if (moreMenu) moreMenu.style.display = 'none';
-
-        // Also highlight the source tab in More menu if it was selected from there
-        document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach((btn) => {
-          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
+        document.querySelectorAll('[data-route]').forEach((el) => {
+          el.classList.toggle('mama-nav-active', el.dataset.route === route.path);
+        });
+        // Mobile chips show only the active group's sub-views; the bottom bar
+        // is what crosses groups.
+        document.querySelectorAll('.mama-subview-chip').forEach((chip) => {
+          chip.hidden = String(chip.dataset.route).split('/')[0] !== route.group;
+        });
+        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach((tab) => {
+          tab.classList.toggle('mama-nav-active', tab.dataset.group === route.group);
         });
 
-        // Update chat panel tab indicator
-        const tabIndicator = document.getElementById('chat-tab-indicator');
-        if (tabIndicator) {
-          tabIndicator.textContent = tabName.charAt(0).toUpperCase() + tabName.slice(1);
-        }
-
-        // Update sidebar nav items
-        document.querySelectorAll('#mama-sidebar .mama-nav-item').forEach((btn) => {
-          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
-        });
-
-        // Update mobile tab bar
-        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach((btn) => {
-          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
-        });
-        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        const overflowTabs = ['feed', 'wiki', 'logs', 'settings'];
-        if (moreBtn) {
-          moreBtn.classList.toggle('mama-nav-active', overflowTabs.includes(tabName));
-        }
-
-        // Legacy: update any remaining [data-tab] buttons outside sidebar/mobile
-        document.querySelectorAll('[data-tab]').forEach((btn) => {
-          if (btn.closest('#mama-sidebar') || btn.closest('#mama-mobile-tabs')) return;
-          const isActive = btn.dataset.tab === tabName;
-          btn.classList.toggle('bg-indigo-100', isActive);
-          btn.classList.toggle('bg-mama-lavender/30', isActive);
-          btn.classList.toggle('text-mama-black', isActive);
-        });
-
+        const regionId = ROUTES[route.path].region;
         document.querySelectorAll('.tab-content').forEach((content) => {
-          content.classList.toggle('active', content.id === `tab-${tabName}`);
+          content.classList.toggle('active', content.id === regionId);
         });
 
-        // Mobile chat: toggle full-screen chat overlay
-        const chatWrapper = document.getElementById('chat-panel-wrapper');
-        if (chatWrapper) {
-          if (tabName === 'chat') {
-            chatWrapper.classList.add('mobile-chat-active');
-          } else {
-            chatWrapper.classList.remove('mobile-chat-active');
-          }
+        const selection = paramsToSelection(route.params);
+        reportPageContext(
+          route.path,
+          {
+            pageType: 'route',
+            group: route.group,
+            view: route.view,
+            params: Object.fromEntries(route.params.entries()),
+          },
+          selectedItemFor(selection)
+        );
+
+        if (route.group === 'operator') {
+          await ensureOperator(route.view, selection);
+          return;
         }
 
-        const publishBasicTabContext = () => {
-          const selectedItem =
-            tabName === 'agents' && params?.id ? { type: 'agent', id: params.id } : undefined;
-          reportPageContext(
-            tabName,
-            { pageType: 'tab-switch', tab: tabName, ...(params || {}) },
-            selectedItem
-          );
-        };
-
-        if (tabName === 'dashboard') {
-          dashboard.init();
-          publishBasicTabContext();
-        } else if (tabName === 'settings') {
-          settings.init();
-          loadConnectorsList();
-          publishBasicTabContext();
-        } else if (tabName === 'memory') {
-          // Initialize sidebar state for current screen size
+        if (route.view === 'memory') {
           updateCheckpointSidebarForScreenSize();
-
-          // Load checkpoints
-          loadCheckpoints();
-
-          // Load memory stats for analytics bar
           updateMemoryStats();
-
-          // Load graph
           if (!STATE.graphLoaded) {
             try {
               const data = await graph.fetchData();
@@ -2119,37 +1497,67 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
             } catch (error) {
               console.error('[MAMA] Failed to load graph:', error);
               const loadingEl = document.getElementById('graph-loading');
-              if (loadingEl)
+              if (loadingEl) {
                 loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
+              }
             }
           }
-          publishBasicTabContext();
-        } else if (tabName === 'feed') {
-          connectorFeed.init();
-          publishBasicTabContext();
-        } else if (tabName === 'agents') {
-          agentsModule.init();
-          // Handle deep navigation: params.id opens agent detail, params.tab selects tab
-          if (params?.id) {
-            await agentsModule.navigateTo(params.id, params.tab);
-          } else {
-            agentsModule.showList();
-          }
-        } else if (tabName === 'wiki') {
+          return;
+        }
+
+        if (route.view === 'wiki') {
           wiki.init();
-          await wiki.navigateTo(params?.path);
-        } else if (tabName === 'logs') {
+          await wiki.navigateTo(route.params.get('path') || undefined);
+          return;
+        }
+
+        // System is read-only truth: both views render the one authoritative
+        // runtime snapshot, so the screen can never name a backend, model or
+        // connector state the daemon is not actually running.
+        if (route.view === 'runtime') {
+          await renderRuntimeView(document.getElementById('runtime-content'));
+          return;
+        }
+
+        if (route.view === 'connectors') {
+          await renderConnectorsView(document.getElementById('connectors-list'));
+          return;
+        }
+
+        if (route.view === 'logs') {
           const iframe = document.getElementById('logs-iframe');
           if (iframe && !iframe.getAttribute('src')) {
             iframe.src = '/viewer/log-viewer.html';
           }
-          publishBasicTabContext();
-        } else if (tabName === 'chat') {
-          publishBasicTabContext();
-        } else {
-          publishBasicTabContext();
         }
       }
+
+      /**
+       * Navigate by route path (`operator/tasks`) or bare view name (`tasks`).
+       * Writes the hash first, then applies: the hashchange listener sees the
+       * key it already holds and stays out of the way.
+       */
+      async function switchTab(target, params) {
+        const path = normalizeRoutePath(target);
+        const search =
+          params instanceof URLSearchParams ? params : new URLSearchParams(params || {});
+        writeViewerHash(path, search);
+        await applyRoute({
+          path,
+          group: ROUTES[path].group,
+          view: ROUTES[path].view,
+          params: search,
+        });
+      }
+
+      window.addEventListener('hashchange', () => {
+        const route = parseViewerHash();
+        if (routeKey(route.path, route.params) === STATE.routeKey) return;
+        applyRoute(route);
+      });
+
+      // Agent → viewer navigation commands ride the same route resolver.
+      startUICommandPolling(switchTab);
 
       function toggleTheme() {
         // Light-only theme (brand unification) - no toggle needed
@@ -2527,104 +1935,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
           .catch(() => (result.innerHTML = '<span class="text-red-500">Connection failed</span>'));
       }
 
-      async function sendChatMessage() {
-        if (pendingAttachment) {
-          const file = pendingAttachment;
-          // Don't clear attachment yet - wait for successful send
-
-          const formData = new FormData();
-          formData.append('file', file);
-
-          try {
-            const resp = await fetch('/api/upload', { method: 'POST', body: formData });
-            if (!resp.ok) throw new Error('Upload failed');
-            const data = await resp.json();
-
-            // Check WS connection before sending
-            if (!chat.ws || chat.ws.readyState !== WebSocket.OPEN) {
-              chat.addSystemMessage('Not connected. Please wait for reconnection.', 'error');
-              return;
-            }
-
-            const input = document.getElementById('chat-input');
-            const isImage = file.type.startsWith('image/');
-            const defaultMsg = isImage ? 'What is in this image?' : 'Analyze this document';
-            const message = input.value.trim() || defaultMsg;
-
-            const mediaUrl = '/api/media/' + encodeURIComponent(data.filename);
-            const attachMeta = {
-              mediaUrl,
-              filename: data.filename,
-              originalName: file.name,
-              contentType: file.type,
-              isImage,
-            };
-
-            // Save with attachment metadata for history persistence
-            chat.addUserMessageWithAttachment(message, attachMeta);
-
-            chat.enableSend(false);
-            chat.ws.send(
-              JSON.stringify({
-                type: 'send',
-                sessionId: chat.sessionId,
-                content: message,
-                attachments: [
-                  {
-                    filename: data.filename,
-                    contentType: data.contentType,
-                  },
-                ],
-              })
-            );
-
-            // Clear attachment only after successful send
-            clearAttachment();
-            input.value = '';
-          } catch (err) {
-            chat.addSystemMessage('Upload failed: ' + err.message, 'error');
-            // Keep pendingAttachment so user can retry
-          }
-          return;
-        }
-        chat.send();
-      }
-
-      // Send quiz choice as message
-      window.sendQuizChoice = function (choice) {
-        if (chat && chat.ws && chat.ws.readyState === WebSocket.OPEN) {
-          // Set the input to the choice and send
-          const input = document.getElementById('chat-input');
-          if (input) {
-            input.value = choice;
-            chat.send();
-          }
-        }
-      };
-
-      function toggleTTS() {
-        chat.toggleTTS && chat.toggleTTS();
-      }
-
-      function toggleTTSPopup() {
-        const popup = document.getElementById('tts-speed-popup');
-        popup.classList.toggle('hidden');
-      }
-
-      function updateTTSSpeed(value) {
-        document.getElementById('tts-speed-label').textContent = value + 'x';
-        document.getElementById('tts-speed-value').textContent = value + 'x';
-        chat.setTTSRate && chat.setTTSRate(parseFloat(value));
-      }
-
-      function toggleHandsFree() {
-        chat.toggleHandsFree && chat.toggleHandsFree();
-      }
-
-      function toggleVoiceInput() {
-        chat.toggleVoice && chat.toggleVoice();
-      }
-
       function filterByTopic(topic) {
         graph.filterByTopic && graph.filterByTopic(topic);
       }
@@ -2633,11 +1943,17 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         graph.filterByOutcome && graph.filterByOutcome(outcome);
       }
 
+      // Clear is scoped to the Graph module instance that owns the filters. Each
+      // control is looked up defensively: the bar is markup that can be edited,
+      // and one missing input must not take the whole Clear action down.
       function clearFilters() {
-        document.getElementById('topic-filter').value = '';
-        document.getElementById('outcome-filter').value = '';
-        document.getElementById('search-input').value = '';
-        graph.clearFilters && graph.clearFilters();
+        const topicFilter = document.getElementById('topic-filter');
+        const outcomeFilter = document.getElementById('outcome-filter');
+        const searchInput = document.getElementById('search-input');
+        if (topicFilter) topicFilter.value = '';
+        if (outcomeFilter) outcomeFilter.value = '';
+        if (searchInput) searchInput.value = '';
+        graph?.clearFilters?.();
       }
 
       async function exportDecisions(format) {
@@ -2692,174 +2008,8 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         }
       }
 
-      let checkpointsData = [];
-
-      function renderMarkdown(text) {
-        if (!text) return '';
-        try {
-          if (typeof marked !== 'undefined' && marked.parse) {
-            return marked.parse(text);
-          }
-        } catch (e) {
-          console.error('[MAMA] Markdown parse error:', e);
-        }
-        return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-      }
-
-      async function loadCheckpoints() {
-        const container = document.getElementById('checkpoint-list');
-        if (!container) {
-          console.error('[MAMA] checkpoint-list container not found');
-          return;
-        }
-
-        console.log('[MAMA] Loading checkpoints...');
-
-        try {
-          const data = await API.get('/api/checkpoints');
-          checkpointsData = data.checkpoints || [];
-
-          console.log('[MAMA] Loaded', checkpointsData.length, 'checkpoints');
-
-          if (checkpointsData.length > 0) {
-            container.innerHTML = checkpointsData
-              .map((cp, idx) => {
-                const fullSummary = renderMarkdown(cp.summary || '');
-                return `
-              <div class="checkpoint-item p-3 bg-white bg-white border border-gray-200 border-gray-300 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
-                <div class="text-xs font-semibold text-mama-black text-mama-black mb-1">${new Date(cp.timestamp).toLocaleString()}</div>
-                <div class="checkpoint-summary text-sm text-gray-700 text-gray-700 markdown-content line-clamp-3 overflow-hidden">${fullSummary}</div>
-                <div class="checkpoint-details hidden mt-3 pt-3 border-t border-gray-200 border-gray-300">
-                  <div class="text-sm text-gray-700 text-gray-700 markdown-content max-h-64 overflow-y-auto">${fullSummary}</div>
-                </div>
-              </div>
-            `;
-              })
-              .join('');
-          } else {
-            container.innerHTML =
-              '<div class="text-center text-sm text-gray-500 py-4">No checkpoints found</div>';
-          }
-        } catch (error) {
-          console.error('[MAMA] Failed to load checkpoints:', error);
-          container.innerHTML =
-            '<div class="text-center text-sm text-red-500 py-4">Failed to load checkpoints</div>';
-        }
-      }
-
-      function toggleCheckpoint(idx) {
-        const items = document.querySelectorAll('.checkpoint-item');
-        items.forEach((item, i) => {
-          const details = item.querySelector('.checkpoint-details');
-          const summary = item.querySelector('.checkpoint-summary');
-          if (i === idx) {
-            const isExpanded = !details.classList.contains('hidden');
-            details.classList.toggle('hidden');
-            summary.classList.toggle('hidden', !isExpanded);
-            item.classList.toggle('border-indigo-500', !isExpanded);
-          } else {
-            details.classList.add('hidden');
-            summary.classList.remove('hidden');
-            item.classList.remove('border-indigo-500');
-          }
-        });
-      }
-
-      // Connector list loader for Settings
-      const CONNECTOR_NAMES = [
-        'slack',
-        'telegram',
-        'discord',
-        'chatwork',
-        'gmail',
-        'calendar',
-        'notion',
-        'obsidian',
-        'kagemusha',
-        'sheets',
-        'trello',
-        'drive',
-        'imessage',
-      ];
-      const CONNECTOR_CATEGORIES = {
-        Messaging: ['slack', 'telegram', 'discord', 'chatwork'],
-        Google: ['gmail', 'calendar', 'drive', 'sheets'],
-        Knowledge: ['notion', 'obsidian', 'kagemusha'],
-        'Dev Tools': ['claude-code'],
-        Other: ['trello', 'imessage'],
-      };
-      async function loadConnectorsList() {
-        const container = document.getElementById('settings-connectors-list');
-        if (!container) return;
-        let connectorStatus = {};
-        try {
-          const res = await fetch('/api/connectors/status');
-          if (res.ok) {
-            const data = await res.json();
-            for (const c of data.connectors || []) connectorStatus[c.name] = c;
-          }
-        } catch {}
-        // Load config
-        let config = {};
-        try {
-          const res = await fetch('/api/config');
-          if (res.ok) {
-            const data = await res.json();
-            config = data?.connectors || {};
-          }
-        } catch {}
-        let html = '';
-        for (const [category, names] of Object.entries(CONNECTOR_CATEGORIES)) {
-          html += `<div style="margin-bottom:12px"><div style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:12px;font-weight:600;color:#6B6560;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">${category}</div><div class="grid grid-cols-2 lg:grid-cols-3 gap-1.5">`;
-          for (const name of names) {
-            const status = connectorStatus[name];
-            const cfg = config[name];
-            const enabled = cfg?.enabled || status?.enabled || false;
-            const healthy = status?.healthy || false;
-            const lastPoll = status?.lastPollTime
-              ? new Date(status.lastPollTime).toLocaleTimeString('ko-KR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : null;
-            const channels = status?.channelCount || Object.keys(cfg?.channels || {}).length || 0;
-            const statusDot = enabled ? (healthy ? '#3A9E7E' : '#E8A040') : '#9E9891';
-            html += `<div style="background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:8px 10px;font-size:12px;display:flex;align-items:center;gap:8px">`;
-            html += `<span style="display:inline-block;width:6px;height:6px;background:${statusDot};border-radius:1px;flex-shrink:0"></span>`;
-            html += `<span style="font-weight:600;color:#1A1A1A;flex:1">${name}</span>`;
-            if (channels > 0)
-              html += `<span style="font-size:10px;color:#9E9891">${channels}ch</span>`;
-            if (lastPoll) html += `<span style="font-size:10px;color:#9E9891">${lastPoll}</span>`;
-            if (!enabled)
-              html += `<span style="font-size:9px;color:#9E9891;background:#F5F2ED;padding:1px 4px;border-radius:2px">off</span>`;
-            html += `</div>`;
-          }
-          html += `</div></div>`;
-        }
-        container.innerHTML = html;
-      }
-
-      // Mobile "More" menu
-      function toggleMobileMore() {
-        const more = document.getElementById('mama-mobile-more');
-        if (!more) return;
-        const isVisible = more.style.display !== 'none';
-        more.style.display = isVisible ? 'none' : 'block';
-        // Update More button active state
-        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        if (moreBtn) moreBtn.classList.toggle('mama-nav-active', !isVisible);
-      }
-      function closeMobileMore() {
-        const more = document.getElementById('mama-mobile-more');
-        if (more) more.style.display = 'none';
-        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        if (moreBtn) moreBtn.classList.remove('mama-nav-active');
-      }
-
       // Expose to window for onclick handlers
       window.switchTab = switchTab;
-      window.toggleMobileMore = toggleMobileMore;
-      window.closeMobileMore = closeMobileMore;
       window.toggleTheme = toggleTheme;
       window.toggleLegend = toggleLegend;
       window.closeDetailModal = closeDetailModal;
@@ -2869,265 +2019,31 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       window.showSaveDecisionForm = showSaveDecisionForm;
       window.hideSaveDecisionForm = hideSaveDecisionForm;
       window.submitSaveDecision = submitSaveDecision;
-      window.copyNgrokCommand = copyNgrokCommand;
       window.testConnection = testConnection;
-      window.sendChatMessage = sendChatMessage;
-      window.toggleTTS = toggleTTS;
-      window.toggleTTSPopup = toggleTTSPopup;
-      window.updateTTSSpeed = updateTTSSpeed;
-      window.toggleHandsFree = toggleHandsFree;
-      window.toggleVoiceInput = toggleVoiceInput;
-
-      // File attachment state
-      let pendingAttachment = null;
-
-      const FILE_ICONS = {
-        'application/pdf': '📄',
-        'text/plain': '📝',
-        'text/csv': '📊',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📃',
-        'application/msword': '📃',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊',
-        'application/vnd.ms-excel': '📊',
-      };
-
-      function getFileIcon(mimeType) {
-        return FILE_ICONS[mimeType] || '📎';
-      }
-
-      function handleFileSelect(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const preview = document.getElementById('chat-attachment-preview');
-        const thumb = document.getElementById('chat-attachment-thumb');
-        const name = document.getElementById('chat-attachment-name');
-
-        if (file.type.startsWith('image/')) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            thumb.src = e.target.result;
-          };
-          reader.readAsDataURL(file);
-          thumb.style.display = '';
-        } else {
-          // Show emoji icon for documents
-          thumb.style.display = 'none';
-          name.textContent = getFileIcon(file.type) + ' ' + file.name;
-        }
-
-        if (file.type.startsWith('image/')) {
-          name.textContent = file.name;
-        }
-        preview.classList.remove('hidden');
-        pendingAttachment = file;
-        // cleared
-      }
-
-      function clearAttachment() {
-        pendingAttachment = null;
-        // cleared
-        document.getElementById('chat-attachment-preview').classList.add('hidden');
-        document.getElementById('chat-file-input').value = '';
-        const thumb = document.getElementById('chat-attachment-thumb');
-        thumb.src = 'data:,';
-        thumb.style.display = '';
-      }
-
-      window.handleFileSelect = handleFileSelect;
-      window.clearAttachment = clearAttachment;
-
-      // Drag & drop support
-      const chatMessages = document.getElementById('chat-messages');
-      if (chatMessages) {
-        const panel = chatMessages.closest('#chat-panel') || chatMessages.parentElement;
-        ['dragenter', 'dragover'].forEach((evt) => {
-          panel.addEventListener(evt, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            panel.classList.add('ring-2', 'ring-mama-yellow');
-          });
-        });
-        ['dragleave', 'drop'].forEach((evt) => {
-          panel.addEventListener(evt, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            panel.classList.remove('ring-2', 'ring-mama-yellow');
-          });
-        });
-        panel.addEventListener('drop', (e) => {
-          const file = e.dataTransfer.files[0];
-          if (!file) return;
-
-          // Allowed MIME types and extensions (match file input accept attribute)
-          const allowedTypes = [
-            'image/',
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'text/plain',
-            'text/csv',
-            'text/markdown',
-            'text/html',
-            'text/xml',
-            'application/json',
-            'application/xml',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-powerpoint',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/zip',
-            'application/gzip',
-          ];
-          const allowedExts = [
-            '.pdf',
-            '.doc',
-            '.docx',
-            '.txt',
-            '.csv',
-            '.xls',
-            '.xlsx',
-            '.md',
-            '.json',
-            '.html',
-            '.htm',
-            '.xml',
-            '.zip',
-            '.gz',
-            '.ppt',
-            '.pptx',
-          ];
-          const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
-
-          const isAllowed =
-            allowedTypes.some((t) => file.type.startsWith(t)) || allowedExts.includes(ext);
-          if (isAllowed) {
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            document.getElementById('chat-file-input').files = dt.files;
-            handleFileSelect({ target: { files: [file] } });
-          } else {
-            chat.addSystemMessage(
-              'Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS, PPT, MD, JSON, HTML, ZIP',
-              'error'
-            );
-          }
-        });
-      }
-
+      window.filterByOutcome = filterByOutcome;
+      window.clearFilters = clearFilters;
+      window.exportDecisions = exportDecisions;
       window.filterByTopic = filterByTopic;
       window.handleGraphSearch = handleGraphSearch;
       window.saveOutcome = saveOutcome;
-      window.loadCheckpoints = loadCheckpoints;
-      window.toggleCheckpoint = toggleCheckpoint;
 
       document.addEventListener('DOMContentLoaded', () => {
         const userLang = navigator.language || navigator.userLanguage;
         document.documentElement.lang = userLang.split('-')[0];
 
-        // Initialize Lucide icons (sidebar + mobile tab bar)
+        // Initialize Lucide icons (rail + chip row)
         if (typeof lucide !== 'undefined' && lucide.createIcons) {
           lucide.createIcons();
         }
 
         initTheme();
-        // Initialize floating chat panel bindings (session init is lazy, on first open)
-        chat.initFloating();
-        // Default to feed tab
-        switchTab('feed');
+
+        // Route from the address bar; an empty or unknown hash is normalised to
+        // the default so the URL always names what is on screen.
+        const initialRoute = parseViewerHash();
+        writeViewerHash(initialRoute.path, initialRoute.params);
+        applyRoute(initialRoute);
       });
-
-      // Listen for postMessage from skill deployment
-      window.addEventListener('message', (event) => {
-        if (!event.data) return;
-
-        // viewer:sendToChat — generic child iframe → chat handoff
-        if (event.data.type === 'viewer:sendToChat') {
-          const message = typeof event.data.message === 'string' ? event.data.message : '';
-          if (!message) {
-            return;
-          }
-          const input = document.getElementById('chat-input');
-          if (input && chat) {
-            input.value = message;
-            setTimeout(() => chat.send(), 50);
-          }
-        }
-      });
-
-      // Cleanup resources on page unload
-      window.addEventListener('beforeunload', () => {
-        // Cleanup dashboard intervals
-        if (window.dashboardModule?.cleanup) {
-          window.dashboardModule.cleanup();
-        }
-        // Cleanup chat resources
-        if (window.chatModule?.cleanup) {
-          window.chatModule.cleanup();
-        }
-        console.log('[MAMA] Resources cleaned up');
-      });
-
-      // Context-aware help: ? button sends tab-specific prompt to chat
-      const TAB_HELP_PROMPTS = {
-        dashboard: `The user clicked the help button on the MAMA OS Dashboard tab.
-Please explain what this tab shows:
-- Gateway connection status (Discord, Slack, Telegram, Chatwork)
-- MCP server status
-- Multi-Agent swarm overview
-- Token usage and cost tracking
-- Scheduled jobs (Cron) status
-Explain what each section means and what actions the user can take. Be friendly and concise.`,
-
-        memory: `The user clicked the help button on the Memory tab.
-Please explain this tab's features:
-- Decision Graph: Visual graph showing relationships between decisions (click nodes for details)
-- Checkpoints: Session checkpoint list (resume previous work)
-- Stats bar: Total decisions, weekly activity, outcome distribution
-- Search: Find past decisions by keyword
-- Save new decisions: Record insights with the + button
-Be friendly and concise.`,
-
-        settings: `The user clicked the help button on the Settings tab.
-Please explain what can be configured here:
-- Gateways: Discord, Slack, Telegram, Chatwork bot connections
-- Agent: Backend model, max turns, timeout, and other agent settings
-- Multi-Agent: Per-agent model, backend, tier, and delegation settings
-- Cron: Create, edit, and run scheduled jobs
-- Token Budget: Set daily token limits and alerts
-- Metrics: Enable/disable metrics collection and set retention period
-Be friendly and concise.`,
-
-        logs: `The user clicked the help button on the Logs tab.
-Please explain this tab's features:
-- Shows real-time daemon log output with auto-polling
-- Filter by log level (ERROR, WARN, INFO, DEBUG)
-- Search logs by keyword
-- Pause/Resume auto-refresh
-Be friendly and concise.`,
-      };
-
-      window.askContextHelp = function () {
-        const currentTab = STATE.currentTab || 'feed';
-        const prompt = TAB_HELP_PROMPTS[currentTab];
-        if (!prompt) return;
-
-        if (window.innerWidth < 768) {
-          switchTab('chat');
-        } else {
-          const wrapper = document.getElementById('chat-panel-wrapper');
-          if (wrapper && wrapper.style.display === 'none') {
-            toggleChatPanel();
-          }
-        }
-
-        // Set input and send
-        const input = document.getElementById('chat-input');
-        if (input && chat) {
-          input.value = prompt;
-          setTimeout(() => chat.send(), 150);
-        }
-      };
 
       // Register Service Worker for PWA
       if ('serviceWorker' in navigator) {

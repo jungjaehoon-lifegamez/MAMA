@@ -23,7 +23,7 @@ mama start
 **What you get:**
 
 - Always-on agent with gateway integrations (Discord, Slack, Telegram)
-- Built-in MAMA OS (graph viewer + mobile chat)
+- Built-in MAMA OS Viewer (operator board, memory graph, wiki, runtime status)
 - Autonomous agent loop with heartbeat monitoring
 - Full decision memory across all conversations
 

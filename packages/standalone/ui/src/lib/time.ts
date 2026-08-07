@@ -8,7 +8,7 @@ export function getFreshnessClass(now: number, updatedAt: number): string {
   }
   const age = Math.max(0, now - updatedAt);
   if (age < HOUR_MS) {
-    return 'bg-agent-light text-agent';
+    return 'bg-agent-light text-agent-strong';
   }
   if (age <= 6 * HOUR_MS) {
     return 'bg-surface-secondary text-text-tertiary';

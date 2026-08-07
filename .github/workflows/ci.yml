@@ -61,6 +61,7 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
+            packages/standalone/ui/node_modules
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
 
@@ -80,6 +81,7 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
+            packages/standalone/ui/node_modules
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
       - name: Test mama-core
@@ -103,6 +105,7 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
+            packages/standalone/ui/node_modules
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
       - uses: actions/cache@v5
@@ -131,6 +134,7 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
+            packages/standalone/ui/node_modules
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
       - name: Test plugin
@@ -154,6 +158,7 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
+            packages/standalone/ui/node_modules
             packages/*/dist
           key: ${{ runner.os }}-build-${{ github.sha }}
       - name: Test mcp-server

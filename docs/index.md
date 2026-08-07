@@ -46,7 +46,7 @@ _Step-by-step instructions for specific tasks_
 - [Installation Guide](guides/installation.md) - Complete installation process
 - [Standalone Setup](guides/standalone-setup.md) - Set up always-on AI agent
 - [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
-- [Mobile Access](guides/mobile-access.md) - Access MAMA from any device with mobile chat
+- [Mobile Access](guides/mobile-access.md) - Reach the Viewer from any device
 - [Webchat Media](guides/webchat-media.md) - Image upload, TTS/STT voice features
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 - [Standalone Troubleshooting](guides/standalone-troubleshooting.md) - Fix standalone agent issues
@@ -72,7 +72,7 @@ _Technical specifications and API documentation_
 _Conceptual explanations and design decisions_
 
 - [Architecture](explanation/architecture.md) - System architecture overview
-- [MAMA OS](explanation/mama-os.md) - Built-in graph viewer and mobile chat
+- [MAMA OS](explanation/mama-os.md) - The built-in Viewer: Operator, Knowledge, System
 - [Tier System](explanation/tier-system.md) - Tier system design and philosophy
 - [Decision Graph](explanation/decision-graph.md) - Decision evolution tracking
 - [Semantic Search](explanation/semantic-search.md) - How semantic search works

@@ -4,7 +4,7 @@ import { formatRelativeTime } from '../lib/time';
 
 const STATUS_CLASSES: Record<TriggerStatus, string> = {
   active: 'bg-success-soft text-success-text',
-  disabled: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
+  disabled: 'bg-surface-secondary text-text-secondary',
   superseded: 'bg-warning-soft text-warning-text',
 };
 
@@ -36,11 +36,11 @@ export default function TriggerRow({ trigger, now, onOpen }: TriggerRowProps) {
             event.stopPropagation();
             onOpen(trigger.id, event.currentTarget);
           }}
-          className="block max-w-80 text-left text-sm font-medium text-agent-hover underline-offset-2 hover:underline dark:text-agent"
+          className="block max-w-80 text-left text-sm font-medium text-agent-strong underline-offset-2 hover:underline"
         >
           {trigger.kind}
         </button>
-        <div className="mt-1 max-w-80 truncate text-[11px] text-text-secondary dark:text-text-tertiary">
+        <div className="mt-1 max-w-80 truncate text-[11px] text-text-secondary">
           {keywords || 'No keywords'}
         </div>
       </td>
@@ -55,7 +55,7 @@ export default function TriggerRow({ trigger, now, onOpen }: TriggerRowProps) {
       <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">
         {trigger.succeeded} / {trigger.failed}
       </td>
-      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary dark:text-text-tertiary">
+      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">
         {formatRelativeTime(now, trigger.updatedAt)}
       </td>
       <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">
