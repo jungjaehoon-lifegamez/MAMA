@@ -409,23 +409,17 @@
             </div>
           </div>
 
-          <!-- Runtime Tab -->
+          <!-- Runtime Tab: rendered from /api/runtime/status only. -->
           <div class="tab-content" id="tab-runtime">
             <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-              <div id="runtime-content">
-                <div style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px">
-                  Runtime health lands here.
-                </div>
-              </div>
+              <div id="runtime-content"></div>
             </div>
           </div>
 
-          <!-- Connectors Tab -->
+          <!-- Connectors Tab: read-only state from the same runtime snapshot. -->
           <div class="tab-content" id="tab-connectors">
             <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-              <div id="connectors-list" class="space-y-1.5">
-                <p class="text-[10px] text-gray-400">Loading connectors...</p>
-              </div>
+              <div id="connectors-list"></div>
             </div>
           </div>
 
@@ -1267,6 +1261,7 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       import { GraphModule } from '/viewer/js/modules/graph.js';
       import { MemoryModule } from '/viewer/js/modules/memory.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
+      import { renderRuntimeView, renderConnectorsView } from '/viewer/js/modules/system.js';
       import { API } from '/viewer/js/utils/api.js';
       import { startUICommandPolling, reportPageContext } from '/viewer/js/utils/ui-commands.js';
 
@@ -1515,8 +1510,16 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
           return;
         }
 
+        // System is read-only truth: both views render the one authoritative
+        // runtime snapshot, so the screen can never name a backend, model or
+        // connector state the daemon is not actually running.
+        if (route.view === 'runtime') {
+          await renderRuntimeView(document.getElementById('runtime-content'));
+          return;
+        }
+
         if (route.view === 'connectors') {
-          await loadConnectorsList();
+          await renderConnectorsView(document.getElementById('connectors-list'));
           return;
         }
 
@@ -2069,65 +2072,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
             item.classList.remove('border-indigo-500');
           }
         });
-      }
-
-      // Connector status list (System > Connectors)
-      const CONNECTOR_CATEGORIES = {
-        Messaging: ['slack', 'telegram', 'discord', 'chatwork'],
-        Google: ['gmail', 'calendar', 'drive', 'sheets'],
-        Knowledge: ['notion', 'obsidian', 'kagemusha'],
-        'Dev Tools': ['claude-code'],
-        Other: ['trello', 'imessage'],
-      };
-      async function loadConnectorsList() {
-        const container = document.getElementById('connectors-list');
-        if (!container) return;
-        let connectorStatus = {};
-        try {
-          const res = await fetch('/api/connectors/status');
-          if (res.ok) {
-            const data = await res.json();
-            for (const c of data.connectors || []) connectorStatus[c.name] = c;
-          }
-        } catch {}
-        // Load config
-        let config = {};
-        try {
-          const res = await fetch('/api/config');
-          if (res.ok) {
-            const data = await res.json();
-            config = data?.connectors || {};
-          }
-        } catch {}
-        let html = '';
-        for (const [category, names] of Object.entries(CONNECTOR_CATEGORIES)) {
-          html += `<div style="margin-bottom:12px"><div style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:12px;font-weight:600;color:#6B6560;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">${category}</div><div class="grid grid-cols-2 lg:grid-cols-3 gap-1.5">`;
-          for (const name of names) {
-            const status = connectorStatus[name];
-            const cfg = config[name];
-            const enabled = cfg?.enabled || status?.enabled || false;
-            const healthy = status?.healthy || false;
-            const lastPoll = status?.lastPollTime
-              ? new Date(status.lastPollTime).toLocaleTimeString('ko-KR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : null;
-            const channels = status?.channelCount || Object.keys(cfg?.channels || {}).length || 0;
-            const statusDot = enabled ? (healthy ? '#3A9E7E' : '#E8A040') : '#9E9891';
-            html += `<div style="background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:8px 10px;font-size:12px;display:flex;align-items:center;gap:8px">`;
-            html += `<span style="display:inline-block;width:6px;height:6px;background:${statusDot};border-radius:1px;flex-shrink:0"></span>`;
-            html += `<span style="font-weight:600;color:#1A1A1A;flex:1">${name}</span>`;
-            if (channels > 0)
-              html += `<span style="font-size:10px;color:#9E9891">${channels}ch</span>`;
-            if (lastPoll) html += `<span style="font-size:10px;color:#9E9891">${lastPoll}</span>`;
-            if (!enabled)
-              html += `<span style="font-size:9px;color:#9E9891;background:#F5F2ED;padding:1px 4px;border-radius:2px">off</span>`;
-            html += `</div>`;
-          }
-          html += `</div></div>`;
-        }
-        container.innerHTML = html;
       }
 
       // Expose to window for onclick handlers

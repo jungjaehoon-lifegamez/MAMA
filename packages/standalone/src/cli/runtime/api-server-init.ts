@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 import { createApiServer } from '../../api/index.js';
-import type { ApiServer } from '../../api/index.js';
+import type { ApiServer, RuntimeConnectorStatus, RuntimeStatusSnapshot } from '../../api/index.js';
+import { visibleConnectorNames } from '../../connectors/private-connector-policy.js';
 import { createPersistentReportStore } from '../../api/report-persistence.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
 import { liveBoundaryChannels } from '../../evidence/read.js';
@@ -58,6 +59,38 @@ export interface InitApiServerResult {
   apiServer: ApiServer;
   eventBus: import('../../multi-agent/agent-event-bus.js').AgentEventBus;
   skillRegistry: SkillRegistry;
+}
+
+/**
+ * Project the connectors the runtime actually booted with.
+ *
+ * Only CONFIGURED connectors are listed (so an unconfigured install honestly
+ * shows an empty list), filtered through the private-connector visibility
+ * policy. `state` reports registration truth, not a guess: a connector the
+ * daemon registered is `connected`, one that is switched off is
+ * `disconnected`, and one that is enabled in config but absent from the boot
+ * registry is `unknown` rather than being claimed as healthy.
+ */
+export function projectRuntimeConnectors(
+  connectorConfigLoadResult: ConnectorConfigLoadResult,
+  enabledConnectors: readonly string[]
+): RuntimeConnectorStatus[] {
+  const configuredNames = Object.keys(connectorConfigLoadResult.config);
+  const registered = new Set(enabledConnectors);
+  return visibleConnectorNames(configuredNames)
+    .filter((name) => configuredNames.includes(name))
+    .map((name) => {
+      const enabled =
+        (connectorConfigLoadResult.config as Record<string, { enabled?: boolean } | undefined>)[
+          name
+        ]?.enabled ?? false;
+      const state: RuntimeConnectorStatus['state'] = registered.has(name)
+        ? 'connected'
+        : enabled
+          ? 'unknown'
+          : 'disconnected';
+      return { name, enabled, state };
+    });
 }
 
 export async function initApiServer(params: InitApiServerParams): Promise<InitApiServerResult> {
@@ -121,9 +154,36 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
       memoryAdapter: mamaCoreAdapter,
       channelGrant: liveBoundaryChannels,
     });
+  // --- Authoritative runtime snapshot ---------------------------------
+  // Built from what this boot already resolved. It deliberately does NOT read
+  // agents.ts or any stored model registry: the Viewer must show the backend
+  // and model this process is running, not a catalog default.
+  const daemonStartedAt = Math.round(Date.now() - process.uptime() * 1000);
+  const getRuntimeStatus = (): RuntimeStatusSnapshot => {
+    let health: RuntimeStatusSnapshot['health'] = null;
+    if (healthService) {
+      try {
+        const report = healthService.compute();
+        health = { score: report.score, status: report.status };
+      } catch (error) {
+        console.warn('[start] runtime health unavailable:', error);
+        health = null;
+      }
+    }
+    return {
+      running: true,
+      backend: config.agent.backend,
+      model: config.agent.model,
+      startedAt: daemonStartedAt,
+      health,
+      connectors: projectRuntimeConnectors(connectorConfigLoadResult, enabledConnectors),
+    };
+  };
+
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,
+    getRuntimeStatus,
     // Daemon runtime is the ONLY place the persistent store is wired; the
     // in-memory default keeps test call sites off the real ~/.mama.
     reportStore: createPersistentReportStore({

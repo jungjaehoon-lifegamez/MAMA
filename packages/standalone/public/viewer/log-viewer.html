@@ -14,7 +14,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .status-dot.connected{background:var(--success);box-shadow:0 0 6px var(--success)}
 .status-dot.disconnected{background:var(--error)}
 .status-dot.connecting{background:var(--warn);animation:pulse 1s infinite}
-.status-dot.ws-connected{background:#39d353;box-shadow:0 0 8px #39d353}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @keyframes fadeNew{from{background:rgba(59,185,80,.18)}to{background:transparent}}
 .status-text{font-size:11px;color:var(--muted);min-width:100px}
@@ -24,7 +23,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn:hover{border-color:var(--accent);color:var(--accent)}
 .btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .btn.paused{background:var(--warn);border-color:var(--warn);color:#000}
-.btn.ws-mode{background:#39d353;border-color:#39d353;color:#000}
 .sel-ctrl{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 5px;color:var(--text);font-size:11px;font-family:inherit;outline:none}
 .toolbar{display:flex;align-items:center;gap:6px;padding:5px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
 .search-box{flex:1;min-width:120px;display:flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 7px}
@@ -184,7 +182,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <span class="rate-badge" id="rateBadge" title="Lines per second">0 l/s</span>
   <div class="hdr-right">
     <button class="btn" id="liveBtn" title="Toggle live (L)">&#9654; Live</button>
-    <button class="btn" id="wsBtn" title="WebSocket mode (W)">WS</button>
     <select class="sel-ctrl" id="intervalSel" title="Poll interval">
       <option value="1000">1s</option>
       <option value="2000" selected>2s</option>
@@ -288,7 +285,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="empty" id="emptyState">
         <div class="ico">&#128203;</div>
         <p>daemon.log</p>
-        <p><kbd>L</kbd> Live <kbd>W</kbd> WebSocket <kbd>/</kbd> Search <kbd>A</kbd> Auto-scroll <kbd>P</kbd> Pause <kbd>D</kbd> Stats</p>
+        <p><kbd>L</kbd> Live <kbd>/</kbd> Search <kbd>A</kbd> Auto-scroll <kbd>P</kbd> Pause <kbd>D</kbd> Stats</p>
       </div>
     </div>
     <div class="minimap" id="minimap">
@@ -328,15 +325,10 @@ const NEW_LINE_ANIM_MS = 900;
 const AUTO_SCROLL_THRESHOLD = 50;
 const MAX_INCREMENTAL_LINES = 200;
 const PINS_STORAGE_KEY = 'mama-log-viewer-pins';
-const WS_RECONNECT_DELAY = 3000;
-const WS_MAX_RETRIES = 5;
 const HISTOGRAM_BUCKETS = 30;
 
 // Use same-origin by default so custom host/IP + non-default port keeps working.
 const API_BASE = location.protocol === 'file:' ? 'http://localhost:3847' : '';
-const WS_URL = location.protocol === 'file:'
-  ? 'ws://localhost:3847/ws'
-  : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 const POST_MSG_ORIGIN = location.protocol === 'file:' ? '*' : location.origin;
 
 const S = {
@@ -348,7 +340,6 @@ const S = {
   activeSources: null, excludedSources: new Set(),
   activeChannels: null, excludedChannels: new Set(), sourcePanelOpen: false,
   regexMode: false,
-  wsMode: false, ws: null, wsRetries: 0,
   pins: new Set(),
   pinsPanelOpen: false,
   statsDashOpen: false,
@@ -630,8 +621,7 @@ function fetchLogs() {
   }).then((data) => {
     const hasTotal = Number.isFinite(data.total);
     const displayTotal = hasTotal ? data.total : (data.truncated ? '~' + data.lines.length : data.lines.length);
-    const modeLabel = S.wsMode ? 'WS+Poll' : 'Polling';
-    setStatus('connected', modeLabel + ' (' + (parseInt($('intervalSel').value) / 1000) + 's) \u2022 ' + displayTotal + ' total');
+    setStatus('connected', 'Polling (' + (parseInt($('intervalSel').value) / 1000) + 's) \u2022 ' + displayTotal + ' total');
     const bytes = data.totalBytes || data.fileSize;
     if (bytes) $('fileInfo').textContent = (bytes / 1024 / 1024).toFixed(1) + 'MB';
 
@@ -686,77 +676,6 @@ function stopPolling() {
   $('liveBtn').className = 'btn';
   $('liveBtn').innerHTML = '&#9654; Live';
   setStatus('disconnected', 'Stopped \u2014 ' + S.logs.length + ' lines');
-}
-
-/* ===== WebSocket ===== */
-function connectWS() {
-  if (S.ws && (S.ws.readyState === WebSocket.OPEN || S.ws.readyState === WebSocket.CONNECTING)) return;
-
-  S.wsMode = true;
-  $('wsBtn').classList.add('ws-mode');
-  setStatus('connecting', 'WS connecting...');
-
-  try {
-    S.ws = new WebSocket(WS_URL);
-  } catch (e) {
-    fallbackToPolling('WS init failed');
-    return;
-  }
-
-  S.ws.onopen = () => {
-    S.wsRetries = 0;
-    setStatus('ws-connected', 'WebSocket connected');
-    S.ws.send(JSON.stringify({ type: 'subscribe', channel: 'logs' }));
-  };
-
-  S.ws.onmessage = (evt) => {
-    try {
-      const data = JSON.parse(evt.data);
-      if (data.type === 'log' && data.line) {
-        if (emptyState && emptyState.parentNode) emptyState.remove();
-        addLines([data.line], false);
-      } else if (data.type === 'logs' && data.lines) {
-        addLines(data.lines, !S.initialized);
-        S.initialized = true;
-      }
-    } catch (e) {
-      if (typeof evt.data === 'string' && evt.data.trim()) {
-        addLines([evt.data], false);
-      }
-    }
-  };
-
-  S.ws.onclose = () => {
-    if (!S.wsMode) return;
-    S.wsRetries++;
-    if (S.wsRetries <= WS_MAX_RETRIES) {
-      setStatus('connecting', 'WS reconnecting (' + S.wsRetries + '/' + WS_MAX_RETRIES + ')...');
-      setTimeout(connectWS, WS_RECONNECT_DELAY);
-    } else {
-      fallbackToPolling('WS max retries reached');
-    }
-  };
-
-  S.ws.onerror = () => {
-    // onclose will fire after onerror
-  };
-}
-
-function disconnectWS() {
-  S.wsMode = false;
-  $('wsBtn').classList.remove('ws-mode');
-  if (S.ws) {
-    S.ws.onclose = null;
-    S.ws.close();
-    S.ws = null;
-  }
-  S.wsRetries = 0;
-}
-
-function fallbackToPolling(reason) {
-  disconnectWS();
-  setStatus('disconnected', 'WS failed: ' + reason + ' \u2014 switching to polling');
-  if (!S.live) startPolling();
 }
 
 /* ===== Export ===== */
@@ -1211,16 +1130,6 @@ $('clearBtn').addEventListener('click', () => {
   if (S.statsDashOpen) updateStatsDashboard();
 });
 
-$('wsBtn').addEventListener('click', () => {
-  if (S.wsMode) {
-    disconnectWS();
-    setStatus(S.live ? 'connected' : 'disconnected', S.live ? 'Polling mode' : 'WS disconnected');
-  } else {
-    connectWS();
-    if (!S.live) startPolling();
-  }
-});
-
 document.querySelectorAll('.lvl').forEach((el) => {
   el.addEventListener('click', () => {
     const lv = el.getAttribute('data-l');
@@ -1256,7 +1165,6 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === 'f') { e.preventDefault(); $('searchInput').focus(); return; }
   if (e.key === '/') { e.preventDefault(); $('searchInput').focus(); return; }
   if (e.key === 'l' || e.key === 'L') { S.live ? stopPolling() : startPolling(); }
-  if (e.key === 'w' || e.key === 'W') { $('wsBtn').click(); }
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
     S.autoScroll = !S.autoScroll;
     $('autoBtn').classList.toggle('active', S.autoScroll);

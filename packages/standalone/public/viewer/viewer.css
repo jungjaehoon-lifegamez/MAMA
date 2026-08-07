@@ -1143,3 +1143,199 @@ div.vis-tooltip {
   max-width: 320px;
   pointer-events: none;
 }
+
+/* ============================================================================
+   SYSTEM VIEWS (Runtime / Connectors) — read-only runtime truth
+   ============================================================================ */
+
+.mama-system-panel {
+  max-width: 880px;
+}
+
+.mama-system-heading {
+  font-family: Inter, 'Noto Sans KR', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #131313;
+  margin: 0 0 4px;
+}
+
+.mama-system-note {
+  font-size: 12px;
+  color: #6b6560;
+  margin: 0 0 14px;
+}
+
+.mama-system-note code,
+.mama-system-code {
+  font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  background: #f5f2ed;
+  border: 1px solid #ede9e1;
+  border-radius: var(--radius-button, 6px);
+  padding: 2px 6px;
+  color: #131313;
+}
+
+.mama-system-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.mama-system-tile {
+  background: #fff;
+  border: 1px solid #ede9e1;
+  border-radius: var(--radius-inner, 8px);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 3px solid #ede9e1;
+}
+
+.mama-system-tile[data-tone='ok'] {
+  border-left-color: #3a9e7e;
+}
+.mama-system-tile[data-tone='warn'] {
+  border-left-color: #e8a040;
+}
+.mama-system-tile[data-tone='bad'] {
+  border-left-color: #ff9999;
+}
+.mama-system-tile[data-tone='neutral'] {
+  border-left-color: #ffce00;
+}
+
+.mama-system-tile-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #9e9891;
+  font-weight: 600;
+}
+
+.mama-system-tile-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #131313;
+  overflow-wrap: anywhere;
+}
+
+.mama-system-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mama-system-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #ede9e1;
+  border-radius: var(--radius-button, 6px);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.mama-system-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: #9e9891;
+  flex-shrink: 0;
+}
+
+.mama-system-row[data-tone='ok'] .mama-system-dot {
+  background: #3a9e7e;
+}
+.mama-system-row[data-tone='warn'] .mama-system-dot {
+  background: #e8a040;
+}
+
+.mama-system-row-name {
+  font-weight: 600;
+  color: #131313;
+  flex: 1;
+}
+
+.mama-system-row-state {
+  font-size: 11px;
+  color: #6b6560;
+}
+
+.mama-system-badge {
+  font-size: 9px;
+  color: #9e9891;
+  background: #f5f2ed;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.mama-system-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 880px;
+}
+
+.mama-system-skeleton-row {
+  height: 44px;
+  border-radius: var(--radius-inner, 8px);
+  background: linear-gradient(90deg, #f5f2ed 25%, #ede9e1 50%, #f5f2ed 75%);
+  background-size: 200% 100%;
+  animation: mama-system-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes mama-system-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.mama-system-error,
+.mama-system-empty {
+  max-width: 440px;
+  background: #fff;
+  border: 1px solid #ede9e1;
+  border-radius: var(--radius-card, 12px);
+  padding: 16px;
+}
+
+.mama-system-error-title,
+.mama-system-empty-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #131313;
+}
+
+.mama-system-error-detail,
+.mama-system-empty-detail {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #6b6560;
+  overflow-wrap: anywhere;
+}
+
+.mama-system-retry {
+  background: #ffce00;
+  color: #131313;
+  border: none;
+  border-radius: var(--radius-button, 6px);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mama-system-retry:hover {
+  background: #e6b800;
+}
