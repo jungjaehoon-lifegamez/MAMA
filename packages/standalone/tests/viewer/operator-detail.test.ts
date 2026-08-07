@@ -32,8 +32,11 @@ describe('task detail drawer: bounded evidence', () => {
   it('reads no raw transcript and issues no new request', () => {
     expect(drawer).not.toMatch(/raw.?transcript|\/api\/(raw|messages)/i);
     expect(drawer).not.toContain('useQuery');
-    expect(drawer).not.toContain("from '../api/client'\n");
     expect(drawer).not.toContain('fetch(');
+    // The drawer may import OperatorTask as a type; it must not import the api
+    // client value, nor call it. A type-only import names no `api` binding.
+    expect(drawer).not.toMatch(/^import \{[^}]*\bapi\b/m);
+    expect(drawer).not.toMatch(/\bapi\.\w+\(/);
   });
 
   it('carries exactly the four bounded sections', () => {
@@ -101,6 +104,18 @@ describe('tasks page: selection is validated before it becomes a route', () => {
   it('drops a selection the loaded page cannot answer', () => {
     expect(tasks).toContain('setSelectedTaskId(null);');
     expect(tasks).toContain('firstFilterRef.current?.focus()');
+  });
+
+  it('says why, instead of closing the drawer silently', () => {
+    // Ordinary case, not an edge one: the task is outside the newest 50, or a
+    // filter change / 30s refetch moved it out from under an open drawer.
+    expect(tasks).toContain('setUnresolvedTaskId(selectedTaskId);');
+    expect(tasks).toContain('Task #{unresolvedTaskId} is not in the current view.');
+    expect(tasks).toContain('role="status"');
+    // Dismissible, and cleared as soon as a selection resolves again.
+    expect(tasks).toContain('onClick={() => setUnresolvedTaskId(null)}');
+    expect(tasks).toContain('Dismiss');
+    expect(tasks).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
 });
 

@@ -44,6 +44,7 @@ export default function Tasks({
     () => positiveTaskId(focusTaskId) ?? null
   );
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
+  const [unresolvedTaskId, setUnresolvedTaskId] = useState<number | null>(null);
   const queryClient = useQueryClient();
   const scrolledHashRef = useRef<string | null>(null);
   const firstFilterRef = useRef<HTMLButtonElement>(null);
@@ -108,6 +109,7 @@ export default function Tasks({
   useEffect(() => {
     const requested = positiveTaskId(focusTaskId);
     if (requested !== undefined) {
+      setUnresolvedTaskId(null);
       setSelectedTaskId(requested);
     }
   }, [focusTaskId, selectionNonce]);
@@ -116,12 +118,14 @@ export default function Tasks({
   const selectedTask =
     selectedTaskId === null ? null : (tasks.find((task) => task.id === selectedTaskId) ?? null);
 
-  // A selected id the loaded page does not answer (filtered out, deleted) must
-  // not leave a phantom selection behind.
+  // A selected id the loaded page does not answer (outside the newest 50, moved
+  // out by a status filter or a refetch, deleted) must not leave a phantom
+  // selection behind. Closing silently would read as a bug, so say why.
   useEffect(() => {
     if (!query.data || selectedTaskId === null || selectedTask) {
       return;
     }
+    setUnresolvedTaskId(selectedTaskId);
     setSelectedTaskId(null);
     window.queueMicrotask(() => {
       if (drawerOpener?.isConnected) {
@@ -137,6 +141,7 @@ export default function Tasks({
   };
 
   const openDetails = (task: OperatorTask, opener: HTMLElement) => {
+    setUnresolvedTaskId(null);
     setDrawerOpener(opener);
     setSelectedTaskId(task.id);
     onSelectTask?.(task.id);
@@ -180,6 +185,22 @@ export default function Tasks({
               );
             })}
           </div>
+
+          {unresolvedTaskId !== null && (
+            <div
+              role="status"
+              className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-secondary"
+            >
+              <span>Task #{unresolvedTaskId} is not in the current view.</span>
+              <button
+                type="button"
+                onClick={() => setUnresolvedTaskId(null)}
+                className="shrink-0 rounded-lg border border-border bg-surface-secondary px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-surface-hover focus:ring-2 focus:ring-agent-strong"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-[var(--shadow-xs)]">
             {query.isPending ? (
