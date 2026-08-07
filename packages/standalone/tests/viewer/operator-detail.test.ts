@@ -104,6 +104,12 @@ describe('tasks page: selection is validated before it becomes a route', () => {
   it('drops a selection the loaded page cannot answer', () => {
     expect(tasks).toContain('setSelectedTaskId(null);');
     expect(tasks).toContain('firstFilterRef.current?.focus()');
+    // The drop must reach the host as well, or `?task=<id>` stays in the hash
+    // and every reload re-applies the same dead id forever. The effect that
+    // drops it therefore notifies, and lists the notifier among its deps.
+    expect(tasks).toContain(
+      '}, [drawerOpener, onSelectTask, query.data, selectedTask, selectedTaskId]);'
+    );
   });
 
   it('says why, instead of closing the drawer silently', () => {

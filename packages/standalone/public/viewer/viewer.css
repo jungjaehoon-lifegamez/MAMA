@@ -911,7 +911,8 @@ div.vis-tooltip {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: #9e9891;
+  /* #9e9891 was ~2.6:1 on white -- below AA for this 10px label. */
+  color: #6b6560;
   font-weight: 600;
 }
 
@@ -970,7 +971,8 @@ div.vis-tooltip {
 
 .mama-system-badge {
   font-size: 9px;
-  color: #9e9891;
+  /* #9e9891 was ~2.5:1 on the #f5f2ed chip -- below AA at 9px. */
+  color: #6b6560;
   background: #f5f2ed;
   padding: 1px 4px;
   border-radius: 2px;

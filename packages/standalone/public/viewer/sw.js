@@ -109,9 +109,12 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response.ok) {
             const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
+            // The write is held open by the event, not by respondWith: the
+            // response still returns immediately, but the worker may not be
+            // killed mid-put, which would leave a truncated cache entry.
+            event.waitUntil(
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone))
+            );
           }
           return response;
         })
@@ -130,12 +133,13 @@ self.addEventListener('fetch', (event) => {
           return cachedResponse;
         }
         return fetch(request).then((response) => {
-          // Cache successful responses
+          // Cache successful responses. Same detached-put hazard as the
+          // operator branch above, so it is held open the same way.
           if (response.ok) {
             const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
+            event.waitUntil(
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone))
+            );
           }
           return response;
         });

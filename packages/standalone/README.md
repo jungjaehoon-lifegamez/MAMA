@@ -171,7 +171,7 @@ Three groups:
 | **Knowledge** | Wiki       | Knowledge base (syncs with Obsidian vault)                                                       |
 | **System**    | Runtime    | Read-only runtime truth: backend, model, gateways, health                                        |
 | **System**    | Connectors | Connector status and last poll                                                                   |
-| **System**    | Logs       | Daemon logs with filtering, pinning, stats, WebSocket mode                                       |
+| **System**    | Logs       | Daemon logs with filtering, pinning, stats, WebSocket and polling                                |
 
 Each view has its own hash route, e.g. `/viewer#operator/tasks?task=42`.
 

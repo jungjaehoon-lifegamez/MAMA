@@ -41,11 +41,17 @@ describe('GET /api/runtime/status', () => {
   });
 
   afterEach(() => {
-    scheduler.shutdown();
-    if (originalAuthToken === undefined) {
-      delete process.env.MAMA_AUTH_TOKEN;
-    } else {
-      process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+    // The env restore must survive a scheduler that throws on shutdown: this
+    // file shares a fork with the rest of the suite, so a leaked test token
+    // would silently re-authenticate someone else's server.
+    try {
+      scheduler.shutdown();
+    } finally {
+      if (originalAuthToken === undefined) {
+        delete process.env.MAMA_AUTH_TOKEN;
+      } else {
+        process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+      }
     }
   });
 

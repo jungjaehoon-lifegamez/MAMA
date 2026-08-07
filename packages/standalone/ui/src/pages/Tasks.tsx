@@ -127,6 +127,10 @@ export default function Tasks({
     }
     setUnresolvedTaskId(selectedTaskId);
     setSelectedTaskId(null);
+    // Tell the host too, or `?task=<id>` survives in the hash and every
+    // reload re-applies the same dead id. Host-driven updates carrying an
+    // undefined selection are a no-op for the effect above, so no echo loop.
+    onSelectTask?.(undefined);
     window.queueMicrotask(() => {
       if (drawerOpener?.isConnected) {
         drawerOpener.focus();
@@ -134,7 +138,7 @@ export default function Tasks({
         firstFilterRef.current?.focus();
       }
     });
-  }, [drawerOpener, query.data, selectedTask, selectedTaskId]);
+  }, [drawerOpener, onSelectTask, query.data, selectedTask, selectedTaskId]);
 
   const patchTask = (task: OperatorTask, patch: TaskPatch) => {
     mutation.mutate({ task, patch });

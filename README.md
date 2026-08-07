@@ -11,7 +11,7 @@
 
 **MAMA OS is an always-on agent server.** You install it on your own machine, and it
 stays running around the clock — like Home Assistant or Plex, but its job is your work
-channels. `mama start` brings it up. Its dashboard lives at `localhost:3847`. Its
+channels. `mama start` brings it up. Its Viewer lives at `localhost:3847`. Its
 reports arrive in your chat app.
 
 ![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: deadline slipped Fri to Wed, B waiting 9h on your quote, invoice paid $1,200 in, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)

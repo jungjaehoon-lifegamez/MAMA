@@ -893,7 +893,10 @@ export MAMA_DISABLE_HTTP_SERVER=true
 # Disable only the chat WebSocket API (keep the Viewer)
 export MAMA_DISABLE_WEBSOCKET=true
 
-# Alternative spelling of the same switch
+# Legacy alias for the switch above. It still works, but `/mama:configure
+# --enable-all` clears only MAMA_DISABLE_HTTP_SERVER and MAMA_DISABLE_WEBSOCKET,
+# so a chat API disabled through this alias stays disabled until you remove it
+# by hand. Use MAMA_DISABLE_WEBSOCKET instead.
 export MAMA_DISABLE_MOBILE_CHAT=true
 
 # Set authentication token
@@ -914,7 +917,7 @@ mama start
 
 ```bash
 # The Viewer works, the chat WebSocket API is closed
-export MAMA_DISABLE_MOBILE_CHAT=true
+export MAMA_DISABLE_WEBSOCKET=true
 mama start
 ```
 
