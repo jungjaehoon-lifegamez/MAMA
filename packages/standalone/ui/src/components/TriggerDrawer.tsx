@@ -295,7 +295,7 @@ export default function TriggerDrawer({
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
                     required
-                    className="mt-1 w-full rounded-lg border border-border bg-surface-selected px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-agent"
+                    className="mt-1 w-full rounded-lg border border-border bg-surface-selected px-3 py-2 text-sm text-text focus:ring-2 focus:ring-agent-strong"
                   />
                 </div>
                 <button

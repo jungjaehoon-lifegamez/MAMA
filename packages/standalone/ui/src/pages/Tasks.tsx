@@ -25,7 +25,13 @@ interface MutationInput {
   patch: TaskPatch;
 }
 
-export default function Tasks({ focusTaskId }: { focusTaskId?: number }) {
+export default function Tasks({
+  focusTaskId,
+  selectionNonce,
+}: {
+  focusTaskId?: number;
+  selectionNonce?: number;
+}) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [mutationStates, setMutationStates] = useState<TaskMutationState>(() => new Map());
@@ -66,6 +72,13 @@ export default function Tasks({ focusTaskId }: { focusTaskId?: number }) {
     return () => window.clearInterval(timer);
   }, []);
 
+  // A host update re-delivers the selection even when it is unchanged (the
+  // same task, navigated to twice). Forget what we already scrolled to, or the
+  // second navigation would be a no-op.
+  useEffect(() => {
+    scrolledHashRef.current = null;
+  }, [focusTaskId, selectionNonce]);
+
   useEffect(() => {
     if (!query.data?.tasks.length) {
       return;
@@ -77,7 +90,7 @@ export default function Tasks({ focusTaskId }: { focusTaskId?: number }) {
       scrolledHashRef.current,
       (id) => document.getElementById(id)
     );
-  }, [focusTaskId, query.data]);
+  }, [focusTaskId, query.data, selectionNonce]);
 
   const patchTask = (task: OperatorTask, patch: TaskPatch) => {
     mutation.mutate({ task, patch });

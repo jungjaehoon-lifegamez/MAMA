@@ -14,10 +14,16 @@ const STATUS_FILTERS: Array<{ value: TriggerStatusFilter; label: string }> = [
 
 type TriggerCache = { triggers: OperatorTrigger[] };
 
-export default function Triggers({ initialTriggerId }: { initialTriggerId?: string }) {
+export default function Triggers({
+  selectedTriggerId,
+  selectionNonce,
+}: {
+  selectedTriggerId?: string;
+  selectionNonce?: number;
+}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TriggerStatusFilter>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(initialTriggerId ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(selectedTriggerId ?? null);
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +57,14 @@ export default function Triggers({ initialTriggerId }: { initialTriggerId?: stri
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // The host can deep-link a trigger into an already-mounted surface; a repeat
+  // of the same id still counts, hence the nonce.
+  useEffect(() => {
+    if (selectedTriggerId !== undefined) {
+      setSelectedId(selectedTriggerId);
+    }
+  }, [selectedTriggerId, selectionNonce]);
 
   const triggers = query.data?.triggers ?? [];
   const filteredTriggers = useMemo(
@@ -117,7 +131,7 @@ export default function Triggers({ initialTriggerId }: { initialTriggerId?: stri
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search kind or keyword"
-                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-agent"
+                className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:ring-2 focus:ring-agent-strong"
               />
             </div>
 
