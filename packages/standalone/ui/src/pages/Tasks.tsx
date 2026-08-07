@@ -25,7 +25,7 @@ interface MutationInput {
   patch: TaskPatch;
 }
 
-export default function Tasks() {
+export default function Tasks({ focusTaskId }: { focusTaskId?: number }) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [mutationStates, setMutationStates] = useState<TaskMutationState>(() => new Map());
@@ -70,12 +70,14 @@ export default function Tasks() {
     if (!query.data?.tasks.length) {
       return;
     }
+    // The host document owns the URL; a focused task arrives as a prop and the
+    // hash is only the fallback for a directly addressed page.
     scrolledHashRef.current = scrollTaskHashIntoView(
-      window.location.hash,
+      focusTaskId === undefined ? window.location.hash : `#task-${focusTaskId}`,
       scrolledHashRef.current,
       (id) => document.getElementById(id)
     );
-  }, [query.data]);
+  }, [focusTaskId, query.data]);
 
   const patchTask = (task: OperatorTask, patch: TaskPatch) => {
     mutation.mutate({ task, patch });
@@ -103,7 +105,7 @@ export default function Tasks() {
                   onClick={() => setSelectedStatus(filter.value)}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                     active
-                      ? 'bg-agent-hover text-on-agent dark:bg-agent'
+                      ? 'bg-agent text-on-agent hover:bg-agent-hover'
                       : 'bg-surface text-text-secondary hover:bg-surface-hover'
                   }`}
                 >

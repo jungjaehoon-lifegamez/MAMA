@@ -9,7 +9,7 @@ import { formatRelativeTime } from '../lib/time';
 
 const STATUS_CLASSES: Record<TriggerStatus, string> = {
   active: 'bg-success-soft text-success-text',
-  disabled: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
+  disabled: 'bg-surface-secondary text-text-secondary',
   superseded: 'bg-warning-soft text-warning-text',
 };
 

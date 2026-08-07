@@ -14,10 +14,10 @@ const STATUS_FILTERS: Array<{ value: TriggerStatusFilter; label: string }> = [
 
 type TriggerCache = { triggers: OperatorTrigger[] };
 
-export default function Triggers() {
+export default function Triggers({ initialTriggerId }: { initialTriggerId?: string }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TriggerStatusFilter>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialTriggerId ?? null);
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -132,7 +132,7 @@ export default function Triggers() {
                     onClick={() => setStatusFilter(filter.value)}
                     className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                       active
-                        ? 'bg-agent-hover text-on-agent dark:bg-agent'
+                        ? 'bg-agent text-on-agent hover:bg-agent-hover'
                         : 'bg-surface text-text-secondary hover:bg-surface-hover'
                     }`}
                   >

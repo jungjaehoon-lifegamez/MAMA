@@ -3,15 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
     "bundle": "tsc -p tsconfig.json --noEmit && vite build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.80.7",
     "dompurify": "^3.2.5",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.2"
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.8",

@@ -13,22 +13,22 @@ const TASK_STATUSES: TaskStatus[] = [
 
 const STATUS_CLASSES: Record<TaskStatus, string> = {
   pending: 'bg-surface-secondary text-text-secondary',
-  in_progress: 'bg-agent-light text-agent-hover dark:text-agent',
+  in_progress: 'bg-agent-light text-agent-strong',
   review: 'bg-warning-soft text-warning-text',
   blocked: 'bg-warning-soft text-warning-text',
   done: 'bg-success-soft text-success-text',
-  cancelled: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
+  cancelled: 'bg-surface-secondary text-text-secondary',
 };
 
 const PRIORITY_CLASSES = {
   high: 'bg-warning-soft text-warning-text',
   normal: 'bg-surface-secondary text-text-secondary',
-  low: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
+  low: 'bg-surface-secondary text-text-secondary',
 };
 
 const TEMPORAL_CLASSES: Record<TaskTemporalCategory, string> = {
   closed: 'bg-surface-secondary text-text-tertiary',
-  upcoming: 'bg-agent-light text-agent-hover dark:text-agent',
+  upcoming: 'bg-agent-light text-agent-strong',
   due: 'bg-warning-soft text-warning-text',
   overdue: 'bg-danger/10 text-danger',
   unscheduled: 'bg-surface-secondary text-text-tertiary',
@@ -56,7 +56,7 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
 
   return (
     <tr id={`task-${task.id}`} className="scroll-mt-4 border-b border-border last:border-0">
-      <td className="px-3 py-3 text-xs font-medium text-text-secondary dark:text-text-tertiary whitespace-nowrap">
+      <td className="px-3 py-3 text-xs font-medium text-text-secondary whitespace-nowrap">
         #{task.id}
       </td>
       <td className="px-3 py-3 min-w-56">
@@ -65,7 +65,7 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
           <div className="mt-0.5 text-[11px] font-medium text-warning-text">(unconfirmed)</div>
         )}
         {task.latest_event && (
-          <div className="mt-1 max-w-80 truncate text-[11px] text-text-secondary dark:text-text-tertiary">
+          <div className="mt-1 max-w-80 truncate text-[11px] text-text-secondary">
             {task.latest_event}
           </div>
         )}
@@ -104,14 +104,14 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
         >
           {temporal.badgeLabel}
         </span>
-        <div className="text-[11px] text-text-secondary dark:text-text-tertiary">
+        <div className="text-[11px] text-text-secondary">
           {temporal.fact}
         </div>
       </td>
       <td className="px-3 py-3 max-w-48 truncate text-xs text-text-secondary">
         {task.source_channel || '-'}
       </td>
-      <td className="px-3 py-3 text-xs text-text-secondary dark:text-text-tertiary whitespace-nowrap">
+      <td className="px-3 py-3 text-xs text-text-secondary whitespace-nowrap">
         {formatRelativeTime(now, task.updated_at)}
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
@@ -120,7 +120,7 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
             type="button"
             disabled={pending}
             onClick={() => onPatch(task, { confirmed: true })}
-            className="rounded-lg bg-agent-hover px-2.5 py-1.5 text-xs font-medium text-on-agent hover:bg-agent-hover dark:bg-agent disabled:opacity-50"
+            className="rounded-lg bg-agent px-2.5 py-1.5 text-xs font-medium text-on-agent hover:bg-agent-hover disabled:opacity-50"
           >
             {pending ? 'Saving...' : 'Approve'}
           </button>
