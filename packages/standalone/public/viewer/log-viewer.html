@@ -102,8 +102,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .selection-bar .sel-count{font-weight:600}
 .selection-bar button{padding:3px 10px;font-size:11px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:#fff;border-radius:6px;cursor:pointer}
 .selection-bar button:hover{background:rgba(255,255,255,.25)}
-.selection-bar .send-btn{background:#fff;color:var(--accent);font-weight:600;border:none}
-.selection-bar .send-btn:hover{background:#e6edf3}
 
 /* Log area + minimap */
 .log-wrap{flex:1;overflow:hidden;display:flex;flex-direction:column}
@@ -145,26 +143,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .empty .ico{font-size:36px;opacity:.25}
 .empty p{font-size:11px}
 .empty kbd{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px}
-.prompt-panel{border-top:1px solid var(--border);background:var(--surface);flex-shrink:0}
-.prompt-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;cursor:pointer;user-select:none}
-.prompt-hdr h3{font-size:11px;color:var(--accent);font-weight:600}
-.prompt-hdr .arrow{font-size:10px;color:var(--muted);transition:transform .2s}
-.prompt-hdr .arrow.open{transform:rotate(180deg)}
-.prompt-body{padding:0 14px 8px;display:none}
-.prompt-body.open{display:block}
-.presets{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px}
-.preset{padding:2px 8px;font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--muted);cursor:pointer;transition:all .12s;font-family:inherit}
-.preset:hover{border-color:var(--accent);color:var(--accent)}
-.prompt-row{display:flex;gap:6px}
-.prompt-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;font-family:inherit;resize:none;outline:none;min-height:40px;max-height:80px}
-.prompt-input:focus{border-color:var(--accent)}
-.prompt-input::placeholder{color:var(--muted)}
-.prompt-actions{display:flex;flex-direction:column;gap:3px}
-.send-btn-prompt{padding:5px 12px;background:var(--accent);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}
-.send-btn-prompt:hover{opacity:.9}
-.copy-btn-prompt{padding:5px 12px;background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
-.copy-btn-prompt:hover{color:var(--text);border-color:var(--muted)}
-
 /* Export dropdown */
 .export-dropdown{position:relative;display:inline-block}
 .export-menu{display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:100;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,.4)}
@@ -276,7 +254,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div style="flex:1"></div>
   <button id="selPin" title="Pin selected lines">&#128204; Pin</button>
   <button id="selCopy">Copy</button>
-  <button class="send-btn" id="selSend">Send to Chat</button>
   <button id="selClear">Clear</button>
 </div>
 <div class="log-wrap">
@@ -290,27 +267,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div class="minimap" id="minimap">
       <div class="minimap-viewport" id="minimapViewport"></div>
-    </div>
-  </div>
-</div>
-<div class="prompt-panel">
-  <div class="prompt-hdr" id="promptHdr">
-    <h3>&#128172; Send to Chat</h3>
-    <span class="arrow open" id="promptArrow">&#9660;</span>
-  </div>
-  <div class="prompt-body open" id="promptBody">
-    <div class="presets">
-      <button class="preset" data-p="errors">&#128308; Errors</button>
-      <button class="preset" data-p="status">&#128202; Status</button>
-      <button class="preset" data-p="slow">&#128012; Slow</button>
-      <button class="preset" data-p="recent">&#128221; Recent</button>
-    </div>
-    <div class="prompt-row">
-      <textarea class="prompt-input" id="promptInput" placeholder="루나에게 요청..."></textarea>
-      <div class="prompt-actions">
-        <button class="send-btn-prompt" id="promptSend">&#128228; Send</button>
-        <button class="copy-btn-prompt" id="promptCopy">&#128203; Copy</button>
-      </div>
     </div>
   </div>
 </div>
@@ -329,7 +285,6 @@ const HISTOGRAM_BUCKETS = 30;
 
 // Use same-origin by default so custom host/IP + non-default port keeps working.
 const API_BASE = location.protocol === 'file:' ? 'http://localhost:3847' : '';
-const POST_MSG_ORIGIN = location.protocol === 'file:' ? '*' : location.origin;
 
 const S = {
   logs: [], autoScroll: true, selected: new Set(), lastClickIdx: -1,
@@ -1088,14 +1043,6 @@ $('selCopy').addEventListener('click', () => {
     $('selCopy').textContent = '\u2705'; setTimeout(() => { $('selCopy').textContent = 'Copy'; }, 1200);
   });
 });
-$('selSend').addEventListener('click', () => {
-  const text = getSelectedText();
-  const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
-  window.parent.postMessage({ type: 'viewer:sendToChat', message: msg }, POST_MSG_ORIGIN);
-  S.selected.clear();
-  logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
-  updateSelectionBar();
-});
 $('selClear').addEventListener('click', () => {
   S.selected.clear();
   logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
@@ -1196,20 +1143,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* ===== Prompt panel ===== */
-$('promptHdr').addEventListener('click', () => {
-  $('promptBody').classList.toggle('open');
-  $('promptArrow').classList.toggle('open');
-});
-
-const PRESETS = {
-  errors: 'Analyze ERROR, FAIL, ECONNREFUSED logs from daemon.log and explain causes and fixes',
-  status: 'Check current MAMA OS status (processes, memory, uptime, connections)',
-  slow: 'Find slow operations (timeout, slow, 1000ms+) and analyze performance bottlenecks',
-  recent: 'Summarize the last 50 log lines \u2014 what happened, any errors?',
-  agents: 'Show only agent activity: Dashboard Agent, Wiki Agent, Conductor, delegate, audit results'
-};
-
 // Agent Activity patterns for filtering and audit timeline
 const AGENT_PATTERNS = /Dashboard Agent|Wiki Agent|Conductor|Audit|delegate|Briefing published|Compilation complete|No changes detected|agent-refresh|wiki\/compile|Tool\] delegate/;
 
@@ -1245,13 +1178,6 @@ $('auditPanelToggle').addEventListener('click', () => {
   panel.style.display = isVisible ? 'none' : 'block';
   if (!isVisible) buildAuditTimeline();
 });
-document.querySelectorAll('.preset').forEach((el) => {
-  el.addEventListener('click', () => {
-    $('promptInput').value = PRESETS[el.getAttribute('data-p')];
-    $('promptInput').focus();
-  });
-});
-
 // Toolbar: Agent filter button
 $('agentFilterBtn').addEventListener('click', () => {
   const isActive = $('agentFilterBtn').classList.toggle('active');
@@ -1264,30 +1190,6 @@ $('agentFilterBtn').addEventListener('click', () => {
     $('searchInput').value = '';
   }
   applyFilters();
-});
-
-$('promptSend').addEventListener('click', () => {
-  const text = $('promptInput').value.trim();
-  if (!text) return;
-  let msg = text;
-  if (S.selected.size > 0) {
-    const selLogs = [];
-    S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
-    msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
-  }
-  window.parent.postMessage({ type: 'viewer:sendToChat', message: msg }, POST_MSG_ORIGIN);
-  $('promptInput').value = '';
-});
-$('promptCopy').addEventListener('click', () => {
-  let text = $('promptInput').value;
-  if (S.selected.size > 0) {
-    const selLogs = [];
-    S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
-    text += '\n\n```\n' + selLogs.join('\n') + '\n```';
-  }
-  navigator.clipboard.writeText(text).then(() => {
-    $('promptCopy').textContent = '\u2705'; setTimeout(() => { $('promptCopy').innerHTML = '&#128203; Copy'; }, 1200);
-  });
 });
 
 window.addEventListener('message', (e) => {

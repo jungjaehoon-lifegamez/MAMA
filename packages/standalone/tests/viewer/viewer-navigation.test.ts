@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const viewerPath = join(process.cwd(), 'public', 'viewer', 'viewer.html');
 const viewerCssPath = join(process.cwd(), 'public', 'viewer', 'viewer.css');
+const logViewerPath = join(process.cwd(), 'public', 'viewer', 'log-viewer.html');
 
 const VALID_ROUTES = [
   'operator/board',
@@ -207,5 +208,31 @@ describe('Viewer unified operator navigation', () => {
   it('leaves no credential input behind with the settings tab', () => {
     expect(source).not.toMatch(/id="settings-[a-z-]*(token|secret|key|password)/i);
     expect(source).not.toContain('id="settings-');
+  });
+
+  /**
+   * The log viewer is an iframe inside System > Logs. It used to post
+   * `viewer:sendToChat` up to the parent document; the listener went with the
+   * Chat tab, so the control rendered and silently did nothing. A dead button
+   * is worse than a missing one - it tells the owner a message was sent.
+   */
+  it('leaves no orphaned send-to-chat control in the log viewer iframe', () => {
+    const logViewer = readFileSync(logViewerPath, 'utf8');
+    expect(logViewer).not.toContain('sendToChat');
+    expect(logViewer).not.toContain('Send to Chat');
+    expect(logViewer).not.toContain('promptInput');
+    expect(logViewer).not.toContain('prompt-panel');
+    // Nothing in the iframe may address the parent document any more.
+    expect(logViewer).not.toContain('window.parent.postMessage');
+  });
+
+  /**
+   * The retired panel carried a placeholder naming a personal assistant
+   * persona. Source must stay free of personal identifiers, so pin ASCII.
+   */
+  it('keeps the log viewer free of non-ascii personal strings', () => {
+    const logViewer = readFileSync(logViewerPath, 'utf8');
+    // eslint-disable-next-line no-control-regex
+    expect(logViewer).not.toMatch(/[^\x00-\x7F]/);
   });
 });
