@@ -11,6 +11,7 @@ import {
   WorkOrderConsumer,
   WORKORDER_MAX_ATTEMPTS,
   detectTransportErrorResponse,
+  classifyTransientModelError,
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
   classifyTemporalFailure,
@@ -1014,3 +1015,23 @@ describe('in-band API errors are transport failures, never content', () => {
 });
 
 const ctx2 = makeDeps();
+
+describe('transient upstream model errors are named, not anonymous digests', () => {
+  it('classifies capacity / rate-limit / 5xx thrown errors', () => {
+    expect(
+      classifyTransientModelError(
+        'CLI error: Selected model is at capacity. Please try a different model.'
+      )
+    ).toBe('model-at-capacity');
+    expect(classifyTransientModelError('CLI error: 429 rate limit exceeded')).toBe('rate-limited');
+    expect(classifyTransientModelError('CLI error: 503 upstream overloaded')).toBe('upstream-5xx');
+  });
+  it('leaves genuine MAMA-side failures unclassified (null)', () => {
+    expect(
+      classifyTransientModelError(
+        'candidate receipt set is empty without live pre-run retry authority'
+      )
+    ).toBeNull();
+    expect(classifyTransientModelError('brief-missing')).toBeNull();
+  });
+});
