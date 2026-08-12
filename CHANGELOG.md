@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.34.1] - 2026-08-12
+
+### Fixed
+
+- **Transient model-capacity errors are named, not anonymized.** Board
+  workers fail ~23% on live, dominated by "Selected model is at capacity"
+  (an upstream Anthropic 529-class blip). It arrives as a thrown CLI error,
+  which the in-band transport detector never saw, so it landed as an
+  anonymous sha256 digest and hard-failed 12 board workorders downstream
+  ("candidate receipt set is empty"). `classifyTransientModelError` now
+  names the thrown upstream classes (model-at-capacity / rate-limited /
+  upstream-5xx) through the same path as an in-band 529 - the operator
+  reads a class, not a digest. Candidates are re-offered next batch, so
+  nothing is permanently lost.
+
+
 ## mama-os [0.34.0] - 2026-08-08
 
 ### Added
