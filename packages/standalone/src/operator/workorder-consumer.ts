@@ -170,6 +170,21 @@ export function detectTransportErrorResponse(response: string): string | null {
   return `API Error: ${match[1].trim()}`;
 }
 
+/**
+ * A transient upstream model error the CLI THREW (not in-band). "Selected model
+ * is at capacity", rate limits, overload and 5xx are upstream capacity signals -
+ * the same class as an in-band 529, but delivered as a thrown CLI error rather
+ * than response text. detectTransportErrorResponse only sees in-band bytes; this
+ * names the thrown ones so the operator reads "model-at-capacity" instead of an
+ * anonymous sha256 digest for what is an Anthropic capacity blip, not a MAMA bug.
+ */
+export function classifyTransientModelError(reason: string): string | null {
+  if (/\bat capacity\b|is at capacity/i.test(reason)) return 'model-at-capacity';
+  if (/\b429\b|rate.?limit|too many requests/i.test(reason)) return 'rate-limited';
+  if (/\b5\d{2}\b|overloaded|server error|internal error/i.test(reason)) return 'upstream-5xx';
+  return null;
+}
+
 /** Exported so the boot-time leg declaration and the timer share one number. */
 export const DEFAULT_TICK_MS = 60_000;
 const ALARM_DEDUP_MS = 6 * 60 * 60 * 1000;
@@ -384,7 +399,15 @@ export class WorkOrderConsumer {
         return;
       }
       const reason = errMessage(err);
-      this.handleFailure(wo, reason, !isAmbiguousCodeActMutation(err));
+      const transient = classifyTransientModelError(reason);
+      // Name transient upstream errors identically to an in-band 529 so the
+      // operator sees a class, not an anonymous digest. Transient = retryable
+      // (not an ambiguous mutation); per-kind max_attempts bounds the rest.
+      this.handleFailure(
+        wo,
+        transient ? `model-transport-error: ${transient}` : reason,
+        transient ? true : !isAmbiguousCodeActMutation(err)
+      );
       return;
     }
 
