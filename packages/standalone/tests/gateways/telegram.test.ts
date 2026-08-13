@@ -686,7 +686,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
-      config: { allowedChats: ['-7777'] },
+      config: { allowedChats: ['-7777'], ownerUserIds: ['9001'] },
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-group-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
     });
@@ -811,16 +811,16 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('rate-caps dropped-media warnings when no inbound allowlist is configured', async () => {
+  it('diverts repeated media before download or send when no owner can be resolved', async () => {
+    const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: {},
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-warn-')),
-      fetchImpl: vi.fn(async () => jpegResponse()),
+      fetchImpl,
     });
     await gateway.start();
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 121),
@@ -831,11 +831,10 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo-2', file_unique_id: 'photo-u-2', width: 10, height: 10 }],
     });
 
-    const warnings = warnSpy.mock.calls.flat().join('\n');
-    expect(
-      warnings.match(/Dropped media because telegram\.allowed_chats is not configured/g)
-    ).toHaveLength(1);
-    warnSpy.mockRestore();
+    expect(mockApi.getFile).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
+    expect(mockApi.sendMessage).not.toHaveBeenCalled();
     await gateway.stop();
   });
 

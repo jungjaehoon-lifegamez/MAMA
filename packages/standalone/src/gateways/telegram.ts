@@ -33,6 +33,8 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
+import { resolveTelegramPrincipal } from './principal.js';
+import { logSecurityEventOnly } from '../security/security-monitor.js';
 import type {
   ReportDeliveryBinding,
   ReportDeliveryLease,
@@ -426,6 +428,24 @@ export class TelegramGateway extends BaseGateway {
       }
     }
 
+    const principal = resolveTelegramPrincipal({
+      userId: String(msg.from.id),
+      chatId: String(msg.chat.id),
+      chatType: msg.chat.type,
+      allowedChats: new Set(this.config.allowedChats ?? []),
+      ownerUserIds:
+        this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
+    });
+    if (principal.lane === 'divert') {
+      logSecurityEventOnly({
+        type: 'telegram_principal_diverted',
+        severity: 'warn',
+        message: 'Telegram ingress diverted before processing',
+        details: { source: 'telegram', chatType: msg.chat.type },
+      });
+      return;
+    }
+
     const hasMedia = Boolean((msg.photo && msg.photo.length > 0) || msg.document);
     if (hasMedia && (!this.config.allowedChats || this.config.allowedChats.length === 0)) {
       const lastWarn = this.rejectedChatWarnAt.get(String(msg.chat.id)) ?? 0;
@@ -648,6 +668,7 @@ export class TelegramGateway extends BaseGateway {
       channelId: String(msg.chat.id),
       userId: String(msg.from.id),
       text,
+      principal,
       contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
       metadata: {
         username: msg.from.username,
