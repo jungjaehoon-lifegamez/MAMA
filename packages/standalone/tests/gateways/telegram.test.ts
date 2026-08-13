@@ -576,7 +576,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     );
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 101),
+      ...makeBaseMessage(7777, 7777, 101),
       photo: [
         { file_id: 'small', file_unique_id: 'small-u', width: 10, height: 10, file_size: 2 },
         { file_id: 'large', file_unique_id: 'large-u', width: 100, height: 100, file_size: 4 },
@@ -644,7 +644,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     expect(onMessage).toBeTypeOf('function');
     await onMessage!({
       message: {
-        ...makeBaseMessage(7777, 42, 900),
+        ...makeBaseMessage(7777, 7777, 900),
         text: 'what is open right now',
       },
     });
@@ -672,7 +672,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = await makeGateway();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 102),
+      ...makeBaseMessage(7777, 7777, 102),
       caption: 'Read this image',
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
@@ -718,7 +718,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     );
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 104),
+      ...makeBaseMessage(7777, 7777, 104),
       document: {
         file_id: 'document',
         file_unique_id: 'document-u',
@@ -744,7 +744,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     mockApi.getFile.mockResolvedValue({ file_path: 'documents/reference.png', file_size: 12 });
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 118),
+      ...makeBaseMessage(7777, 7777, 118),
       caption: 'Read this uploaded image',
       document: {
         file_id: 'document-image',
@@ -801,7 +801,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.start();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 119),
+      ...makeBaseMessage(7777, 7777, 119),
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
@@ -823,11 +823,11 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.start();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 121),
+      ...makeBaseMessage(7777, 7777, 121),
       photo: [{ file_id: 'photo-1', file_unique_id: 'photo-u-1', width: 10, height: 10 }],
     });
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 122),
+      ...makeBaseMessage(7777, 7777, 122),
       photo: [{ file_id: 'photo-2', file_unique_id: 'photo-u-2', width: 10, height: 10 }],
     });
 
@@ -850,7 +850,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.start();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 120),
+      ...makeBaseMessage(7777, 7777, 120),
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
@@ -860,8 +860,8 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
   it('routes identical short text from distinct Telegram message IDs', async () => {
     const gateway = await makeGateway();
-    const first = { ...makeBaseMessage(7777, 42, 106), text: 'yes' };
-    const second = { ...makeBaseMessage(7777, 42, 107), text: 'yes' };
+    const first = { ...makeBaseMessage(7777, 7777, 106), text: 'yes' };
+    const second = { ...makeBaseMessage(7777, 7777, 107), text: 'yes' };
 
     await privateHandler(gateway).handleMessage(first);
     await privateHandler(gateway).handleMessage(second);
@@ -884,12 +884,12 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = await makeGateway();
 
     const first = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 130),
+      ...makeBaseMessage(7777, 7777, 130),
       text: 'first',
     });
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
     const second = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 131),
+      ...makeBaseMessage(7777, 7777, 131),
       text: 'second',
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -913,7 +913,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     const gateway = await makeGateway();
     const turn = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 132),
+      ...makeBaseMessage(7777, 7777, 132),
       text: 'first',
     });
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
@@ -975,7 +975,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     const gateway = await makeGateway();
     const turn = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 133),
+      ...makeBaseMessage(7777, 7777, 133),
       text: 'first',
     });
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
@@ -1015,11 +1015,11 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 133),
+      ...makeBaseMessage(7777, 7777, 133),
       text: 'first',
     });
     const second = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 134),
+      ...makeBaseMessage(7777, 7777, 134),
       text: 'second',
     });
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(2));
@@ -1044,7 +1044,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
     await expect(
       privateHandler(gateway).handleMessage({
-        ...makeBaseMessage(7777, 42, 135),
+        ...makeBaseMessage(7777, 7777, 135),
         text: 'send it',
       })
     ).resolves.toBeUndefined();
@@ -1064,7 +1064,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     const gateway = await makeGateway();
     const turn = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 136),
+      ...makeBaseMessage(7777, 7777, 136),
       text: 'long turn',
     });
     await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
@@ -1091,7 +1091,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     const gateway = await makeGateway();
     const turn = privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 138),
+      ...makeBaseMessage(7777, 7777, 138),
       text: 'ready race',
     });
     await vi.waitFor(() => expect(mockApi.editMessageText).toHaveBeenCalledOnce());
@@ -1127,7 +1127,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
     await expect(
       privateHandler(gateway).handleMessage({
-        ...makeBaseMessage(7777, 42, 137),
+        ...makeBaseMessage(7777, 7777, 137),
         text: 'long response',
       })
     ).rejects.toThrow('third chunk failed');
@@ -1151,7 +1151,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
   it('still drops the same Telegram message ID', async () => {
     const gateway = await makeGateway();
-    const message = { ...makeBaseMessage(7777, 42, 108), text: 'yes' };
+    const message = { ...makeBaseMessage(7777, 7777, 108), text: 'yes' };
 
     await privateHandler(gateway).handleMessage(message);
     await privateHandler(gateway).handleMessage(message);
@@ -1169,7 +1169,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       mediaRoot,
       fetchImpl: vi.fn(async () => jpegResponse()),
     };
-    const message = { ...makeBaseMessage(7777, 42, 123), text: 'run once' };
+    const message = { ...makeBaseMessage(7777, 7777, 123), text: 'run once' };
     const first = new TelegramGateway(options);
     await first.start();
     await privateHandler(first).handleMessage(message);
@@ -1231,7 +1231,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = await makeGateway();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 109),
+      ...makeBaseMessage(7777, 7777, 109),
       caption: 'external instruction',
       forward_origin: { type: 'user', date: 1700000000 },
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
@@ -1248,7 +1248,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     mockApi.getFile.mockResolvedValue({});
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 110),
+      ...makeBaseMessage(7777, 7777, 110),
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
@@ -1265,7 +1265,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = await makeGateway(vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 111),
+      ...makeBaseMessage(7777, 7777, 111),
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
@@ -1286,7 +1286,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 112),
+      ...makeBaseMessage(7777, 7777, 112),
       text: 'process this',
     });
 

@@ -532,8 +532,12 @@ export class TelegramGateway extends BaseGateway {
     const attachments: MessageAttachment[] = [];
     const contentBlocks: ContentBlock[] = [];
     let transientMediaPath: string | undefined;
+    // The public lane is conversation-only: a non-owner's attachment is never
+    // downloaded with the bot's credentials and never becomes a model-visible
+    // content block. Text/caption still flows.
+    const mediaAllowed = principal.lane === 'owner';
     try {
-      if (msg.photo && msg.photo.length > 0) {
+      if (mediaAllowed && msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
         const downloaded = await downloadTelegramMedia({
           botToken: this.token,
@@ -575,7 +579,7 @@ export class TelegramGateway extends BaseGateway {
         if (!text.trim()) {
           text = '[Image]';
         }
-      } else if (msg.document) {
+      } else if (mediaAllowed && msg.document) {
         const downloaded = await downloadTelegramMedia({
           botToken: this.token,
           fileId: msg.document.file_id,
