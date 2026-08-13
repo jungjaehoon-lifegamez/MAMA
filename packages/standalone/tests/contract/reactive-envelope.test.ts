@@ -11,6 +11,7 @@ import type { NormalizedMessage } from '../../src/gateways/types.js';
 import type { AgentLoopOptions } from '../../src/agent/types.js';
 import { makeAuthorityHarness } from '../envelope/fixtures.js';
 import { buildChannelKey, SessionPool, setSessionPool } from '../../src/agent/session-pool.js';
+import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 type CapturedRun = {
   prompt: string;
@@ -30,12 +31,12 @@ function makeReactiveEnvelopeConfig(): ReactiveEnvelopeConfig {
 }
 
 function makeMessage(source: NormalizedMessage['source']): NormalizedMessage {
-  return {
+  return withOwnerPrincipal({
     source,
     channelId: `${source}:channel:${Math.random().toString(36).slice(2)}`,
     userId: `${source}:user`,
     text: `hello from ${source}`,
-  };
+  });
 }
 
 describe('reactive envelope issuance', () => {
@@ -176,12 +177,12 @@ describe('reactive envelope issuance', () => {
       makeReactiveEnvelopeConfig(),
       authority
     );
-    const message: NormalizedMessage = {
+    const message: NormalizedMessage = withOwnerPrincipal({
       source: 'telegram',
       channelId: 'tg:busy',
       userId: 'u:busy',
       text: 'queued hello',
-    };
+    });
     const channelKey = buildChannelKey(message.source, message.channelId);
     sessionPool.getSession(channelKey);
     let queued = false;
@@ -220,12 +221,12 @@ describe('reactive envelope issuance', () => {
       makeReactiveEnvelopeConfig(),
       authority
     );
-    const message: NormalizedMessage = {
+    const message: NormalizedMessage = withOwnerPrincipal({
       source: 'telegram',
       channelId: 'tg:envelope-fail',
       userId: 'u:envelope-fail',
       text: 'hello',
-    };
+    });
     const channelKey = buildChannelKey(message.source, message.channelId);
 
     await expect(router.process(message)).rejects.toThrow('synthetic envelope failure');

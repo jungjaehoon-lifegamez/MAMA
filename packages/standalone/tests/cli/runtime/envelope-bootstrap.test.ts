@@ -17,6 +17,7 @@ import {
   loadConnectorConfig,
   type ConnectorConfigLoadResult,
 } from '../../../src/connectors/config-loader.js';
+import { withOwnerPrincipal } from '../../gateways/helpers/principal-fixture.js';
 
 const DISABLED_CONNECTOR_CONFIG_LOAD_RESULT: ConnectorConfigLoadResult = Object.freeze({
   ok: true,
@@ -313,12 +314,14 @@ describe('STORY-M1R-BOOTSTRAP-3: off-mode behavior', () => {
           bootstrap.envelopeConfig,
           bootstrap.envelopeAuthority
         );
-        await router.process({
-          source: 'telegram',
-          channelId: 'tg:1',
-          userId: 'u:1',
-          text: 'read memory',
-        });
+        await router.process(
+          withOwnerPrincipal({
+            source: 'telegram',
+            channelId: 'tg:1',
+            userId: 'u:1',
+            text: 'read memory',
+          })
+        );
         const executor = new GatewayToolExecutor({
           mamaApi: createMockMamaApi([]),
           envelopeIssuanceMode: bootstrap.metadata.issuance,
@@ -462,21 +465,25 @@ describe('STORY-M1R-BOOTSTRAP-4: concurrency/lock release', () => {
       );
 
       await expect(
-        router.process({
-          source: 'telegram',
-          channelId: 'tg:lock-release',
-          userId: 'u:1',
-          text: 'hello',
-        })
+        router.process(
+          withOwnerPrincipal({
+            source: 'telegram',
+            channelId: 'tg:lock-release',
+            userId: 'u:1',
+            text: 'hello',
+          })
+        )
       ).rejects.toThrow('synthetic envelope failure');
 
       await expect(
-        router.process({
-          source: 'telegram',
-          channelId: 'tg:lock-release',
-          userId: 'u:1',
-          text: 'hello again',
-        })
+        router.process(
+          withOwnerPrincipal({
+            source: 'telegram',
+            channelId: 'tg:lock-release',
+            userId: 'u:1',
+            text: 'hello again',
+          })
+        )
       ).resolves.toMatchObject({ response: 'ok' });
     });
   });

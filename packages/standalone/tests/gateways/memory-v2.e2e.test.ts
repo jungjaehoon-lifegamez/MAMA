@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import Database from '../../src/sqlite.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
+import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 
 const TEST_DB = '/tmp/test-standalone-memory-v2-e2e.db';
 const require = createRequire(import.meta.url);
@@ -94,21 +95,25 @@ describe('Story: Memory V2 Standalone Integration', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await router.process({
-        source: 'discord',
-        channelId: 'channel-e2e',
-        userId: 'user-e2e',
-        text: 'We decided to use pnpm in this repository, keep answers concise, and reuse this convention for all follow-up tasks in the current project.',
-      });
+      await router.process(
+        withOwnerPrincipal({
+          source: 'discord',
+          channelId: 'channel-e2e',
+          userId: 'user-e2e',
+          text: 'We decided to use pnpm in this repository, keep answers concise, and reuse this convention for all follow-up tasks in the current project.',
+        })
+      );
 
       await waitForMemoryIngestion(mamaApi);
 
-      await router.process({
-        source: 'discord',
-        channelId: 'channel-e2e',
-        userId: 'user-e2e',
-        text: 'Should we keep using pnpm here?',
-      });
+      await router.process(
+        withOwnerPrincipal({
+          source: 'discord',
+          channelId: 'channel-e2e',
+          userId: 'user-e2e',
+          text: 'Should we keep using pnpm here?',
+        })
+      );
 
       expect(lastPrompt).not.toContain('[MAMA Profile]');
       expect(lastPrompt).not.toContain('[MAMA Memories]');
