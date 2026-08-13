@@ -24,6 +24,7 @@ import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import { getConfig } from '../cli/config/config-manager.js';
+import { resolveConnectorPrincipal } from './principal.js';
 
 /**
  * Slack message event structure
@@ -85,6 +86,8 @@ export class SlackGateway extends BaseGateway {
   private webClient: WebClient;
   private config: SlackLocalGatewayConfig;
   private teamId?: string;
+  private ownerWarningLogged = false;
+  private missingTeamIdWarningLogged = false;
 
   // Multi-agent support
   private botToken: string;
@@ -208,42 +211,56 @@ export class SlackGateway extends BaseGateway {
       return;
     }
 
+    // Ignore bot messages before resolving an end-user principal.
+    if (event.bot_id) return;
+
+    if (!this.teamId && !this.missingTeamIdWarningLogged) {
+      this.logger.warn('Slack team ID is unavailable; all senders will be diverted');
+      this.missingTeamIdWarningLogged = true;
+    }
+
+    const isDM = event.channel_type === 'im';
+    const principal = resolveConnectorPrincipal({
+      connector: 'slack',
+      namespace: this.teamId ?? 'workspace',
+      userId: event.user,
+      ownerUserId: this.teamId ? this.config.ownerUserId : undefined,
+      isDirectMessage: isDM,
+    });
+    if (principal.lane === 'divert') {
+      return;
+    }
+
     // Dedup: Slack Socket Mode may redeliver events, and app_mention + message
     // fire for the same @mention. Mark every processed event to prevent duplicates.
-    if (!event.bot_id) {
-      const dedupKey = event.ts;
-      if (this.processedMessages.has(dedupKey)) {
-        return;
-      }
-      this.processedMessages.set(dedupKey, Date.now());
-      // Periodic cleanup
-      if (this.processedMessages.size > 100) {
-        const now = Date.now();
-        for (const [key, time] of this.processedMessages) {
-          if (now - time > SlackGateway.DEDUP_TTL_MS) this.processedMessages.delete(key);
+    const dedupKey = event.ts;
+    if (this.processedMessages.has(dedupKey)) {
+      return;
+    }
+    this.processedMessages.set(dedupKey, Date.now());
+    // Periodic cleanup
+    if (this.processedMessages.size > 100) {
+      const now = Date.now();
+      for (const [key, time] of this.processedMessages) {
+        if (now - time > SlackGateway.DEDUP_TTL_MS) {
+          this.processedMessages.delete(key);
         }
       }
     }
 
-    // Record ALL messages to channel history (for conversation context)
+    // Only admitted owner messages become conversation context.
     const channelHistory = getChannelHistory();
-    const senderName = event.bot_id ? (event.bot_id === 'auto-route' ? 'Agent' : 'Bot') : 'User';
     channelHistory.record(event.channel, {
       messageId: event.ts,
-      sender: senderName,
-      userId: event.user || event.bot_id || '',
+      sender: 'User',
+      userId: event.user,
       body: event.text || '',
       timestamp: parseFloat(event.ts) * 1000,
-      isBot: !!event.bot_id,
+      isBot: false,
     });
 
     // Agent-bot message handling was here: shared-context recording and mention
     // delegation between bots. Removed with the multi-bot handler, which never ran.
-
-    // Ignore other bot messages (not part of our multi-agent system)
-    if (event.bot_id) return;
-
-    const isDM = event.channel_type === 'im';
 
     // Check if we should respond to this message
     if (!this.shouldRespond(event, isDM, isMention)) {
@@ -306,6 +323,7 @@ export class SlackGateway extends BaseGateway {
       channelId: event.channel,
       userId: event.user,
       text: enrichedContent,
+      principal,
       contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
       metadata: {
         threadTs: event.thread_ts || event.ts,
@@ -483,6 +501,11 @@ export class SlackGateway extends BaseGateway {
    * Start the Slack gateway
    */
   async start(): Promise<void> {
+    if (!this.config.ownerUserId && !this.ownerWarningLogged) {
+      this.logger.warn('Slack owner user ID is not configured; all senders will be diverted');
+      this.ownerWarningLogged = true;
+    }
+
     if (this.connected) {
       this.logger.log('Slack gateway already connected');
       return;
