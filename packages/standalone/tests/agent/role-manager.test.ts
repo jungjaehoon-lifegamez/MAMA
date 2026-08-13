@@ -5,6 +5,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { RoleManager, getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
 import type { RolesConfig, RoleConfig } from '../../src/cli/config/types.js';
+import type { PrincipalContext } from '../../src/gateways/principal.js';
 
 describe('RoleManager', () => {
   afterEach(() => {
@@ -20,6 +21,53 @@ describe('RoleManager', () => {
       expect(role.allowedTools).toContain('*');
       expect(role.systemControl).toBe(true);
       expect(role.sensitiveAccess).toBe(true);
+    });
+
+    it('keeps the viewer static mapping when its host principal is console eligible', () => {
+      const manager = new RoleManager();
+      const principal: PrincipalContext = {
+        class: 'owner',
+        lane: 'owner',
+        canonicalId: 'viewer:host:host',
+        consoleEligible: true,
+      };
+
+      expect(manager.getRoleForSource('viewer', { principal }).roleName).toBe('os_agent');
+    });
+
+    it('resolves admitted public and defensive external principals to zero-tool roles', () => {
+      const manager = new RoleManager();
+      const publicPrincipal: PrincipalContext = {
+        class: 'external',
+        lane: 'public',
+        canonicalId: 'telegram:global:public-user',
+        consoleEligible: false,
+      };
+      const divertedPrincipal: PrincipalContext = {
+        ...publicPrincipal,
+        lane: 'divert',
+        canonicalId: 'telegram:global:diverted-user',
+      };
+
+      expect(manager.getRoleForSource('telegram', { principal: publicPrincipal }).roleName).toBe(
+        'public_lane'
+      );
+      expect(manager.getRoleForSource('telegram', { principal: divertedPrincipal }).roleName).toBe(
+        'external_data'
+      );
+    });
+
+    it('uses principal console eligibility only for Telegram owner messages', () => {
+      const manager = new RoleManager();
+      const principal: PrincipalContext = {
+        class: 'owner',
+        lane: 'owner',
+        canonicalId: 'telegram:global:owner-user',
+        consoleEligible: true,
+      };
+
+      expect(manager.getRoleForSource('telegram', { principal }).roleName).toBe('owner_console');
+      expect(manager.getRoleForSource('discord', { principal }).roleName).toBe('chat_bot');
     });
 
     it('should return chat_bot role for discord source', () => {

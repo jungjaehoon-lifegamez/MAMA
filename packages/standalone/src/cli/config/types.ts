@@ -115,6 +115,23 @@ export const DEFAULT_ROLES: RolesConfig = {
       systemControl: false,
       sensitiveAccess: false,
     },
+    public_lane: {
+      model: 'claude-sonnet-5',
+      maxTurns: 4,
+      allowedTools: [],
+      blockedTools: ['*'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
+    external_data: {
+      maxTurns: 0,
+      allowedTools: [],
+      blockedTools: ['*'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
     // Owner console: granted ONLY when the telegram inbound is verified-owner
     // (allowed_chats locked AND the message is a 1:1 DM from an allowlisted
     // chat). Read/query surface is wide and Drive mutations are constrained to

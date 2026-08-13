@@ -7,6 +7,7 @@
 
 import { minimatch } from 'minimatch';
 import { RoleConfig, RolesConfig, DEFAULT_ROLES } from '../cli/config/types.js';
+import type { PrincipalContext } from '../gateways/principal.js';
 
 /**
  * Options for RoleManager initialization
@@ -24,6 +25,7 @@ export interface RoleManagerOptions {
 export interface SourceTrustContext {
   channelId?: string;
   chatType?: string;
+  principal?: PrincipalContext;
 }
 
 /**
@@ -61,6 +63,37 @@ export class RoleManager {
     trust?: SourceTrustContext
   ): { roleName: string; role: RoleConfig } {
     const normalizedSource = source.toLowerCase();
+    const principal = trust?.principal;
+
+    // Principal-aware roles are resolved before transport mappings. Public
+    // principals are external by classification, so the external branch keeps
+    // that admitted subcase on the public lane while every other external
+    // principal falls into the unreachable, zero-tool defense role.
+    if (principal?.class === 'external') {
+      const principalRoleName = principal.lane === 'public' ? 'public_lane' : 'external_data';
+      const principalRole = this.rolesConfig.definitions[principalRoleName];
+      if (!principalRole) {
+        throw new Error(`Required principal role "${principalRoleName}" is not defined`);
+      }
+      return { roleName: principalRoleName, role: principalRole };
+    }
+
+    if (principal?.lane === 'public') {
+      const publicRole = this.rolesConfig.definitions['public_lane'];
+      if (!publicRole) {
+        throw new Error('Required principal role "public_lane" is not defined');
+      }
+      return { roleName: 'public_lane', role: publicRole };
+    }
+
+    // A host principal can be console-eligible, but owner_console is a
+    // Telegram-only surface. Viewer/mobile/system retain their static mapping.
+    if (normalizedSource === 'telegram' && principal?.consoleEligible === true) {
+      const ownerRole = this.rolesConfig.definitions['owner_console'];
+      if (ownerRole) {
+        return { roleName: 'owner_console', role: ownerRole };
+      }
+    }
 
     // Trust-conditional escalation: telegram + allowlist locked + 1:1 DM from
     // an allowlisted chat -> owner_console. Groups/supergroups NEVER escalate
