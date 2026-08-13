@@ -11,7 +11,6 @@ import {
   Partials,
   Message,
   Events,
-  ChannelType,
   AttachmentBuilder,
 } from 'discord.js';
 import { existsSync } from 'node:fs';
@@ -34,6 +33,7 @@ import type { MultiAgentConfig } from '../cli/config/types.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { resolveConnectorPrincipal } from './principal.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -249,7 +249,26 @@ export class DiscordGateway extends BaseGateway {
     const classification = await this.classifyMessage(message);
     if (!classification) return; // bot message, already handled or ignored
 
-    const isDM = message.channel.type === ChannelType.DM;
+    const isDM = !message.guild;
+    const principal = resolveConnectorPrincipal({
+      connector: 'discord',
+      namespace: message.guild?.id ?? 'direct',
+      userId: message.author.id,
+      ownerUserId: this.config.ownerUserId,
+      isDirectMessage: isDM,
+    });
+    if (principal.lane === 'divert') {
+      getChannelHistory().record(message.channel.id, {
+        messageId: message.id,
+        sender: message.author.username,
+        userId: message.author.id,
+        body: this.cleanMessageContent(message.content),
+        timestamp: Date.now(),
+        isBot: false,
+      });
+      return;
+    }
+
     const isMentioned = message.mentions.has(this.client.user!);
 
     // Debug logging
@@ -334,6 +353,7 @@ export class DiscordGateway extends BaseGateway {
       channelName,
       userId: message.author.id,
       text: cleanContent,
+      principal,
       contentBlocks:
         attachmentInfo.contentBlocks.length > 0 ? attachmentInfo.contentBlocks : undefined,
       metadata: {

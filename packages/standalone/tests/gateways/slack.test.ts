@@ -246,6 +246,7 @@ describe('SlackGateway', () => {
     const divertedGateway = new SlackGateway({
       botToken: 'xoxb-test-token',
       appToken: 'xapp-test-token',
+      ownerUserId: 'user-synthetic',
       turnProcessor,
     });
     const internals = divertedGateway as unknown as {
@@ -256,6 +257,7 @@ describe('SlackGateway', () => {
     internals.logger.log = vi.fn();
     const sentEvents: string[] = [];
     divertedGateway.onEvent((event) => sentEvents.push(event.type));
+    await divertedGateway.start();
 
     await internals.handleMessage(
       {
