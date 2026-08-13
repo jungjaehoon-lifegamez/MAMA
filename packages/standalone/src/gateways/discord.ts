@@ -51,6 +51,8 @@ const discordLogger = new DebugLogger('discord');
 export interface DiscordGatewayOptions {
   /** Discord bot token */
   token: string;
+  /** Owner Discord user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
   /** Message router for processing messages */
   turnProcessor: TurnProcessor;
   /** Reading sessions to NAME channels is a display concern, asked for by name. */
@@ -62,6 +64,11 @@ export interface DiscordGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+}
+
+interface DiscordLocalGatewayConfig extends DiscordGatewayConfig {
+  /** Owner Discord user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -125,7 +132,7 @@ export class DiscordGateway extends BaseGateway {
 
   private client: Client;
   private token: string;
-  private config: DiscordGatewayConfig;
+  private config: DiscordLocalGatewayConfig;
   private defaultChannelId?: string;
 
   // Message editing throttle state
@@ -150,6 +157,7 @@ export class DiscordGateway extends BaseGateway {
       enabled: true,
       token: options.token,
       guilds: coerceDiscordGuildConfig(options.config?.guilds) || {},
+      ownerUserId: options.ownerUserId,
     };
     discordLogger.info(
       `[Discord] Initialized with guild config keys: ${

@@ -140,6 +140,8 @@ export interface TelegramGatewayConfig {
   token: string;
   /** Allowed chat IDs (empty = allow all) */
   allowedChats?: string[];
+  /** Owner Telegram user IDs. Unset means owner resolution fails closed. */
+  ownerUserIds?: string[];
 }
 
 /**
@@ -204,6 +206,7 @@ export class TelegramGateway extends BaseGateway {
       enabled: true,
       token: options.token,
       allowedChats: options.config?.allowedChats || [],
+      ownerUserIds: options.config?.ownerUserIds,
     };
     this.mediaRoot =
       options.mediaRoot ??

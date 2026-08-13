@@ -9,6 +9,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SlackGateway } from '../../src/gateways/slack.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
 
+const slackApiMocks = vi.hoisted(() => ({
+  authTest: vi.fn().mockResolvedValue({ ok: true, team_id: 'team-synthetic-1' }),
+}));
+
 // Mock @slack/socket-mode
 vi.mock('@slack/socket-mode', () => {
   const mockSocketClient = {
@@ -25,6 +29,9 @@ vi.mock('@slack/socket-mode', () => {
 // Mock @slack/web-api
 vi.mock('@slack/web-api', () => {
   const mockWebClient = {
+    auth: {
+      test: slackApiMocks.authTest,
+    },
     chat: {
       postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234567890.123456' }),
     },
@@ -96,12 +103,30 @@ describe('SlackGateway', () => {
       const config = gatewayWithConfig.getConfig();
       expect(config.channels?.['C123']?.requireMention).toBe(false);
     });
+
+    it('should retain the configured owner user ID', () => {
+      const gatewayWithOwner = new SlackGateway({
+        botToken: 'xoxb-test',
+        appToken: 'xapp-test',
+        turnProcessor: mockMessageRouter,
+        ownerUserId: 'owner-user-1',
+      });
+
+      expect(gatewayWithOwner.getConfig()).toMatchObject({ ownerUserId: 'owner-user-1' });
+    });
   });
 
   describe('start()', () => {
     it('should connect to Slack via Socket Mode', async () => {
       await gateway.start();
       // SocketModeClient.start should have been called
+    });
+
+    it('should capture the Slack team ID from auth.test once', async () => {
+      await gateway.start();
+
+      expect(slackApiMocks.authTest).toHaveBeenCalledTimes(1);
+      expect(Reflect.get(gateway, 'teamId')).toBe('team-synthetic-1');
     });
 
     it('should not reconnect if already connected', async () => {
