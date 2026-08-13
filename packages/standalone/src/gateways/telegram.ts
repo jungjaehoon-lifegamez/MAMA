@@ -39,6 +39,14 @@ import type {
   TelegramReportDeliveryControl,
   TypedTelegramDeliveryOutcome,
 } from '../operator/report-delivery-coordinator.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
+  };
+};
+const telegramLogger = new DebugLogger('telegram');
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
@@ -465,10 +473,14 @@ export class TelegramGateway extends BaseGateway {
     const durableEntry = this.messageLedger.get(messageKey);
     const numChatId = msg.chat.id;
     const api = this.bot!.api;
+    let initialResponseMessageId: number | null = null;
     const presenter = this.createResponsePresenter(
       numChatId,
       messageKey,
-      durableEntry?.nextChunkIndex ?? 0
+      durableEntry?.nextChunkIndex ?? 0,
+      (messageId) => {
+        initialResponseMessageId = messageId;
+      }
     );
     if (durableEntry?.state !== 'ready') await presenter.start();
     if (durableEntry?.state === 'ready' && durableEntry.response !== undefined) {
@@ -674,6 +686,16 @@ export class TelegramGateway extends BaseGateway {
           this.recentMessageIds.delete(messageKey);
         }
         throw error;
+      }
+
+      if (result.outcome === 'external_divert') {
+        if (initialResponseMessageId !== null) {
+          await api.deleteMessage(numChatId, initialResponseMessageId).catch(() => {});
+        }
+        this.messageLedger.markReady(messageKey, '');
+        this.messageLedger.markDelivered(messageKey);
+        telegramLogger.info('[Telegram] Turn externally diverted; no response sent');
+        return;
       }
 
       this.messageLedger.markReady(messageKey, result.response);
@@ -989,13 +1011,15 @@ export class TelegramGateway extends BaseGateway {
   private createResponsePresenter(
     chatId: number,
     messageKey: string,
-    resumeFromChunk = 0
+    resumeFromChunk = 0,
+    onInitialSend?: (messageId: number) => void
   ): TelegramResponsePresenter {
     const api = this.bot!.api;
     return new TelegramResponsePresenter(
       {
         send: async (content) => {
           const sent = await api.sendMessage(chatId, content);
+          onInitialSend?.(sent.message_id);
           return String(sent.message_id);
         },
         edit: async (handle, content) => {

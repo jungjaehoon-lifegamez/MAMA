@@ -2,6 +2,8 @@
  * Type definitions for Message Gateway system
  */
 
+import type { PrincipalContext } from './principal.js';
+
 /**
  * Supported messenger platforms
  */
@@ -42,6 +44,8 @@ export interface NormalizedMessage {
   userId: string;
   /** Message text content */
   text: string;
+  /** Host-resolved sender identity and admission lane. */
+  principal?: PrincipalContext;
   /** Multimodal content blocks (images, etc.) */
   contentBlocks?: ContentBlock[];
   /** Platform-specific metadata */

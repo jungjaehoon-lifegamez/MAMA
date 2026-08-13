@@ -32,6 +32,7 @@ import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext, AgentLoopOptions, ModelRunProvenance } from '../agent/types.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
+import { laneChannelId } from './principal.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -302,6 +303,7 @@ export interface GatewayRegistry {
 export type {
   BlockedTurn,
   CompletedTurn,
+  DivertedTurn,
   ProcessingResult,
   ProcessOptions,
   SessionDirectory,
@@ -815,7 +817,8 @@ export class MessageRouter implements TurnProcessor {
     message: NormalizedMessage,
     processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const lane = message.principal?.lane ?? 'owner';
+    const channelKey = buildChannelKey(message.source, laneChannelId(message.channelId, lane));
     const previous = this.channelTails.get(channelKey);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -846,6 +849,8 @@ export class MessageRouter implements TurnProcessor {
     processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
+    const lane = message.principal?.lane ?? 'owner';
+    const sessionChannelId = laneChannelId(message.channelId, lane);
 
     // Security: Block sensitive configuration requests from non-viewer sources.
     // The wall applies to OWNER-authored text only: untrusted-wrapped blocks
@@ -910,13 +915,13 @@ This protects your credentials from being exposed in chat logs.`;
     // 1. Get or create session (by source + channelId)
     const session = this.sessionStore.getOrCreate(
       message.source,
-      message.channelId,
+      sessionChannelId,
       message.userId,
       message.channelName
     );
 
     // 2. Check if session is busy (another request in progress)
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const channelKey = buildChannelKey(message.source, sessionChannelId);
     const sessionPool = getSessionPool();
     const initialSession = sessionPool.getSession(channelKey);
     let cliSessionId = initialSession.sessionId;
@@ -990,7 +995,10 @@ This protects your credentials from being exposed in chat logs.`;
           ? { source: message.source, channelId: message.channelId }
           : null;
       const reportCarryChannelKey = reportCarryTarget
-        ? buildChannelKey(reportCarryTarget.source, reportCarryTarget.channelId)
+        ? buildChannelKey(
+            reportCarryTarget.source,
+            laneChannelId(reportCarryTarget.channelId, lane)
+          )
         : null;
       const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
         ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
@@ -1169,6 +1177,7 @@ This protects your credentials from being exposed in chat logs.`;
           userId: message.userId,
           model: roleModel, // Role-specific model override
           maxTurns: roleMaxTurns, // Role-specific max turns
+          sessionKey: channelKey,
           source: message.source,
           channelId: message.channelId,
           agentContext,

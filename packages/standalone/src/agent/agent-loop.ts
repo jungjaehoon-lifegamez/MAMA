@@ -47,6 +47,7 @@ import {
 } from './code-act/index.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
+import { laneChannelId } from '../gateways/principal.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -1261,10 +1262,12 @@ export class AgentLoop {
     const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
 
     // Track channel key for session release
-    const channelKey = buildChannelKey(
-      options?.source ?? 'default',
-      options?.channelId ?? this.sessionKey
-    );
+    const channelKey =
+      options?.sessionKey ??
+      buildChannelKey(
+        options?.source ?? 'default',
+        laneChannelId(options?.channelId ?? this.sessionKey, 'owner')
+      );
 
     // Use session pool for conversation continuity
     // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking
