@@ -83,7 +83,6 @@ export async function wireGateways(params: {
     slackGateway,
     telegramGateway,
     gateways,
-    agentLoop,
     cronEmitter,
   } = params;
 
@@ -209,19 +208,9 @@ export async function wireGateways(params: {
           }
         : {}),
     },
-    agentLoop: {
-      run: async (prompt: string) => {
-        const result = await agentLoop.run(prompt);
-        return { response: result.response };
-      },
-      runWithContent: async (content) => {
-        // Cast to match the expected type (both use same structure)
-        console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-        const result = await agentLoop.runWithContent(
-          content as Parameters<typeof agentLoop.runWithContent>[0]
-        );
-        return { response: result.response };
-      },
+    turnProcessor: messageRouter,
+    ownerUserIdsBySource: {
+      chatwork: config.chatwork?.owner_user_id,
     },
   });
 
@@ -242,7 +231,8 @@ export async function wireGateways(params: {
       }
     }
   } catch (error) {
-    console.warn('Plugin loading warning:', error);
+    wiringLogger.error('Plugin loading failed:', error);
+    throw error;
   }
 
   return { pluginLoader };

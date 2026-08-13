@@ -305,6 +305,8 @@ export interface Gateway {
  * Plugin manifest (plugin.json)
  */
 export interface PluginManifest {
+  /** Host/plugin contract version. Versions below 2 are refused before registration. */
+  apiVersion: number;
   /** Unique plugin ID */
   id: string;
   /** Display name */
@@ -318,9 +320,9 @@ export interface PluginManifest {
   /** Plugin type */
   type: 'gateway';
   /** Gateway-specific metadata */
-  gateway?: {
+  gateway: {
     /** Gateway source ID (e.g., 'discord', 'slack') */
-    sourceId: string;
+    sourceId: MessageSource;
     /** Display label */
     label: string;
     /** Config schema (JSON Schema) */
@@ -328,6 +330,20 @@ export interface PluginManifest {
   };
   /** Required dependencies */
   dependencies?: Record<string, string>;
+}
+
+/** Plugin-supplied message data accepted by the host-owned ingress boundary. */
+export interface PluginInboundInput {
+  channelId: string;
+  userId: string;
+  text: string;
+  contentBlocks?: ContentBlock[];
+  metadata?: MessageMetadata;
+}
+
+/** A diverted inbound has no response by construction. */
+export interface PluginInboundResult {
+  response?: string;
 }
 
 /**
@@ -338,8 +354,8 @@ export interface PluginApi {
   logger: PluginLogger;
   /** Get config for this plugin */
   getConfig<T = unknown>(): T | undefined;
-  /** Get agent loop for processing messages */
-  getAgentLoop(): AgentLoopInterface;
+  /** Submit an inbound message through host-owned identity resolution and routing. */
+  processInbound(input: PluginInboundInput): Promise<PluginInboundResult>;
   /** Register a message handler */
   onMessage(handler: MessageHandler): void;
   /** Send a response to a channel */
@@ -354,14 +370,6 @@ export interface PluginLogger {
   warn(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;
   debug(message: string, ...args: unknown[]): void;
-}
-
-/**
- * Agent loop interface for plugins
- */
-export interface AgentLoopInterface {
-  run(prompt: string): Promise<{ response: string }>;
-  runWithContent(content: ContentBlock[]): Promise<{ response: string }>;
 }
 
 /**

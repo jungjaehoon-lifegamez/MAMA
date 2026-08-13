@@ -125,6 +125,9 @@ export const DEFAULT_ROLES: RolesConfig = {
       sensitiveAccess: false,
     },
     external_data: {
+      // Never executes (maxTurns 0, unreachable by design) - the model field
+      // exists only because config validation requires one per role definition.
+      model: 'claude-sonnet-5',
       maxTurns: 0,
       allowedTools: [],
       blockedTools: ['*'],

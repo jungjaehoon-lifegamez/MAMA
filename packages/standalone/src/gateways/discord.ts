@@ -333,7 +333,15 @@ export class DiscordGateway extends BaseGateway {
 
     const channelHistory = getChannelHistory();
     // Build message history context for Claude (OpenClaw style)
-    const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
+    const ownerHistoryUserIds = new Set(
+      this.config.ownerUserId ? [this.config.ownerUserId] : []
+    );
+    const historyContext = channelHistory.formatForContext(
+      message.channel.id,
+      message.id,
+      undefined,
+      { includeUserIds: ownerHistoryUserIds }
+    );
     if (historyContext) {
       console.log(
         `[Discord] Built historyContext (${historyContext.length} chars):`,
