@@ -299,3 +299,40 @@ describe('Story TG-01/TG-04: Telegram ingress principal admission', () => {
     await gateway.stop();
   });
 });
+
+describe('public lane media containment', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    seams.handlers.clear();
+    seams.api.sendMessage.mockResolvedValue({ message_id: 1 });
+  });
+
+  it('never downloads a non-owner group photo and passes text without content blocks', async () => {
+    const processTurn = vi.fn(() => completed());
+    const turnProcessor: TurnProcessor = { processTurn };
+    const gateway = await makeGateway({
+      turnProcessor,
+      allowedChats: ['1001', '-2002'],
+      ownerUserIds: ['1001'],
+    });
+    void gateway;
+
+    await deliver(
+      makeMessage({
+        chatId: -2002,
+        userId: 9999,
+        messageId: 9101,
+        chatType: 'group',
+        text: '@test_bot please look at this',
+        entities: [{ type: 'mention', offset: 0, length: '@test_bot'.length }],
+        photo: [{ file_id: 'f1', file_unique_id: 'u1', file_size: 1234, width: 10, height: 10 }],
+      })
+    );
+
+    expect(seams.api.getFile).not.toHaveBeenCalled();
+    expect(processTurn).toHaveBeenCalledTimes(1);
+    const passed = processTurn.mock.calls[0][0] as NormalizedMessage;
+    expect(passed.principal?.lane).toBe('public');
+    expect(passed.contentBlocks).toBeUndefined();
+  });
+});
