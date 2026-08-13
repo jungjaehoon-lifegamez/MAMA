@@ -22,6 +22,7 @@ interface SyntheticTelegramMessage {
 
 interface SyntheticSlackEvent {
   type: string;
+  subtype?: string;
   channel: string;
   channel_type: 'im' | 'mpim' | 'channel';
   user: string;
@@ -249,6 +250,9 @@ interface DeliveryObservation {
   downloadCount: number;
   outboundCount: number;
   outboundTargets: string[];
+  typingCount: number;
+  deletionCount: number;
+  reactionCount: number;
 }
 
 const connectors: Connector[] = ['telegram', 'slack', 'discord'];
@@ -335,6 +339,7 @@ function createRouterHarness(
   const sessionStore = new SessionStore(new Database(':memory:'));
   const modelCalls: CapturedModelCall[] = [];
   const agentLoop = {
+    childRuntimeToolCapable: false,
     run: vi.fn(async (prompt: string, options?: AgentLoopOptions) => {
       if (!options) throw new Error('Missing matrix agent options');
       modelCalls.push({ prompt, options });
@@ -453,6 +458,9 @@ async function runTelegramCell(
         ...telegramSeams.api.sendDocument.mock.calls.map((call) => String(call[0])),
         ...telegramSeams.api.sendSticker.mock.calls.map((call) => String(call[0])),
       ],
+      typingCount: telegramSeams.api.sendChatAction.mock.calls.length,
+      deletionCount: telegramSeams.api.deleteMessage.mock.calls.length,
+      reactionCount: 0,
     };
   } finally {
     await gateway.stop();
@@ -465,6 +473,7 @@ function makeSlackEvent(cell: MatrixCell): SyntheticSlackEvent {
   const isPublic = cell.surface === 'public-channel';
   return {
     type: 'message',
+    subtype: cell.sender === 'external' ? 'file_share' : undefined,
     channel: channelId,
     channel_type: cell.surface === 'dm' ? 'im' : cell.surface === 'group' ? 'mpim' : 'channel',
     user: cell.sender === 'owner' ? 'slack-owner' : 'slack-external',
@@ -499,7 +508,12 @@ async function runSlackCell(
   await gateway.start();
 
   try {
-    const route = cell.surface === 'public-channel' ? 'app_mention' : 'message';
+    const route =
+      event.subtype === 'file_share'
+        ? 'message'
+        : cell.surface === 'public-channel'
+          ? 'app_mention'
+          : 'message';
     const handler = slackSeams.handlers.get(route);
     expect(handler).toBeTypeOf('function');
     await handler!({ event, ack: vi.fn().mockResolvedValue(undefined) });
@@ -510,6 +524,9 @@ async function runSlackCell(
       outboundTargets: slackSeams.postMessage.mock.calls.map((call) =>
         String((call[0] as { channel?: string }).channel)
       ),
+      typingCount: 0,
+      deletionCount: 0,
+      reactionCount: 0,
     };
   } finally {
     await gateway.stop();
@@ -587,6 +604,9 @@ async function runDiscordCell(
       ...message.reply.mock.calls.map(() => message.channel.id),
       ...message.channel.send.mock.calls.map(() => message.channel.id),
     ],
+    typingCount: message.channel.sendTyping.mock.calls.length,
+    deletionCount: 0,
+    reactionCount: message.react.mock.calls.length,
   };
 }
 
@@ -647,6 +667,7 @@ describe('Task 10: sender boundary completion matrix', () => {
       const processTurn = vi.spyOn(harness.router, 'processTurn');
       const sessionCreation = vi.spyOn(harness.sessionStore, 'getOrCreate');
       const toolExecution = vi.spyOn(GatewayToolExecutor.prototype, 'execute');
+      const historyWrite = vi.spyOn(ChannelHistory.prototype, 'record');
 
       try {
         const observation = await runCell(cell, harness);
@@ -663,8 +684,12 @@ describe('Task 10: sender boundary completion matrix', () => {
           expect(harness.mamaApi.recallMemory).not.toHaveBeenCalled();
           expect(harness.mamaApi.loadCheckpoint).not.toHaveBeenCalled();
           expect(toolExecution).not.toHaveBeenCalled();
+          expect(historyWrite).not.toHaveBeenCalled();
           expect(observation.downloadCount).toBe(0);
           expect(observation.outboundCount).toBe(0);
+          expect(observation.typingCount).toBe(0);
+          expect(observation.deletionCount).toBe(0);
+          expect(observation.reactionCount).toBe(0);
           return;
         }
 
@@ -693,6 +718,9 @@ describe('Task 10: sender boundary completion matrix', () => {
           expect(harness.mamaApi.recallMemory).not.toHaveBeenCalled();
           expect(harness.mamaApi.loadCheckpoint).not.toHaveBeenCalled();
           expect(observation.downloadCount).toBe(0);
+          expect(new Set(historyWrite.mock.calls.map(([channelId]) => channelId))).toEqual(
+            new Set([`${observation.channelId}#public`])
+          );
         } else {
           expect(observation.downloadCount).toBe(1);
           expect(harness.enhance).toHaveBeenCalledTimes(1);
@@ -702,6 +730,7 @@ describe('Task 10: sender boundary completion matrix', () => {
         }
       } finally {
         toolExecution.mockRestore();
+        historyWrite.mockRestore();
         sessionCreation.mockRestore();
         processTurn.mockRestore();
         harness.close();

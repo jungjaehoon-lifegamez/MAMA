@@ -42,6 +42,23 @@ scenario IDs from this document.
 | TG-04 | A mentioned Telegram group non-owner is classified external and admitted only to `public_lane`: fixed public policy, no tools, no memory/context injection, no attachment download in the conversation-only case, and same-chat reply. | `sender-boundary-matrix.test.ts`: `covers 'telegram'/'group'/'external' without crossing the sender boundary`; the complete parameterized matrix covers all 18 connector/surface/sender cells. | GREEN (intentional change) |
 | TG-05 | Backend replacement for the public lane rebuilds from the fixed public policy plus bounded public history only. Owner turns and external history metadata are excluded, and resumed public turns do not invoke memory retrieval.       | `sender-boundary-matrix.test.ts`: `TG-05 replaces a public session with only bounded public history` and `excludes a diverted Discord sender from the next owner prompt history`.              | GREEN (2026-08-13)         |
 
+### Sender-boundary round-2 closure: 2026-08-13
+
+- **TG-01:** Telegram resolves the principal before enqueueing an inbound turn. Owner and public
+  traffic in one group use distinct lane queue keys, so a slow public turn cannot hold the owner
+  lane; a diverted principal never enters the queue. Deduplication still occurs before admission.
+  Evidence: `telegram.test.ts` cases `TG-01 does not queue an owner group turn behind a slow public
+turn` and `TG-01 does not enqueue a Telegram principal resolved to divert`. **Status: GREEN.**
+- **TG-04:** a Claude `AgentLoop` now publishes whether its construction-wide persistent child
+  runtime has native or MCP tools. The public lane fails closed before session/model work when that
+  capability is present and processes only on a gateway-only Claude construction. Cline reports
+  false because its tool boundary remains per role. Evidence: `message-router-principal.test.ts`.
+  **Status: GREEN.**
+- **TG-05:** router `ChannelHistory` writes use the same lane-adjusted channel ID as the session,
+  and diverted Discord ingress performs no history write. The sender matrix also pins zero typing,
+  reaction, deletion, attachment-download, history, model, tool, and outbound effects on diverted
+  cells. **Status: GREEN.**
+
 ### Final review closure
 
 The final coverage, security, and temporal reviewers read this artifact first. Their findings
@@ -432,6 +449,11 @@ change unless they are release-blocking security or data-loss issues.
       both Slack ingress routes, and non-owner prompt-history exclusion are pinned.
 
 ## Change log
+
+- 2026-08-13: Closed the sender-boundary round-2 review: fail-closed public child-runtime
+  containment (TG-04), principal-before-queue Telegram lane isolation (TG-01), and lane-scoped or
+  zero-persistence history behavior (TG-05). The external Slack file-share fixture now exercises
+  the real `file_share` subtype and proves zero downloads before owner admission.
 
 - 2026-08-13: Added the final sender-boundary completion matrix and linked TG-01 ordered lane
   ownership, TG-04 limited Telegram group conversation, and TG-05 replacement/history isolation to

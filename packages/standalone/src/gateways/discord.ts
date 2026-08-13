@@ -258,14 +258,6 @@ export class DiscordGateway extends BaseGateway {
       isDirectMessage: isDM,
     });
     if (principal.lane === 'divert') {
-      getChannelHistory().record(message.channel.id, {
-        messageId: message.id,
-        sender: message.author.username,
-        userId: message.author.id,
-        body: this.cleanMessageContent(message.content),
-        timestamp: Date.now(),
-        isBot: false,
-      });
       return;
     }
 
@@ -333,9 +325,7 @@ export class DiscordGateway extends BaseGateway {
 
     const channelHistory = getChannelHistory();
     // Build message history context for Claude (OpenClaw style)
-    const ownerHistoryUserIds = new Set(
-      this.config.ownerUserId ? [this.config.ownerUserId] : []
-    );
+    const ownerHistoryUserIds = new Set(this.config.ownerUserId ? [this.config.ownerUserId] : []);
     const historyContext = channelHistory.formatForContext(
       message.channel.id,
       message.id,

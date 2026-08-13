@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AgentLoop } from '../../src/agent/agent-loop.js';
 import Database from '../../src/sqlite.js';
 import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
@@ -113,6 +114,102 @@ describe('MessageRouter principal admission gate', () => {
         })
       )
     ).resolves.toMatchObject({ outcome: 'completed', response: 'processed' });
+  });
+
+  it.each([
+    {
+      surface: 'native tools',
+      mcp: [] as string[],
+      builtinTools: undefined,
+    },
+    {
+      surface: 'MCP tools',
+      mcp: ['synthetic-mcp-tool'],
+      builtinTools: '',
+    },
+  ])(
+    'diverts the public lane before a real Claude AgentLoop with $surface can run',
+    async ({ mcp, builtinTools }) => {
+      const capableLoop = new AgentLoop(null, {
+        backend: 'claude',
+        systemPrompt: 'Synthetic public containment test',
+        toolsConfig: { gateway: ['*'], mcp },
+        builtinTools,
+      });
+      const run = vi.spyOn(capableLoop, 'run').mockResolvedValue({ response: 'must not run' });
+      const capableSessionStore = new SessionStore(new Database(':memory:'));
+      const capableRouter = new MessageRouter(
+        capableSessionStore,
+        capableLoop,
+        createMockMamaApi([])
+      );
+      const getOrCreate = vi.spyOn(capableSessionStore, 'getOrCreate');
+
+      expect(capableLoop.childRuntimeToolCapable).toBe(true);
+      await expect(
+        capableRouter.process(
+          connectorMessage({
+            principal: {
+              class: 'external',
+              lane: 'public',
+              canonicalId: 'telegram:global:synthetic-public',
+              consoleEligible: false,
+            },
+          })
+        )
+      ).resolves.toMatchObject({ outcome: 'external_divert', delivery: 'silent' });
+      expect(run).not.toHaveBeenCalled();
+      expect(getOrCreate).not.toHaveBeenCalled();
+      expect(securityEvents.logSecurityEventOnly).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'public_lane_requires_gateway_only_runtime' })
+      );
+
+      capableSessionStore.close();
+    }
+  );
+
+  it('processes the public lane through a real gateway-only Claude AgentLoop construction', async () => {
+    const gatewayOnlyLoop = new AgentLoop(null, {
+      backend: 'claude',
+      systemPrompt: 'Synthetic gateway-only test',
+      toolsConfig: { gateway: ['*'], mcp: [] },
+      builtinTools: '',
+    });
+    const run = vi.spyOn(gatewayOnlyLoop, 'run').mockResolvedValue({ response: 'gateway-only' });
+    const gatewaySessionStore = new SessionStore(new Database(':memory:'));
+    const gatewayRouter = new MessageRouter(
+      gatewaySessionStore,
+      gatewayOnlyLoop,
+      createMockMamaApi([])
+    );
+
+    expect(gatewayOnlyLoop.childRuntimeToolCapable).toBe(false);
+    await expect(
+      gatewayRouter.process(
+        connectorMessage({
+          principal: {
+            class: 'external',
+            lane: 'public',
+            canonicalId: 'telegram:global:synthetic-public',
+            consoleEligible: false,
+          },
+        })
+      )
+    ).resolves.toMatchObject({ outcome: 'completed', response: 'gateway-only' });
+    expect(run).toHaveBeenCalledOnce();
+
+    gatewaySessionStore.close();
+  });
+
+  it('reports no construction-wide child tool capability for a real Cline AgentLoop', () => {
+    const clineLoop = new AgentLoop(null, {
+      backend: 'cline',
+      systemPrompt: 'Synthetic Cline capability test',
+      clineCwd: testHome,
+      toolsConfig: { gateway: ['*'], mcp: ['synthetic-mcp-tool'] },
+    });
+
+    expect(clineLoop.childRuntimeToolCapable).toBe(false);
   });
 
   it('leaves no channel-tail entry after a diverted turn', async () => {

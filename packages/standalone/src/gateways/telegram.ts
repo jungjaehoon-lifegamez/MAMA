@@ -33,7 +33,7 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
-import { resolveTelegramPrincipal } from './principal.js';
+import { laneChannelId, resolveTelegramPrincipal, type PrincipalContext } from './principal.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import type {
   ReportDeliveryBinding,
@@ -368,8 +368,52 @@ export class TelegramGateway extends BaseGateway {
   }
 
   private async handleMessage(msg: NonNullable<Context['message']>): Promise<void> {
-    const chatKey = String(msg.chat?.id ?? 'unknown');
-    await this.runInChatQueue(chatKey, () => this.processMessage(msg));
+    if (!msg.from || !msg.chat) return;
+
+    const now = Date.now();
+    const messageKey = `${msg.chat.id}:${msg.message_id}`;
+    if (this.messageLedger.get(messageKey)?.state === 'delivered') return;
+    if (this.recentMessageIds.has(messageKey)) return;
+    this.recentMessageIds.set(messageKey, now);
+
+    for (const [key, ts] of this.recentMessageIds) {
+      if (now - ts > MESSAGE_DEDUP_TTL_MS) this.recentMessageIds.delete(key);
+    }
+
+    const chatId = String(msg.chat.id);
+    if (this.config.allowedChats && this.config.allowedChats.length > 0) {
+      if (!this.config.allowedChats.includes(chatId)) {
+        const lastWarn = this.rejectedChatWarnAt.get(chatId) ?? 0;
+        if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
+          this.rejectedChatWarnAt.set(chatId, now);
+          console.warn(
+            `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from.id})`
+          );
+        }
+        return;
+      }
+    }
+
+    const principal = resolveTelegramPrincipal({
+      userId: String(msg.from.id),
+      chatId,
+      chatType: msg.chat.type,
+      allowedChats: new Set(this.config.allowedChats ?? []),
+      ownerUserIds:
+        this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
+    });
+    if (principal.lane === 'divert') {
+      logSecurityEventOnly({
+        type: 'telegram_principal_diverted',
+        severity: 'warn',
+        message: 'Telegram ingress diverted before processing',
+        details: { source: 'telegram', chatType: msg.chat.type },
+      });
+      return;
+    }
+
+    const laneKey = laneChannelId(chatId, principal.lane);
+    await this.runInChatQueue(laneKey, () => this.processMessage(msg, messageKey, principal));
   }
 
   private async runInChatQueue<T>(
@@ -395,56 +439,14 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
-  private async processMessage(msg: NonNullable<Context['message']>): Promise<void> {
+  private async processMessage(
+    msg: NonNullable<Context['message']>,
+    messageKey: string,
+    principal: PrincipalContext
+  ): Promise<void> {
     if (!msg.from || !msg.chat) return;
 
     const now = Date.now();
-
-    // Telegram update dedup (60s TTL). Do not deduplicate by text content:
-    // repeated short replies and emoji are distinct conversation turns.
-    const messageKey = `${msg.chat.id}:${msg.message_id}`;
-    if (this.messageLedger.get(messageKey)?.state === 'delivered') return;
-    if (this.recentMessageIds.has(messageKey)) return;
-    this.recentMessageIds.set(messageKey, now);
-
-    // Cleanup expired entries
-    for (const [key, ts] of this.recentMessageIds) {
-      if (now - ts > MESSAGE_DEDUP_TTL_MS) this.recentMessageIds.delete(key);
-    }
-
-    // Allowed chats filter
-    if (this.config.allowedChats && this.config.allowedChats.length > 0) {
-      if (!this.config.allowedChats.includes(String(msg.chat.id))) {
-        // Rate-cap the warn per chat so a stranger cannot grow daemon.log
-        // one line per unique message.
-        const lastWarn = this.rejectedChatWarnAt.get(String(msg.chat.id)) ?? 0;
-        if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
-          this.rejectedChatWarnAt.set(String(msg.chat.id), now);
-          console.warn(
-            `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from?.id ?? 'unknown'})`
-          );
-        }
-        return;
-      }
-    }
-
-    const principal = resolveTelegramPrincipal({
-      userId: String(msg.from.id),
-      chatId: String(msg.chat.id),
-      chatType: msg.chat.type,
-      allowedChats: new Set(this.config.allowedChats ?? []),
-      ownerUserIds:
-        this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
-    });
-    if (principal.lane === 'divert') {
-      logSecurityEventOnly({
-        type: 'telegram_principal_diverted',
-        severity: 'warn',
-        message: 'Telegram ingress diverted before processing',
-        details: { source: 'telegram', chatType: msg.chat.type },
-      });
-      return;
-    }
 
     const hasMedia = Boolean((msg.photo && msg.photo.length > 0) || msg.document);
     if (hasMedia && (!this.config.allowedChats || this.config.allowedChats.length === 0)) {
