@@ -258,6 +258,8 @@ export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
  * Agent Loop interface for message processing
  */
 export interface AgentLoopClient {
+  /** True when a construction-wide child runtime can invoke native or MCP tools. */
+  readonly childRuntimeToolCapable: boolean;
   /**
    * Run the agent loop with a prompt
    */
@@ -694,6 +696,11 @@ export class MessageRouter implements TurnProcessor {
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
+    if (this.agentLoop.childRuntimeToolCapable) {
+      logger.warn(
+        'Public lane will refuse turns because the child runtime has construction-wide tools'
+      );
+    }
     this.mamaApi = mamaApi;
     this.envelopeConfig = envelopeConfig;
     this.envelopeAuthority = envelopeAuthority;
@@ -841,6 +848,23 @@ export class MessageRouter implements TurnProcessor {
           source: admittedMessage.source,
           channelId: admittedMessage.channelId,
           lane: lane ?? 'missing',
+        },
+      });
+      return {
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: Date.now() - startedAt,
+      };
+    }
+    if (lane === 'public' && this.agentLoop.childRuntimeToolCapable) {
+      logSecurityEventOnly({
+        type: 'public_lane_requires_gateway_only_runtime',
+        severity: 'warn',
+        message: 'Public lane requires a gateway-only child runtime',
+        details: {
+          source: admittedMessage.source,
+          channelId: admittedMessage.channelId,
         },
       });
       return {
@@ -1527,7 +1551,7 @@ This protects your credentials from being exposed in chat logs.`;
       if (channelHistory) {
         const now = Date.now();
         // Record user message (use UUID to avoid collisions in concurrent requests)
-        channelHistory.record(message.channelId, {
+        channelHistory.record(sessionChannelId, {
           messageId: `user_${randomUUID()}`,
           sender: message.userId,
           userId: message.userId,
@@ -1536,7 +1560,7 @@ This protects your credentials from being exposed in chat logs.`;
           isBot: false,
         });
         // 6. Record bot response
-        channelHistory.record(message.channelId, {
+        channelHistory.record(sessionChannelId, {
           messageId: `bot_${randomUUID()}`,
           sender: 'MAMA',
           userId: 'mama',
@@ -2529,6 +2553,7 @@ export function createMockAgentLoop(
   responseGenerator: (prompt: string) => string = () => 'Mock response'
 ): AgentLoopClient {
   return {
+    childRuntimeToolCapable: false,
     async run(
       prompt: string,
       _options?: AgentLoopOptions

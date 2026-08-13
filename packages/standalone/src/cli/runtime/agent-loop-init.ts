@@ -305,6 +305,7 @@ export function initMainAgentLoop(
   // Create AgentLoopClient wrapper (adapts AgentLoopResult -> { response })
   // Also sets session key for lane-based concurrency and includes reasoning
   const agentLoopClient: AgentLoopClient = {
+    childRuntimeToolCapable: agentLoop.childRuntimeToolCapable,
     run: async (prompt: string, options?: AgentLoopOptions) => {
       // Per-call reasoning state (review M2: module-level state crossed runs
       // once operator lanes could overlap chat).

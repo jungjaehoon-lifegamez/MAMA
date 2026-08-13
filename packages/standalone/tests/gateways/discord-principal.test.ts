@@ -169,7 +169,7 @@ describe('Discord ingress principal admission', () => {
     setChannelHistory(new ChannelHistory());
   });
 
-  it('diverts an unmentioned external sender before downloads, typing, or reactions and records text only', async () => {
+  it('diverts an unmentioned external sender with zero persistence or external effects', async () => {
     const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
     const gateway = makeGateway(turnProcessor);
     const history = new ChannelHistory();
@@ -184,15 +184,7 @@ describe('Discord ingress principal admission', () => {
     expect(message.channel.sendTyping).not.toHaveBeenCalled();
     expect(message.react).not.toHaveBeenCalled();
     expect(message.reply).not.toHaveBeenCalled();
-    expect(history.getHistory('channel-principal')).toEqual([
-      expect.objectContaining({
-        messageId: 'message-1',
-        userId: 'external-user',
-        body: 'synthetic request',
-        isBot: false,
-      }),
-    ]);
-    expect(history.getHistory('channel-principal')[0]?.attachments).toBeUndefined();
+    expect(history.getHistory('channel-principal')).toEqual([]);
     expect(gateway).toBeInstanceOf(DiscordGateway);
   });
 

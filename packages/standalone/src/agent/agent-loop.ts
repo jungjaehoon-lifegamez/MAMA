@@ -610,6 +610,15 @@ function withExecutionSurface(
 }
 
 export class AgentLoop {
+  /**
+   * Construction-wide child-runtime tool capability.
+   *
+   * Claude's persistent CLI cannot narrow native or MCP tools per turn, so a
+   * public lane may run only when both surfaces were disabled at construction.
+   * Codex and Cline enforce their tool policies through different per-run or
+   * per-role boundaries and therefore report false here.
+   */
+  readonly childRuntimeToolCapable: boolean;
   private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -856,6 +865,8 @@ export class AgentLoop {
 
     // Choose backend (default: claude)
     this.backend = backend;
+    this.childRuntimeToolCapable =
+      backend === 'claude' && (useMCPMode || options.builtinTools !== '');
 
     if (this.backend === 'codex') {
       // Codex app-server mode

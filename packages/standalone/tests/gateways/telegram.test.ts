@@ -902,6 +902,91 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  it('TG-01 does not queue an owner group turn behind a slow public turn', async () => {
+    let releasePublic!: () => void;
+    const publicBlocked = new Promise<void>((resolve) => {
+      releasePublic = resolve;
+    });
+    let markPublicEntered!: () => void;
+    const publicEntered = new Promise<void>((resolve) => {
+      markPublicEntered = resolve;
+    });
+    const ownerEntered = vi.fn();
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (message: { principal?: { lane?: string }; text: string }) => {
+        if (message.principal?.lane === 'public') {
+          markPublicEntered();
+          await publicBlocked;
+        } else if (message.principal?.lane === 'owner') {
+          ownerEntered();
+        }
+        return { outcome: 'completed', response: `response:${message.text}`, duration: 1 };
+      }
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['-7001'], ownerUserIds: ['7001'] },
+    });
+    await gateway.start();
+    const groupMessage = (userId: number, messageId: number, text: string) => ({
+      message_id: messageId,
+      date: 1700000000,
+      chat: { id: -7001, type: 'group' as const },
+      from: {
+        id: userId,
+        is_bot: false as const,
+        first_name: 'Synthetic',
+        username: `synthetic-${userId}`,
+      },
+      text: `@test_bot ${text}`,
+      entities: [{ type: 'mention' as const, offset: 0, length: 9 }],
+    });
+
+    const publicTurn = privateHandler(gateway).handleMessage(
+      groupMessage(7002, 140, 'public-slow')
+    );
+    await publicEntered;
+    const ownerTurn = privateHandler(gateway).handleMessage(groupMessage(7001, 141, 'owner-fast'));
+
+    try {
+      await vi.waitFor(() => expect(ownerEntered).toHaveBeenCalledOnce());
+    } finally {
+      releasePublic();
+      await Promise.allSettled([publicTurn, ownerTurn]);
+      await gateway.stop();
+    }
+  });
+
+  it('TG-01 does not enqueue a Telegram principal resolved to divert', async () => {
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7001'], ownerUserIds: [] },
+    });
+    await gateway.start();
+    const queue = vi.spyOn(
+      gateway as unknown as {
+        runInChatQueue<T>(
+          chatKey: string,
+          work: () => Promise<T>,
+          allowReentrant?: boolean
+        ): Promise<T>;
+      },
+      'runInChatQueue'
+    );
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7001, 7002, 142),
+      text: 'divert me',
+    });
+
+    expect(queue).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
+    expect(mockApi.sendMessage).not.toHaveBeenCalled();
+    await gateway.stop();
+  });
+
   it('TG-01 serializes the exact external report delivery ID behind an active same-chat turn', async () => {
     let releaseTurn!: () => void;
     const blocked = new Promise<void>((resolve) => {
