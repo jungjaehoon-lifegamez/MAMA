@@ -68,7 +68,21 @@ function processFixtureMessage(
   message: NormalizedMessage,
   processOptions?: Parameters<MessageRouter['process']>[1]
 ): ReturnType<MessageRouter['process']> {
-  return router.process(withOwnerPrincipal(message), processOptions);
+  const admittedMessage =
+    message.principal !== undefined || message.source !== 'telegram'
+      ? withOwnerPrincipal(message)
+      : {
+          ...message,
+          principal: {
+            class: 'owner' as const,
+            lane: 'owner' as const,
+            canonicalId: 'telegram:global:synthetic-owner',
+            // Legacy router tests exercise RoleManager's allowlist branch.
+            // Ingress-specific tests supply the authoritative eligibility bit.
+            consoleEligible: false,
+          },
+        };
+  return router.process(admittedMessage, processOptions);
 }
 
 beforeAll(() => {
@@ -2134,7 +2148,7 @@ describe('MessageRouter', () => {
 });
 
 describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
-  it('acknowledges report carry with the consuming public-lane key', async () => {
+  it('does not expose or consume owner report carry on the public lane', async () => {
     const db = new Database(':memory:');
     const sessionStore = new SessionStore(db);
     const reportCarry: ReportCarryPort = {
@@ -2168,9 +2182,8 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
         },
       });
 
-      expect(reportCarry.acknowledge).toHaveBeenCalledWith(
-        expect.objectContaining({ consumingChannelKey: 'telegram:report-lane-channel#public' })
-      );
+      expect(reportCarry.peek).not.toHaveBeenCalled();
+      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
     } finally {
       resetRoleManager();
       sessionStore.close();
