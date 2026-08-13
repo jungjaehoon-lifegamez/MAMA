@@ -56,6 +56,8 @@ export interface SlackGatewayOptions {
   botToken: string;
   /** Slack app token for Socket Mode (xapp-...) */
   appToken: string;
+  /** Owner Slack user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
   /** Message router for processing messages */
   turnProcessor: TurnProcessor;
   /** Gateway configuration */
@@ -63,6 +65,11 @@ export interface SlackGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+}
+
+interface SlackLocalGatewayConfig extends SlackGatewayConfig {
+  /** Owner Slack user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
 }
 
 /**
@@ -76,7 +83,8 @@ export class SlackGateway extends BaseGateway {
 
   private socketClient: SocketModeClient;
   private webClient: WebClient;
-  private config: SlackGatewayConfig;
+  private config: SlackLocalGatewayConfig;
+  private teamId?: string;
 
   // Multi-agent support
   private botToken: string;
@@ -102,6 +110,7 @@ export class SlackGateway extends BaseGateway {
       botToken: options.botToken,
       appToken: options.appToken,
       channels: options.config?.channels || {},
+      ownerUserId: options.ownerUserId,
     };
 
     // Create Socket Mode client for real-time events
@@ -474,6 +483,8 @@ export class SlackGateway extends BaseGateway {
       return;
     }
 
+    const authResult = await this.webClient.auth.test();
+    this.teamId = authResult.team_id ?? this.teamId;
     await this.socketClient.start();
   }
 

@@ -148,6 +148,20 @@ describe('TelegramGateway basics', () => {
   it('should return undefined for getLastMessageAt() initially', () => {
     expect(gateway.getLastMessageAt()).toBeUndefined();
   });
+
+  it('should retain configured owner user IDs', () => {
+    const configuredGateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      config: {
+        ownerUserIds: ['owner-user-1', 'owner-user-2'],
+      },
+    });
+
+    expect(Reflect.get(configuredGateway, 'config')).toMatchObject({
+      ownerUserIds: ['owner-user-1', 'owner-user-2'],
+    });
+  });
 });
 
 describe('TelegramGateway - message splitting', () => {

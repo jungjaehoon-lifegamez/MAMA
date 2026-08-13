@@ -106,6 +106,17 @@ describe('DiscordGateway', () => {
       const config = gatewayWithConfig.getConfig();
       expect(config.guilds?.['123']?.requireMention).toBe(false);
     });
+
+    it('should retain the configured owner user ID', () => {
+      const gatewayWithOwner = new DiscordGateway({
+        token: 'test-token',
+        turnProcessor: mockMessageRouter,
+        sessionDirectory: mockMessageRouter,
+        ownerUserId: 'owner-user-1',
+      });
+
+      expect(gatewayWithOwner.getConfig()).toMatchObject({ ownerUserId: 'owner-user-1' });
+    });
   });
 
   describe('start()', () => {

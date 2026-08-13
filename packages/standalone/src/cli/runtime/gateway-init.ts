@@ -96,6 +96,7 @@ export async function initGateways(
 
       discordGateway = new DiscordGateway({
         token: config.discord.token,
+        ownerUserId: config.discord.owner_user_id,
         // The router satisfies both capabilities today; the surface asks for each by name
         // so that either can be replaced without handing over the other.
         turnProcessor: messageRouter,
@@ -143,6 +144,7 @@ export async function initGateways(
       slackGateway = new SlackGateway({
         botToken: config.slack.bot_token,
         appToken: config.slack.app_token,
+        ownerUserId: config.slack.owner_user_id,
         turnProcessor: messageRouter,
       });
 
@@ -185,6 +187,7 @@ export async function initGateways(
         turnProcessor: messageRouter,
         config: {
           allowedChats: config.telegram.allowed_chats,
+          ownerUserIds: config.telegram.owner_user_ids,
         },
       });
 
