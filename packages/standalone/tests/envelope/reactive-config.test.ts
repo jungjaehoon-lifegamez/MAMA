@@ -14,6 +14,7 @@ import {
   type ReactiveEnvelopeConfig,
 } from '../../src/envelope/reactive-config.js';
 import { makeAuthorityHarness } from './fixtures.js';
+import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
   return {
@@ -185,7 +186,7 @@ describe('reactive envelope route policy', () => {
     const sessionStore = new SessionStore(db);
     const config = makeConfig();
     const env = { HOME: '/tmp/mama-home' };
-    const message = makeMessage('telegram', 'tg:policy');
+    const message = withOwnerPrincipal(makeMessage('telegram', 'tg:policy'));
     const expectedPolicy = getReactiveRoutePolicy(message, config, env);
     const { authority } = makeAuthorityHarness(db);
     let seenOptions: AgentLoopOptions | undefined;

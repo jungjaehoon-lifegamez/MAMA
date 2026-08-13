@@ -32,7 +32,7 @@ import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext, AgentLoopOptions, ModelRunProvenance } from '../agent/types.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
-import { laneChannelId } from './principal.js';
+import { laneChannelId, makeHostPrincipal } from './principal.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -334,6 +334,7 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+const HOST_MESSAGE_SOURCES = new Set<NormalizedMessage['source']>(['viewer', 'mobile', 'system']);
 
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
@@ -817,8 +818,35 @@ export class MessageRouter implements TurnProcessor {
     message: NormalizedMessage,
     processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
-    const lane = message.principal?.lane ?? 'owner';
-    const channelKey = buildChannelKey(message.source, laneChannelId(message.channelId, lane));
+    const startedAt = Date.now();
+    const admittedMessage =
+      message.principal === undefined && HOST_MESSAGE_SOURCES.has(message.source)
+        ? { ...message, principal: makeHostPrincipal(message.source) }
+        : message;
+    const lane = admittedMessage.principal?.lane;
+    if (lane !== 'owner' && lane !== 'public') {
+      logSecurityEventOnly({
+        type: 'external_sender_diverted',
+        severity: 'warn',
+        message: 'Sender diverted before router session processing',
+        details: {
+          source: admittedMessage.source,
+          channelId: admittedMessage.channelId,
+          lane: lane ?? 'missing',
+        },
+      });
+      return {
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: Date.now() - startedAt,
+      };
+    }
+
+    const channelKey = buildChannelKey(
+      admittedMessage.source,
+      laneChannelId(admittedMessage.channelId, lane)
+    );
     const previous = this.channelTails.get(channelKey);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -832,7 +860,7 @@ export class MessageRouter implements TurnProcessor {
         processOptions?.onQueued?.();
         await previous.catch(() => {});
       }
-      return await this.processInChannel(message, {
+      return await this.processInChannel(admittedMessage, {
         ...processOptions,
         onQueued: previous ? undefined : processOptions?.onQueued,
       });

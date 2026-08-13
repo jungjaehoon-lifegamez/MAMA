@@ -11,6 +11,7 @@ import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentLoopOptions, GatewayToolInput } from '../../src/agent/types.js';
 import { makeAuthorityHarness, makeSignedEnvelope } from '../envelope/fixtures.js';
+import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 function makeReactiveEnvelopeConfig(): ReactiveEnvelopeConfig {
   return {
@@ -62,19 +63,23 @@ describe('Reactive Main envelope tool path', () => {
     const harness = makeRouterHarness(fakeAgentLoop);
     sessionStore = harness.sessionStore;
 
-    await harness.router.process({
-      source: 'telegram',
-      channelId: 'tg:1',
-      userId: 'u:1',
-      text: 'hello',
-    });
-    await harness.router.process({
-      source: 'telegram',
-      channelId: 'tg:2',
-      userId: 'u:2',
-      text: 'hello with content',
-      contentBlocks: [{ type: 'text', text: 'hello with content' }],
-    });
+    await harness.router.process(
+      withOwnerPrincipal({
+        source: 'telegram',
+        channelId: 'tg:1',
+        userId: 'u:1',
+        text: 'hello',
+      })
+    );
+    await harness.router.process(
+      withOwnerPrincipal({
+        source: 'telegram',
+        channelId: 'tg:2',
+        userId: 'u:2',
+        text: 'hello with content',
+        contentBlocks: [{ type: 'text', text: 'hello with content' }],
+      })
+    );
 
     expect(seen.run?.envelope).toBeDefined();
     expect(seen.run?.envelope?.signature).toBeDefined();
@@ -98,12 +103,14 @@ describe('Reactive Main envelope tool path', () => {
     };
     const harness = makeRouterHarness(fakeAgentLoop);
     sessionStore = harness.sessionStore;
-    await harness.router.process({
-      source: 'telegram',
-      channelId: 'tg:1',
-      userId: 'u:1',
-      text: 'hello',
-    });
+    await harness.router.process(
+      withOwnerPrincipal({
+        source: 'telegram',
+        channelId: 'tg:1',
+        userId: 'u:1',
+        text: 'hello',
+      })
+    );
 
     const executionContext = buildAgentToolExecutionContext(capturedOptions);
     const executor = new GatewayToolExecutor({ mamaApi: createMockMamaApi([]) });
