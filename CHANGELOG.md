@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **Every chat ingress now classifies the sender before privileged work.** Telegram, Slack, and
+  Discord divert external senders before model turns, session creation, prompt-history injection,
+  attachment download, tool execution, or model-derived outbound sends. Non-owner history is
+  excluded from later prompts. Slack and Discord add `owner_user_id`; leaving it unset fails
+  closed.
+- **Telegram group non-owners now have a limited conversation lane.** This intentional behavior
+  change admits an addressed group message only to the isolated, memory-free, tool-free public
+  lane and returns its reply to the same group; it does not grant owner-console authority.
+- **Gateway plugins must declare `apiVersion: 2`.** Older plugin API versions are rejected at load
+  time; this is a breaking compatibility change for third-party gateway plugins.
+
 ## mama-os [0.34.1] - 2026-08-12
 
 ### Fixed
@@ -18,7 +31,6 @@ All notable changes to this project will be documented in this file.
   upstream-5xx) through the same path as an in-band 529 - the operator
   reads a class, not a digest. Candidates are re-offered next batch, so
   nothing is permanently lost.
-
 
 ## mama-os [0.34.0] - 2026-08-08
 
