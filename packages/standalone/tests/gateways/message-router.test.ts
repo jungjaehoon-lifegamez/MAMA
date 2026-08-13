@@ -190,6 +190,102 @@ describe('MessageRouter', () => {
       expect(secondEnteredAt - releasedAt).toBeLessThan(200);
     });
 
+    it('does not let a public-lane turn wait behind the owner lane for the same channel', async () => {
+      let releaseOwner!: () => void;
+      const ownerBlocked = new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+      const entered: string[] = [];
+      const agentLoop = {
+        run: vi.fn(async (prompt: string) => {
+          const lane = prompt.includes('owner request') ? 'owner' : 'public';
+          entered.push(lane);
+          if (lane === 'owner') await ownerBlocked;
+          return { response: `${lane} response` };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      const ownerTurn = customRouter.process({
+        source: 'telegram',
+        channelId: 'shared-lane-channel',
+        userId: 'owner-synthetic',
+        text: 'owner request',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:owner-synthetic',
+          consoleEligible: true,
+        },
+      });
+      await vi.waitFor(() => expect(entered).toEqual(['owner']));
+
+      const publicTurn = customRouter.process({
+        source: 'telegram',
+        channelId: 'shared-lane-channel',
+        userId: 'external-synthetic',
+        text: 'public request',
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      let separationError: unknown;
+      try {
+        await vi.waitFor(() => expect(entered).toEqual(['owner', 'public']));
+      } catch (error) {
+        separationError = error;
+      } finally {
+        releaseOwner();
+      }
+      await Promise.all([ownerTurn, publicTurn]);
+      if (separationError) throw separationError;
+    });
+
+    it('uses the public lane for durable sessions, the session pool, and the agent-loop key', async () => {
+      const runOptions: AgentLoopOptions[] = [];
+      const agentLoop = {
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: 'public response' };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      await customRouter.process({
+        source: 'telegram',
+        channelId: 'lane-storage-channel',
+        userId: 'external-synthetic',
+        text: 'public request',
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      expect(sessionStore.listSessions('telegram').map((session) => session.channelId)).toContain(
+        'lane-storage-channel#public'
+      );
+      expect(getSessionPool().listSessions().has('telegram:lane-storage-channel#public')).toBe(
+        true
+      );
+      expect(runOptions[0]?.sessionKey).toBe('telegram:lane-storage-channel#public');
+      expect(runOptions[0]?.channelId).toBe('lane-storage-channel');
+    });
+
     it('releases the FIFO gate when an onQueued callback throws', async () => {
       let releaseFirst!: () => void;
       const firstBlocked = new Promise<void>((resolve) => {
@@ -2022,6 +2118,49 @@ describe('MessageRouter', () => {
 });
 
 describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
+  it('acknowledges report carry with the consuming public-lane key', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const reportCarry: ReportCarryPort = {
+      peek: vi.fn(() => ({ deliveryId: 'delivery-public-lane', prefix: 'report context' })),
+      acknowledge: vi.fn(() => true),
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust(['report-lane-channel']);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await router.process({
+        source: 'telegram',
+        channelId: 'report-lane-channel',
+        userId: 'external-synthetic',
+        text: 'consume report',
+        metadata: { chatType: 'private' },
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      expect(reportCarry.acknowledge).toHaveBeenCalledWith(
+        expect.objectContaining({ consumingChannelKey: 'telegram:report-lane-channel#public' })
+      );
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
   it('injects the report once into a verified owner continuation and acknowledges only after persistence', async () => {
     const db = new Database(':memory:');
     const sessionStore = new SessionStore(db);

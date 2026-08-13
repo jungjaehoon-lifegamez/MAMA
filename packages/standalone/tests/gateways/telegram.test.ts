@@ -162,6 +162,49 @@ describe('TelegramGateway basics', () => {
       ownerUserIds: ['owner-user-1', 'owner-user-2'],
     });
   });
+
+  it('sends nothing for an externally diverted turn', async () => {
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn().mockResolvedValue({
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: 0,
+      }),
+    };
+    const divertedGateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor,
+      config: { allowedChats: ['7001'] },
+    });
+    await divertedGateway.start();
+    mockApi.sendMessage.mockClear();
+    mockApi.editMessageText.mockClear();
+    mockApi.deleteMessage.mockClear();
+
+    const onMessage = registeredHandlers.get('message');
+    expect(onMessage).toBeTypeOf('function');
+    await onMessage!({
+      message: {
+        message_id: 501,
+        date: 1700000000,
+        chat: { id: 7001, type: 'private' },
+        from: {
+          id: 7001,
+          is_bot: false,
+          first_name: 'Synthetic',
+          username: 'synthetic-user',
+        },
+        text: 'synthetic request',
+      },
+    });
+
+    expect(mockApi.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7001, '⏳');
+    expect(mockApi.editMessageText).not.toHaveBeenCalled();
+    expect(mockApi.deleteMessage).toHaveBeenCalledWith(7001, 1);
+    await divertedGateway.stop();
+  });
 });
 
 describe('TelegramGateway - message splitting', () => {

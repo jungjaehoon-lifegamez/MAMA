@@ -579,6 +579,10 @@ export class DiscordGateway extends BaseGateway {
     } finally {
       await tracker.cleanup();
     }
+    if (routerResult.outcome === 'external_divert') {
+      discordLogger.info('[Discord] Turn externally diverted; no response sent');
+      return;
+    }
     const response = routerResult.response;
     const duration = routerResult.duration;
 

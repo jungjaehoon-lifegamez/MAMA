@@ -362,6 +362,11 @@ export class SlackGateway extends BaseGateway {
       await tracker.cleanup();
     }
 
+    if (result.outcome === 'external_divert') {
+      this.logger.log('[Slack] Turn externally diverted; no response sent');
+      return;
+    }
+
     // Send response in thread
     await this.sendResponse(event, result.response);
 

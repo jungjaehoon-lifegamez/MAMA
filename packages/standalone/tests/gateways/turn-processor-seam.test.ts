@@ -135,7 +135,22 @@ describe('turn outcome is discriminated', () => {
     expect('modelRunId' in blocked).toBe(false);
   });
 
-  it('keeps the original fields on both branches so existing callers are untouched', () => {
+  it('carries no response when a turn is externally diverted before model work', () => {
+    const diverted: ProcessingResult = {
+      outcome: 'external_divert',
+      delivery: 'silent',
+      sessionId: 'external-divert',
+      duration: 0,
+    };
+
+    expect(diverted.outcome).toBe('external_divert');
+    if (diverted.outcome === 'external_divert') {
+      expect(diverted.delivery).toBe('silent');
+    }
+    expect('response' in diverted).toBe(false);
+  });
+
+  it('keeps response fields on the completed and blocked branches', () => {
     const outcomes: ProcessingResult[] = [
       {
         outcome: 'completed',
