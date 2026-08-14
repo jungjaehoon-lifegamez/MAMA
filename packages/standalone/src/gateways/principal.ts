@@ -1,4 +1,4 @@
-export type PrincipalClass = 'owner' | 'external';
+export type PrincipalClass = 'owner' | 'member' | 'external';
 
 export type AdmissionLane = 'owner' | 'public' | 'divert';
 
@@ -6,6 +6,7 @@ export interface PrincipalContext {
   readonly class: PrincipalClass;
   readonly lane: AdmissionLane;
   readonly canonicalId: string;
+  readonly principalId?: string;
   readonly consoleEligible: boolean;
 }
 

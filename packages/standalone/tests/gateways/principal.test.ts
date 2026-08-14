@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PrincipalClass, PrincipalContext } from '../../src/gateways/principal.js';
 import {
   laneChannelId,
   makeHostPrincipal,
@@ -7,6 +8,27 @@ import {
 } from '../../src/gateways/principal.js';
 
 describe('Gateway principal resolution', () => {
+  describe('PrincipalContext contract', () => {
+    it('accepts a member class and keeps principalId optional through freezing', () => {
+      const memberClass: PrincipalClass = 'member';
+      const withoutPrincipalId: PrincipalContext = Object.freeze({
+        class: memberClass,
+        lane: 'public',
+        canonicalId: 'telegram:global:1002',
+        consoleEligible: false,
+      });
+      const withPrincipalId: PrincipalContext = Object.freeze({
+        ...withoutPrincipalId,
+        principalId: 'principal-1002',
+      });
+
+      expect(withoutPrincipalId.principalId).toBeUndefined();
+      expect(withPrincipalId.principalId).toBe('principal-1002');
+      expect(Object.isFrozen(withoutPrincipalId)).toBe(true);
+      expect(Object.isFrozen(withPrincipalId)).toBe(true);
+    });
+  });
+
   describe('resolveTelegramPrincipal()', () => {
     it('resolves an explicitly configured owner on a private surface', () => {
       const principal = resolveTelegramPrincipal({
