@@ -33,7 +33,7 @@ import type { MultiAgentConfig } from '../cli/config/types.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import { resolveConnectorPrincipal } from './principal.js';
+import { overlayMemberPrincipal, resolveConnectorPrincipal } from './principal.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -258,13 +258,20 @@ export class DiscordGateway extends BaseGateway {
     if (!classification) return; // bot message, already handled or ignored
 
     const isDM = !message.guild;
-    const principal = resolveConnectorPrincipal({
+    const namespace = message.guild?.id ?? 'direct';
+    let principal = resolveConnectorPrincipal({
       connector: 'discord',
-      namespace: message.guild?.id ?? 'direct',
+      namespace,
       userId: message.author.id,
       ownerUserId: this.config.ownerUserId,
       isDirectMessage: isDM,
     });
+    if (principal.class === 'external' && this.principalResolver) {
+      principal = overlayMemberPrincipal(
+        principal,
+        this.principalResolver('discord', namespace, message.author.id)
+      );
+    }
     if (principal.lane === 'divert') {
       return;
     }

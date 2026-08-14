@@ -33,7 +33,12 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
-import { laneChannelId, resolveTelegramPrincipal, type PrincipalContext } from './principal.js';
+import {
+  laneChannelId,
+  overlayMemberPrincipal,
+  resolveTelegramPrincipal,
+  type PrincipalContext,
+} from './principal.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import type {
   ReportDeliveryBinding,
@@ -402,7 +407,7 @@ export class TelegramGateway extends BaseGateway {
       }
     }
 
-    const principal = resolveTelegramPrincipal({
+    let principal = resolveTelegramPrincipal({
       userId: String(msg.from.id),
       chatId,
       chatType: msg.chat.type,
@@ -410,6 +415,12 @@ export class TelegramGateway extends BaseGateway {
       ownerUserIds:
         this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
     });
+    if (principal.class === 'external' && this.principalResolver) {
+      principal = overlayMemberPrincipal(
+        principal,
+        this.principalResolver('telegram', 'global', String(msg.from.id))
+      );
+    }
     if (principal.lane === 'divert') {
       logSecurityEventOnly({
         type: 'telegram_principal_diverted',
