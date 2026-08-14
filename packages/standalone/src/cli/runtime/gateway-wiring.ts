@@ -224,13 +224,13 @@ export async function wireGateways(params: {
   }
 
   if (discoveredPlugins.length > 0) {
-    console.log(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
+    wiringLogger.info(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
     const pluginGateways = await pluginLoader.loadAll();
     for (const gateway of pluginGateways) {
       try {
         await gateway.start();
         gateways.push(gateway);
-        console.log(`✓ Plugin gateway connected: ${gateway.source}`);
+        wiringLogger.info(`✓ Plugin gateway connected: ${gateway.source}`);
       } catch (error) {
         console.error(`Plugin gateway failed (${gateway.source}):`, error);
       }
