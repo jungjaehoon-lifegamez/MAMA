@@ -355,6 +355,7 @@ export * from './cases/wiki-page-index.js';
 export * from './connectors/event-index.js';
 export * from './connectors/raw-query.js';
 export * from './connectors/types.js';
+export * from './identity/principal-repository.js';
 export * from './search/question-type.js';
 export * from './search/feedback-store.js';
 export * from './search/ranker-features.js';
