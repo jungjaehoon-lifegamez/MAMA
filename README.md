@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-5005%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-5859%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Right now, you read every channel yourself so nothing slips past you.
 > MAMA reads them instead, and sends you the few things that need you.
@@ -39,9 +39,11 @@ Nobody asked for that message. Overnight, the MAMA server on your machine read 1
 sources: Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, and more.
 It decided what needed you, and wrote it down with links.
 
-It also did the small work already. The task board updated itself from those
-same conversations. Lasting decisions were saved to memory. The wiki wrote its
-daily page.
+It also did the small work already — done by a standing roster of workers,
+not one giant bot: a board keeper that files tasks from conversations, a wiki
+writer that keeps the daily page, a deadline watcher that rechecks dates, and a
+memory curator that decides what deserves to be remembered. Each one leaves
+receipts you can open.
 
 ## What that replaces
 
@@ -81,7 +83,9 @@ A system that acts on its own must be easy to check afterwards.
   The database rejects any row that fakes a cause.
 - **It drafts; you send.** An agent can write the customer reply from the
   evidence, but sending requires an explicit permission for that destination.
-  Memory writes refuse anything shaped like a secret.
+  Memory writes refuse anything shaped like a secret. The system interrupts you for approvals and
+  operational alarms such as stale claims, exhausted retries, or unresolved effects; everything
+  else waits for the next report.
 - **Your record stays on your machine.** The databases are local SQLite and the
   embeddings are computed locally. Network traffic goes to two places only: the
   services you connected (Slack, Gmail, and so on) and your AI provider, through
@@ -129,7 +133,7 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.32.3        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-os](packages/standalone/) 0.34.1        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
 | [mama-core](packages/mama-core/) 2.1.2        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
@@ -160,9 +164,9 @@ Dependency direction is one-way: nothing depends on the daemon.
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                        |
 | Done (v0.30–v0.32) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant → persistent Code-Act processes follow the active principal and do not replay completed mutations. |
-| **Now**            | Flip `conductor.enabled`: the standing judge consumes durable batches live, measured against a six-item parity rubric before it takes report authority.                                                                                                                                                                           |
+| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                       |
 | Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                   |
-| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                                                                                                                                                                                                     |
+| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2.        |
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 
@@ -175,6 +179,9 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 - **A surface that can only answer "nothing" fails the build.** Two shipped APIs turned out
   to be permanently empty. The drift guard that now covers the tool catalog generalizes to
   every advertised surface.
+- **Reports that state their own arithmetic.** The daily report should end with what
+  it handled for you — tasks filed, dates rechecked, questions closed — in counts, so the
+  time it returns is a number, not a feeling.
 - **An approval inbox.** Taken from OpenWorker: when the owner is away, the system queues
   the decision instead of raising its own authority.
 - **Permissions you can explain in one sentence.** Also from OpenWorker: label every
@@ -189,10 +196,10 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 5,005 tests across five packages
+pnpm test     # 5,859 tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-03_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-13_
 
 ## License
 

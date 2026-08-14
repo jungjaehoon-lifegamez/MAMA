@@ -47,6 +47,7 @@ import {
 } from './code-act/index.js';
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
+import { laneChannelId } from '../gateways/principal.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -609,6 +610,15 @@ function withExecutionSurface(
 }
 
 export class AgentLoop {
+  /**
+   * Construction-wide child-runtime tool capability.
+   *
+   * Claude's persistent CLI cannot narrow native or MCP tools per turn, so a
+   * public lane may run only when both surfaces were disabled at construction.
+   * Codex and Cline enforce their tool policies through different per-run or
+   * per-role boundaries and therefore report false here.
+   */
+  readonly childRuntimeToolCapable: boolean;
   private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -855,6 +865,8 @@ export class AgentLoop {
 
     // Choose backend (default: claude)
     this.backend = backend;
+    this.childRuntimeToolCapable =
+      backend === 'claude' && (useMCPMode || options.builtinTools !== '');
 
     if (this.backend === 'codex') {
       // Codex app-server mode
@@ -1261,10 +1273,12 @@ export class AgentLoop {
     const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
 
     // Track channel key for session release
-    const channelKey = buildChannelKey(
-      options?.source ?? 'default',
-      options?.channelId ?? this.sessionKey
-    );
+    const channelKey =
+      options?.sessionKey ??
+      buildChannelKey(
+        options?.source ?? 'default',
+        laneChannelId(options?.channelId ?? this.sessionKey, 'owner')
+      );
 
     // Use session pool for conversation continuity
     // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking

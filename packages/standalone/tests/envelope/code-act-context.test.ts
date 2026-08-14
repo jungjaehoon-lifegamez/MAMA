@@ -28,6 +28,7 @@ import { SessionStore } from '../../src/gateways/session-store.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import type { Envelope } from '../../src/envelope/types.js';
 import { makeSignedEnvelope } from './fixtures.js';
+import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 let testDbPath = '';
 let previousMamaDbPath: string | undefined;
@@ -349,13 +350,15 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
         bootstrap.envelopeAuthority
       );
 
-      await router.process({
-        source: 'telegram',
-        channelId: '7777',
-        userId: 'telegram:owner',
-        text: 'current Trello work?',
-        metadata: { chatType: 'private' },
-      });
+      await router.process(
+        withOwnerPrincipal({
+          source: 'telegram',
+          channelId: '7777',
+          userId: 'telegram:owner',
+          text: 'current Trello work?',
+          metadata: { chatType: 'private' },
+        })
+      );
 
       expect(emittedEnvelope?.scope.raw_connectors).toEqual(['telegram', 'trello']);
       const executionContext: GatewayToolExecutionContext = {

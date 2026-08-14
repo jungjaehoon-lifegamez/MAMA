@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiscordGateway } from '../../src/gateways/discord.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
+import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 
 // Mock discord.js
 const discordClientMock = vi.hoisted(() => ({
@@ -105,6 +106,17 @@ describe('DiscordGateway', () => {
 
       const config = gatewayWithConfig.getConfig();
       expect(config.guilds?.['123']?.requireMention).toBe(false);
+    });
+
+    it('should retain the configured owner user ID', () => {
+      const gatewayWithOwner = new DiscordGateway({
+        token: 'test-token',
+        turnProcessor: mockMessageRouter,
+        sessionDirectory: mockMessageRouter,
+        ownerUserId: 'owner-user-1',
+      });
+
+      expect(gatewayWithOwner.getConfig()).toMatchObject({ ownerUserId: 'owner-user-1' });
     });
   });
 
@@ -234,6 +246,54 @@ describe('DiscordGateway', () => {
       expect(handler1).not.toHaveBeenCalled();
       expect(handler2).not.toHaveBeenCalled();
     });
+  });
+
+  it('sends nothing for an externally diverted turn', async () => {
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn().mockResolvedValue({
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: 0,
+      }),
+    };
+    const divertedGateway = new DiscordGateway({
+      token: 'test-token',
+      turnProcessor,
+      sessionDirectory: mockMessageRouter,
+    });
+    const send = vi.fn().mockResolvedValue({ id: 'placeholder-synthetic' });
+    const sentEvents: string[] = [];
+    divertedGateway.onEvent((event) => sentEvents.push(event.type));
+    const internals = divertedGateway as unknown as {
+      dispatchToAgent(
+        message: object,
+        cleanContent: string,
+        normalizedMessage: object,
+        attachmentInfo: { effectiveAttachments: [] }
+      ): Promise<void>;
+    };
+
+    await internals.dispatchToAgent(
+      {
+        channel: {
+          id: 'channel-synthetic',
+          send,
+          messages: { fetch: vi.fn() },
+        },
+      },
+      'synthetic request',
+      {
+        source: 'discord',
+        channelId: 'channel-synthetic',
+        userId: 'user-synthetic',
+        text: 'synthetic request',
+      },
+      { effectiveAttachments: [] }
+    );
+
+    expect(send).not.toHaveBeenCalled();
+    expect(sentEvents).not.toContain('message_sent');
   });
 });
 

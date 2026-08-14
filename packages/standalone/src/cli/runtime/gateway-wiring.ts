@@ -83,7 +83,6 @@ export async function wireGateways(params: {
     slackGateway,
     telegramGateway,
     gateways,
-    agentLoop,
     cronEmitter,
   } = params;
 
@@ -209,40 +208,33 @@ export async function wireGateways(params: {
           }
         : {}),
     },
-    agentLoop: {
-      run: async (prompt: string) => {
-        const result = await agentLoop.run(prompt);
-        return { response: result.response };
-      },
-      runWithContent: async (content) => {
-        // Cast to match the expected type (both use same structure)
-        console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-        const result = await agentLoop.runWithContent(
-          content as Parameters<typeof agentLoop.runWithContent>[0]
-        );
-        return { response: result.response };
-      },
+    turnProcessor: messageRouter,
+    ownerUserIdsBySource: {
+      chatwork: config.chatwork?.owner_user_id,
     },
   });
 
-  // Discover and load gateway plugins
+  // Discovery is host-owned and must remain fail-closed.
+  let discoveredPlugins: Awaited<ReturnType<PluginLoader['discover']>>;
   try {
-    const discoveredPlugins = await pluginLoader.discover();
-    if (discoveredPlugins.length > 0) {
-      console.log(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
-      const pluginGateways = await pluginLoader.loadAll();
-      for (const gateway of pluginGateways) {
-        try {
-          await gateway.start();
-          gateways.push(gateway);
-          console.log(`✓ Plugin gateway connected: ${gateway.source}`);
-        } catch (error) {
-          console.error(`Plugin gateway failed (${gateway.source}):`, error);
-        }
+    discoveredPlugins = await pluginLoader.discover();
+  } catch (error) {
+    wiringLogger.error('Plugin discovery failed:', error);
+    throw error;
+  }
+
+  if (discoveredPlugins.length > 0) {
+    wiringLogger.info(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
+    const pluginGateways = await pluginLoader.loadAll();
+    for (const gateway of pluginGateways) {
+      try {
+        await gateway.start();
+        gateways.push(gateway);
+        wiringLogger.info(`✓ Plugin gateway connected: ${gateway.source}`);
+      } catch (error) {
+        console.error(`Plugin gateway failed (${gateway.source}):`, error);
       }
     }
-  } catch (error) {
-    console.warn('Plugin loading warning:', error);
   }
 
   return { pluginLoader };

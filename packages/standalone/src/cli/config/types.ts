@@ -115,6 +115,26 @@ export const DEFAULT_ROLES: RolesConfig = {
       systemControl: false,
       sensitiveAccess: false,
     },
+    public_lane: {
+      model: 'claude-sonnet-5',
+      maxTurns: 4,
+      allowedTools: [],
+      blockedTools: ['*'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
+    external_data: {
+      // Never executes (maxTurns 0, unreachable by design) - the model field
+      // exists only because config validation requires one per role definition.
+      model: 'claude-sonnet-5',
+      maxTurns: 0,
+      allowedTools: [],
+      blockedTools: ['*'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
     // Owner console: granted ONLY when the telegram inbound is verified-owner
     // (allowed_chats locked AND the message is a 1:1 DM from an allowlisted
     // chat). Read/query surface is wide and Drive mutations are constrained to
@@ -281,6 +301,8 @@ export interface DiscordConfig {
   enabled: boolean;
   /** Discord bot token */
   token?: string;
+  /** Owner Discord user ID. Unset means owner resolution fails closed. */
+  owner_user_id?: string;
   /** Default channel ID for notifications */
   default_channel_id?: string;
   /** Mention mode - only respond when mentioned */
@@ -315,6 +337,8 @@ export interface SlackConfig {
   bot_token?: string;
   /** Slack app token (for socket mode) */
   app_token?: string;
+  /** Owner Slack user ID. Unset means owner resolution fails closed. */
+  owner_user_id?: string;
 }
 
 /**
@@ -327,6 +351,8 @@ export interface TelegramConfig {
   token?: string;
   /** Allowed chat IDs (empty = allow all) */
   allowed_chats?: string[];
+  /** Owner Telegram user IDs. Unset means owner resolution fails closed. */
+  owner_user_ids?: string[];
 }
 
 /**
@@ -337,6 +363,8 @@ export interface ChatworkConfig {
   enabled: boolean;
   /** Chatwork API token */
   api_token?: string;
+  /** Owner Chatwork user ID. Unset means owner resolution fails closed. */
+  owner_user_id?: string;
   /** Room IDs to monitor */
   room_ids?: string[];
   /** Polling interval in milliseconds */

@@ -22,7 +22,12 @@ import {
   McpCompletedMutationInterruptedError,
   McpResultMissingError,
 } from '../../src/agent/types.js';
-import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
+import type {
+  AgentContext,
+  AgentLoopOptions,
+  ContentBlock,
+  MAMAApiInterface,
+} from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import {
   createPersonaReportAsk,
@@ -539,6 +544,9 @@ describe('AgentLoop', () => {
     });
 
     it('TG-03 routes an inbound image through Cline read_files instead of Claude Read', async () => {
+      const imageRoot = mkdtempSync(join(tmpdir(), 'mama-cline-image-'));
+      const imagePath = join(imageRoot, 'synthetic.png');
+      writeFileSync(imagePath, Buffer.from('image'));
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         {
@@ -552,28 +560,33 @@ describe('AgentLoop', () => {
         { mamaApi: createMockApi() }
       );
 
-      await agentLoop.runWithContent(
-        [
-          { type: 'text', text: 'translate' },
+      try {
+        await agentLoop.runWithContent(
+          [
+            { type: 'text', text: 'translate' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+              localPath: imagePath,
+            } as ContentBlock & { localPath: string },
+          ],
           {
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
-          },
-        ],
-        {
-          source: 'telegram',
-          channelId: 'cline-image',
-          agentContext: {
-            ...createChatBotContext(),
-            backend: 'cline',
-            roleName: 'owner_console',
-            role: DEFAULT_ROLES.definitions.owner_console,
-          },
-        }
-      );
+            source: 'telegram',
+            channelId: 'cline-image',
+            agentContext: {
+              ...createChatBotContext(),
+              backend: 'cline',
+              roleName: 'owner_console',
+              role: DEFAULT_ROLES.definitions.owner_console,
+            },
+          }
+        );
 
-      expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('MUST call the read_files tool');
-      expect(persistentPromptMock.mock.calls[0]?.[0]).not.toContain('MUST call the Read tool');
+        expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('MUST call the read_files tool');
+        expect(persistentPromptMock.mock.calls[0]?.[0]).not.toContain('MUST call the Read tool');
+      } finally {
+        rmSync(imageRoot, { recursive: true, force: true });
+      }
     });
   });
 

@@ -113,6 +113,9 @@ function isOwnerConsoleMessage(message: NormalizedMessage, config: MAMAConfig): 
   if (!config.roles?.definitions?.owner_console) {
     return false;
   }
+  if (message.principal !== undefined) {
+    return message.principal.consoleEligible;
+  }
   const allowed = config.telegram?.allowed_chats;
   if (!Array.isArray(allowed) || allowed.length === 0) {
     return false;

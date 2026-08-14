@@ -32,6 +32,7 @@ import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
 import type { AgentContext, AgentLoopOptions, ModelRunProvenance } from '../agent/types.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
+import { laneChannelId, makeHostPrincipal } from './principal.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -257,6 +258,8 @@ export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
  * Agent Loop interface for message processing
  */
 export interface AgentLoopClient {
+  /** True when a construction-wide child runtime can invoke native or MCP tools. */
+  readonly childRuntimeToolCapable: boolean;
   /**
    * Run the agent loop with a prompt
    */
@@ -302,6 +305,7 @@ export interface GatewayRegistry {
 export type {
   BlockedTurn,
   CompletedTurn,
+  DivertedTurn,
   ProcessingResult,
   ProcessOptions,
   SessionDirectory,
@@ -332,6 +336,14 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+const HOST_MESSAGE_SOURCES = new Set<NormalizedMessage['source']>(['viewer', 'mobile', 'system']);
+export const PUBLIC_LANE_SYSTEM_PROMPT =
+  "You are MAMA's public chat assistant. Answer directly and concisely using only the public conversation. You have no tools.";
+const EMPTY_ENHANCED_PROMPT_CONTEXT: EnhancedPromptContext = Object.freeze({
+  keywordInstructions: '',
+  agentsContent: '',
+  rulesContent: '',
+});
 
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
@@ -684,6 +696,11 @@ export class MessageRouter implements TurnProcessor {
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
+    if (this.agentLoop.childRuntimeToolCapable) {
+      logger.warn(
+        'Public lane will refuse turns because the child runtime has construction-wide tools'
+      );
+    }
     this.mamaApi = mamaApi;
     this.envelopeConfig = envelopeConfig;
     this.envelopeAuthority = envelopeAuthority;
@@ -747,6 +764,7 @@ export class MessageRouter implements TurnProcessor {
       channelId: message.channelId,
       chatType:
         typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
+      principal: message.principal,
     });
     const surface: ConnectorCapabilitySurface =
       roleName === 'owner_console'
@@ -815,7 +833,52 @@ export class MessageRouter implements TurnProcessor {
     message: NormalizedMessage,
     processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const startedAt = Date.now();
+    const admittedMessage =
+      message.principal === undefined && HOST_MESSAGE_SOURCES.has(message.source)
+        ? { ...message, principal: makeHostPrincipal(message.source) }
+        : message;
+    const lane = admittedMessage.principal?.lane;
+    if (lane !== 'owner' && lane !== 'public') {
+      logSecurityEventOnly({
+        type: 'external_sender_diverted',
+        severity: 'warn',
+        message: 'Sender diverted before router session processing',
+        details: {
+          source: admittedMessage.source,
+          channelId: admittedMessage.channelId,
+          lane: lane ?? 'missing',
+        },
+      });
+      return {
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: Date.now() - startedAt,
+      };
+    }
+    if (lane === 'public' && this.agentLoop.childRuntimeToolCapable) {
+      logSecurityEventOnly({
+        type: 'public_lane_requires_gateway_only_runtime',
+        severity: 'warn',
+        message: 'Public lane requires a gateway-only child runtime',
+        details: {
+          source: admittedMessage.source,
+          channelId: admittedMessage.channelId,
+        },
+      });
+      return {
+        outcome: 'external_divert',
+        delivery: 'silent',
+        sessionId: 'external-divert',
+        duration: Date.now() - startedAt,
+      };
+    }
+
+    const channelKey = buildChannelKey(
+      admittedMessage.source,
+      laneChannelId(admittedMessage.channelId, lane)
+    );
     const previous = this.channelTails.get(channelKey);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -829,7 +892,7 @@ export class MessageRouter implements TurnProcessor {
         processOptions?.onQueued?.();
         await previous.catch(() => {});
       }
-      return await this.processInChannel(message, {
+      return await this.processInChannel(admittedMessage, {
         ...processOptions,
         onQueued: previous ? undefined : processOptions?.onQueued,
       });
@@ -846,6 +909,8 @@ export class MessageRouter implements TurnProcessor {
     processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
+    const lane = message.principal?.lane ?? 'owner';
+    const sessionChannelId = laneChannelId(message.channelId, lane);
 
     // Security: Block sensitive configuration requests from non-viewer sources.
     // The wall applies to OWNER-authored text only: untrusted-wrapped blocks
@@ -910,13 +975,13 @@ This protects your credentials from being exposed in chat logs.`;
     // 1. Get or create session (by source + channelId)
     const session = this.sessionStore.getOrCreate(
       message.source,
-      message.channelId,
+      sessionChannelId,
       message.userId,
       message.channelName
     );
 
     // 2. Check if session is busy (another request in progress)
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const channelKey = buildChannelKey(message.source, sessionChannelId);
     const sessionPool = getSessionPool();
     const initialSession = sessionPool.getSession(channelKey);
     let cliSessionId = initialSession.sessionId;
@@ -990,7 +1055,10 @@ This protects your credentials from being exposed in chat logs.`;
           ? { source: message.source, channelId: message.channelId }
           : null;
       const reportCarryChannelKey = reportCarryTarget
-        ? buildChannelKey(reportCarryTarget.source, reportCarryTarget.channelId)
+        ? buildChannelKey(
+            reportCarryTarget.source,
+            laneChannelId(reportCarryTarget.channelId, lane)
+          )
         : null;
       const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
         ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
@@ -1023,6 +1091,7 @@ This protects your credentials from being exposed in chat logs.`;
       let context: InjectedContext = { prompt: '', decisions: [], hasContext: false };
       let streamFlushTimer: ReturnType<typeof setInterval> | null = null;
       try {
+        const isPublicLane = lane === 'public';
         // 3. Create AgentContext for role-aware execution
         const trelloAvailable =
           this.envelopeConfig?.rawConnectorsFor(message).includes('trello') === true;
@@ -1034,16 +1103,14 @@ This protects your credentials from being exposed in chat logs.`;
         let systemPrompt: string;
         const historyContext = message.metadata?.historyContext;
 
-        // Always enhance for per-message skill/keyword injection
-        const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
-        const ruleContext: RuleContext | undefined = agentContext
-          ? { agentId: agentContext.roleName, channelId: message.channelId }
-          : undefined;
-        const enhanced = await this.promptEnhancer.enhance(
-          message.text,
-          workspacePath,
-          ruleContext
-        );
+        // Public turns never inspect private workspace rules, skills, or AGENTS files.
+        const enhanced = isPublicLane
+          ? EMPTY_ENHANCED_PROMPT_CONTEXT
+          : await this.promptEnhancer.enhance(
+              message.text,
+              process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'),
+              { agentId: agentContext.roleName, channelId: message.channelId } satisfies RuleContext
+            );
 
         // TG-05: every main backend keeps its live conversation in a durable
         // runtime session. Only a genuinely new/replacement session rebuilds
@@ -1052,7 +1119,7 @@ This protects your credentials from being exposed in chat logs.`;
 
         // Persistent backends skip repeated retrieval after the first turn.
         context =
-          needsFullContext && this.config.implicitLegacyContextSearch
+          !isPublicLane && needsFullContext && this.config.implicitLegacyContextSearch
             ? await this.contextInjector.getRelevantContext(message.text)
             : { prompt: '', decisions: [], hasContext: false };
 
@@ -1060,21 +1127,25 @@ This protects your credentials from being exposed in chat logs.`;
           systemPrompt = '';
           logger.info('CONTINUE turn: skipping context injection');
         } else {
-          // New persistent session: full prompt build.
-          const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
-            source: message.source,
-            channelId: message.channelId,
-          });
-          systemPrompt = this.buildSystemPrompt(
-            session,
-            context.prompt,
-            historyContext,
-            sessionStartupContext,
-            agentContext,
-            enhanced,
-            true,
-            trelloAvailable
-          );
+          if (isPublicLane) {
+            systemPrompt = this.buildPublicLaneSystemPrompt(session);
+          } else {
+            // New persistent owner/host session: retain the existing full prompt build.
+            const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
+              source: message.source,
+              channelId: message.channelId,
+            });
+            systemPrompt = this.buildSystemPrompt(
+              session,
+              context.prompt,
+              historyContext,
+              sessionStartupContext,
+              agentContext,
+              enhanced,
+              true,
+              trelloAvailable
+            );
+          }
         }
 
         // 7. Run agent loop (with session info for lane-based concurrency)
@@ -1096,12 +1167,12 @@ This protects your credentials from being exposed in chat logs.`;
           );
         }
         const roleMaxTurns = agentContext.role.maxTurns;
-        const sessionPolicyFingerprint = this.buildSessionPolicyFingerprint(
-          agentContext,
-          enhanced,
-          roleModel,
-          trelloAvailable
-        );
+        const sessionPolicyFingerprint = isPublicLane
+          ? hashSessionPolicyFingerprint({
+              baseInstructions: PUBLIC_LANE_SYSTEM_PROMPT,
+              model: roleModel,
+            })
+          : this.buildSessionPolicyFingerprint(agentContext, enhanced, roleModel, trelloAvailable);
 
         // Determine if we should resume an existing CLI session
         // - New CLI session: start with --session-id (inject full system prompt)
@@ -1116,9 +1187,11 @@ This protects your credentials from being exposed in chat logs.`;
         // For resumed sessions: inject minimal context only
         // Persistent CLI keeps the process alive with full system prompt from initial request
         // Only inject per-message context (related decisions) to avoid context overflow
-        const effectivePrompt = shouldResume
-          ? this.buildMinimalResumePrompt(context.prompt, agentContext)
-          : systemPrompt;
+        const effectivePrompt = isPublicLane
+          ? PUBLIC_LANE_SYSTEM_PROMPT
+          : shouldResume
+            ? this.buildMinimalResumePrompt(context.prompt, agentContext)
+            : systemPrompt;
 
         // Wrap stream callbacks to accumulate deltas and periodically flush to DB
         let streamAccumulator = '';
@@ -1147,10 +1220,11 @@ This protects your credentials from being exposed in chat logs.`;
 
         // Skill on-demand injection: prepend matched skill content to user message
         // (not system prompt — PersistentCLI can't update system prompt after creation)
-        const skillPrefix = enhanced.skillContent
-          ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
-          : '';
-        if (enhanced.skillContent) {
+        const skillPrefix =
+          !isPublicLane && enhanced.skillContent
+            ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
+            : '';
+        if (!isPublicLane && enhanced.skillContent) {
           logger.info(
             `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
           );
@@ -1169,6 +1243,7 @@ This protects your credentials from being exposed in chat logs.`;
           userId: message.userId,
           model: roleModel, // Role-specific model override
           maxTurns: roleMaxTurns, // Role-specific max turns
+          sessionKey: channelKey,
           source: message.source,
           channelId: message.channelId,
           agentContext,
@@ -1197,6 +1272,9 @@ This protects your credentials from being exposed in chat logs.`;
         };
         if ((this.config.backend === 'codex' || this.config.backend === 'cline') && shouldResume) {
           options.freshSessionSystemPrompt = async () => {
+            if (isPublicLane) {
+              return this.buildPublicLaneSystemPrompt(session);
+            }
             const freshContext = this.config.implicitLegacyContextSearch
               ? await this.contextInjector.getRelevantContext(message.text)
               : context;
@@ -1225,11 +1303,14 @@ This protects your credentials from being exposed in chat logs.`;
 
         // TG-05/TG-06: carry is captured once before the model call and travels
         // only in this turn's user message, never in a rebuilt system prompt.
-        const carryPrefix = reportCarryPeek?.prefix ?? '';
-        const inboxPrefix = ownerReportSnapshot ? `${ownerReportSnapshot.text}\n\n` : '';
+        const carryPrefix = !isPublicLane ? (reportCarryPeek?.prefix ?? '') : '';
+        const inboxPrefix =
+          !isPublicLane && ownerReportSnapshot ? `${ownerReportSnapshot.text}\n\n` : '';
 
         try {
-          if (shouldResume) {
+          if (isPublicLane) {
+            memoryPrefix = '';
+          } else if (shouldResume) {
             // Per-channel notices PLUS the operator broadcast key: host-code
             // alarms (workorder failures) have no conversation channel at
             // enqueue time - without the broadcast read they dead-letter
@@ -1258,7 +1339,7 @@ This protects your credentials from being exposed in chat logs.`;
           logger.warn(
             `[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`
           );
-          if (shouldResume) {
+          if (!isPublicLane && shouldResume) {
             try {
               memoryPrefix = await this.getPerTurnMemoryPrefix(message);
             } catch (fallbackErr) {
@@ -1284,7 +1365,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Auto-inject translation prompt for images
           let messageText = message.text;
-          if (hasImages && this.shouldAutoTranslate(message.text)) {
+          if (!isPublicLane && hasImages && this.shouldAutoTranslate(message.text)) {
             const translationKeywords = [
               '\uBC88\uC5ED',
               '\uBB50\uB77C\uACE0',
@@ -1317,7 +1398,7 @@ This protects your credentials from being exposed in chat logs.`;
           }
 
           // Add text content (with memory context, skill context, and page context)
-          const pageCtx = this.getPageContextPrefix(message);
+          const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
           const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
@@ -1363,7 +1444,7 @@ This protects your credentials from being exposed in chat logs.`;
           }
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         } else {
-          const pageCtx = this.getPageContextPrefix(message);
+          const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
           const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
           const conductorStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
@@ -1386,7 +1467,7 @@ This protects your credentials from being exposed in chat logs.`;
         if (agentSavedThisTurn) {
           logger.info('[memory-agent] extraction skipped - agent saved in-turn (dual-save dedup)');
         }
-        if (response && message.text && !agentSavedThisTurn) {
+        if (!isPublicLane && response && message.text && !agentSavedThisTurn) {
           const rawAssistantText = stripGatewayDecorations(response);
           void (async () => {
             try {
@@ -1470,7 +1551,7 @@ This protects your credentials from being exposed in chat logs.`;
       if (channelHistory) {
         const now = Date.now();
         // Record user message (use UUID to avoid collisions in concurrent requests)
-        channelHistory.record(message.channelId, {
+        channelHistory.record(sessionChannelId, {
           messageId: `user_${randomUUID()}`,
           sender: message.userId,
           userId: message.userId,
@@ -1479,7 +1560,7 @@ This protects your credentials from being exposed in chat logs.`;
           isBot: false,
         });
         // 6. Record bot response
-        channelHistory.record(message.channelId, {
+        channelHistory.record(sessionChannelId, {
           messageId: `bot_${randomUUID()}`,
           sender: 'MAMA',
           userId: 'mama',
@@ -1562,6 +1643,28 @@ This protects your credentials from being exposed in chat logs.`;
       // locked when any of those durability steps fail.
       releaseCliSessionLock();
     }
+  }
+
+  private buildPublicLaneSystemPrompt(session: Session): string {
+    const history = this.sessionStore
+      .getHistory(session.id)
+      .filter((turn) => turn.state !== 'provisional' && turn.bot.trim().length > 0)
+      .slice(-5);
+    if (history.length === 0) {
+      return PUBLIC_LANE_SYSTEM_PROMPT;
+    }
+
+    const priorConversation = history
+      .map((turn) => {
+        const safeUser = sanitizeForPrompt(turn.user);
+        const safeAssistant = sanitizeForPrompt(turn.bot);
+        const user = safeUser.length > 300 ? `${safeUser.slice(0, 300)}...` : safeUser;
+        const assistant =
+          safeAssistant.length > 500 ? `${safeAssistant.slice(0, 500)}...` : safeAssistant;
+        return `User: ${user}\nAssistant: ${assistant}`;
+      })
+      .join('\n\n');
+    return `${PUBLIC_LANE_SYSTEM_PROMPT}\n\nPublic conversation so far:\n${priorConversation}`;
   }
 
   /**
@@ -2453,6 +2556,7 @@ export function createMockAgentLoop(
   responseGenerator: (prompt: string) => string = () => 'Mock response'
 ): AgentLoopClient {
   return {
+    childRuntimeToolCapable: false,
     async run(
       prompt: string,
       _options?: AgentLoopOptions

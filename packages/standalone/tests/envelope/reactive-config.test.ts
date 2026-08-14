@@ -14,6 +14,7 @@ import {
   type ReactiveEnvelopeConfig,
 } from '../../src/envelope/reactive-config.js';
 import { makeAuthorityHarness } from './fixtures.js';
+import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
   return {
@@ -185,7 +186,7 @@ describe('reactive envelope route policy', () => {
     const sessionStore = new SessionStore(db);
     const config = makeConfig();
     const env = { HOME: '/tmp/mama-home' };
-    const message = makeMessage('telegram', 'tg:policy');
+    const message = withOwnerPrincipal(makeMessage('telegram', 'tg:policy'));
     const expectedPolicy = getReactiveRoutePolicy(message, config, env);
     const { authority } = makeAuthorityHarness(db);
     let seenOptions: AgentLoopOptions | undefined;
@@ -375,6 +376,54 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
     );
 
     expect(policy.rawConnectors).toEqual(['telegram', 'kagemusha', 'trello']);
+  });
+
+  it('treats a present Telegram principal as authoritative and preserves legacy equivalence', () => {
+    const legacy = ownerMessage('7777', 'private');
+    const principalBacked: NormalizedMessage = {
+      ...legacy,
+      principal: {
+        class: 'owner',
+        lane: 'owner',
+        canonicalId: 'telegram:global:7777',
+        consoleEligible: true,
+      },
+    };
+    const principalDenied: NormalizedMessage = {
+      ...legacy,
+      principal: {
+        class: 'owner',
+        lane: 'owner',
+        canonicalId: 'telegram:global:7777',
+        consoleEligible: false,
+      },
+    };
+
+    const enabled = ['kagemusha', 'trello'];
+    expect(
+      getReactiveRoutePolicy(principalBacked, ownerConfig(), { HOME: '/tmp/home' }, enabled)
+        .rawConnectors
+    ).toEqual(
+      getReactiveRoutePolicy(legacy, ownerConfig(), { HOME: '/tmp/home' }, enabled).rawConnectors
+    );
+    expect(
+      getReactiveRoutePolicy(principalDenied, ownerConfig(), { HOME: '/tmp/home' }, enabled)
+        .rawConnectors
+    ).toEqual(['telegram']);
+  });
+
+  it('does not widen a non-Telegram host principal even when it is console eligible', () => {
+    const viewer = ownerMessage('viewer-channel', 'private', 'viewer');
+    viewer.principal = {
+      class: 'owner',
+      lane: 'owner',
+      canonicalId: 'viewer:host:host',
+      consoleEligible: true,
+    };
+
+    expect(
+      getReactiveRoutePolicy(viewer, ownerConfig(), { HOME: '/tmp/home' }, ['trello']).rawConnectors
+    ).toEqual([]);
   });
 
   it.each([

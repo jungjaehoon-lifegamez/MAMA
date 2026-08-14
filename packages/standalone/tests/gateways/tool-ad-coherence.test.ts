@@ -20,6 +20,7 @@ import { SessionStore } from '../../src/gateways/session-store.js';
 import type { AgentContext } from '../../src/agent/types.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 
 function enabledPrivatePolicy() {
   const result: ConnectorConfigLoadResult = {
@@ -129,13 +130,15 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       roleManager.setTelegramTrust(['owner-chat']);
 
       try {
-        await router.process({
-          source: 'telegram',
-          channelId: 'owner-chat',
-          userId: 'owner',
-          text: 'status',
-          metadata: { chatType: 'private' },
-        });
+        await router.process(
+          withOwnerPrincipal({
+            source: 'telegram',
+            channelId: 'owner-chat',
+            userId: 'owner',
+            text: 'status',
+            metadata: { chatType: 'private' },
+          })
+        );
         const context = run.mock.calls[0]?.[1]?.agentContext as AgentContext;
 
         expect(context.roleName).toBe('owner_console');

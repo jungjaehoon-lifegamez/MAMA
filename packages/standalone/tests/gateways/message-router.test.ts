@@ -40,6 +40,7 @@ import {
   projectConsoleBriefForPrompt,
 } from '../../src/operator/console-brief.js';
 import { FileReportCarryStore, type ReportCarryPort } from '../../src/operator/report-carry.js';
+import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-message-router-'));
@@ -60,6 +61,28 @@ function privatePolicy(enabled: boolean): PrivateConnectorPolicy {
     enabledNames: enabled ? ['kagemusha'] : [],
   };
   return resolvePrivateConnectorPolicy(result);
+}
+
+function processFixtureMessage(
+  router: MessageRouter,
+  message: NormalizedMessage,
+  processOptions?: Parameters<MessageRouter['process']>[1]
+): ReturnType<MessageRouter['process']> {
+  const admittedMessage =
+    message.principal !== undefined || message.source !== 'telegram'
+      ? withOwnerPrincipal(message)
+      : {
+          ...message,
+          principal: {
+            class: 'owner' as const,
+            lane: 'owner' as const,
+            canonicalId: 'telegram:global:synthetic-owner',
+            // Legacy router tests exercise RoleManager's allowlist branch.
+            // Ingress-specific tests supply the authoritative eligibility bit.
+            consoleEligible: false,
+          },
+        };
+  return router.process(admittedMessage, processOptions);
 }
 
 beforeAll(() => {
@@ -153,14 +176,15 @@ describe('MessageRouter', () => {
       const onQueued = vi.fn();
       const onThirdQueued = vi.fn();
 
-      const first = customRouter.process({
+      const first = processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: 'fifo-channel',
         userId: 'owner',
         text: 'first',
       });
       await vi.waitFor(() => expect(agentLoop.run).toHaveBeenCalledTimes(1));
-      const second = customRouter.process(
+      const second = processFixtureMessage(
+        customRouter,
         {
           source: 'telegram',
           channelId: 'fifo-channel',
@@ -169,7 +193,8 @@ describe('MessageRouter', () => {
         },
         { onQueued }
       );
-      const third = customRouter.process(
+      const third = processFixtureMessage(
+        customRouter,
         {
           source: 'telegram',
           channelId: 'fifo-channel',
@@ -190,6 +215,102 @@ describe('MessageRouter', () => {
       expect(secondEnteredAt - releasedAt).toBeLessThan(200);
     });
 
+    it('does not let a public-lane turn wait behind the owner lane for the same channel', async () => {
+      let releaseOwner!: () => void;
+      const ownerBlocked = new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+      const entered: string[] = [];
+      const agentLoop = {
+        run: vi.fn(async (prompt: string) => {
+          const lane = prompt.includes('owner request') ? 'owner' : 'public';
+          entered.push(lane);
+          if (lane === 'owner') await ownerBlocked;
+          return { response: `${lane} response` };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      const ownerTurn = processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'shared-lane-channel',
+        userId: 'owner-synthetic',
+        text: 'owner request',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:owner-synthetic',
+          consoleEligible: true,
+        },
+      });
+      await vi.waitFor(() => expect(entered).toEqual(['owner']));
+
+      const publicTurn = processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'shared-lane-channel',
+        userId: 'external-synthetic',
+        text: 'public request',
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      let separationError: unknown;
+      try {
+        await vi.waitFor(() => expect(entered).toEqual(['owner', 'public']));
+      } catch (error) {
+        separationError = error;
+      } finally {
+        releaseOwner();
+      }
+      await Promise.all([ownerTurn, publicTurn]);
+      if (separationError) throw separationError;
+    });
+
+    it('uses the public lane for durable sessions, the session pool, and the agent-loop key', async () => {
+      const runOptions: AgentLoopOptions[] = [];
+      const agentLoop = {
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: 'public response' };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      await processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'lane-storage-channel',
+        userId: 'external-synthetic',
+        text: 'public request',
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      expect(sessionStore.listSessions('telegram').map((session) => session.channelId)).toContain(
+        'lane-storage-channel#public'
+      );
+      expect(getSessionPool().listSessions().has('telegram:lane-storage-channel#public')).toBe(
+        true
+      );
+      expect(runOptions[0]?.sessionKey).toBe('telegram:lane-storage-channel#public');
+      expect(runOptions[0]?.channelId).toBe('lane-storage-channel');
+    });
+
     it('releases the FIFO gate when an onQueued callback throws', async () => {
       let releaseFirst!: () => void;
       const firstBlocked = new Promise<void>((resolve) => {
@@ -208,9 +329,10 @@ describe('MessageRouter', () => {
       );
       const base = { source: 'telegram' as const, channelId: 'queued-hook', userId: 'owner' };
 
-      const first = customRouter.process({ ...base, text: 'first' });
+      const first = processFixtureMessage(customRouter, { ...base, text: 'first' });
       await vi.waitFor(() => expect(agentLoop.run).toHaveBeenCalledTimes(1));
-      const second = customRouter.process(
+      const second = processFixtureMessage(
+        customRouter,
         { ...base, text: 'second' },
         {
           onQueued: () => {
@@ -219,7 +341,7 @@ describe('MessageRouter', () => {
         }
       );
       await expect(second).rejects.toThrow('queued callback failed');
-      const third = customRouter.process({ ...base, text: 'third' });
+      const third = processFixtureMessage(customRouter, { ...base, text: 'third' });
       releaseFirst();
 
       await first;
@@ -245,10 +367,14 @@ describe('MessageRouter', () => {
         text: 'first',
       };
 
-      await expect(router.process(message)).rejects.toThrow('session disk unavailable');
+      await expect(processFixtureMessage(router, message)).rejects.toThrow(
+        'session disk unavailable'
+      );
 
       expect(getSessionPool().peekSession('telegram:persistence-failure').busy).toBe(false);
-      await expect(router.process({ ...message, text: 'second' })).resolves.toMatchObject({
+      await expect(
+        processFixtureMessage(router, { ...message, text: 'second' })
+      ).resolves.toMatchObject({
         response: 'Agent response',
       });
     });
@@ -269,7 +395,7 @@ describe('MessageRouter', () => {
         },
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
 
       expect(sessionStore.getHistory(result.sessionId)[0]?.user).toContain(imagePath);
       getRoleManager().setTelegramTrust(undefined);
@@ -289,7 +415,7 @@ describe('MessageRouter', () => {
         source: { type: 'base64' as const, media_type: 'image/png', data: 'aW1hZ2U=' },
       };
 
-      await clineRouter.process({
+      await processFixtureMessage(clineRouter, {
         source: 'telegram',
         channelId: 'cline-image',
         userId: 'owner',
@@ -311,7 +437,7 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
 
       expect(result.response).toBe('Agent response');
       expect(result.sessionId).toBeDefined();
@@ -326,7 +452,7 @@ describe('MessageRouter', () => {
         text: 'Hi',
       };
 
-      await router.process(message);
+      await processFixtureMessage(router, message);
 
       const session = router.getSession('discord', 'new-channel');
       expect(session).not.toBeNull();
@@ -340,8 +466,8 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      const result1 = await router.process(message);
-      const result2 = await router.process({ ...message, text: 'Hi again' });
+      const result1 = await processFixtureMessage(router, message);
+      const result2 = await processFixtureMessage(router, { ...message, text: 'Hi again' });
 
       expect(result1.sessionId).toBe(result2.sessionId);
     });
@@ -354,7 +480,7 @@ describe('MessageRouter', () => {
         text: 'Tell me about tests',
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
 
       // Context injection is currently disabled (TODO in message-router.ts)
       // So injectedDecisions will be empty until embedding server is enabled
@@ -370,7 +496,7 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
       const history = sessionStore.getHistory(result.sessionId);
 
       expect(history).toHaveLength(1);
@@ -386,14 +512,14 @@ describe('MessageRouter', () => {
         createMockMamaApi(mockDecisions)
       );
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-123',
         userId: 'user-456',
         text: 'Hello',
         metadata: { messageId: 'msg-1' },
       });
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-123',
         userId: 'user-456',
@@ -421,7 +547,7 @@ describe('MessageRouter', () => {
         implicitMemoryRecall: true,
       });
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-memory',
         userId: 'user-456',
@@ -446,7 +572,7 @@ describe('MessageRouter', () => {
         search,
       });
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-legacy-memory',
         userId: 'user-456',
@@ -476,7 +602,7 @@ describe('MessageRouter', () => {
       const mamaApi = createMockMamaApi(mockDecisions);
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: uniqueChannelId,
         userId: 'user-456',
@@ -501,7 +627,7 @@ describe('MessageRouter', () => {
         { backend: 'codex' }
       );
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: `codex-restart-${Date.now()}`,
         userId: 'user-456',
@@ -540,8 +666,8 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      await customRouter.process(message);
-      await customRouter.process({ ...message, text: 'Continue' });
+      await processFixtureMessage(customRouter, message);
+      await processFixtureMessage(customRouter, { ...message, text: 'Continue' });
 
       expect(receivedFingerprints[0]).toBeDefined();
       expect(receivedFingerprints[1]).toBe(receivedFingerprints[0]);
@@ -599,8 +725,8 @@ describe('MessageRouter', () => {
           text: 'Hello',
         };
 
-        await customRouter.process(message);
-        await customRouter.process({ ...message, text: 'Continue' });
+        await processFixtureMessage(customRouter, message);
+        await processFixtureMessage(customRouter, { ...message, text: 'Continue' });
 
         expect(receivedOptions[1]?.systemPrompt).toContain('[Role:');
         const rebuiltPrompt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
@@ -633,7 +759,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId,
           userId: 'owner-id',
@@ -705,8 +831,8 @@ describe('MessageRouter', () => {
         };
 
         try {
-          await firstRouter.process(message);
-          await secondRouter.process({ ...message, text: 'continue' });
+          await processFixtureMessage(firstRouter, message);
+          await processFixtureMessage(secondRouter, { ...message, text: 'continue' });
 
           expect(receivedOptions[1]?.resumeSession).toBe(true);
           expect(receivedOptions[1]?.sessionPolicyFingerprint).not.toBe(
@@ -751,7 +877,7 @@ describe('MessageRouter', () => {
       );
       const imagePath = '/private/workspace/media/inbound/telegram/storyboard.png';
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: 'attachment-reset',
         userId: 'owner',
@@ -762,7 +888,7 @@ describe('MessageRouter', () => {
           attachments: [{ type: 'image', filename: 'storyboard.png', localPath: imagePath }],
         },
       });
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: 'attachment-reset',
         userId: 'owner',
@@ -803,7 +929,7 @@ describe('MessageRouter', () => {
         { backend: 'codex' }
       );
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId,
         userId: 'owner',
@@ -843,8 +969,8 @@ describe('MessageRouter', () => {
         text: 'Continue the decision review',
       };
 
-      await customRouter.process(message);
-      await customRouter.process(message);
+      await processFixtureMessage(customRouter, message);
+      await processFixtureMessage(customRouter, message);
       const callsBeforeRebuild = search.mock.calls.length;
       const rebuiltPrompt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
 
@@ -884,8 +1010,8 @@ describe('MessageRouter', () => {
         text: 'Continue',
       };
 
-      await expect(customRouter.process(message)).rejects.toThrow('Request timeout');
-      await customRouter.process(message);
+      await expect(processFixtureMessage(customRouter, message)).rejects.toThrow('Request timeout');
+      await processFixtureMessage(customRouter, message);
 
       expect(receivedOptions[1]?.resumeSession).toBe(true);
       expect(receivedOptions[1]?.systemPrompt).toContain('## Instructions');
@@ -919,7 +1045,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: 'synthetic-owner',
           userId: 'synthetic-owner',
@@ -952,7 +1078,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1010,7 +1136,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1064,7 +1190,7 @@ describe('MessageRouter', () => {
         );
 
         try {
-          await customRouter.process({
+          await processFixtureMessage(customRouter, {
             source: 'telegram',
             channelId: ownerChannelId,
             userId: ownerChannelId,
@@ -1104,7 +1230,7 @@ describe('MessageRouter', () => {
       // is a normal path, not a corner case.
       rmSync(testSoulPath, { force: true });
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1140,7 +1266,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: 'untrusted-group',
           userId: '42',
@@ -1176,7 +1302,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1231,7 +1357,7 @@ describe('MessageRouter', () => {
         );
 
         try {
-          await customRouter.process({
+          await processFixtureMessage(customRouter, {
             source: 'telegram',
             channelId,
             userId: channelId,
@@ -1268,7 +1394,7 @@ describe('MessageRouter', () => {
 
       unlinkSync(testSoulPath);
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1307,7 +1433,7 @@ describe('MessageRouter', () => {
       );
 
       try {
-        await customRouter.process({
+        await processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: ownerChannelId,
           userId: ownerChannelId,
@@ -1343,7 +1469,7 @@ describe('MessageRouter', () => {
       });
       customRouter.setUICommandQueue(queue);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'viewer',
         channelId: 'viewer-channel',
         userId: 'user-456',
@@ -1372,7 +1498,7 @@ describe('MessageRouter', () => {
       });
       customRouter.setUICommandQueue(queue);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'discord-channel',
         userId: 'user-456',
@@ -1403,7 +1529,7 @@ describe('MessageRouter', () => {
       });
       customRouter.setUICommandQueue(queue);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'viewer',
         channelId: 'viewer-channel',
         userId: 'user-456',
@@ -1432,7 +1558,7 @@ describe('MessageRouter', () => {
       customRouter.setSessionsDb(db);
 
       await expect(
-        customRouter.process({
+        processFixtureMessage(customRouter, {
           source: 'discord',
           channelId: 'discord-fail',
           userId: 'user-456',
@@ -1468,7 +1594,7 @@ describe('MessageRouter', () => {
       };
 
       await expect(
-        customRouter.process({
+        processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId: 'enhancer-failure',
           userId: 'owner',
@@ -1502,7 +1628,7 @@ describe('MessageRouter', () => {
       );
 
       await expect(
-        customRouter.process({
+        processFixtureMessage(customRouter, {
           source: 'telegram',
           channelId,
           userId: 'synthetic-owner',
@@ -1535,7 +1661,7 @@ describe('MessageRouter', () => {
       const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
 
       // First message - should inject system prompt
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: uniqueChannelId,
         userId: 'user-456',
@@ -1544,7 +1670,7 @@ describe('MessageRouter', () => {
 
       // Second message - should resume with a bounded role marker, not rebuild
       // the complete startup prompt already retained by the durable thread.
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: uniqueChannelId,
         userId: 'user-456',
@@ -1586,13 +1712,13 @@ describe('MessageRouter', () => {
         { backend: 'cline' }
       );
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: uniqueChannelId,
         userId: 'owner',
         text: 'First Cline turn',
       });
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: uniqueChannelId,
         userId: 'owner',
@@ -1626,7 +1752,7 @@ describe('MessageRouter', () => {
       const saveSpy = vi.fn();
       customRouter['mamaApi'].save = saveSpy;
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-autosave',
         userId: 'user-456',
@@ -1657,7 +1783,7 @@ describe('MessageRouter', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'discord',
         channelId: 'channel-audit-ack',
         userId: 'user-456',
@@ -1690,7 +1816,7 @@ describe('MessageRouter', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: '5551000001',
         userId: '5551000001',
@@ -1723,7 +1849,7 @@ describe('MessageRouter', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: '5551000001',
         userId: '5551000001',
@@ -1756,7 +1882,7 @@ describe('MessageRouter', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: '5551000001',
         userId: '5551000001',
@@ -1791,7 +1917,7 @@ describe('MessageRouter', () => {
         }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: '5551000001',
         userId: '5551000001',
@@ -1817,7 +1943,7 @@ describe('MessageRouter', () => {
         getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
       } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
+      await processFixtureMessage(customRouter, {
         source: 'telegram',
         channelId: '5551000001',
         userId: '5551000001',
@@ -1848,7 +1974,7 @@ describe('MessageRouter', () => {
             getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
           } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-          await customRouter.process({
+          await processFixtureMessage(customRouter, {
             source: 'telegram',
             channelId: '5551000001',
             userId: '5551000001',
@@ -1885,7 +2011,7 @@ describe('MessageRouter', () => {
 
       const routerRef = new MessageRouter(sessionStore, agentLoop, mamaApi);
 
-      await routerRef.process({
+      await processFixtureMessage(routerRef, {
         source: 'discord',
         channelId: 'channel-notice',
         userId: 'user-456',
@@ -1901,7 +2027,7 @@ describe('MessageRouter', () => {
         relevant_memories: [],
       });
 
-      await routerRef.process({
+      await processFixtureMessage(routerRef, {
         source: 'discord',
         channelId: 'channel-notice',
         userId: 'user-456',
@@ -1922,7 +2048,7 @@ describe('MessageRouter', () => {
     });
 
     it('should return session after processing', async () => {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'discord',
         channelId: 'channel-123',
         userId: 'user-456',
@@ -1944,7 +2070,7 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
       expect(sessionStore.getHistory(result.sessionId)).toHaveLength(1);
 
       router.clearSession(result.sessionId);
@@ -1961,7 +2087,7 @@ describe('MessageRouter', () => {
         text: 'Hello',
       };
 
-      const result = await router.process(message);
+      const result = await processFixtureMessage(router, message);
       router.deleteSession(result.sessionId);
 
       const session = router.getSession('discord', 'channel-123');
@@ -2022,6 +2148,48 @@ describe('MessageRouter', () => {
 });
 
 describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
+  it('does not expose or consume owner report carry on the public lane', async () => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const reportCarry: ReportCarryPort = {
+      peek: vi.fn(() => ({ deliveryId: 'delivery-public-lane', prefix: 'report context' })),
+      acknowledge: vi.fn(() => true),
+    };
+    resetRoleManager();
+    getRoleManager().setTelegramTrust(['report-lane-channel']);
+    const router = new MessageRouter(
+      sessionStore,
+      createMockAgentLoop(() => 'response'),
+      createMockMamaApi([]),
+      {},
+      undefined,
+      undefined,
+      { reportCarry }
+    );
+
+    try {
+      await processFixtureMessage(router, {
+        source: 'telegram',
+        channelId: 'report-lane-channel',
+        userId: 'external-synthetic',
+        text: 'consume report',
+        metadata: { chatType: 'private' },
+        principal: {
+          class: 'external',
+          lane: 'public',
+          canonicalId: 'telegram:global:external-synthetic',
+          consoleEligible: false,
+        },
+      });
+
+      expect(reportCarry.peek).not.toHaveBeenCalled();
+      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
+    } finally {
+      resetRoleManager();
+      sessionStore.close();
+    }
+  });
+
   it('injects the report once into a verified owner continuation and acknowledges only after persistence', async () => {
     const db = new Database(':memory:');
     const sessionStore = new SessionStore(db);
@@ -2059,14 +2227,14 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: 'owner-chat',
         userId: 'owner',
         text: 'first',
         metadata: { chatType: 'private' },
       });
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: 'owner-chat',
         userId: 'owner',
@@ -2129,8 +2297,10 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
         text: 'continue',
         metadata: { chatType: 'private' },
       };
-      await expect(router.process(message)).rejects.toThrow('synthetic model failure');
-      await router.process(message);
+      await expect(processFixtureMessage(router, message)).rejects.toThrow(
+        'synthetic model failure'
+      );
+      await processFixtureMessage(router, message);
 
       expect(prompts).toHaveLength(2);
       expect(prompts[0]).toContain('operator-report-carry');
@@ -2170,7 +2340,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
 
     try {
       await expect(
-        router.process({
+        processFixtureMessage(router, {
           source: 'telegram',
           channelId: target.channelId,
           userId: 'owner',
@@ -2223,7 +2393,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
 
     try {
       await expect(
-        router.process({
+        processFixtureMessage(router, {
           source: 'telegram',
           channelId: target.channelId,
           userId: 'owner',
@@ -2270,14 +2440,14 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: 'other-chat',
         userId: 'other',
         text: 'untrusted',
         metadata: { chatType: 'private' },
       });
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: target.channelId,
         userId: 'owner',
@@ -2313,14 +2483,14 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: 'other-chat',
         userId: 'other',
         text: 'untrusted',
         metadata: { chatType: 'private' },
       });
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: 'trusted-owner',
         userId: 'owner',
@@ -2373,7 +2543,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: target.channelId,
         userId: 'owner',
@@ -2423,7 +2593,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'telegram',
         channelId: target.channelId,
         userId: 'owner',
@@ -2475,7 +2645,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
 
     try {
       await expect(
-        router.process({
+        processFixtureMessage(router, {
           source: 'telegram',
           channelId: target.channelId,
           userId: 'owner',
@@ -2534,7 +2704,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process(message);
+      await processFixtureMessage(router, message);
 
       expect(reportCarry.acknowledge).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2582,7 +2752,7 @@ describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
     );
 
     try {
-      await router.process({
+      await processFixtureMessage(router, {
         source: 'discord',
         channelId: 'discord-owner',
         userId: 'owner',

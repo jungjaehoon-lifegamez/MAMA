@@ -15,6 +15,7 @@ import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import { TelegramReportContextStore } from '../../src/gateways/telegram-report-context-store.js';
 import { OwnerReportInbox } from '../../src/gateways/owner-report-inbox.js';
 import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
+import type { NormalizedMessage } from '../../src/gateways/types.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-router-report-inbox-'));
@@ -32,6 +33,21 @@ afterAll(() => {
   else process.env.HOME = originalHome;
   rmSync(testHome, { recursive: true, force: true });
 });
+
+function processFixtureMessage(
+  router: MessageRouter,
+  message: NormalizedMessage
+): ReturnType<MessageRouter['process']> {
+  return router.process({
+    ...message,
+    principal: {
+      class: 'owner',
+      lane: 'owner',
+      canonicalId: 'telegram:global:synthetic-owner',
+      consoleEligible: false,
+    },
+  });
+}
 
 describe('MessageRouter owner-report inbox consumption', () => {
   let db: SQLiteDatabase;
@@ -88,7 +104,7 @@ describe('MessageRouter owner-report inbox consumption', () => {
     const prompts: string[] = [];
     const router = makeRouter(prompts);
 
-    await router.process({
+    await processFixtureMessage(router, {
       source: 'telegram',
       channelId: ownerChat,
       userId: ownerChat,
@@ -122,7 +138,7 @@ describe('MessageRouter owner-report inbox consumption', () => {
     });
 
     // The next continued turn must not receive the consumed report again.
-    await router.process({
+    await processFixtureMessage(router, {
       source: 'telegram',
       channelId: ownerChat,
       userId: ownerChat,
@@ -142,7 +158,7 @@ describe('MessageRouter owner-report inbox consumption', () => {
     const router = makeRouter(prompts);
     const strangerChat = `stranger-${process.pid}`;
 
-    await router.process({
+    await processFixtureMessage(router, {
       source: 'telegram',
       channelId: strangerChat,
       userId: strangerChat,
@@ -182,14 +198,14 @@ describe('MessageRouter owner-report inbox consumption', () => {
       { ownerReportInbox: new OwnerReportInbox(reportStore) }
     );
 
-    await router.process({
+    await processFixtureMessage(router, {
       source: 'telegram',
       channelId: ownerChat,
       userId: ownerChat,
       text: 'why did you say that?',
       metadata: { chatType: 'private', messageId: '9001' },
     });
-    await router.process({
+    await processFixtureMessage(router, {
       source: 'telegram',
       channelId: ownerChat,
       userId: ownerChat,
@@ -218,7 +234,7 @@ describe('MessageRouter owner-report inbox consumption', () => {
     const router = makeRouter(prompts);
 
     await expect(
-      router.process({
+      processFixtureMessage(router, {
         source: 'telegram',
         channelId: ownerChat,
         userId: ownerChat,

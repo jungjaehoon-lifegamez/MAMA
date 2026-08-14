@@ -33,12 +33,22 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
+import { laneChannelId, resolveTelegramPrincipal, type PrincipalContext } from './principal.js';
+import { logSecurityEventOnly } from '../security/security-monitor.js';
 import type {
   ReportDeliveryBinding,
   ReportDeliveryLease,
   TelegramReportDeliveryControl,
   TypedTelegramDeliveryOutcome,
 } from '../operator/report-delivery-coordinator.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
+  };
+};
+const telegramLogger = new DebugLogger('telegram');
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
@@ -140,6 +150,8 @@ export interface TelegramGatewayConfig {
   token: string;
   /** Allowed chat IDs (empty = allow all) */
   allowedChats?: string[];
+  /** Owner Telegram user IDs. Unset means owner resolution fails closed. */
+  ownerUserIds?: string[];
 }
 
 /**
@@ -204,6 +216,7 @@ export class TelegramGateway extends BaseGateway {
       enabled: true,
       token: options.token,
       allowedChats: options.config?.allowedChats || [],
+      ownerUserIds: options.config?.ownerUserIds,
     };
     this.mediaRoot =
       options.mediaRoot ??
@@ -355,8 +368,52 @@ export class TelegramGateway extends BaseGateway {
   }
 
   private async handleMessage(msg: NonNullable<Context['message']>): Promise<void> {
-    const chatKey = String(msg.chat?.id ?? 'unknown');
-    await this.runInChatQueue(chatKey, () => this.processMessage(msg));
+    if (!msg.from || !msg.chat) return;
+
+    const now = Date.now();
+    const messageKey = `${msg.chat.id}:${msg.message_id}`;
+    if (this.messageLedger.get(messageKey)?.state === 'delivered') return;
+    if (this.recentMessageIds.has(messageKey)) return;
+    this.recentMessageIds.set(messageKey, now);
+
+    for (const [key, ts] of this.recentMessageIds) {
+      if (now - ts > MESSAGE_DEDUP_TTL_MS) this.recentMessageIds.delete(key);
+    }
+
+    const chatId = String(msg.chat.id);
+    if (this.config.allowedChats && this.config.allowedChats.length > 0) {
+      if (!this.config.allowedChats.includes(chatId)) {
+        const lastWarn = this.rejectedChatWarnAt.get(chatId) ?? 0;
+        if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
+          this.rejectedChatWarnAt.set(chatId, now);
+          console.warn(
+            `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from.id})`
+          );
+        }
+        return;
+      }
+    }
+
+    const principal = resolveTelegramPrincipal({
+      userId: String(msg.from.id),
+      chatId,
+      chatType: msg.chat.type,
+      allowedChats: new Set(this.config.allowedChats ?? []),
+      ownerUserIds:
+        this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
+    });
+    if (principal.lane === 'divert') {
+      logSecurityEventOnly({
+        type: 'telegram_principal_diverted',
+        severity: 'warn',
+        message: 'Telegram ingress diverted before processing',
+        details: { source: 'telegram', chatType: msg.chat.type },
+      });
+      return;
+    }
+
+    const laneKey = laneChannelId(chatId, principal.lane);
+    await this.runInChatQueue(laneKey, () => this.processMessage(msg, messageKey, principal));
   }
 
   private async runInChatQueue<T>(
@@ -382,38 +439,14 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
-  private async processMessage(msg: NonNullable<Context['message']>): Promise<void> {
+  private async processMessage(
+    msg: NonNullable<Context['message']>,
+    messageKey: string,
+    principal: PrincipalContext
+  ): Promise<void> {
     if (!msg.from || !msg.chat) return;
 
     const now = Date.now();
-
-    // Telegram update dedup (60s TTL). Do not deduplicate by text content:
-    // repeated short replies and emoji are distinct conversation turns.
-    const messageKey = `${msg.chat.id}:${msg.message_id}`;
-    if (this.messageLedger.get(messageKey)?.state === 'delivered') return;
-    if (this.recentMessageIds.has(messageKey)) return;
-    this.recentMessageIds.set(messageKey, now);
-
-    // Cleanup expired entries
-    for (const [key, ts] of this.recentMessageIds) {
-      if (now - ts > MESSAGE_DEDUP_TTL_MS) this.recentMessageIds.delete(key);
-    }
-
-    // Allowed chats filter
-    if (this.config.allowedChats && this.config.allowedChats.length > 0) {
-      if (!this.config.allowedChats.includes(String(msg.chat.id))) {
-        // Rate-cap the warn per chat so a stranger cannot grow daemon.log
-        // one line per unique message.
-        const lastWarn = this.rejectedChatWarnAt.get(String(msg.chat.id)) ?? 0;
-        if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
-          this.rejectedChatWarnAt.set(String(msg.chat.id), now);
-          console.warn(
-            `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from?.id ?? 'unknown'})`
-          );
-        }
-        return;
-      }
-    }
 
     const hasMedia = Boolean((msg.photo && msg.photo.length > 0) || msg.document);
     if (hasMedia && (!this.config.allowedChats || this.config.allowedChats.length === 0)) {
@@ -462,10 +495,14 @@ export class TelegramGateway extends BaseGateway {
     const durableEntry = this.messageLedger.get(messageKey);
     const numChatId = msg.chat.id;
     const api = this.bot!.api;
+    let initialResponseMessageId: number | null = null;
     const presenter = this.createResponsePresenter(
       numChatId,
       messageKey,
-      durableEntry?.nextChunkIndex ?? 0
+      durableEntry?.nextChunkIndex ?? 0,
+      (messageId) => {
+        initialResponseMessageId = messageId;
+      }
     );
     if (durableEntry?.state !== 'ready') await presenter.start();
     if (durableEntry?.state === 'ready' && durableEntry.response !== undefined) {
@@ -497,8 +534,12 @@ export class TelegramGateway extends BaseGateway {
     const attachments: MessageAttachment[] = [];
     const contentBlocks: ContentBlock[] = [];
     let transientMediaPath: string | undefined;
+    // The public lane is conversation-only: a non-owner's attachment is never
+    // downloaded with the bot's credentials and never becomes a model-visible
+    // content block. Text/caption still flows.
+    const mediaAllowed = principal.lane === 'owner';
     try {
-      if (msg.photo && msg.photo.length > 0) {
+      if (mediaAllowed && msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
         const downloaded = await downloadTelegramMedia({
           botToken: this.token,
@@ -540,7 +581,7 @@ export class TelegramGateway extends BaseGateway {
         if (!text.trim()) {
           text = '[Image]';
         }
-      } else if (msg.document) {
+      } else if (mediaAllowed && msg.document) {
         const downloaded = await downloadTelegramMedia({
           botToken: this.token,
           fileId: msg.document.file_id,
@@ -633,6 +674,7 @@ export class TelegramGateway extends BaseGateway {
       channelId: String(msg.chat.id),
       userId: String(msg.from.id),
       text,
+      principal,
       contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
       metadata: {
         username: msg.from.username,
@@ -671,6 +713,16 @@ export class TelegramGateway extends BaseGateway {
           this.recentMessageIds.delete(messageKey);
         }
         throw error;
+      }
+
+      if (result.outcome === 'external_divert') {
+        if (initialResponseMessageId !== null) {
+          await api.deleteMessage(numChatId, initialResponseMessageId).catch(() => {});
+        }
+        this.messageLedger.markReady(messageKey, '');
+        this.messageLedger.markDelivered(messageKey);
+        telegramLogger.info('[Telegram] Turn externally diverted; no response sent');
+        return;
       }
 
       this.messageLedger.markReady(messageKey, result.response);
@@ -986,13 +1038,15 @@ export class TelegramGateway extends BaseGateway {
   private createResponsePresenter(
     chatId: number,
     messageKey: string,
-    resumeFromChunk = 0
+    resumeFromChunk = 0,
+    onInitialSend?: (messageId: number) => void
   ): TelegramResponsePresenter {
     const api = this.bot!.api;
     return new TelegramResponsePresenter(
       {
         send: async (content) => {
           const sent = await api.sendMessage(chatId, content);
+          onInitialSend?.(sent.message_id);
           return String(sent.message_id);
         },
         edit: async (handle, content) => {
