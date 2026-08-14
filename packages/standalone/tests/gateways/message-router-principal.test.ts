@@ -94,6 +94,35 @@ describe('MessageRouter principal admission gate', () => {
     );
   });
 
+  it('TG-04 diverts the impossible member owner-lane pair before session creation', async () => {
+    const getOrCreate = vi.spyOn(sessionStore, 'getOrCreate');
+    const message = connectorMessage({
+      principal: {
+        class: 'member',
+        lane: 'owner',
+        canonicalId: 'telegram:global:contradictory-member',
+        consoleEligible: false,
+      },
+    });
+
+    await expect(router.process(message)).resolves.toMatchObject({
+      outcome: 'external_divert',
+      delivery: 'silent',
+      sessionId: 'external-divert',
+    });
+    expect(getOrCreate).not.toHaveBeenCalled();
+    expect(securityEvents.logSecurityEventOnly).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'external_sender_diverted',
+        details: expect.objectContaining({
+          source: 'telegram',
+          principalClass: 'member',
+          lane: 'owner',
+        }),
+      })
+    );
+  });
+
   it('allows an owner principal through to normal processing', async () => {
     await expect(router.process(withOwnerPrincipal(connectorMessage()))).resolves.toMatchObject({
       outcome: 'completed',

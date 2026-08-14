@@ -839,7 +839,9 @@ export class MessageRouter implements TurnProcessor {
         ? { ...message, principal: makeHostPrincipal(message.source) }
         : message;
     const lane = admittedMessage.principal?.lane;
-    if (lane !== 'owner' && lane !== 'public') {
+    const principalClass = admittedMessage.principal?.class;
+    const impossibleMemberOwnerLane = principalClass === 'member' && lane === 'owner';
+    if ((lane !== 'owner' && lane !== 'public') || impossibleMemberOwnerLane) {
       logSecurityEventOnly({
         type: 'external_sender_diverted',
         severity: 'warn',
@@ -847,6 +849,7 @@ export class MessageRouter implements TurnProcessor {
         details: {
           source: admittedMessage.source,
           channelId: admittedMessage.channelId,
+          principalClass: principalClass ?? 'missing',
           lane: lane ?? 'missing',
         },
       });
