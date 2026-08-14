@@ -48,7 +48,7 @@ vi.mock('../../src/security/security-monitor.js', () => ({
   logSecurityEventOnly: seams.logSecurityEventOnly,
 }));
 
-import { TelegramGateway } from '../../src/gateways/telegram.js';
+import { TelegramGateway, type TelegramGatewayOptions } from '../../src/gateways/telegram.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 import { TelegramResponsePresenter } from '../../src/gateways/telegram-response-presenter.js';
 import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
@@ -130,6 +130,7 @@ async function makeGateway(input: {
   turnProcessor: TurnProcessor;
   allowedChats: string[];
   ownerUserIds?: string[];
+  principalResolver?: TelegramGatewayOptions['principalResolver'];
 }): Promise<TelegramGateway> {
   const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-principal-'));
   mediaRoots.add(mediaRoot);
@@ -143,6 +144,7 @@ async function makeGateway(input: {
     mediaRoot,
     messageLedgerPath: join(mediaRoot, 'ledger.json'),
     fetchImpl: vi.fn(),
+    principalResolver: input.principalResolver,
   });
   startedGateways.add(gateway);
   await gateway.start();
@@ -310,6 +312,146 @@ describe('Story TG-01/TG-04: Telegram ingress principal admission', () => {
     expect(routed[0]?.principal).toMatchObject({
       class: 'external',
       lane: 'public',
+      consoleEligible: false,
+    });
+    await gateway.stop();
+  });
+
+  it('TG-04 overlays an active registered member while preserving the external public lane', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
+    const principalResolver = vi.fn().mockReturnValue({
+      principalId: 'telegram-member-principal',
+      kind: 'member',
+      status: 'active',
+    });
+    const gateway = await makeGateway({
+      turnProcessor,
+      allowedChats: ['-7005'],
+      ownerUserIds: ['9001'],
+      principalResolver,
+    });
+
+    await deliver(
+      makeMessage({
+        chatId: -7005,
+        userId: 7005,
+        messageId: 6,
+        chatType: 'group',
+        text: '@test_bot status',
+        entities: [{ type: 'mention', offset: 0, length: 9 }],
+      })
+    );
+
+    expect(principalResolver).toHaveBeenCalledWith('telegram', 'global', '7005');
+    expect(routed[0]?.principal).toEqual({
+      class: 'member',
+      lane: 'public',
+      canonicalId: 'telegram:global:7005',
+      principalId: 'telegram-member-principal',
+      consoleEligible: false,
+    });
+    expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
+    await gateway.stop();
+  });
+
+  it('keeps an owner_user_ids sender authoritative and skips the registry lookup', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
+    const principalResolver = vi.fn().mockReturnValue({
+      principalId: 'registry-member-principal',
+      kind: 'member',
+      status: 'active',
+    });
+    const gateway = await makeGateway({
+      turnProcessor,
+      allowedChats: ['7006'],
+      ownerUserIds: ['7006'],
+      principalResolver,
+    });
+
+    await deliver(makeMessage({ chatId: 7006, userId: 7006, messageId: 7, text: 'owner request' }));
+
+    expect(principalResolver).not.toHaveBeenCalled();
+    expect(routed[0]?.principal).toMatchObject({
+      class: 'owner',
+      lane: 'owner',
+      canonicalId: 'telegram:global:7006',
+    });
+    await gateway.stop();
+  });
+
+  it.each(['suspended', 'offboarded'])(
+    'keeps a %s registered member external on the public lane',
+    async (status) => {
+      const routed: NormalizedMessage[] = [];
+      const turnProcessor: TurnProcessor = {
+        processTurn: vi.fn((message) => {
+          routed.push(message);
+          return completed();
+        }),
+      };
+      const principalResolver = vi.fn().mockReturnValue({
+        principalId: 'inactive-member-principal',
+        kind: 'member',
+        status,
+      });
+      const gateway = await makeGateway({
+        turnProcessor,
+        allowedChats: ['7007'],
+        ownerUserIds: ['9001'],
+        principalResolver,
+      });
+
+      await deliver(
+        makeMessage({ chatId: 7007, userId: 7007, messageId: 8, text: 'public request' })
+      );
+
+      expect(principalResolver).toHaveBeenCalledWith('telegram', 'global', '7007');
+      expect(routed[0]?.principal).toEqual({
+        class: 'external',
+        lane: 'public',
+        canonicalId: 'telegram:global:7007',
+        consoleEligible: false,
+      });
+      await gateway.stop();
+    }
+  );
+
+  it('keeps a null registry result identical to Phase 1', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
+    const principalResolver = vi.fn().mockReturnValue(null);
+    const gateway = await makeGateway({
+      turnProcessor,
+      allowedChats: ['7008'],
+      ownerUserIds: ['9001'],
+      principalResolver,
+    });
+
+    await deliver(
+      makeMessage({ chatId: 7008, userId: 7008, messageId: 9, text: 'public request' })
+    );
+
+    expect(routed[0]?.principal).toEqual({
+      class: 'external',
+      lane: 'public',
+      canonicalId: 'telegram:global:7008',
       consoleEligible: false,
     });
     await gateway.stop();

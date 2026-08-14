@@ -3,6 +3,7 @@ import type { PrincipalClass, PrincipalContext } from '../../src/gateways/princi
 import {
   laneChannelId,
   makeHostPrincipal,
+  overlayMemberPrincipal,
   resolveConnectorPrincipal,
   resolveTelegramPrincipal,
 } from '../../src/gateways/principal.js';
@@ -199,6 +200,117 @@ describe('Gateway principal resolution', () => {
         canonicalId: 'discord:guild-a:1002',
         consoleEligible: false,
       });
+    });
+  });
+
+  describe('overlayMemberPrincipal()', () => {
+    it('TG-04 replaces an external Telegram principal with a frozen active member without changing its public lane', () => {
+      const external = resolveTelegramPrincipal({
+        userId: '1002',
+        chatId: '-2001',
+        chatType: 'group',
+        allowedChats: new Set(['-2001']),
+        ownerUserIds: new Set(['1001']),
+      });
+
+      const member = overlayMemberPrincipal(external, {
+        principalId: 'principal-1002',
+        kind: 'member',
+        status: 'active',
+      });
+
+      expect(member).not.toBe(external);
+      expect(member).toEqual({
+        ...external,
+        class: 'member',
+        principalId: 'principal-1002',
+      });
+      expect(member.lane).toBe(external.lane);
+      expect(member.lane).toBe('public');
+      expect(Object.isFrozen(member)).toBe(true);
+    });
+
+    it.each(['slack', 'discord'] as const)(
+      'keeps the exact Phase-1 divert lane for an active %s member',
+      (connector) => {
+        const external = resolveConnectorPrincipal({
+          connector,
+          namespace: `${connector}-namespace`,
+          userId: 'member-user',
+          ownerUserId: 'owner-user',
+          isDirectMessage: false,
+        });
+
+        const member = overlayMemberPrincipal(external, {
+          principalId: `${connector}-member-principal`,
+          kind: 'member',
+          status: 'active',
+        });
+
+        expect(member.class).toBe('member');
+        expect(member.principalId).toBe(`${connector}-member-principal`);
+        expect(member.lane).toBe(external.lane);
+        expect(member.lane).toBe('divert');
+        expect(Object.isFrozen(member)).toBe(true);
+      }
+    );
+
+    it('returns an owner unchanged regardless of the registry row', () => {
+      const owner = resolveConnectorPrincipal({
+        connector: 'slack',
+        namespace: 'team-a',
+        userId: 'owner-user',
+        ownerUserId: 'owner-user',
+        isDirectMessage: true,
+      });
+
+      expect(
+        overlayMemberPrincipal(owner, {
+          principalId: 'registry-principal',
+          kind: 'member',
+          status: 'active',
+        })
+      ).toBe(owner);
+    });
+
+    it.each(['suspended', 'offboarded'])(
+      'returns an external principal unchanged for a %s member row',
+      (status) => {
+        const external = resolveConnectorPrincipal({
+          connector: 'discord',
+          namespace: 'guild-a',
+          userId: 'member-user',
+          ownerUserId: 'owner-user',
+          isDirectMessage: false,
+        });
+
+        expect(
+          overlayMemberPrincipal(external, {
+            principalId: 'member-principal',
+            kind: 'member',
+            status,
+          })
+        ).toBe(external);
+      }
+    );
+
+    it('returns an external principal unchanged for a null or owner registry row', () => {
+      const external = resolveConnectorPrincipal({
+        connector: 'discord',
+        namespace: 'guild-a',
+        userId: 'external-user',
+        ownerUserId: 'owner-user',
+        isDirectMessage: false,
+      });
+
+      expect(overlayMemberPrincipal(external, null)).toBe(external);
+      expect(
+        overlayMemberPrincipal(external, {
+          principalId: 'registry-owner',
+          kind: 'owner',
+          status: 'active',
+        })
+      ).toBe(external);
     });
   });
 

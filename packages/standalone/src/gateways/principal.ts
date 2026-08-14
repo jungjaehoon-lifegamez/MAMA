@@ -30,6 +30,21 @@ function freezePrincipal(context: PrincipalContext): PrincipalContext {
   return Object.freeze(context);
 }
 
+export function overlayMemberPrincipal(
+  base: PrincipalContext,
+  row: { principalId: string; kind: 'owner' | 'member'; status: string } | null
+): PrincipalContext {
+  if (base.class !== 'external' || row?.kind !== 'member' || row.status !== 'active') {
+    return base;
+  }
+
+  return freezePrincipal({
+    ...base,
+    class: 'member',
+    principalId: row.principalId,
+  });
+}
+
 function normalizedIds(ids: ReadonlySet<string>): ReadonlySet<string> {
   return new Set(Array.from(ids, (id) => id.trim()).filter((id) => id.length > 0));
 }
@@ -42,9 +57,7 @@ function telegramOwnerUserIds(input: TelegramPrincipalInput): ReadonlySet<string
   const positiveAllowedChatIds = Array.from(normalizedIds(input.allowedChats)).filter((chatId) =>
     /^[1-9]\d*$/.test(chatId)
   );
-  return positiveAllowedChatIds.length === 1
-    ? new Set([positiveAllowedChatIds[0]])
-    : new Set();
+  return positiveAllowedChatIds.length === 1 ? new Set([positiveAllowedChatIds[0]]) : new Set();
 }
 
 export function resolveTelegramPrincipal(input: TelegramPrincipalInput): PrincipalContext {

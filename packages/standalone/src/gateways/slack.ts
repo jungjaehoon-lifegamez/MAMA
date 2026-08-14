@@ -24,7 +24,7 @@ import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import { getConfig } from '../cli/config/config-manager.js';
-import { resolveConnectorPrincipal } from './principal.js';
+import { overlayMemberPrincipal, resolveConnectorPrincipal } from './principal.js';
 
 /**
  * Slack message event structure
@@ -228,13 +228,19 @@ export class SlackGateway extends BaseGateway {
     }
 
     const isDM = event.channel_type === 'im';
-    const principal = resolveConnectorPrincipal({
+    let principal = resolveConnectorPrincipal({
       connector: 'slack',
       namespace: this.teamId ?? 'workspace',
       userId: event.user,
       ownerUserId: this.teamId ? this.config.ownerUserId : undefined,
       isDirectMessage: isDM,
     });
+    if (principal.class === 'external' && this.principalResolver && this.teamId) {
+      principal = overlayMemberPrincipal(
+        principal,
+        this.principalResolver('slack', this.teamId, event.user)
+      );
+    }
     if (principal.lane === 'divert') {
       return;
     }
