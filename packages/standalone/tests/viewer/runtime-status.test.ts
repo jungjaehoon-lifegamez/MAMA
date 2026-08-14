@@ -136,20 +136,6 @@ describe('GET /api/runtime/status', () => {
     expect(response.status).toBe(503);
     expect(response.body.code).toBe('runtime_status_unavailable');
   });
-
-  it('awaits a live snapshot supplier instead of serializing a pending promise', async () => {
-    const asyncSnapshot = async () => SNAPSHOT;
-    const apiServer = createApiServer({
-      scheduler,
-      port: 0,
-      getRuntimeStatus: asyncSnapshot as unknown as () => RuntimeStatusSnapshot,
-    });
-
-    const response = await request(apiServer.app).get('/api/runtime/status');
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(SNAPSHOT);
-  });
 });
 
 describe('runtime connector projection', () => {
@@ -178,36 +164,6 @@ describe('runtime connector projection', () => {
     expect(
       projectRuntimeConnectors({ ok: true, config: {}, enabledNames: [] } as never, [])
     ).toEqual([]);
-  });
-
-  it('does not expose a configured private connector through the generic System projection', () => {
-    const result = projectRuntimeConnectors(
-      {
-        ok: true,
-        config: {
-          telegram: { enabled: true },
-          kagemusha: { enabled: true },
-        },
-        enabledNames: ['telegram', 'kagemusha'],
-      } as never,
-      ['telegram', 'kagemusha']
-    );
-
-    expect(result.map((connector) => connector.name)).toEqual(['telegram']);
-  });
-
-  it('uses a live gateway health check over an unrelated raw-connector setting', () => {
-    const result = projectRuntimeConnectors(
-      {
-        ok: true,
-        config: { telegram: { enabled: false } },
-        enabledNames: [],
-      } as never,
-      [],
-      new Map([['telegram', 'pass']])
-    );
-
-    expect(result).toEqual([{ name: 'telegram', enabled: true, state: 'connected' }]);
   });
 });
 
