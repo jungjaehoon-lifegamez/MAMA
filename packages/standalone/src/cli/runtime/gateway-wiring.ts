@@ -214,25 +214,27 @@ export async function wireGateways(params: {
     },
   });
 
-  // Discover and load gateway plugins
+  // Discovery is host-owned and must remain fail-closed.
+  let discoveredPlugins: Awaited<ReturnType<PluginLoader['discover']>>;
   try {
-    const discoveredPlugins = await pluginLoader.discover();
-    if (discoveredPlugins.length > 0) {
-      console.log(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
-      const pluginGateways = await pluginLoader.loadAll();
-      for (const gateway of pluginGateways) {
-        try {
-          await gateway.start();
-          gateways.push(gateway);
-          console.log(`✓ Plugin gateway connected: ${gateway.source}`);
-        } catch (error) {
-          console.error(`Plugin gateway failed (${gateway.source}):`, error);
-        }
+    discoveredPlugins = await pluginLoader.discover();
+  } catch (error) {
+    wiringLogger.error('Plugin discovery failed:', error);
+    throw error;
+  }
+
+  if (discoveredPlugins.length > 0) {
+    console.log(`Plugins discovered: ${discoveredPlugins.map((p) => p.name).join(', ')}`);
+    const pluginGateways = await pluginLoader.loadAll();
+    for (const gateway of pluginGateways) {
+      try {
+        await gateway.start();
+        gateways.push(gateway);
+        console.log(`✓ Plugin gateway connected: ${gateway.source}`);
+      } catch (error) {
+        console.error(`Plugin gateway failed (${gateway.source}):`, error);
       }
     }
-  } catch (error) {
-    wiringLogger.error('Plugin loading failed:', error);
-    throw error;
   }
 
   return { pluginLoader };

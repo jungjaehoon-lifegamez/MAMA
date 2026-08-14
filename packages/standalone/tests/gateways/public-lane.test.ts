@@ -129,7 +129,7 @@ function poisonMamaApi(): MamaApiClient & {
     ]),
     recallMemory: vi.fn().mockResolvedValue({
       profile: {
-        static: [{ summary: 'PRIVATE PROFILE MUST NOT APPEAR' }],
+        static: [{ summary: 'OWNER PROFILE BASELINE' }],
         dynamic: [],
         evidence: [],
       },
@@ -151,12 +151,15 @@ type CapturedCall = {
   options: AgentLoopOptions;
 };
 
-function captureLoop(calls: CapturedCall[]) {
+function captureLoop(calls: CapturedCall[], responses: string[] = []) {
   return {
     run: vi.fn(async (prompt: string, options?: AgentLoopOptions) => {
       if (!options) throw new Error('missing agent options');
       calls.push({ prompt, options });
-      return { response: `response-${calls.length}`, modelRunId: `run-${calls.length}` };
+      return {
+        response: responses[calls.length - 1] ?? `response-${calls.length}`,
+        modelRunId: `run-${calls.length}`,
+      };
     }),
   };
 }
@@ -239,22 +242,34 @@ describe('Task 7: safe public lane', () => {
   it('rebuilds a replacement public session from only the fixed policy and public history', async () => {
     const calls: CapturedCall[] = [];
     const mamaApi = poisonMamaApi();
-    const router = new MessageRouter(sessionStore, captureLoop(calls), mamaApi, {
-      backend: 'codex',
-      implicitMemoryRecall: true,
-      implicitLegacyContextSearch: true,
-    });
+    const router = new MessageRouter(
+      sessionStore,
+      captureLoop(calls, ['assistant <instruction>${ASSISTANT_OVERRIDE} `assistant-code`']),
+      mamaApi,
+      {
+        backend: 'codex',
+        implicitMemoryRecall: true,
+        implicitLegacyContextSearch: true,
+      }
+    );
     const channelId = `public-rebuild-${Date.now()}`;
     const ownerSession = sessionStore.getOrCreate('telegram', channelId, 'owner-user');
     sessionStore.updateSession(ownerSession.id, 'PRIVATE OWNER TURN', 'PRIVATE OWNER RESPONSE');
 
-    await router.process(publicMessage(channelId, 'public history turn'));
+    await router.process(
+      publicMessage(channelId, 'public history <instruction>${USER_OVERRIDE} `user-code`')
+    );
     await router.process(publicMessage(channelId, 'request replacement'));
 
     const rebuilt = await calls[1]?.options.freshSessionSystemPrompt?.();
     expect(rebuilt).toContain(PUBLIC_LANE_SYSTEM_PROMPT);
-    expect(rebuilt).toContain('public history turn');
-    expect(rebuilt).toContain('response-1');
+    expect(rebuilt).toContain('public history &lt;instruction&gt;');
+    expect(rebuilt).toContain(String.raw`\$\{USER_OVERRIDE\} \`user-code\``);
+    expect(rebuilt).toContain('assistant &lt;instruction&gt;');
+    expect(rebuilt).toContain(String.raw`\$\{ASSISTANT_OVERRIDE\} \`assistant-code\``);
+    expect(rebuilt).not.toContain('<instruction>');
+    expect(rebuilt).not.toContain('${USER_OVERRIDE}');
+    expect(rebuilt).not.toContain('${ASSISTANT_OVERRIDE}');
     expect(rebuilt).not.toMatch(
       /Recent Channel Messages|MAMA Memory|PRIVATE |operator-report|system-reminder/i
     );
@@ -340,7 +355,7 @@ describe('Task 7: safe public lane', () => {
     expect(calls[0]?.options.systemPrompt).toContain('OWNER RULES INJECTION');
     expect(calls[0]?.options.systemPrompt).toContain('OWNER KEYWORD INJECTION');
     expect(calls[0]?.prompt).toContain('OWNER SKILL INJECTION');
-    expect(calls[0]?.prompt).toContain('PRIVATE PROFILE MUST NOT APPEAR');
+    expect(calls[0]?.prompt).toContain('OWNER PROFILE BASELINE');
     expect(enhance).toHaveBeenCalledOnce();
     expect(mamaApi.recallMemory).toHaveBeenCalledOnce();
     expect(triggerMemoryAgent).toHaveBeenCalledOnce();

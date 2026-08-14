@@ -1656,8 +1656,11 @@ This protects your credentials from being exposed in chat logs.`;
 
     const priorConversation = history
       .map((turn) => {
-        const user = turn.user.length > 300 ? `${turn.user.slice(0, 300)}...` : turn.user;
-        const assistant = turn.bot.length > 500 ? `${turn.bot.slice(0, 500)}...` : turn.bot;
+        const safeUser = sanitizeForPrompt(turn.user);
+        const safeAssistant = sanitizeForPrompt(turn.bot);
+        const user = safeUser.length > 300 ? `${safeUser.slice(0, 300)}...` : safeUser;
+        const assistant =
+          safeAssistant.length > 500 ? `${safeAssistant.slice(0, 500)}...` : safeAssistant;
         return `User: ${user}\nAssistant: ${assistant}`;
       })
       .join('\n\n');
