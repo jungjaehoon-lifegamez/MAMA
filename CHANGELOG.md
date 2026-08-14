@@ -17,6 +17,16 @@ All notable changes to this project will be documented in this file.
 - **Gateway plugins must declare `apiVersion: 2`.** Older plugin API versions are rejected at load
   time; this is a breaking compatibility change for third-party gateway plugins.
 
+### Internal
+
+- **P2a adds the durable principal-registry substrate without shipping member access.** Migration
+  064 creates the additive principal and external-identity tables; older code safely ignores both
+  tables after a code rollback. Active member rows are only a label overlay with exactly the same
+  Telegram public-lane or Slack/Discord diversion behavior as external senders. A verified owner
+  can register only the host-authenticated identity from a user-origin Telegram forward through
+  the registry-native and Code-Act-projected member tools. Public member support remains withheld
+  until P2b grants are designed and shipped.
+
 ## mama-os [0.34.1] - 2026-08-12
 
 ### Fixed
