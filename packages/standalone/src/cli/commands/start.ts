@@ -67,7 +67,7 @@ import { initMetrics } from '../runtime/metrics-init.js';
 import { initMamaCore } from '../runtime/mama-core-init.js';
 import { initMainAgentLoop } from '../runtime/agent-loop-init.js';
 import { initMemoryAgent } from '../runtime/memory-agent-init.js';
-import { initGateways } from '../runtime/gateway-init.js';
+import { initGateways, type PrincipalResolver } from '../runtime/gateway-init.js';
 import { wireGateways } from '../runtime/gateway-wiring.js';
 import { initCronScheduler, initHeartbeat } from '../runtime/scheduler-init.js';
 import { initConnectors } from '../runtime/connector-init.js';
@@ -101,6 +101,7 @@ import {
   commitModelRunInAdapter,
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
+import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
@@ -135,6 +136,16 @@ const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   config: {},
   enabledNames: [],
 });
+
+export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
+  const { createPrincipalRepository } = mamaCore as typeof mamaCore & {
+    createPrincipalRepository: (adapter: DatabaseAdapter) => {
+      resolveByExternal: PrincipalResolver;
+    };
+  };
+  const repository = createPrincipalRepository(adapter);
+  return repository.resolveByExternal.bind(repository);
+}
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
   if (value === 'claude' || value === 'codex' || value === 'cline') {
@@ -1186,8 +1197,10 @@ export async function runAgentLoop(
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+  const coreAdapter = getAdapter() as DatabaseAdapter;
+  const principalResolver = createCorePrincipalResolver(coreAdapter);
   const contextCompileService = createContextCompileService({
-    memoryAdapter: getAdapter(),
+    memoryAdapter: coreAdapter,
     // Raw visibility comes from the owner's connector config, not from the derived scope
     // columns. Without this the compile reads nothing: measured on the live index, the
     // scope-based predicate returns 0 of 30,671 events for the input shape sent here.
@@ -1515,7 +1528,8 @@ export async function runAgentLoop(
     toolExecutor,
     agentLoop,
     runtimeBackend,
-    db
+    db,
+    principalResolver
   );
   const { discordGateway, slackGateway, telegramGateway, gateways } = gatewayInit;
 

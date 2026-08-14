@@ -64,6 +64,12 @@ export interface DiscordGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+  /** Optional core-backed principal lookup; consumed by the identity overlay in Task 5. */
+  principalResolver?: (
+    connector: string,
+    namespace: string,
+    externalId: string
+  ) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
 }
 
 interface DiscordLocalGatewayConfig extends DiscordGatewayConfig {
@@ -129,6 +135,7 @@ function coerceDiscordGuildConfig(raw: unknown): Record<string, DiscordGuildConf
  */
 export class DiscordGateway extends BaseGateway {
   readonly source = 'discord' as const;
+  readonly principalResolver: DiscordGatewayOptions['principalResolver'];
 
   private client: Client;
   private token: string;
@@ -152,6 +159,7 @@ export class DiscordGateway extends BaseGateway {
       sessionDirectory: options.sessionDirectory,
     });
     this.token = options.token;
+    this.principalResolver = options.principalResolver;
     this.defaultChannelId = options.defaultChannelId;
     this.config = {
       enabled: true,

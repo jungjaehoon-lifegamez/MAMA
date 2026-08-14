@@ -66,6 +66,12 @@ export interface SlackGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+  /** Optional core-backed principal lookup; consumed by the identity overlay in Task 5. */
+  principalResolver?: (
+    connector: string,
+    namespace: string,
+    externalId: string
+  ) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
 }
 
 interface SlackLocalGatewayConfig extends SlackGatewayConfig {
@@ -81,6 +87,7 @@ interface SlackLocalGatewayConfig extends SlackGatewayConfig {
  */
 export class SlackGateway extends BaseGateway {
   readonly source = 'slack' as const;
+  readonly principalResolver: SlackGatewayOptions['principalResolver'];
 
   private socketClient: SocketModeClient;
   private webClient: WebClient;
@@ -108,6 +115,7 @@ export class SlackGateway extends BaseGateway {
   constructor(options: SlackGatewayOptions) {
     super({ turnProcessor: options.turnProcessor });
     this.botToken = options.botToken;
+    this.principalResolver = options.principalResolver;
     this.config = {
       enabled: true,
       botToken: options.botToken,

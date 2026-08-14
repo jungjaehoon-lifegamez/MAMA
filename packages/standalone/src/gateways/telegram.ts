@@ -172,6 +172,12 @@ export interface TelegramGatewayOptions {
   fetchImpl?: TelegramMediaDownloadRequest['fetchImpl'];
   /** Internal test/operations seam for restart-safe completed-message deduplication. */
   messageLedgerPath?: string;
+  /** Optional core-backed principal lookup; consumed by the identity overlay in Task 5. */
+  principalResolver?: (
+    connector: string,
+    namespace: string,
+    externalId: string
+  ) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
 }
 
 /**
@@ -179,6 +185,7 @@ export interface TelegramGatewayOptions {
  */
 export class TelegramGateway extends BaseGateway {
   readonly source = 'telegram' as const;
+  readonly principalResolver: TelegramGatewayOptions['principalResolver'];
 
   private token: string;
   private config: TelegramGatewayConfig;
@@ -212,6 +219,7 @@ export class TelegramGateway extends BaseGateway {
     // The seam lives on the shared surface role, not on this gateway.
     super({ turnProcessor: options.turnProcessor });
     this.token = options.token;
+    this.principalResolver = options.principalResolver;
     this.config = {
       enabled: true,
       token: options.token,
