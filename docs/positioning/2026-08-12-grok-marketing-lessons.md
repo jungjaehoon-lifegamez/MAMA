@@ -7,7 +7,7 @@
 ### ① 기능을 관계로 번역한다
 
 - **Grok**: "메모리·persistence·orchestration"을 안 판다. "동료에게 일을 넘긴다(hand work to a teammate)"를 판다.
-- **근거**: AI 위임은 대인 비용(체면·관계)이 없어 사람이 더 기꺼이 맡긴다. MIT/BCG 2025 — 임원 76%가 에이전틱 AI를 "도구가 아닌 동료"로 인식.
+- **근거**: MIT/BCG 2025 — 임원 76%가 에이전틱 AI를 "도구가 아닌 동료"로 인식(인식 조사이지 위임 기제 연구는 아님). "AI 위임은 대인 비용(체면·관계)이 없어 더 기꺼이 맡긴다"는 우리의 해석 가설이다 — 별도 출처 없음.
 - **MAMA 적용**: "MCP 메모리 서버 + 오퍼레이터 런타임"으로 설명하는 순간 도구가 된다. "당신 대신 지켜보고 정리하는 존재"로 설명해야 관계가 된다.
 - **실측 갭**: README 태그라인("you read every channel yourself → MAMA reads them instead")은 이미 관계다. 그러나 바로 다음 문단 "always-on agent server, like Home Assistant or Plex"가 도구 프레임으로 되돌린다. 관계를 한 박자 더 유지할 것.
 
