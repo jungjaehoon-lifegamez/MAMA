@@ -57,6 +57,47 @@ describe('RoleManager', () => {
       );
     });
 
+    it('TG-04 exhaustively resolves members before transport or owner escalation', () => {
+      const manager = new RoleManager();
+      const publicMember: PrincipalContext = {
+        class: 'member',
+        lane: 'public',
+        canonicalId: 'telegram:global:member-user',
+        consoleEligible: false,
+      };
+      const divertedMember: PrincipalContext = {
+        ...publicMember,
+        lane: 'divert',
+        canonicalId: 'telegram:global:diverted-member',
+      };
+      const forgedConsoleMember: PrincipalContext = {
+        ...divertedMember,
+        canonicalId: 'telegram:global:forged-console-member',
+        consoleEligible: true,
+      };
+
+      const publicResolution = manager.getRoleForSource('telegram', { principal: publicMember });
+      const divertedResolution = manager.getRoleForSource('telegram', {
+        principal: divertedMember,
+      });
+      const forgedResolution = manager.getRoleForSource('telegram', {
+        principal: forgedConsoleMember,
+      });
+      const memberRoleNames = [
+        publicResolution.roleName,
+        divertedResolution.roleName,
+        forgedResolution.roleName,
+      ];
+
+      expect(publicResolution.roleName).toBe('public_lane');
+      expect(publicResolution.role.allowedTools).toEqual([]);
+      expect(divertedResolution.roleName).toBe('external_data');
+      expect(divertedResolution.role.allowedTools).toEqual([]);
+      expect(forgedResolution.roleName).toBe('external_data');
+      expect(memberRoleNames).not.toContain('chat_bot');
+      expect(memberRoleNames).not.toContain('owner_console');
+    });
+
     it('uses principal console eligibility only for Telegram owner messages', () => {
       const manager = new RoleManager();
       const principal: PrincipalContext = {
