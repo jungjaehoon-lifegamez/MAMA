@@ -2570,7 +2570,12 @@ export class GatewayToolExecutor {
               candidateId: candidate.candidateId,
               ...(candidate.displayName === undefined
                 ? {}
-                : { displayName: candidate.displayName }),
+                : {
+                    displayName: wrapUntrustedContent(
+                      'member-candidate-display-name',
+                      candidate.displayName
+                    ),
+                  }),
               firstSeen: candidate.firstSeen,
             }));
           return { success: true, candidates };
@@ -2650,7 +2655,15 @@ export class GatewayToolExecutor {
               error: 'Principal repository is not wired on this deployment.',
             };
           }
-          return { success: true, members: this.principalRepository.listMembers() };
+          const members = this.principalRepository.listMembers().map((member) => ({
+            ...member,
+            ...(member.displayName === undefined
+              ? {}
+              : {
+                  displayName: wrapUntrustedContent('member-list-display-name', member.displayName),
+                }),
+          }));
+          return { success: true, members };
         }
         case 'board_read': {
           if (!this.reportReader) {
