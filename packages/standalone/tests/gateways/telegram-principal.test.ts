@@ -1,8 +1,8 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const seams = vi.hoisted(() => ({
   api: {
@@ -53,6 +53,20 @@ import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledge
 import { TelegramResponsePresenter } from '../../src/gateways/telegram-response-presenter.js';
 import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
+
+const startedGateways = new Set<TelegramGateway>();
+const mediaRoots = new Set<string>();
+
+afterEach(async () => {
+  for (const gateway of startedGateways) {
+    await gateway.stop();
+  }
+  startedGateways.clear();
+  for (const mediaRoot of mediaRoots) {
+    await rm(mediaRoot, { recursive: true, force: true });
+  }
+  mediaRoots.clear();
+});
 
 interface SyntheticTelegramMessage {
   message_id: number;
@@ -118,6 +132,7 @@ async function makeGateway(input: {
   ownerUserIds?: string[];
 }): Promise<TelegramGateway> {
   const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-principal-'));
+  mediaRoots.add(mediaRoot);
   const gateway = new TelegramGateway({
     token: 'synthetic-token',
     turnProcessor: input.turnProcessor,
@@ -129,6 +144,7 @@ async function makeGateway(input: {
     messageLedgerPath: join(mediaRoot, 'ledger.json'),
     fetchImpl: vi.fn(),
   });
+  startedGateways.add(gateway);
   await gateway.start();
   return gateway;
 }

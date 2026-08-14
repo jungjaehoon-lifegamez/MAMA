@@ -5,12 +5,12 @@
  * requiring an actual Telegram bot connection.
  */
 
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterAll, afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
 const originalLedgerPath = process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH;
 let ledgerSequence = 0;
@@ -77,6 +77,37 @@ import { TelegramGateway } from '../../src/gateways/telegram.js';
 import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 import { splitTelegramMessage } from '../../src/gateways/telegram-response-presenter.js';
+
+const startedGateways = new Set<TelegramGateway>();
+const mediaRoots = new Set<string>();
+const originalGatewayStart = TelegramGateway.prototype.start;
+const gatewayStartSpy = vi
+  .spyOn(TelegramGateway.prototype, 'start')
+  .mockImplementation(async function (this: TelegramGateway): Promise<void> {
+    startedGateways.add(this);
+    await originalGatewayStart.call(this);
+  });
+
+async function makeMediaRoot(prefix: string): Promise<string> {
+  const mediaRoot = await mkdtemp(prefix);
+  mediaRoots.add(mediaRoot);
+  return mediaRoot;
+}
+
+afterEach(async () => {
+  for (const gateway of startedGateways) {
+    await gateway.stop();
+  }
+  startedGateways.clear();
+  for (const mediaRoot of mediaRoots) {
+    await rm(mediaRoot, { recursive: true, force: true });
+  }
+  mediaRoots.clear();
+});
+
+afterAll(() => {
+  gatewayStartSpy.mockRestore();
+});
 
 // A real TurnProcessor, not a router shaped like one. A double that implements only the
 // router's old method would force the base to adapt at runtime, and that adaptation is
@@ -258,7 +289,7 @@ describe('TelegramGateway - message splitting', () => {
   it('retries the failed chunk without resending earlier confirmed chunks', async () => {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
     const ledgerPath = join(
-      await mkdtemp(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
+      await makeMediaRoot(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
       'ledger.json'
     );
     const gateway = new TelegramGateway({
@@ -292,7 +323,7 @@ describe('TelegramGateway - message splitting', () => {
   it('retries a definite Telegram 429 rejection instead of marking it delivered', async () => {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
     const ledgerPath = join(
-      await mkdtemp(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
+      await makeMediaRoot(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
       'ledger.json'
     );
     const gateway = new TelegramGateway({
@@ -539,7 +570,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     );
 
   async function makeGateway(fetchImpl = vi.fn(async () => jpegResponse())) {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-gateway-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-gateway-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
@@ -632,7 +663,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       token: 'test-bot-token',
       turnProcessor: injected,
       config: { allowedChats: ['7777'] },
-      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-seam-')),
+      mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-seam-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
     });
     await gateway.start();
@@ -687,7 +718,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: { allowedChats: ['-7777'], ownerUserIds: ['9001'] },
-      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-group-')),
+      mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-group-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
     });
     await gateway.start();
@@ -772,7 +803,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
-      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-denied-')),
+      mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-denied-')),
       fetchImpl,
     });
     await gateway.start();
@@ -795,7 +826,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: {},
-      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-')),
+      mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-open-media-')),
       fetchImpl,
     });
     await gateway.start();
@@ -817,7 +848,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: {},
-      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-warn-')),
+      mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-open-media-warn-')),
       fetchImpl,
     });
     await gateway.start();
@@ -839,7 +870,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   });
 
   it('retains downloaded image media for bounded follow-up tool use', async () => {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-cleanup-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
@@ -1193,7 +1224,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   });
 
   it('resumes only the first unconfirmed inbound response chunk after a send failure', async () => {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-chunk-resume-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-chunk-resume-'));
     const ledgerPath = join(mediaRoot, 'ledger.json');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
@@ -1246,7 +1277,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   });
 
   it('does not reprocess a completed Telegram message after a gateway restart', async () => {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-restart-dedup-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-restart-dedup-'));
     const options = {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
@@ -1269,7 +1300,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   });
 
   it('delivers a durable ready response during startup without rerunning the agent turn', async () => {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-ready-replay-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-ready-replay-'));
     const ledgerPath = join(mediaRoot, 'ledger.json');
     const ledger = new TelegramMessageLedger(ledgerPath);
     ledger.claim('7777:124');
@@ -1292,7 +1323,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   });
 
   it('makes an interrupted turn visible during startup without rerunning unknown side effects', async () => {
-    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-claimed-recovery-'));
+    const mediaRoot = await makeMediaRoot(join(tmpdir(), 'mama-telegram-claimed-recovery-'));
     const ledgerPath = join(mediaRoot, 'ledger.json');
     new TelegramMessageLedger(ledgerPath).claim('7777:125');
     const gateway = new TelegramGateway({
@@ -1392,7 +1423,7 @@ describe('TelegramGateway report delivery control (TG-05/TG-06)', () => {
   async function controlHarness() {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
     const ledgerPath = join(
-      await mkdtemp(join(tmpdir(), 'mama-telegram-report-control-')),
+      await makeMediaRoot(join(tmpdir(), 'mama-telegram-report-control-')),
       'ledger.json'
     );
     const gateway = new TelegramGateway({

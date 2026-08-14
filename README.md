@@ -83,9 +83,9 @@ A system that acts on its own must be easy to check afterwards.
   The database rejects any row that fakes a cause.
 - **It drafts; you send.** An agent can write the customer reply from the
   evidence, but sending requires an explicit permission for that destination.
-  Memory writes refuse anything shaped like a secret. The system interrupts you
-  only when something genuinely needs your approval; everything else waits for
-  the next report.
+  Memory writes refuse anything shaped like a secret. The system interrupts you for approvals and
+  operational alarms such as stale claims, exhausted retries, or unresolved effects; everything
+  else waits for the next report.
 - **Your record stays on your machine.** The databases are local SQLite and the
   embeddings are computed locally. Network traffic goes to two places only: the
   services you connected (Slack, Gmail, and so on) and your AI provider, through
@@ -164,9 +164,9 @@ Dependency direction is one-way: nothing depends on the daemon.
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                        |
 | Done (v0.30–v0.32) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant → persistent Code-Act processes follow the active principal and do not replay completed mutations. |
-| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owner, member, and outsider are distinguished before the model ever runs. The gate every team feature stands on.                                                                                                                                                       |
+| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                       |
 | Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                   |
-| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2.          |
+| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2.        |
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 

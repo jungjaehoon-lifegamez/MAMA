@@ -193,6 +193,29 @@ describe('Slack ingress principal admission', () => {
     expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
   });
 
+  it('processes an app mention once when the unmentioned message event arrives first', async () => {
+    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+    const gateway = new SlackGateway({
+      botToken: 'xoxb-synthetic',
+      appToken: 'xapp-synthetic',
+      ownerUserId: 'owner-user',
+      turnProcessor,
+      config: { channels: { 'channel-principal': { requireMention: true } } },
+    });
+    await gateway.start();
+    const event = makeEvent({
+      user: 'owner-user',
+      ts: '1000.0007',
+      text: 'synthetic request',
+    });
+
+    await deliver('message', event);
+    await deliver('app_mention', event);
+    await deliver('app_mention', event);
+
+    expect(turnProcessor.processTurn).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed without an owner and emits the boot warning once', async () => {
     const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
     const gateway = new SlackGateway({

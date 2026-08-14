@@ -16,7 +16,6 @@ import { TelegramReportContextStore } from '../../src/gateways/telegram-report-c
 import { OwnerReportInbox } from '../../src/gateways/owner-report-inbox.js';
 import { getRoleManager, resetRoleManager } from '../../src/agent/role-manager.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
-import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-router-report-inbox-'));
@@ -39,7 +38,15 @@ function processFixtureMessage(
   router: MessageRouter,
   message: NormalizedMessage
 ): ReturnType<MessageRouter['process']> {
-  return router.process(withOwnerPrincipal(message));
+  return router.process({
+    ...message,
+    principal: {
+      class: 'owner',
+      lane: 'owner',
+      canonicalId: 'telegram:global:synthetic-owner',
+      consoleEligible: false,
+    },
+  });
 }
 
 describe('MessageRouter owner-report inbox consumption', () => {

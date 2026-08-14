@@ -189,7 +189,9 @@ export class PluginLoader {
 
     const sourceId = plugin.manifest.gateway?.sourceId;
     if (!isMessageSource(sourceId)) {
-      throw new Error(`Plugin ${pluginId} has an unsupported gateway sourceId: ${String(sourceId)}`);
+      throw new Error(
+        `Plugin ${pluginId} has an unsupported gateway sourceId: ${String(sourceId)}`
+      );
     }
 
     const entryPath = join(plugin.path, plugin.manifest.main);
@@ -246,9 +248,14 @@ export class PluginLoader {
     const gateways: Gateway[] = [];
 
     for (const [pluginId] of this.plugins) {
-      const gateway = await this.loadPlugin(pluginId);
-      if (gateway) {
-        gateways.push(gateway);
+      try {
+        const gateway = await this.loadPlugin(pluginId);
+        if (gateway) {
+          gateways.push(gateway);
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.error(`[PluginLoader] Skipping plugin ${pluginId} after load failure:`, error);
       }
     }
 

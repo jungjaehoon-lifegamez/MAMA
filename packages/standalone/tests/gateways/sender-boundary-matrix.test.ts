@@ -656,8 +656,8 @@ describe('Task 10: sender boundary completion matrix', () => {
   it('defines all 18 connector, surface, and sender cells', () => {
     expect(matrixCells).toHaveLength(18);
     expect(
-      new Set(matrixCells.map((cell) => `${cell.connector}/${cell.surface}/${cell.sender}`))
-    ).toHaveLength(18);
+      new Set(matrixCells.map((cell) => `${cell.connector}/${cell.surface}/${cell.sender}`)).size
+    ).toBe(18);
   });
 
   it.each(matrixCells)(
@@ -754,6 +754,10 @@ describe('Task 10: sender boundary completion matrix', () => {
         token: 'synthetic-token',
         ownerUserId: 'discord-owner',
         turnProcessor: harness.router,
+        sessionDirectory: {
+          listSessions: vi.fn().mockReturnValue([]),
+          updateChannelName: vi.fn().mockReturnValue(false),
+        },
         config: { guilds: { 'guild-matrix': { requireMention: true } } },
       });
       await discordSeams.handlers.get('messageCreate')!(external);

@@ -237,16 +237,6 @@ export class SlackGateway extends BaseGateway {
     if (this.processedMessages.has(dedupKey)) {
       return;
     }
-    this.processedMessages.set(dedupKey, Date.now());
-    // Periodic cleanup
-    if (this.processedMessages.size > 100) {
-      const now = Date.now();
-      for (const [key, time] of this.processedMessages) {
-        if (now - time > SlackGateway.DEDUP_TTL_MS) {
-          this.processedMessages.delete(key);
-        }
-      }
-    }
 
     // Only admitted owner messages become conversation context.
     const channelHistory = getChannelHistory();
@@ -265,6 +255,17 @@ export class SlackGateway extends BaseGateway {
     // Check if we should respond to this message
     if (!this.shouldRespond(event, isDM, isMention)) {
       return;
+    }
+
+    this.processedMessages.set(dedupKey, Date.now());
+    // Periodic cleanup
+    if (this.processedMessages.size > 100) {
+      const now = Date.now();
+      for (const [key, time] of this.processedMessages) {
+        if (now - time > SlackGateway.DEDUP_TTL_MS) {
+          this.processedMessages.delete(key);
+        }
+      }
     }
 
     // Emit message received event

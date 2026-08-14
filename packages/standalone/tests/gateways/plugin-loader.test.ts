@@ -14,9 +14,12 @@ function writePluginFixture(input: {
   id: string;
   apiVersion?: number;
   sourceId?: string;
+  pluginsDir?: string;
 }): { pluginsDir: string; apiKey: symbol; registerKey: symbol } {
-  const pluginsDir = mkdtempSync(join(tmpdir(), 'mama-plugin-loader-'));
-  fixtureRoots.push(pluginsDir);
+  const pluginsDir = input.pluginsDir ?? mkdtempSync(join(tmpdir(), 'mama-plugin-loader-'));
+  if (!input.pluginsDir) {
+    fixtureRoots.push(pluginsDir);
+  }
   const pluginDir = join(pluginsDir, input.id);
   mkdirSync(pluginDir);
 
@@ -36,8 +39,8 @@ function writePluginFixture(input: {
   }
   writeFileSync(join(pluginDir, 'plugin.json'), JSON.stringify(manifest));
 
-  const apiKey = Symbol.for(`mama-test-plugin-api:${pluginsDir}`);
-  const registerKey = Symbol.for(`mama-test-plugin-register:${pluginsDir}`);
+  const apiKey = Symbol.for(`mama-test-plugin-api:${pluginsDir}:${input.id}`);
+  const registerKey = Symbol.for(`mama-test-plugin-register:${pluginsDir}:${input.id}`);
   writeFileSync(
     join(pluginDir, 'index.mjs'),
     `const apiKey = Symbol.for(${JSON.stringify(Symbol.keyFor(apiKey))});
@@ -83,7 +86,7 @@ afterEach(() => {
 });
 
 describe('PluginLoader host-owned ingress', () => {
-  it.each([
+  it.each<[label: string, apiVersion: number | undefined]>([
     ['missing', undefined],
     ['older', 1],
   ])('refuses a %s apiVersion before register()', async (_label, apiVersion) => {
@@ -94,6 +97,32 @@ describe('PluginLoader host-owned ingress', () => {
 
     await expect(loader.loadPlugin(`legacy-${_label}`)).rejects.toThrow(/apiVersion.*2/);
     expect(globalValue<number>(fixture.registerKey)).toBeUndefined();
+  });
+
+  it('skips a rejected manifest while loading and starting the remaining plugin', async () => {
+    const pluginsDir = mkdtempSync(join(tmpdir(), 'mama-plugin-loader-batch-'));
+    fixtureRoots.push(pluginsDir);
+    const rejected = writePluginFixture({ id: 'rejected', apiVersion: 1, pluginsDir });
+    const accepted = writePluginFixture({ id: 'accepted', apiVersion: 2, pluginsDir });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loader = new PluginLoader({
+      pluginsDir,
+      turnProcessor: { processTurn: vi.fn() },
+    });
+    await loader.discover();
+
+    const gateways = await loader.loadAll();
+    await Promise.all(gateways.map((gateway) => gateway.start()));
+
+    expect(gateways).toHaveLength(1);
+    expect(gateways[0]?.source).toBe('chatwork');
+    expect(globalValue<number>(rejected.registerKey)).toBeUndefined();
+    expect(globalValue<number>(accepted.registerKey)).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[PluginLoader] Skipping plugin rejected after load failure:',
+      expect.objectContaining({ message: expect.stringMatching(/apiVersion.*2/) })
+    );
+    errorSpy.mockRestore();
   });
 
   it('derives source and principal from host state and ignores injected authority fields', async () => {
