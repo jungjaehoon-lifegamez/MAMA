@@ -49,7 +49,9 @@ function normalizedIds(ids: ReadonlySet<string>): ReadonlySet<string> {
   return new Set(Array.from(ids, (id) => id.trim()).filter((id) => id.length > 0));
 }
 
-function telegramOwnerUserIds(input: TelegramPrincipalInput): ReadonlySet<string> {
+function telegramOwnerUserIds(
+  input: Pick<TelegramPrincipalInput, 'allowedChats' | 'ownerUserIds'>
+): ReadonlySet<string> {
   if (input.ownerUserIds !== undefined) {
     return normalizedIds(input.ownerUserIds);
   }
@@ -58,6 +60,19 @@ function telegramOwnerUserIds(input: TelegramPrincipalInput): ReadonlySet<string
     /^[1-9]\d*$/.test(chatId)
   );
   return positiveAllowedChatIds.length === 1 ? new Set([positiveAllowedChatIds[0]]) : new Set();
+}
+
+export function deriveTelegramOwnerId(telegram: {
+  readonly owner_user_ids?: readonly string[];
+  readonly allowed_chats?: readonly string[];
+}): string | null {
+  const ownerUserIds = telegramOwnerUserIds({
+    allowedChats: new Set(telegram.allowed_chats ?? []),
+    ...(telegram.owner_user_ids === undefined
+      ? {}
+      : { ownerUserIds: new Set(telegram.owner_user_ids) }),
+  });
+  return ownerUserIds.size === 1 ? (Array.from(ownerUserIds)[0] ?? null) : null;
 }
 
 export function resolveTelegramPrincipal(input: TelegramPrincipalInput): PrincipalContext {
