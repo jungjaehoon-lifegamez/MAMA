@@ -176,6 +176,42 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
+    name: 'member_candidates',
+    description: 'List non-expired member candidates captured from owner-forwarded users',
+    params: [],
+    returnType:
+      '{ candidates: Array<{ candidateId: string; displayName?: string; firstSeen: number }> }',
+    category: 'os',
+  },
+  {
+    name: 'member_register',
+    description: 'Register one host-authenticated forwarded candidate by candidate_id only',
+    params: [{ name: 'candidate_id', type: 'string', required: true }],
+    returnType: '{ principalId: string }',
+    category: 'os',
+  },
+  {
+    name: 'member_suspend',
+    description: 'Suspend a member principal; owner principals are refused',
+    params: [{ name: 'principal_id', type: 'string', required: true }],
+    returnType: '{ principalId: string; status: "suspended" }',
+    category: 'os',
+  },
+  {
+    name: 'member_offboard',
+    description: 'Offboard a member principal; owner principals are refused',
+    params: [{ name: 'principal_id', type: 'string', required: true }],
+    returnType: '{ principalId: string; status: "offboarded" }',
+    category: 'os',
+  },
+  {
+    name: 'member_list',
+    description: 'List registered member principals and current statuses',
+    params: [],
+    returnType: '{ members: Array<{ principalId: string; displayName?: string; status: string }> }',
+    category: 'os',
+  },
+  {
     name: 'workorder_request',
     description: 'Enqueue a priority system workorder and acknowledge it without waiting',
     params: [
@@ -676,6 +712,8 @@ export const READ_ONLY_TOOLS = new Set([
   'mama_provenance',
   'mama_load_checkpoint',
   'board_read',
+  'member_candidates',
+  'member_list',
   'audit_findings_read',
   'workorder_status',
   'Read',
@@ -734,6 +772,9 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'task_lifecycle_reconcile',
   'task_temporal_reconcile',
   'contract_no_update',
+  'member_register',
+  'member_suspend',
+  'member_offboard',
   'drive_upload',
 ]);
 

@@ -33,6 +33,7 @@ import {
 } from './telegram-media.js';
 import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
+import { getMemberCandidateStore, MEMBER_CANDIDATE_TTL_MS } from './member-candidate-store.js';
 import {
   laneChannelId,
   overlayMemberPrincipal,
@@ -420,6 +421,21 @@ export class TelegramGateway extends BaseGateway {
         principal,
         this.principalResolver('telegram', 'global', String(msg.from.id))
       );
+    }
+    if (
+      principal.class === 'owner' &&
+      principal.consoleEligible &&
+      msg.forward_origin?.type === 'user' &&
+      Boolean(msg.forward_origin.sender_user)
+    ) {
+      getMemberCandidateStore().upsert({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: String(msg.forward_origin.sender_user.id),
+        displayName: msg.forward_origin.sender_user.first_name,
+        firstSeen: now,
+        expiresAt: now + MEMBER_CANDIDATE_TTL_MS,
+      });
     }
     if (principal.lane === 'divert') {
       logSecurityEventOnly({

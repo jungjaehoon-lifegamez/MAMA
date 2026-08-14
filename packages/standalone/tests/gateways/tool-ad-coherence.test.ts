@@ -76,6 +76,11 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(prompt).toContain('mama_save');
       expect(prompt).toContain('workorder_request');
       expect(prompt).toContain('workorder_status');
+      expect(prompt).toContain('member_candidates');
+      expect(prompt).toContain('member_register');
+      expect(prompt).toContain('member_suspend');
+      expect(prompt).toContain('member_offboard');
+      expect(prompt).toContain('member_list');
       expect(prompt).not.toContain('os_restart_bot');
       expect(prompt).not.toContain('delegate');
       expect(prompt).not.toContain('browser_navigate');

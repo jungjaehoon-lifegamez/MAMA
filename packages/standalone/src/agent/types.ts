@@ -49,6 +49,37 @@ export interface ExternalLifecycleReconcileToolInput {
   expected_revision: number;
 }
 
+export interface PrincipalRepository {
+  resolveByExternal(
+    connector: string,
+    namespace: string,
+    externalId: string
+  ): { principalId: string; kind: 'owner' | 'member'; status: string } | null;
+  registerMember(input: {
+    displayName?: string;
+    connector: string;
+    namespace: string;
+    externalId: string;
+    now: number;
+  }): string;
+  bindIdentity(
+    principalId: string,
+    connector: string,
+    namespace: string,
+    externalId: string,
+    now: number
+  ): void;
+  suspend(principalId: string, now: number): void;
+  offboard(principalId: string, now: number): void;
+  ensureOwner(input: {
+    connector: string;
+    namespace: string;
+    externalId: string;
+    now: number;
+  }): 'created' | 'exists' | 'conflict';
+  listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+}
+
 // ============================================================================
 // Agent Context Types (Role Awareness)
 // ============================================================================
@@ -652,6 +683,18 @@ export interface DriveUploadInput {
   destinationCapability?: string;
 }
 
+export type MemberCandidatesInput = Record<string, never>;
+
+export interface MemberRegisterInput {
+  candidate_id: string;
+}
+
+export interface MemberPrincipalInput {
+  principal_id: string;
+}
+
+export type MemberListInput = Record<string, never>;
+
 /**
  * Union type for all MCP tool inputs
  */
@@ -670,6 +713,10 @@ export type GatewayToolInput =
   | DriveFindFolderInput
   | DriveDownloadInput
   | DriveUploadInput
+  | MemberCandidatesInput
+  | MemberRegisterInput
+  | MemberPrincipalInput
+  | MemberListInput
   | TemporalReconcileToolInput
   | ExternalBindingToolInput
   | ExternalLifecycleReconcileToolInput;
@@ -719,6 +766,11 @@ export type GatewayToolName =
   | 'workorder_request'
   | 'workorder_status'
   | 'console_brief_update'
+  | 'member_candidates'
+  | 'member_register'
+  | 'member_suspend'
+  | 'member_offboard'
+  | 'member_list'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI
@@ -1273,6 +1325,8 @@ export interface GatewayToolExecutorOptions {
   } | null>;
   /** Optional wiki publish adapter for source-linked artifact persistence. */
   wikiPublishAdapter?: WikiPublishAdapter | null;
+  /** Core-backed principal repository for owner-only member administration. */
+  principalRepository?: PrincipalRepository;
 }
 
 export interface MemoryWriteProvenance {
