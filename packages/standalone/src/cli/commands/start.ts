@@ -22,7 +22,11 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import { liveBoundaryChannels } from '../../evidence/read.js';
-import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import type {
+  AgentContext,
+  GatewayToolExecutionContext,
+  PrincipalRepository,
+} from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
@@ -139,9 +143,7 @@ const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   enabledNames: [],
 });
 
-type CorePrincipalRegistry = OwnerBackfillRegistry & {
-  resolveByExternal: PrincipalResolver;
-};
+type CorePrincipalRegistry = OwnerBackfillRegistry & PrincipalRepository;
 
 export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrincipalRegistry {
   const { createPrincipalRepository } = mamaCore as typeof mamaCore & {
@@ -1207,6 +1209,7 @@ export async function runAgentLoop(
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const coreAdapter = getAdapter() as DatabaseAdapter;
   const principalRegistry = createCorePrincipalRegistry(coreAdapter);
+  toolExecutor.setPrincipalRepository(principalRegistry);
   backfillTelegramOwner({
     telegram: config.telegram,
     registry: principalRegistry,
