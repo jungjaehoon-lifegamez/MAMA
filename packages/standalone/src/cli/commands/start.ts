@@ -121,6 +121,7 @@ import {
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
 import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
+import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -130,6 +131,7 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
+const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -137,13 +139,19 @@ const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   enabledNames: [],
 });
 
-export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
+type CorePrincipalRegistry = OwnerBackfillRegistry & {
+  resolveByExternal: PrincipalResolver;
+};
+
+export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrincipalRegistry {
   const { createPrincipalRepository } = mamaCore as typeof mamaCore & {
-    createPrincipalRepository: (adapter: DatabaseAdapter) => {
-      resolveByExternal: PrincipalResolver;
-    };
+    createPrincipalRepository: (adapter: DatabaseAdapter) => CorePrincipalRegistry;
   };
-  const repository = createPrincipalRepository(adapter);
+  return createPrincipalRepository(adapter);
+}
+
+export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
+  const repository = createCorePrincipalRegistry(adapter);
   return repository.resolveByExternal.bind(repository);
 }
 
@@ -1198,7 +1206,14 @@ export async function runAgentLoop(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const coreAdapter = getAdapter() as DatabaseAdapter;
-  const principalResolver = createCorePrincipalResolver(coreAdapter);
+  const principalRegistry = createCorePrincipalRegistry(coreAdapter);
+  backfillTelegramOwner({
+    telegram: config.telegram,
+    registry: principalRegistry,
+    now: Date.now(),
+    logger: principalRegistryLogger,
+  });
+  const principalResolver = principalRegistry.resolveByExternal.bind(principalRegistry);
   const contextCompileService = createContextCompileService({
     memoryAdapter: coreAdapter,
     // Raw visibility comes from the owner's connector config, not from the derived scope
