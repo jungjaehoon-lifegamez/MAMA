@@ -11,7 +11,6 @@ import {
   Partials,
   Message,
   Events,
-  ChannelType,
   AttachmentBuilder,
 } from 'discord.js';
 import { existsSync } from 'node:fs';
@@ -34,6 +33,7 @@ import type { MultiAgentConfig } from '../cli/config/types.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { resolveConnectorPrincipal } from './principal.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -51,6 +51,8 @@ const discordLogger = new DebugLogger('discord');
 export interface DiscordGatewayOptions {
   /** Discord bot token */
   token: string;
+  /** Owner Discord user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
   /** Message router for processing messages */
   turnProcessor: TurnProcessor;
   /** Reading sessions to NAME channels is a display concern, asked for by name. */
@@ -62,6 +64,11 @@ export interface DiscordGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+}
+
+interface DiscordLocalGatewayConfig extends DiscordGatewayConfig {
+  /** Owner Discord user ID. Unset means owner resolution fails closed. */
+  ownerUserId?: string;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -125,7 +132,7 @@ export class DiscordGateway extends BaseGateway {
 
   private client: Client;
   private token: string;
-  private config: DiscordGatewayConfig;
+  private config: DiscordLocalGatewayConfig;
   private defaultChannelId?: string;
 
   // Message editing throttle state
@@ -150,6 +157,7 @@ export class DiscordGateway extends BaseGateway {
       enabled: true,
       token: options.token,
       guilds: coerceDiscordGuildConfig(options.config?.guilds) || {},
+      ownerUserId: options.ownerUserId,
     };
     discordLogger.info(
       `[Discord] Initialized with guild config keys: ${
@@ -241,7 +249,18 @@ export class DiscordGateway extends BaseGateway {
     const classification = await this.classifyMessage(message);
     if (!classification) return; // bot message, already handled or ignored
 
-    const isDM = message.channel.type === ChannelType.DM;
+    const isDM = !message.guild;
+    const principal = resolveConnectorPrincipal({
+      connector: 'discord',
+      namespace: message.guild?.id ?? 'direct',
+      userId: message.author.id,
+      ownerUserId: this.config.ownerUserId,
+      isDirectMessage: isDM,
+    });
+    if (principal.lane === 'divert') {
+      return;
+    }
+
     const isMentioned = message.mentions.has(this.client.user!);
 
     // Debug logging
@@ -306,7 +325,13 @@ export class DiscordGateway extends BaseGateway {
 
     const channelHistory = getChannelHistory();
     // Build message history context for Claude (OpenClaw style)
-    const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
+    const ownerHistoryUserIds = new Set(this.config.ownerUserId ? [this.config.ownerUserId] : []);
+    const historyContext = channelHistory.formatForContext(
+      message.channel.id,
+      message.id,
+      undefined,
+      { includeUserIds: ownerHistoryUserIds }
+    );
     if (historyContext) {
       console.log(
         `[Discord] Built historyContext (${historyContext.length} chars):`,
@@ -326,6 +351,7 @@ export class DiscordGateway extends BaseGateway {
       channelName,
       userId: message.author.id,
       text: cleanContent,
+      principal,
       contentBlocks:
         attachmentInfo.contentBlocks.length > 0 ? attachmentInfo.contentBlocks : undefined,
       metadata: {
@@ -570,6 +596,10 @@ export class DiscordGateway extends BaseGateway {
       });
     } finally {
       await tracker.cleanup();
+    }
+    if (routerResult.outcome === 'external_divert') {
+      discordLogger.info('[Discord] Turn externally diverted; no response sent');
+      return;
     }
     const response = routerResult.response;
     const duration = routerResult.duration;

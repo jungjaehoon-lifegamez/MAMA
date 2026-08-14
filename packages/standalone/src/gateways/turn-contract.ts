@@ -23,7 +23,7 @@ export interface ProcessOptions {
   onStream?: StreamCallbacks;
 }
 
-/** Fields every turn outcome carries, whatever happened. */
+/** Fields carried by outcomes that produce a response. */
 export interface TurnOutcomeBase {
   /** Response text from the agent. */
   response: string;
@@ -72,8 +72,16 @@ export interface BlockedTurn extends TurnOutcomeBase {
   reason: 'security_block';
 }
 
-/** Discriminated on `outcome`; both branches keep the base fields. */
-export type ProcessingResult = CompletedTurn | BlockedTurn;
+/** Diverted before any model/session work. Carries NO response by construction. */
+export interface DivertedTurn {
+  outcome: 'external_divert';
+  delivery: 'silent';
+  sessionId: 'external-divert';
+  duration: number;
+}
+
+/** Discriminated on `outcome`; only model and security branches carry responses. */
+export type ProcessingResult = CompletedTurn | BlockedTurn | DivertedTurn;
 
 /**
  * The one callable boundary between a user-facing surface and turn processing.

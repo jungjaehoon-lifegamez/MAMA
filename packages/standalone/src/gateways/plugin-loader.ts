@@ -18,9 +18,50 @@ import type {
   Gateway,
   GatewayPluginModule,
   MessageHandler,
-  AgentLoopInterface,
   MessageSource,
+  PluginInboundInput,
+  PluginInboundResult,
 } from './types.js';
+import type { TurnProcessor } from './turn-contract.js';
+import { resolveConnectorPrincipal } from './principal.js';
+
+const PLUGIN_MESSAGE_SOURCES: ReadonlySet<string> = new Set<MessageSource>([
+  'discord',
+  'slack',
+  'telegram',
+  'chatwork',
+  'mobile',
+  'viewer',
+  'system',
+]);
+
+function isMessageSource(value: unknown): value is MessageSource {
+  return typeof value === 'string' && PLUGIN_MESSAGE_SOURCES.has(value);
+}
+
+function assertInboundInput(input: PluginInboundInput): void {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Plugin processInbound input must be an object');
+  }
+  if (typeof input.channelId !== 'string' || input.channelId.length === 0) {
+    throw new Error('Plugin processInbound channelId must be a non-empty string');
+  }
+  if (typeof input.userId !== 'string' || input.userId.length === 0) {
+    throw new Error('Plugin processInbound userId must be a non-empty string');
+  }
+  if (typeof input.text !== 'string') {
+    throw new Error('Plugin processInbound text must be a string');
+  }
+  if (input.contentBlocks !== undefined && !Array.isArray(input.contentBlocks)) {
+    throw new Error('Plugin processInbound contentBlocks must be an array');
+  }
+  if (
+    input.metadata !== undefined &&
+    (typeof input.metadata !== 'object' || input.metadata === null || Array.isArray(input.metadata))
+  ) {
+    throw new Error('Plugin processInbound metadata must be an object');
+  }
+}
 
 /**
  * Plugin loader configuration
@@ -30,8 +71,10 @@ export interface PluginLoaderConfig {
   pluginsDir?: string;
   /** Gateway configurations from main config */
   gatewayConfigs?: Record<string, unknown>;
-  /** Agent loop instance */
-  agentLoop?: AgentLoopInterface;
+  /** Host-owned turn processor. Never exposed directly to plugins. */
+  turnProcessor: TurnProcessor;
+  /** Owner IDs resolved from host connector configuration, keyed by manifest source ID. */
+  ownerUserIdsBySource?: Readonly<Partial<Record<MessageSource, string | undefined>>>;
 }
 
 /**
@@ -40,15 +83,19 @@ export interface PluginLoaderConfig {
 export class PluginLoader {
   private readonly pluginsDir: string;
   private readonly gatewayConfigs: Record<string, unknown>;
-  private readonly agentLoop?: AgentLoopInterface;
+  private readonly turnProcessor: TurnProcessor;
+  private readonly ownerUserIdsBySource: Readonly<
+    Partial<Record<MessageSource, string | undefined>>
+  >;
   private readonly plugins: Map<string, LoadedPlugin> = new Map();
   private readonly messageHandlers: Map<string, MessageHandler[]> = new Map();
 
-  constructor(config: PluginLoaderConfig = {}) {
+  constructor(config: PluginLoaderConfig) {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
     this.pluginsDir = config.pluginsDir || join(homeDir, '.mama', 'plugins');
     this.gatewayConfigs = config.gatewayConfigs || {};
-    this.agentLoop = config.agentLoop;
+    this.turnProcessor = config.turnProcessor;
+    this.ownerUserIdsBySource = config.ownerUserIdsBySource ?? {};
   }
 
   /**
@@ -134,6 +181,19 @@ export class PluginLoader {
       return null;
     }
 
+    if (!Number.isInteger(plugin.manifest.apiVersion) || plugin.manifest.apiVersion < 2) {
+      throw new Error(
+        `Plugin ${pluginId} requires manifest apiVersion >= 2; received ${String(plugin.manifest.apiVersion)}`
+      );
+    }
+
+    const sourceId = plugin.manifest.gateway?.sourceId;
+    if (!isMessageSource(sourceId)) {
+      throw new Error(
+        `Plugin ${pluginId} has an unsupported gateway sourceId: ${String(sourceId)}`
+      );
+    }
+
     const entryPath = join(plugin.path, plugin.manifest.main);
 
     // Prevent path traversal: ensure entryPath stays within the plugin directory
@@ -153,7 +213,7 @@ export class PluginLoader {
 
     try {
       // Create plugin API
-      const api = this.createPluginApi(pluginId);
+      const api = this.createPluginApi(pluginId, sourceId);
 
       // Dynamic import of plugin module
       const moduleUrl = pathToFileURL(entryPath).href;
@@ -188,9 +248,14 @@ export class PluginLoader {
     const gateways: Gateway[] = [];
 
     for (const [pluginId] of this.plugins) {
-      const gateway = await this.loadPlugin(pluginId);
-      if (gateway) {
-        gateways.push(gateway);
+      try {
+        const gateway = await this.loadPlugin(pluginId);
+        if (gateway) {
+          gateways.push(gateway);
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.error(`[PluginLoader] Skipping plugin ${pluginId} after load failure:`, error);
       }
     }
 
@@ -200,7 +265,7 @@ export class PluginLoader {
   /**
    * Create the API object for a plugin
    */
-  private createPluginApi(pluginId: string): PluginApi {
+  private createPluginApi(pluginId: string, sourceId: MessageSource): PluginApi {
     // Note: plugin info is available via this.plugins.get(pluginId)
     const handlers: MessageHandler[] = [];
     this.messageHandlers.set(pluginId, handlers);
@@ -214,11 +279,29 @@ export class PluginLoader {
         return this.gatewayConfigs[pluginId] as T | undefined;
       },
 
-      getAgentLoop: (): AgentLoopInterface => {
-        if (!this.agentLoop) {
-          throw new Error('Agent loop not available');
+      processInbound: async (input: PluginInboundInput): Promise<PluginInboundResult> => {
+        assertInboundInput(input);
+        const principal = resolveConnectorPrincipal({
+          connector: sourceId,
+          namespace: input.channelId,
+          userId: input.userId,
+          ownerUserId: this.ownerUserIdsBySource[sourceId],
+          isDirectMessage: false,
+        });
+        if (principal.lane === 'divert') {
+          return {};
         }
-        return this.agentLoop;
+
+        const result = await this.turnProcessor.processTurn({
+          source: sourceId,
+          channelId: input.channelId,
+          userId: input.userId,
+          text: input.text,
+          principal: Object.freeze({ ...principal, consoleEligible: false }),
+          ...(input.contentBlocks === undefined ? {} : { contentBlocks: input.contentBlocks }),
+          ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+        });
+        return result.outcome === 'external_divert' ? {} : { response: result.response };
       },
 
       onMessage: (handler: MessageHandler): void => {
@@ -292,6 +375,6 @@ export class PluginLoader {
 /**
  * Create a plugin loader instance
  */
-export function createPluginLoader(config?: PluginLoaderConfig): PluginLoader {
+export function createPluginLoader(config: PluginLoaderConfig): PluginLoader {
   return new PluginLoader(config);
 }

@@ -262,11 +262,11 @@ describe('mama init command', () => {
       const config = await loadConfig();
       expect(config.agent.backend).toBe('codex');
       expect(config.agent.model).toBe('gpt-5.4');
-      expect(Object.values(config.roles?.definitions ?? {}).map((role) => role.model)).toEqual([
-        'gpt-5.4',
-        'gpt-5.4',
-        'gpt-5.4',
-      ]);
+      const codexRoleModels = Object.values(config.roles?.definitions ?? {}).map(
+        (role) => role.model
+      );
+      expect(codexRoleModels.length).toBeGreaterThanOrEqual(5);
+      expect(new Set(codexRoleModels)).toEqual(new Set(['gpt-5.4']));
     });
 
     it('should apply the Cline DeepSeek backend when skipAuthCheck is enabled', async () => {
@@ -276,11 +276,11 @@ describe('mama init command', () => {
       expect(config.agent.backend).toBe('cline');
       expect(config.agent.model).toBe('deepseek/deepseek-v4-flash');
       expect(config.agent.cline_provider).toBe('cline');
-      expect(Object.values(config.roles?.definitions ?? {}).map((role) => role.model)).toEqual([
-        'deepseek/deepseek-v4-flash',
-        'deepseek/deepseek-v4-flash',
-        'deepseek/deepseek-v4-flash',
-      ]);
+      const clineRoleModels = Object.values(config.roles?.definitions ?? {}).map(
+        (role) => role.model
+      );
+      expect(clineRoleModels.length).toBeGreaterThanOrEqual(5);
+      expect(new Set(clineRoleModels)).toEqual(new Set(['deepseek/deepseek-v4-flash']));
     });
 
     it('accepts an installed and authenticated Cline hosted provider', async () => {

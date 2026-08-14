@@ -236,7 +236,7 @@ export class WorkOrderConsumer {
       this.emitEvent({ type: 'stale-claim', workKind: wo.workKind, workOrderId: wo.id });
       this.alarm(
         wo.workKind,
-        `workorder ${wo.workKind}#${wo.id} stale claim (daemon crash?)`,
+        `${wo.workKind} work has a stale claim - daemon crash? (workorder #${wo.id})`,
         wo.workKind === 'temporal' ? 'temporal-stale-claim' : wo.workKind
       );
       this.handleFailure(wo, 'stale-claim');
@@ -548,7 +548,7 @@ export class WorkOrderConsumer {
     this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });
     this.alarm(
       wo.workKind,
-      `workorder ${wo.workKind}#${wo.id} retries exhausted (${wo.payload.attempts}/${maxAttempts}): ${reason}`
+      `${wo.workKind} work failed - retries exhausted: ${reason} (workorder #${wo.id}, ${wo.payload.attempts}/${maxAttempts})`
     );
   }
 
@@ -638,7 +638,7 @@ export class WorkOrderConsumer {
       workOrderId: wo.id,
       reason: receiptReason,
     });
-    this.alarm('board', `workorder board#${wo.id} ${receiptReason}`, 'board-candidate-receipts');
+    this.alarm('board', `board work failed: ${receiptReason} (workorder #${wo.id})`, 'board-candidate-receipts');
     this.log(`[workorder-consumer] failed board#${wo.id}: ${receiptReason}`);
   }
 
@@ -657,7 +657,7 @@ export class WorkOrderConsumer {
       tokensUsed,
       completeWhenNoCandidates,
     });
-    const message = `workorder board#${wo.id} candidate receipt state unresolved: ${errMessage(err)}`;
+    const message = `board candidate receipt state unresolved: ${errMessage(err)} (workorder #${wo.id})`;
     this.log(`[workorder-consumer] ${message}`);
     this.alarm('board', message, 'board-candidate-state-unresolved');
   }
@@ -758,7 +758,7 @@ export class WorkOrderConsumer {
       this.log(`[workorder-consumer] temporal#${wo.id} exhaustion was already committed`);
       this.alarm(
         'temporal',
-        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${logReason}`
+        `temporal work failed - retries exhausted: ${logReason} (workorder #${wo.id}, ${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal})`
       );
       return;
     }
@@ -823,8 +823,8 @@ export class WorkOrderConsumer {
     this.alarm(
       'temporal',
       result.retrySuppressed
-        ? `workorder temporal#${wo.id} automatic retry suppressed because a mutation outcome is ambiguous: ${logReason}`
-        : `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${logReason}`
+        ? `temporal automatic retry suppressed - a mutation outcome is ambiguous: ${logReason} (workorder #${wo.id})`
+        : `temporal work failed - retries exhausted: ${logReason} (workorder #${wo.id}, ${result.attempt}/${result.maxAttempts})`
     );
   }
 

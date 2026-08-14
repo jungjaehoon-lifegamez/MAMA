@@ -60,6 +60,11 @@ export interface ChannelHistoryConfig {
   preloadLimit?: number;
 }
 
+export interface FormatForContextOptions {
+  /** When provided, include only these users plus bot-authored entries. */
+  includeUserIds?: ReadonlySet<string>;
+}
+
 const DEFAULT_LIMIT = 20;
 const DEFAULT_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const DEFAULT_PRELOAD_LIMIT = 5; // Preload 5 recent messages per channel
@@ -293,8 +298,17 @@ export class ChannelHistory {
    * Format history for Claude context injection
    * Similar to OpenClaw's "[Chat messages since your last reply - for context]"
    */
-  formatForContext(channelId: string, excludeMessageId?: string, keepBotSender?: string): string {
+  formatForContext(
+    channelId: string,
+    excludeMessageId?: string,
+    keepBotSender?: string,
+    opts?: FormatForContextOptions
+  ): string {
     let history = this.getRecentHistory(channelId, excludeMessageId);
+
+    if (opts?.includeUserIds !== undefined) {
+      history = history.filter((entry) => entry.isBot || opts.includeUserIds?.has(entry.userId));
+    }
 
     if (keepBotSender) {
       // Keep human messages + bot messages from the specified sender only.
