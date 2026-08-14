@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-5005%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-5859%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Right now, you read every channel yourself so nothing slips past you.
 > MAMA reads them instead, and sends you the few things that need you.
@@ -196,7 +196,7 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 5,005 tests across five packages
+pnpm test     # 5,859 tests across five packages
 ```
 
 Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-13_
