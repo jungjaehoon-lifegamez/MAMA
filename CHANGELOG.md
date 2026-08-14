@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## mama-os [0.35.0] - 2026-08-14
 
 ### Security
 
