@@ -59,7 +59,7 @@ turn` and `TG-01 does not enqueue a Telegram principal resolved to divert`. **St
   reaction, deletion, attachment-download, history, model, tool, and outbound effects on diverted
   cells. **Status: GREEN.**
 
-### P2a owner member-tool evidence: 2026-08-15
+### P2a owner member-tool evidence: 2026-08-14
 
 - **TG-04 registry and projection:** all five owner member-management tools (`member_candidates`,
   `member_register`, `member_suspend`, `member_offboard`, and `member_list`) originate in the
@@ -474,7 +474,7 @@ change unless they are release-blocking security or data-loss issues.
       tests; standalone `tsc --noEmit` passed. TG-01 lane ordering/isolation, the TG-04 Telegram
       group public-lane exception, TG-05 public-session replacement, Slack restart/team-ID failure,
       both Slack ingress routes, and non-owner prompt-history exclusion are pinned.
-- [x] The 2026-08-15 P2a completion matrix pins the durable registry, zero-grant member overlay,
+- [x] The 2026-08-14 P2a completion matrix pins the durable registry, zero-grant member overlay,
       immediate suspension invalidation, owner bookkeeping backfill, single-owner constraint,
       connector isolation, owner-only executor guard, forward-candidate registration, forced
       envelope denial, and principal-independent session keys. Migration 064 remains additive and
@@ -482,7 +482,7 @@ change unless they are release-blocking security or data-loss issues.
 
 ## Change log
 
-- 2026-08-15: Added TG-04 evidence for P2a's registry-native and Code-Act-projected owner member
+- 2026-08-14: Added TG-04 evidence for P2a's registry-native and Code-Act-projected owner member
   tools, executor-only owner authorization, forward-authenticated registration, zero new member
   access, and the principal-independent session key. Public member grants remain deferred to P2b.
 

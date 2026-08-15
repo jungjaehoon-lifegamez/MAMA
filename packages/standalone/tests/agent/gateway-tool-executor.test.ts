@@ -1871,7 +1871,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         ['member_suspend', { principal_id: 'principal_member_1' }],
         ['member_offboard', { principal_id: 'principal_member_1' }],
         ['member_list', {}],
-      ])('refuses %s for every non-owner_console role', async (toolName, input) => {
+      ])('refuses %s from a non-owner_console role', async (toolName, input) => {
         const principalRepository = createPrincipalRepository();
         const executor = new GatewayToolExecutor({
           mamaApi: createMockApi(),

@@ -35,6 +35,18 @@ export interface PrincipalRepository {
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
 }
 
+export type PrincipalRegistrationErrorCode = 'identity_bound_to_owner' | 'member_not_active';
+
+export class PrincipalRegistrationError extends Error {
+  readonly code: PrincipalRegistrationErrorCode;
+
+  constructor(code: PrincipalRegistrationErrorCode, message: string) {
+    super(message);
+    this.name = 'PrincipalRegistrationError';
+    this.code = code;
+  }
+}
+
 type PrincipalKind = PrincipalRow['kind'];
 type PrincipalStatus = PrincipalRow['status'];
 
@@ -136,6 +148,23 @@ export function createPrincipalRepository(
     externalId: string;
     now: number;
   }): string {
+    const existing = resolveByExternal(input.connector, input.namespace, input.externalId);
+    if (existing) {
+      if (existing.kind === 'member' && existing.status === 'active') {
+        return existing.principalId;
+      }
+      if (existing.kind === 'owner') {
+        throw new PrincipalRegistrationError(
+          'identity_bound_to_owner',
+          'External identity is already bound to an owner principal'
+        );
+      }
+      throw new PrincipalRegistrationError(
+        'member_not_active',
+        'External identity is already bound to a non-active member principal'
+      );
+    }
+
     const principalId = mintPrincipalId(
       'member',
       input.connector,

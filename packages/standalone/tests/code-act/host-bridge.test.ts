@@ -112,10 +112,11 @@ describe('HostBridge', () => {
           'member_list',
         ])
       );
-      expect(tier3).toEqual(expect.arrayContaining(['member_candidates', 'member_list']));
-      expect(tier3).not.toEqual(
-        expect.arrayContaining(['member_register', 'member_suspend', 'member_offboard'])
-      );
+      expect(tier3).toContain('member_candidates');
+      expect(tier3).toContain('member_list');
+      expect(tier3).not.toContain('member_register');
+      expect(tier3).not.toContain('member_suspend');
+      expect(tier3).not.toContain('member_offboard');
       expect(isCodeActMutatingTool('member_candidates')).toBe(false);
       expect(isCodeActMutatingTool('member_list')).toBe(false);
       expect(isCodeActMutatingTool('member_register')).toBe(true);
