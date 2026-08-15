@@ -415,6 +415,33 @@ describe('mama init command', () => {
       consoleErrors = [];
       await expect(initCommand({ force: true })).resolves.not.toThrow();
     });
+
+    it('rescopes a pre-existing cross-backend role override during forced reconfiguration', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex' });
+      const configPath = getConfigPath();
+      const existingConfig = await loadConfig();
+      const roleNames = Object.keys(existingConfig.roles?.definitions ?? {});
+      const firstRole = roleNames[0];
+      expect(firstRole).toBeDefined();
+      if (!firstRole || !existingConfig.roles) {
+        throw new Error('Expected at least one configured role');
+      }
+      existingConfig.roles.definitions[firstRole].model = 'gpt-5.4';
+      await writeFile(configPath, yaml.dump(existingConfig), 'utf8');
+
+      await initCommand({ force: true, skipAuthCheck: true, backend: 'claude' });
+
+      const reconfigured = await loadConfig();
+      expect(reconfigured.agent).toMatchObject({
+        backend: 'claude',
+        model: 'claude-sonnet-4-6',
+      });
+      expect(
+        Object.values(reconfigured.roles?.definitions ?? {}).every(
+          (role) => role.model === 'claude-sonnet-4-6'
+        )
+      ).toBe(true);
+    });
   });
 
   describe('directory structure', () => {

@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
 import { isProcessContextKey } from '../agent/code-act/run-context-registry.js';
-import { defaultModelForBackend } from '../agent/backend-model-policy.js';
+import { defaultModelForBackend, rescopeConfigModels } from '../agent/backend-model-policy.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
@@ -2942,6 +2942,8 @@ async function handleUpdateConfigRequest(
       return;
     }
 
+    const modelChanges = rescopeModelsForConfigSave(updatedConfig);
+
     const errors = validateConfigUpdate(updatedConfig);
     if (errors.length > 0) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2953,6 +2955,12 @@ async function handleUpdateConfigRequest(
         })
       );
       return;
+    }
+
+    for (const change of modelChanges) {
+      console.warn(
+        `[MAMA CONFIG WARNING] Rescoped ${change.target} from ${JSON.stringify(change.from)} to ${JSON.stringify(change.to)}.`
+      );
     }
 
     saveMAMAConfig(updatedConfig);
@@ -2989,6 +2997,45 @@ async function handleUpdateConfigRequest(
       })
     );
   }
+}
+
+function rescopeModelsForConfigSave(
+  config: Record<string, unknown>
+): Array<{ target: string; from: string | undefined; to: string }> {
+  if (!isRecord(config.agent) || typeof config.agent.backend !== 'string') {
+    return [];
+  }
+
+  const backend = config.agent.backend.toLowerCase();
+  if (!supportedManagedBackends.includes(backend)) {
+    return [];
+  }
+
+  const roles = isRecord(config.roles) ? config.roles : undefined;
+  const definitions = roles && isRecord(roles.definitions) ? roles.definitions : {};
+  const roleModels = Object.fromEntries(
+    Object.entries(definitions)
+      .filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]))
+      .map(([name, definition]) => [
+        name,
+        typeof definition.model === 'string' ? definition.model : undefined,
+      ])
+  );
+  const scopedModels = rescopeConfigModels({
+    backend: backend as Parameters<typeof rescopeConfigModels>[0]['backend'],
+    agentModel: typeof config.agent.model === 'string' ? config.agent.model : undefined,
+    roleModels,
+  });
+
+  config.agent.model = scopedModels.agentModel;
+  for (const [name, model] of Object.entries(scopedModels.roleModels)) {
+    const definition = definitions[name];
+    if (isRecord(definition)) {
+      definition.model = model;
+    }
+  }
+
+  return scopedModels.changes;
 }
 
 function maskToken(token: string): string {
