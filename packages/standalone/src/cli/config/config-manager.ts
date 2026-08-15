@@ -13,7 +13,10 @@ import * as yaml from 'js-yaml';
 
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig, RoleConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
-import { resolveBackendScopedModel } from '../../agent/backend-model-policy.js';
+import {
+  rescopeConfigModels,
+  resolveBackendScopedModel,
+} from '../../agent/backend-model-policy.js';
 // ============================================================================
 // Sync Config Cache (STORY-002)
 // ============================================================================
@@ -199,9 +202,6 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
 
   if (!config.agent.backend) {
     errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'cline'");
-  }
-  if (!config.agent.model) {
-    errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
   }
 
   // Validate role definitions have models
@@ -476,9 +476,17 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     config.agent && (config.agent.backend as string) === 'codex-mcp'
       ? { ...config.agent, backend: 'codex' as const }
       : config.agent;
-  const mergedAgent = {
+  const mergedAgentDefaults = {
     ...DEFAULT_CONFIG.agent,
     ...agent,
+  };
+  const mergedAgent = {
+    ...mergedAgentDefaults,
+    model:
+      agent?.model ??
+      resolveBackendScopedModel({
+        backend: mergedAgentDefaults.backend,
+      }),
   };
   const inheritedRoleDefinitions = Object.fromEntries(
     Object.entries(DEFAULT_CONFIG.roles?.definitions ?? {}).map(([name, role]) => [
@@ -486,13 +494,46 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
       { ...role, model: mergedAgent.model },
     ])
   ) as Record<string, RoleConfig>;
+  const mergedRoles = DEFAULT_CONFIG.roles
+    ? {
+        definitions: { ...inheritedRoleDefinitions, ...config.roles?.definitions },
+        sourceMapping: {
+          ...DEFAULT_CONFIG.roles.sourceMapping,
+          ...config.roles?.sourceMapping,
+        },
+      }
+    : config.roles;
+  const scopedModels = rescopeConfigModels({
+    backend: mergedAgent.backend,
+    agentModel: mergedAgent.model,
+    roleModels: Object.fromEntries(
+      Object.entries(mergedRoles?.definitions ?? {}).map(([name, role]) => [name, role.model])
+    ),
+  });
+  const scopedRoles = mergedRoles
+    ? {
+        ...mergedRoles,
+        definitions: Object.fromEntries(
+          Object.entries(mergedRoles.definitions).map(([name, role]) => [
+            name,
+            { ...role, model: scopedModels.roleModels[name] },
+          ])
+        ) as Record<string, RoleConfig>,
+      }
+    : mergedRoles;
+
+  for (const change of scopedModels.changes) {
+    console.warn(
+      `[MAMA CONFIG WARNING] Rescoped ${change.target} from ${JSON.stringify(change.from)} to ${JSON.stringify(change.to)}.`
+    );
+  }
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
     ...config,
     // Deep-merge known structured fields with defaults
     version: config.version ?? DEFAULT_CONFIG.version,
-    agent: mergedAgent,
+    agent: { ...mergedAgent, model: scopedModels.agentModel },
     database: {
       ...DEFAULT_CONFIG.database,
       ...config.database,
@@ -505,15 +546,7 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     // older version lacks newer role definitions (owner_console), and a plain
     // override would silently disable trust-conditional escalation on every
     // real deployment. User-defined roles and sourceMapping still win.
-    roles: DEFAULT_CONFIG.roles
-      ? {
-          definitions: { ...inheritedRoleDefinitions, ...config.roles?.definitions },
-          sourceMapping: {
-            ...DEFAULT_CONFIG.roles.sourceMapping,
-            ...config.roles?.sourceMapping,
-          },
-        }
-      : config.roles,
+    roles: scopedRoles,
     use_claude_cli: config.use_claude_cli ?? DEFAULT_CONFIG.use_claude_cli,
     discord: config.discord ?? DEFAULT_CONFIG.discord,
     slack: config.slack ?? DEFAULT_CONFIG.slack,
