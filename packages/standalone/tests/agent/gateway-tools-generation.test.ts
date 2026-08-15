@@ -37,6 +37,15 @@ describe('Gateway tools generation', () => {
       expect(names).toContain('telegram_send');
       expect(names).toContain('create_fb_overlay');
       expect(names).toContain('code_act');
+      expect(names).toEqual(
+        expect.arrayContaining([
+          'member_candidates',
+          'member_register',
+          'member_suspend',
+          'member_offboard',
+          'member_list',
+        ])
+      );
       // The 2026-07-30 cull removed the legacy families; a reappearance means
       // someone re-registered a surface with no consumer.
       expect(names).not.toContain('browser_navigate');

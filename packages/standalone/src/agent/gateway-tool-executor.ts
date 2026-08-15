@@ -69,6 +69,7 @@ import type {
   TemporalReconcileToolInput,
   ExternalBindingToolInput,
   ExternalLifecycleReconcileToolInput,
+  PrincipalRepository,
 } from './types.js';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
@@ -115,6 +116,7 @@ import {
   resolvePrivatePrincipalSurface,
   type PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
+import { getMemberCandidateStore } from '../gateways/member-candidate-store.js';
 
 const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -368,6 +370,13 @@ const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'reactive_internal',
   'code_act',
 ]);
+const OWNER_CONSOLE_MEMBER_TOOLS = new Set([
+  'member_candidates',
+  'member_register',
+  'member_suspend',
+  'member_offboard',
+  'member_list',
+]);
 
 class ContextPacketProvenanceError extends Error {}
 
@@ -619,6 +628,7 @@ export class GatewayToolExecutor {
   private readonly channelGrantProvider: () => Record<string, readonly string[]>;
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
+  private principalRepository: PrincipalRepository | null;
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
   private temporalContextPacketLookup: NonNullable<
     GatewayToolExecutorOptions['temporalContextPacketLookup']
@@ -858,6 +868,9 @@ export class GatewayToolExecutor {
   setWikiPublishAdapter(adapter: WikiPublishAdapter | null): void {
     this.wikiPublishAdapter = adapter;
   }
+  setPrincipalRepository(repository: PrincipalRepository): void {
+    this.principalRepository = repository;
+  }
 
   /** Check if a memory agent is available for routing memory writes. */
   hasMemoryAgent(): boolean {
@@ -879,6 +892,7 @@ export class GatewayToolExecutor {
     this.sessionStore = options.sessionStore;
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
+    this.principalRepository = options.principalRepository ?? null;
     this.contextCompileService = options.contextCompileService;
     this.temporalContextPacketLookup =
       options.temporalContextPacketLookup ??
@@ -2091,6 +2105,16 @@ export class GatewayToolExecutor {
     }
 
     if (
+      OWNER_CONSOLE_MEMBER_TOOLS.has(toolName) &&
+      this.getExecutionState().agentContext?.roleName !== 'owner_console'
+    ) {
+      return {
+        success: false,
+        error: `Permission denied: ${toolName} is restricted to owner_console.`,
+      } as GatewayToolResult;
+    }
+
+    if (
       toolName.startsWith('drive_') &&
       this.getExecutionState().agentContext?.roleName !== 'owner_console'
     ) {
@@ -2538,6 +2562,108 @@ export class GatewayToolExecutor {
             message:
               'Lesson appended to your operating brief; it applies from the next session re-anchor.',
           };
+        }
+        case 'member_candidates': {
+          const candidates = getMemberCandidateStore()
+            .list(Date.now())
+            .map((candidate) => ({
+              candidateId: candidate.candidateId,
+              ...(candidate.displayName === undefined
+                ? {}
+                : {
+                    displayName: wrapUntrustedContent(
+                      'member-candidate-display-name',
+                      candidate.displayName
+                    ),
+                  }),
+              firstSeen: candidate.firstSeen,
+            }));
+          return { success: true, candidates };
+        }
+        case 'member_register': {
+          const fields = Object.keys(input as Record<string, unknown>);
+          const candidateId = (input as { candidate_id?: unknown }).candidate_id;
+          if (
+            fields.length !== 1 ||
+            fields[0] !== 'candidate_id' ||
+            typeof candidateId !== 'string' ||
+            candidateId.trim().length === 0
+          ) {
+            return {
+              success: false,
+              code: 'member_candidate_required',
+              error: 'member_register accepts exactly one candidate_id from member_candidates.',
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const now = Date.now();
+          const candidateStore = getMemberCandidateStore();
+          const candidate = candidateStore.get(candidateId, now);
+          if (!candidate) {
+            return {
+              success: false,
+              code: 'member_candidate_missing',
+              error: 'Member candidate is missing or expired.',
+            };
+          }
+          const principalId = this.principalRepository.registerMember({
+            connector: candidate.connector,
+            namespace: candidate.namespace,
+            externalId: candidate.externalId,
+            ...(candidate.displayName === undefined ? {} : { displayName: candidate.displayName }),
+            now,
+          });
+          candidateStore.delete(candidate.candidateId);
+          return { success: true, principalId };
+        }
+        case 'member_suspend':
+        case 'member_offboard': {
+          const principalId = (input as { principal_id?: unknown }).principal_id;
+          if (typeof principalId !== 'string' || principalId.trim().length === 0) {
+            return {
+              success: false,
+              code: 'principal_id_required',
+              error: `${toolName} requires principal_id.`,
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const now = Date.now();
+          if (toolName === 'member_suspend') {
+            this.principalRepository.suspend(principalId, now);
+            return { success: true, principalId, status: 'suspended' };
+          }
+          this.principalRepository.offboard(principalId, now);
+          return { success: true, principalId, status: 'offboarded' };
+        }
+        case 'member_list': {
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const members = this.principalRepository.listMembers().map((member) => ({
+            ...member,
+            ...(member.displayName === undefined
+              ? {}
+              : {
+                  displayName: wrapUntrustedContent('member-list-display-name', member.displayName),
+                }),
+          }));
+          return { success: true, members };
         }
         case 'board_read': {
           if (!this.reportReader) {

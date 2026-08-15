@@ -291,6 +291,7 @@ describe('Story SEC-3: deterministic code audit', () => {
       const finding = report.findings.find((f) => f.id === 'owner-console-stale-allowlist');
       expect(finding?.severity).toBe('MAJOR');
       expect(finding?.summary).toContain('workorder_request');
+      expect(finding?.summary).toContain('member_register');
     });
 
     it('passes when the persisted allowlist covers all defaults (and skips when unpersisted)', async () => {

@@ -426,6 +426,24 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
     ).toEqual([]);
   });
 
+  it('TG-04 does not treat a member as owner console when consoleEligible is forced true', () => {
+    const member = ownerMessage('7777', 'private');
+    member.principal = {
+      class: 'member',
+      lane: 'public',
+      canonicalId: 'telegram:global:member-user',
+      consoleEligible: true,
+    };
+
+    expect(
+      getReactiveRoutePolicy(member, ownerConfig(), { HOME: '/tmp/home' }, [
+        'kagemusha',
+        'trello',
+        'drive',
+      ]).rawConnectors
+    ).toEqual(['telegram']);
+  });
+
   it.each([
     ['owner group', ownerMessage('7777', 'group'), ownerConfig()],
     ['unverified private chat', ownerMessage('9999', 'private'), ownerConfig()],

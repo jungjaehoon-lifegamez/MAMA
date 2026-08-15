@@ -1,4 +1,4 @@
-export type PrincipalClass = 'owner' | 'external';
+export type PrincipalClass = 'owner' | 'member' | 'external';
 
 export type AdmissionLane = 'owner' | 'public' | 'divert';
 
@@ -6,6 +6,7 @@ export interface PrincipalContext {
   readonly class: PrincipalClass;
   readonly lane: AdmissionLane;
   readonly canonicalId: string;
+  readonly principalId?: string;
   readonly consoleEligible: boolean;
 }
 
@@ -29,11 +30,28 @@ function freezePrincipal(context: PrincipalContext): PrincipalContext {
   return Object.freeze(context);
 }
 
+export function overlayMemberPrincipal(
+  base: PrincipalContext,
+  row: { principalId: string; kind: 'owner' | 'member'; status: string } | null
+): PrincipalContext {
+  if (base.class !== 'external' || row?.kind !== 'member' || row.status !== 'active') {
+    return base;
+  }
+
+  return freezePrincipal({
+    ...base,
+    class: 'member',
+    principalId: row.principalId,
+  });
+}
+
 function normalizedIds(ids: ReadonlySet<string>): ReadonlySet<string> {
   return new Set(Array.from(ids, (id) => id.trim()).filter((id) => id.length > 0));
 }
 
-function telegramOwnerUserIds(input: TelegramPrincipalInput): ReadonlySet<string> {
+function telegramOwnerUserIds(
+  input: Pick<TelegramPrincipalInput, 'allowedChats' | 'ownerUserIds'>
+): ReadonlySet<string> {
   if (input.ownerUserIds !== undefined) {
     return normalizedIds(input.ownerUserIds);
   }
@@ -41,9 +59,20 @@ function telegramOwnerUserIds(input: TelegramPrincipalInput): ReadonlySet<string
   const positiveAllowedChatIds = Array.from(normalizedIds(input.allowedChats)).filter((chatId) =>
     /^[1-9]\d*$/.test(chatId)
   );
-  return positiveAllowedChatIds.length === 1
-    ? new Set([positiveAllowedChatIds[0]])
-    : new Set();
+  return positiveAllowedChatIds.length === 1 ? new Set([positiveAllowedChatIds[0]]) : new Set();
+}
+
+export function deriveTelegramOwnerId(telegram: {
+  readonly owner_user_ids?: readonly string[];
+  readonly allowed_chats?: readonly string[];
+}): string | null {
+  const ownerUserIds = telegramOwnerUserIds({
+    allowedChats: new Set(telegram.allowed_chats ?? []),
+    ...(telegram.owner_user_ids === undefined
+      ? {}
+      : { ownerUserIds: new Set(telegram.owner_user_ids) }),
+  });
+  return ownerUserIds.size === 1 ? (Array.from(ownerUserIds)[0] ?? null) : null;
 }
 
 export function resolveTelegramPrincipal(input: TelegramPrincipalInput): PrincipalContext {

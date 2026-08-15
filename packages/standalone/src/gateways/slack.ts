@@ -24,7 +24,7 @@ import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import { getConfig } from '../cli/config/config-manager.js';
-import { resolveConnectorPrincipal } from './principal.js';
+import { overlayMemberPrincipal, resolveConnectorPrincipal } from './principal.js';
 
 /**
  * Slack message event structure
@@ -66,6 +66,12 @@ export interface SlackGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
+  /** Optional core-backed principal lookup; consumed by the identity overlay in Task 5. */
+  principalResolver?: (
+    connector: string,
+    namespace: string,
+    externalId: string
+  ) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
 }
 
 interface SlackLocalGatewayConfig extends SlackGatewayConfig {
@@ -81,6 +87,7 @@ interface SlackLocalGatewayConfig extends SlackGatewayConfig {
  */
 export class SlackGateway extends BaseGateway {
   readonly source = 'slack' as const;
+  readonly principalResolver: SlackGatewayOptions['principalResolver'];
 
   private socketClient: SocketModeClient;
   private webClient: WebClient;
@@ -108,6 +115,7 @@ export class SlackGateway extends BaseGateway {
   constructor(options: SlackGatewayOptions) {
     super({ turnProcessor: options.turnProcessor });
     this.botToken = options.botToken;
+    this.principalResolver = options.principalResolver;
     this.config = {
       enabled: true,
       botToken: options.botToken,
@@ -220,13 +228,19 @@ export class SlackGateway extends BaseGateway {
     }
 
     const isDM = event.channel_type === 'im';
-    const principal = resolveConnectorPrincipal({
+    let principal = resolveConnectorPrincipal({
       connector: 'slack',
       namespace: this.teamId ?? 'workspace',
       userId: event.user,
       ownerUserId: this.teamId ? this.config.ownerUserId : undefined,
       isDirectMessage: isDM,
     });
+    if (principal.class === 'external' && this.principalResolver && this.teamId) {
+      principal = overlayMemberPrincipal(
+        principal,
+        this.principalResolver('slack', this.teamId, event.user)
+      );
+    }
     if (principal.lane === 'divert') {
       return;
     }

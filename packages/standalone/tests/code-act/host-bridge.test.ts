@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { HostBridge, isCodeActMutatingTool } from '../../src/agent/code-act/host-bridge.js';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
@@ -96,6 +96,32 @@ describe('HostBridge', () => {
       expect(create?.params.map((param) => param.name)).toContain('due_at');
       expect(update?.params.map((param) => param.name)).toContain('due_at');
       expect(list?.returnType).toContain('temporal_state');
+    });
+
+    it('TG-04 classifies member reads and mutations across Code-Act tiers', () => {
+      const bridge = new HostBridge(makeExecutor());
+      const tier2 = bridge.getAvailableFunctions(2).map((fn) => fn.name);
+      const tier3 = bridge.getAvailableFunctions(3).map((fn) => fn.name);
+
+      expect(tier2).toEqual(
+        expect.arrayContaining([
+          'member_candidates',
+          'member_register',
+          'member_suspend',
+          'member_offboard',
+          'member_list',
+        ])
+      );
+      expect(tier3).toContain('member_candidates');
+      expect(tier3).toContain('member_list');
+      expect(tier3).not.toContain('member_register');
+      expect(tier3).not.toContain('member_suspend');
+      expect(tier3).not.toContain('member_offboard');
+      expect(isCodeActMutatingTool('member_candidates')).toBe(false);
+      expect(isCodeActMutatingTool('member_list')).toBe(false);
+      expect(isCodeActMutatingTool('member_register')).toBe(true);
+      expect(isCodeActMutatingTool('member_suspend')).toBe(true);
+      expect(isCodeActMutatingTool('member_offboard')).toBe(true);
     });
 
     it('exposes bound lifecycle mutations to Tier 2 but never Tier 3', () => {
