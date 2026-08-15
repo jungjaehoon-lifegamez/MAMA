@@ -60,6 +60,12 @@ export interface GatewayInitResult {
   gateways: Array<{ stop: () => Promise<void> }>;
 }
 
+export type PrincipalResolver = (
+  connector: string,
+  namespace: string,
+  externalId: string
+) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
+
 /**
  * Initialize Discord, Slack, and Telegram gateways.
  *
@@ -74,7 +80,8 @@ export async function initGateways(
   // Both were only read by the multi-agent handler hookup, which is gone. Kept in the
   // signature so callers compile unchanged.
   _runtimeBackend: 'claude' | 'codex' | 'cline',
-  _db: SQLiteDatabase
+  _db: SQLiteDatabase,
+  principalResolver?: PrincipalResolver
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
@@ -107,6 +114,7 @@ export async function initGateways(
               guilds: normalizedGuilds,
             }
           : undefined,
+        principalResolver,
       });
 
       const gatewayInterface = {
@@ -146,6 +154,7 @@ export async function initGateways(
         appToken: config.slack.app_token,
         ownerUserId: config.slack.owner_user_id,
         turnProcessor: messageRouter,
+        principalResolver,
       });
 
       await slackGateway.start();
@@ -189,6 +198,7 @@ export async function initGateways(
           allowedChats: config.telegram.allowed_chats,
           ownerUserIds: config.telegram.owner_user_ids,
         },
+        principalResolver,
       });
 
       await telegramGateway.start();

@@ -98,7 +98,11 @@ function completed(): ReturnType<TurnProcessor['processTurn']> {
   });
 }
 
-function makeMessage(input: { userId: string; messageId: string }): SyntheticDiscordMessage {
+function makeMessage(input: {
+  userId: string;
+  messageId: string;
+  guildId?: string | null;
+}): SyntheticDiscordMessage {
   return {
     id: input.messageId,
     content: 'synthetic request',
@@ -108,7 +112,10 @@ function makeMessage(input: { userId: string; messageId: string }): SyntheticDis
       username: `synthetic-${input.userId}`,
       tag: `synthetic-${input.userId}#0001`,
     },
-    guild: { id: 'guild-principal', name: 'Synthetic Guild' },
+    guild:
+      input.guildId === null
+        ? null
+        : { id: input.guildId ?? 'guild-principal', name: 'Synthetic Guild' },
     channel: {
       id: 'channel-principal',
       type: 0,
@@ -135,11 +142,15 @@ function makeMessage(input: { userId: string; messageId: string }): SyntheticDis
   };
 }
 
-function makeGateway(turnProcessor: TurnProcessor): DiscordGateway {
+function makeGateway(
+  turnProcessor: TurnProcessor,
+  principalResolver?: ConstructorParameters<typeof DiscordGateway>[0]['principalResolver']
+): DiscordGateway {
   return new DiscordGateway({
     token: 'synthetic-token',
     ownerUserId: 'owner-user',
     turnProcessor,
+    principalResolver,
     sessionDirectory: {
       listSessions: vi.fn().mockReturnValue([]),
       updateChannelName: vi.fn().mockReturnValue(false),
@@ -196,7 +207,12 @@ describe('Discord ingress principal admission', () => {
         return completed();
       }),
     };
-    makeGateway(turnProcessor);
+    const principalResolver = vi.fn().mockReturnValue({
+      principalId: 'registry-member-principal',
+      kind: 'member',
+      status: 'active',
+    });
+    makeGateway(turnProcessor, principalResolver);
     const message = makeMessage({ userId: 'owner-user', messageId: 'message-2' });
 
     await deliver(message);
@@ -210,5 +226,43 @@ describe('Discord ingress principal admission', () => {
     });
     expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
     expect(seams.downloadFile).toHaveBeenCalledTimes(1);
+    expect(principalResolver).not.toHaveBeenCalled();
+  });
+
+  it('overlays an active member with the guild namespace while preserving divert admission', async () => {
+    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+    const principalResolver = vi.fn().mockReturnValue({
+      principalId: 'discord-member-principal',
+      kind: 'member',
+      status: 'active',
+    });
+    makeGateway(turnProcessor, principalResolver);
+    const message = makeMessage({ userId: 'member-user', messageId: 'message-3' });
+
+    await deliver(message);
+
+    expect(principalResolver).toHaveBeenCalledWith('discord', 'guild-principal', 'member-user');
+    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
+    expect(seams.downloadFile).not.toHaveBeenCalled();
+  });
+
+  it('uses the direct namespace for a diverted member DM', async () => {
+    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+    const principalResolver = vi.fn().mockReturnValue({
+      principalId: 'discord-direct-member-principal',
+      kind: 'member',
+      status: 'active',
+    });
+    makeGateway(turnProcessor, principalResolver);
+    const message = makeMessage({
+      userId: 'direct-member-user',
+      messageId: 'message-4',
+      guildId: null,
+    });
+
+    await deliver(message);
+
+    expect(principalResolver).toHaveBeenCalledWith('discord', 'direct', 'direct-member-user');
+    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
   });
 });

@@ -65,11 +65,10 @@ export class RoleManager {
     const normalizedSource = source.toLowerCase();
     const principal = trust?.principal;
 
-    // Principal-aware roles are resolved before transport mappings. Public
-    // principals are external by classification, so the external branch keeps
-    // that admitted subcase on the public lane while every other external
-    // principal falls into the unreachable, zero-tool defense role.
-    if (principal?.class === 'external') {
+    // Principal-aware roles are resolved before transport mappings. External
+    // and member principals share the same non-owner roles: an admitted public
+    // lane or the unreachable, zero-tool defense role for every other lane.
+    if (principal?.class === 'external' || principal?.class === 'member') {
       const principalRoleName = principal.lane === 'public' ? 'public_lane' : 'external_data';
       const principalRole = this.rolesConfig.definitions[principalRoleName];
       if (!principalRole) {

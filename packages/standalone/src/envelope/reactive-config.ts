@@ -114,7 +114,7 @@ function isOwnerConsoleMessage(message: NormalizedMessage, config: MAMAConfig): 
     return false;
   }
   if (message.principal !== undefined) {
-    return message.principal.consoleEligible;
+    return message.principal.class === 'owner' && message.principal.consoleEligible;
   }
   const allowed = config.telegram?.allowed_chats;
   if (!Array.isArray(allowed) || allowed.length === 0) {

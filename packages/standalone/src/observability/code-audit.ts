@@ -97,6 +97,13 @@ const MEMORY_WAL_LIMIT = 10 * 1024 * 1024;
 const METRICS_WAL_LIMIT = 5 * 1024 * 1024;
 const DAEMON_LOG_LIMIT = 50 * 1024 * 1024;
 const SEVERITY_RANK: Record<AuditSeverity, number> = { INFO: 0, MINOR: 1, MAJOR: 2 };
+const OWNER_MEMBER_ADMIN_TOOLS = [
+  'member_candidates',
+  'member_register',
+  'member_suspend',
+  'member_offboard',
+  'member_list',
+] as const;
 
 function fileSize(path: string): number | null {
   try {
@@ -375,8 +382,8 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
   }
 
   // Stage-2 (plan B7): a CUSTOMIZED persisted owner_console definition freezes
-  // its allowedTools at save time - new default tools (workorder_request/
-  // status class) silently never reach it. Observe-only: warn the owner, no
+  // its allowedTools at save time - new default tools (workorder and
+  // forward-authenticated member administration) silently never reach it. Observe-only: warn, no
   // forced merge (observability over restriction).
   const persistedOwnerConsole = options.config?.roles?.definitions?.owner_console as
     | { allowedTools?: string[] }
@@ -386,7 +393,8 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
     // default tools would be a false positive (PR bot round).
     const { DEFAULT_ROLES } = await import('../cli/config/types.js');
     const defaultTools = DEFAULT_ROLES.definitions?.owner_console?.allowedTools ?? [];
-    const missing = defaultTools.filter(
+    const requiredTools = [...new Set([...defaultTools, ...OWNER_MEMBER_ADMIN_TOOLS])];
+    const missing = requiredTools.filter(
       (tool) => !persistedOwnerConsole.allowedTools?.includes(tool)
     );
     if (missing.length > 0) {

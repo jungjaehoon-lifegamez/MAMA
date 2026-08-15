@@ -22,7 +22,11 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import { liveBoundaryChannels } from '../../evidence/read.js';
-import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import type {
+  AgentContext,
+  GatewayToolExecutionContext,
+  PrincipalRepository,
+} from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
@@ -67,7 +71,7 @@ import { initMetrics } from '../runtime/metrics-init.js';
 import { initMamaCore } from '../runtime/mama-core-init.js';
 import { initMainAgentLoop } from '../runtime/agent-loop-init.js';
 import { initMemoryAgent } from '../runtime/memory-agent-init.js';
-import { initGateways } from '../runtime/gateway-init.js';
+import { initGateways, type PrincipalResolver } from '../runtime/gateway-init.js';
 import { wireGateways } from '../runtime/gateway-wiring.js';
 import { initCronScheduler, initHeartbeat } from '../runtime/scheduler-init.js';
 import { initConnectors } from '../runtime/connector-init.js';
@@ -101,6 +105,7 @@ import {
   commitModelRunInAdapter,
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
+import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
@@ -120,6 +125,7 @@ import {
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
 import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
+import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -129,12 +135,27 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
+const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
   config: {},
   enabledNames: [],
 });
+
+type CorePrincipalRegistry = OwnerBackfillRegistry & PrincipalRepository;
+
+export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrincipalRegistry {
+  const { createPrincipalRepository } = mamaCore as typeof mamaCore & {
+    createPrincipalRepository: (adapter: DatabaseAdapter) => CorePrincipalRegistry;
+  };
+  return createPrincipalRepository(adapter);
+}
+
+export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
+  const repository = createCorePrincipalRegistry(adapter);
+  return repository.resolveByExternal.bind(repository);
+}
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
   if (value === 'claude' || value === 'codex' || value === 'cline') {
@@ -1186,8 +1207,18 @@ export async function runAgentLoop(
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+  const coreAdapter = getAdapter() as DatabaseAdapter;
+  const principalRegistry = createCorePrincipalRegistry(coreAdapter);
+  toolExecutor.setPrincipalRepository(principalRegistry);
+  backfillTelegramOwner({
+    telegram: config.telegram,
+    registry: principalRegistry,
+    now: Date.now(),
+    logger: principalRegistryLogger,
+  });
+  const principalResolver = principalRegistry.resolveByExternal.bind(principalRegistry);
   const contextCompileService = createContextCompileService({
-    memoryAdapter: getAdapter(),
+    memoryAdapter: coreAdapter,
     // Raw visibility comes from the owner's connector config, not from the derived scope
     // columns. Without this the compile reads nothing: measured on the live index, the
     // scope-based predicate returns 0 of 30,671 events for the input shape sent here.
@@ -1515,7 +1546,8 @@ export async function runAgentLoop(
     toolExecutor,
     agentLoop,
     runtimeBackend,
-    db
+    db,
+    principalResolver
   );
   const { discordGateway, slackGateway, telegramGateway, gateways } = gatewayInit;
 

@@ -59,6 +59,33 @@ turn` and `TG-01 does not enqueue a Telegram principal resolved to divert`. **St
   reaction, deletion, attachment-download, history, model, tool, and outbound effects on diverted
   cells. **Status: GREEN.**
 
+### P2a owner member-tool evidence: 2026-08-14
+
+- **TG-04 registry and projection:** all five owner member-management tools (`member_candidates`,
+  `member_register`, `member_suspend`, `member_offboard`, and `member_list`) originate in the
+  canonical tool registry, appear in the owner-native catalog, and are projected into the Tier-2
+  Code-Act HostBridge. The executor independently refuses every one unless the active role is
+  `owner_console`; projection alone never grants authority. Evidence:
+  `p2a-member-registry-e2e.test.ts` case `TG-04 projects all five member tools and refuses them for
+a non-owner executor role`.
+- **TG-04 authenticated registration:** Telegram creates a candidate only for an owner-forwarded
+  user-origin message and takes the external identity from `forward_origin.sender_user.id`; a
+  privacy-hidden forward creates no candidate. Registration accepts only the resulting opaque
+  `candidate_id`, consumes it, writes migration-064 registry state, and the next ingress resolves
+  the member principal. Evidence: `telegram.test.ts` cases `TG-04 mints an owner-forwarded
+candidate from forward_origin instead of message text` and `TG-04 does not mint a candidate from
+a privacy-hidden forward`; `p2a-member-registry-e2e.test.ts` cases `TG-04 registers an
+owner-forwarded candidate and invalidates membership on suspend` and `TG-04 refuses
+model-supplied identities without a host candidate`.
+- **TG-04 zero-grant shadow contract:** a member remains on the external sender's existing lane,
+  never resolves `chat_bot` or `owner_console`, and cannot widen an envelope even if
+  `consoleEligible` is forced true. The durable session key remains source plus lane-adjusted
+  channel and does not include `principalId`. Evidence: `p2a-member-registry-e2e.test.ts` cases
+  `TG-04 preserves external lane access and connector identity isolation`, `TG-04 denies
+owner-console envelope access to a member with forced console eligibility`, and `TG-05 keeps the
+session key stable when only member principalId changes`. This is an internal P2a substrate;
+  member access is not public until P2b grants land.
+
 ### Final review closure
 
 The final coverage, security, and temporal reviewers read this artifact first. Their findings
@@ -447,8 +474,17 @@ change unless they are release-blocking security or data-loss issues.
       tests; standalone `tsc --noEmit` passed. TG-01 lane ordering/isolation, the TG-04 Telegram
       group public-lane exception, TG-05 public-session replacement, Slack restart/team-ID failure,
       both Slack ingress routes, and non-owner prompt-history exclusion are pinned.
+- [x] The 2026-08-14 P2a completion matrix pins the durable registry, zero-grant member overlay,
+      immediate suspension invalidation, owner bookkeeping backfill, single-owner constraint,
+      connector isolation, owner-only executor guard, forward-candidate registration, forced
+      envelope denial, and principal-independent session keys. Migration 064 remains additive and
+      rollback-safe because older code has no readers or writers for its new tables.
 
 ## Change log
+
+- 2026-08-14: Added TG-04 evidence for P2a's registry-native and Code-Act-projected owner member
+  tools, executor-only owner authorization, forward-authenticated registration, zero new member
+  access, and the principal-independent session key. Public member grants remain deferred to P2b.
 
 - 2026-08-14: Hardened TG-05 public-session replacement by sanitizing both user and assistant
   history before bounded truncation. The replacement regression proves prompt-structure markers

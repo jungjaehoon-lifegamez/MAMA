@@ -133,6 +133,57 @@ register({
   params: 'lesson (one concrete lesson)',
 });
 register({
+  name: 'member_candidates',
+  description: 'List non-expired Telegram member candidates captured from owner-forwarded users.',
+  category: 'os_monitoring',
+  params: 'no params',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+});
+register({
+  name: 'member_register',
+  description:
+    'Register one host-authenticated forwarded member candidate. The candidate_id is the only accepted identity input.',
+  category: 'os_monitoring',
+  params: 'candidate_id',
+  inputSchema: {
+    type: 'object',
+    properties: { candidate_id: { type: 'string' } },
+    required: ['candidate_id'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'member_suspend',
+  description: 'Suspend a registered member principal. Owner principals cannot be suspended.',
+  category: 'os_monitoring',
+  params: 'principal_id',
+  inputSchema: {
+    type: 'object',
+    properties: { principal_id: { type: 'string' } },
+    required: ['principal_id'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'member_offboard',
+  description: 'Offboard a registered member principal. Owner principals cannot be offboarded.',
+  category: 'os_monitoring',
+  params: 'principal_id',
+  inputSchema: {
+    type: 'object',
+    properties: { principal_id: { type: 'string' } },
+    required: ['principal_id'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'member_list',
+  description: 'List registered member principals and their current statuses.',
+  category: 'os_monitoring',
+  params: 'no params',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+});
+register({
   name: 'workorder_request',
   description:
     'Enqueue a priority workorder (board refresh, wiki compile, or memory curation) for the system worker lane. Enqueue-and-ack ONLY: the run happens later on the operator lane - reply with a short ack, never wait for or fabricate its result.',
