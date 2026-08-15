@@ -86,7 +86,7 @@ owner-console envelope access to a member with forced console eligibility`, and 
 session key stable when only member principalId changes`. This is an internal P2a substrate;
   member access is not public until P2b grants land.
 
-### Backend-scoped model runtime closure: 2026-08-16
+### Backend-scoped model runtime closure: 2026-08-15
 
 - **TG-05:** a same-backend per-role model override now reaches the real Codex app-server session
   policy instead of being replaced by the boot model in the main runtime wrapper. Because the
@@ -94,12 +94,12 @@ session key stable when only member principalId changes`. This is an internal P2
   stale durable thread exactly once; the next unchanged turn continues the replacement without a
   second rebuild. Evidence: `role-model-reaches-backend.test.ts` cases `REGRESSION 1 sends a
 same-backend role override through the real AgentLoop` and `TG-05 replaces a rescoped model
-session once and then continues without thrash`. **Status: GREEN (2026-08-16).**
+session once and then continues without thrash`. **Status: GREEN (2026-08-15).**
 - **TG-05 configuration boundary:** the complete `codex -> claude -> cline -> codex` load matrix
   covers clean models, cross-backend leftovers, and same-backend overrides. Every loaded main and
   role model belongs to the active backend family, and warnings occur exactly when a rescope is
   applied. Evidence: `backend-switch-matrix.test.ts` case `loads codex -> claude -> cline -> codex
-with %s models in the active family`. **Status: GREEN (2026-08-16).**
+with %s models in the active family`. **Status: GREEN (2026-08-15).**
 
 ### Final review closure
 
@@ -494,13 +494,13 @@ change unless they are release-blocking security or data-loss issues.
       connector isolation, owner-only executor guard, forward-candidate registration, forced
       envelope denial, and principal-independent session keys. Migration 064 remains additive and
       rollback-safe because older code has no readers or writers for its new tables.
-- [x] The 2026-08-16 TG-05 backend-model gate pins the real AgentLoop-to-Codex policy handoff,
+- [x] The 2026-08-15 TG-05 backend-model gate pins the real AgentLoop-to-Codex policy handoff,
       one bounded durable-thread replacement after a model rescope, stable continuation after the
       replacement, and the complete clean/leftover/same-backend-override switch matrix.
 
 ## Change log
 
-- 2026-08-16: Added TG-05 runtime evidence that same-backend role models reach Codex session
+- 2026-08-15: Added TG-05 runtime evidence that same-backend role models reach Codex session
   policy, model rescoping rotates and replaces a durable session exactly once, and unchanged
   follow-up turns do not thrash. The backend switch matrix pins active-family models and
   rescope-only warnings across Codex, Claude, Cline, and back to Codex.

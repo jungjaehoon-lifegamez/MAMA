@@ -29,6 +29,7 @@ import {
   getMAMAHome,
   configExists as _configExists,
   loadConfig,
+  saveConfig,
 } from '../../src/cli/config/config-manager.js';
 
 /**
@@ -428,11 +429,17 @@ describe('mama init command', () => {
         throw new Error('Expected at least one configured role');
       }
       existingConfig.roles.definitions[firstRole].model = 'gpt-5.4';
+      // Reviewer fix: force:true discards mutations before rescoping could run.
+      // Exercise the CONFIG-PRESERVING product scenario instead - the owner's
+      // one-line backend switch in the raw file: backend flips to claude while
+      // agent.model and a role override remain codex-family. The repairing
+      // loader must rescope both, and a save round-trip must persist
+      // family-consistent models in the raw file.
+      (existingConfig.agent as { backend: string }).backend = 'claude';
       await writeFile(configPath, yaml.dump(existingConfig), 'utf8');
 
-      await initCommand({ force: true, skipAuthCheck: true, backend: 'claude' });
-
       const reconfigured = await loadConfig();
+      await saveConfig(reconfigured);
       expect(reconfigured.agent).toMatchObject({
         backend: 'claude',
         model: 'claude-sonnet-4-6',
