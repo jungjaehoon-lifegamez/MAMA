@@ -23,6 +23,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { initCommand } from '../../src/cli/commands/init.js';
+import { backendForModel } from '../../src/agent/backend-model-policy.js';
 import {
   getConfigPath,
   getMAMAHome,
@@ -439,6 +440,17 @@ describe('mama init command', () => {
       expect(
         Object.values(reconfigured.roles?.definitions ?? {}).every(
           (role) => role.model === 'claude-sonnet-4-6'
+        )
+      ).toBe(true);
+
+      const rawPersisted = yaml.load(await readFile(configPath, 'utf8')) as {
+        agent: { model: string };
+        roles?: { definitions?: Record<string, { model: string }> };
+      };
+      expect(backendForModel(rawPersisted.agent.model)).toBe('claude');
+      expect(
+        Object.values(rawPersisted.roles?.definitions ?? {}).every(
+          (role) => backendForModel(role.model) === 'claude'
         )
       ).toBe(true);
     });

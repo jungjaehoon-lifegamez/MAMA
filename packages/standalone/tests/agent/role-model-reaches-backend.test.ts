@@ -232,7 +232,7 @@ afterEach(async () => {
 
 describe('runtime role model reaches the Codex session policy', () => {
   it('REGRESSION 1 sends a same-backend role override through the real AgentLoop', async () => {
-    const root = roots[0];
+    const root = roots[roots.length - 1];
     if (!root) {
       throw new Error('Expected a runtime fixture root');
     }
@@ -249,8 +249,26 @@ describe('runtime role model reaches the Codex session policy', () => {
     expect(starts[0]?.params?.model).toBe('gpt-5.4');
   });
 
+  it('REGRESSION 4 sends a runWithContent role override to the Codex child policy', async () => {
+    const root = roots[roots.length - 1];
+    if (!root) {
+      throw new Error('Expected a runtime fixture root');
+    }
+    const capture = join(root, 'codex-rpc.ndjson');
+    const runtime = createRuntime('gpt-5.6-sol');
+
+    await runtime.agentLoopClient.runWithContent?.(
+      [{ type: 'text', text: 'Use the configured role model.' }],
+      turnOptions({ model: 'gpt-5.4', resumeSession: false })
+    );
+
+    const starts = messages(capture).filter((message) => message.method === 'thread/start');
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.params?.model).toBe('gpt-5.4');
+  });
+
   it('TG-05 replaces a rescoped model session once and then continues without thrash', async () => {
-    const root = roots[0];
+    const root = roots[roots.length - 1];
     if (!root) {
       throw new Error('Expected a runtime fixture root');
     }

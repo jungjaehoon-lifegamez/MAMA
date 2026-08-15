@@ -14,6 +14,7 @@ import * as yaml from 'js-yaml';
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig, RoleConfig } from './types.js';
 import { DEFAULT_CONFIG, MAMA_PATHS } from './types.js';
 import {
+  emitBackendModelWarnings,
   rescopeConfigModels,
   resolveBackendScopedModel,
 } from '../../agent/backend-model-policy.js';
@@ -522,11 +523,7 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
       }
     : mergedRoles;
 
-  for (const change of scopedModels.changes) {
-    console.warn(
-      `[MAMA CONFIG WARNING] Rescoped ${change.target} from ${JSON.stringify(change.from)} to ${JSON.stringify(change.to)}.`
-    );
-  }
+  emitBackendModelWarnings([...scopedModels.changes, ...(scopedModels.warnings ?? [])]);
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
