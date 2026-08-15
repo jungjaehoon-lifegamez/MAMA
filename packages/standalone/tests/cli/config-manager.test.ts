@@ -735,6 +735,33 @@ describe('ConfigManager', () => {
       warn.mockRestore();
     });
 
+    it('passes through an unknown model with one loud warning across repeated loads', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'codex', model: 'gpt-5.6-sol' },
+        database: { path: '~/.test/db.sqlite' },
+        roles: {
+          definitions: {
+            reviewer: { model: 'sonnet-dedupe-regression', allowedTools: ['*'] },
+          },
+          sourceMapping: {},
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const first = await loadConfig();
+      const second = await loadConfig();
+
+      expect(first.roles?.definitions.reviewer?.model).toBe('sonnet-dedupe-regression');
+      expect(second.roles?.definitions.reviewer?.model).toBe('sonnet-dedupe-regression');
+      expect(warningLines(warn)).toEqual([
+        expect.stringContaining(
+          'model "sonnet-dedupe-regression" not recognized as a codex-family model; passing through'
+        ),
+      ]);
+      warn.mockRestore();
+    });
+
     it('prunes a rescoped inherited-default role during a save round trip', async () => {
       await writeRawConfig({
         version: 1,

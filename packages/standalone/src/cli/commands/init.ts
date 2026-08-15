@@ -20,7 +20,10 @@ import {
 import { BOOTSTRAP_TEMPLATE } from '../../onboarding/bootstrap-template.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
-import { rescopeConfigModels } from '../../agent/backend-model-policy.js';
+import {
+  emitBackendModelWarnings,
+  rescopeConfigModels,
+} from '../../agent/backend-model-policy.js';
 
 /**
  * CLAUDE.md template for workspace documentation
@@ -257,6 +260,7 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
     for (const [name, role] of Object.entries(roleDefinitions)) {
       role.model = scopedModels.roleModels[name];
     }
+    emitBackendModelWarnings(scopedModels.warnings ?? []);
     await saveConfig(config);
     if (options.skipAuthCheck && requestedBackend) {
       console.log(

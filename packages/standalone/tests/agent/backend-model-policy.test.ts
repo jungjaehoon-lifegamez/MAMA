@@ -15,7 +15,9 @@ describe('backend model policy', () => {
       ['claude-sonnet-5', 'claude'],
       ['claude-opus-4-1', 'claude'],
       ['claude-opus-4-1-20250805', 'claude'],
+      ['CLAUDE-sonnet-5', 'claude'],
       ['gpt-5.4', 'codex'],
+      ['GPT-5.4', 'codex'],
       ['gpt-5.6-sol', 'codex'],
       ['gpt-5.6-luna', 'codex'],
       ['o4-mini', 'codex'],
@@ -124,6 +126,37 @@ describe('backend model policy', () => {
         agentModel: 'gpt-5.6-sol',
         roleModels: { reviewer: 'custom-local-model' },
         changes: [],
+        warnings: [
+          {
+            target: 'roles.definitions.reviewer.model',
+            from: 'custom-local-model',
+            to: 'custom-local-model',
+            backend: 'codex',
+            unknownFamily: true,
+          },
+        ],
+      });
+    });
+
+    it('passes through a short unknown model with an explicit warning entry', () => {
+      expect(
+        rescopeConfigModels({
+          backend: 'claude',
+          agentModel: 'claude-sonnet-4-6',
+          roleModels: { reviewer: 'sonnet' },
+        })
+      ).toMatchObject({
+        roleModels: { reviewer: 'sonnet' },
+        changes: [],
+        warnings: [
+          {
+            target: 'roles.definitions.reviewer.model',
+            from: 'sonnet',
+            to: 'sonnet',
+            backend: 'claude',
+            unknownFamily: true,
+          },
+        ],
       });
     });
 

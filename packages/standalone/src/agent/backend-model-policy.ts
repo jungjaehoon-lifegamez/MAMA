@@ -6,12 +6,30 @@ const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
   cline: 'deepseek/deepseek-v4-flash',
 };
 
+export interface BackendModelChange {
+  target: string;
+  from: string | undefined;
+  to: string;
+}
+
+export interface UnknownModelFamilyWarning {
+  target: string;
+  from: string;
+  to: string;
+  backend: BackendType;
+  unknownFamily: true;
+}
+
+export type BackendModelPolicyEntry = BackendModelChange | UnknownModelFamilyWarning;
+
+const emittedWarningKeys = new Set<string>();
+
 export function defaultModelForBackend(backend: BackendType): string {
   return DEFAULT_MODEL_BY_BACKEND[backend];
 }
 
 export function backendForModel(model: string): BackendType | null {
-  const normalizedModel = model.trim();
+  const normalizedModel = model.trim().toLowerCase();
 
   if (/^claude[-.]/.test(normalizedModel)) {
     return 'claude';
@@ -35,10 +53,25 @@ export function resolveBackendScopedModel(input: {
   model?: string;
   inheritedBackend?: BackendType;
   inheritedModel?: string;
+  warningTarget?: string;
+  onWarning?: (warning: UnknownModelFamilyWarning) => void;
 }): string {
   const model = input.model?.trim();
-  if (model && modelMatchesBackend(model, input.backend)) {
-    return model;
+  if (model) {
+    const modelBackend = backendForModel(model);
+    if (modelBackend === null) {
+      input.onWarning?.({
+        target: input.warningTarget ?? 'model',
+        from: model,
+        to: model,
+        backend: input.backend,
+        unknownFamily: true,
+      });
+      return model;
+    }
+    if (modelBackend === input.backend) {
+      return model;
+    }
   }
   if (input.backend === input.inheritedBackend && input.inheritedModel?.trim()) {
     return input.inheritedModel.trim();
@@ -53,12 +86,16 @@ export function rescopeConfigModels(input: {
 }): {
   agentModel: string;
   roleModels: Record<string, string>;
-  changes: Array<{ target: string; from: string | undefined; to: string }>;
+  changes: BackendModelChange[];
+  warnings?: UnknownModelFamilyWarning[];
 } {
-  const changes: Array<{ target: string; from: string | undefined; to: string }> = [];
+  const changes: BackendModelChange[] = [];
+  const warnings: UnknownModelFamilyWarning[] = [];
   const agentModel = resolveBackendScopedModel({
     backend: input.backend,
     model: input.agentModel,
+    warningTarget: 'agent.model',
+    onWarning: (warning) => warnings.push(warning),
   });
 
   if (input.agentModel !== agentModel) {
@@ -72,6 +109,8 @@ export function rescopeConfigModels(input: {
       model: configuredModel,
       inheritedBackend: input.backend,
       inheritedModel: agentModel,
+      warningTarget: `roles.definitions.${role}.model`,
+      onWarning: (warning) => warnings.push(warning),
     });
     roleModels[role] = roleModel;
 
@@ -84,5 +123,30 @@ export function rescopeConfigModels(input: {
     }
   }
 
-  return { agentModel, roleModels, changes };
+  const result = { agentModel, roleModels, changes };
+  return warnings.length > 0 ? { ...result, warnings } : result;
+}
+
+export function emitBackendModelWarnings(
+  entries: readonly BackendModelPolicyEntry[],
+  emit: (message: string) => void = console.warn
+): void {
+  for (const entry of entries) {
+    const key = `${entry.target}|${String(entry.from)}|${entry.to}`;
+    if (emittedWarningKeys.has(key)) {
+      continue;
+    }
+    emittedWarningKeys.add(key);
+
+    if ('unknownFamily' in entry && entry.unknownFamily) {
+      emit(
+        `[MAMA CONFIG WARNING] model ${JSON.stringify(entry.from)} not recognized as a ${entry.backend}-family model; passing through for ${entry.target}.`
+      );
+      continue;
+    }
+
+    emit(
+      `[MAMA CONFIG WARNING] Rescoped ${entry.target} from ${JSON.stringify(entry.from)} to ${JSON.stringify(entry.to)}.`
+    );
+  }
 }
