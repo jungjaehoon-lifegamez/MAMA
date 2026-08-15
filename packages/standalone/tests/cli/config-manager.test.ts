@@ -2,8 +2,8 @@
  * Unit tests for ConfigManager
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmod, mkdir, writeFile, rm, stat } from 'node:fs/promises';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { chmod, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -36,6 +36,8 @@ describe('ConfigManager', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+
     // Restore HOME
     if (originalHome !== undefined) {
       process.env.HOME = originalHome;
@@ -623,6 +625,139 @@ describe('ConfigManager', () => {
 
       expect(errors).toContain('memory_policy.implicit_recall must be boolean');
       expect(errors).toContain('memory_policy.implicit_legacy_context_search must be boolean');
+    });
+  });
+
+  describe('backend-scoped config models', () => {
+    async function writeRawConfig(config: Record<string, unknown>): Promise<void> {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      await writeFile(join(mamaDir, 'config.yaml'), yaml.dump(config));
+    }
+
+    function warningLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+      return spy.mock.calls.map(([line]) => String(line));
+    }
+
+    it('rescopes stale Claude role models to the configured Codex agent model', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'codex', model: 'gpt-5.6-sol' },
+        database: { path: '~/.test/db.sqlite' },
+        roles: {
+          definitions: {
+            os_agent: { ...DEFAULT_ROLES.definitions.os_agent, model: 'claude-sonnet-5' },
+            chat_bot: { ...DEFAULT_ROLES.definitions.chat_bot, model: 'claude-sonnet-5' },
+          },
+          sourceMapping: {},
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await loadConfig();
+
+      expect(loaded.agent.model).toBe('gpt-5.6-sol');
+      for (const role of Object.values(loaded.roles?.definitions ?? {})) {
+        expect(role.model).toBe('gpt-5.6-sol');
+      }
+      expect(warningLines(warn)).toHaveLength(2);
+      expect(warningLines(warn)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(
+            /roles\.definitions\.os_agent\.model.*claude-sonnet-5.*gpt-5\.6-sol/
+          ),
+          expect.stringMatching(
+            /roles\.definitions\.chat_bot\.model.*claude-sonnet-5.*gpt-5\.6-sol/
+          ),
+        ])
+      );
+      warn.mockRestore();
+    });
+
+    it('rescopes a stale Codex agent model to the Claude default and updates roles', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'claude', model: 'gpt-5.6-sol' },
+        database: { path: '~/.test/db.sqlite' },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await loadConfig();
+
+      expect(loaded.agent.model).toBe('claude-sonnet-4-6');
+      for (const role of Object.values(loaded.roles?.definitions ?? {})) {
+        expect(role.model).toBe('claude-sonnet-4-6');
+      }
+      expect(warningLines(warn)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/agent\.model.*gpt-5\.6-sol.*claude-sonnet-4-6/),
+        ])
+      );
+      warn.mockRestore();
+    });
+
+    it('fills an unset Codex agent model and all roles without warning', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'codex' },
+        database: { path: '~/.test/db.sqlite' },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await loadConfig();
+
+      expect(loaded.agent.model).toBe('gpt-5.4');
+      for (const role of Object.values(loaded.roles?.definitions ?? {})) {
+        expect(role.model).toBe('gpt-5.4');
+      }
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('preserves a same-backend role override without warning', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'codex', model: 'gpt-5.6-sol' },
+        database: { path: '~/.test/db.sqlite' },
+        roles: {
+          definitions: {
+            chat_bot: { ...DEFAULT_ROLES.definitions.chat_bot, model: 'gpt-5.4' },
+          },
+          sourceMapping: {},
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await loadConfig();
+
+      expect(loaded.roles?.definitions.chat_bot?.model).toBe('gpt-5.4');
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('prunes a rescoped inherited-default role during a save round trip', async () => {
+      await writeRawConfig({
+        version: 1,
+        agent: { backend: 'codex', model: 'gpt-5.6-sol' },
+        database: { path: '~/.test/db.sqlite' },
+        roles: {
+          definitions: {
+            chat_bot: { ...DEFAULT_ROLES.definitions.chat_bot, model: 'claude-sonnet-5' },
+          },
+          sourceMapping: {},
+        },
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const loaded = await loadConfig();
+      expect(loaded.roles?.definitions.chat_bot?.model).toBe('gpt-5.6-sol');
+      await saveConfig(loaded);
+
+      const persisted = yaml.load(
+        await readFile(join(testDir, '.mama/config.yaml'), 'utf-8')
+      ) as Partial<MAMAConfig>;
+      expect(persisted.roles?.definitions.chat_bot).toBeUndefined();
+      warn.mockRestore();
     });
   });
 });
