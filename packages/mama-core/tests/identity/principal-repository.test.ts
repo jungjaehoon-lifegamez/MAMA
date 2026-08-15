@@ -7,7 +7,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter as DBManagerAdapter } from '../../src/db-manager.js';
-import { createPrincipalRepository } from '../../src/identity/principal-repository.js';
+import {
+  createPrincipalRepository,
+  PrincipalRegistrationError,
+} from '../../src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../src/test-utils.js';
 
 describe('TG-01/TG-04 principal repository over migration 064', () => {
@@ -54,6 +57,59 @@ describe('TG-01/TG-04 principal repository over migration 064', () => {
     expect(repository.resolveByExternal('telegram', 'private', 'missing')).toBeNull();
   });
 
+  it('registers the same active member identity idempotently without duplicate rows', () => {
+    const repository = createPrincipalRepository(adapter);
+    const input = {
+      displayName: 'Primary member',
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'external-idempotent',
+      now: 110,
+    };
+
+    const firstPrincipalId = repository.registerMember(input);
+    const secondPrincipalId = repository.registerMember({ ...input, now: 111 });
+
+    expect(secondPrincipalId).toBe(firstPrincipalId);
+    expect(adapter.prepare('SELECT COUNT(*) AS count FROM principals').get()).toEqual({ count: 1 });
+    expect(adapter.prepare('SELECT COUNT(*) AS count FROM external_identities').get()).toEqual({
+      count: 1,
+    });
+  });
+
+  it('throws a typed conflict when the external identity belongs to an owner', () => {
+    const repository = createPrincipalRepository(adapter);
+    repository.ensureOwner({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'owner-external',
+      now: 120,
+    });
+
+    expect(() =>
+      repository.registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: 'owner-external',
+        now: 121,
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        name: 'PrincipalRegistrationError',
+        code: 'identity_bound_to_owner',
+        message: expect.stringContaining('owner principal'),
+      })
+    );
+    expect(() =>
+      repository.registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: 'owner-external',
+        now: 122,
+      })
+    ).toThrow(PrincipalRegistrationError);
+  });
+
   it('changes a member status to suspended', () => {
     const repository = createPrincipalRepository(adapter);
     const principalId = repository.registerMember({
@@ -70,6 +126,38 @@ describe('TG-01/TG-04 principal repository over migration 064', () => {
       kind: 'member',
       status: 'suspended',
     });
+  });
+
+  it('offboards a member and retains the offboarded external identity status', () => {
+    const repository = createPrincipalRepository(adapter);
+    const principalId = repository.registerMember({
+      connector: 'discord',
+      namespace: 'guild-1',
+      externalId: 'external-offboarded',
+      now: 210,
+    });
+
+    repository.offboard(principalId, 211);
+
+    expect(repository.resolveByExternal('discord', 'guild-1', 'external-offboarded')).toEqual({
+      principalId,
+      kind: 'member',
+      status: 'offboarded',
+    });
+    expect(() =>
+      repository.registerMember({
+        connector: 'discord',
+        namespace: 'guild-1',
+        externalId: 'external-offboarded',
+        now: 212,
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        name: 'PrincipalRegistrationError',
+        code: 'member_not_active',
+        message: expect.stringContaining('non-active member principal'),
+      })
+    );
   });
 
   it('rejects suspending or offboarding the owner', () => {
