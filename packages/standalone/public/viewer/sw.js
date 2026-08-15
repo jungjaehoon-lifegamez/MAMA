@@ -1,6 +1,6 @@
 /**
  * @fileoverview Service Worker for the MAMA Viewer PWA
- * @version 2.0.0
+ * @version 3.0.0
  *
  * Provides offline caching for static assets using cache-first strategy.
  */
@@ -10,7 +10,7 @@
 // Bumped for the unified Viewer: the retired chat/feed/agents/dashboard/settings
 // modules no longer exist, so a client holding the old cache would keep serving
 // 404-shaped entries for them. A new cache name is what evicts them.
-const CACHE_NAME = 'mama-viewer-v2';
+const CACHE_NAME = 'mama-viewer-v3';
 const STATIC_ASSETS = [
   '/viewer',
   '/viewer/viewer.css',
