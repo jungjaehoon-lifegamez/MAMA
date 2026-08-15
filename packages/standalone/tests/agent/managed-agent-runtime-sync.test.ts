@@ -161,6 +161,41 @@ describe('managed-agent-runtime-sync', () => {
     expect(config.multi_agent.agents.alpha.model).toBe('deepseek/deepseek-v4-flash');
   });
 
+  it('preserves the persisted model when changes omit backend and model', async () => {
+    const config = {
+      agent: { backend: 'codex' as const, model: 'gpt-5.6-sol' },
+      multi_agent: {
+        enabled: true,
+        agents: {
+          legacy: {
+            name: 'Legacy',
+            display_name: 'Legacy',
+            trigger_prefix: '!legacy',
+            tier: 1,
+            backend: 'claude' as const,
+            model: 'claude-sonnet-5',
+            enabled: false,
+          },
+        },
+      },
+    };
+
+    const result = await updateManagedAgentRuntime(
+      {
+        agentId: 'legacy',
+        changes: { enabled: true },
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot.enabled).toBe(true);
+    expect(config.multi_agent.agents.legacy.model).toBe('claude-sonnet-5');
+  });
+
   it('rescopes a cross-family explicit model when updating a managed agent', async () => {
     const config = {
       agent: { backend: 'codex' as const, model: 'gpt-5.6-sol' },

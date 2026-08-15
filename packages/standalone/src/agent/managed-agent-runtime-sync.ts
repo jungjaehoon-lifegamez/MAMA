@@ -269,13 +269,18 @@ export async function updateManagedAgentRuntime(
         (updatedAgent as Record<string, unknown>)[key] = value;
       }
     }
-    const effectiveBackend = normalizeCreateBackend(updatedAgent.backend, config.agent?.backend);
-    updatedAgent.model = resolveManagedAgentModel({
-      config,
-      backend: effectiveBackend,
-      model: updatedAgent.model,
-      target: `multi_agent.agents.${input.agentId}.model`,
-    });
+    // Rescope only when the update touches backend/model: an unrelated update
+    // (e.g. { enabled: true }) must not silently rewrite the persisted model.
+    // Load-time resolution still family-guards whatever is stored.
+    if ('backend' in input.changes || 'model' in input.changes) {
+      const effectiveBackend = normalizeCreateBackend(updatedAgent.backend, config.agent?.backend);
+      updatedAgent.model = resolveManagedAgentModel({
+        config,
+        backend: effectiveBackend,
+        model: updatedAgent.model,
+        target: `multi_agent.agents.${input.agentId}.model`,
+      });
+    }
 
     if (!agents) {
       throw new Error(`Agent '${input.agentId}' not found in config`);
