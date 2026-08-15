@@ -20,6 +20,7 @@ import {
 import { BOOTSTRAP_TEMPLATE } from '../../onboarding/bootstrap-template.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
+import { rescopeConfigModels } from '../../agent/backend-model-policy.js';
 
 /**
  * CLAUDE.md template for workspace documentation
@@ -101,12 +102,6 @@ interface BackendResolution {
   backend: 'claude' | 'codex' | 'cline';
   codexAuthPath?: string;
 }
-
-const DEFAULT_MODEL_BY_BACKEND: Record<BackendResolution['backend'], string> = {
-  claude: 'claude-sonnet-4-6',
-  codex: 'gpt-5.4',
-  cline: 'deepseek/deepseek-v4-flash',
-};
 
 function isClineAvailable(command: string): boolean {
   const result = spawnSync(command, ['--version'], { stdio: 'ignore', timeout: 5_000 });
@@ -249,14 +244,18 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   try {
     const configPath = await createDefaultConfig(options.force);
     const config = await loadConfig();
-    const defaultModel = DEFAULT_MODEL_BY_BACKEND[selectedBackend.backend];
     config.agent.backend = selectedBackend.backend;
-    config.agent.model = defaultModel;
     if (selectedBackend.backend === 'cline') {
       config.agent.cline_provider = 'cline';
     }
-    for (const role of Object.values(config.roles?.definitions ?? {})) {
-      role.model = defaultModel;
+    const roleDefinitions = config.roles?.definitions ?? {};
+    const scopedModels = rescopeConfigModels({
+      backend: selectedBackend.backend,
+      roleModels: Object.fromEntries(Object.keys(roleDefinitions).map((name) => [name, undefined])),
+    });
+    config.agent.model = scopedModels.agentModel;
+    for (const [name, role] of Object.entries(roleDefinitions)) {
+      role.model = scopedModels.roleModels[name];
     }
     await saveConfig(config);
     if (options.skipAuthCheck && requestedBackend) {
