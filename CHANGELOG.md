@@ -2,20 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## mama-os [0.35.0] - 2026-08-14
-
-### Security
-
-- **Every chat ingress now classifies the sender before privileged work.** Telegram, Slack, and
-  Discord divert external senders before model turns, session creation, prompt-history injection,
-  attachment download, tool execution, or model-derived outbound sends, except for the addressed
-  Telegram group messages admitted to the isolated public lane below. Non-owner history is excluded
-  from owner prompts. Slack and Discord add `owner_user_id`; leaving it unset fails closed.
-- **Telegram group non-owners now have a limited conversation lane.** This intentional behavior
-  change admits an addressed group message only to the isolated, memory-free, tool-free public
-  lane and returns its reply to the same group; it does not grant owner-console authority.
-- **Gateway plugins must declare `apiVersion: 2`.** Older plugin API versions are rejected at load
-  time; this is a breaking compatibility change for third-party gateway plugins.
+## mama-os [0.36.0] - 2026-08-16
 
 ### Fixed
 
@@ -32,6 +19,21 @@ All notable changes to this project will be documented in this file.
   can register only the host-authenticated identity from a user-origin Telegram forward through
   the registry-native and Code-Act-projected member tools. Public member support remains withheld
   until P2b grants are designed and shipped.
+
+## mama-os [0.35.0] - 2026-08-14
+
+### Security
+
+- **Every chat ingress now classifies the sender before privileged work.** Telegram, Slack, and
+  Discord divert external senders before model turns, session creation, prompt-history injection,
+  attachment download, tool execution, or model-derived outbound sends, except for the addressed
+  Telegram group messages admitted to the isolated public lane below. Non-owner history is excluded
+  from owner prompts. Slack and Discord add `owner_user_id`; leaving it unset fails closed.
+- **Telegram group non-owners now have a limited conversation lane.** This intentional behavior
+  change admits an addressed group message only to the isolated, memory-free, tool-free public
+  lane and returns its reply to the same group; it does not grant owner-console authority.
+- **Gateway plugins must declare `apiVersion: 2`.** Older plugin API versions are rejected at load
+  time; this is a breaking compatibility change for third-party gateway plugins.
 
 ## mama-os [0.34.1] - 2026-08-12
 
