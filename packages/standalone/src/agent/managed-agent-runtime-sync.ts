@@ -11,7 +11,12 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
-import { defaultModelForBackend } from './backend-model-policy.js';
+import {
+  emitBackendModelWarnings,
+  resolveBackendScopedModel,
+  type BackendModelPolicyEntry,
+  type UnknownModelFamilyWarning,
+} from './backend-model-policy.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 type LooseConfig = MAMAConfig;
@@ -80,7 +85,7 @@ async function writePersonaFileDefault(personaFile: string, content: string): Pr
 function normalizeCreateBackend(
   backend: string | undefined,
   fallback: string | undefined
-): ManagedAgentConfig['backend'] {
+): NonNullable<ManagedAgentConfig['backend']> {
   const candidate = String(backend ?? fallback ?? 'claude').toLowerCase();
   switch (candidate) {
     case 'codex':
@@ -91,6 +96,31 @@ function normalizeCreateBackend(
     default:
       return 'claude';
   }
+}
+
+function resolveManagedAgentModel(input: {
+  config: LooseConfig;
+  backend: NonNullable<ManagedAgentConfig['backend']>;
+  model?: string;
+  target: string;
+}): string {
+  const warnings: UnknownModelFamilyWarning[] = [];
+  const inheritedBackend = normalizeCreateBackend(input.config.agent?.backend, undefined);
+  const configuredModel = input.model?.trim();
+  const resolvedModel = resolveBackendScopedModel({
+    backend: input.backend,
+    model: configuredModel,
+    inheritedBackend,
+    inheritedModel: input.config.agent?.model,
+    warningTarget: input.target,
+    onWarning: (warning) => warnings.push(warning),
+  });
+  const entries: BackendModelPolicyEntry[] = [...warnings];
+  if (configuredModel && configuredModel !== resolvedModel) {
+    entries.unshift({ target: input.target, from: configuredModel, to: resolvedModel });
+  }
+  emitBackendModelWarnings(entries, (message) => logger.warn(message));
+  return resolvedModel;
 }
 
 async function applyRuntimeHooks(
@@ -159,6 +189,12 @@ export async function createManagedAgentRuntime(
 
     const personaFile = defaultPersonaFile(input.id);
     const backend = normalizeCreateBackend(input.backend, config.agent?.backend);
+    const model = resolveManagedAgentModel({
+      config,
+      backend,
+      model: input.model,
+      target: `multi_agent.agents.${input.id}.model`,
+    });
     const snapshot: ManagedAgentConfig = {
       name: input.name,
       display_name: input.name,
@@ -167,7 +203,7 @@ export async function createManagedAgentRuntime(
       tier: input.tier as 1 | 2 | 3,
       can_delegate: false,
       backend,
-      model: input.model,
+      model,
       enabled: true,
     };
 
@@ -209,10 +245,6 @@ export async function updateManagedAgentRuntime(
     }
 
     const updatedAgent: ManagedAgentConfig = { ...currentAgent };
-    const requestedBackend =
-      typeof input.changes.backend === 'string'
-        ? normalizeCreateBackend(input.changes.backend, updatedAgent.backend)
-        : undefined;
     for (const key of [
       'name',
       'display_name',
@@ -237,12 +269,17 @@ export async function updateManagedAgentRuntime(
         (updatedAgent as Record<string, unknown>)[key] = value;
       }
     }
-    if (
-      requestedBackend &&
-      requestedBackend !== currentAgent.backend &&
-      !('model' in input.changes)
-    ) {
-      updatedAgent.model = defaultModelForBackend(requestedBackend);
+    // Rescope only when the update touches backend/model: an unrelated update
+    // (e.g. { enabled: true }) must not silently rewrite the persisted model.
+    // Load-time resolution still family-guards whatever is stored.
+    if ('backend' in input.changes || 'model' in input.changes) {
+      const effectiveBackend = normalizeCreateBackend(updatedAgent.backend, config.agent?.backend);
+      updatedAgent.model = resolveManagedAgentModel({
+        config,
+        backend: effectiveBackend,
+        model: updatedAgent.model,
+        target: `multi_agent.agents.${input.agentId}.model`,
+      });
     }
 
     if (!agents) {

@@ -17,6 +17,12 @@ All notable changes to this project will be documented in this file.
 - **Gateway plugins must declare `apiVersion: 2`.** Older plugin API versions are rejected at load
   time; this is a breaking compatibility change for third-party gateway plugins.
 
+### Fixed
+
+- Switching agent.backend now rescopes every model resolution (main, roles, API saves, init) to the
+  active backend with loud warnings; stale cross-backend role overrides can no longer reach the
+  runtime.
+
 ### Internal
 
 - **P2a adds the durable principal-registry substrate without shipping member access.** Migration

@@ -23,11 +23,13 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { initCommand } from '../../src/cli/commands/init.js';
+import { backendForModel } from '../../src/agent/backend-model-policy.js';
 import {
   getConfigPath,
   getMAMAHome,
   configExists as _configExists,
   loadConfig,
+  saveConfig,
 } from '../../src/cli/config/config-manager.js';
 
 /**
@@ -414,6 +416,50 @@ describe('mama init command', () => {
       consoleOutput = [];
       consoleErrors = [];
       await expect(initCommand({ force: true })).resolves.not.toThrow();
+    });
+
+    it('rescopes a pre-existing cross-backend role override during forced reconfiguration', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex' });
+      const configPath = getConfigPath();
+      const existingConfig = await loadConfig();
+      const roleNames = Object.keys(existingConfig.roles?.definitions ?? {});
+      const firstRole = roleNames[0];
+      expect(firstRole).toBeDefined();
+      if (!firstRole || !existingConfig.roles) {
+        throw new Error('Expected at least one configured role');
+      }
+      existingConfig.roles.definitions[firstRole].model = 'gpt-5.4';
+      // Reviewer fix: force:true discards mutations before rescoping could run.
+      // Exercise the CONFIG-PRESERVING product scenario instead - the owner's
+      // one-line backend switch in the raw file: backend flips to claude while
+      // agent.model and a role override remain codex-family. The repairing
+      // loader must rescope both, and a save round-trip must persist
+      // family-consistent models in the raw file.
+      (existingConfig.agent as { backend: string }).backend = 'claude';
+      await writeFile(configPath, yaml.dump(existingConfig), 'utf8');
+
+      const reconfigured = await loadConfig();
+      await saveConfig(reconfigured);
+      expect(reconfigured.agent).toMatchObject({
+        backend: 'claude',
+        model: 'claude-sonnet-4-6',
+      });
+      expect(
+        Object.values(reconfigured.roles?.definitions ?? {}).every(
+          (role) => role.model === 'claude-sonnet-4-6'
+        )
+      ).toBe(true);
+
+      const rawPersisted = yaml.load(await readFile(configPath, 'utf8')) as {
+        agent: { model: string };
+        roles?: { definitions?: Record<string, { model: string }> };
+      };
+      expect(backendForModel(rawPersisted.agent.model)).toBe('claude');
+      expect(
+        Object.values(rawPersisted.roles?.definitions ?? {}).every(
+          (role) => backendForModel(role.model) === 'claude'
+        )
+      ).toBe(true);
     });
   });
 

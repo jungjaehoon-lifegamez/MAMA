@@ -82,6 +82,24 @@ describe('managed-agent-runtime-sync', () => {
     expect(codexRuntime.snapshot.backend).toBe('codex');
   });
 
+  it('rescopes a cross-family model when creating a managed agent', async () => {
+    const config = {
+      agent: { backend: 'codex' as const, model: 'gpt-5.6-sol' },
+      multi_agent: { enabled: true, agents: {} },
+    };
+
+    const result = await createManagedAgentRuntime(
+      { id: 'reviewer', name: 'Reviewer', model: 'claude-sonnet-5', tier: 1 },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot).toMatchObject({ backend: 'codex', model: 'gpt-5.6-sol' });
+  });
+
   it('TG-03/TG-04 preserves the cline backend when creating agents', async () => {
     const config = {
       agent: { backend: 'claude' as const },
@@ -141,6 +159,75 @@ describe('managed-agent-runtime-sync', () => {
     expect(result.snapshot.model).toBe('deepseek/deepseek-v4-flash');
     expect(config.multi_agent.agents.alpha.backend).toBe('cline');
     expect(config.multi_agent.agents.alpha.model).toBe('deepseek/deepseek-v4-flash');
+  });
+
+  it('preserves the persisted model when changes omit backend and model', async () => {
+    const config = {
+      agent: { backend: 'codex' as const, model: 'gpt-5.6-sol' },
+      multi_agent: {
+        enabled: true,
+        agents: {
+          legacy: {
+            name: 'Legacy',
+            display_name: 'Legacy',
+            trigger_prefix: '!legacy',
+            tier: 1,
+            backend: 'claude' as const,
+            model: 'claude-sonnet-5',
+            enabled: false,
+          },
+        },
+      },
+    };
+
+    const result = await updateManagedAgentRuntime(
+      {
+        agentId: 'legacy',
+        changes: { enabled: true },
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot.enabled).toBe(true);
+    expect(config.multi_agent.agents.legacy.model).toBe('claude-sonnet-5');
+  });
+
+  it('rescopes a cross-family explicit model when updating a managed agent', async () => {
+    const config = {
+      agent: { backend: 'codex' as const, model: 'gpt-5.6-sol' },
+      multi_agent: {
+        enabled: true,
+        agents: {
+          alpha: {
+            name: 'Alpha',
+            display_name: 'Alpha',
+            trigger_prefix: '!alpha',
+            tier: 1,
+            backend: 'codex' as const,
+            model: 'gpt-5.4',
+          },
+        },
+      },
+    };
+
+    const result = await updateManagedAgentRuntime(
+      {
+        agentId: 'alpha',
+        changes: { model: 'claude-sonnet-5' },
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot.model).toBe('gpt-5.6-sol');
+    expect(config.multi_agent.agents.alpha.model).toBe('gpt-5.6-sol');
   });
 
   it('uses a default persona path when updating system text without persona_file', async () => {
