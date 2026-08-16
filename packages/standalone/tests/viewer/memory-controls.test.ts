@@ -70,7 +70,7 @@ describe('retired console artifacts', () => {
   });
 
   it('versions the service worker and precaches only retained assets', () => {
-    expect(sw).toContain("const CACHE_NAME = 'mama-viewer-v2'");
+    expect(sw).toContain("const CACHE_NAME = 'mama-viewer-v3'");
     for (const name of RETIRED_MODULES) {
       expect(sw).not.toContain(`/viewer/js/modules/${name}.js`);
     }

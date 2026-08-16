@@ -14,7 +14,15 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
 import { isProcessContextKey } from '../agent/code-act/run-context-registry.js';
-import { defaultModelForBackend } from '../agent/backend-model-policy.js';
+import {
+  backendForModel,
+  defaultModelForBackend,
+  emitBackendModelWarnings,
+  rescopeConfigModels,
+  resolveBackendScopedModel,
+  type BackendModelChange,
+  type UnknownModelFamilyWarning,
+} from '../agent/backend-model-policy.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
@@ -2942,6 +2950,8 @@ async function handleUpdateConfigRequest(
       return;
     }
 
+    const modelPolicyEntries = rescopeModelsForConfigSave(updatedConfig);
+
     const errors = validateConfigUpdate(updatedConfig);
     if (errors.length > 0) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2954,6 +2964,11 @@ async function handleUpdateConfigRequest(
       );
       return;
     }
+
+    emitBackendModelWarnings([
+      ...modelPolicyEntries.changes,
+      ...modelPolicyEntries.warnings,
+    ]);
 
     saveMAMAConfig(updatedConfig);
 
@@ -2989,6 +3004,78 @@ async function handleUpdateConfigRequest(
       })
     );
   }
+}
+
+function rescopeModelsForConfigSave(
+  config: Record<string, unknown>
+): { changes: BackendModelChange[]; warnings: UnknownModelFamilyWarning[] } {
+  if (!isRecord(config.agent) || typeof config.agent.backend !== 'string') {
+    return { changes: [], warnings: [] };
+  }
+
+  const backend = config.agent.backend.toLowerCase();
+  if (!supportedManagedBackends.includes(backend)) {
+    return { changes: [], warnings: [] };
+  }
+
+  const roles = isRecord(config.roles) ? config.roles : undefined;
+  const definitions = roles && isRecord(roles.definitions) ? roles.definitions : {};
+  const roleModels = Object.fromEntries(
+    Object.entries(definitions)
+      .filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]))
+      .map(([name, definition]) => [
+        name,
+        typeof definition.model === 'string' ? definition.model : undefined,
+      ])
+  );
+  const scopedModels = rescopeConfigModels({
+    backend: backend as Parameters<typeof rescopeConfigModels>[0]['backend'],
+    agentModel: typeof config.agent.model === 'string' ? config.agent.model : undefined,
+    roleModels,
+  });
+
+  config.agent.model = scopedModels.agentModel;
+  for (const [name, model] of Object.entries(scopedModels.roleModels)) {
+    const definition = definitions[name];
+    if (isRecord(definition)) {
+      definition.model = model;
+    }
+  }
+
+  const changes = [...scopedModels.changes];
+  const warnings = [...(scopedModels.warnings ?? [])];
+  const multiAgent = isRecord(config.multi_agent) ? config.multi_agent : undefined;
+  const managedAgents = multiAgent && isRecord(multiAgent.agents) ? multiAgent.agents : {};
+  for (const [agentId, agentConfig] of Object.entries(managedAgents)) {
+    if (!isRecord(agentConfig)) {
+      continue;
+    }
+    const effectiveBackend =
+      typeof agentConfig.backend === 'string' ? agentConfig.backend.toLowerCase() : backend;
+    if (!supportedManagedBackends.includes(effectiveBackend)) {
+      continue;
+    }
+
+    const configuredModel =
+      typeof agentConfig.model === 'string' ? agentConfig.model.trim() : undefined;
+    const target = `multi_agent.agents.${agentId}.model`;
+    const resolvedModel = resolveBackendScopedModel({
+      backend: effectiveBackend as Parameters<typeof resolveBackendScopedModel>[0]['backend'],
+      model: configuredModel,
+      inheritedBackend: backend as Parameters<
+        typeof resolveBackendScopedModel
+      >[0]['inheritedBackend'],
+      inheritedModel: scopedModels.agentModel,
+      warningTarget: target,
+      onWarning: (warning) => warnings.push(warning),
+    });
+    agentConfig.model = resolvedModel;
+    if (configuredModel && configuredModel !== resolvedModel) {
+      changes.push({ target, from: configuredModel, to: resolvedModel });
+    }
+  }
+
+  return { changes, warnings };
 }
 
 function maskToken(token: string): string {
@@ -3254,10 +3341,11 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
       const model = config.agent.model;
-      if (backend === 'claude' && !isClaudeModel(model)) {
+      const modelBackend = backendForModel(model);
+      if (backend === 'claude' && modelBackend !== null && modelBackend !== 'claude') {
         errors.push('agent.model must be a Claude model when agent.backend is "claude"');
       }
-      if (isCodexFamilyBackend(backend) && !isCodexModel(model)) {
+      if (isCodexFamilyBackend(backend) && modelBackend !== null && modelBackend !== 'codex') {
         errors.push(`agent.model must be a Codex/OpenAI model when agent.backend is "${backend}"`);
       }
     }
@@ -3294,12 +3382,13 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
-          if (backend === 'claude' && !isClaudeModel(modelRaw)) {
+          const modelBackend = backendForModel(modelRaw);
+          if (backend === 'claude' && modelBackend !== null && modelBackend !== 'claude') {
             errors.push(
               `multi_agent.agents.${agentId}.model must be a Claude model when backend is "claude"`
             );
           }
-          if (isCodexFamilyBackend(backend) && !isCodexModel(modelRaw)) {
+          if (isCodexFamilyBackend(backend) && modelBackend !== null && modelBackend !== 'codex') {
             errors.push(
               `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "${backend}"`
             );

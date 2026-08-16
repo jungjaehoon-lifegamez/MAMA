@@ -320,10 +320,6 @@ export function initMainAgentLoop(
         callOptions.sessionKey = `${options.source}:${options.channelId}:${options.userId || 'unknown'}`;
       }
 
-      if (runtimeBackend === 'codex') {
-        // Override role-based model selection for the Codex backend.
-        callOptions.model = config.agent.model;
-      }
       const result = await agentLoop.run(prompt, callOptions);
 
       // Check if auto-recall was used (by checking if relevant-memories was in the history)
@@ -362,10 +358,6 @@ export function initMainAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-      if (runtimeBackend === 'codex') {
-        // Override role-based model selection for the Codex backend.
-        callOptions.model = config.agent.model;
-      }
       const result = await agentLoop.runWithContent(
         content as unknown as AgentContentBlock[],
         callOptions
