@@ -1104,7 +1104,7 @@ export class AgentLoop {
   /**
    * Set report publisher for report_publish tool (Dashboard Agent)
    */
-  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+  setReportPublisher(fn: (slots: Record<string, string>) => void | readonly string[]): void {
     this.mcpExecutor.setReportPublisher(fn);
   }
 

@@ -29,6 +29,7 @@ import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.j
 import type { PrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
+import { resolvePackageVersion } from '../../package-version.js';
 import type { RuntimeEnvelopeBootstrap } from './envelope-bootstrap.js';
 import { API_PORT } from './utilities.js';
 
@@ -159,6 +160,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
   // agents.ts or any stored model registry: the Viewer must show the backend
   // and model this process is running, not a catalog default.
   const daemonStartedAt = Math.round(Date.now() - process.uptime() * 1000);
+  const packageVersion = resolvePackageVersion();
   const getRuntimeStatus = (): RuntimeStatusSnapshot => {
     let health: RuntimeStatusSnapshot['health'] = null;
     if (healthService) {
@@ -172,6 +174,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     }
     return {
       running: true,
+      version: packageVersion,
       backend: config.agent.backend,
       model: config.agent.model,
       startedAt: daemonStartedAt,

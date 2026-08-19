@@ -232,6 +232,81 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(String(error)).not.toContain('Valid tools:');
         }
       });
+
+      it('TG-06 reports an identical full dashboard as accepted with zero changed slots', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        executor.setReportPublisher(() => ({
+          acceptedSlotIds: ['pipeline', 'briefing', 'decisions', 'action_required'],
+          changedSlotIds: [],
+        }));
+
+        const result = await executor.execute('report_publish', {
+          slots: {
+            pipeline: '<p>p</p>',
+            briefing: '<p>b</p>',
+            decisions: '<p>d</p>',
+            action_required: '<p>a</p>',
+          },
+        });
+
+        expect(result).toEqual({
+          success: true,
+          acceptedSlotIds: ['action_required', 'briefing', 'decisions', 'pipeline'],
+          changedSlotIds: [],
+          message:
+            'Dashboard report accepted: action_required, briefing, decisions, pipeline (4 accepted, 0 changed)',
+        });
+        expect(result.message).not.toContain('updated');
+      });
+
+      it('TG-06 exposes accepted and changed slot identities for a mixed dashboard publish', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        executor.setReportPublisher(() => ({
+          acceptedSlotIds: ['pipeline', 'briefing', 'decisions'],
+          changedSlotIds: ['pipeline', 'decisions'],
+        }));
+
+        const result = await executor.execute('report_publish', {
+          slots: {
+            pipeline: '<p>new</p>',
+            briefing: '<p>same</p>',
+            decisions: '<p>changed</p>',
+          },
+        });
+
+        expect(result).toEqual({
+          success: true,
+          acceptedSlotIds: ['briefing', 'decisions', 'pipeline'],
+          changedSlotIds: ['decisions', 'pipeline'],
+          message:
+            'Dashboard report accepted: briefing, decisions, pipeline (3 accepted, 2 changed)',
+        });
+      });
+
+      it.each([
+        ['void', undefined, ['briefing', 'pipeline']],
+        ['slot array', ['briefing'], ['briefing']],
+      ] as const)(
+        'keeps a legacy %s report publisher callback compatible',
+        async (_caseName, publisherResult, expectedSlotIds) => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+          executor.setReportPublisher(() => publisherResult);
+
+          const result = await executor.execute('report_publish', {
+            slots: { pipeline: '<p>p</p>', briefing: '<p>b</p>' },
+          });
+
+          expect(result).toMatchObject({
+            success: true,
+            acceptedSlotIds: expectedSlotIds,
+            changedSlotIds: expectedSlotIds,
+            message: `Dashboard report accepted: ${expectedSlotIds.join(', ')} (${expectedSlotIds.length} accepted, ${expectedSlotIds.length} changed)`,
+          });
+        }
+      );
     });
 
     describe('bound external lifecycle mutations', () => {

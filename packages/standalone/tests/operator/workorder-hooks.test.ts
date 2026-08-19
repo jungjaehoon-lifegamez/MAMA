@@ -10,9 +10,12 @@ import { describe, it, expect } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { initAgentTables } from '../../src/db/agent-store.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { createReportPublisher, createReportStore } from '../../src/api/report-handler.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   buildWorkerTraceQueries,
+  buildFullBoardTraceQueries,
+  applyBoardRefreshVerdict,
   LANE_OBLIGATED_TOOLS,
   buildPromotionAfterHook,
   boardCandidateReceiptVerdict,
@@ -60,6 +63,59 @@ describe('Story S2-T3: extracted workorder hooks', () => {
     });
   });
 
+  describe('TG-01/TG-06 Board repair gate completion', () => {
+    it('clears a captured reconcile only when action and candidate effects both verify', () => {
+      const cleared: Array<[string, number]> = [];
+      const gate = {
+        completeVerifiedReconcile: (channel: string, generation: number) =>
+          cleared.push([channel, generation]),
+        completeVerifiedFull: () => undefined,
+      };
+      const workOrder = {
+        id: 12,
+        workKind: 'board',
+        payload: {
+          attempts: 1,
+          mode: 'reconcile',
+          channelKey: 'telegram:owner',
+          repairGeneration: 51,
+        },
+      } as unknown as WorkOrderRecord;
+
+      expect(applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate)).toEqual({
+        disposition: 'complete',
+      });
+      expect(cleared).toEqual([['telegram:owner', 51]]);
+
+      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate);
+      applyBoardRefreshVerdict(
+        workOrder,
+        true,
+        { disposition: 'fail', reason: 'candidate receipt missing' },
+        gate
+      );
+      expect(cleared).toEqual([['telegram:owner', 51]]);
+    });
+
+    it('clears all captured dirt only after a host-verified full effect', () => {
+      const cleared: number[] = [];
+      const gate = {
+        completeVerifiedReconcile: () => undefined,
+        completeVerifiedFull: (generation: number) => cleared.push(generation),
+      };
+      const workOrder = {
+        id: 13,
+        workKind: 'board',
+        payload: { attempts: 1, mode: 'full', repairGeneration: 88, noUpdateScope: 'full:88' },
+      } as unknown as WorkOrderRecord;
+
+      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate);
+      expect(cleared).toEqual([]);
+      applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate);
+      expect(cleared).toEqual([88]);
+    });
+  });
+
   describe('AC #1 (G1): worker trace queries see rows written by the REAL executor log path', () => {
     async function runToolAs(
       db: SQLiteDatabase,
@@ -97,6 +153,198 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       // The anchor works: rows before the snapshot are not re-counted.
       const after = queries.getTraceMaxId();
       expect(queries.countObligatedTraceRowsSince(after)).toBe(0);
+    });
+
+    it('TG-06 full repair evidence is attempt-bound and requires all four slots', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const opDb: SQLiteDatabase = new Database(':memory:');
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      executor.setTaskLedger(new TaskLedger(opDb));
+      executor.setReportPublisher(() => undefined);
+
+      const queries = buildFullBoardTraceQueries(sessionsDb, 'worker:board', 41);
+      const before = queries.getTraceMaxId();
+      await runToolAs(sessionsDb, executor, 'worker:board');
+      await executor.execute(
+        'report_publish',
+        { slots: { briefing: '<p>partial must not verify</p>' } } as never,
+        {
+          executionSurface: 'model_tool',
+          source: 'operator',
+          channelId: 'worker:board',
+          workorderAttemptId: 41,
+        } as never
+      );
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      await executor.execute(
+        'report_publish',
+        {
+          slots: {
+            pipeline: '<p>wrong attempt</p>',
+            briefing: '<p>wrong attempt</p>',
+            decisions: '<p>wrong attempt</p>',
+            action_required: '<p>wrong attempt</p>',
+          },
+        } as never,
+        {
+          executionSurface: 'model_tool',
+          source: 'operator',
+          channelId: 'worker:board',
+          workorderAttemptId: 40,
+        } as never
+      );
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      await expect(
+        executor.execute(
+          'report_publish',
+          {} as never,
+          {
+            executionSurface: 'model_tool',
+            source: 'operator',
+            channelId: 'worker:board',
+            workorderAttemptId: 41,
+          } as never
+        )
+      ).rejects.toThrow(/slots object/);
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      executor.setReportPublisher(() => {
+        throw new Error('synthetic report store failure');
+      });
+      await expect(
+        executor.execute(
+          'report_publish',
+          {
+            slots: {
+              briefing: '<p>failed</p>',
+              action_required: '<p>failed</p>',
+              decisions: '<p>failed</p>',
+              pipeline: '<p>failed</p>',
+            },
+          } as never,
+          {
+            executionSurface: 'model_tool',
+            source: 'operator',
+            channelId: 'worker:board',
+            workorderAttemptId: 41,
+          } as never
+        )
+      ).rejects.toThrow(/synthetic report store failure/);
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      executor.setReportPublisher(() => undefined);
+      await executor.execute(
+        'report_publish',
+        {
+          slots: {
+            pipeline: '<p>pipeline secret-free fixture</p>',
+            custom_extra: '<p>extra remains allowed</p>',
+            briefing: '<p>briefing secret-free fixture</p>',
+            decisions: '<p>decisions secret-free fixture</p>',
+            action_required: '<p>action secret-free fixture</p>',
+          },
+        } as never,
+        {
+          executionSurface: 'model_tool',
+          source: 'operator',
+          channelId: 'worker:board',
+          workorderAttemptId: 41,
+        } as never
+      );
+
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(1);
+      const row = sessionsDb
+        .prepare(
+          `SELECT details FROM agent_activity
+           WHERE type = 'gateway_tool_call' AND execution_status = 'completed'
+             AND normalized_tool_name = 'report_publish'
+             AND json_extract(details, '$.workorder_attempt_id') = 41
+           ORDER BY id DESC LIMIT 1`
+        )
+        .get() as { details: string };
+      const details = JSON.parse(row.details) as Record<string, unknown>;
+      expect(details.report_slot_ids).toEqual([
+        'action_required',
+        'briefing',
+        'custom_extra',
+        'decisions',
+        'pipeline',
+      ]);
+      expect(row.details).not.toContain('secret-free fixture');
+    });
+
+    it('TG-06 full evidence follows the real publisher persisted subset', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      executor.setTaskLedger(new TaskLedger(new Database(':memory:')));
+      executor.setReportPublisher(createReportPublisher(createReportStore(), new Set()));
+      const queries = buildFullBoardTraceQueries(sessionsDb, 'worker:board', 77);
+      const before = queries.getTraceMaxId();
+      const context = {
+        executionSurface: 'model_tool' as const,
+        source: 'operator' as const,
+        channelId: 'worker:board',
+        workorderAttemptId: 77,
+      };
+
+      const partial = await executor.execute(
+        'report_publish',
+        {
+          slots: {
+            briefing: '<p>b</p>',
+            action_required: '<p>a</p>',
+            decisions: '<p>d</p>',
+            pipeline: 'x'.repeat(65_537),
+          },
+        } as never,
+        context as never
+      );
+      expect(partial).toMatchObject({
+        success: true,
+        acceptedSlotIds: ['action_required', 'briefing', 'decisions'],
+      });
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      await expect(
+        executor.execute(
+          'report_publish',
+          {
+            slots: {
+              briefing: 'x'.repeat(65_537),
+              action_required: 'x'.repeat(65_537),
+              decisions: 'x'.repeat(65_537),
+              pipeline: 'x'.repeat(65_537),
+            },
+          } as never,
+          context as never
+        )
+      ).rejects.toThrow(/accepted no slots/);
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+
+      const complete = await executor.execute(
+        'report_publish',
+        {
+          slots: {
+            custom_extra: '<p>x</p>',
+            pipeline: '<p>p</p>',
+            briefing: '<p>b</p>',
+            decisions: '<p>d</p>',
+            action_required: '<p>a</p>',
+          },
+        } as never,
+        context as never
+      );
+      expect(complete).toMatchObject({
+        success: true,
+        acceptedSlotIds: ['action_required', 'briefing', 'custom_extra', 'decisions', 'pipeline'],
+      });
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(1);
     });
 
     // Found in review. The executor writes a trace row on its failure paths too, so without

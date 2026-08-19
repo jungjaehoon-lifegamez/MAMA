@@ -26,6 +26,7 @@ export interface RuntimeConnectorStatus {
 
 export interface RuntimeStatusSnapshot {
   running: boolean;
+  version: string;
   backend: RuntimeBackend;
   model: string;
   startedAt: number;
@@ -49,6 +50,7 @@ export interface RuntimeStatusRouterOptions {
 function serializeSnapshot(snapshot: RuntimeStatusSnapshot): RuntimeStatusSnapshot {
   return {
     running: snapshot.running,
+    version: snapshot.version,
     backend: snapshot.backend,
     model: snapshot.model,
     startedAt: snapshot.startedAt,

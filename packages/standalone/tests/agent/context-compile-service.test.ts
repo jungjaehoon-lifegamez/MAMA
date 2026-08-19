@@ -1003,6 +1003,50 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     expect(boundary?.channels).toEqual({ telegram: ['chat-1', 'chat-2'] });
   });
 
+  it('TG-03/TG-04 reuses the gateway grant snapshot for scope allowance and raw narrowing', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_gateway_snapshot',
+          scopes: input.scopes,
+        })
+    );
+    const channelGrant = vi.fn(() => ({ telegram: ['changed-after-gateway-entry'] }));
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      channelGrant,
+      childModelRunId: () => 'mr_context_gateway_snapshot',
+      packetId: () => 'ctxp_gateway_snapshot',
+    });
+
+    const result = await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      channelGrantSnapshot: { telegram: ['chat-at-gateway-entry'] },
+      input: {
+        task: 'compile from one gateway grant snapshot',
+        scopes: [{ kind: 'channel', id: 'telegram:chat-at-gateway-entry' }],
+      },
+    });
+
+    expect(result.packet.scopes).toEqual([
+      { kind: 'channel', id: 'telegram:chat-at-gateway-entry' },
+    ]);
+    expect(channelGrant).not.toHaveBeenCalled();
+    const boundary = (
+      compileContext.mock.calls[0][1] as {
+        boundary?: { scopes?: unknown; channels?: unknown };
+      }
+    ).boundary;
+    expect(boundary).toMatchObject({
+      scopes: [{ kind: 'channel', id: 'telegram:chat-at-gateway-entry' }],
+      channels: { telegram: ['chat-at-gateway-entry'] },
+    });
+  });
+
   // No grant means the boundary carries none, rather than an empty object that a reader
   // could mistake for "granted, with nothing in it".
   it('AC: omits the channel grant entirely when none is configured', async () => {
