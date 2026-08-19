@@ -10,8 +10,8 @@
  *   5. every reportEveryNTicks: the agent composes a situational digest of the window (M2),
  *   6. at configured LOCAL hours: the agent composes a fuller scheduled report (M2).
  *
- * Read-only: recall/surface/log/report-to-owner only, no write-actions (M1/M2). All deps are
- * injected so the pipeline is unit-testable.
+ * The loop itself performs only deterministic intake, trigger matching, recall, and reports.
+ * Matched batches are handed durably to the MAMA owner-event agent for action.
  */
 
 import type {
@@ -43,6 +43,7 @@ import {
 import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
 import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
+import type { OwnerEventActivation } from './owner-event-inbox.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -114,28 +115,16 @@ export interface TriggerLoopDeps {
    */
   fullReportSelfGather?: string[] | ((ctx: { lastSuccessIso: string | null }) => string[]);
   /**
-   * M8: board-reconcile feed. Invoked after commit with connector-qualified
-   * channelKey ("<connector>:<channelId>") and bounded delta excerpt lines
-   * (each carrying the event id so reconcile task writes can pass
-   * source_event_id). Absent -> no reconcile leg.
+   * Durable MAMA owner-agent event feed. Matched trigger contracts travel with
+   * the source batch before the connector cursor advances.
    */
-  /**
-   * `eventIds` is the batch itself, carried alongside the human-readable lines.
-   *
-   * The ids were already inside the lines as `[id:evt_...]` headers and were only ever
-   * read back by parsing prose - which meant the SYSTEM knew the batch, flattened it to
-   * text, and then asked the AGENT to restate it. Every change a bounded run makes rests
-   * on this batch; carrying it is the difference between a fact and a claim.
-   */
-  onChannelDelta?: (channelKey: string, lines: string[], eventIds: string[]) => void;
-  /**
-   * S1: durable conductor feed. Each per-channel batch is enqueued BEFORE
-   * `delta.commit()` - a crash between the two redelivers the events and the
-   * inbox's per-event dedupe absorbs the duplicate. Structural type, no import
-   * cycle. Absent -> no conductor leg.
-   */
-  conductorInbox?: {
-    enqueue(batch: { channelKey: string; eventIds: string[]; lines: string[] }): number | null;
+  ownerEventInbox?: {
+    enqueue(batch: {
+      channelKey: string;
+      eventIds: string[];
+      lines: string[];
+      activations: OwnerEventActivation[];
+    }): number | null;
   };
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
@@ -196,20 +185,11 @@ export class OperatorTriggerLoop {
       throw new Error('OperatorTriggerLoop: reportDelivery requires reportTarget');
     }
     this.deps = deps;
-    // G2 success signal: when a sent report cites fired triggers (USED_TRIGGERS
-    // trailer, window-validated), record 'succeeded' on each. Uncited fires stay
-    // neutral; elimination still comes from the review pass. Detector-based fires
-    // carry the detector name as id and are not in the registry -- skip loudly.
+    // A report citation proves only that the trigger was discussed. Actual
+    // success/failure belongs to OwnerEventLoop and its durable effect receipt.
     const recordTriggerUse = (ids: string[]): void => {
       for (const id of ids) {
-        try {
-          deps.registry.recordOutcome(id, 'succeeded');
-          deps.log(`[trigger-loop] outcome succeeded trigger=${id} (cited in owner report)`);
-        } catch (err) {
-          deps.log(
-            `[trigger-loop] outcome skip trigger=${id}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
+        deps.log(`[trigger-loop] report cited trigger=${id}; effect outcome owned by owner-event`);
       }
     };
     this.digest = new SituationReporter({ recordTriggerUse });
@@ -574,9 +554,14 @@ export class OperatorTriggerLoop {
       log(`[trigger-loop] tick ${tick}: drained ${events.length} events`);
     }
 
+    const signalsByEvent = new Map<OperatorChannelEvent, ReturnType<typeof matchTriggers>>();
+    for (const event of events) {
+      signalsByEvent.set(event, matchTriggers(event, registry));
+    }
+
     // 2. Match + fire + recordFire, folding fire activity into the report accumulators.
     for (const event of reportEvents) {
-      const signals = matchTriggers(event, registry);
+      const signals = signalsByEvent.get(event) ?? [];
       for (const signal of signals) {
         const fireResult = await fireTrigger(signal, memory);
         if (this.stopping) return result(events.length);
@@ -620,16 +605,16 @@ export class OperatorTriggerLoop {
       this.authorWindowGeneration += 1;
       this.persistPendingReports();
     }
-    // Group per channel ONCE, before the cursor moves: the conductor inbox
+    // Group per channel ONCE, before the cursor moves: the owner-event inbox
     // persists each group pre-commit, and the same groups feed the post-commit
     // reconcile callback.
     const channelBatches: Array<{
       channelKey: string;
       lines: string[];
-      indexIds: string[];
       inboxEventIds: string[];
+      activations: OwnerEventActivation[];
     }> = [];
-    if (events.length > 0 && (this.deps.conductorInbox || this.deps.onChannelDelta)) {
+    if (events.length > 0 && this.deps.ownerEventInbox) {
       const byChannel = new Map<string, OperatorChannelEvent[]>();
       // Report dedupe and board reconciliation have different durability
       // boundaries. A report snapshot may already contain a replayed event,
@@ -655,9 +640,6 @@ export class OperatorTriggerLoop {
               .replace(/[\r\n]+/g, ' ')
               .slice(0, 200)}`
         );
-        const indexIds = channelEvents
-          .map((e) => e.eventIndexId)
-          .filter((id): id is string => typeof id === 'string' && id.length > 0);
         // Inbox identity must cover EVERY event or dedupe cannot absorb a
         // redelivery. The fallback is NAMESPACED: bare delta row ids from two
         // different channels (or after a VACUUM renumbering) must not collide
@@ -665,38 +647,40 @@ export class OperatorTriggerLoop {
         const inboxEventIds = channelEvents.map(
           (e) => e.eventIndexId ?? `raw:${channelKey}:${e.id}`
         );
-        channelBatches.push({ channelKey, lines, indexIds, inboxEventIds });
+        const activationsById = new Map<string, OwnerEventActivation>();
+        for (const signal of channelEvents.flatMap((event) => signalsByEvent.get(event) ?? [])) {
+          if (!signal.triggerId || activationsById.has(signal.triggerId)) continue;
+          activationsById.set(signal.triggerId, {
+            triggerId: signal.triggerId,
+            kind: signal.kind,
+            memoryQuery: signal.memoryQuery,
+            procedure: signal.procedure.map((step) => ({ ...step })),
+            requiredEvidence: [...signal.requiredEvidence],
+          });
+        }
+        channelBatches.push({
+          channelKey,
+          lines,
+          inboxEventIds,
+          activations: [...activationsById.values()],
+        });
       }
     }
 
     // S1: durable BEFORE the cursor advances. Deliberately NOT wrapped in
     // try/catch - an inbox write failure must fail the tick before commit so
     // the batch redelivers next drain. Fail loud, lose nothing.
-    if (this.deps.conductorInbox) {
+    if (this.deps.ownerEventInbox) {
       for (const b of channelBatches) {
-        this.deps.conductorInbox.enqueue({
+        this.deps.ownerEventInbox.enqueue({
           channelKey: b.channelKey,
           eventIds: b.inboxEventIds,
           lines: b.lines,
+          activations: b.activations,
         });
       }
     }
-
     delta.commit(events);
-
-    // M8: feed the board-reconcile leg AFTER commit (the loop's cursor is
-    // authoritative; reconcile is a freshness layer repaired by the 30-min cron).
-    if (this.deps.onChannelDelta) {
-      for (const b of channelBatches) {
-        try {
-          this.deps.onChannelDelta(b.channelKey, b.lines, b.indexIds);
-        } catch (err) {
-          log(
-            `[trigger-loop] onChannelDelta failed for ${b.channelKey}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
-    }
 
     // 3. Agent authors new triggers from the recent window.
     if (

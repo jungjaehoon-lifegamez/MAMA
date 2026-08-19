@@ -1542,10 +1542,10 @@ describe('MessageRouter', () => {
       expect(receivedPrompt).toContain('wiki-agent&lt;script&gt;');
     });
 
-    it('should record conductor task_error activity when the agent loop fails', async () => {
+    it('records the failed frontdoor turn as MAMA, not a separate Conductor identity', async () => {
       initAgentTables(db);
       createAgentVersion(db, {
-        agent_id: 'conductor',
+        agent_id: 'mama',
         snapshot: { model: 'sonnet', tier: 1 },
       });
       const agentLoop = {
@@ -1570,7 +1570,7 @@ describe('MessageRouter', () => {
 
       const row = db
         .prepare(
-          "SELECT type, error_message FROM agent_activity WHERE agent_id = 'conductor' ORDER BY id DESC LIMIT 1"
+          "SELECT type, error_message FROM agent_activity WHERE agent_id = 'mama' ORDER BY id DESC LIMIT 1"
         )
         .get() as { type: string; error_message: string | null };
       expect(row.type).toBe('task_error');

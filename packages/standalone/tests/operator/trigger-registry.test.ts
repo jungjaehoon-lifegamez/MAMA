@@ -53,6 +53,8 @@ describe('TriggerRegistry', () => {
 
   it('recordOutcome bumps stats (G2 evolution feed)', () => {
     reg.create(sampleInput('t3'));
+    reg.recordFire('t3');
+    reg.recordFire('t3');
     reg.recordOutcome('t3', 'failed');
     reg.recordOutcome('t3', 'succeeded');
     expect(reg.getById('t3')?.stats).toEqual({ fired: 2, succeeded: 1, failed: 1 });

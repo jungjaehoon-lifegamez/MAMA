@@ -168,6 +168,14 @@ export interface BackgroundTaskRegistry {
   register(task: Promise<unknown>): void;
 }
 
+export interface OwnerEventEffectAuthority {
+  batchId: number;
+  effectKeys: Readonly<{
+    telegram_send: string;
+    drive_upload: string;
+  }>;
+}
+
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;
   agentId?: string;
@@ -191,6 +199,8 @@ export type GatewayToolExecutionContext = {
    * agent, which is the difference between a fact and a claim.
    */
   causeEventIds?: readonly string[];
+  /** Host-issued semantic action identities for one durable owner-event batch. */
+  ownerEventEffects?: OwnerEventEffectAuthority;
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -681,6 +691,8 @@ export interface DriveUploadInput {
   folderId: string;
   fileName?: string;
   destinationCapability?: string;
+  /** Host-issued semantic action key; required only for owner-event turns. */
+  effect_key?: string;
 }
 
 export type MemberCandidatesInput = Record<string, never>;
@@ -978,6 +990,8 @@ export interface AgentLoopOptions {
   disableAutoRecall?: boolean;
   /** Message source for session pool (e.g., "discord", "slack", "viewer") */
   source?: string;
+  /** Host-owned execution actor id, distinct from the authorization role. */
+  actorId?: string;
   /** Channel ID for session pool */
   channelId?: string;
   /**
@@ -991,6 +1005,8 @@ export interface AgentLoopOptions {
   temporalWorkContext?: TemporalWorkContext;
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
+  /** Host-issued semantic action identities for one durable owner-event batch. */
+  ownerEventEffects?: OwnerEventEffectAuthority;
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)

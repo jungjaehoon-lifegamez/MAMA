@@ -14,11 +14,6 @@ import type { ConnectorConfigLoadResult } from '../../../src/connectors/config-l
 import { resolvePrivateConnectorPolicy } from '../../../src/connectors/private-connector-policy.js';
 import type { MessageRouter } from '../../../src/gateways/index.js';
 import { AgentEventBus } from '../../../src/multi-agent/agent-event-bus.js';
-import type { ExternalLifecycleCandidateSet } from '../../../src/operator/external-lifecycle.js';
-import {
-  bindingCandidateFor,
-  enqueueAndClaimBindingAttempt,
-} from '../../operator/external-lifecycle-fixtures.js';
 import { TaskLedger } from '../../../src/operator/task-ledger.js';
 import { BoardRefreshGate } from '../../../src/operator/board-refresh-gate.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
@@ -27,19 +22,6 @@ import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
 import Database from '../../../src/sqlite.js';
 import type { AgentLoop } from '../../../src/agent/index.js';
 import type { OAuthManager } from '../../../src/auth/index.js';
-
-const disabledConnectorConfig: ConnectorConfigLoadResult = {
-  ok: true,
-  config: {
-    kagemusha: {
-      enabled: false,
-      pollIntervalMinutes: 60,
-      channels: {},
-      auth: { type: 'none' },
-    },
-  },
-  enabledNames: [],
-};
 
 const enabledConnectorConfig: ConnectorConfigLoadResult = {
   ok: true,
@@ -52,17 +34,6 @@ const enabledConnectorConfig: ConnectorConfigLoadResult = {
     },
   },
   enabledNames: ['kagemusha'],
-};
-
-const malformedConnectorConfig: ConnectorConfigLoadResult = {
-  ok: false,
-  error: {
-    code: 'parse_error',
-    path: '/private/connectors.json',
-    message: 'redacted from reconcile workorders',
-  },
-  config: {},
-  enabledNames: [],
 };
 
 function createConfig(): MAMAConfig {
@@ -104,37 +75,6 @@ function createConnectorEventTable(db: Database): void {
     operator_observation_seq INTEGER,
     metadata_json TEXT
   )`);
-}
-
-function insertKagemushaEvent(
-  db: Database,
-  input: {
-    eventId: string;
-    sourceId?: string;
-    channel?: string;
-    status?: string;
-    observationSeq?: number;
-    metadata?: Readonly<Record<string, unknown>>;
-  }
-): void {
-  db.prepare(`INSERT INTO connector_event_index VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    input.eventId,
-    'kagemusha',
-    'kanban_card',
-    input.sourceId ?? 'task:42',
-    input.channel ?? 'private-room',
-    Buffer.from('a'.repeat(64), 'hex'),
-    1_775_260_800_000,
-    1,
-    input.observationSeq ?? 1,
-    JSON.stringify(
-      input.metadata ?? {
-        taskId: 42,
-        status: input.status ?? 'done',
-        rawConnector: 'kagemusha',
-      }
-    )
-  );
 }
 
 async function registerReconcileRuntime(input: {
@@ -192,42 +132,6 @@ async function registerReconcileRuntime(input: {
   });
 
   return { apiServer, boardRefreshGate, eventBus, ledger, routeHandle };
-}
-
-async function emitReconcileDelta(
-  eventBus: AgentEventBus,
-  eventId: string,
-  channelKey = 'kagemusha:private-room'
-): Promise<void> {
-  eventBus.emit({
-    type: 'operator:channel-delta',
-    channelKey,
-    lines: [`[id:${eventId}] host delta`],
-    eventIds: [eventId],
-  });
-  await vi.advanceTimersByTimeAsync(1);
-}
-
-function lifecycleCandidates(workorder: ReturnType<TaskLedger['claimNextWorkOrder']>) {
-  if (!workorder) throw new Error('reconcile workorder expected');
-  return workorder.payload.candidates as unknown as ExternalLifecycleCandidateSet;
-}
-
-function bindExistingTask(ledger: TaskLedger): { taskId: number } {
-  const task = ledger.create({ title: 'native task' });
-  const candidate = bindingCandidateFor({ task });
-  const attempt = enqueueAndClaimBindingAttempt(ledger, candidate);
-  ledger.applyExternalBindingDecision(
-    attempt.id,
-    {
-      candidate_id: candidate.candidateId,
-      decision: 'bind',
-      reason: 'exact task identity confirmed',
-      expected_revision: candidate.taskRevision,
-    },
-    { runId: 'test_bind', workOrderAttemptId: attempt.id, causeEventIds: [candidate.eventId] }
-  );
-  return { taskId: task.id };
 }
 
 async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed' | 'none') {
@@ -364,68 +268,6 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     if (previousDebounce === undefined) delete process.env.MAMA_RECONCILE_DEBOUNCE_MS;
     else process.env.MAMA_RECONCILE_DEBOUNCE_MS = previousDebounce;
     rmSync(testHome, { recursive: true, force: true });
-  });
-
-  it('does not turn disabled private historical evidence or delta prose into a board workorder', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_private', sourceId: 'secret-source-id' });
-      const { eventBus, ledger } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: disabledConnectorConfig,
-      });
-
-      eventBus.emit({
-        type: 'operator:channel-delta',
-        channelKey: 'kagemusha:private-room',
-        lines: ['secret title and private lifecycle prose'],
-        eventIds: ['evt_private'],
-      });
-      await vi.advanceTimersByTimeAsync(1);
-
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  it('enqueues the enabled exact event payload with its host-built binding candidate', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      const ledger = new TaskLedger(db);
-      const task = ledger.create({ title: 'native task', source_event_id: 'evt_enabled' });
-      insertKagemushaEvent(db, { eventId: 'evt_enabled' });
-      const { eventBus } = await registerReconcileRuntime({
-        db,
-        ledger,
-        connectorConfigLoadResult: enabledConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_enabled');
-
-      const workorder = ledger.claimNextWorkOrder();
-      expect(workorder?.payload).toMatchObject({
-        mode: 'reconcile',
-        channelKey: 'kagemusha:private-room',
-        eventIds: ['evt_enabled'],
-        repairGeneration: expect.any(Number),
-      });
-      expect(lifecycleCandidates(workorder)).toMatchObject({
-        bindingCandidates: [
-          {
-            eventId: 'evt_enabled',
-            taskId: task.id,
-            observedStatus: 'done',
-          },
-        ],
-        lifecycleCandidates: [],
-        diagnostics: [],
-      });
-    } finally {
-      db.close();
-    }
   });
 
   it('TG-06 enqueues one boot repair with an exact scope and dedupes it while open', async () => {
@@ -665,35 +507,6 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
-  it('TG-01/TG-06 successful full then a new delta enqueues full repair on the next timer', async () => {
-    const runtime = await registerOwnerFullRuntime('report');
-    try {
-      await vi.advanceTimersByTimeAsync(10_000);
-      await runtime.consumer.tick();
-      expect(runtime.boardRefreshGate.needsFullRepair()).toBe(false);
-
-      runtime.eventBus.emit({
-        type: 'operator:channel-delta',
-        channelKey: 'telegram:owner',
-        lines: ['newer delta after verified full'],
-        eventIds: ['evt-newer-after-full'],
-      });
-      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
-
-      expect(runtime.ledger.claimNextWorkOrder()).toMatchObject({
-        idempotencyKey: expect.stringContaining('board:reconcile:telegram:owner:'),
-        payload: { mode: 'reconcile', repairGeneration: 501 },
-      });
-      expect(runtime.ledger.claimNextWorkOrder()).toMatchObject({
-        idempotencyKey: 'board:full:repair',
-        payload: { mode: 'full', repairGeneration: 501 },
-      });
-    } finally {
-      runtime.routeHandle.stop();
-      runtime.db.close();
-    }
-  });
-
   it('TG-06 forced agent refresh enqueue failure leaves dirt for scheduled repair', async () => {
     const runtime = await registerOwnerFullRuntime('report');
     try {
@@ -741,29 +554,20 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
-  it('TG-06 stop owns boot/interval/reconcile timers and removes the delta listener across restart', async () => {
+  it('TG-06 stop owns boot, interval, and manual reconcile timers across restart', async () => {
     const db = new Database(':memory:');
     try {
       createConnectorEventTable(db);
-      const eventBus = new AgentEventBus();
       const oldGate = new BoardRefreshGate({ initialGeneration: 700 });
       const first = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
         boardRefreshGate: oldGate,
-        eventBus,
       });
       first.routeHandle.stop();
 
-      eventBus.emit({
-        type: 'operator:channel-delta',
-        channelKey: 'telegram:owner',
-        lines: ['after stop'],
-        eventIds: ['evt-after-stop'],
-      });
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 10_000);
       expect(first.ledger.claimNextWorkOrder()).toBeNull();
-      expect(oldGate.dirtyGeneration('telegram:owner')).toBeNull();
 
       const newGate = new BoardRefreshGate({ initialGeneration: 800 });
       const restarted = await registerReconcileRuntime({
@@ -771,251 +575,13 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         connectorConfigLoadResult: enabledConnectorConfig,
         ledger: first.ledger,
         boardRefreshGate: newGate,
-        eventBus,
       });
-      eventBus.emit({
-        type: 'operator:channel-delta',
-        channelKey: 'telegram:owner',
-        lines: ['after restart'],
-        eventIds: ['evt-after-restart'],
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(restarted.ledger.claimNextWorkOrder()?.payload).toMatchObject({
+        mode: 'full',
+        repairGeneration: 800,
       });
-
-      expect(oldGate.dirtyGeneration('telegram:owner')).toBeNull();
-      expect(newGate.dirtyGeneration('telegram:owner')).toBe(801);
       restarted.routeHandle.stop();
-    } finally {
-      db.close();
-    }
-  });
-
-  it('consumes an enabled private partition when the immutable raw scope does not authorize it', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_out_of_scope' });
-      const { eventBus, ledger } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: enabledConnectorConfig,
-        rawConnectorScope: [],
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_out_of_scope');
-
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  it('fails closed for a malformed boot connector snapshot without a private prompt', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_malformed_boot' });
-      const { eventBus, ledger } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: malformedConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_malformed_boot');
-
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  it('emits a later lifecycle candidate from an existing binding without task hints', async () => {
-    const db = new Database(':memory:');
-    try {
-      const ledger = new TaskLedger(db);
-      const { taskId } = bindExistingTask(ledger);
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, {
-        eventId: 'evt_later',
-        channel: 'room-later',
-        observationSeq: 10,
-      });
-      const { eventBus } = await registerReconcileRuntime({
-        db,
-        ledger,
-        connectorConfigLoadResult: enabledConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_later', 'kagemusha:room-later');
-
-      const candidates = lifecycleCandidates(ledger.claimNextWorkOrder());
-      expect(candidates.bindingCandidates).toEqual([]);
-      expect(candidates.lifecycleCandidates).toMatchObject([
-        { eventId: 'evt_later', taskId, proposedStatus: 'done' },
-      ]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it('TG-06 accepts production Kagemusha metadata and applies the receipted native transition', async () => {
-    const db = new Database(':memory:');
-    try {
-      const ledger = new TaskLedger(db);
-      const { taskId } = bindExistingTask(ledger);
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, {
-        eventId: 'evt_production_metadata',
-        channel: 'room-production',
-        observationSeq: 10,
-        metadata: {
-          taskId: 42,
-          status: 'done',
-          priority: 'high',
-          deadline: 1_775_260_800_000,
-          sourceRoom: 'room-production',
-          rawConnector: 'kagemusha',
-          autoCreated: true,
-        },
-      });
-      const { eventBus } = await registerReconcileRuntime({
-        db,
-        ledger,
-        connectorConfigLoadResult: enabledConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_production_metadata', 'kagemusha:room-production');
-
-      const workorder = ledger.claimNextWorkOrder();
-      const candidate = lifecycleCandidates(workorder).lifecycleCandidates[0];
-      if (!workorder || !candidate) throw new Error('production lifecycle candidate expected');
-      expect(candidate).toMatchObject({
-        eventId: 'evt_production_metadata',
-        taskId,
-        proposedStatus: 'done',
-      });
-
-      const receipt = ledger.applyExternalLifecycleDecision(
-        workorder.id,
-        {
-          candidate_id: candidate.candidateId,
-          decision: 'apply',
-          reason: 'TG-06 production Kagemusha lifecycle confirmed',
-          expected_revision: candidate.taskRevision,
-        },
-        {
-          runId: 'test_production_metadata',
-          workOrderAttemptId: workorder.id,
-          causeEventIds: ['evt_production_metadata'],
-        }
-      );
-
-      expect(receipt).toMatchObject({
-        candidateId: candidate.candidateId,
-        outcome: 'applied',
-        taskId,
-      });
-      expect(ledger.getExternalCandidateReceipt(candidate.candidateId)).toEqual(receipt);
-      expect(ledger.getById(taskId)).toMatchObject({
-        status: 'done',
-        revision: candidate.taskRevision + 1,
-        latestEvent: candidate.evidenceSummary,
-      });
-    } finally {
-      db.close();
-    }
-  });
-
-  it('suppresses a candidate after its exact lifecycle receipt exists', async () => {
-    const db = new Database(':memory:');
-    try {
-      const ledger = new TaskLedger(db);
-      bindExistingTask(ledger);
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_receipted', observationSeq: 10 });
-      const { eventBus } = await registerReconcileRuntime({
-        db,
-        ledger,
-        connectorConfigLoadResult: enabledConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_receipted');
-      const first = ledger.claimNextWorkOrder();
-      const firstCandidate = lifecycleCandidates(first).lifecycleCandidates[0];
-      if (!first || !firstCandidate) throw new Error('lifecycle candidate expected');
-      ledger.applyExternalLifecycleDecision(
-        first.id,
-        {
-          candidate_id: firstCandidate.candidateId,
-          decision: 'retain',
-          reason: 'reviewed exact lifecycle evidence',
-          expected_revision: firstCandidate.taskRevision,
-        },
-        { runId: 'test_receipt', workOrderAttemptId: first.id, causeEventIds: ['evt_receipted'] }
-      );
-
-      await emitReconcileDelta(eventBus, 'evt_receipted');
-
-      const second = lifecycleCandidates(ledger.claimNextWorkOrder());
-      expect(second.lifecycleCandidates).toEqual([]);
-      expect(second.bindingCandidates).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it('enqueues a bounded diagnostic for an enabled malformed lifecycle event', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_malformed', status: 'not-a-lifecycle' });
-      const { eventBus, ledger } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: enabledConnectorConfig,
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_malformed');
-
-      expect(lifecycleCandidates(ledger.claimNextWorkOrder())).toEqual({
-        bindingCandidates: [],
-        lifecycleCandidates: [],
-        diagnostics: [{ eventId: 'evt_malformed', code: 'unknown_status' }],
-      });
-    } finally {
-      db.close();
-    }
-  });
-
-  it('restores an unconsumed batch after an adapter read failure and retries it', async () => {
-    const db = new Database(':memory:');
-    try {
-      createConnectorEventTable(db);
-      insertKagemushaEvent(db, { eventId: 'evt_retry' });
-      let failReads = true;
-      const { eventBus, ledger } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: enabledConnectorConfig,
-        getAdapter: () => {
-          if (failReads) {
-            return {
-              prepare: () => {
-                throw new Error('connector event index unavailable');
-              },
-            };
-          }
-          return db;
-        },
-      });
-
-      await emitReconcileDelta(eventBus, 'evt_retry');
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-      failReads = false;
-      await vi.advanceTimersByTimeAsync(60_000);
-
-      // The dashboard's normal startup workorder fires before the one-minute
-      // scheduler retry; it is unrelated and does not consume the retry batch.
-      expect(ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
-      expect(lifecycleCandidates(ledger.claimNextWorkOrder())).toMatchObject({
-        bindingCandidates: [],
-        lifecycleCandidates: [],
-        diagnostics: [{ eventId: 'evt_retry', code: 'ambiguous_task_pair' }],
-      });
     } finally {
       db.close();
     }

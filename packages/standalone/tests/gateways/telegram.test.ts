@@ -348,6 +348,28 @@ describe('TelegramGateway - message splitting', () => {
     expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['report', 'report']);
     await gateway.stop();
   });
+
+  it('treats a delivered owner-event occurrence as complete even if retry wording changes', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const ledgerPath = join(
+      await makeMediaRoot(join(tmpdir(), 'mama-telegram-owner-event-ledger-')),
+      'ledger.json'
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+
+    await gateway.sendMessage('7777', 'first translation', 'owner-event:41:message:0');
+    await expect(
+      gateway.sendMessage('7777', 'wording changed on retry', 'owner-event:41:message:0')
+    ).resolves.toBeUndefined();
+
+    expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['first translation']);
+    await gateway.stop();
+  });
 });
 
 describe('TelegramGateway - bot info stored after start()', () => {

@@ -8,7 +8,7 @@
  *   1. Sets up closure-scoped reasoning state (reasoningLog, turnCount, autoRecallUsed)
  *   2. Checks persona completion and logs onboarding status
  *   3. Determines OS Agent mode and loads capabilities
- *   4. Resolves Code-Act config from conductor agent
+ *   4. Resolves Code-Act config from os-agent, with a legacy persona fallback
  *   5. Creates the main AgentLoop with all options
  *   6. Creates buildReasoningHeader() helper (closure-scoped)
  *   7. Creates agentLoopClient wrapper with run() and runWithContent() methods
@@ -91,7 +91,7 @@ declare const __dirname: string;
 export interface AgentLoopInitResult {
   agentLoop: AgentLoop;
   agentLoopClient: AgentLoopClient;
-  /** Whether Code-Act is enabled (derived from conductor agent config) */
+  /** Whether Code-Act is enabled for the main agent. */
   useCodeAct: boolean;
 }
 
@@ -152,7 +152,7 @@ export function initMainAgentLoop(
   // Viewer frontdoor prefers an explicit os-agent value; conductor remains the
   // field-level fallback for normalized legacy installs.
   const osAgentUseCodeAct = config.multi_agent?.agents?.['os-agent']?.useCodeAct;
-  const conductorUseCodeAct =
+  const legacyConductorUseCodeAct =
     config.multi_agent?.agents?.conductor?.useCodeAct ??
     config.multi_agent?.agents?.Conductor?.useCodeAct;
   // Backend-aware default (live incident 2026-07-27): the main claude chat is
@@ -165,7 +165,7 @@ export function initMainAgentLoop(
   const useCodeAct =
     options?.osAgentMode === true
       ? false
-      : (osAgentUseCodeAct ?? conductorUseCodeAct ?? runtimeBackend !== 'claude');
+      : (osAgentUseCodeAct ?? legacyConductorUseCodeAct ?? runtimeBackend !== 'claude');
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.

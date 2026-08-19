@@ -13,6 +13,7 @@ function sig(over: Partial<TriggerSignal> = {}): TriggerSignal {
   return {
     kind: 'k',
     memoryQuery: over.memoryQuery ?? 'weekly report cadence',
+    procedure: over.procedure ?? [],
     requiredEvidence: over.requiredEvidence ?? ['current_message'],
     confidence: 0.7,
     detector: 'agent-authored:t1',
@@ -24,7 +25,9 @@ function sig(over: Partial<TriggerSignal> = {}): TriggerSignal {
   };
 }
 
-function fakeMem(recalls: { topic: string; content: string; similarity?: number }[]): OperatorMemoryPort {
+function fakeMem(
+  recalls: { topic: string; content: string; similarity?: number }[]
+): OperatorMemoryPort {
   return {
     async save() {
       return;
@@ -37,7 +40,9 @@ function fakeMem(recalls: { topic: string; content: string; similarity?: number 
 
 describe('fireTrigger', () => {
   it('recalls the triggered memoryQuery and surfaces it', async () => {
-    const mem = fakeMem([{ topic: 'report-cadence', content: 'reports go out Fridays', similarity: 0.8 }]);
+    const mem = fakeMem([
+      { topic: 'report-cadence', content: 'reports go out Fridays', similarity: 0.8 },
+    ]);
     const out = await fireTrigger(sig(), mem);
     expect(out.recalled).toEqual([{ topic: 'report-cadence', content: 'reports go out Fridays' }]);
     expect(out.evidence.current_message).toBe('the report is late');
@@ -49,9 +54,13 @@ describe('fireTrigger', () => {
   });
 
   it('resolves injected evidence providers for requiredEvidence keys', async () => {
-    const out = await fireTrigger(sig({ requiredEvidence: ['current_message', 'channel_history'] }), fakeMem([]), {
-      channel_history: async () => ['msg1', 'msg2'],
-    });
+    const out = await fireTrigger(
+      sig({ requiredEvidence: ['current_message', 'channel_history'] }),
+      fakeMem([]),
+      {
+        channel_history: async () => ['msg1', 'msg2'],
+      }
+    );
     expect(out.evidence.current_message).toBe('the report is late');
     expect(out.evidence.channel_history).toEqual(['msg1', 'msg2']);
   });

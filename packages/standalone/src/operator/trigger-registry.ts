@@ -272,13 +272,13 @@ export class TriggerRegistry {
     if (result.changes === 0) throw new Error(`recordFire: no trigger with id ${id}`);
   }
 
-  /** Record an intervention outcome - the G2 evolution feed (Task 4 reads stats). */
+  /** Record a terminal result for a previously recorded fire. */
   recordOutcome(id: string, outcome: 'succeeded' | 'failed'): void {
     const column = outcome === 'succeeded' ? 'succeeded' : 'failed';
     const result = this.db
       .prepare(
         `UPDATE operator_triggers
-         SET fired = fired + 1, ${column} = ${column} + 1, updated_at = ?
+         SET ${column} = ${column} + 1, updated_at = ?
          WHERE id = ?`
       )
       .run(Date.now(), id);

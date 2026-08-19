@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.37.0] - 2026-08-19
+
+### Changed
+
+- **MAMA now owns connector events directly.** The default-off stateful Conductor, its shadow
+  inbox, backend restriction, and Board-only tool grant were removed. Connector batches and
+  immutable matched trigger procedures enter a new durable owner-event journal before source
+  cursor commit, then run through the same owner AgentLoop and current owner operating brief on
+  per-channel sessions for Claude, Codex, and Cline.
+- **Event completion requires durable evidence.** A connector batch is acknowledged only after a
+  completed effect tool, accepted workorder, or exact `contract_no_update` receipt. Prose-only
+  success and failed tools retry. The parallel connector-delta Board consumer was removed;
+  scheduled/manual full repair and explicit manual reconcile remain.
+- **Automatic owner work stays host-bound and replay-safe.** Owner-event execution requires an
+  issued envelope with the configured owner Telegram destination. Non-idempotent mutations are
+  delegated through permanent event-derived workorder keys. Each batch receives exactly one
+  host-issued key per external effect kind plus a durable pre-transmission ledger; model-authored
+  keys cannot create alternate retry identities. Exhausted errors, leases, and stale pending
+  batches page the owner. Before rerunning a claimed batch, MAMA recovers confirmed effects,
+  accepted permanent workorders, and exact no-update receipts so a crash between effect and inbox
+  ACK cannot turn completed work into a poison retry. Shutdown drains the event turn before closing
+  the operator database.
+
 ## mama-os [0.36.1] - 2026-08-19
 
 ### Fixed
@@ -330,7 +353,8 @@ renumbered past the retired-chain ledger ceiling; 2.1.0's 043 never applied live
   quiet hours (23-08), suppresses duplicates across restarts, and reports
   recovery once. Boot counts as a beat, so a restart never pages for the
   outage it just recovered from.
-- **Report parity rubric checked in** (`docs/development/report-parity-rubric.md`):
+- **Report parity rubric checked in** (historical rubric, retired when the default-off Conductor
+  was removed):
   the six-item board/delta/cause/schedule/delivery/honesty comparison; 6/6
   three days running hands report authority to the conductor leg.
 
@@ -1076,7 +1100,7 @@ preceded this release: every critical finding was in code added on this branch.
   MAJOR-alert dedup preserved, MINOR never alerted, no auto-fix, no shell.
   MAJOR alerts flow through a direct dispatch path that cannot fabricate
   incident/denylist/RDAP artifacts, awaits delivery, and retries on the next
-  run after total delivery failure. `POST /api/conductor/audit` returns the
+  run after total delivery failure. The historical manual audit route returned the
   full report (runs in ~100ms vs the prior 150-210s LLM burn per hour).
 - **Security telemetry test pollution** — `MAMA_SECURITY_LOG_DIR` redirects all
   security telemetry (events, incidents, denylist artifacts); the test suite

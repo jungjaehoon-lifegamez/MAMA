@@ -8,6 +8,8 @@ import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
+import Database from '../../src/sqlite.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { getMemberCandidateStore } from '../../src/gateways/member-candidate-store.js';
@@ -1227,6 +1229,383 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('Telegram output parity', () => {
+      it('dedupes owner-event Telegram actions by stable semantic key across retry reordering', async () => {
+        const keys: Array<string | undefined> = [];
+        const api = createMockApi();
+        api.beginModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0));
+        api.commitModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0, 'completed'));
+        api.failModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0, 'failed'));
+        const executor = new GatewayToolExecutor({ mamaApi: api });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        executor.setTelegramGateway({
+          sendMessage: vi.fn(async (_chatId, _message, idempotencyKey) => {
+            keys.push(idempotencyKey);
+          }),
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+        const firstRun = {
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: 'owner-event:41',
+          modelRunId: 'mr-owner-event-first',
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId: 41,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        };
+        const retryRun = { ...firstRun, modelRunId: 'mr-owner-event-retry' };
+
+        await executor.execute(
+          'telegram_send',
+          { chat_id: '7777', message: 'first translation', delivery_key: 'telegram-delivery' },
+          firstRun
+        );
+        await executor.execute(
+          'telegram_send',
+          {
+            chat_id: '7777',
+            message: 'duplicate notice in the same batch',
+            delivery_key: 'telegram-delivery',
+          },
+          firstRun
+        );
+        await executor.execute(
+          'telegram_send',
+          {
+            chat_id: '7777',
+            message: 'rephrased translation on retry',
+            delivery_key: 'telegram-delivery',
+          },
+          retryRun
+        );
+        expect(keys).toEqual(['owner-event:41:telegram:telegram-delivery']);
+      });
+
+      it('rejects a syntactically valid owner-event key that the host did not issue', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const sendMessage = vi.fn();
+        executor.setTelegramGateway({
+          sendMessage,
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+
+        const result = await executor.execute(
+          'telegram_send',
+          {
+            chat_id: '7777',
+            message: 'changed duplicate key',
+            delivery_key: 'translated-feedback',
+          },
+          {
+            agentId: 'owner_console',
+            source: 'owner-event',
+            channelId: 'chatwork:C1',
+            sourceMessageRef: 'owner-event:42',
+            modelRunId: 'mr-owner-event-unissued-key',
+            executionSurface: 'direct',
+            ownerEventEffects: {
+              batchId: 42,
+              effectKeys: {
+                telegram_send: 'telegram-delivery',
+                drive_upload: 'drive-upload',
+              },
+            },
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringContaining('host-issued'),
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      it('rejects owner-event Telegram sends without a stable semantic delivery key', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const sendMessage = vi.fn();
+        executor.setTelegramGateway({
+          sendMessage,
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+
+        const result = await executor.execute(
+          'telegram_send',
+          { chat_id: '7777', message: 'send without a key' },
+          {
+            agentId: 'owner_console',
+            source: 'owner-event',
+            channelId: 'chatwork:C1',
+            sourceMessageRef: 'owner-event:42',
+            modelRunId: 'mr-owner-event-missing-key',
+            executionSurface: 'direct',
+            ownerEventEffects: {
+              batchId: 42,
+              effectKeys: {
+                telegram_send: 'telegram-delivery',
+                drive_upload: 'drive-upload',
+              },
+            },
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringContaining('host-issued telegram_send key'),
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      it('does not change Telegram transport variant after an ambiguous owner-event send', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const sendMessage = vi.fn().mockRejectedValue(new Error('unknown transport outcome'));
+        const sendFile = vi.fn();
+        executor.setTelegramGateway({
+          sendMessage,
+          sendFile,
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+        const run = {
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: 'owner-event:44',
+          modelRunId: 'mr-owner-event-telegram-unknown',
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId: 44,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        };
+
+        await expect(
+          executor.execute(
+            'telegram_send',
+            { chat_id: '7777', message: 'first', delivery_key: 'telegram-delivery' },
+            run
+          )
+        ).resolves.toMatchObject({ success: false });
+        const retry = await executor.execute(
+          'telegram_send',
+          {
+            chat_id: '7777',
+            file_path: '/private/workspace/retry.png',
+            delivery_key: 'telegram-delivery',
+          },
+          { ...run, modelRunId: 'mr-owner-event-telegram-variant-retry' }
+        );
+
+        expect(retry).toMatchObject({
+          success: false,
+          error: expect.stringContaining('originally reserved delivery variant'),
+        });
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendFile).not.toHaveBeenCalled();
+      });
+
+      it('reconciles an ambiguous owner-event Drive upload from the host reservation without another create', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const prepareUpload = vi.fn().mockResolvedValue({
+          prepared: {
+            folderId: 'folder-original',
+            localPath: '/private/workspace/first.png',
+            fileName: 'translated.png',
+            occurrenceDigest: 'digest',
+          },
+          existing: null,
+        });
+        const transmitPreparedUpload = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('transport timeout after create'));
+        const recoverUpload = vi.fn().mockResolvedValue({
+          fileId: 'uploaded-1',
+          name: 'translated.png',
+        });
+        (
+          executor as unknown as {
+            driveTools: {
+              prepareUpload: typeof prepareUpload;
+              transmitPreparedUpload: typeof transmitPreparedUpload;
+              recoverUpload: typeof recoverUpload;
+            };
+          }
+        ).driveTools = { prepareUpload, transmitPreparedUpload, recoverUpload };
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['drive_upload'] },
+        });
+        const run = {
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: 'owner-event:43',
+          modelRunId: 'mr-owner-event-drive',
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId: 43,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        };
+
+        await expect(
+          executor.execute(
+            'drive_upload',
+            {
+              localPath: '/private/workspace/first.png',
+              folderId: 'folder-original',
+              fileName: 'translated.png',
+              effect_key: 'drive-upload',
+            },
+            run
+          )
+        ).rejects.toThrow('transport timeout');
+        const retry = await executor.execute(
+          'drive_upload',
+          {
+            localPath: '/private/workspace/random-retry-name.png',
+            folderId: 'folder-changed',
+            fileName: 'renamed-on-retry.png',
+            effect_key: 'drive-upload',
+          },
+          { ...run, modelRunId: 'mr-owner-event-drive-retry' }
+        );
+
+        expect(retry).toMatchObject({ success: true });
+        expect(prepareUpload).toHaveBeenCalledTimes(1);
+        expect(transmitPreparedUpload).toHaveBeenCalledTimes(1);
+        expect(recoverUpload).toHaveBeenCalledWith(
+          'folder-original',
+          'owner-event:43:drive:drive-upload'
+        );
+      });
+
+      it('retries a Drive failure proven to happen before files.create', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const preparation = {
+          prepared: {
+            folderId: 'folder-original',
+            localPath: '/private/workspace/translated.png',
+            fileName: 'translated.png',
+            occurrenceDigest: 'digest',
+          },
+          existing: null,
+        };
+        const prepareUpload = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('temporary list failure'))
+          .mockResolvedValueOnce(preparation);
+        const transmitPreparedUpload = vi.fn().mockResolvedValue({
+          fileId: 'uploaded-1',
+          name: 'translated.png',
+        });
+        (
+          executor as unknown as {
+            driveTools: {
+              prepareUpload: typeof prepareUpload;
+              transmitPreparedUpload: typeof transmitPreparedUpload;
+              recoverUpload: ReturnType<typeof vi.fn>;
+            };
+          }
+        ).driveTools = {
+          prepareUpload,
+          transmitPreparedUpload,
+          recoverUpload: vi.fn(),
+        };
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['drive_upload'] },
+        });
+        const run = {
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: 'owner-event:45',
+          modelRunId: 'mr-owner-event-drive-preflight',
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId: 45,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        };
+        const input = {
+          localPath: '/private/workspace/translated.png',
+          folderId: 'folder-original',
+          fileName: 'translated.png',
+          effect_key: 'drive-upload',
+        };
+
+        await expect(executor.execute('drive_upload', input, run)).rejects.toThrow(
+          'temporary list failure'
+        );
+        await expect(
+          executor.execute('drive_upload', input, {
+            ...run,
+            modelRunId: 'mr-owner-event-drive-preflight-retry',
+          })
+        ).resolves.toMatchObject({ success: true });
+        expect(prepareUpload).toHaveBeenCalledTimes(2);
+        expect(transmitPreparedUpload).toHaveBeenCalledTimes(1);
+      });
+
       it('sends image outputs as photos and falls back to documents when Telegram rejects the photo', async () => {
         const workspace = await mkdtemp(join(tmpdir(), 'mama-telegram-output-'));
         const outputPath = join(workspace, 'translated.png');
