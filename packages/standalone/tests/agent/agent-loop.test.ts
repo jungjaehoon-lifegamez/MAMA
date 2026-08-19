@@ -387,6 +387,18 @@ describe('AgentLoop', () => {
     clineAdapterOptionsMock.mockClear();
   });
 
+  it('TG-06 preserves structured report publisher results in the AgentLoop setter contract', () => {
+    const publisher: Parameters<AgentLoop['setReportPublisher']>[0] = () => ({
+      acceptedSlotIds: ['briefing'],
+      changedSlotIds: [],
+    });
+
+    expect(publisher({ briefing: '<p>unchanged</p>' })).toEqual({
+      acceptedSlotIds: ['briefing'],
+      changedSlotIds: [],
+    });
+  });
+
   describe('Cline main backend', () => {
     it('TG-03/TG-04 selects Cline and projects CodeAct through its Hub tool bridge', async () => {
       const agentLoop = new AgentLoop(

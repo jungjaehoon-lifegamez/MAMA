@@ -173,11 +173,11 @@ Source paths below are relative to `packages/standalone/src`; test paths are rel
   evidence paths, not a claim that those four alone sum to 175. The clean-index version/status
   gate passed 27/27 tests in `tests/package-version.test.ts`, `tests/cli/status-version.test.ts`, and
   `tests/viewer/runtime-status.test.ts`; typecheck and build passed, and the built CLI reported
-  `0.36.0`. The Board regression files above changed again during the publisher follow-up, so no
+  `0.36.1`. The Board regression files above changed again during the publisher follow-up, so no
   earlier Board test count is reused and no combined test total is claimed here.
 - **Complete code gate:** from a clean detached checkout of the staged PR index after the final
   publisher and declaration-parser corrections, `pnpm --dir packages/standalone test` passed 376
-  test files and 5,030 tests; four files and nine tests were skipped (5,039 total). Standalone
+  test files and 5,033 tests; four files and nine tests were skipped (5,042 total). Standalone
   typecheck and build also passed. Release
   rebuild/restart and version cutover, a real owner Telegram turn, and visible Telegram report
   delivery have not yet been verified. This section therefore records code/test evidence only and
@@ -187,7 +187,7 @@ Source paths below are relative to `packages/standalone/src`; test paths are rel
   surfaces show that runtime value without exposing filesystem entrypoints. A mismatch warning
   requires the operator to verify the daemon service entrypoint before restarting; it does not
   claim that a restart selects the globally installed CLI. On this host the measured authorities
-  are currently split: the global CLI is `0.34.1`, the repo package is `0.36.0`, launchd invokes the
+  are currently split: the global CLI is `0.34.1`, the repo package is `0.36.1`, launchd invokes the
   repo `dist/cli/index.js` through `~/.mama/start.sh`, and the running process predates the current
   build. Release installation, service entrypoint, and running process cutover are therefore
   separate operational steps. Evidence: `package-version.ts`, `cli/index.ts`,
@@ -601,9 +601,9 @@ change unless they are release-blocking security or data-loss issues.
       manual, owner, reconcile, completion, and shutdown paths. Completion requires an
       attempt-bound accepted all-four-slot publish or an exact non-force scoped no-update proof.
       No earlier Board aggregate is reused after the later publisher changes.
-- [x] A clean detached checkout of the staged PR index passed 376 files and 5,030 tests, with four
-      files and nine tests skipped (5,039 total); typecheck and build passed.
-- [ ] Rebuild/restart the release, confirm the `0.36.0` runtime cutover, complete a real owner
+- [x] A clean detached checkout of the staged PR index passed 376 files and 5,033 tests, with four
+      files and nine tests skipped (5,042 total); typecheck and build passed.
+- [ ] Rebuild/restart the release, confirm the `0.36.1` runtime cutover, complete a real owner
       Telegram turn, and observe visible Telegram report delivery.
 
 ## Change log
@@ -613,8 +613,8 @@ change unless they are release-blocking security or data-loss issues.
   accepted-slot and one-call grant-snapshot evidence, versioned non-destructive Board brief
   projection, and a generation-aware repair gate with attempt-bound all-four publish or exact
   non-force no-update completion. Shutdown ownership and identical-publish timestamp/SSE dedupe are
-  regression-covered. A clean detached checkout of the staged PR index passed 376 files and 5,030
-  tests, with four files and nine tests skipped (5,039 total); typecheck and build passed. Release
+  regression-covered. A clean detached checkout of the staged PR index passed 376 files and 5,033
+  tests, with four files and nine tests skipped (5,042 total); typecheck and build passed. Release
   cutover, a real owner Telegram turn, and visible Telegram delivery remain pending.
 
 - 2026-08-15: Added TG-05 runtime evidence that same-backend role models reach Codex session

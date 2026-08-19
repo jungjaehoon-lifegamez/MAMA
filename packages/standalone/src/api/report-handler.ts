@@ -1,5 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import type { ServerResponse } from 'node:http';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
+
+const reportLogger = new DebugLogger('Report');
 
 export interface ReportSlot {
   slotId: string;
@@ -109,7 +112,7 @@ export function createReportPublisher(
     }
     if (changed.length > 0) {
       broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
-      console.log(`[Report] published slots: ${changed.join(', ')}`);
+      reportLogger.info(`published slots: ${changed.join(', ')}`);
     }
     return {
       acceptedSlotIds: accepted.sort(),

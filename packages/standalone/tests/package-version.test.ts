@@ -6,8 +6,8 @@ interface PackageVersionModule {
   resolvePackageVersion?: () => string;
 }
 
-describe('executing package version resolver', () => {
-  it('returns the version declared by the executing standalone package', async () => {
+describe('Story TG-06: executing package version resolver', () => {
+  it('AC: returns the version declared by the executing standalone package', async () => {
     const versionModule = (await import('../src/package-version.js').catch(
       () => ({})
     )) as PackageVersionModule;

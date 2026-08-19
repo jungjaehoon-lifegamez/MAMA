@@ -120,6 +120,23 @@ describe('Story S2-T2: publisher contracts', () => {
           repairGeneration: -1,
         })
       ).toThrow(/repairGeneration/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'telegram:owner',
+          deltaLines: ['delta'],
+          noUpdateScope: 'full:42',
+        })
+      ).toThrow(/noUpdateScope is full-only/);
+      expect(() =>
+        validateWorkOrderPayload('board', { mode: 'full', noUpdateScope: 'full:41' })
+      ).toThrow(/repairGeneration is required/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          eventIds: ['valid', 'x'.repeat(1001)],
+        })
+      ).toThrow(/eventIds/);
     });
 
     it('accepts only recursively valid unique lifecycle candidates on reconcile payloads', () => {
