@@ -22,7 +22,9 @@ vi.mock('../../src/memory/provenance-live.js', async () => {
   };
 });
 
-function createExecutor(): GatewayToolExecutor {
+function createExecutor(
+  channelGrantProvider?: () => Record<string, readonly string[]>
+): GatewayToolExecutor {
   return new GatewayToolExecutor({
     mamaApi: {
       recallMemory: vi.fn(),
@@ -32,6 +34,7 @@ function createExecutor(): GatewayToolExecutor {
       commitModelRun: vi.fn().mockResolvedValue({ id: 'run_1' }),
       failModelRun: vi.fn().mockResolvedValue({ id: 'run_1' }),
     } as unknown as MAMAApiInterface,
+    channelGrantProvider,
   });
 }
 
@@ -149,6 +152,54 @@ describe('mama_provenance authority', () => {
     expect(options.connectors).toEqual(['board']);
     // The reader filters project_id on the same window; dropping it made citation wider.
     expect(options.projectIds).toEqual(['p1']);
+  });
+
+  it('TG-03/TG-04 reuses one grant snapshot for provenance scopes and citation channels', async () => {
+    resolveLive.mockClear();
+    resolveLive.mockResolvedValue({
+      memoryId: 'mem_1',
+      status: 'unresolved',
+      modelRunId: null,
+      contextPacketId: null,
+      events: [],
+      unresolved: [],
+      supports: [],
+      reason: 'no_event_refs',
+    });
+    let grantSequence = 0;
+    const channelGrantProvider = vi.fn(() => {
+      grantSequence += 1;
+      return grantSequence === 1 ? { board: ['alpha'] } : { board: ['beta'] };
+    });
+    const executor = createExecutor(channelGrantProvider);
+    const context = {
+      agentContext: agentContext(2),
+      envelope: envelope(2, {
+        raw_connectors: ['board'],
+        memory_scopes: [{ kind: 'global', id: 'system' }],
+      }),
+    };
+
+    const firstResult = await call(executor, context);
+    const secondResult = await call(executor, context);
+
+    expect(firstResult).toMatchObject({ success: true });
+    expect(secondResult).toMatchObject({ success: true });
+    expect(channelGrantProvider).toHaveBeenCalledTimes(2);
+    expect(resolveLive.mock.calls[0]?.[1]).toMatchObject({
+      scopes: [
+        { kind: 'global', id: 'system' },
+        { kind: 'channel', id: 'board:alpha' },
+      ],
+      channels: { board: ['alpha'] },
+    });
+    expect(resolveLive.mock.calls[1]?.[1]).toMatchObject({
+      scopes: [
+        { kind: 'global', id: 'system' },
+        { kind: 'channel', id: 'board:beta' },
+      ],
+      channels: { board: ['beta'] },
+    });
   });
 
   it('requires a memory id rather than resolving an empty handle', async () => {

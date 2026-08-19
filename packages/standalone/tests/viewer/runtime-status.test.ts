@@ -16,6 +16,7 @@ import request from 'supertest';
 import { createApiServer, type RuntimeStatusSnapshot } from '../../src/api/index.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
 import { projectRuntimeConnectors } from '../../src/cli/runtime/api-server-init.js';
+import { renderRuntimeSnapshot } from '../../public/viewer/src/modules/system.js';
 
 const TUNNEL_HEADERS = {
   'cf-connecting-ip': '198.51.100.7',
@@ -24,6 +25,7 @@ const TUNNEL_HEADERS = {
 
 const SNAPSHOT: RuntimeStatusSnapshot = {
   running: true,
+  version: '9.8.7',
   backend: 'codex',
   model: 'gpt-test',
   startedAt: 1000,
@@ -69,6 +71,7 @@ describe('GET /api/runtime/status', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       running: true,
+      version: '9.8.7',
       backend: 'codex',
       model: 'gpt-test',
       startedAt: 1000,
@@ -87,10 +90,14 @@ describe('GET /api/runtime/status', () => {
       ...SNAPSHOT,
       // A supplier field that must never reach a browser.
       botToken: 'supplier-extra-value',
+      entrypoint: '/opt/mama/dist/cli/index.js',
+      packageJsonPath: '/opt/mama/package.json',
     } as unknown as RuntimeStatusSnapshot;
 
     const response = await request(serverWith(noisy).app).get('/api/runtime/status');
     expect(JSON.stringify(response.body)).not.toContain('supplier-extra-value');
+    expect(response.body).not.toHaveProperty('entrypoint');
+    expect(response.body).not.toHaveProperty('packageJsonPath');
   });
 
   it('reports health as null rather than fabricating a score', async () => {
@@ -184,6 +191,13 @@ describe('System views render runtime truth', () => {
   it('renders "unavailable" for a null health score', () => {
     expect(systemSource).toContain('HEALTH_UNAVAILABLE');
     expect(systemSource).toMatch(/health\s*\?/);
+  });
+
+  it('renders the executing package version in Runtime', () => {
+    const html = renderRuntimeSnapshot(SNAPSHOT);
+
+    expect(html).toContain('Version');
+    expect(html).toContain('9.8.7');
   });
 
   it('has loading, error-with-retry, and empty states', () => {

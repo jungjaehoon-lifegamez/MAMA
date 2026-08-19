@@ -148,7 +148,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
         type: 'Record<string, string>',
         required: true,
         description:
-          'Object mapping slot IDs to HTML strings. Keys: briefing, alerts, activity, pipeline. Values: your analysis as styled HTML.',
+          'Object mapping slot IDs to HTML strings. Keys: briefing, action_required, decisions, pipeline. Values: your analysis as styled HTML.',
       },
     ],
     returnType: '{ success: boolean; message: string }',
@@ -857,6 +857,26 @@ export class HostBridge {
             : undefined;
           let terminalAuditRecorded = false;
           try {
+            if (desc.name === 'report_publish') {
+              const slots = input.slots;
+              const slotsAreObject =
+                typeof slots === 'object' && slots !== null && !Array.isArray(slots);
+              const slotsRecord = slotsAreObject ? (slots as Record<string, unknown>) : null;
+              const invalidSlotValue =
+                slotsRecord !== null &&
+                Object.values(slotsRecord).some((value) => typeof value !== 'string');
+              const emptySlotMap = slotsRecord !== null && Object.keys(slotsRecord).length === 0;
+              if (!slotsAreObject || invalidSlotValue || emptySlotMap) {
+                const validationError = new Error(
+                  emptySlotMap
+                    ? 'report_publish() requires at least one HTML slot'
+                    : 'report_publish() slots must be an object of HTML strings'
+                );
+                Object.assign(validationError, { code: 'invalid_tool_input' });
+                throw validationError;
+              }
+            }
+
             // Validation failures are host-tool terminal events too. Keep them
             // inside the audited region so every projected call has both the
             // initial observation and one stable terminal outcome.
@@ -943,7 +963,19 @@ export class HostBridge {
       args[0] !== null &&
       !Array.isArray(args[0])
     ) {
-      return args[0] as Record<string, unknown>;
+      const objectInput = args[0] as Record<string, unknown>;
+      if (
+        desc.name === 'report_publish' &&
+        !(
+          typeof objectInput.slots === 'object' &&
+          objectInput.slots !== null &&
+          !Array.isArray(objectInput.slots)
+        ) &&
+        Object.values(objectInput).every((value) => typeof value === 'string')
+      ) {
+        return { slots: objectInput };
+      }
+      return objectInput;
     }
 
     // Map positional args to param names

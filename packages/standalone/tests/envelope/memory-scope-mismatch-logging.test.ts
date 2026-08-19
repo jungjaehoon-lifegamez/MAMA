@@ -8,6 +8,7 @@ import type {
   AgentContext,
   GatewayToolInput,
   GatewayToolResult,
+  GatewayToolExecutorOptions,
   MAMAApiInterface,
 } from '../../src/agent/types.js';
 import Database from '../../src/sqlite.js';
@@ -123,6 +124,8 @@ function createExecutorHarness(options?: {
   mamaApi?: MAMAApiInterface;
   metricsStore?: MetricsStoreMock;
   envelopeIssuanceMode?: 'off' | 'enabled' | 'required';
+  channelGrantProvider?: () => Record<string, readonly string[]>;
+  contextCompileService?: GatewayToolExecutorOptions['contextCompileService'];
 }): {
   db: Database;
   executor: GatewayToolExecutor;
@@ -137,6 +140,8 @@ function createExecutorHarness(options?: {
     mamaApi,
     metricsStore: metricsStore as unknown as MetricsStore,
     envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'enabled',
+    channelGrantProvider: options?.channelGrantProvider,
+    contextCompileService: options?.contextCompileService,
   });
   executor.setSessionsDb(db);
   return { db, executor, mamaApi, metricsStore };
@@ -383,6 +388,274 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
+  it('TG-03/TG-04 audits omitted context_compile scopes against the trusted service default', async () => {
+    const compileAndPersistContext = vi.fn(async (request) => ({
+      packet: {
+        packet_id: 'ctxp_scope_default',
+        task: request.input.task,
+        scopes: [{ kind: 'global', id: 'system' }],
+        source_refs: [],
+      },
+      record: {},
+      modelRunId: 'mr_scope_default',
+      parentModelRunId: null,
+    }));
+    const channelGrantProvider = vi.fn(() => ({ trello: ['board-alpha'] }));
+    const { db, executor, metricsStore } = createExecutorHarness({
+      contextCompileService: { compileAndPersistContext } as never,
+      channelGrantProvider,
+    });
+    const envelope = makeSignedEnvelope({
+      source: 'telegram',
+      channel_id: 'abc',
+      scope: {
+        project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
+        raw_connectors: ['trello'],
+        memory_scopes: [{ kind: 'global', id: 'system' }],
+        allowed_destinations: [],
+      },
+    });
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile with the trusted service default' } as GatewayToolInput,
+      {
+        agentId: 'workorder-board',
+        source: 'telegram',
+        channelId: 'abc',
+        agentContext: createTelegramContext(),
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true, packet_id: 'ctxp_scope_default' });
+    expect(compileAndPersistContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.not.objectContaining({ scopes: expect.anything() }),
+        channelGrantSnapshot: { trello: ['board-alpha'] },
+      })
+    );
+    expect(channelGrantProvider).toHaveBeenCalledOnce();
+    const [row] = readGatewayToolRows(db);
+    expect(row).toMatchObject({
+      input_summary: 'context_compile',
+      execution_status: 'completed',
+      scope_mismatch: 0,
+    });
+    expect(parseScopes(row.requested_scopes)).toEqual([]);
+    expect(metricsStore.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'envelope_scope_mismatch' })
+    );
+    db.close();
+  });
+
+  it.each(['mama_search', 'mama_recall'] as const)(
+    'TG-03/TG-04 snapshots a changing grant once per %s call and refreshes the next call',
+    async (toolName) => {
+      let grantSequence = 0;
+      const channelGrantProvider = vi.fn(() => {
+        grantSequence += 1;
+        return grantSequence === 1 ? { trello: ['board-alpha'] } : { trello: ['board-beta'] };
+      });
+      const { db, executor, mamaApi, metricsStore } = createExecutorHarness({
+        channelGrantProvider,
+      });
+      const envelope = makeSignedEnvelope({
+        source: 'telegram',
+        channel_id: 'abc',
+        scope: {
+          project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
+          raw_connectors: ['trello'],
+          memory_scopes: [{ kind: 'global', id: 'system' }],
+          allowed_destinations: [],
+        },
+      });
+      const executionContext = {
+        agentId: 'workorder-board',
+        source: 'telegram',
+        channelId: 'abc',
+        agentContext: createTelegramContext(),
+        envelope,
+        executionSurface: 'model_tool' as const,
+      };
+
+      const firstResult = await executor.execute(
+        toolName,
+        { query: 'first grant snapshot' },
+        executionContext
+      );
+      const secondResult = await executor.execute(
+        toolName,
+        { query: 'second grant snapshot' },
+        executionContext
+      );
+
+      expect(firstResult).toMatchObject({ success: true });
+      expect(secondResult).toMatchObject({ success: true });
+      expect(channelGrantProvider).toHaveBeenCalledTimes(2);
+      const apiCalls =
+        toolName === 'mama_search'
+          ? vi.mocked(mamaApi.suggest).mock.calls
+          : vi.mocked(mamaApi.recallMemory!).mock.calls;
+      expect(apiCalls[0]?.[1]).toMatchObject({
+        scopes: [
+          { kind: 'global', id: 'system' },
+          { kind: 'channel', id: 'trello:board-alpha' },
+        ],
+      });
+      expect(apiCalls[1]?.[1]).toMatchObject({
+        scopes: [
+          { kind: 'global', id: 'system' },
+          { kind: 'channel', id: 'trello:board-beta' },
+        ],
+      });
+      const rows = readGatewayToolRows(db);
+      expect(rows.map((row) => row.scope_mismatch)).toEqual([0, 0]);
+      expect(parseScopes(rows[0].requested_scopes)).toEqual([
+        auditScope('global', 'system'),
+        auditScope('channel', 'trello:board-alpha'),
+      ]);
+      expect(parseScopes(rows[1].requested_scopes)).toEqual([
+        auditScope('global', 'system'),
+        auditScope('channel', 'trello:board-beta'),
+      ]);
+      expect(rows[0].requested_scopes).not.toContain('trello:board-alpha');
+      expect(rows[1].requested_scopes).not.toContain('trello:board-beta');
+      expect(metricsStore.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'envelope_scope_mismatch' })
+      );
+      db.close();
+    }
+  );
+
+  it.each(['mama_search', 'mama_recall'] as const)(
+    'TG-03/TG-04 audits defaulted %s identity and live mirror scopes as allowed',
+    async (toolName) => {
+      const { db, executor, mamaApi, metricsStore } = createExecutorHarness({
+        channelGrantProvider: () => ({ trello: ['board-alpha', 'board-beta'] }),
+      });
+      const envelope = makeSignedEnvelope({
+        source: 'telegram',
+        channel_id: 'abc',
+        scope: {
+          project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
+          raw_connectors: ['trello'],
+          memory_scopes: [{ kind: 'global', id: 'system' }],
+          allowed_destinations: [],
+        },
+      });
+      const query = `defaulted ${toolName}`;
+
+      const result = await executor.execute(
+        toolName,
+        { query },
+        {
+          agentId: 'workorder-board',
+          source: 'telegram',
+          channelId: 'abc',
+          agentContext: createTelegramContext(),
+          envelope,
+          executionSurface: 'model_tool',
+        }
+      );
+
+      expect(result).toMatchObject({ success: true });
+      const expectedScopes = [
+        { kind: 'global', id: 'system' },
+        { kind: 'channel', id: 'trello:board-alpha' },
+        { kind: 'channel', id: 'trello:board-beta' },
+      ];
+      if (toolName === 'mama_search') {
+        expect(mamaApi.suggest).toHaveBeenCalledWith(
+          query,
+          expect.objectContaining({ scopes: expectedScopes })
+        );
+      } else {
+        expect(mamaApi.recallMemory).toHaveBeenCalledWith(
+          query,
+          expect.objectContaining({ scopes: expectedScopes })
+        );
+      }
+      const [row] = readGatewayToolRows(db);
+      expect(row).toMatchObject({
+        input_summary: toolName,
+        execution_status: 'completed',
+        scope_mismatch: 0,
+      });
+      expect(parseScopes(row.requested_scopes)).toEqual([
+        auditScope('global', 'system'),
+        auditScope('channel', 'trello:board-alpha'),
+        auditScope('channel', 'trello:board-beta'),
+      ]);
+      expect(row.requested_scopes).not.toContain('trello:board-alpha');
+      expect(row.requested_scopes).not.toContain('trello:board-beta');
+      expect(metricsStore.record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'envelope_scope_mismatch' })
+      );
+      db.close();
+    }
+  );
+
+  it.each(['mama_search', 'mama_recall'] as const)(
+    'TG-04 denies and audits caller-supplied out-of-allowance %s scopes with digested ids',
+    async (toolName) => {
+      const { db, executor, mamaApi, metricsStore } = createExecutorHarness({
+        channelGrantProvider: () => ({ trello: ['board-alpha'] }),
+      });
+      const envelope = makeSignedEnvelope({
+        source: 'telegram',
+        channel_id: 'abc',
+        scope: {
+          project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
+          raw_connectors: ['trello'],
+          memory_scopes: [{ kind: 'global', id: 'system' }],
+          allowed_destinations: [],
+        },
+      });
+
+      const result = await executor.execute(
+        toolName,
+        {
+          query: `denied ${toolName}`,
+          scopes: [{ kind: 'channel', id: 'trello:board-denied' }],
+        },
+        {
+          agentId: 'workorder-board',
+          source: 'telegram',
+          channelId: 'abc',
+          agentContext: createTelegramContext(),
+          envelope,
+          executionSurface: 'model_tool',
+        }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        code: 'memory_scope_out_of_scope',
+      });
+      expect(mamaApi.suggest).not.toHaveBeenCalled();
+      expect(mamaApi.recallMemory).not.toHaveBeenCalled();
+      const [row] = readGatewayToolRows(db);
+      expect(row).toMatchObject({
+        input_summary: toolName,
+        execution_status: 'failed',
+        scope_mismatch: 1,
+      });
+      expect(parseScopes(row.requested_scopes)).toEqual([
+        auditScope('channel', 'trello:board-denied'),
+      ]);
+      expect(row.requested_scopes).not.toContain('trello:board-denied');
+      expect(metricsStore.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'envelope_scope_mismatch',
+          labels: expect.objectContaining({ tool: toolName }),
+        })
+      );
+      db.close();
+    }
+  );
+
   it('covers each memory-mutating tool and uses effective scopes for derived ingest paths', async () => {
     const cases: Array<{
       toolName: 'mama_save' | 'mama_update';
@@ -489,7 +762,9 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
 
     expect(result).toEqual({
       success: true,
-      message: 'Dashboard updated: daily (1 slots)',
+      acceptedSlotIds: ['daily'],
+      changedSlotIds: ['daily'],
+      message: 'Dashboard report accepted: daily (1 accepted, 1 changed)',
     });
     const rows = readGatewayToolRows(db);
     expect(rows.map((row) => row.input_summary)).toEqual(['report_publish']);

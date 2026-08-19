@@ -8,6 +8,7 @@ import {
   assertStage2FlagCompatible,
   validateWorkOrderPayload,
   boardFullKey,
+  boardRepairKey,
   boardManualKey,
   boardReconcileKey,
   wikiBatchKey,
@@ -43,6 +44,11 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(boardFullKey(t)).not.toBe(boardFullKey(t + 31 * 60_000));
       expect(boardManualKey(t)).not.toBe(boardFullKey(t));
       expect(boardManualKey(t)).not.toBe(boardManualKey(t + 1));
+    });
+
+    it('TG-06 uses one open-row-stable key for scheduled repair retries', () => {
+      expect(boardRepairKey()).toBe('board:full:repair');
+      expect(boardRepairKey()).toBe(boardRepairKey());
     });
 
     it('reconcile keys are per-fire occurrences; wiki/promotion keys well-formed', () => {
@@ -81,6 +87,39 @@ describe('Story S2-T2: publisher contracts', () => {
         })
       ).not.toThrow();
       expect(() => validateWorkOrderPayload('board', { mode: 'full', force: true })).not.toThrow();
+    });
+
+    it('TG-06 validates generation-bound full and reconcile repair payloads', () => {
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          repairGeneration: 41,
+          noUpdateScope: 'full:41',
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          repairGeneration: 41,
+          noUpdateScope: 'full:40',
+        })
+      ).toThrow(/noUpdateScope/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'telegram:owner',
+          deltaLines: ['delta'],
+          repairGeneration: 42,
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'telegram:owner',
+          deltaLines: ['delta'],
+          repairGeneration: -1,
+        })
+      ).toThrow(/repairGeneration/);
     });
 
     it('accepts only recursively valid unique lifecycle candidates on reconcile payloads', () => {

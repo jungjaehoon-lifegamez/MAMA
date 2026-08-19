@@ -56,6 +56,15 @@ export function boardFullKey(now: number): string {
   return `board:full:${Math.floor(now / BOARD_SLOT_MS)}`;
 }
 
+/**
+ * Enabled reconcile mode has one repair occurrence open at a time. TaskLedger
+ * dedupes this key only while pending/in-progress; terminal rows release it so
+ * a later dirty generation can reuse the same key.
+ */
+export function boardRepairKey(): string {
+  return 'board:full:repair';
+}
+
 /** Manual/forced orders get their own key (plan M2): a forced refresh must
  *  never dedup against a pending scheduled FULL that lacks force. */
 export function boardManualKey(now: number): string {
@@ -103,6 +112,10 @@ export interface BoardPayload {
   mode: 'full' | 'reconcile';
   /** Owner-forced refresh: brief must publish even on NO_UPDATE. */
   force?: boolean;
+  /** Gate generation captured before enqueue. */
+  repairGeneration?: number;
+  /** Exact full-run contract_no_update scope: full:<repairGeneration>. */
+  noUpdateScope?: string;
   channelKey?: string;
   readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
@@ -136,7 +149,16 @@ export interface TemporalPayload {
 }
 
 const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
-  board: ['mode', 'force', 'channelKey', 'deltaLines', 'eventIds', 'candidates'],
+  board: [
+    'mode',
+    'force',
+    'repairGeneration',
+    'noUpdateScope',
+    'channelKey',
+    'deltaLines',
+    'eventIds',
+    'candidates',
+  ],
   wiki: ['batchId', 'events'],
   'memory-curation': ['scheduledAt'],
   temporal: [
@@ -178,6 +200,14 @@ export function validateWorkOrderPayload(
     if (payload.force !== undefined && typeof payload.force !== 'boolean') {
       throw new Error(`workorder payload (board): force must be a boolean`);
     }
+    if (
+      payload.repairGeneration !== undefined &&
+      (!Number.isSafeInteger(payload.repairGeneration) || (payload.repairGeneration as number) < 0)
+    ) {
+      throw new Error(
+        `workorder payload (board): repairGeneration must be a non-negative safe integer`
+      );
+    }
     if (mode === 'reconcile') {
       if (!isBoundedString(payload.channelKey)) {
         throw new Error(`workorder payload (board reconcile): channelKey required`);
@@ -199,6 +229,9 @@ export function validateWorkOrderPayload(
       }
       if (payload.candidates !== undefined)
         validateLifecycleCandidates(payload.candidates, payload.eventIds);
+      if (payload.noUpdateScope !== undefined) {
+        throw new Error(`workorder payload (board reconcile): noUpdateScope is full-only`);
+      }
     } else if (
       payload.channelKey !== undefined ||
       payload.deltaLines !== undefined ||
@@ -206,6 +239,17 @@ export function validateWorkOrderPayload(
     ) {
       // Reconcile-only fields on a full run signal a caller bug - loud.
       throw new Error(`workorder payload (board full): channelKey/deltaLines are reconcile-only`);
+    } else if (
+      payload.repairGeneration !== undefined &&
+      payload.noUpdateScope !== `full:${String(payload.repairGeneration)}`
+    ) {
+      throw new Error(
+        `workorder payload (board full): noUpdateScope must equal full:<repairGeneration>`
+      );
+    } else if (payload.noUpdateScope !== undefined && payload.repairGeneration === undefined) {
+      throw new Error(
+        `workorder payload (board full): repairGeneration is required with noUpdateScope`
+      );
     }
   } else if (kind === 'wiki') {
     if (typeof payload.batchId !== 'string' || payload.batchId === '') {

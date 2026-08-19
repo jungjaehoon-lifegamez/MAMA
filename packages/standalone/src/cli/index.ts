@@ -16,21 +16,9 @@ import { statusCommand } from './commands/status.js';
 import { runCommand } from './commands/run.js';
 import { createConnectorCommand } from './commands/connector.js';
 import { initConfig } from './config/config-manager.js';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { resolvePackageVersion } from '../package-version.js';
 
-// Read version from package.json at runtime
-const getVersion = (): string => {
-  try {
-    // Try relative path from dist/cli/index.js
-    const pkgPath = join(__dirname, '../../package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    return pkg.version;
-  } catch {
-    return 'unknown'; // Fallback if package.json not found
-  }
-};
-const VERSION = getVersion();
+const VERSION = resolvePackageVersion();
 
 const program = new Command();
 

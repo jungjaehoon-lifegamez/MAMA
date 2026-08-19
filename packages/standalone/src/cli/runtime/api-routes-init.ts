@@ -36,18 +36,20 @@ import type { DiscordGateway } from '../../gateways/discord.js';
 import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
-import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
+import type { AgentEvent, AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
   validateWorkOrderPayload,
   boardFullKey,
+  boardRepairKey,
   boardManualKey,
   boardReconcileKey,
   wikiBatchKey,
   promotionKey,
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
+import type { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import type { TaskLedger, WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
 import type { ExternalLifecycleCandidateSet } from '../../operator/external-lifecycle.js';
@@ -75,6 +77,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const routesLogger = new DebugLogger('api-routes');
+const HOST_MANUAL_FULL_REPAIR_CHANNEL = 'host:api-report-agent-refresh';
 
 export interface KagemushaTaskQueryInput {
   sourceRoom?: string;
@@ -268,11 +271,17 @@ export interface RegisterApiRoutesParams {
   sessionsDb?: SQLiteDatabase;
   /** Stage-2 consumer: per-kind completion hooks register here (started by start.ts AFTER this returns). */
   workOrderConsumer?: WorkOrderConsumer;
+  /** Shared host-owned Board repair gate; null preserves reconcile-disabled legacy behavior. */
+  boardRefreshGate: BoardRefreshGate | null;
   /** TG-05/TG-06: owner-report context store for the operator recovery surface. */
   reportContextStore?: import('../../gateways/telegram-report-context-store.js').TelegramReportContextStore;
 }
 
-export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
+export interface ApiRoutesHandle {
+  stop(): void;
+}
+
+export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<ApiRoutesHandle> {
   const {
     config,
     apiServer,
@@ -290,7 +299,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     rawConnectorScope,
     sessionsDb,
     workOrderConsumer,
+    boardRefreshGate,
   } = params;
+  let boardBootTimeout: ReturnType<typeof setTimeout> | null = null;
+  let boardInterval: ReturnType<typeof setInterval> | null = null;
+  let boardReconcileScheduler:
+    | import('../../operator/board-reconcile.js').ReconcileScheduler
+    | null = null;
+  let boardDeltaHandler: ((event: AgentEvent) => void) | null = null;
 
   // ── Stage-2 workorder publishers ──────────────────────────────────────
   // The ONLY system run path since v0.28.0: every scheduled/boot/manual run
@@ -479,13 +495,31 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // Schedule/boot/manual all funnel here: one occurrence-keyed board
     // workorder per entry. An enqueue failure is logged loudly and the next
     // occurrence retries - there is no fallback run path.
+    const reconcileEnabled = boardRefreshGate !== null;
     const runDashboardAgent = (opts?: { force?: boolean }): void => {
       try {
+        if (!opts?.force && boardRefreshGate && !boardRefreshGate.needsFullRepair()) {
+          return;
+        }
+        if (opts?.force && boardRefreshGate) {
+          // Host-owned manual dirt is captured before validation/enqueue can
+          // fail. It clears only through the full run-bound effect verifier.
+          boardRefreshGate.markChannelDirty(HOST_MANUAL_FULL_REPAIR_CHANNEL);
+        }
         const now = Date.now();
+        const repair = boardRefreshGate?.captureFullRepair();
         enqueueWorkOrderOrThrow(
           'board',
-          opts?.force ? boardManualKey(now) : boardFullKey(now),
-          { mode: 'full', ...(opts?.force ? { force: true } : {}) },
+          opts?.force
+            ? boardManualKey(now)
+            : boardRefreshGate
+              ? boardRepairKey()
+              : boardFullKey(now),
+          {
+            mode: 'full',
+            ...(repair ?? {}),
+            ...(opts?.force ? { force: true } : {}),
+          },
           opts?.force ? 'high' : undefined
         );
       } catch (err) {
@@ -500,9 +534,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // ONE constant feeds both the timer and the declared cadence - if they
     // drift apart the watchdog pages on a schedule nobody is running.
     const DASHBOARD_AGENT_INTERVAL_MS = 30 * 60 * 1000;
-    setTimeout(runDashboardAgent, 10_000);
+    boardBootTimeout = setTimeout(runDashboardAgent, 10_000);
     getLegCadence()?.declare('dashboard-agent', DASHBOARD_AGENT_INTERVAL_MS);
-    setInterval(() => {
+    boardInterval = setInterval(() => {
       getLegCadence()?.beat('dashboard-agent');
       runDashboardAgent();
     }, DASHBOARD_AGENT_INTERVAL_MS);
@@ -517,7 +551,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // -- M8 board reconcile leg (freshness layer; default OFF, opt-in like
     // MAMA_TRIGGER_LOOP). The trigger loop emits operator:channel-delta after
     // committing its cursor; the 30-min cron above remains the repair pass.
-    if (process.env.MAMA_BOARD_RECONCILE === '1') {
+    if (reconcileEnabled && boardRefreshGate) {
       const { ReconcileScheduler } = await import('../../operator/board-reconcile.js');
       const { captureSnapshot, verifyAfterRun } = await import('../../operator/action-verifier.js');
 
@@ -539,38 +573,70 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       // (agent_activity has NO channel_id column; json_extract is the only
       // schema-supported key; agent_id re-keying is a green-test trap).
       if (workOrderConsumer) {
-        const { buildWorkerTraceQueries, boardCandidateReceiptVerdict } =
-          await import('../../operator/workorder-hooks.js');
-        const workerVerifierDeps = {
+        const {
+          applyBoardRefreshVerdict,
+          buildFullBoardTraceQueries,
+          buildWorkerTraceQueries,
+          boardCandidateReceiptVerdict,
+        } = await import('../../operator/workorder-hooks.js');
+        const reconcileVerifierDeps = {
           ...verifierDeps,
           ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
         };
+        const fullVerifierDepsFor = (attemptId: number) => ({
+          ...verifierDeps,
+          ...buildFullBoardTraceQueries(sessionsDb, 'worker:board', attemptId),
+        });
         workOrderConsumer.registerHook('board', {
           verdictRequired: true,
           before: (wo) => {
-            if (wo.payload.mode !== 'reconcile') return null;
-            return captureSnapshot(
-              workerVerifierDeps,
-              `reconcile:${String(wo.payload.channelKey)}`
-            );
+            if (wo.payload.mode === 'reconcile') {
+              return captureSnapshot(
+                reconcileVerifierDeps,
+                `reconcile:${String(wo.payload.channelKey)}`
+              );
+            }
+            if (wo.payload.mode === 'full' && typeof wo.payload.noUpdateScope === 'string') {
+              return captureSnapshot(fullVerifierDepsFor(wo.id), wo.payload.noUpdateScope);
+            }
+            return null;
           },
           after: (wo, response, beforeState) => {
-            if (wo.payload.mode !== 'reconcile' || !beforeState) {
-              // FULL runs are not bracket-verified (plan: reconcile mode only).
+            const receiptVerdict = boardCandidateReceiptVerdict(wo, reconcileLedger);
+            if (!beforeState) {
               if (response.includes('NO_UPDATE')) {
                 console.log('[stage2] board worker: no changes detected, publish skipped');
               }
-              return boardCandidateReceiptVerdict(wo, reconcileLedger);
+              return receiptVerdict;
             }
-            const scope = `reconcile:${String(wo.payload.channelKey)}`;
+            const isReconcile = wo.payload.mode === 'reconcile';
+            const scope = isReconcile
+              ? `reconcile:${String(wo.payload.channelKey)}`
+              : String(wo.payload.noUpdateScope);
             const verdict = verifyAfterRun(
-              workerVerifierDeps,
+              isReconcile ? reconcileVerifierDeps : fullVerifierDepsFor(wo.id),
               beforeState as ReturnType<typeof captureSnapshot>,
               scope
             );
-            const outcome = verdict.verified ? 'reconcile_verified' : 'reconcile_unverified';
+            // force:true is a request to rebuild/publish, so an exact no-op
+            // note cannot discharge it. Non-force scheduled repair may use
+            // the exact scope note when there is genuinely nothing to write.
+            const effectVerified =
+              verdict.verified &&
+              !(
+                wo.payload.mode === 'full' &&
+                wo.payload.force === true &&
+                verdict.obligatedTraceCount === 0
+              );
+            const outcome = effectVerified
+              ? isReconcile
+                ? 'reconcile_verified'
+                : 'full_verified'
+              : isReconcile
+                ? 'reconcile_unverified'
+                : 'full_unverified';
             console.log(
-              `[stage2] ${outcome} channel=${String(wo.payload.channelKey)}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
+              `[stage2] ${outcome} scope=${scope}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
             );
             try {
               if (sessionsDb) {
@@ -578,7 +644,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
                   agent_id: 'workorder-board',
                   agent_version: 0,
                   type: outcome,
-                  input_summary: `reconcile ${String(wo.payload.channelKey)}`,
+                  input_summary: scope,
                   output_summary: verdict.effects.join('; '),
                   execution_status: 'completed',
                   trigger_reason: 'workorder',
@@ -587,15 +653,15 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             } catch {
               /* telemetry only */
             }
-            if (!verdict.verified) {
+            if (!effectVerified) {
               eventBus.emit({
                 type: 'agent:action',
                 agent: 'Dashboard Agent',
-                action: 'reconcile_unverified',
-                target: String(wo.payload.channelKey),
+                action: isReconcile ? 'reconcile_unverified' : 'full_unverified',
+                target: isReconcile ? String(wo.payload.channelKey) : scope,
               });
             }
-            return boardCandidateReceiptVerdict(wo, reconcileLedger);
+            return applyBoardRefreshVerdict(wo, effectVerified, receiptVerdict, boardRefreshGate);
           },
         });
       }
@@ -605,7 +671,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
         globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
         log: (line) => console.log(line),
-        run: (channelKey, deltaLines, eventIds) => {
+        run: (channelKey, deltaLines, eventIds, repairGeneration) => {
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
@@ -617,6 +683,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               // A private partition that boot did not authorize is consumed
               // without a generic board workorder. Rejecting would retain and
               // retry the private delta; enqueuing would leak its prose.
+              boardRefreshGate.consumeUnauthorizedPartition(channelKey, repairGeneration);
               return Promise.resolve();
             }
             const ledger = toolExecutor.getTaskLedger();
@@ -639,6 +706,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               // The batch, carried structurally. It was already inside deltaLines as
               // `[id:evt_...]` text and could only be recovered by parsing prose.
               eventIds,
+              repairGeneration,
               // Host-authored structural authority. deltaLines remain untrusted,
               // human-readable context and never grant lifecycle mutations.
               candidates,
@@ -655,11 +723,21 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           return Promise.resolve();
         },
       });
-      eventBus.on('operator:channel-delta', (event) => {
+      boardReconcileScheduler = reconcileScheduler;
+      boardDeltaHandler = (event) => {
         if (event.type === 'operator:channel-delta') {
-          reconcileScheduler.enqueue(event.channelKey, event.lines, event.eventIds);
+          // TG-06: dirt exists at ingress, before debounce, budget, evidence
+          // reads, or ledger enqueue can fail.
+          const repairGeneration = boardRefreshGate.markChannelDirty(event.channelKey);
+          reconcileScheduler.enqueue(
+            event.channelKey,
+            event.lines,
+            event.eventIds,
+            repairGeneration
+          );
         }
-      });
+      };
+      eventBus.on('operator:channel-delta', boardDeltaHandler);
 
       // Manual reconcile: lines from the body, or the caller must supply them
       // (no silent alternate data path -- M8 review #17).
@@ -675,7 +753,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           });
           return;
         }
-        reconcileScheduler.enqueue(channelKey, lines);
+        const repairGeneration = boardRefreshGate.markChannelDirty(channelKey);
+        reconcileScheduler.enqueue(channelKey, lines, [], repairGeneration);
         res.json({ ok: true, message: 'Reconcile queued (async; runs after debounce)' });
       });
       console.log('[reconcile] Board reconcile leg enabled (MAMA_BOARD_RECONCILE=1)');
@@ -1754,4 +1833,18 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   );
   console.log('✓ Viewer UI available at /viewer');
   console.log('✓ Setup wizard available at /setup');
+  return {
+    stop: () => {
+      if (boardBootTimeout) clearTimeout(boardBootTimeout);
+      boardBootTimeout = null;
+      if (boardInterval) clearInterval(boardInterval);
+      boardInterval = null;
+      boardReconcileScheduler?.stop();
+      boardReconcileScheduler = null;
+      if (boardDeltaHandler) {
+        eventBus.off('operator:channel-delta', boardDeltaHandler);
+      }
+      boardDeltaHandler = null;
+    },
+  };
 }
