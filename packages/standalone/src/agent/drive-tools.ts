@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import {
   chmodSync,
   existsSync,
@@ -32,6 +32,18 @@ export interface DriveToolServiceOptions {
   workspaceRoot?: string;
   runGws?: DriveGwsRunner;
   maxDownloadBytes?: number;
+}
+
+export interface PreparedDriveUpload {
+  folderId: string;
+  localPath: string;
+  fileName: string;
+  occurrenceDigest: string | null;
+}
+
+export interface DriveUploadPreparation {
+  prepared: PreparedDriveUpload;
+  existing: { fileId: string; name: string } | null;
 }
 
 export interface UntrustedDriveEvidence<T> {
@@ -318,7 +330,20 @@ export class DriveToolService {
     }
   }
 
-  async upload(input: DriveUploadInput): Promise<{ fileId: string; name: string }> {
+  async upload(
+    input: DriveUploadInput,
+    ownerEventOccurrence?: string
+  ): Promise<{ fileId: string; name: string }> {
+    const preparation = await this.prepareUpload(input, ownerEventOccurrence);
+    if (preparation.existing) return preparation.existing;
+    return this.transmitPreparedUpload(preparation.prepared);
+  }
+
+  /** Validate locally and perform the safe occurrence lookup before reserving transmission. */
+  async prepareUpload(
+    input: DriveUploadInput,
+    ownerEventOccurrence?: string
+  ): Promise<DriveUploadPreparation> {
     const folderId = requireDriveId(input.folderId, 'folderId');
     if (!existsSync(input.localPath)) {
       throw new Error('Upload file does not exist.');
@@ -333,6 +358,29 @@ export class DriveToolService {
       throw new Error('Drive upload source must be a regular file.');
     }
     const fileName = sanitizeFileName(input.fileName, basename(localPath));
+    const occurrenceDigest = ownerEventOccurrence
+      ? createHash('sha256').update(ownerEventOccurrence).digest('hex')
+      : null;
+    if (occurrenceDigest) {
+      const found = await this.findUploadOccurrence(folderId, occurrenceDigest);
+      if (found) {
+        return {
+          prepared: { folderId, localPath, fileName, occurrenceDigest },
+          existing: found,
+        };
+      }
+    }
+    return {
+      prepared: { folderId, localPath, fileName, occurrenceDigest },
+      existing: null,
+    };
+  }
+
+  /** The sole files.create boundary. Caller must durably mark transmitting first. */
+  async transmitPreparedUpload(
+    prepared: PreparedDriveUpload
+  ): Promise<{ fileId: string; name: string }> {
+    const { folderId, localPath, fileName, occurrenceDigest } = prepared;
     const result = parseObject(
       await this.runGws([
         'drive',
@@ -341,7 +389,13 @@ export class DriveToolService {
         '--params',
         JSON.stringify({ uploadType: 'multipart', supportsAllDrives: true }),
         '--json',
-        JSON.stringify({ name: fileName, parents: [folderId] }),
+        JSON.stringify({
+          name: fileName,
+          parents: [folderId],
+          ...(occurrenceDigest
+            ? { appProperties: { mamaOwnerEventOccurrence: occurrenceDigest } }
+            : {}),
+        }),
         '--upload',
         localPath,
       ])
@@ -350,5 +404,50 @@ export class DriveToolService {
       throw new Error('gws returned an invalid Drive upload result.');
     }
     return { fileId: result.id, name: result.name };
+  }
+
+  /** Reconcile an already-transmitted owner-event upload without issuing another create. */
+  async recoverUpload(
+    folderIdInput: string,
+    ownerEventOccurrence: string
+  ): Promise<{ fileId: string; name: string }> {
+    const folderId = requireDriveId(folderIdInput, 'folderId');
+    const occurrenceDigest = createHash('sha256').update(ownerEventOccurrence).digest('hex');
+    const found = await this.findUploadOccurrence(folderId, occurrenceDigest);
+    if (!found) {
+      throw new Error(
+        'Drive upload occurrence is unresolved; refusing a duplicate create until reconciliation succeeds'
+      );
+    }
+    return found;
+  }
+
+  private async findUploadOccurrence(
+    folderId: string,
+    occurrenceDigest: string
+  ): Promise<{ fileId: string; name: string } | null> {
+    const existing = parseObject(
+      await this.runGws([
+        'drive',
+        'files',
+        'list',
+        '--params',
+        JSON.stringify({
+          q:
+            `'${folderId}' in parents and trashed = false and ` +
+            `appProperties has { key='mamaOwnerEventOccurrence' and value='${occurrenceDigest}' }`,
+          fields: 'files(id,name)',
+          pageSize: 1,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        }),
+      ])
+    );
+    const [found] = readObjectArray(existing.files, 'files');
+    if (!found) return null;
+    if (typeof found.id !== 'string' || typeof found.name !== 'string') {
+      throw new Error('gws returned an invalid Drive occurrence result.');
+    }
+    return { fileId: found.id, name: found.name };
   }
 }

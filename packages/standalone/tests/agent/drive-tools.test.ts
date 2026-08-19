@@ -222,4 +222,49 @@ describe('DriveToolService', () => {
     );
     expect(runGws).toHaveBeenCalledTimes(1);
   });
+
+  it('recovers an owner-event Drive upload by occurrence instead of creating a duplicate', async () => {
+    const root = makeRoot();
+    const inside = join(root, 'outbound', 'translated.png');
+    mkdirSync(dirname(inside), { recursive: true });
+    writeFileSync(inside, 'translated');
+    const runGws = vi
+      .fn<DriveGwsRunner>()
+      .mockResolvedValueOnce('{"files":[]}')
+      .mockResolvedValueOnce('{"id":"uploaded-1","name":"ko.png"}')
+      .mockResolvedValueOnce('{"files":[{"id":"uploaded-1","name":"ko.png"}]}');
+    const service = new DriveToolService({ workspaceRoot: root, runGws });
+    const input = { localPath: inside, folderId: 'folder-1', fileName: 'ko.png' };
+
+    await expect(service.upload(input, 'owner-event:41:drive:0')).resolves.toEqual({
+      fileId: 'uploaded-1',
+      name: 'ko.png',
+    });
+    await expect(service.upload(input, 'owner-event:41:drive:0')).resolves.toEqual({
+      fileId: 'uploaded-1',
+      name: 'ko.png',
+    });
+
+    expect(runGws).toHaveBeenCalledTimes(3);
+    expect(runGws.mock.calls.filter(([args]) => args.includes('create'))).toHaveLength(1);
+    const createJson = JSON.parse(
+      runGws.mock.calls.find(([args]) => args.includes('create'))![0][
+        runGws.mock.calls.find(([args]) => args.includes('create'))![0].indexOf('--json') + 1
+      ]
+    ) as { appProperties?: Record<string, string> };
+    expect(createJson.appProperties?.mamaOwnerEventOccurrence).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('never creates again while an ambiguous owner-event upload is unresolved', async () => {
+    const root = makeRoot();
+    const runGws = vi.fn<DriveGwsRunner>().mockResolvedValue('{"files":[]}');
+    const service = new DriveToolService({ workspaceRoot: root, runGws });
+
+    await expect(
+      service.recoverUpload('folder-1', 'owner-event:41:drive:drive-upload')
+    ).rejects.toThrow(/refusing a duplicate create/i);
+    expect(runGws).toHaveBeenCalledTimes(1);
+    expect(runGws.mock.calls[0][0]).toContain('list');
+    expect(runGws.mock.calls[0][0]).not.toContain('create');
+  });
 });

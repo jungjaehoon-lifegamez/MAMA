@@ -72,17 +72,27 @@ export function boardManualKey(now: number): string {
 }
 
 /**
- * Batch-deterministic key (S2 Task 4): a conductor judgment that delegates
- * carries its inbox batch, and a crash between enqueue and ack redelivers
- * the batch - the SAME ids must produce the SAME key so the retry dedups
- * instead of double-ordering. Wall-clock keys cannot give that.
+ * Batch-deterministic key: a MAMA owner-event judgment that delegates carries
+ * its inbox batch. The key remains reserved after terminal completion so a
+ * post-enqueue/pre-ACK crash cannot order the same work twice.
  */
 export function boardBatchKey(causeEventIds: readonly string[]): string {
   const digest = createHash('sha256')
     .update([...causeEventIds].sort().join('\n'))
     .digest('hex')
     .slice(0, 16);
-  return `board:batch:${digest}`;
+  return `owner-event:board:${digest}`;
+}
+
+export function ownerEventWorkOrderKey(
+  kind: 'wiki' | 'memory-curation',
+  causeEventIds: readonly string[]
+): string {
+  const digest = createHash('sha256')
+    .update([...causeEventIds].sort().join('\n'))
+    .digest('hex')
+    .slice(0, 16);
+  return `owner-event:${kind}:${digest}`;
 }
 
 export function boardReconcileKey(channelKey: string, now: number): string {

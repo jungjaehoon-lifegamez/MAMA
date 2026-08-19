@@ -23,6 +23,8 @@ export interface TriggerSourceRef {
 export interface TriggerSignal {
   kind: string;
   memoryQuery: string;
+  /** Immutable procedure snapshot carried into the owner-agent event turn. */
+  procedure: TriggerProcedureStep[];
   requiredEvidence: string[];
   confidence: number;
   detector: string;

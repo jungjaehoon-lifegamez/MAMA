@@ -249,7 +249,7 @@ register({
   name: 'telegram_send',
   description: 'Send message, file, or sticker to Telegram',
   category: 'utility',
-  params: 'chat_id, message?, file_path?, sticker_emotion?',
+  params: 'chat_id, message?, file_path?, sticker_emotion?, delivery_key?',
 });
 register({
   name: 'ocr_image',
@@ -302,7 +302,7 @@ register({
   name: 'drive_upload',
   description: 'Upload a private MAMA workspace file to Google Drive',
   category: 'business_data',
-  params: 'localPath, folderId, fileName?, destinationCapability?',
+  params: 'localPath, folderId, fileName?, destinationCapability?, effect_key?',
 });
 
 // OS Management (viewer-only)

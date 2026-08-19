@@ -482,7 +482,7 @@ export class MessageRouter implements TurnProcessor {
     }>,
   };
 
-  // Sessions DB for conductor activity logging
+  // Sessions DB for MAMA frontdoor activity logging
   private sessionsDb: import('../sqlite.js').default | null = null;
   setSessionsDb(db: import('../sqlite.js').default): void {
     this.sessionsDb = db;
@@ -494,7 +494,7 @@ export class MessageRouter implements TurnProcessor {
     this.uiCommandQueue = queue;
   }
 
-  // Validation service for memory agent + conductor sessions
+  // Validation service for memory agent + MAMA sessions
   private validationService:
     | import('../validation/session-service.js').ValidationSessionService
     | null = null;
@@ -517,7 +517,7 @@ export class MessageRouter implements TurnProcessor {
     }
     const data = (ctx.pageData as Record<string, unknown> | null) ?? null;
 
-    // Build rich context that tells conductor exactly what the user sees
+    // Build rich context that tells MAMA exactly what the user sees
     const lines: string[] = ['<viewer-context>'];
     lines.push(`route: ${sanitizeForPrompt(ctx.currentRoute)}`);
     if (ctx.selectedItem?.type && ctx.selectedItem?.id) {
@@ -1265,7 +1265,7 @@ This protects your credentials from being exposed in chat logs.`;
           // knows it BEFORE the agent runs - the same shape as a reconcile work order
           // carrying its delta batch. Without this the chat lane had no cause wire at all:
           // measured on the live ledger, every unattributed task_update came from the
-          // conductor, and conductor runs outnumber board-worker runs 1,611 to 45.
+          // frontdoor MAMA lane, which far outnumbered board-worker runs.
           //
           // Only when the ref rests on a real platform message id. `sourceTurnId` falls back
           // to `generated:<uuid>` when the platform gave none, and a synthetic id names
@@ -1437,7 +1437,7 @@ This protects your credentials from being exposed in chat logs.`;
             }
           }
 
-          const conductorStart = Date.now();
+          const turnStart = Date.now();
           const result = await this.agentLoop.runWithContent(contentBlocks, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
@@ -1445,11 +1445,11 @@ This protects your credentials from being exposed in chat logs.`;
           if (result.modelRunProvenance === 'commit_failed') {
             completedProvenanceReason = 'commit_failed';
           }
-          this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
+          this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
           const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
-          const conductorStart = Date.now();
+          const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
@@ -1457,7 +1457,7 @@ This protects your credentials from being exposed in chat logs.`;
           if (result.modelRunProvenance === 'commit_failed') {
             completedProvenanceReason = 'commit_failed';
           }
-          this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
+          this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         }
 
         // Auto-extract facts from conversation (fire-and-forget, non-blocking).
@@ -2503,10 +2503,10 @@ INSTRUCTION:
     })();
   }
 
-  // ── Activity Logging (shared by conductor + memory agent) ───────────
+  // ── Activity Logging (shared by MAMA frontdoor + memory agent) ──────
 
   private resolveFrontdoorAgentId(message: NormalizedMessage): string {
-    return message.source === 'viewer' ? 'os-agent' : 'conductor';
+    return message.source === 'viewer' ? 'os-agent' : 'mama';
   }
 
   private logFrontdoorActivity(

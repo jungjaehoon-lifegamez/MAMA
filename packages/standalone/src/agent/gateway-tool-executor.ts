@@ -251,6 +251,7 @@ type ActiveGatewayExecutionContext = {
   temporalWorkContext?: TemporalWorkContext;
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
+  ownerEventEffects?: GatewayToolExecutionContext['ownerEventEffects'];
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -562,7 +563,7 @@ export interface TelegramGatewayInterface {
     caption?: string,
     idempotencyKey?: string
   ): Promise<void>;
-  sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
+  sendSticker(chatId: string | number, emotion: string, idempotencyKey?: string): Promise<boolean>;
   sendMessageFromActiveTurn?(chatId: string, text: string, idempotencyKey?: string): Promise<void>;
   sendFileFromActiveTurn?(
     chatId: string,
@@ -576,7 +577,11 @@ export interface TelegramGatewayInterface {
     caption?: string,
     idempotencyKey?: string
   ): Promise<void>;
-  sendStickerFromActiveTurn?(chatId: string | number, emotion: string): Promise<boolean>;
+  sendStickerFromActiveTurn?(
+    chatId: string | number,
+    emotion: string,
+    idempotencyKey?: string
+  ): Promise<boolean>;
 }
 
 /**
@@ -671,11 +676,19 @@ export class GatewayToolExecutor {
     this.obsidianVaultName = vaultName ?? null;
   }
   private taskLedger: import('../operator/task-ledger.js').TaskLedger | null = null;
+  private ownerEventEffectLedger:
+    | import('../operator/owner-event-effects.js').OwnerEventEffectLedger
+    | null = null;
   setTaskLedger(ledger: import('../operator/task-ledger.js').TaskLedger): void {
     this.taskLedger = ledger;
   }
   getTaskLedger(): import('../operator/task-ledger.js').TaskLedger | null {
     return this.taskLedger;
+  }
+  setOwnerEventEffectLedger(
+    ledger: import('../operator/owner-event-effects.js').OwnerEventEffectLedger
+  ): void {
+    this.ownerEventEffectLedger = ledger;
   }
   private agentEventBus: AgentEventBus | null = null;
   setAgentEventBus(bus: AgentEventBus): void {
@@ -730,6 +743,7 @@ export class GatewayToolExecutor {
       workorderAttemptId: executionContext?.workorderAttemptId,
       temporalWorkContext: executionContext?.temporalWorkContext,
       causeEventIds: executionContext?.causeEventIds,
+      ownerEventEffects: executionContext?.ownerEventEffects,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -774,6 +788,7 @@ export class GatewayToolExecutor {
       // Never merged from fallback - temporal authority belongs to one claimed run only.
       temporalWorkContext: active.temporalWorkContext,
       causeEventIds: active.causeEventIds,
+      ownerEventEffects: active.ownerEventEffects,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -2241,6 +2256,7 @@ export class GatewayToolExecutor {
               message?: string;
               file_path?: string;
               sticker_emotion?: string;
+              delivery_key?: string;
             }
           );
         case 'ocr_image': {
@@ -2331,13 +2347,87 @@ export class GatewayToolExecutor {
               )
             ),
           };
-        case 'drive_upload':
-          return {
-            success: true,
-            result: asUntrustedDriveEvidence(
-              await this.driveTools.upload(input as DriveUploadInput)
-            ),
-          };
+        case 'drive_upload': {
+          const uploadInput = input as DriveUploadInput;
+          const state = this.getExecutionState();
+          const sourceMessageRef = state.sourceMessageRef;
+          if (!sourceMessageRef?.startsWith('owner-event:')) {
+            return {
+              success: true,
+              result: asUntrustedDriveEvidence(await this.driveTools.upload(uploadInput)),
+            };
+          }
+
+          const effect = this.requireOwnerEventEffect(uploadInput.effect_key, 'drive_upload');
+          const ledger = this.requireOwnerEventEffectLedger();
+          const occurrence = `${sourceMessageRef}:drive:${effect.actionKey}`;
+          let reservation = ledger.inspect(effect.batchId, effect.actionKey, 'drive_upload');
+          if (reservation?.state === 'confirmed') {
+            if (!reservation.result) {
+              throw new Error('Confirmed Drive upload is missing its durable result');
+            }
+            return { success: true, result: asUntrustedDriveEvidence(reservation.result) };
+          }
+          if (!reservation) {
+            // Local validation and the read-only marker lookup are safely retryable.
+            // Do them before the durable transition that means a create may have escaped.
+            const preparation = await this.driveTools.prepareUpload(uploadInput, occurrence);
+            reservation = ledger.begin(effect.batchId, effect.actionKey, 'drive_upload', {
+              folderId: preparation.prepared.folderId,
+              fileName: preparation.prepared.fileName,
+            });
+            if (reservation.state === 'confirmed') {
+              if (!reservation.result) {
+                throw new Error('Confirmed Drive upload is missing its durable result');
+              }
+              return { success: true, result: asUntrustedDriveEvidence(reservation.result) };
+            }
+            if (reservation.state === 'execute' && preparation.existing) {
+              ledger.confirm(
+                effect.batchId,
+                effect.actionKey,
+                'drive_upload',
+                preparation.existing
+              );
+              return {
+                success: true,
+                result: asUntrustedDriveEvidence(preparation.existing),
+              };
+            }
+            if (reservation.state === 'execute') {
+              try {
+                const result = await this.driveTools.transmitPreparedUpload(preparation.prepared);
+                ledger.confirm(effect.batchId, effect.actionKey, 'drive_upload', result);
+                return { success: true, result: asUntrustedDriveEvidence(result) };
+              } catch (error) {
+                ledger.markUnknown(
+                  effect.batchId,
+                  effect.actionKey,
+                  'drive_upload',
+                  error instanceof Error ? error.message : String(error)
+                );
+                throw error;
+              }
+            }
+          }
+          const folderId = reservation.intent.folderId;
+          if (typeof folderId !== 'string') {
+            throw new Error('Owner-event Drive reservation has invalid durable intent');
+          }
+          try {
+            const result = await this.driveTools.recoverUpload(folderId, occurrence);
+            ledger.confirm(effect.batchId, effect.actionKey, 'drive_upload', result);
+            return { success: true, result: asUntrustedDriveEvidence(result) };
+          } catch (error) {
+            ledger.markUnknown(
+              effect.batchId,
+              effect.actionKey,
+              'drive_upload',
+              error instanceof Error ? error.message : String(error)
+            );
+            throw error;
+          }
+        }
         // Browser tools
         case 'os_get_config':
           return await this.executeGetConfig(input as GetConfigInput);
@@ -3709,8 +3799,9 @@ export class GatewayToolExecutor {
     message?: string;
     file_path?: string;
     sticker_emotion?: string;
+    delivery_key?: string;
   }): Promise<{ success: boolean; error?: string }> {
-    const { chat_id, message, file_path, sticker_emotion } = input;
+    const { chat_id, message, file_path, sticker_emotion, delivery_key } = input;
 
     if (!chat_id) {
       return { success: false, error: 'chat_id is required' };
@@ -3721,24 +3812,67 @@ export class GatewayToolExecutor {
     }
 
     const sourceMessageRef = this.getExecutionState().sourceMessageRef;
+    const ownerEvent = sourceMessageRef?.startsWith('owner-event:') === true;
+    const deliveryVariant = sticker_emotion
+      ? 'sticker'
+      : file_path
+        ? TELEGRAM_PHOTO_EXTENSIONS.has(extname(file_path).toLowerCase())
+          ? 'image'
+          : 'file'
+        : 'text';
+    let ownerEffect: { batchId: number; actionKey: string } | null = null;
+    let ownerLedger: import('../operator/owner-event-effects.js').OwnerEventEffectLedger | null =
+      null;
+    try {
+      if (ownerEvent) {
+        ownerEffect = this.requireOwnerEventEffect(delivery_key, 'telegram_send');
+        ownerLedger = this.requireOwnerEventEffectLedger();
+        const reservation = ownerLedger.begin(
+          ownerEffect.batchId,
+          ownerEffect.actionKey,
+          'telegram_send',
+          { chatId: chat_id, variant: deliveryVariant }
+        );
+        if (reservation.state === 'confirmed') return { success: true };
+        if (reservation.intent.chatId !== chat_id) {
+          return {
+            success: false,
+            error: 'owner-event Telegram target differs from the host-reserved destination',
+          };
+        }
+        if (reservation.intent.variant !== deliveryVariant) {
+          return {
+            success: false,
+            error: 'owner-event Telegram retry must use the originally reserved delivery variant',
+          };
+        }
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
     const idempotencyKey = sourceMessageRef
-      ? createHash('sha256')
-          .update(
-            JSON.stringify([
-              sourceMessageRef,
-              chat_id,
-              message ?? null,
-              file_path ?? null,
-              sticker_emotion ?? null,
-            ])
-          )
-          .digest('hex')
+      ? ownerEvent
+        ? `${sourceMessageRef}:telegram:${delivery_key}`
+        : createHash('sha256')
+            .update(
+              JSON.stringify([
+                sourceMessageRef,
+                chat_id,
+                message ?? null,
+                file_path ?? null,
+                sticker_emotion ?? null,
+              ])
+            )
+            .digest('hex')
       : undefined;
 
     try {
       if (sticker_emotion) {
-        await (this.telegramGateway.sendStickerFromActiveTurn?.(chat_id, sticker_emotion) ??
-          this.telegramGateway.sendSticker(chat_id, sticker_emotion));
+        await (this.telegramGateway.sendStickerFromActiveTurn?.(
+          chat_id,
+          sticker_emotion,
+          idempotencyKey
+        ) ?? this.telegramGateway.sendSticker(chat_id, sticker_emotion, idempotencyKey));
       } else if (file_path) {
         const safePath = resolvePrivateWorkspaceFile(file_path);
         if (TELEGRAM_PHOTO_EXTENSIONS.has(extname(safePath).toLowerCase())) {
@@ -3799,10 +3933,48 @@ export class GatewayToolExecutor {
         };
       }
 
+      if (ownerEffect && ownerLedger) {
+        ownerLedger.confirm(ownerEffect.batchId, ownerEffect.actionKey, 'telegram_send', null);
+      }
       return { success: true };
     } catch (err) {
+      if (ownerEffect && ownerLedger) {
+        ownerLedger.markUnknown(
+          ownerEffect.batchId,
+          ownerEffect.actionKey,
+          'telegram_send',
+          err instanceof Error ? err.message : String(err)
+        );
+      }
       return { success: false, error: `Failed to send to Telegram: ${err}` };
     }
+  }
+
+  private requireOwnerEventEffect(
+    actionKey: string | undefined,
+    toolName: 'telegram_send' | 'drive_upload'
+  ): { batchId: number; actionKey: string } {
+    const state = this.getExecutionState();
+    const authority = state.ownerEventEffects;
+    if (!authority || state.sourceMessageRef !== `owner-event:${authority.batchId}`) {
+      throw new Error(`owner-event ${toolName} requires host-issued effect authority`);
+    }
+    const expectedKey = authority.effectKeys[toolName];
+    if (actionKey !== expectedKey) {
+      throw new Error(
+        `owner-event ${toolName} requires the host-issued ${toolName} key ${expectedKey}`
+      );
+    }
+    return { batchId: authority.batchId, actionKey };
+  }
+
+  private requireOwnerEventEffectLedger(): import('../operator/owner-event-effects.js').OwnerEventEffectLedger {
+    if (!this.ownerEventEffectLedger) {
+      throw new Error(
+        'owner-event external effects are disabled without the durable effect ledger'
+      );
+    }
+    return this.ownerEventEffectLedger;
   }
 
   /**
