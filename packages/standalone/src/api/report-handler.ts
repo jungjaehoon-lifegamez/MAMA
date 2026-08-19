@@ -1,5 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import type { ServerResponse } from 'node:http';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
+
+const reportLogger = new DebugLogger('Report');
 
 export interface ReportSlot {
   slotId: string;
@@ -16,12 +19,18 @@ export interface ReportStore {
   getAllSorted(): ReportSlot[];
 }
 
+export interface ReportPublishResult {
+  acceptedSlotIds: string[];
+  changedSlotIds: string[];
+}
+
 export function createReportStore(): ReportStore {
   const slots = new Map<string, ReportSlot>();
 
   return {
     get(slotId: string): ReportSlot | undefined {
-      return slots.get(slotId);
+      const slot = slots.get(slotId);
+      return slot ? { ...slot } : undefined;
     },
 
     update(slotId: string, html: string, priority: number): void {
@@ -40,13 +49,15 @@ export function createReportStore(): ReportStore {
     getAll(): Record<string, ReportSlot> {
       const result: Record<string, ReportSlot> = {};
       for (const [key, value] of slots) {
-        result[key] = value;
+        result[key] = { ...value };
       }
       return result;
     },
 
     getAllSorted(): ReportSlot[] {
-      return Array.from(slots.values()).sort((a, b) => a.priority - b.priority);
+      return Array.from(slots.values(), (slot) => ({ ...slot })).sort(
+        (a, b) => a.priority - b.priority
+      );
     },
   };
 }
@@ -68,15 +79,15 @@ const MAX_SLOT_BYTES = 65_536;
 const MAX_SLOTS_PER_PUBLISH = 24;
 
 /**
- * The single write path for agent/heartbeat report publishing: store every slot
- * (any slot id -- the board renders known slots first, then custom), broadcast
- * one full snapshot. Oversized slots are skipped LOUDLY, never truncated
- * silently (observability over restriction).
+ * The single write path for agent/heartbeat report publishing: accept every valid slot
+ * (any slot id -- the board renders known slots first, then custom), persist changed HTML,
+ * and broadcast one full snapshot only when something changed. Oversized slots are skipped
+ * LOUDLY, never truncated silently (observability over restriction).
  */
 export function createReportPublisher(
   store: ReportStore,
   sseClients: Set<ServerResponse>
-): (slots: Record<string, string>) => void {
+): (slots: Record<string, string>) => ReportPublishResult {
   return (slots) => {
     const entries = Object.entries(slots);
     if (entries.length > MAX_SLOTS_PER_PUBLISH) {
@@ -84,19 +95,29 @@ export function createReportPublisher(
         `[Report] publish carried ${entries.length} slots; keeping the first ${MAX_SLOTS_PER_PUBLISH}`
       );
     }
-    const published: string[] = [];
+    const accepted: string[] = [];
+    const changed: string[] = [];
     for (const [slotId, html] of entries.slice(0, MAX_SLOTS_PER_PUBLISH)) {
       if (Buffer.byteLength(html, 'utf-8') > MAX_SLOT_BYTES) {
         console.warn(`[Report] slot '${slotId}' exceeds ${MAX_SLOT_BYTES} bytes -- skipped`);
         continue;
       }
-      store.update(slotId, html, store.get(slotId)?.priority ?? 0);
-      published.push(slotId);
+      accepted.push(slotId);
+      const existing = store.get(slotId);
+      if (existing?.html === html) {
+        continue;
+      }
+      store.update(slotId, html, existing?.priority ?? 0);
+      changed.push(slotId);
     }
-    broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
-    if (published.length > 0) {
-      console.log(`[Report] published slots: ${published.join(', ')}`);
+    if (changed.length > 0) {
+      broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
+      reportLogger.info(`published slots: ${changed.join(', ')}`);
     }
+    return {
+      acceptedSlotIds: accepted.sort(),
+      changedSlotIds: changed.sort(),
+    };
   };
 }
 

@@ -26,6 +26,7 @@ export interface RuntimeConnectorStatus {
 
 export interface RuntimeStatusSnapshot {
   running: boolean;
+  version: string;
   backend: RuntimeBackend;
   model: string;
   startedAt: number;
@@ -131,6 +132,7 @@ export function renderRuntimeSnapshot(snapshot: RuntimeStatusSnapshot): string {
     '<p class="mama-system-note">Reported by the running daemon; some fields reflect boot-time state. Configuration is edited via the CLI or the config file.</p>' +
     '<div class="mama-system-tiles">' +
     statTile('Daemon', snapshot.running ? 'running' : 'stopped', snapshot.running ? 'ok' : 'bad') +
+    statTile('Version', snapshot.version) +
     statTile('Backend', snapshot.backend) +
     statTile('Model', snapshot.model) +
     statTile('Health', healthValue, healthTone) +

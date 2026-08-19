@@ -217,6 +217,7 @@ function realCodeActHarness(input: {
   tier?: 1 | 2 | 3;
   throwOnRawQuery?: boolean;
   executionContext?: GatewayToolExecutionContext;
+  channelGrantProvider?: () => Record<string, readonly string[]>;
 }) {
   const observed = observeRawQueries({ throwOnRawQuery: input.throwOnRawQuery });
   const service = createContextCompileService({ memoryAdapter: observed.adapter });
@@ -224,6 +225,7 @@ function realCodeActHarness(input: {
   const executor = new GatewayToolExecutor({
     contextCompileService: service,
     envelopeIssuanceMode: 'enabled',
+    channelGrantProvider: input.channelGrantProvider,
   });
   const bridge = new HostBridge(
     executor,
@@ -429,6 +431,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
     });
     const harness = realCodeActHarness({
       rawConnectors: routeRawConnectors({ chatType: 'private' }),
+      channelGrantProvider: () => ({ trello: ['board-7'] }),
     });
 
     const result = await harness.sandbox.execute(source);

@@ -38,7 +38,7 @@ describe('ReconcileScheduler', () => {
     expect(run).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith('slack:C1', ['a', 'b'], []);
+    expect(run).toHaveBeenCalledWith('slack:C1', ['a', 'b'], [], 0);
     s.stop();
   });
 
@@ -69,7 +69,7 @@ describe('ReconcileScheduler', () => {
     // budget window passes -> retry timer picks the dirty channel up
     await vi.advanceTimersByTimeAsync(3_600_001);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run).toHaveBeenLastCalledWith('chatwork:9', ['b'], []);
+    expect(run).toHaveBeenLastCalledWith('chatwork:9', ['b'], [], 0);
     s.stop();
   });
 
@@ -90,7 +90,39 @@ describe('ReconcileScheduler', () => {
     const s = make({ debounceMs: 10, maxPendingLines: 3 });
     s.enqueue('slack:C1', ['1', '2', '3', '4', '5']);
     await vi.advanceTimersByTimeAsync(20);
-    expect(run).toHaveBeenCalledWith('slack:C1', ['3', '4', '5'], []);
+    expect(run).toHaveBeenCalledWith('slack:C1', ['3', '4', '5'], [], 0);
+    s.stop();
+  });
+
+  it('TG-06 rejects an invalid repair generation before scheduling work', () => {
+    const s = make();
+
+    expect(() => s.enqueue('slack:C1', ['delta'], [], -1)).toThrow(/repairGeneration/);
+    expect(() => s.enqueue('slack:C1', ['delta'], [], 1.5)).toThrow(/repairGeneration/);
+    s.stop();
+  });
+
+  it('TG-01 carries the newest captured repair generation through one scheduler fire', async () => {
+    const s = make({ debounceMs: 10 });
+    s.enqueue('telegram:owner', ['older'], ['evt-1'], 41);
+    s.enqueue('telegram:owner', ['newer'], ['evt-2'], 42);
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(run).toHaveBeenCalledWith('telegram:owner', ['older', 'newer'], ['evt-1', 'evt-2'], 42);
+    s.stop();
+  });
+
+  it('TG-06 preserves the captured generation when enqueue fails and the batch retries', async () => {
+    run.mockRejectedValueOnce(new Error('enqueue failed'));
+    const s = make({ debounceMs: 10, globalMaxPerHour: 10 });
+    s.enqueue('slack:C1', ['delta'], ['evt-1'], 77);
+
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(60_001);
+
+    expect(run).toHaveBeenNthCalledWith(1, 'slack:C1', ['delta'], ['evt-1'], 77);
+    expect(run).toHaveBeenNthCalledWith(2, 'slack:C1', ['delta'], ['evt-1'], 77);
     s.stop();
   });
 

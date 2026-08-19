@@ -117,6 +117,7 @@ import {
   type PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
 import { getMemberCandidateStore } from '../gateways/member-candidate-store.js';
+import type { ReportPublishResult } from '../api/report-handler.js';
 
 const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -127,6 +128,12 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 type PrivateAwareGatewayToolExecutorOptions = GatewayToolExecutorOptions & {
   privateConnectorPolicy?: PrivateConnectorPolicy;
 };
+
+function isReportPublishResult(
+  value: void | readonly string[] | ReportPublishResult
+): value is ReportPublishResult {
+  return value !== undefined && !Array.isArray(value);
+}
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -222,6 +229,7 @@ let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
 type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
 
 type GatewayExecutionContext = GatewayToolExecutionContext;
+type ChannelGrantSnapshot = Record<string, readonly string[]>;
 type GatewayContextSnapshot = {
   agentId: string;
   source: string;
@@ -246,6 +254,8 @@ type ActiveGatewayExecutionContext = {
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
+  /** One live grant read shared by every read-authority check in this gateway call. */
+  channelGrantSnapshot?: ChannelGrantSnapshot;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
@@ -640,7 +650,9 @@ export class GatewayToolExecutor {
   private currentSource: string = '';
   private currentChannelId: string = '';
   private disallowedGatewayTools: Set<string> = new Set();
-  private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
+  private reportPublisher:
+    | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
+    | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
   private workOrderRequestHandler:
     | ((
@@ -765,6 +777,8 @@ export class GatewayToolExecutor {
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
+      // Never merged from fallback - one snapshot belongs to one gateway call only.
+      channelGrantSnapshot: active.channelGrantSnapshot,
       // Never merged from fallback - blocks are strictly per-call.
       disallowedGatewayTools: active.disallowedGatewayTools,
     };
@@ -842,7 +856,9 @@ export class GatewayToolExecutor {
     this.disallowedGatewayTools = new Set(tools);
   }
 
-  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+  setReportPublisher(
+    fn: (slots: Record<string, string>) => void | readonly string[] | ReportPublishResult
+  ): void {
     this.reportPublisher = fn;
   }
   /** Forwarder hook for on-demand full reports (plan v6 S1-T3). */
@@ -1200,7 +1216,11 @@ export class GatewayToolExecutor {
       }
       try {
         this.envelopeEnforcer.check(ctx.envelope, toolName, enforcementInput, {
-          readScopeMirror: this.readScopeMirrorFor(toolName, ctx.envelope),
+          readScopeMirror: this.readScopeMirrorFor(
+            toolName,
+            ctx.envelope,
+            ctx.channelGrantSnapshot
+          ),
         });
         return undefined;
       } catch (err) {
@@ -1320,7 +1340,11 @@ export class GatewayToolExecutor {
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
-    const ctx = { ...baseCtx, gatewayCallId };
+    const channelGrantSnapshot =
+      baseCtx.envelope && MIRROR_READABLE_TOOLS.has(toolName)
+        ? snapshotChannelGrant(this.channelGrantProvider)
+        : undefined;
+    const ctx = { ...baseCtx, gatewayCallId, channelGrantSnapshot };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
     const computedScopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
     const scopeAudit = ctx.temporalWorkContext
@@ -1411,6 +1435,7 @@ export class GatewayToolExecutor {
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
+        this.gatewayTraceDetails(toolName, undefined),
         auditError
       );
       if (scopeAudit.mismatch) {
@@ -1440,6 +1465,7 @@ export class GatewayToolExecutor {
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
+        this.gatewayTraceDetails(toolName, auditResult),
         postRunError
       );
       if (scopeAudit.mismatch) {
@@ -1454,7 +1480,8 @@ export class GatewayToolExecutor {
       auditResult,
       Date.now() - startedAt,
       scopeAudit,
-      gatewayCallId
+      gatewayCallId,
+      this.gatewayTraceDetails(toolName, auditResult)
     );
     if (scopeAudit.mismatch) {
       this.alarmScopeMismatch(activeCtx, toolName);
@@ -1688,7 +1715,11 @@ export class GatewayToolExecutor {
     }
 
     if (!requestedScopes || requestedScopes.length === 0) {
-      if (toolName === 'context_compile' && Array.isArray((input as { scopes?: unknown }).scopes)) {
+      const requestedScopeValue = (input as { scopes?: unknown }).scopes;
+      if (
+        toolName === 'context_compile' &&
+        (requestedScopeValue === undefined || Array.isArray(requestedScopeValue))
+      ) {
         return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
       }
       return {
@@ -1698,7 +1729,11 @@ export class GatewayToolExecutor {
       };
     }
 
-    const envelopeScopeKeys = new Set(envelopeScopesSnapshot.map(memoryScopeKey));
+    const effectiveAuditAllowance = [
+      ...envelopeScopesSnapshot,
+      ...(this.readScopeMirrorFor(toolName, ctx.envelope, ctx.channelGrantSnapshot) ?? []),
+    ];
+    const envelopeScopeKeys = new Set(effectiveAuditAllowance.map(memoryScopeKey));
     const hasOutOfEnvelopeScope = requestedScopes.some(
       (scope) => !envelopeScopeKeys.has(memoryScopeKey(scope))
     );
@@ -1767,7 +1802,7 @@ export class GatewayToolExecutor {
     const envelopeScopes = ctx.envelope
       ? [
           ...ctx.envelope.scope.memory_scopes,
-          ...mirrorReadScopes(ctx.envelope, this.channelGrantProvider()),
+          ...(this.readScopeMirrorFor(toolName, ctx.envelope, ctx.channelGrantSnapshot) ?? []),
         ]
       : null;
     const allowedScopes = envelopeScopes ?? this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
@@ -1822,18 +1857,18 @@ export class GatewayToolExecutor {
 
   /**
    * The grant-mirror READ allowance for memory tools (see mirrorReadScopes):
-   * computed lazily - only memory-scoped tools pay the connector-config read -
-   * and against the LIVE grant, so a channel the owner removes stops being
-   * readable on the next call, mid-envelope included.
+   * computed from the gateway-call snapshot, so every authority check agrees
+   * within one call while the next call observes a fresh live grant.
    */
   private readScopeMirrorFor(
     toolName: string,
-    envelope: Envelope
+    envelope: Envelope,
+    channelGrantSnapshot: ChannelGrantSnapshot | undefined
   ): Array<{ kind: 'channel'; id: string }> | undefined {
-    if (!MIRROR_READABLE_TOOLS.has(toolName)) {
+    if (!MIRROR_READABLE_TOOLS.has(toolName) || !channelGrantSnapshot) {
       return undefined;
     }
-    return mirrorReadScopes(envelope, this.channelGrantProvider());
+    return mirrorReadScopes(envelope, channelGrantSnapshot);
   }
 
   private applyEnvelopeScopedReadDefaults(
@@ -1882,7 +1917,7 @@ export class GatewayToolExecutor {
     // READ defaulting: identity scopes plus the grant mirror, so an omitted
     // scopes arg recalls everything this run is ALLOWED to read instead of
     // silently less than the enforcer would accept.
-    const mirror = mirrorReadScopes(ctx.envelope, this.channelGrantProvider());
+    const mirror = this.readScopeMirrorFor(toolName, ctx.envelope, ctx.channelGrantSnapshot) ?? [];
     const seen = new Set(
       ctx.envelope.scope.memory_scopes.map((scope) => `${scope.kind}:${scope.id}`)
     );
@@ -2018,6 +2053,7 @@ export class GatewayToolExecutor {
     durationMs: number,
     scopeAudit: ScopeAuditFields,
     gatewayCallId: string,
+    toolDetails: Record<string, unknown>,
     error?: unknown
   ): void {
     try {
@@ -2056,11 +2092,24 @@ export class GatewayToolExecutor {
           ...(ctx?.workorderAttemptId !== undefined
             ? { workorder_attempt_id: ctx.workorderAttemptId }
             : {}),
+          ...toolDetails,
         },
       });
     } catch (logErr) {
       securityLogger.warn('[envelope] gateway audit log failed (non-fatal)', logErr);
     }
+  }
+
+  private gatewayTraceDetails(
+    toolName: string,
+    result: GatewayToolResult | undefined
+  ): Record<string, unknown> {
+    if (toolName !== 'report_publish') return {};
+    const slotIds = (result as { acceptedSlotIds?: unknown } | undefined)?.acceptedSlotIds;
+    if (!Array.isArray(slotIds) || slotIds.some((slotId) => typeof slotId !== 'string')) return {};
+    // Audit only the structural slot identity. Board HTML/content must never
+    // enter gateway trace details.
+    return { report_slot_ids: [...slotIds].sort() };
   }
 
   private alarmScopeMismatch(
@@ -2439,12 +2488,34 @@ export class GatewayToolExecutor {
             }
           }
           if (this.reportPublisher) {
-            this.reportPublisher(slotsInput);
-            const slotNames = Object.keys(slotsInput);
+            const publication = this.reportPublisher(slotsInput);
+            // Backward compatibility: older injected publishers return void
+            // or the exact changed slot array. Production distinguishes slots
+            // accepted as present from slots whose HTML actually changed.
+            const acceptedSlotIds = Array.isArray(publication)
+              ? [...new Set(publication)].sort()
+              : isReportPublishResult(publication)
+                ? [...new Set(publication.acceptedSlotIds)].sort()
+                : Object.keys(slotsInput).sort();
+            const changedSlotIds = Array.isArray(publication)
+              ? [...acceptedSlotIds]
+              : isReportPublishResult(publication)
+                ? [...new Set(publication.changedSlotIds)].sort()
+                : [...acceptedSlotIds];
+            if (acceptedSlotIds.length === 0) {
+              throw new AgentError(
+                'Report publisher accepted no slots',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
 
             return {
               success: true,
-              message: `Dashboard updated: ${slotNames.join(', ')} (${slotNames.length} slots)`,
+              acceptedSlotIds,
+              changedSlotIds,
+              message: `Dashboard report accepted: ${acceptedSlotIds.join(', ')} (${acceptedSlotIds.length} accepted, ${changedSlotIds.length} changed)`,
             };
           }
           throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
@@ -4250,7 +4321,7 @@ export class GatewayToolExecutor {
       // back excerpts from every other channel of the connector. Citation would then be
       // strictly wider than reading, which is the one thing this path must never be.
       const citationChannels = ctx.envelope
-        ? narrowGrantToEnvelope(liveBoundaryChannels(), {
+        ? narrowGrantToEnvelope(ctx.channelGrantSnapshot ?? {}, {
             connectors,
             scopes: ctx.envelope.scope.memory_scopes ?? [],
           })
@@ -4407,6 +4478,7 @@ export class GatewayToolExecutor {
         caller: 'gateway',
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
+        channelGrantSnapshot: ctx.channelGrantSnapshot,
         input: effectiveInput,
         signal: ctx.signal,
         beforePersist: temporalContext
@@ -4554,6 +4626,15 @@ function getContextPacketIdForTrustedProvenance(
 
 function dedupeSourceRefs(refs: string[]): string[] {
   return [...new Set(refs)];
+}
+
+function snapshotChannelGrant(
+  provider: () => Record<string, readonly string[]>
+): ChannelGrantSnapshot {
+  const liveGrant = provider();
+  return Object.fromEntries(
+    Object.entries(liveGrant).map(([connector, channels]) => [connector, [...channels]])
+  );
 }
 
 function normalizeMemoryScopes(value: unknown): MemoryScope[] | null {
