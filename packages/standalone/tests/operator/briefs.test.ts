@@ -124,9 +124,9 @@ describe('Story S2-T5: briefs', () => {
       });
       const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
       const generatedProjection = projectWorkOrderBriefForPrompt('board', '', enabled);
-      const generatedOverlay = generatedProjection
-        .slice(generatedProjection.indexOf(PRIVATE_PROMPT_OVERLAY_START))
-        .trim();
+      const overlayStart = generatedProjection.indexOf(PRIVATE_PROMPT_OVERLAY_START);
+      expect(overlayStart).toBeGreaterThanOrEqual(0);
+      const generatedOverlay = generatedProjection.slice(overlayStart).trim();
       const samples = [
         `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker without an end`,
         `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored body\n${PRIVATE_PROMPT_OVERLAY_END}`,
@@ -206,6 +206,8 @@ describe('Story S2-T5: briefs', () => {
       expect(brief).toContain('repairGeneration');
       expect(brief).toContain('noUpdateScope');
       expect(brief).toContain('contract_no_update({reason, scope: input.noUpdateScope})');
+      expect(brief).toContain('noUpdateScope is absent');
+      expect(brief).toContain('without calling\ncontract_no_update');
       expect(brief).toContain('<!-- MAMA managed board work-order contract v1:start -->');
       expect(brief).toContain('<!-- MAMA managed board work-order contract v1:end -->');
       expect(brief).toContain('supersedes any earlier Stage-2 instructions');

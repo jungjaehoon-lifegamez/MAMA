@@ -94,6 +94,14 @@ describe('ReconcileScheduler', () => {
     s.stop();
   });
 
+  it('TG-06 rejects an invalid repair generation before scheduling work', () => {
+    const s = make();
+
+    expect(() => s.enqueue('slack:C1', ['delta'], [], -1)).toThrow(/repairGeneration/);
+    expect(() => s.enqueue('slack:C1', ['delta'], [], 1.5)).toThrow(/repairGeneration/);
+    s.stop();
+  });
+
   it('TG-01 carries the newest captured repair generation through one scheduler fire', async () => {
     const s = make({ debounceMs: 10 });
     s.enqueue('telegram:owner', ['older'], ['evt-1'], 41);

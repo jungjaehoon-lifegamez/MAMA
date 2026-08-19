@@ -746,10 +746,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           channelKey?: string;
           lines?: string[];
         };
-        if (!channelKey || !Array.isArray(lines) || lines.length === 0) {
+        if (
+          typeof channelKey !== 'string' ||
+          channelKey.length === 0 ||
+          channelKey.length > 1000 ||
+          !Array.isArray(lines) ||
+          lines.length === 0
+        ) {
           res.status(400).json({
             ok: false,
-            error: 'channelKey and non-empty lines[] are required',
+            error: 'channelKey (1-1000 chars) and non-empty lines[] are required',
           });
           return;
         }

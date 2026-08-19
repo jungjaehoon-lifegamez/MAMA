@@ -164,6 +164,10 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       executor.setTaskLedger(new TaskLedger(opDb));
       executor.setReportPublisher(() => undefined);
 
+      expect(() => buildFullBoardTraceQueries(sessionsDb, 'worker:board', 0)).toThrow(
+        /positive integer/
+      );
+
       const queries = buildFullBoardTraceQueries(sessionsDb, 'worker:board', 41);
       const before = queries.getTraceMaxId();
       await runToolAs(sessionsDb, executor, 'worker:board');

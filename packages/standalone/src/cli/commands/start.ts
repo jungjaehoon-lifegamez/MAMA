@@ -139,11 +139,13 @@ const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
+const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -958,9 +960,9 @@ export function buildOwnerWorkOrderRequestHandler(
   causeEventIds?: readonly string[]
 ) => { accepted: boolean; reason?: string } {
   const now = deps.now ?? Date.now;
-  const log = deps.log ?? ((line: string) => console.log(line));
+  const log = deps.log ?? ((line: string) => ownerWorkOrderLogger.info(line));
   const logError =
-    deps.logError ?? ((line: string, detail: unknown) => console.error(line, detail));
+    deps.logError ?? ((line: string, detail: unknown) => ownerWorkOrderLogger.error(line, detail));
 
   return (kind, causeEventIds) => {
     try {

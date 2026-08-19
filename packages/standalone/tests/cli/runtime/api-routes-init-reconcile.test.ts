@@ -301,7 +301,7 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     opsAlarm: { configured: false, send: async () => undefined },
   });
 
-  await registerApiRoutes({
+  const routeHandle = await registerApiRoutes({
     config: createConfig(),
     apiServer,
     eventBus,
@@ -325,7 +325,16 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     boardRefreshGate,
     now: () => 9_000,
   });
-  return { apiServer, boardRefreshGate, consumer, db, eventBus, ledger, ownerRequest };
+  return {
+    apiServer,
+    boardRefreshGate,
+    consumer,
+    db,
+    eventBus,
+    ledger,
+    ownerRequest,
+    routeHandle,
+  };
 }
 
 describe('TG-04 Task 7: registered reconcile callback private lifecycle isolation', () => {
@@ -452,6 +461,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
 
   it('TG-06 preserves the legacy 30-minute full schedule when reconcile is disabled', async () => {
     const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createConnectorEventTable(db);
@@ -469,7 +479,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
     } finally {
-      process.env.MAMA_BOARD_RECONCILE = '1';
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
       db.close();
     }
   });
@@ -503,6 +514,28 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
+  it('TG-06 rejects an oversized manual reconcile channel before marking gate dirt', async () => {
+    const db = new Database(':memory:');
+    try {
+      createConnectorEventTable(db);
+      const { apiServer, boardRefreshGate, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+      const channelKey = 'x'.repeat(1001);
+
+      const response = await request(apiServer.app)
+        .post('/api/operator/reconcile')
+        .send({ channelKey, lines: ['delta'] });
+
+      expect(response.status).toBe(400);
+      expect(boardRefreshGate?.dirtyGeneration(channelKey)).toBeNull();
+      routeHandle.stop();
+    } finally {
+      db.close();
+    }
+  });
+
   it.each(['report'] as const)(
     'TG-06 owner full %s effect clears shared dirt and suppresses scheduled repair',
     async (effect) => {
@@ -517,6 +550,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         await vi.advanceTimersByTimeAsync(10_000 + 30 * 60 * 1000);
         expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
       } finally {
+        runtime.routeHandle.stop();
         runtime.db.close();
       }
     }
@@ -539,6 +573,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         });
         expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
       } finally {
+        runtime.routeHandle.stop();
         runtime.db.close();
       }
     }
@@ -564,6 +599,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         noUpdateScope: 'full:501',
       });
     } finally {
+      runtime.routeHandle.stop();
       runtime.db.close();
     }
   });
@@ -582,6 +618,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         await vi.advanceTimersByTimeAsync(10_000 + 30 * 60 * 1000);
         expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
       } finally {
+        runtime.routeHandle.stop();
         runtime.db.close();
       }
     }
@@ -605,6 +642,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         });
         expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
       } finally {
+        runtime.routeHandle.stop();
         runtime.db.close();
       }
     }
@@ -622,6 +660,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
     } finally {
+      runtime.routeHandle.stop();
       runtime.db.close();
     }
   });
@@ -650,6 +689,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         payload: { mode: 'full', repairGeneration: 501 },
       });
     } finally {
+      runtime.routeHandle.stop();
       runtime.db.close();
     }
   });
@@ -671,12 +711,14 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         payload: { mode: 'full', repairGeneration: 501 },
       });
     } finally {
+      runtime.routeHandle.stop();
       runtime.db.close();
     }
   });
 
   it('TG-06 forced agent refresh keeps the disabled legacy payload', async () => {
     const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createConnectorEventTable(db);
@@ -693,7 +735,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         force: true,
       });
     } finally {
-      process.env.MAMA_BOARD_RECONCILE = '1';
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
       db.close();
     }
   });

@@ -221,7 +221,6 @@ function fetchHealthScore(): Promise<{
 }
 
 export interface RuntimeVersionEndpointOptions {
-  hostname?: string;
   port?: number;
   timeoutMs?: number;
 }
@@ -237,7 +236,9 @@ export function fetchRuntimeVersion(
     let response: http.IncomingMessage | undefined;
 
     const settle = (value: string | null, destroy = false): void => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       clearTimeout(deadline);
       if (destroy) {
@@ -250,7 +251,7 @@ export function fetchRuntimeVersion(
     const deadline = setTimeout(() => settle(null, true), timeoutMs);
     const req = http.request(
       {
-        hostname: options.hostname ?? '127.0.0.1',
+        hostname: '127.0.0.1',
         port: options.port ?? 3847,
         path: '/api/runtime/status',
         method: 'GET',
@@ -263,7 +264,9 @@ export function fetchRuntimeVersion(
         let ended = false;
 
         res.on('data', (chunk: Buffer) => {
-          if (settled) return;
+          if (settled) {
+            return;
+          }
           responseBytes += chunk.byteLength;
           if (responseBytes > MAX_RUNTIME_VERSION_RESPONSE_BYTES) {
             settle(null, true);
@@ -275,7 +278,9 @@ export function fetchRuntimeVersion(
         res.once('error', () => settle(null, true));
         res.on('end', () => {
           ended = true;
-          if (settled) return;
+          if (settled) {
+            return;
+          }
           try {
             const json = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
               version?: unknown;
@@ -288,7 +293,9 @@ export function fetchRuntimeVersion(
           }
         });
         res.once('close', () => {
-          if (!ended) settle(null, true);
+          if (!ended) {
+            settle(null, true);
+          }
         });
       }
     );

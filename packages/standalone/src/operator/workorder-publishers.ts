@@ -208,6 +208,16 @@ export function validateWorkOrderPayload(
         `workorder payload (board): repairGeneration must be a non-negative safe integer`
       );
     }
+    if (
+      payload.eventIds !== undefined &&
+      (!Array.isArray(payload.eventIds) ||
+        payload.eventIds.some((id) => !isBoundedString(id)) ||
+        new Set(payload.eventIds).size !== payload.eventIds.length)
+    ) {
+      throw new Error(
+        `workorder payload (board): eventIds[] must contain unique 1-1000 character strings`
+      );
+    }
     if (mode === 'reconcile') {
       if (!isBoundedString(payload.channelKey)) {
         throw new Error(`workorder payload (board reconcile): channelKey required`);
@@ -216,17 +226,6 @@ export function validateWorkOrderPayload(
         throw new Error(`workorder payload (board reconcile): non-empty deltaLines[] required`);
       }
       // Not required: a reconcile whose batch could not be determined still has to run.
-      // But a malformed one must not reach the ledger as a cause.
-      if (
-        payload.eventIds !== undefined &&
-        (!Array.isArray(payload.eventIds) ||
-          payload.eventIds.some((id) => !isBoundedString(id)) ||
-          new Set(payload.eventIds).size !== payload.eventIds.length)
-      ) {
-        throw new Error(
-          `workorder payload (board reconcile): eventIds[] must contain unique 1-1000 character strings`
-        );
-      }
       if (payload.candidates !== undefined)
         validateLifecycleCandidates(payload.candidates, payload.eventIds);
       if (payload.noUpdateScope !== undefined) {

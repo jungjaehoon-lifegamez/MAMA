@@ -91,8 +91,10 @@ update is needed: agent_notices({limit: 100}) for the last board publish
 boundary, then a recency check (mama_search({limit: 30}) with NO query,
 compare created_at). If nothing substantive is newer and force is not set,
 call contract_no_update({reason, scope: input.noUpdateScope}) with that exact
-scope, then respond NO_UPDATE and stop. Do not substitute or derive another
-scope. Otherwise follow "How to Write" and publish ALL
+scope when noUpdateScope is present, then respond NO_UPDATE and stop. When
+noUpdateScope is absent, respond NO_UPDATE and stop without calling
+contract_no_update; do not substitute or derive another scope. Otherwise follow
+"How to Write" and publish ALL
 FOUR slots in ONE report_publish({slots: {briefing, action_required, decisions, pipeline}}) call.
 
 mode "reconcile" = a single-channel delta reconcile for input.channelKey using
