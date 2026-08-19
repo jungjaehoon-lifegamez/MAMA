@@ -322,6 +322,22 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(fresh.payload.attempts).toBe(1);
     });
 
+    it('reads a durable owner-event workorder acceptance after terminal transition', () => {
+      const order = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'owner-event:wiki:receipt',
+        input: { batchId: 'owner-event:wiki:receipt', events: ['evt-1'] },
+      });
+      expect(ledger.findWorkOrderByOccurrence('wiki', 'owner-event:wiki:receipt')?.id).toBe(
+        order.id
+      );
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(order.id);
+      expect(ledger.findWorkOrderByOccurrence('wiki', 'owner-event:wiki:receipt')?.status).toBe(
+        'done'
+      );
+    });
+
     it('claims priority high>normal>low then id ASC (CASE, not lexicographic)', () => {
       const low = ledger.enqueueWorkOrder({
         workKind: 'wiki',

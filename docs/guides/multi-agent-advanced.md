@@ -5,8 +5,9 @@
 
 ---
 
-> In the viewer and webchat, `os-agent` is the user-facing main agent. `conductor` remains
-> available for audit and background orchestration.
+> In the viewer, webchat, and connector-event lane, MAMA/`os-agent` is the acting subject. A
+> multi-agent persona named `conductor` may remain in legacy installations, but it is not the
+> removed background Conductor and does not own connector events or audits.
 
 ## What this guide no longer covers
 

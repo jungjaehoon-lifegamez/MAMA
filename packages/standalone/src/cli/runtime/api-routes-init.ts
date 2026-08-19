@@ -36,7 +36,7 @@ import type { DiscordGateway } from '../../gateways/discord.js';
 import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
-import type { AgentEvent, AgentEventBus } from '../../multi-agent/agent-event-bus.js';
+import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
@@ -306,7 +306,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   let boardReconcileScheduler:
     | import('../../operator/board-reconcile.js').ReconcileScheduler
     | null = null;
-  let boardDeltaHandler: ((event: AgentEvent) => void) | null = null;
 
   // ── Stage-2 workorder publishers ──────────────────────────────────────
   // The ONLY system run path since v0.28.0: every scheduled/boot/manual run
@@ -466,7 +465,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       createReportPublisher(apiServer.reportStore, apiServer.reportSseClients)
     );
     // S1-T4 artifact hub: the console READS the board it directs. Same store
-    // the publisher writes - the conductor's status answers cite these slots
+    // the publisher writes - MAMA's status answers cite these slots
     // instead of re-deriving state from memory copies.
     toolExecutor.setReportReader(() => {
       const slots = apiServer.reportStore.getAll();
@@ -548,9 +547,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       res.json({ ok: true, message: 'Board refresh workorder enqueued (forced)' });
     });
 
-    // -- M8 board reconcile leg (freshness layer; default OFF, opt-in like
-    // MAMA_TRIGGER_LOOP). The trigger loop emits operator:channel-delta after
-    // committing its cursor; the 30-min cron above remains the repair pass.
+    // Manual Board reconcile remains available for an explicit operator
+    // request. Connector deltas belong to the MAMA owner-event agent and are
+    // no longer consumed by a parallel Board worker.
     if (reconcileEnabled && boardRefreshGate) {
       const { ReconcileScheduler } = await import('../../operator/board-reconcile.js');
       const { captureSnapshot, verifyAfterRun } = await import('../../operator/action-verifier.js');
@@ -724,21 +723,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         },
       });
       boardReconcileScheduler = reconcileScheduler;
-      boardDeltaHandler = (event) => {
-        if (event.type === 'operator:channel-delta') {
-          // TG-06: dirt exists at ingress, before debounce, budget, evidence
-          // reads, or ledger enqueue can fail.
-          const repairGeneration = boardRefreshGate.markChannelDirty(event.channelKey);
-          reconcileScheduler.enqueue(
-            event.channelKey,
-            event.lines,
-            event.eventIds,
-            repairGeneration
-          );
-        }
-      };
-      eventBus.on('operator:channel-delta', boardDeltaHandler);
-
       // Manual reconcile: lines from the body, or the caller must supply them
       // (no silent alternate data path -- M8 review #17).
       apiServer.app.post('/api/operator/reconcile', requireAuth, (req, res) => {
@@ -1011,7 +995,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   }
 
   // -- System Audit: hourly deterministic code checks ---------------------
-  // Owner decision 2026-04-22 (mama_conductor_audit_code_based_read_only),
+  // Owner decision 2026-04-22 (legacy id: mama_conductor_audit_code_based_read_only),
   // landed 2026-07-17: the audit is fact collection and recording executed by
   // CODE - no LLM invocation, no auto-fix, no broad filesystem access. The
   // prior hourly LLM audit violated that decision and the 2026-05-14
@@ -1094,7 +1078,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   }, AUDIT_INITIAL_DELAY_MS);
 
   // Manual trigger returns the full report (read-only, no LLM, fast)
-  apiServer.app.post('/api/conductor/audit', requireAuth, async (_req, res) => {
+  apiServer.app.post('/api/system/audit', requireAuth, async (_req, res) => {
     const report = await runSystemAudit();
     if (report) {
       res.json({ ok: true, mode: 'code', report });
@@ -1104,7 +1088,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   });
 
   routesLogger.info(
-    '[System Audit] Ready - deterministic code checks every 60 min, POST /api/conductor/audit for manual run'
+    '[System Audit] Ready - deterministic code checks every 60 min, POST /api/system/audit for manual run'
   );
 
   // ── Memory Agent stats API ────────────────────────────────────────────
@@ -1847,10 +1831,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       boardInterval = null;
       boardReconcileScheduler?.stop();
       boardReconcileScheduler = null;
-      if (boardDeltaHandler) {
-        eventBus.off('operator:channel-delta', boardDeltaHandler);
-      }
-      boardDeltaHandler = null;
     },
   };
 }

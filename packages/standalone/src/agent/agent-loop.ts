@@ -128,9 +128,9 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   enabledNames: [],
 });
 
-// Exported so the conductor test can PIN that 'conductor' is absent: the
-// conductor must run on its own session:operator:conductor lane, never the
-// global operator lane where Stage-2 workers serialize (deadlock topology).
+// Sources without an entry stay on their per-session lane. Owner-event work
+// deliberately uses `owner-event:<channelKey>` instead of the global operator
+// lane so separate connector conversations do not serialize behind Stage-2.
 export const SOURCE_GLOBAL_LANES: Record<string, string> = {
   viewer: 'viewer',
   system: 'system',
@@ -555,18 +555,21 @@ export function buildAgentToolExecutionContext(
       options.sourceMessageRef === undefined &&
       options.modelRunId === undefined &&
       options.workorderAttemptId === undefined &&
-      options.temporalWorkContext === undefined)
+      options.temporalWorkContext === undefined &&
+      options.ownerEventEffects === undefined)
   ) {
     return null;
   }
   const agentContext = options.agentContext;
   const context: AgentToolExecutionContext = {
     agentContext,
-    agentId: agentContext
-      ? agentContext.source === 'viewer'
-        ? 'os-agent'
-        : agentContext.roleName
-      : undefined,
+    agentId:
+      options.actorId ??
+      (agentContext
+        ? agentContext.source === 'viewer'
+          ? 'os-agent'
+          : agentContext.roleName
+        : undefined),
     source: options.source,
     channelId: options.channelId,
     envelope: options.envelope,
@@ -586,6 +589,9 @@ export function buildAgentToolExecutionContext(
   }
   if (options.causeEventIds !== undefined) {
     context.causeEventIds = options.causeEventIds;
+  }
+  if (options.ownerEventEffects !== undefined) {
+    context.ownerEventEffects = options.ownerEventEffects;
   }
   if (options.temporalWorkContext !== undefined) {
     context.temporalWorkContext = options.temporalWorkContext;
@@ -1039,9 +1045,9 @@ export class AgentLoop {
       ...base,
       // Persona blocks are per-call policy - never executor instance state.
       disallowedGatewayTools: this.disallowedTools,
-      // Never let persona calls inherit the code-act route's fallback identity.
-      // 'conductor' matches the existing delegation-routing fallback
-      // (gateway-tool-executor.ts:653) so attribution is unchanged.
+      // Never let optional multi-agent persona calls inherit the code-act
+      // route's fallback identity. `conductor` remains the legacy persona
+      // fallback and is unrelated to the removed background event subject.
       // (Persona lanes always pass source/channelId, so base is non-null for them
       // and the disallowed list travels on every persona run.)
       agentId: base.agentId || 'conductor',

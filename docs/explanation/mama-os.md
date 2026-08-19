@@ -3,7 +3,7 @@
 > **PARTIALLY HISTORICAL (v0.21-era).** The walkthrough below predates the
 > operator runtime and the Viewer/operator unification. The one surface today
 > is `/viewer`, opening on the operator board; the workorder pipeline,
-> conductor and effect ledger are documented in
+> MAMA owner-event agent, and effect ledger are documented in
 > [architecture](architecture.md).
 
 **Category:** Explanation (Conceptual Understanding)  
