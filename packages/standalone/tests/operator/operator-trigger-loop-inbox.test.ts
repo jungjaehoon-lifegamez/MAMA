@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
-import { ConductorInbox } from '../../src/operator/conductor-inbox.js';
+import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
 import type {
@@ -35,7 +35,7 @@ function fakeMem(): OperatorMemoryPort {
   };
 }
 
-describe('trigger loop feeds the conductor inbox before committing the cursor', () => {
+describe('trigger loop feeds the MAMA owner-event inbox before committing the cursor', () => {
   let db: SQLiteDatabase;
   let reg: TriggerRegistry;
 
@@ -45,8 +45,65 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
   });
   afterEach(() => reg.close());
 
+  it('hands the complete matched trigger procedure to the MAMA owner-event journal', async () => {
+    const inbox = new OwnerEventInbox(db);
+    reg.create({
+      id: 'feedback-trigger',
+      kind: 'feedback relay',
+      memoryQuery: 'owner feedback relay policy',
+      match: { keywords: ['message'], keywordMode: 'any', minConfidence: 0.8 },
+      procedure: [
+        { action: 'translate', description: 'Translate the feedback into Korean.' },
+        { action: 'deliver', description: 'Deliver the result to the owner.' },
+      ],
+      requiredEvidence: ['current_message', 'feedback_attachment'],
+      authoredBy: 'agent',
+      provenance: { createdFrom: 'owner-correction', note: 'standing responsibility' },
+    });
+    let drained = false;
+    const events = [{ ...makeEvents(1)[0], eventIndexId: 'evt-feedback' }];
+    const loop = new OperatorTriggerLoop({
+      delta: {
+        drainNew: () => {
+          if (drained) return [];
+          drained = true;
+          return events;
+        },
+        commit: () => {},
+      },
+      memory: fakeMem(),
+      registry: reg,
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 3,
+        reviewEveryNTicks: 5,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+      ownerEventInbox: inbox,
+    });
+
+    await loop.tick();
+
+    expect(inbox.claimNext()?.activations).toEqual([
+      {
+        triggerId: 'feedback-trigger',
+        kind: 'feedback relay',
+        memoryQuery: 'owner feedback relay policy',
+        procedure: [
+          { action: 'translate', description: 'Translate the feedback into Korean.' },
+          { action: 'deliver', description: 'Deliver the result to the owner.' },
+        ],
+        requiredEvidence: ['current_message', 'feedback_attachment'],
+      },
+    ]);
+  });
+
   it('enqueues, then commits; a commit failure leaves the batch durable', async () => {
-    const inbox = new ConductorInbox(db);
+    const inbox = new OwnerEventInbox(db);
     const calls: string[] = [];
     let failCommit = true;
     let pending: OperatorChannelEvent[] = makeEvents(2);
@@ -81,7 +138,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
         authorWindowSize: 10,
       },
       log: () => {},
-      conductorInbox: inbox,
+      ownerEventInbox: inbox,
     });
 
     await expect(loop.tick()).rejects.toThrow('cursor write failed');
@@ -95,7 +152,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
   });
 
   it('collapses embedded newlines so a message body cannot forge line or block framing', async () => {
-    const inbox = new ConductorInbox(db);
+    const inbox = new OwnerEventInbox(db);
     const events: OperatorChannelEvent[] = [
       {
         ...makeEvents(1)[0],
@@ -126,7 +183,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
         authorWindowSize: 10,
       },
       log: () => {},
-      conductorInbox: inbox,
+      ownerEventInbox: inbox,
     });
     await loop.tick();
     const row = inbox.claimNext()!;
@@ -136,7 +193,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
   });
 
   it('a batch beyond the 10-line display cap keeps FULL identity and an honest excerpt', async () => {
-    const inbox = new ConductorInbox(db);
+    const inbox = new OwnerEventInbox(db);
     const events: OperatorChannelEvent[] = Array.from({ length: 12 }, (_, i) => ({
       id: i + 1,
       channel: 'chat',
@@ -170,7 +227,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
         authorWindowSize: 10,
       },
       log: () => {},
-      conductorInbox: inbox,
+      ownerEventInbox: inbox,
     });
     await loop.tick();
     const row = inbox.claimNext()!;
@@ -181,7 +238,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
   });
 
   it('groups per channel and enqueues each group with full event identity', async () => {
-    const inbox = new ConductorInbox(db);
+    const inbox = new OwnerEventInbox(db);
     const events: OperatorChannelEvent[] = [
       { ...makeEvents(1)[0], channelId: 'C1', eventIndexId: 'evi_1' },
       { ...makeEvents(2)[1], channelId: 'C2' }, // no index id -> namespaced fallback
@@ -210,7 +267,7 @@ describe('trigger loop feeds the conductor inbox before committing the cursor', 
         authorWindowSize: 10,
       },
       log: () => {},
-      conductorInbox: inbox,
+      ownerEventInbox: inbox,
     });
 
     await loop.tick();

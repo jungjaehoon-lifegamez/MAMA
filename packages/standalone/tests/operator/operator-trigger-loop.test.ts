@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
+import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
 import { buildReviewPrompt } from '../../src/operator/trigger-review.js';
 import type {
@@ -199,7 +200,7 @@ describe('OperatorTriggerLoop', () => {
     expect(pending?.digest.windowTotal).toBe(0);
   });
 
-  it('still forwards replayed connector events to board reconciliation after report dedupe', async () => {
+  it('keeps replayed connector events in the MAMA owner-event journal after report dedupe', async () => {
     let pending: PendingReportState | null = null;
     const pendingReportStore = {
       load: () => pending,
@@ -208,26 +209,25 @@ describe('OperatorTriggerLoop', () => {
       },
     };
     const event = ev(1, 'owner', 'board delta that must survive restart');
+    const ownerEventInbox = new OwnerEventInbox(db);
     delta.queue = [event];
 
-    await makeLoop({ pendingReportStore, output: { send: vi.fn(async () => {}) } }).tick();
-
-    delta.queue = [event];
-    const onChannelDelta = vi.fn();
     await makeLoop({
       pendingReportStore,
       output: { send: vi.fn(async () => {}) },
-      onChannelDelta,
+      ownerEventInbox,
     }).tick();
 
-    expect(onChannelDelta).toHaveBeenCalledOnce();
-    // The batch rides alongside the prompt lines now: the ids were always inside the
-    // lines as `[id:evt_...]` text, and carrying them structurally is what lets a bounded
-    // run attribute what it changes without asking the agent to restate anything.
-    expect(onChannelDelta).toHaveBeenCalledWith(
-      'slack:owner',
-      expect.arrayContaining([expect.stringContaining('board delta that must survive restart')]),
-      expect.any(Array)
+    delta.queue = [event];
+    await makeLoop({
+      pendingReportStore,
+      output: { send: vi.fn(async () => {}) },
+      ownerEventInbox,
+    }).tick();
+
+    expect(ownerEventInbox.depth().pending).toBe(1);
+    expect(ownerEventInbox.claimNext()?.lines).toEqual(
+      expect.arrayContaining([expect.stringContaining('board delta that must survive restart')])
     );
     expect(pending?.digest.windowTotal).toBe(1);
   });
@@ -641,6 +641,31 @@ describe('OperatorTriggerLoop', () => {
     await loop.tick();
     await loop.tick();
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call a trigger successful merely because an owner report cited it', async () => {
+    seedTrigger(reg, 'effect-owned-trigger', 'feedback');
+    const loop = makeLoop({
+      reportAsk: async () => 'feedback observed\nUSED_TRIGGERS: effect-owned-trigger',
+      output: { send: vi.fn(async () => {}) },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+        reportEveryNTicks: 1,
+      },
+    });
+    delta.queue = [ev(1, 'ch-a', 'feedback arrived')];
+
+    await loop.tick();
+
+    expect(reg.getById('effect-owned-trigger')?.stats).toMatchObject({
+      fired: 1,
+      succeeded: 0,
+      failed: 0,
+    });
   });
 
   it('start() ticks on the interval and the returned stop fn halts it', async () => {

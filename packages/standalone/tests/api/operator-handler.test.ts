@@ -162,6 +162,9 @@ describe('Story M9.3: Operator trigger API', () => {
   describe('AC #1: Summary reports trigger status and outcome counters', () => {
     it('GET /summary aggregates trigger counters across statuses', async () => {
       seedReg.create(sampleInput('t1'));
+      seedReg.recordFire('t1');
+      seedReg.recordFire('t1');
+      seedReg.recordFire('t1');
       seedReg.recordOutcome('t1', 'succeeded');
       seedReg.recordOutcome('t1', 'succeeded');
       seedReg.recordOutcome('t1', 'failed');

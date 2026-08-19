@@ -17,7 +17,10 @@ import type { OperatorChannelEvent } from './operator-interfaces.js';
 import type { TriggerRecord, TriggerSignal } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
 
-export function matchTriggers(event: OperatorChannelEvent, registry: TriggerRegistry): TriggerSignal[] {
+export function matchTriggers(
+  event: OperatorChannelEvent,
+  registry: TriggerRegistry
+): TriggerSignal[] {
   // The operator reacts to incoming messages, not its own output (ports detector role check,
   // workflow-situation-detector.ts:13).
   if (event.role !== 'user') return [];
@@ -34,7 +37,11 @@ export function matchTriggers(event: OperatorChannelEvent, registry: TriggerRegi
   return signals;
 }
 
-function triggerMatchesEvent(trigger: TriggerRecord, event: OperatorChannelEvent, text: string): boolean {
+function triggerMatchesEvent(
+  trigger: TriggerRecord,
+  event: OperatorChannelEvent,
+  text: string
+): boolean {
   const { keywords, keywordMode, scopeChannelIds } = trigger.match;
 
   if (scopeChannelIds && scopeChannelIds.length > 0 && !scopeChannelIds.includes(event.channelId)) {
@@ -49,10 +56,15 @@ function triggerMatchesEvent(trigger: TriggerRecord, event: OperatorChannelEvent
   return keywordMode === 'any' ? cleaned.some(hit) : cleaned.every(hit);
 }
 
-function buildSignal(trigger: TriggerRecord, event: OperatorChannelEvent, text: string): TriggerSignal {
+function buildSignal(
+  trigger: TriggerRecord,
+  event: OperatorChannelEvent,
+  text: string
+): TriggerSignal {
   return {
     kind: trigger.kind,
     memoryQuery: trigger.memoryQuery,
+    procedure: trigger.procedure.map((step) => ({ ...step })),
     requiredEvidence: [...trigger.requiredEvidence],
     confidence: trigger.match.minConfidence,
     detector: `agent-authored:${trigger.id}`,
@@ -60,7 +72,9 @@ function buildSignal(trigger: TriggerRecord, event: OperatorChannelEvent, text: 
     occurredAt: event.createdAt,
     reason: `Agent-authored trigger ${trigger.id} matched.`,
     text,
-    sourceRefs: [{ sourceConnector: event.channel, sourceId: event.eventIndexId ?? String(event.id) }],
+    sourceRefs: [
+      { sourceConnector: event.channel, sourceId: event.eventIndexId ?? String(event.id) },
+    ],
     triggerId: trigger.id,
   };
 }

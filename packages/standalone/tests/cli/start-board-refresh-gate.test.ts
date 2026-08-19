@@ -5,6 +5,40 @@ import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { buildOwnerWorkOrderRequestHandler } from '../../src/cli/commands/start.js';
 
 describe('TG-06 owner board workorder repair generation', () => {
+  it.each(['board', 'wiki', 'memory-curation'] as const)(
+    'dedupes a receipted owner-event %s handoff even after the first workorder is terminal',
+    (kind) => {
+      const db = new Database(':memory:');
+      const ledger = new TaskLedger(db);
+      let now = 1_000;
+      const handler = buildOwnerWorkOrderRequestHandler({
+        taskLedger: ledger,
+        boardRefreshGate: null,
+        now: () => now,
+        log: vi.fn(),
+        logError: vi.fn(),
+      });
+
+      expect(handler(kind, ['evt-owner-1'])).toEqual({ accepted: true });
+      const first = ledger.claimNextWorkOrder();
+      if (!first) throw new Error('owner-event workorder expected');
+      expect(first.idempotencyKey).toMatch(new RegExp(`^owner-event:${kind}:`));
+      ledger.completeWorkOrder(first.id);
+
+      now = 9_000;
+      expect(handler(kind, ['evt-owner-1'])).toEqual({ accepted: true });
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      expect(
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM operator_tasks WHERE kind = 'system'`).get() as {
+            n: number;
+          }
+        ).n
+      ).toBe(1);
+      db.close();
+    }
+  );
+
   it('marks eventless and event-backed owner full requests dirty before enqueue and carries exact scopes', () => {
     const db = new Database(':memory:');
     const ledger = new TaskLedger(db);

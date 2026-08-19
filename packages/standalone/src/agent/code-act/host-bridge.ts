@@ -346,6 +346,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'message', type: 'string', required: false },
       { name: 'file_path', type: 'string', required: false },
       { name: 'sticker_emotion', type: 'string', required: false },
+      { name: 'delivery_key', type: 'string', required: false },
     ],
     returnType: 'true',
     category: 'communication',
@@ -452,6 +453,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'folderId', type: 'string', required: true },
       { name: 'fileName', type: 'string', required: false },
       { name: 'destinationCapability', type: 'string', required: false },
+      { name: 'effect_key', type: 'string', required: false },
     ],
     returnType:
       "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { fileId: string; name: string } } }",

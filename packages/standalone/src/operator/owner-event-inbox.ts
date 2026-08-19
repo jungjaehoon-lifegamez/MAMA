@@ -1,31 +1,24 @@
 /**
- * Durable conductor inbox.
+ * Durable MAMA owner-event inbox.
  *
- * Written BEFORE the delta cursor commits (the trigger loop today commits the
- * cursor and then invokes its callback, so a callback failure loses the batch
- * forever - operator-trigger-loop.ts, "feed AFTER commit"). With this table
- * the order inverts: enqueue -> commit. A crash between the two redelivers on
- * the next drain, and per-event dedupe turns redelivery into a no-op.
+ * Written BEFORE the delta cursor commits. A crash between enqueue and commit
+ * redelivers on the next drain, and per-event dedupe makes that a no-op.
  *
  * Claims are leases, not transfers: an acked row is done; an unacked claim
  * older than the lease returns to pending via replayStale().
  *
  * `eventIds` and `lines` are INDEPENDENT fields, never zipped positionally:
  * eventIds is the identity/cause set (the whole batch), lines is the bounded
- * display excerpt - the same split the reconcile callback documents. Review
- * caught the original positional pairing scrambling content for any batch
- * larger than the display cap.
+ * display excerpt. Trigger activations are immutable procedure snapshots.
  */
 import type { SQLiteDatabase } from '../sqlite.js';
+import type { TriggerProcedureStep } from './trigger-types.js';
 
 const MAX_ATTEMPTS = 5;
 const ACKED_RETENTION_MS = 7 * 86_400_000;
 /**
- * Pending rows older than this park as dead: in shadow mode nothing acks, and
- * an unbounded pending queue detonates as months of stale chat replayed at 8
- * runs per 30s tick the day the owner flips the flag (review F4). 7 days of
- * shadow data is the observation window; older batches are stale, not lost -
- * dead rows stay visible in depth().
+ * Pending rows older than this park as dead so a long provider outage cannot
+ * replay months of stale chat. Dead rows remain visible in depth().
  */
 const PENDING_RETENTION_MS = 7 * 86_400_000;
 /**
@@ -44,6 +37,16 @@ export interface InboxBatch {
   eventIds: string[];
   /** Bounded human-readable excerpt - display only, not paired with eventIds. */
   lines: string[];
+  /** Immutable trigger contracts matched before the source cursor advanced. */
+  activations: OwnerEventActivation[];
+}
+
+export interface OwnerEventActivation {
+  triggerId: string;
+  kind: string;
+  memoryQuery: string;
+  procedure: TriggerProcedureStep[];
+  requiredEvidence: string[];
 }
 
 export interface InboxRow extends InboxBatch {
@@ -52,7 +55,30 @@ export interface InboxRow extends InboxBatch {
   attempts: number;
 }
 
-export class ConductorInbox {
+export type OwnerEventBatch = InboxRow;
+
+interface StoredOwnerEventRow {
+  id: number;
+  channel_key: string;
+  event_ids_json: string;
+  lines_json: string;
+  activations_json: string;
+  attempts: number;
+}
+
+function deadBatch(row: StoredOwnerEventRow, attempts: number): OwnerEventBatch {
+  return {
+    id: row.id,
+    channelKey: row.channel_key,
+    eventIds: JSON.parse(row.event_ids_json) as string[],
+    lines: JSON.parse(row.lines_json) as string[],
+    activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
+    status: 'dead',
+    attempts,
+  };
+}
+
+export class OwnerEventInbox {
   private readonly stmtInsertEvent;
   private readonly stmtInsertBatch;
   private readonly stmtClaimSelect;
@@ -66,84 +92,114 @@ export class ConductorInbox {
   private readonly stmtReplay;
   private readonly stmtDepth;
 
-  constructor(private readonly db: SQLiteDatabase) {
+  constructor(
+    private readonly db: SQLiteDatabase,
+    private readonly clock: () => number = () => Date.now()
+  ) {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS conductor_inbox (
+      CREATE TABLE IF NOT EXISTS owner_event_inbox (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         channel_key TEXT NOT NULL,
         event_ids_json TEXT NOT NULL,
         lines_json TEXT NOT NULL,
+        activations_json TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending'
           CHECK (status IN ('pending','claimed','acked','dead')),
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
         created_at INTEGER NOT NULL,
         claimed_at INTEGER,
-        acked_at INTEGER
+        acked_at INTEGER,
+        retry_after INTEGER
       );
-      CREATE INDEX IF NOT EXISTS idx_conductor_inbox_status
-        ON conductor_inbox(status, id);
-      CREATE TABLE IF NOT EXISTS conductor_inbox_events (
+      CREATE INDEX IF NOT EXISTS idx_owner_event_inbox_status
+        ON owner_event_inbox(status, id);
+      CREATE TABLE IF NOT EXISTS owner_event_inbox_events (
         event_id TEXT PRIMARY KEY,
         seen_at INTEGER NOT NULL DEFAULT 0
       );
-      CREATE INDEX IF NOT EXISTS idx_conductor_inbox_events_seen
-        ON conductor_inbox_events(seen_at);
+      CREATE INDEX IF NOT EXISTS idx_owner_event_inbox_events_seen
+        ON owner_event_inbox_events(seen_at);
     `);
+    const columns = this.db.prepare(`PRAGMA table_info(owner_event_inbox)`).all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === 'retry_after')) {
+      this.db.exec(`ALTER TABLE owner_event_inbox ADD COLUMN retry_after INTEGER`);
+    }
     // Prepared once: enqueue runs per channel per drain tick and re-preparing
     // statements per call was measurable on backfill drains.
     this.stmtInsertEvent = this.db.prepare(
-      `INSERT OR IGNORE INTO conductor_inbox_events (event_id, seen_at) VALUES (?, ?)`
+      `INSERT OR IGNORE INTO owner_event_inbox_events (event_id, seen_at) VALUES (?, ?)`
     );
     this.stmtInsertBatch = this.db.prepare(
-      `INSERT INTO conductor_inbox (channel_key, event_ids_json, lines_json, created_at)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO owner_event_inbox
+         (channel_key, event_ids_json, lines_json, activations_json, created_at)
+       VALUES (?, ?, ?, ?, ?)`
     );
     this.stmtClaimSelect = this.db.prepare(
-      `SELECT id, channel_key, event_ids_json, lines_json, attempts
-         FROM conductor_inbox WHERE status = 'pending' ORDER BY id ASC LIMIT 1`
+      `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+         FROM owner_event_inbox
+        WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ?
+        ORDER BY id ASC LIMIT 1`
     );
     this.stmtClaimUpdate = this.db.prepare(
-      `UPDATE conductor_inbox SET status = 'claimed', claimed_at = ?
+      `UPDATE owner_event_inbox SET status = 'claimed', claimed_at = ?
         WHERE id = ? AND status = 'pending'`
     );
     this.stmtAck = this.db.prepare(
-      `UPDATE conductor_inbox SET status = 'acked', acked_at = ? WHERE id = ?`
+      `UPDATE owner_event_inbox SET status = 'acked', acked_at = ? WHERE id = ?`
     );
     this.stmtRetry = this.db.prepare(
-      `UPDATE conductor_inbox
+      `UPDATE owner_event_inbox
           SET status = CASE WHEN attempts + 1 >= ${MAX_ATTEMPTS} THEN 'dead' ELSE 'pending' END,
-              attempts = attempts + 1, last_error = ?, claimed_at = NULL
+              attempts = attempts + 1, last_error = ?, claimed_at = NULL,
+              retry_after = ? + CASE attempts
+                WHEN 0 THEN 60000
+                WHEN 1 THEN 300000
+                WHEN 2 THEN 1800000
+                WHEN 3 THEN 7200000
+                ELSE 43200000
+              END
         WHERE id = ? AND status = 'claimed'`
     );
-    this.stmtRetryStatus = this.db.prepare(`SELECT status FROM conductor_inbox WHERE id = ?`);
+    this.stmtRetryStatus = this.db.prepare(`SELECT status FROM owner_event_inbox WHERE id = ?`);
     this.stmtPruneAcked = this.db.prepare(
-      `DELETE FROM conductor_inbox WHERE status = 'acked' AND acked_at <= ?`
+      `DELETE FROM owner_event_inbox WHERE status = 'acked' AND acked_at <= ?`
     );
     this.stmtPrunePending = this.db.prepare(
-      `UPDATE conductor_inbox
+      `UPDATE owner_event_inbox
           SET status = 'dead', last_error = 'stale_pending_expired'
         WHERE status = 'pending' AND created_at <= ?`
     );
-    this.stmtPruneEvents = this.db.prepare(`DELETE FROM conductor_inbox_events WHERE seen_at <= ?`);
+    this.stmtPruneEvents = this.db.prepare(
+      `DELETE FROM owner_event_inbox_events WHERE seen_at <= ?`
+    );
     // Same poison cap as retry(): a claim that expires its lease repeatedly
     // (hung run, daemon death mid-flight) must park as dead too, not re-pend
     // forever at the head of the queue (review F8).
     this.stmtReplay = this.db.prepare(
-      `UPDATE conductor_inbox
+      `UPDATE owner_event_inbox
           SET status = CASE WHEN attempts + 1 >= ${MAX_ATTEMPTS} THEN 'dead' ELSE 'pending' END,
-              attempts = attempts + 1, claimed_at = NULL
+              attempts = attempts + 1, claimed_at = NULL,
+              retry_after = ? + CASE attempts
+                WHEN 0 THEN 60000
+                WHEN 1 THEN 300000
+                WHEN 2 THEN 1800000
+                WHEN 3 THEN 7200000
+                ELSE 43200000
+              END
         WHERE status = 'claimed' AND COALESCE(claimed_at, 0) <= ?`
     );
     // Grouped on the (status, id) index; never scans the acked bulk.
     this.stmtDepth = this.db.prepare(
-      `SELECT status, COUNT(*) AS n FROM conductor_inbox
+      `SELECT status, COUNT(*) AS n FROM owner_event_inbox
         WHERE status IN ('pending','claimed','dead') GROUP BY status`
     );
   }
 
   private now(): number {
-    return Date.now();
+    return this.clock();
   }
 
   /**
@@ -161,7 +217,7 @@ export class ConductorInbox {
       const chunk = batch.eventIds.slice(i, i + SEEN_CHUNK);
       const rows = this.db
         .prepare(
-          `SELECT event_id FROM conductor_inbox_events WHERE event_id IN (${chunk
+          `SELECT event_id FROM owner_event_inbox_events WHERE event_id IN (${chunk
             .map(() => '?')
             .join(',')})`
         )
@@ -180,6 +236,7 @@ export class ConductorInbox {
         batch.channelKey,
         JSON.stringify(fresh),
         JSON.stringify(batch.lines),
+        JSON.stringify(batch.activations),
         now
       );
     });
@@ -187,12 +244,13 @@ export class ConductorInbox {
   }
 
   claimNext(): InboxRow | null {
-    const row = this.stmtClaimSelect.get() as
+    const row = this.stmtClaimSelect.get(this.now()) as
       | {
           id: number;
           channel_key: string;
           event_ids_json: string;
           lines_json: string;
+          activations_json: string;
           attempts: number;
         }
       | undefined;
@@ -208,6 +266,7 @@ export class ConductorInbox {
       channelKey: row.channel_key,
       eventIds: JSON.parse(row.event_ids_json) as string[],
       lines: JSON.parse(row.lines_json) as string[],
+      activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
       status: 'claimed',
       attempts: row.attempts,
     };
@@ -223,7 +282,7 @@ export class ConductorInbox {
    * permanent loss must never be silent.
    */
   retry(id: number, error: string): 'pending' | 'dead' | 'noop' {
-    const result = this.stmtRetry.run(error.slice(0, 500), id);
+    const result = this.stmtRetry.run(error.slice(0, 500), this.now(), id);
     if (result.changes !== 1) {
       return 'noop'; // replayStale already flipped it
     }
@@ -232,14 +291,45 @@ export class ConductorInbox {
   }
 
   replayStale(olderThanMs: number, now = this.now()): number {
+    return this.replayStaleDetailed(olderThanMs, now).replayed;
+  }
+
+  replayStaleDetailed(
+    olderThanMs: number,
+    now = this.now()
+  ): { replayed: number; newlyDead: OwnerEventBatch[] } {
     // Housekeeping rides along: acked rows age out, stale pending rows park
     // as dead (visible, bounded), and the dedupe table keeps a wide but
     // finite horizon - no table here grows without bound.
+    const stalePending = this.db
+      .prepare(
+        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+           FROM owner_event_inbox
+          WHERE status = 'pending' AND created_at <= ?
+          ORDER BY id ASC`
+      )
+      .all(now - PENDING_RETENTION_MS) as StoredOwnerEventRow[];
     this.stmtPruneAcked.run(now - ACKED_RETENTION_MS);
     this.stmtPrunePending.run(now - PENDING_RETENTION_MS);
     this.stmtPruneEvents.run(now - EVENT_RETENTION_MS);
-    const result = this.stmtReplay.run(now - olderThanMs);
-    return result.changes;
+    const cutoff = now - olderThanMs;
+    const dying = this.db
+      .prepare(
+        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+           FROM owner_event_inbox
+          WHERE status = 'claimed' AND attempts + 1 >= ${MAX_ATTEMPTS}
+            AND COALESCE(claimed_at, 0) <= ?
+          ORDER BY id ASC`
+      )
+      .all(cutoff) as StoredOwnerEventRow[];
+    const result = this.stmtReplay.run(now, cutoff);
+    return {
+      replayed: result.changes,
+      newlyDead: [
+        ...stalePending.map((row) => deadBatch(row, row.attempts)),
+        ...dying.map((row) => deadBatch(row, row.attempts + 1)),
+      ],
+    };
   }
 
   depth(): { pending: number; claimed: number; dead: number } {

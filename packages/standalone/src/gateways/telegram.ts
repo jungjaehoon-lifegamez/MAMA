@@ -896,6 +896,8 @@ export class TelegramGateway extends BaseGateway {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: createHash('sha256').update(text).digest('hex'),
     };
+    const prior = this.messageLedger.get(ledgerKey);
+    if (idempotencyKey.startsWith('owner-event:') && prior?.state === 'delivered') return;
     const { entry: existing } = this.messageLedger.claim(ledgerKey, binding);
     if (existing?.state === 'delivered') return;
 
@@ -1025,6 +1027,8 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
     const ledgerKey = this.outboundLedgerKey(idempotencyKey, kind);
+    const prior = this.messageLedger.get(ledgerKey);
+    if (idempotencyKey.startsWith('owner-event:') && prior?.state === 'delivered') return;
     const { entry: existing } = this.messageLedger.claim(ledgerKey, {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: createHash('sha256').update(payload).digest('hex'),
@@ -1107,17 +1111,35 @@ export class TelegramGateway extends BaseGateway {
     return `outbound:${digest}`;
   }
 
-  async sendSticker(chatId: string | number, emotion: string): Promise<boolean> {
+  async sendSticker(
+    chatId: string | number,
+    emotion: string,
+    idempotencyKey?: string
+  ): Promise<boolean> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
-    return this.runInChatQueue(String(chatId), () => this.sendStickerNow(chatId, emotion));
+    return this.runInChatQueue(String(chatId), () =>
+      this.sendStickerNow(chatId, emotion, idempotencyKey)
+    );
   }
 
-  async sendStickerFromActiveTurn(chatId: string | number, emotion: string): Promise<boolean> {
+  async sendStickerFromActiveTurn(
+    chatId: string | number,
+    emotion: string,
+    idempotencyKey?: string
+  ): Promise<boolean> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
-    return this.runInChatQueue(String(chatId), () => this.sendStickerNow(chatId, emotion), true);
+    return this.runInChatQueue(
+      String(chatId),
+      () => this.sendStickerNow(chatId, emotion, idempotencyKey),
+      true
+    );
   }
 
-  private async sendStickerNow(chatId: string | number, emotion: string): Promise<boolean> {
+  private async sendStickerNow(
+    chatId: string | number,
+    emotion: string,
+    idempotencyKey?: string
+  ): Promise<boolean> {
     const bot = this.bot;
     if (!bot) throw new Error('Telegram gateway not connected');
     await this.loadStickerSet();
@@ -1127,11 +1149,23 @@ export class TelegramGateway extends BaseGateway {
     for (const emoji of candidates) {
       const fileId = this.stickerCache.get(emoji);
       if (fileId) {
-        await bot.api.sendSticker(numChatId, fileId);
+        await this.sendOutboundOnce(
+          idempotencyKey,
+          'sticker',
+          String(chatId),
+          `${emotion}\0${fileId}`,
+          () => bot.api.sendSticker(numChatId, fileId).then(() => {})
+        );
         return true;
       }
     }
-    await bot.api.sendMessage(numChatId, candidates[0]);
+    await this.sendOutboundOnce(
+      idempotencyKey,
+      'sticker',
+      String(chatId),
+      `${emotion}\0${candidates[0]}`,
+      () => bot.api.sendMessage(numChatId, candidates[0]).then(() => {})
+    );
     return false;
   }
 

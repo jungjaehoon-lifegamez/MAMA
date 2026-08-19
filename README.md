@@ -154,19 +154,19 @@ Dependency direction is one-way: nothing depends on the daemon.
 - **Attribution is wired end-to-end, and the ratio is still low.** Every change now
   carries a cause KIND (`event`/`owner_message`/`clock`/`card_transition` - the DB
   rejects a kind that disagrees with its ids), and judgment runs receive their event
-  batch from the host. But most changes are still clock-born: the conductor that turns
-  channel batches into attributed judgments ships dark behind `conductor.enabled`.
-  The ratio rises when it flips, not before. We plan to raise it, not excuse it.
+  batch from the host. Connector batches now enter MAMA's durable owner-event journal and
+  are handled by the same owner agent identity; the retired default-off Conductor no longer
+  splits attribution or action ownership.
 
 ## Roadmap
 
-|                    |                                                                                                                                                                                                                                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                        |
-| Done (v0.30–v0.32) | Conductor foundations (durable inbox, judgment session - dark behind `conductor.enabled`) → causes wired not relabeled, failures carry the thrower's code, a silent leg pages the owner, memory reads follow the channel grant → persistent Code-Act processes follow the active principal and do not replay completed mutations. |
-| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                       |
-| Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                   |
-| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2.        |
+|                    |                                                                                                                                                                                                                                                                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                 |
+| Done (v0.30–v0.36) | Durable event intake → causes wired not relabeled → effect receipts → MAMA owner-event sessions. The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                                                          |
+| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                |
+| Next               | Unpacked below.                                                                                                                                                                                                                                                                                                            |
+| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2. |
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 

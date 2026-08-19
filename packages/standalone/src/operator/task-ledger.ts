@@ -1983,6 +1983,21 @@ export class TaskLedger implements TaskSource {
     return this.insertWorkOrder(order, 1);
   }
 
+  /** Read a durable workorder acceptance by its host-issued occurrence key. */
+  findWorkOrderByOccurrence(
+    workKind: Exclude<WorkOrderKind, 'temporal'>,
+    idempotencyKey: string
+  ): WorkOrderRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM operator_tasks
+          WHERE kind = 'system' AND source_channel = ? AND source_event_id = ?
+          ORDER BY id ASC LIMIT 1`
+      )
+      .get(`${WORKORDER_CHANNEL_PREFIX}${workKind}`, idempotencyKey) as TaskRow | undefined;
+    return row ? this.rowToWorkOrder(row) : null;
+  }
+
   private insertWorkOrder(order: EnqueueWorkOrderInput, attempts: number): WorkOrderRecord {
     assertEnum(order.workKind, WORKORDER_KINDS, 'workKind');
     if (order.priority !== undefined) {
@@ -1992,11 +2007,13 @@ export class TaskLedger implements TaskSource {
       throw new Error('enqueueWorkOrder: idempotencyKey must be non-empty');
     }
     const channel = `${WORKORDER_CHANNEL_PREFIX}${order.workKind}`;
+    const durableOwnerEvent = order.idempotencyKey.startsWith('owner-event:');
     const open = this.db
       .prepare(
         `SELECT * FROM operator_tasks
          WHERE kind = 'system' AND source_channel = ? AND source_event_id = ?
-           AND status IN ('pending','in_progress')`
+           ${durableOwnerEvent ? '' : "AND status IN ('pending','in_progress')"}
+         ORDER BY id ASC LIMIT 1`
       )
       .get(channel, order.idempotencyKey) as TaskRow | undefined;
     if (open) {

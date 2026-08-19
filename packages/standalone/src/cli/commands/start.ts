@@ -28,6 +28,7 @@ import type {
   PrincipalRepository,
 } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
+import { PromptEnhancer } from '../../agent/prompt-enhancer.js';
 import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
@@ -91,12 +92,7 @@ import {
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
-import {
-  DEFAULT_CONFIG,
-  DEFAULT_ROLES,
-  type AgentPersonaConfig,
-  type RoleConfig,
-} from '../config/types.js';
+import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
 import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -108,22 +104,30 @@ import {
 import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
-import { ensureConsoleBrief } from '../../operator/console-brief.js';
+import {
+  ensureConsoleBrief,
+  loadConsoleBrief,
+  projectConsoleBriefForPrompt,
+} from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import {
   boardBatchKey,
   boardManualKey,
+  ownerEventWorkOrderKey,
   promotionManualKey,
   validateWorkOrderPayload,
   wikiBatchKey,
 } from '../../operator/workorder-publishers.js';
-import { ConductorInbox } from '../../operator/conductor-inbox.js';
-import { ConductorSession } from '../../operator/conductor-session.js';
-import { Conductor } from '../../operator/conductor.js';
-import { buildBoardReground } from '../../operator/board-reground.js';
+import { OwnerEventInbox } from '../../operator/owner-event-inbox.js';
+import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
+import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
+import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
+import {
+  buildOwnerEventAgentContext,
+  resolveOwnerEventExecution,
+} from '../../operator/owner-event-policy.js';
 import { initLegCadence, getLegCadence, getLegPageNotifier } from '../../operator/leg-cadence.js';
-import { getSessionPool } from '../../agent/session-pool.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
@@ -172,14 +176,6 @@ export function requireRuntimeBackend(value: unknown): RuntimeBackend {
     return value;
   }
   throw new Error(`Unsupported agent backend: ${String(value)}`);
-}
-
-export function assertConductorBackendSupported(enabled: boolean, backend: RuntimeBackend): void {
-  if (enabled && backend === 'codex') {
-    throw new Error(
-      'conductor.enabled requires the claude or cline backend - codex session lifecycle lands in S2'
-    );
-  }
 }
 
 export function serializeCodeActExecutionResult(
@@ -658,96 +654,6 @@ function buildProjectedLanePrompt(
 }
 
 /**
- * The conductor's grant (S1). Reads and judgment surfaces plus the ONE write
- * family the spec's center names: committing work orders and board cards. No
- * sends, no memory writes, no compile - the untrusted-input lane stays the
- * most restricted lane, not the least (review F2/security).
- */
-export const CONDUCTOR_TOOL_POLICY = {
-  roleName: 'conductor',
-  allowedTools: [
-    'board_read',
-    'changes_read',
-    'mama_recall',
-    'mama_search',
-    'task_create',
-    'task_list',
-    'task_update',
-    'workorder_request',
-    'workorder_status',
-  ],
-} as const satisfies WorkOrderToolPolicy;
-
-/** Mirrors buildOperatorReportAgentPolicy - same shape, conductor grant. */
-export function buildConductorAgentPolicy(
-  model: string,
-  backend: RuntimeBackend,
-  privateConnectorPolicy: PrivateConnectorPolicy
-): WorkOrderAgentPolicy {
-  const blockedTools: string[] = [];
-  const innerTools = uniqueToolList(CONDUCTOR_TOOL_POLICY.allowedTools);
-  const allowedTools = uniqueToolList([...innerTools]);
-  const agentContext: AgentContext = {
-    source: 'conductor',
-    platform: 'cli',
-    roleName: CONDUCTOR_TOOL_POLICY.roleName,
-    role: {
-      allowedTools,
-      blockedTools,
-      allowedPaths: [],
-      systemControl: false,
-      sensitiveAccess: false,
-      model,
-    },
-    session: {
-      sessionId: 'conductor:main',
-      channelId: 'conductor',
-      startedAt: new Date(),
-    },
-    capabilities: allowedTools,
-    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
-    // Write tier: board cards and work orders only - matches the envelope.
-    tier: 2,
-    backend,
-  };
-  return {
-    agentContext,
-    gatewayToolsPrompt: buildGatewayToolCatalog({
-      surface: 'multi-agent-generic',
-      allowedTools: innerTools,
-      privateConnectorPolicy,
-    }).prompt,
-    briefProjectionPolicy: DISABLED_PRIVATE_CONNECTOR_POLICY,
-  };
-}
-
-/**
- * Merge + validate the conductor config at boot. No-fallback: a malformed
- * value must crash loudly, not silently clamp (review F10: tickMs 0 spins
- * the event loop with a DB write per iteration).
- */
-export function resolveConductorConfig(
-  config: Pick<import('../config/types.js').MAMAConfig, 'conductor'>
-): import('../config/types.js').ConductorConfig {
-  const resolved = {
-    ...DEFAULT_CONFIG.conductor!,
-    ...(config.conductor ?? {}),
-  };
-  const positive: Array<[string, number, number]> = [
-    ['tickMs', resolved.tickMs, 1_000],
-    ['maxAgeMs', resolved.maxAgeMs, 60_000],
-    ['maxTurns', resolved.maxTurns, 1],
-    ['maxTokens', resolved.maxTokens, 1_000],
-  ];
-  for (const [name, value, min] of positive) {
-    if (!Number.isFinite(value) || value < min) {
-      throw new Error(`conductor.${name} must be a number >= ${min}, got ${String(value)}`);
-    }
-  }
-  return resolved;
-}
-
-/**
  * Build the Code-Act role the operator report lane runs under.
  *
  * Without an agentContext.role, roleAllowsOuterCodeAct() returns false (agent-loop.ts), the
@@ -952,7 +858,7 @@ export interface OwnerWorkOrderRequestHandlerDeps {
   logError?: (line: string, detail: unknown) => void;
 }
 
-/** Build the enqueue-and-ack handler shared by direct owner and conductor requests. */
+/** Build the enqueue-and-ack handler shared by owner chat and owner-event turns. */
 export function buildOwnerWorkOrderRequestHandler(
   deps: OwnerWorkOrderRequestHandlerDeps
 ): (
@@ -991,10 +897,18 @@ export function buildOwnerWorkOrderRequestHandler(
           payload = { mode: 'full', force: true, ...(repair ?? {}) };
         }
       } else if (kind === 'wiki') {
-        idempotencyKey = wikiBatchKey('manual', requestedAt);
-        payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
+        if (causeEventIds && causeEventIds.length > 0) {
+          idempotencyKey = ownerEventWorkOrderKey('wiki', causeEventIds);
+          payload = { batchId: idempotencyKey, events: [...causeEventIds] };
+        } else {
+          idempotencyKey = wikiBatchKey('manual', requestedAt);
+          payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
+        }
       } else {
-        idempotencyKey = promotionManualKey(requestedAt);
+        idempotencyKey =
+          causeEventIds && causeEventIds.length > 0
+            ? ownerEventWorkOrderKey('memory-curation', causeEventIds)
+            : promotionManualKey(requestedAt);
         payload = { scheduledAt: new Date(requestedAt).toISOString() };
       }
       validateWorkOrderPayload(kind, payload);
@@ -1712,15 +1626,6 @@ export async function runAgentLoop(
   // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
   // wake), which remains safe while the trigger loop is still booting or explicitly disabled.
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
-  // M8: board-reconcile feed. The trigger loop is built BEFORE the event bus
-  // exists (initApiServer), so it emits through this mutable sink (same
-  // pattern as triggerLoopNudge above).
-  const channelDeltaSink: {
-    current: ((channelKey: string, lines: string[], eventIds: string[]) => void) | null;
-  } = {
-    current: null,
-  };
-
   // Operator DB + native task ledger (M8): wired UNCONDITIONALLY -- the task
   // tools are standard gateway tools and must work even when the trigger loop
   // is off (review finding on #142). Single handle, closed once at shutdown.
@@ -1739,11 +1644,12 @@ export async function runAgentLoop(
   // One host-owned gate spans owner workorder requests, route scheduling,
   // delta ingestion, and completion verification for this boot.
   const boardRefreshGate = process.env.MAMA_BOARD_RECONCILE === '1' ? new BoardRefreshGate() : null;
-  // S1: durable conductor inbox - constructed UNCONDITIONALLY so drained
-  // batches persist before the cursor commits even while the conductor is
-  // disabled (that accumulation IS the shadow-mode data; retention inside
-  // ConductorInbox keeps it bounded).
-  const conductorInbox = new ConductorInbox(operatorDb);
+  // Durable MAMA owner-event journal. It uses new tables rather than replaying
+  // the legacy default-off Conductor shadow backlog on cutover.
+  const ownerEventInbox = new OwnerEventInbox(operatorDb);
+  const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
+  toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
+  let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
   // S2: leg cadence watchdog - its OWN timer, deliberately outside the
   // trigger loop (a watchdog inside the thing it watches dies with it).
   // Legs declare+beat at their own tick sites via the singleton; pages ride
@@ -1777,13 +1683,6 @@ export async function runAgentLoop(
       console.error('[leg-watchdog] check failed:', err);
     }
   }, 60_000);
-  const conductorConfig = resolveConductorConfig(config);
-  try {
-    assertConductorBackendSupported(conductorConfig.enabled, runtimeBackend);
-  } catch (error) {
-    operatorDb.close();
-    throw error;
-  }
   // ── Stage-2 workorder consumer (plan S2-T3): the only system run path.
   // Constructed before production runtime assembly registers per-kind
   // completion hooks, and started only after route registration and recovery
@@ -1802,15 +1701,23 @@ export async function runAgentLoop(
   gateways.push({
     stop: async () => {
       clearInterval(legWatchdog);
-      // Consumer stop BEFORE db close (same gateway = ordered; parallel
-      // gateways would race an in-flight tick into "database is not open").
-      await closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
-        try {
-          operatorDb.close();
-        } catch {
-          /* already closed */
-        }
-      }).catch(() => {});
+      // All users of the shared operator DB stop inside this one gateway.
+      // Shutdown invokes gateways in parallel, so a separate owner-event
+      // gateway would race its final ACK against this close.
+      await closeOwnerEventBeforeDatabase(
+        async () => {
+          await stopOwnerEventRuntime?.();
+          stopOwnerEventRuntime = null;
+        },
+        () =>
+          closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
+            try {
+              operatorDb.close();
+            } catch {
+              /* already closed */
+            }
+          })
+      ).catch(() => {});
     },
   });
   {
@@ -2024,14 +1931,6 @@ export async function runAgentLoop(
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
   const { isOperatorTriggerLoopEnabled, resolveOperatorReportChatId } =
     await import('../../operator/runtime-config.js');
-  if (!isOperatorTriggerLoopEnabled(process.env) && conductorConfig.enabled) {
-    // The conductor lives inside the trigger-loop branch (its inbox is fed by
-    // the loop's drain). enabled=true with the loop off would otherwise boot
-    // silently into a conductor that never runs (review).
-    console.error(
-      '[conductor] conductor.enabled=true but the trigger loop is disabled - the conductor will NOT run. Enable the trigger loop or disable the conductor.'
-    );
-  }
   if (isOperatorTriggerLoopEnabled(process.env)) {
     let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
@@ -2124,6 +2023,11 @@ export async function runAgentLoop(
         dataDir: config.agent.cline_data_dir,
       });
       stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();
+      const ownerEventEnvelopeAuthority = envelopeBootstrap.envelopeAuthority;
+      const ownerEventExecution = resolveOwnerEventExecution({
+        issuance: envelopeBootstrap.metadata.issuance,
+        hasAuthority: ownerEventEnvelopeAuthority !== undefined,
+      });
       const triggerLoop = new OperatorTriggerLoop({
         backend: runtimeBackend,
         delta: new ConnectorDeltaRepo(
@@ -2132,9 +2036,7 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
-        conductorInbox,
-        onChannelDelta: (channelKey, lines, eventIds) =>
-          channelDeltaSink.current?.(channelKey, lines, eventIds),
+        ...(ownerEventExecution.enabled ? { ownerEventInbox } : {}),
         askAgent: triggerAgentRuntime.askAuthor,
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
@@ -2300,105 +2202,144 @@ export async function runAgentLoop(
         getLegCadence()?.declare('full-report', 26 * 60 * 60 * 1000);
       }
       const stopTriggerLoop = triggerLoop.start();
+      stopOwnerEventRuntime = async () => {
+        await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()]);
+      };
       // M2.4: point the connector sink's forwarder at this loop now that it exists.
       triggerLoopNudge.current = () => triggerLoop.nudge();
       // S1-T3: owner-intent forwarder - report_request routes to the SAME
       // report machinery (fresh session, delta anchor, consume semantics).
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
 
-      // S1: the stateful conductor consumes the durable inbox on its own
-      // session:conductor:main lane. Default-off; the inbox records
-      // either way (shadow-mode data).
-      let conductorTimer: NodeJS.Timeout | null = null;
-      let conductorTickPromise: Promise<unknown> | null = null;
-      if (conductorConfig.enabled) {
-        const conductorSession = new ConductorSession(getSessionPool(), {
-          maxAgeMs: conductorConfig.maxAgeMs,
-          maxTurns: conductorConfig.maxTurns,
-          maxTokens: conductorConfig.maxTokens,
+      if (ownerEventExecution.enabled && ownerEventEnvelopeAuthority) {
+        // MAMA itself owns connector events. This is the same AgentLoop and
+        // owner operating policy as the owner console, on a durable per-channel
+        // background session. There is no separate Conductor persona.
+        const ownerRole =
+          config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
+        const ownerEventContext = buildOwnerEventAgentContext({
+          backend: runtimeBackend,
+          model: config.agent.model,
+          ownerRole,
+          privateConnectorPolicy,
         });
-        const conductorPolicy = buildConductorAgentPolicy(
-          config.agent.model,
-          runtimeBackend,
-          privateConnectorPolicy
-        );
-        // Per-run envelope, mirroring the report lane: without it every
-        // model_tool call dies 'envelope_missing' while the run resolves and
-        // acks the batch - zero work, green ledger (review F2).
-        const conductorIssueEnvelope =
-          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
-            ? async () => {
-                const projectId = resolveReactiveProjectRoot(config, process.env);
-                const wallSeconds = 300; // one judgment turn, not a gather run
-                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
-                  agent_id: 'conductor',
-                  instance_id: randomUUID(),
-                  source: 'watch',
-                  channel_id: 'conductor',
-                  trigger_context: { user_text: '<conductor batch judgment>' },
-                  scope: {
-                    project_refs: [{ kind: 'project' as const, id: projectId }],
-                    // The conductor reads channel text from its own durable
-                    // inbox, never from connectors - no raw read authority.
-                    raw_connectors: [],
-                    memory_scopes: uniqueMemoryScopes(
-                      deriveMemoryScopes({
-                        source: 'conductor',
-                        channelId: 'conductor',
-                        projectId,
-                      })
-                    ),
-                    allowed_destinations: [], // NO send surface
-                  },
-                  tier: 2,
-                  budget: { wall_seconds: wallSeconds },
-                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
-                });
-              }
-            : undefined;
-        const conductor = new Conductor({
-          inbox: conductorInbox,
-          session: conductorSession,
+        const ownerEventPromptEnhancer = new PromptEnhancer();
+        const ownerEventIssueEnvelope = async (
+          batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
+        ) => {
+          const projectId = resolveReactiveProjectRoot(config, process.env);
+          const wallSeconds = 300;
+          return ownerEventEnvelopeAuthority.buildAndPersist({
+            agent_id: 'mama-owner',
+            instance_id: randomUUID(),
+            source: 'watch',
+            channel_id: batch.channelKey,
+            trigger_context: { user_text: '<MAMA owner event turn>' },
+            scope: {
+              project_refs: [{ kind: 'project' as const, id: projectId }],
+              raw_connectors: [
+                ...privateConnectorPolicy.projectRawConnectors(
+                  'owner_console',
+                  codeActRawConnectors
+                ),
+              ],
+              memory_scopes: uniqueMemoryScopes(
+                deriveMemoryScopes({
+                  source: 'owner-event',
+                  channelId: batch.channelKey,
+                  projectId,
+                })
+              ),
+              allowed_destinations: reportChatId
+                ? [{ kind: 'telegram' as const, id: reportChatId }]
+                : [],
+            },
+            tier: 1,
+            budget: { wall_seconds: wallSeconds },
+            expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+          });
+        };
+        const ownerEventLoop = new OwnerEventLoop({
+          inbox: ownerEventInbox,
           runner: agentLoop,
-          reground: () => buildBoardReground(taskLedger),
-          agentContext: conductorPolicy.agentContext,
-          issueEnvelope: conductorIssueEnvelope,
+          agentContext: ownerEventContext,
+          buildPrompt: async (batch) =>
+            buildOwnerEventPrompt({
+              batch,
+              ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
+              skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
+              ownerTelegramChatId: reportChatId,
+            }),
+          issueEnvelope: ownerEventIssueEnvelope,
+          getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+          getTerminalReceipt: (batch) => {
+            const confirmedEffects = ownerEventEffectLedger.confirmedKinds(batch.id);
+            if (confirmedEffects.length > 0) {
+              return { status: 'acted' as const, tools: confirmedEffects };
+            }
+            const acceptedWorkOrder =
+              taskLedger.findWorkOrderByOccurrence('board', boardBatchKey(batch.eventIds)) ??
+              taskLedger.findWorkOrderByOccurrence(
+                'wiki',
+                ownerEventWorkOrderKey('wiki', batch.eventIds)
+              ) ??
+              taskLedger.findWorkOrderByOccurrence(
+                'memory-curation',
+                ownerEventWorkOrderKey('memory-curation', batch.eventIds)
+              );
+            if (acceptedWorkOrder) {
+              return { status: 'delegated' as const, tools: ['workorder_request'] };
+            }
+            if (taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
+              return { status: 'no_update' as const, tools: [] };
+            }
+            return null;
+          },
+          recordTriggerOutcome: (triggerId, outcome) =>
+            triggerRegistry.recordOutcome(triggerId, outcome),
+          onDead: async (message) => {
+            console.error(message);
+            await getLegPageNotifier()?.(message);
+          },
           log: (line) => console.log(line),
         });
-        conductorTimer = setInterval(() => {
-          if (conductorTickPromise) return; // never overlap ticks
-          conductorTickPromise = conductor
+        let ownerEventTickPromise: Promise<unknown> | null = null;
+        const runOwnerEventTick = (): void => {
+          if (ownerEventTickPromise) return;
+          ownerEventTickPromise = ownerEventLoop
             .tick()
             .catch((err) =>
               console.error(
-                `[conductor] tick failed: ${err instanceof Error ? err.message : String(err)}`
+                `[owner-event] tick failed: ${err instanceof Error ? err.message : String(err)}`
               )
             )
             .finally(() => {
-              conductorTickPromise = null;
+              ownerEventTickPromise = null;
             });
-        }, conductorConfig.tickMs);
-        console.log(`✓ Conductor enabled (tick ${conductorConfig.tickMs}ms)`);
-      } else {
-        console.log('Conductor inbox recording (conductor disabled)');
-      }
+        };
+        const ownerEventTimer = setInterval(runOwnerEventTick, 5_000);
+        ownerEventTimer.unref?.();
+        runOwnerEventTick();
+        console.log('✓ MAMA owner-event agent enabled');
 
-      gateways.push({
-        stop: async () => {
+        stopOwnerEventRuntime = async () => {
           triggerLoopNudge.current = null;
-          if (conductorTimer) clearInterval(conductorTimer);
-          // Let an in-flight tick finish BEFORE the operator DB closes: a
-          // SIGTERM mid-ack otherwise throws on a closed handle, the row
-          // stays 'claimed', and every launchd restart replays the batch
-          // (review F7).
-          if (conductorTickPromise) await conductorTickPromise;
+          clearInterval(ownerEventTimer);
+          // Let an in-flight effect reach its durable ACK before the shared
+          // operator DB closes.
+          if (ownerEventTickPromise) await ownerEventTickPromise;
           await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()]);
-          // The shared operator DB handle is closed by the unconditional stop
-          // hook above (single owner); nothing to close here.
-        },
-      });
-      temporalLogger.info('Trigger loop enabled (default-on, read-only surface mode)');
+        };
+      } else {
+        const reason = ownerEventExecution.enabled
+          ? 'owner-event envelope authority unavailable'
+          : ownerEventExecution.reason;
+        console.error(`[owner-event] disabled: ${reason}`);
+      }
+      temporalLogger.info('Trigger loop enabled (MAMA owner-event intake + report mode)');
     } catch (error) {
+      await stopOwnerEventRuntime?.().catch(() => {});
+      stopOwnerEventRuntime = null;
       await stopTriggerAgentRuntime?.().catch(() => {});
       console.error(
         '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
@@ -2425,9 +2366,6 @@ export async function runAgentLoop(
     connectorConfigLoadResult,
     privateConnectorPolicy,
   });
-
-  channelDeltaSink.current = (channelKey, lines, eventIds) =>
-    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines, eventIds });
 
   const apiRoutesHandle = await registerApiRoutes({
     config,

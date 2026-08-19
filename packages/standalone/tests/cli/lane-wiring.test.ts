@@ -19,7 +19,6 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  CONDUCTOR_TOOL_POLICY,
   OPERATOR_REPORT_TOOL_POLICY,
   WORKORDER_TOOL_POLICIES,
   buildFullReportGatherLines,
@@ -137,31 +136,6 @@ describe('workorder lanes: every granted tool is a real tool', () => {
       (t: string) => !known.has(t)
     );
     expect(unknownReport, 'report lane grants unknown tools').toEqual([]);
-    const unknownConductor = CONDUCTOR_TOOL_POLICY.allowedTools.filter(
-      (t: string) => !known.has(t)
-    );
-    expect(unknownConductor, 'conductor lane grants unknown tools').toEqual([]);
-  });
-
-  // The conductor ingests untrusted channel text into a long-lived session -
-  // it must stay the MOST restricted lane: no sends, no memory writes, no
-  // compile, no raw connector reads.
-  it('keeps sends, memory writes, and compile out of the conductor lane', () => {
-    for (const forbidden of [
-      'telegram_send',
-      'discord_send',
-      'slack_send',
-      'webchat_send',
-      'mama_save',
-      'mama_update',
-      'context_compile',
-      'wiki_publish',
-      'report_publish',
-      'Bash',
-      'Write',
-    ]) {
-      expect(CONDUCTOR_TOOL_POLICY.allowedTools).not.toContain(forbidden);
-    }
   });
 
   // A temporal run is bound to one task on one channel; granting it a task-mutation tool
