@@ -242,7 +242,7 @@ per-channel isolation wins.
 
 ### Evidence transposition (v0.31.0, S2)
 
-- **Causes are wired, not relabeled**: the conductor hands its inbox batch
+- **Causes are wired, not relabeled**: the MAMA owner-event lane hands its inbox batch
   (`causeEventIds`) to every run; on duplicate delivery the HOST batch outranks the
   agent-supplied `source_event_id`. Every effect carries a cause KIND
   (`event | owner_message | clock | card_transition`) with a DB trigger rejecting a kind
@@ -259,15 +259,24 @@ per-channel isolation wins.
   commits with `packet_created_at` receipted, and the HOST seeds the compile with the
   bound source's channel/event.
 
-### Conductor foundations (v0.30.0, S1 - dark behind `conductor.enabled`)
+### MAMA owner-event agent
 
-A durable inbox (`conductor_inbox`: enqueue-before-commit, per-event dedupe, lease claims,
-5-attempt poison cap) feeds one long-lived judgment session on its own
-`session:conductor:main` lane - deliberately NOT the global operator lane, where Stage-2
-workers serialize and an awaiting judgment would deadlock. Recycled on age/turns/tokens/idle
-with a board re-ground on every fresh session. Default off; report authority transfers only
-after a six-item parity rubric (`docs/development/report-parity-rubric.md`) passes 6/6 three
-days running.
+Connector deltas belong to MAMA, not to a separate planning persona. The trigger loop persists
+each batch and its matched trigger procedures to `owner_event_inbox` before advancing the source
+cursor. `OwnerEventLoop` consumes that journal through the same daemon `AgentLoop` and current
+owner operating brief on durable per-channel sessions (`owner-event:<channelKey>`).
+
+The agent chooses the safe primitive sequence. The host fixes connector visibility and the owner
+Telegram destination through the envelope, then ACKs the event only after a completed durable
+effect, an accepted workorder, or an exact `contract_no_update` receipt. Prose is never completion
+evidence. Automatic owner-event execution is disabled when envelope authority is unavailable.
+Non-idempotent mutations run through event-keyed durable workorders. External effects use
+one host-issued identity per external effect kind and a durable pre-transmission ledger; fresh
+model output cannot mint an alternate retry identity. Ambiguous Drive
+creates enter reconcile-only state rather than issuing another create. Scheduled and manual Board
+full repair remain recovery mechanisms; connector deltas no longer fan out to a second Board agent.
+The owner loop reads existing batch-bound effect, workorder, and exact no-update receipts before a
+model retry, closing the crash window between durable completion and inbox ACK.
 
 **Channel identity** underpins both. Connectors emit whatever their upstream hands them,
 which for six of seven is a display NAME while the config is keyed by ID — so every
