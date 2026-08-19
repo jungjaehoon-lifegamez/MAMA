@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-5859%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-6080%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Right now, you read every channel yourself so nothing slips past you.
 > MAMA reads them instead, and sends you the few things that need you.
@@ -133,7 +133,7 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.36.0        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-os](packages/standalone/) 0.37.0        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
 | [mama-core](packages/mama-core/) 2.2.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
@@ -163,7 +163,7 @@ Dependency direction is one-way: nothing depends on the daemon.
 |                    |                                                                                                                                                                                                                                                                                                                            |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                 |
-| Done (v0.30–v0.36) | Durable event intake → causes wired not relabeled → effect receipts → MAMA owner-event sessions. The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                                                          |
+| Done (v0.30–v0.37) | Durable event intake → causes wired not relabeled → effect receipts → MAMA owner-event sessions. The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                                                          |
 | **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                |
 | Next               | Unpacked below.                                                                                                                                                                                                                                                                                                            |
 | v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2. |
@@ -196,10 +196,10 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 5,859 tests across five packages
+pnpm test     # 6,080 passing tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-13_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-19_
 
 ## License
 
