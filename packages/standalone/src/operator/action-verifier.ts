@@ -57,6 +57,8 @@ export interface ActionSnapshot {
 
 export interface VerifyResult {
   verified: boolean;
+  obligatedTraceCount: number;
+  noUpdateRecorded: boolean;
   /** Human-readable evidence lines for the activity record. */
   effects: string[];
 }
@@ -91,7 +93,8 @@ export function verifyAfterRun(
 
   // (b) run-bound signal: a new no-update note with EXACTLY this scope.
   const noteMaxNow = deps.getScopedNoteMaxId(scope);
-  if (noteMaxNow > before.scopedNoteMaxId) {
+  const noUpdateRecorded = noteMaxNow > before.scopedNoteMaxId;
+  if (noUpdateRecorded) {
     verified = true;
     effects.push(`no-update note recorded (scope=${scope})`);
   }
@@ -108,7 +111,7 @@ export function verifyAfterRun(
     effects.push('task ledger changed');
   }
 
-  return { verified, effects };
+  return { verified, obligatedTraceCount: obligatedTraces, noUpdateRecorded, effects };
 }
 
 export interface TemporalVerifierDeps {

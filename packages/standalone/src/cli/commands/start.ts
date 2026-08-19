@@ -110,6 +110,14 @@ import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
+import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
+import {
+  boardBatchKey,
+  boardManualKey,
+  promotionManualKey,
+  validateWorkOrderPayload,
+  wikiBatchKey,
+} from '../../operator/workorder-publishers.js';
 import { ConductorInbox } from '../../operator/conductor-inbox.js';
 import { ConductorSession } from '../../operator/conductor-session.js';
 import { Conductor } from '../../operator/conductor.js';
@@ -131,11 +139,13 @@ const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
+const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -932,6 +942,80 @@ export function buildSystemAgentProcessDefaults(config: {
   };
 }
 
+const OWNER_BOARD_FULL_REPAIR_CHANNEL = 'host:owner-workorder:board-full';
+
+export interface OwnerWorkOrderRequestHandlerDeps {
+  taskLedger: TaskLedger;
+  boardRefreshGate: BoardRefreshGate | null;
+  now?: () => number;
+  log?: (line: string) => void;
+  logError?: (line: string, detail: unknown) => void;
+}
+
+/** Build the enqueue-and-ack handler shared by direct owner and conductor requests. */
+export function buildOwnerWorkOrderRequestHandler(
+  deps: OwnerWorkOrderRequestHandlerDeps
+): (
+  kind: 'board' | 'wiki' | 'memory-curation',
+  causeEventIds?: readonly string[]
+) => { accepted: boolean; reason?: string } {
+  const now = deps.now ?? Date.now;
+  const log = deps.log ?? ((line: string) => ownerWorkOrderLogger.info(line));
+  const logError =
+    deps.logError ?? ((line: string, detail: unknown) => ownerWorkOrderLogger.error(line, detail));
+
+  return (kind, causeEventIds) => {
+    try {
+      const requestedAt = now();
+      let idempotencyKey: string;
+      let payload: Record<string, unknown>;
+      if (kind === 'board') {
+        // TG-06: host dirt is recorded before validation or enqueue can fail.
+        // The fixed synthetic channel never trusts model/event identifiers.
+        const repair = deps.boardRefreshGate
+          ? (() => {
+              deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
+              return deps.boardRefreshGate.captureFullRepair();
+            })()
+          : null;
+        if (causeEventIds && causeEventIds.length > 0) {
+          idempotencyKey = boardBatchKey(causeEventIds);
+          payload = {
+            mode: 'full',
+            force: true,
+            eventIds: [...causeEventIds],
+            ...(repair ?? {}),
+          };
+        } else {
+          idempotencyKey = boardManualKey(requestedAt);
+          payload = { mode: 'full', force: true, ...(repair ?? {}) };
+        }
+      } else if (kind === 'wiki') {
+        idempotencyKey = wikiBatchKey('manual', requestedAt);
+        payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
+      } else {
+        idempotencyKey = promotionManualKey(requestedAt);
+        payload = { scheduledAt: new Date(requestedAt).toISOString() };
+      }
+      validateWorkOrderPayload(kind, payload);
+      const wo = deps.taskLedger.enqueueWorkOrder({
+        workKind: kind,
+        idempotencyKey,
+        input: payload,
+        priority: 'high',
+      });
+      log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
+      return { accepted: true };
+    } catch (err) {
+      logError(
+        `[stage2] owner workorder enqueue failed (${kind}):`,
+        err instanceof Error ? err.message : err
+      );
+      return { accepted: false, reason: 'enqueue-failed' };
+    }
+  };
+}
+
 /**
  * Execute start command
  */
@@ -1652,6 +1736,9 @@ export async function runAgentLoop(
     operatorDb.close();
     throw err;
   }
+  // One host-owned gate spans owner workorder requests, route scheduling,
+  // delta ingestion, and completion verification for this boot.
+  const boardRefreshGate = process.env.MAMA_BOARD_RECONCILE === '1' ? new BoardRefreshGate() : null;
   // S1: durable conductor inbox - constructed UNCONDITIONALLY so drained
   // batches persist before the cursor commits even while the conductor is
   // disabled (that accumulation IS the shadow-mode data; retention inside
@@ -1734,13 +1821,6 @@ export async function runAgentLoop(
     ensureBriefs();
     ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
-    const {
-      validateWorkOrderPayload,
-      boardManualKey,
-      boardBatchKey,
-      wikiBatchKey,
-      promotionManualKey,
-    } = await import('../../operator/workorder-publishers.js');
 
     // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
     // block - the consumer runs with the loop off, so its terminal alarms
@@ -1903,50 +1983,9 @@ export async function runAgentLoop(
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
-    toolExecutor.setWorkOrderRequestHandler((kind, causeEventIds) => {
-      try {
-        const now = Date.now();
-        let idempotencyKey: string;
-        let payload: Record<string, unknown>;
-        if (kind === 'board') {
-          if (causeEventIds && causeEventIds.length > 0) {
-            // Batch-carrying delegation: FULL mode (reconcile requires
-            // channelKey+deltaLines the requester does not have - proven by
-            // review running the validator) with the batch riding as
-            // eventIds, which the validator allows on full and
-            // causeEventIdsFromPayload lifts as the worker's cause. The
-            // batch-deterministic key dedups a redelivered judgment while
-            // the first order is still open.
-            idempotencyKey = boardBatchKey(causeEventIds);
-            payload = { mode: 'full', force: true, eventIds: [...causeEventIds] };
-          } else {
-            idempotencyKey = boardManualKey(now);
-            payload = { mode: 'full', force: true };
-          }
-        } else if (kind === 'wiki') {
-          idempotencyKey = wikiBatchKey('manual', now);
-          payload = { batchId: `${now}-manual`, events: ['manual'] };
-        } else {
-          idempotencyKey = promotionManualKey(now);
-          payload = { scheduledAt: new Date(now).toISOString() };
-        }
-        validateWorkOrderPayload(kind, payload);
-        const wo = taskLedger.enqueueWorkOrder({
-          workKind: kind,
-          idempotencyKey,
-          input: payload,
-          priority: 'high',
-        });
-        console.log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
-        return { accepted: true };
-      } catch (err) {
-        console.error(
-          `[stage2] owner workorder enqueue failed (${kind}):`,
-          err instanceof Error ? err.message : err
-        );
-        return { accepted: false, reason: 'enqueue-failed' };
-      }
-    });
+    toolExecutor.setWorkOrderRequestHandler(
+      buildOwnerWorkOrderRequestHandler({ taskLedger, boardRefreshGate })
+    );
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const temporalAssembly = assembleDaemonTemporalRuntime({
@@ -2390,7 +2429,7 @@ export async function runAgentLoop(
   channelDeltaSink.current = (channelKey, lines, eventIds) =>
     eventBus.emit({ type: 'operator:channel-delta', channelKey, lines, eventIds });
 
-  await registerApiRoutes({
+  const apiRoutesHandle = await registerApiRoutes({
     config,
     apiServer,
     eventBus,
@@ -2410,7 +2449,9 @@ export async function runAgentLoop(
     ],
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
+    boardRefreshGate,
   });
+  gateways.push({ stop: async () => apiRoutesHandle.stop() });
 
   // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
   // recovery/cleanup run after routes are ready, then the consumer starts.

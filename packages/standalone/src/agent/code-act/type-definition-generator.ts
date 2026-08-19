@@ -33,7 +33,10 @@ export class TypeDefinitionGenerator {
           })
           .join(',');
 
-        lines.push(`declare function ${meta.name}(${params}): ${meta.returnType};`);
+        const optionalInput =
+          meta.params.length > 0 && meta.params.every((param) => !param.required);
+        const input = params.length > 0 ? `input${optionalInput ? '?' : ''}:{${params}}` : '';
+        lines.push(`declare function ${meta.name}(${input}): ${meta.returnType};`);
       }
     }
 

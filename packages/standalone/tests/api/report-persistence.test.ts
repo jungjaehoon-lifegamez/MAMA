@@ -60,4 +60,37 @@ describe('createPersistentReportStore', () => {
     expect(b.get('two')?.html).toBe('<p>2</p>');
     expect(b.getAllSorted()).toHaveLength(1);
   });
+
+  it.each(['get', 'getAll', 'getAllSorted'] as const)(
+    'returns a detached slot value from %s without corrupting persistence',
+    async (reader) => {
+      const store = createPersistentReportStore({ filePath });
+      store.update('briefing', '<p>original</p>', 7);
+      const originalUpdatedAt = store.get('briefing')!.updatedAt;
+      const returned =
+        reader === 'get'
+          ? store.get('briefing')!
+          : reader === 'getAll'
+            ? store.getAll().briefing!
+            : store.getAllSorted()[0]!;
+
+      returned.html = '<p>tampered</p>';
+      returned.priority = 99;
+      returned.updatedAt = 0;
+
+      expect(store.get('briefing')).toEqual({
+        slotId: 'briefing',
+        html: '<p>original</p>',
+        priority: 7,
+        updatedAt: originalUpdatedAt,
+      });
+      await flushDebounce();
+      expect(createPersistentReportStore({ filePath }).get('briefing')).toEqual({
+        slotId: 'briefing',
+        html: '<p>original</p>',
+        priority: 7,
+        updatedAt: originalUpdatedAt,
+      });
+    }
+  );
 });

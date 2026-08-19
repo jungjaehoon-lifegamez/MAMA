@@ -118,7 +118,7 @@ function parseDeliveredCodeActDeclarations(systemPrompt: string): CanonicalDecla
       }
       const [, name, rawParams, returnType] = match;
       const params = splitTopLevelParams(rawParams).map((param) => {
-        const paramMatch = param.match(/^([A-Za-z0-9_]+)(\?)?: (.+)$/);
+        const paramMatch = param.match(/^([A-Za-z0-9_]+)(\?)?:\s*(.+)$/);
         if (!paramMatch) {
           throw new Error(`Could not parse Code-Act parameter: ${param}`);
         }
@@ -385,6 +385,18 @@ describe('AgentLoop', () => {
     persistentSetSystemPromptMock.mockClear();
     persistentCLIAdapterOptionsMock.mockClear();
     clineAdapterOptionsMock.mockClear();
+  });
+
+  it('TG-06 preserves structured report publisher results in the AgentLoop setter contract', () => {
+    const publisher: Parameters<AgentLoop['setReportPublisher']>[0] = () => ({
+      acceptedSlotIds: ['briefing'],
+      changedSlotIds: [],
+    });
+
+    expect(publisher({ briefing: '<p>unchanged</p>' })).toEqual({
+      acceptedSlotIds: ['briefing'],
+      changedSlotIds: [],
+    });
   });
 
   describe('Cline main backend', () => {
@@ -1251,28 +1263,10 @@ describe('AgentLoop', () => {
         {
           name: 'context_compile',
           params: [
-            { name: 'task', type: 'string', required: true },
             {
-              name: 'scopes',
-              type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
-              required: false,
-            },
-            { name: 'connectors', type: 'string[]', required: false },
-            { name: 'seed_refs', type: 'Array<Record<string, unknown>>', required: false },
-            {
-              name: 'range',
-              type: '{ start_ms?: number; end_ms?: number }',
-              required: false,
-            },
-            { name: 'as_of', type: 'string | number | null', required: false },
-            { name: 'limit', type: 'number', required: false },
-            { name: 'max_tool_calls', type: 'number', required: false },
-            { name: 'max_ms', type: 'number', required: false },
-            { name: 'max_tokens', type: 'number', required: false },
-            {
-              name: 'strictness',
-              type: "'recall' | 'balanced' | 'strict'",
-              required: false,
+              name: 'input',
+              type: "{task: string,scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>,connectors?: string[],seed_refs?: Array<Record<string, unknown>>,range?: { start_ms?: number; end_ms?: number },as_of?: string | number | null,limit?: number,max_tool_calls?: number,max_ms?: number,max_tokens?: number,strictness?: 'recall' | 'balanced' | 'strict'}",
+              required: true,
             },
           ],
           returnType:
@@ -1281,11 +1275,10 @@ describe('AgentLoop', () => {
         {
           name: 'mama_recall',
           params: [
-            { name: 'query', type: 'string', required: true },
             {
-              name: 'scopes',
-              type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
-              required: false,
+              name: 'input',
+              type: "{query: string,scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>}",
+              required: true,
             },
           ],
           returnType:
@@ -1296,8 +1289,8 @@ describe('AgentLoop', () => {
           name: 'workorder_request',
           params: [
             {
-              name: 'kind',
-              type: "'board' | 'wiki' | 'memory-curation'",
+              name: 'input',
+              type: "{kind: 'board' | 'wiki' | 'memory-curation'}",
               required: true,
             },
           ],

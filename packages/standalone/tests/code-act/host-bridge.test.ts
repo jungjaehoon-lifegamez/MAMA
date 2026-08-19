@@ -422,6 +422,128 @@ describe('HostBridge', () => {
       expect(executeFn).toHaveBeenCalledWith('Read', { path: '/tmp/test.txt' });
     });
 
+    it('TG-03/TG-04 accepts the canonical wrapped report_publish input', async () => {
+      const execute = vi.fn().mockResolvedValue({ success: true });
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['report_publish']);
+
+      const result = await sandbox.execute(
+        'report_publish({ slots: { briefing: "<p>Brief</p>" } })'
+      );
+
+      expect(result.success).toBe(true);
+      expect(execute).toHaveBeenCalledWith('report_publish', {
+        slots: { briefing: '<p>Brief</p>' },
+      });
+    });
+
+    it('TG-03/TG-04 normalizes a legacy direct report slot map', async () => {
+      const execute = vi.fn().mockResolvedValue({ success: true });
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['report_publish']);
+
+      const result = await sandbox.execute('report_publish({ briefing: "<p>Brief</p>" })');
+
+      expect(result.success).toBe(true);
+      expect(execute).toHaveBeenCalledWith('report_publish', {
+        slots: { briefing: '<p>Brief</p>' },
+      });
+    });
+
+    it('TG-03/TG-04 preserves a legitimate direct custom slot named slots', async () => {
+      const execute = vi.fn().mockResolvedValue({ success: true });
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['report_publish']);
+
+      const result = await sandbox.execute('report_publish({ slots: "<p>Custom</p>" })');
+
+      expect(result.success).toBe(true);
+      expect(execute).toHaveBeenCalledWith('report_publish', {
+        slots: { slots: '<p>Custom</p>' },
+      });
+    });
+
+    it('TG-03/TG-04 fails an invalid wrapped report slot value with terminal audit', async () => {
+      const execute = vi.fn();
+      const audit = vi.fn();
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['report_publish']);
+
+      const result = await sandbox.execute('report_publish({ slots: 42 })');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('slots must be an object of HTML strings');
+      expect(execute).not.toHaveBeenCalled();
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[1]?.[2]).toEqual({
+        success: false,
+        code: 'invalid_tool_input',
+      });
+    });
+
+    it.each(['report_publish({})', 'report_publish({ slots: {} })'])(
+      'TG-03/TG-04 rejects an empty report input inside the audited region: %s',
+      async (program) => {
+        const execute = vi.fn();
+        const audit = vi.fn();
+        const bridge = new HostBridge(makeExecutor({ execute }));
+        bridge.onToolUse = audit;
+        const sandbox = new CodeActSandbox();
+        bridge.injectInto(sandbox, ['report_publish']);
+
+        const result = await sandbox.execute(program);
+
+        expect(result.success).toBe(false);
+        expect(result.error?.message).toContain('at least one HTML slot');
+        expect(execute).not.toHaveBeenCalled();
+        expect(audit).toHaveBeenCalledTimes(2);
+        expect(audit.mock.calls[1]?.[2]).toEqual({
+          success: false,
+          code: 'invalid_tool_input',
+        });
+      }
+    );
+
+    it('TG-03/TG-04 rejects a positional report slot array inside the audited region', async () => {
+      const execute = vi.fn();
+      const audit = vi.fn();
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      bridge.onToolUse = audit;
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['report_publish']);
+
+      const result = await sandbox.execute('report_publish(["<p>Not a slot map</p>"])');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('slots must be an object of HTML strings');
+      expect(execute).not.toHaveBeenCalled();
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls[1]?.[2]).toEqual({
+        success: false,
+        code: 'invalid_tool_input',
+      });
+    });
+
+    it('TG-03/TG-04 leaves scalar and array positional mapping unchanged', async () => {
+      const execute = vi.fn().mockResolvedValue({ success: true });
+      const bridge = new HostBridge(makeExecutor({ execute }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, ['Read', 'mama_search']);
+
+      await sandbox.execute('Read("/tmp/test.txt")');
+      await sandbox.execute('mama_search(["first", "second"])');
+
+      expect(execute).toHaveBeenNthCalledWith(1, 'Read', { path: '/tmp/test.txt' });
+      expect(execute).toHaveBeenNthCalledWith(2, 'mama_search', {
+        query: ['first', 'second'],
+      });
+    });
+
     it('propagates executor errors to sandbox', async () => {
       const executeFn = vi.fn().mockResolvedValue({
         success: false,
@@ -654,6 +776,18 @@ describe('HostBridge', () => {
         category: 'os',
       });
       expect(registry.get('workorder_status')?.returnType).toContain("'temporal'");
+    });
+
+    it('TG-03/TG-04 advertises the canonical four-slot report vocabulary', () => {
+      const reportPublish = HostBridge.getToolRegistry().find(
+        (tool) => tool.name === 'report_publish'
+      );
+
+      expect(reportPublish?.params[0]?.description).toContain(
+        'briefing, action_required, decisions, pipeline'
+      );
+      expect(reportPublish?.params[0]?.description).not.toContain('alerts');
+      expect(reportPublish?.params[0]?.description).not.toContain('activity');
     });
   });
 });

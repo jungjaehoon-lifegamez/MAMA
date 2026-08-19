@@ -76,7 +76,10 @@ export function createPersistentReportStore(opts: { filePath: string }): ReportS
   };
 
   return {
-    get: (slotId) => slots.get(slotId),
+    get: (slotId) => {
+      const slot = slots.get(slotId);
+      return slot ? { ...slot } : undefined;
+    },
     update(slotId, html, priority) {
       slots.set(slotId, { slotId, html, priority, updatedAt: Date.now() });
       scheduleWrite();
@@ -85,7 +88,8 @@ export function createPersistentReportStore(opts: { filePath: string }): ReportS
       slots.delete(slotId);
       scheduleWrite();
     },
-    getAll: () => Object.fromEntries(slots),
-    getAllSorted: () => Array.from(slots.values()).sort((a, b) => a.priority - b.priority),
+    getAll: () => Object.fromEntries(Array.from(slots, ([slotId, slot]) => [slotId, { ...slot }])),
+    getAllSorted: () =>
+      Array.from(slots.values(), (slot) => ({ ...slot })).sort((a, b) => a.priority - b.priority),
   };
 }

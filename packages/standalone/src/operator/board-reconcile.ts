@@ -39,7 +39,12 @@ export interface ReconcileSchedulerOptions {
   globalMaxPerHour?: number;
   /** Bounded pending lines kept per channel while deferred. */
   maxPendingLines?: number;
-  run: (channelKey: string, deltaLines: string[], eventIds: string[]) => Promise<void>;
+  run: (
+    channelKey: string,
+    deltaLines: string[],
+    eventIds: string[],
+    repairGeneration: number
+  ) => Promise<void>;
   log: (line: string) => void;
   now?: () => number;
 }
@@ -55,6 +60,8 @@ interface ChannelState {
    * independent caps is how that drift starts.
    */
   pendingEventIds: string[];
+  /** Newest gate generation represented by the coalesced batch. */
+  repairGeneration: number;
   debounceTimer: ReturnType<typeof setTimeout> | null;
   firstEnqueuedAt: number | null;
 }
@@ -83,11 +90,20 @@ export class ReconcileScheduler {
     this.now = opts.now ?? Date.now;
   }
 
-  enqueue(channelKey: string, lines: string[], eventIds: readonly string[] = []): void {
+  enqueue(
+    channelKey: string,
+    lines: string[],
+    eventIds: readonly string[] = [],
+    repairGeneration = 0
+  ): void {
     if (this.stopped) return;
+    if (!Number.isSafeInteger(repairGeneration) || repairGeneration < 0) {
+      throw new Error('reconcile repairGeneration must be a non-negative safe integer');
+    }
     const state = this.channels.get(channelKey) ?? {
       pendingLines: [],
       pendingEventIds: [],
+      repairGeneration: 0,
       debounceTimer: null,
       firstEnqueuedAt: null,
     };
@@ -101,6 +117,7 @@ export class ReconcileScheduler {
       );
     }
     state.pendingEventIds = mergedIds.slice(-MAX_PENDING_EVENT_IDS);
+    state.repairGeneration = Math.max(state.repairGeneration, repairGeneration);
     if (state.firstEnqueuedAt === null) state.firstEnqueuedAt = this.now();
     this.channels.set(channelKey, state);
 
@@ -170,13 +187,15 @@ export class ReconcileScheduler {
 
     const lines = state.pendingLines;
     const eventIds = state.pendingEventIds;
+    const repairGeneration = state.repairGeneration;
     state.pendingLines = [];
     state.pendingEventIds = [];
+    state.repairGeneration = 0;
     state.firstEnqueuedAt = null;
     this.runTimestamps.push(this.now());
 
     try {
-      await this.run(channelKey, lines, eventIds);
+      await this.run(channelKey, lines, eventIds, repairGeneration);
     } catch (err) {
       // Run failure keeps the channel dirty for retry; the scheduler survives. The cause
       // set is restored with the lines - a retry that kept the prompt but lost the batch
@@ -185,6 +204,7 @@ export class ReconcileScheduler {
       state.pendingEventIds = [...new Set([...eventIds, ...state.pendingEventIds])].slice(
         -MAX_PENDING_EVENT_IDS
       );
+      state.repairGeneration = Math.max(repairGeneration, state.repairGeneration);
       if (state.firstEnqueuedAt === null) state.firstEnqueuedAt = this.now();
       this.log(
         `[reconcile] run failed for ${channelKey}: ${err instanceof Error ? err.message : String(err)}; kept dirty for retry`

@@ -123,7 +123,10 @@ describe('Story S2-T5: briefs', () => {
         enabledNames: ['kagemusha'],
       });
       const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
-      const generatedOverlay = projectWorkOrderBriefForPrompt('board', '', enabled).trim();
+      const generatedProjection = projectWorkOrderBriefForPrompt('board', '', enabled);
+      const overlayStart = generatedProjection.indexOf(PRIVATE_PROMPT_OVERLAY_START);
+      expect(overlayStart).toBeGreaterThanOrEqual(0);
+      const generatedOverlay = generatedProjection.slice(overlayStart).trim();
       const samples = [
         `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored marker without an end`,
         `${PRIVATE_PROMPT_OVERLAY_START}\nuser-authored body\n${PRIVATE_PROMPT_OVERLAY_END}`,
@@ -136,7 +139,9 @@ describe('Story S2-T5: briefs', () => {
       ];
 
       for (const raw of samples) {
-        expect(projectWorkOrderBriefForPrompt('board', raw, disabled)).toBe(raw);
+        const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+        expect(projected.startsWith(raw)).toBe(true);
+        expect(projected).toContain('## Work order contract (Stage 2)');
       }
     });
 
@@ -153,7 +158,9 @@ describe('Story S2-T5: briefs', () => {
       ].join('\n');
       const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
 
-      expect(projectWorkOrderBriefForPrompt('board', raw, disabled)).toBe(raw);
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('## Work order contract (Stage 2)');
     });
 
     it('TG-06 removes a complete generated work-order overlay only', () => {
@@ -196,7 +203,234 @@ describe('Story S2-T5: briefs', () => {
       expect(brief).toContain('mode "reconcile"');
       expect(brief).toContain('force');
       expect(brief).toContain('report_publish');
-      expect(brief).not.toContain('MAMA managed'); // marker stripped
+      expect(brief).toContain('repairGeneration');
+      expect(brief).toContain('noUpdateScope');
+      expect(brief).toContain('contract_no_update({reason, scope: input.noUpdateScope})');
+      expect(brief).toContain('noUpdateScope is absent');
+      expect(brief).toContain('without calling\ncontract_no_update');
+      expect(brief).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(brief).toContain('<!-- MAMA managed board work-order contract v1:end -->');
+      expect(brief).toContain('supersedes any earlier Stage-2 instructions');
+    });
+
+    it('TG-05/TG-06 preserves an unmarked Stage-2 section and appends one managed contract', () => {
+      const path = briefPath('board', home);
+      const raw = [
+        '# Owner board brief',
+        '',
+        'Keep this user-authored prefix byte-for-byte.',
+        '',
+        '## Work order contract (Stage 2)',
+        'STALE MANAGED CONTRACT',
+        '',
+        '## Lessons',
+        'Keep this user-authored suffix byte-for-byte.',
+        '',
+      ].join('\n');
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt(
+        'board',
+        loadBrief('board', home)!,
+        disabled
+      );
+
+      expect(projected).toContain(
+        '# Owner board brief\n\nKeep this user-authored prefix byte-for-byte.'
+      );
+      expect(projected).toContain(
+        'report_publish({slots: {briefing, action_required, decisions, pipeline}})'
+      );
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('STALE MANAGED CONTRACT');
+      expect(projected).toContain('## Lessons\nKeep this user-authored suffix byte-for-byte.\n');
+      expect(
+        projected.match(/<!-- MAMA managed board work-order contract v1:start -->/g)
+      ).toHaveLength(1);
+      expect(
+        projected.match(/<!-- MAMA managed board work-order contract v1:end -->/g)
+      ).toHaveLength(1);
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
+    it('TG-05/TG-06 appends one current marked contract when no managed block exists', () => {
+      const path = briefPath('board', home);
+      const raw = '# Owner board brief\n\nKeep every user-authored byte.\n';
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt(
+        'board',
+        loadBrief('board', home)!,
+        disabled
+      );
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('## Work order contract (Stage 2)');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:end -->');
+      expect(projected).toContain('supersedes any earlier Stage-2 instructions');
+      expect(projected).toContain(
+        'report_publish({slots: {briefing, action_required, decisions, pipeline}})'
+      );
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
+    it('TG-05/TG-06 upgrades a complete older managed block without touching disk bytes', () => {
+      const path = briefPath('board', home);
+      const raw = [
+        '# Owner board brief',
+        '',
+        '<!-- MAMA managed board work-order contract v0:start -->',
+        '## Work order contract (Stage 2)',
+        'STALE MARKED CONTRACT',
+        '<!-- MAMA managed board work-order contract v0:end -->',
+        '',
+        '# Owner appendix',
+        'Keep this owner section byte-for-byte.',
+        '',
+      ].join('\n');
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt(
+        'board',
+        loadBrief('board', home)!,
+        disabled
+      );
+
+      expect(projected).not.toContain('v0:start');
+      expect(projected).not.toContain('STALE MARKED CONTRACT');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:end -->');
+      expect(projected).toContain('# Owner appendix\nKeep this owner section byte-for-byte.\n');
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
+    it('TG-05/TG-06 projects the current managed contract idempotently', () => {
+      const raw = '# Owner board brief\n\nKeep every user-authored byte.\n';
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const first = projectWorkOrderBriefForPrompt('board', raw, disabled);
+      const second = projectWorkOrderBriefForPrompt('board', first, disabled);
+
+      expect(second).toBe(first);
+      expect(first.match(/<!-- MAMA managed board work-order contract v1:start -->/g)).toHaveLength(
+        1
+      );
+      expect(first.match(/<!-- MAMA managed board work-order contract v1:end -->/g)).toHaveLength(
+        1
+      );
+    });
+
+    it('TG-05/TG-06 preserves an incomplete managed marker as user-owned text', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '<!-- MAMA managed board work-order contract v0:start -->',
+        'Owner text without a matching end marker.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+      const reprojected = projectWorkOrderBriefForPrompt('board', projected, disabled);
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('Owner text without a matching end marker.');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(reprojected).toBe(projected);
+      expect(
+        reprojected.match(/<!-- MAMA managed board work-order contract v1:start -->/g)
+      ).toHaveLength(1);
+    });
+
+    it('TG-05 preserves an exact Stage-2 heading inside a fenced Markdown block', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '```markdown',
+        '## Work order contract (Stage 2)',
+        'This fenced example belongs to the owner.',
+        '```',
+        '',
+        'Keep this owner-authored tail.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain(
+        '```markdown\n## Work order contract (Stage 2)\nThis fenced example belongs to the owner.\n```'
+      );
+      expect(projected.match(/^## Work order contract \(Stage 2\)$/gm)).toHaveLength(2);
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+    });
+
+    it('TG-05/TG-06 preserves unmarked Stage-2 and H1 sections byte-for-byte', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '## Work order contract (Stage 2)',
+        'STALE MANAGED CONTRACT',
+        '',
+        '# Owner appendix',
+        'Keep this H1 section byte-for-byte.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('STALE MANAGED CONTRACT');
+      expect(projected).toContain('# Owner appendix\nKeep this H1 section byte-for-byte.\n');
+    });
+
+    it('TG-05/TG-06 preserves unmarked Stage-2 and tab-separated H2 content', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '## Work order contract (Stage 2)',
+        'STALE MANAGED CONTRACT',
+        '',
+        '##\tLessons',
+        'Keep this tab-separated H2 section.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('STALE MANAGED CONTRACT');
+      expect(projected).toContain('##\tLessons\nKeep this tab-separated H2 section.\n');
+    });
+
+    it('TG-05/TG-06 preserves unmarked Stage-2 and indented H1 content', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '## Work order contract (Stage 2)',
+        'STALE MANAGED CONTRACT',
+        '',
+        '  # Appendix',
+        'Keep this indented H1 section.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected.startsWith(raw)).toBe(true);
+      expect(projected).toContain('STALE MANAGED CONTRACT');
+      expect(projected).toContain('  # Appendix\nKeep this indented H1 section.\n');
     });
 
     it('TG-04 makes candidate reconcile decisions explicit without prescribing their outcome', () => {

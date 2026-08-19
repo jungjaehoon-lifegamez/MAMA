@@ -41,6 +41,8 @@ export type ContextCompileCaller = 'http' | 'gateway' | string;
 export interface CompileAndPersistContextRequest {
   caller: ContextCompileCaller;
   envelope: Envelope;
+  /** Trusted per-gateway-call grant snapshot; keeps allowance and raw narrowing atomic. */
+  channelGrantSnapshot?: Readonly<Record<string, readonly string[]>>;
   input: ContextCompileInput;
   modelRunId?: string | null;
   parentModelRunId?: string | null;
@@ -584,7 +586,7 @@ export function createContextCompileService(
       // worker_envelope_scope_denied even after the enforcer allowed them.
       // ONE grant snapshot per call: allowance and raw narrowing must never
       // disagree mid-compile.
-      const grantSnapshot = options.channelGrant?.() ?? null;
+      const grantSnapshot = request.channelGrantSnapshot ?? options.channelGrant?.() ?? null;
       const readAllowance = [
         ...request.envelope.scope.memory_scopes,
         ...mirrorReadScopes(request.envelope, grantSnapshot ?? {}),

@@ -62,6 +62,31 @@ describe('ReportStore', () => {
     expect(store.get('footer')).toBeDefined();
     expect(Object.keys(store.getAll())).toHaveLength(1);
   });
+
+  it.each(['get', 'getAll', 'getAllSorted'] as const)(
+    'returns a detached slot value from %s',
+    (reader) => {
+      store.update('briefing', '<p>original</p>', 7);
+      const originalUpdatedAt = store.get('briefing')!.updatedAt;
+      const returned =
+        reader === 'get'
+          ? store.get('briefing')!
+          : reader === 'getAll'
+            ? store.getAll().briefing!
+            : store.getAllSorted()[0]!;
+
+      returned.html = '<p>tampered</p>';
+      returned.priority = 99;
+      returned.updatedAt = 0;
+
+      expect(store.get('briefing')).toEqual({
+        slotId: 'briefing',
+        html: '<p>original</p>',
+        priority: 7,
+        updatedAt: originalUpdatedAt,
+      });
+    }
+  );
 });
 
 describe('broadcastReportUpdate', () => {
@@ -92,7 +117,10 @@ describe('createReportPublisher', () => {
       clients as unknown as Set<import('node:http').ServerResponse>
     );
 
-    publish({ briefing: '<p>b</p>', action_required: '<p>a</p>' });
+    expect(publish({ briefing: '<p>b</p>', action_required: '<p>a</p>' })).toEqual({
+      acceptedSlotIds: ['action_required', 'briefing'],
+      changedSlotIds: ['action_required', 'briefing'],
+    });
 
     expect(store.get('briefing')?.html).toBe('<p>b</p>');
     expect(store.get('action_required')?.html).toBe('<p>a</p>');
@@ -108,11 +136,139 @@ describe('createReportPublisher', () => {
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    publish({ ok: '<p>x</p>', huge: 'x'.repeat(70_000) });
+    expect(publish({ ok: '<p>x</p>', huge: 'x'.repeat(70_000) })).toEqual({
+      acceptedSlotIds: ['ok'],
+      changedSlotIds: ['ok'],
+    });
 
     expect(store.get('ok')).toBeDefined();
     expect(store.get('huge')).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('returns all four persisted required slots in sorted order', () => {
+    const store = createReportStore();
+    const publish = createReportPublisher(
+      store,
+      new Set() as unknown as Set<import('node:http').ServerResponse>
+    );
+
+    expect(
+      publish({
+        pipeline: '<p>p</p>',
+        briefing: '<p>b</p>',
+        decisions: '<p>d</p>',
+        action_required: '<p>a</p>',
+      })
+    ).toEqual({
+      acceptedSlotIds: ['action_required', 'briefing', 'decisions', 'pipeline'],
+      changedSlotIds: ['action_required', 'briefing', 'decisions', 'pipeline'],
+    });
+  });
+
+  it('TG-06 accepts an identical full report without refreshing slots or emitting SSE', () => {
+    const store = createReportStore();
+    const slots = {
+      pipeline: '<p>p</p>',
+      briefing: '<p>b</p>',
+      decisions: '<p>d</p>',
+      action_required: '<p>a</p>',
+    };
+    for (const [slotId, html] of Object.entries(slots)) {
+      store.update(slotId, html, 0);
+    }
+    const before = Object.fromEntries(
+      Object.entries(store.getAll()).map(([slotId, slot]) => [slotId, slot.updatedAt])
+    );
+    const update = vi.spyOn(store, 'update');
+    const written: string[] = [];
+    const clients = new Set<{ write: (data: string) => void }>([
+      { write: (data) => written.push(data) },
+    ]);
+    const publish = createReportPublisher(
+      store,
+      clients as unknown as Set<import('node:http').ServerResponse>
+    );
+
+    expect(publish(slots)).toEqual({
+      acceptedSlotIds: ['action_required', 'briefing', 'decisions', 'pipeline'],
+      changedSlotIds: [],
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(
+      Object.fromEntries(
+        Object.entries(store.getAll()).map(([slotId, slot]) => [slotId, slot.updatedAt])
+      )
+    ).toEqual(before);
+    expect(written).toEqual([]);
+  });
+
+  it('TG-06 updates only changed and new slots and broadcasts one full snapshot', () => {
+    const store = createReportStore();
+    store.update('briefing', '<p>same</p>', 7);
+    store.update('decisions', '<p>old</p>', 3);
+    const briefingBefore = store.get('briefing')!;
+    const update = vi.spyOn(store, 'update');
+    const written: string[] = [];
+    const clients = new Set<{ write: (data: string) => void }>([
+      { write: (data) => written.push(data) },
+    ]);
+    const publish = createReportPublisher(
+      store,
+      clients as unknown as Set<import('node:http').ServerResponse>
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(
+      publish({
+        pipeline: '<p>new</p>',
+        briefing: '<p>same</p>',
+        decisions: '<p>changed</p>',
+        oversized: 'x'.repeat(70_000),
+      })
+    ).toEqual({
+      acceptedSlotIds: ['briefing', 'decisions', 'pipeline'],
+      changedSlotIds: ['decisions', 'pipeline'],
+    });
+
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenNthCalledWith(1, 'pipeline', '<p>new</p>', 0);
+    expect(update).toHaveBeenNthCalledWith(2, 'decisions', '<p>changed</p>', 3);
+    expect(store.get('briefing')).toEqual({
+      slotId: 'briefing',
+      html: '<p>same</p>',
+      priority: 7,
+      updatedAt: briefingBefore.updatedAt,
+    });
+    expect(store.get('decisions')?.html).toBe('<p>changed</p>');
+    expect(store.get('oversized')).toBeUndefined();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain('event: report-update');
+    expect(written[0]).toContain('"slotId":"briefing"');
+    expect(written[0]).toContain('"slotId":"decisions"');
+    expect(written[0]).toContain('"slotId":"pipeline"');
+    warn.mockRestore();
+  });
+
+  it('returns no persisted IDs and emits no SSE when every slot is rejected', () => {
+    const store = createReportStore();
+    const written: string[] = [];
+    const clients = new Set<{ write: (data: string) => void }>([
+      { write: (data) => written.push(data) },
+    ]);
+    const publish = createReportPublisher(
+      store,
+      clients as unknown as Set<import('node:http').ServerResponse>
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(publish({ pipeline: 'x'.repeat(70_000) })).toEqual({
+      acceptedSlotIds: [],
+      changedSlotIds: [],
+    });
+    expect(store.getAll()).toEqual({});
+    expect(written).toEqual([]);
     warn.mockRestore();
   });
 

@@ -75,10 +75,14 @@ const stripManagedMarker = (persona: string): string =>
 
 const BOARD_WORKORDER_CONTRACT = `
 ## Work order contract (Stage 2)
+This managed contract supersedes any earlier Stage-2 instructions in this brief.
+
 Your work order input is a JSON object:
 - mode: "full" | "reconcile"
 - force: true when the owner explicitly requested a fresh board - do NOT reply
   NO_UPDATE; rebuild and publish even if nothing changed.
+- repairGeneration: the host-captured Board repair generation.
+- noUpdateScope: the exact host-authored scope for a full-run no-op.
 - channelKey + deltaLines: present in reconcile mode only.
 - attempts: retry counter (informational).
 
@@ -86,8 +90,12 @@ mode "full" = the scheduled board rewrite. Before writing, check whether an
 update is needed: agent_notices({limit: 100}) for the last board publish
 boundary, then a recency check (mama_search({limit: 30}) with NO query,
 compare created_at). If nothing substantive is newer and force is not set,
-respond NO_UPDATE and stop. Otherwise follow "How to Write" and publish ALL
-FOUR slots in ONE report_publish call.
+call contract_no_update({reason, scope: input.noUpdateScope}) with that exact
+scope when noUpdateScope is present, then respond NO_UPDATE and stop. When
+noUpdateScope is absent, respond NO_UPDATE and stop without calling
+contract_no_update; do not substitute or derive another scope. Otherwise follow
+"How to Write" and publish ALL
+FOUR slots in ONE report_publish({slots: {briefing, action_required, decisions, pipeline}}) call.
 
 mode "reconcile" = a single-channel delta reconcile for input.channelKey using
 input.deltaLines. Apply the RECONCILE RUN rules from this brief (the mode
@@ -107,6 +115,14 @@ host does not prescribe an outcome or tool order. You must not use task_update f
 statuses, or evidence. When there are no candidates, preserve ordinary reconcile
 behavior unchanged.
 `;
+
+const MANAGED_BOARD_CONTRACT_START = '<!-- MAMA managed board work-order contract v1:start -->';
+const MANAGED_BOARD_CONTRACT_END = '<!-- MAMA managed board work-order contract v1:end -->';
+const MANAGED_BOARD_WORKORDER_CONTRACT = [
+  MANAGED_BOARD_CONTRACT_START,
+  BOARD_WORKORDER_CONTRACT.trim(),
+  MANAGED_BOARD_CONTRACT_END,
+].join('\n');
 
 const WIKI_WORKORDER_CONTRACT = `
 ## Work order contract (Stage 2)
@@ -142,7 +158,7 @@ scheduledAt as the current time reference.
 export function buildDefaultBrief(kind: WorkOrderKind): string {
   switch (kind) {
     case 'board':
-      return `${stripManagedMarker(DASHBOARD_AGENT_PERSONA)}\n${BOARD_WORKORDER_CONTRACT}`;
+      return `${stripManagedMarker(DASHBOARD_AGENT_PERSONA)}\n\n${MANAGED_BOARD_WORKORDER_CONTRACT}\n`;
     case 'wiki':
       return `${stripManagedMarker(WIKI_AGENT_PERSONA)}\n${WIKI_WORKORDER_CONTRACT}`;
     case 'memory-curation':
@@ -166,6 +182,88 @@ function stripLegacyPrivateLines(kind: WorkOrderKind, raw: string): string {
   return projected;
 }
 
+interface MarkdownFence {
+  marker: '`' | '~';
+  length: number;
+}
+
+function openingMarkdownFence(line: string): MarkdownFence | null {
+  const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+  if (!match?.[1]) return null;
+  return {
+    marker: match[1][0] as '`' | '~',
+    length: match[1].length,
+  };
+}
+
+function closesMarkdownFence(line: string, fence: MarkdownFence): boolean {
+  const marker = fence.marker === '`' ? '\\`' : '~';
+  return new RegExp(`^ {0,3}${marker}{${fence.length},}[ \\t]*$`).test(line);
+}
+
+function findManagedBoardContracts(raw: string): Array<{ start: number; end: number }> {
+  let fence: MarkdownFence | null = null;
+  let pending: { start: number; version: string } | null = null;
+  const contracts: Array<{ start: number; end: number }> = [];
+  let lineStart = 0;
+
+  while (lineStart < raw.length) {
+    const newline = raw.indexOf('\n', lineStart);
+    const nextLineStart = newline === -1 ? raw.length : newline + 1;
+    let contentEnd = newline === -1 ? raw.length : newline;
+    if (contentEnd > lineStart && raw[contentEnd - 1] === '\r') {
+      contentEnd -= 1;
+    }
+    const line = raw.slice(lineStart, contentEnd);
+
+    if (fence) {
+      if (closesMarkdownFence(line, fence)) {
+        fence = null;
+      }
+    } else {
+      const openingFence = openingMarkdownFence(line);
+      if (openingFence) {
+        fence = openingFence;
+      } else {
+        const start = /^<!-- MAMA managed board work-order contract v(\d+):start -->$/.exec(line);
+        if (start?.[1]) {
+          pending = { start: lineStart, version: start[1] };
+        } else if (pending) {
+          const end = /^<!-- MAMA managed board work-order contract v(\d+):end -->$/.exec(line);
+          if (end?.[1] === pending.version) {
+            contracts.push({ start: pending.start, end: contentEnd });
+            pending = null;
+          }
+        }
+      }
+    }
+
+    lineStart = nextLineStart;
+  }
+
+  return contracts;
+}
+
+function projectCurrentBoardContract(raw: string): string {
+  const managed = findManagedBoardContracts(raw);
+  if (managed.length === 0) {
+    const separator =
+      raw.length === 0 ? '' : raw.endsWith('\n\n') ? '' : raw.endsWith('\n') ? '\n' : '\n\n';
+    return `${raw}${separator}${MANAGED_BOARD_WORKORDER_CONTRACT}\n`;
+  }
+
+  let projected = '';
+  let cursor = 0;
+  for (const [index, contract] of managed.entries()) {
+    projected += raw.slice(cursor, contract.start);
+    if (index === 0) {
+      projected += MANAGED_BOARD_WORKORDER_CONTRACT;
+    }
+    cursor = contract.end;
+  }
+  return projected + raw.slice(cursor);
+}
+
 /** Project a user-owned work-order brief for one run without changing its file. */
 export function projectWorkOrderBriefForPrompt(
   kind: WorkOrderKind,
@@ -173,8 +271,11 @@ export function projectWorkOrderBriefForPrompt(
   policy: PrivateConnectorPolicy
 ): string {
   const overlay = buildPrivatePromptOverlay(resolveWorkOrderPrivateSurface(kind), policy);
+  const withoutMarkedOverlay = stripMarkedPrivatePromptOverlays(raw);
+  const contracted =
+    kind === 'board' ? projectCurrentBoardContract(withoutMarkedOverlay) : withoutMarkedOverlay;
   const projected = stripDisabledPrivatePromptRecipes(
-    stripLegacyPrivateLines(kind, stripMarkedPrivatePromptOverlays(raw)),
+    stripLegacyPrivateLines(kind, contracted),
     overlay.length > 0
   );
   if (!overlay) {

@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.36.1] - 2026-08-19
+
+### Fixed
+
+- **Code-Act declarations now match the host call contract.** Parameterized tools accept one named
+  input object, optional-only tools remain callable without an argument, and `report_publish`
+  accepts its canonical wrapped slot map while safely normalizing the historical direct form.
+- **Board repairs stop spending model turns after a verified result.** One generation-aware gate
+  now coordinates boot, scheduled, reconcile, API, and owner refreshes. Only an attempt-bound
+  accepted four-slot publish, or an exact non-force no-update proof, clears the captured dirt.
+- **Report publication is idempotent and auditable.** Identical accepted slots preserve timestamps
+  and emit no SSE; partial or rejected writes cannot satisfy full-report verification, and audit
+  traces record slot identities without report content.
+- **Memory read authority is consistent within each gateway call.** Default scopes, enforcement,
+  mismatch audit, context compilation, and provenance reuse one detached channel-grant snapshot;
+  the next call observes revocation normally.
+- **The running package version is observable.** Runtime status, Viewer System, and `mama status`
+  report the daemon's own package version and warn on CLI/runtime mismatch without assuming which
+  service entrypoint a restart will execute.
+
+### Changed
+
+- Board workorder prompts receive a versioned, in-memory managed contract while preserving
+  user-owned brief bytes and historical unmarked instructions.
+
 ## mama-os [0.36.0] - 2026-08-16
 
 ### Fixed

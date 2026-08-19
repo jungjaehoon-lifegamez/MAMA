@@ -35,10 +35,24 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).not.toContain('/**');
     });
 
-    it('omits separator whitespace from parameter lists to preserve the prompt budget', () => {
+    it('TG-03/TG-04 wraps parameterized tool declarations in one input object', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1, ['Write']));
 
-      expect(dts).toContain('declare function Write(path: string,content: string): true;');
+      expect(dts).toContain('declare function Write(input:{path: string,content: string}): true;');
+    });
+
+    it('TG-03/TG-04 makes the input object optional when every field is optional', () => {
+      const dts = TypeDefinitionGenerator.generate(policy(1, ['mama_search']));
+
+      expect(dts).toContain('declare function mama_search(input?:{query?: string');
+      expect(dts).not.toContain('declare function mama_search(input:{');
+    });
+
+    it('TG-03/TG-04 keeps zero-parameter tool declarations callable with no input', () => {
+      const dts = TypeDefinitionGenerator.generate(policy(2, ['report_request']));
+
+      expect(dts).toContain('declare function report_request(): { message: string };');
+      expect(dts).not.toContain('report_request(input:');
     });
 
     it('marks optional params with ?', () => {

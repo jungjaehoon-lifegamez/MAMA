@@ -28,6 +28,42 @@ export interface BoardCandidateReceiptInspector {
   inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState;
 }
 
+export interface BoardRefreshGatePort {
+  completeVerifiedReconcile(channelKey: string, capturedGeneration: number): void;
+  completeVerifiedFull(capturedGeneration: number): void;
+}
+
+/**
+ * Clear repair dirt only when both independent authorities agree: the
+ * run-bound action verifier observed an effect and candidate receipts (when
+ * present) are complete. The receipt verdict remains the consumer verdict so
+ * the existing retry policy is unchanged; unverified prose simply leaves the
+ * gate dirty for the scheduled repair pass.
+ */
+export function applyBoardRefreshVerdict(
+  workOrder: WorkOrderRecord,
+  actionVerified: boolean,
+  receiptVerdict: WorkOrderEffectVerdict,
+  gate: BoardRefreshGatePort
+): WorkOrderEffectVerdict {
+  if (!actionVerified || receiptVerdict.disposition !== 'complete') {
+    return receiptVerdict;
+  }
+  const generation = workOrder.payload.repairGeneration;
+  if (!Number.isSafeInteger(generation) || (generation as number) < 0) {
+    return receiptVerdict;
+  }
+  if (workOrder.payload.mode === 'reconcile') {
+    const channelKey = workOrder.payload.channelKey;
+    if (typeof channelKey === 'string' && channelKey.length > 0) {
+      gate.completeVerifiedReconcile(channelKey, generation as number);
+    }
+  } else if (workOrder.payload.mode === 'full') {
+    gate.completeVerifiedFull(generation as number);
+  }
+  return receiptVerdict;
+}
+
 /** Candidate completion is established by receipts, never verifier telemetry. */
 export function boardCandidateReceiptVerdict(
   workOrder: WorkOrderRecord,
@@ -117,6 +153,55 @@ function traceToolList(tools: readonly string[]): string {
 export interface WorkerTraceQueries {
   getTraceMaxId: () => number;
   countObligatedTraceRowsSince: (maxId: number) => number;
+}
+
+const REQUIRED_FULL_BOARD_SLOTS = ['briefing', 'action_required', 'decisions', 'pipeline'] as const;
+
+/** Completed, attempt-bound report_publish evidence for a complete Board repair. */
+export function buildFullBoardTraceQueries(
+  sessionsDb: SQLiteDatabase | undefined,
+  workerChannelId: string,
+  workorderAttemptId: number
+): WorkerTraceQueries {
+  if (!Number.isSafeInteger(workorderAttemptId) || workorderAttemptId < 1) {
+    throw new Error('[workorder-hooks] full Board attempt id must be a positive integer');
+  }
+  const requiredSlotPredicates = REQUIRED_FULL_BOARD_SLOTS.map(
+    () =>
+      `EXISTS (SELECT 1 FROM json_each(json_extract(details, '$.report_slot_ids')) WHERE value = ?)`
+  ).join(' AND ');
+  return {
+    getTraceMaxId: () => {
+      if (!sessionsDb) return 0;
+      const row = sessionsDb
+        .prepare(
+          `SELECT MAX(id) AS max_id FROM agent_activity
+           WHERE type = 'gateway_tool_call'
+             AND json_extract(details, '$.channel_id') = ?`
+        )
+        .get(workerChannelId) as { max_id: number | null };
+      return row.max_id ?? 0;
+    },
+    countObligatedTraceRowsSince: (maxId: number) => {
+      if (!sessionsDb) return 0;
+      const row = sessionsDb
+        .prepare(
+          `SELECT COUNT(*) AS n FROM agent_activity
+           WHERE type = 'gateway_tool_call'
+             AND json_extract(details, '$.channel_id') = ?
+             AND json_extract(details, '$.workorder_attempt_id') = ?
+             AND execution_status = 'completed'
+             AND id > ?
+             AND normalized_tool_name = 'report_publish'
+             AND json_type(details, '$.report_slot_ids') = 'array'
+             AND ${requiredSlotPredicates}`
+        )
+        .get(workerChannelId, workorderAttemptId, maxId, ...REQUIRED_FULL_BOARD_SLOTS) as {
+        n: number;
+      };
+      return row.n;
+    },
+  };
 }
 
 export function buildWorkerTraceQueries(
