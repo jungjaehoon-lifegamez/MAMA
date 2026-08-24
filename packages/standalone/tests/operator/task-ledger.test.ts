@@ -425,7 +425,17 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       );
     });
 
-    it('retries a failed owner-event workorder instead of returning the dead row', () => {
+    /**
+     * Story S2-T1 (PR #229 review): owner-event dedup reserves only
+     * pending/in_progress/done rows.
+     *
+     * Acceptance Criteria:
+     * - AC #8.1: a requeued failure inserts a claimable replacement with attempts+1
+     * - AC #8.2: a failed-only occurrence can be re-enqueued
+     * - AC #8.3: a boot-cancelled occurrence can be re-enqueued (the 08-21..23 dead-batch shape)
+     * - AC #8.4: a completed occurrence still dedups and is never re-run
+     */
+    it('AC #8.1: retries a failed owner-event workorder instead of returning the dead row', () => {
       // Regression (PR #229 review): the durable owner-event dedup had no
       // status filter, so requeueWorkOrder's replacement insert matched the row
       // it had just marked 'failed' and handed it straight back - attempts
@@ -445,7 +455,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()?.id).toBe(replacement.id);
     });
 
-    it('re-enqueues an owner-event occurrence whose only row failed', () => {
+    it('AC #8.2: re-enqueues an owner-event occurrence whose only row failed', () => {
       const order = ledger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: 'owner-event:board:failed',
@@ -465,7 +475,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
     });
 
-    it('re-enqueues an owner-event occurrence cancelled by boot cleanup', () => {
+    it('AC #8.3: re-enqueues an owner-event occurrence cancelled by boot cleanup', () => {
       // The 08-21..23 outage shape: boot cancels the open row, the batch is
       // redelivered, and the dedup made the re-enqueue a no-op forever.
       const order = ledger.enqueueWorkOrder({
@@ -485,7 +495,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
     });
 
-    it('still dedups a COMPLETED owner-event occurrence so work is never re-run', () => {
+    it('AC #8.4: still dedups a COMPLETED owner-event occurrence so work is never re-run', () => {
       const order = ledger.enqueueWorkOrder({
         workKind: 'wiki',
         idempotencyKey: 'owner-event:wiki:done',
