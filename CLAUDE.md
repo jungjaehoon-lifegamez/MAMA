@@ -330,7 +330,9 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   allowlisted chat's private DM gets the owner surface. Static sourceMapping to
   owner_console is downgraded at runtime and flagged by the code audit.
 - **Owner-event lane:** connector batches persist before source cursor commit and run through the
-  same MAMA owner agent on `owner-event:<channelKey>` sessions. Completion requires a confirmed
+  same MAMA owner agent as a stateless FRESH run per batch on `owner-event:<channelKey>` lane keys
+  (each prompt is self-contained; resuming the per-channel thread replayed the whole growing
+  history every batch — 45.9M tokens on 2026-08-20 alone). Completion requires a confirmed
   Telegram/Drive effect, accepted workorder, or exact no-update receipt; a separate background
   Conductor no longer owns or acknowledges connector work.
 - **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`

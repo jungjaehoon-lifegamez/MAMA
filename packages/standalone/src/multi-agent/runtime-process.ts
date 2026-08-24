@@ -35,6 +35,8 @@ export interface CodexRuntimeProcessOptions {
   registryRoot?: string;
   mcpConfigPath?: string;
   command?: string;
+  /** Managed Codex `model_reasoning_effort`; unset means the built-in default. */
+  effort?: string;
   auxiliaryToolPolicy?: CodexAuxiliaryToolPolicy;
 }
 
@@ -81,6 +83,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       isolatedHome: options.isolatedHome,
       registryRoot: options.registryRoot,
       mcpConfigPath: options.mcpConfigPath,
+      effort: options.effort,
     });
     this.auxiliaryToolBridge = options.auxiliaryToolPolicy
       ? createCodexAuxiliaryToolBridge({

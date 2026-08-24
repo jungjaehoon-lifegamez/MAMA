@@ -16,6 +16,8 @@ import type { MessageRouter } from '../../../src/gateways/index.js';
 import { AgentEventBus } from '../../../src/multi-agent/agent-event-bus.js';
 import { TaskLedger } from '../../../src/operator/task-ledger.js';
 import { BoardRefreshGate } from '../../../src/operator/board-refresh-gate.js';
+import { REQUIRED_FULL_BOARD_SLOTS } from '../../../src/operator/workorder-hooks.js';
+import type { ReportStore } from '../../../src/api/report-handler.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
 import { buildOwnerWorkOrderRequestHandler } from '../../../src/cli/commands/start.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
@@ -62,7 +64,7 @@ function createConfig(): MAMAConfig {
   };
 }
 
-function createConnectorEventTable(db: Database): void {
+function createBoardInputTables(db: Database): void {
   db.exec(`CREATE TABLE connector_event_index (
     event_index_id TEXT PRIMARY KEY,
     source_connector TEXT,
@@ -75,6 +77,19 @@ function createConnectorEventTable(db: Database): void {
     operator_observation_seq INTEGER,
     metadata_json TEXT
   )`);
+  // The other board input the delta gate reads from the mama-core adapter.
+  db.exec(`CREATE TABLE IF NOT EXISTS decisions (
+    id TEXT PRIMARY KEY,
+    topic TEXT,
+    created_at TEXT
+  )`);
+}
+
+/** Simulate a full run publishing the four required board slots. */
+function publishBoardSlots(apiServer: { reportStore: ReportStore }): void {
+  for (const [index, slotId] of REQUIRED_FULL_BOARD_SLOTS.entries()) {
+    apiServer.reportStore.update(slotId, `<p>${slotId}</p>`, index);
+  }
 }
 
 async function registerReconcileRuntime(input: {
@@ -137,7 +152,7 @@ async function registerReconcileRuntime(input: {
 async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed' | 'none') {
   const db = new Database(':memory:');
   initAgentTables(db);
-  createConnectorEventTable(db);
+  createBoardInputTables(db);
   const policy = resolvePrivateConnectorPolicy(enabledConnectorConfig);
   const eventBus = new AgentEventBus();
   const toolExecutor = new GatewayToolExecutor({
@@ -273,7 +288,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
   it('TG-06 enqueues one boot repair with an exact scope and dedupes it while open', async () => {
     const db = new Database(':memory:');
     try {
-      createConnectorEventTable(db);
+      createBoardInputTables(db);
       const { ledger } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -301,25 +316,41 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
-  it('TG-06 preserves the legacy 30-minute full schedule when reconcile is disabled', async () => {
+  it('Fix E delta-gates the 30-minute full schedule when reconcile is disabled', async () => {
     const db = new Database(':memory:');
     const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
-      createConnectorEventTable(db);
-      const { ledger } = await registerReconcileRuntime({
+      createBoardInputTables(db);
+      const { apiServer, ledger } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
 
       await vi.advanceTimersByTimeAsync(10_000);
       const boot = ledger.claimNextWorkOrder();
-      expect(boot?.payload).toEqual({ attempts: 1, mode: 'full' });
-      if (!boot) throw new Error('legacy boot full expected');
+      // The boot run has no completed predecessor, so it always runs, and it
+      // carries the watermark that becomes the next tick's baseline.
+      expect(boot?.payload.mode).toBe('full');
+      expect(boot?.payload.deltaWatermark).toEqual(expect.any(String));
+      if (!boot) throw new Error('boot full expected');
+      publishBoardSlots(apiServer);
       ledger.completeWorkOrder(boot.id);
 
+      // Nothing the board reads has moved since that published run.
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
-      expect(ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+
+      // One new connector observation re-opens the schedule.
+      db.prepare(
+        `INSERT INTO connector_event_index
+           (event_index_id, source_connector, channel, operator_observation_seq)
+         VALUES ('e1', 'alpha', 'room', 1)`
+      ).run();
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      const afterConnector = ledger.claimNextWorkOrder();
+      expect(afterConnector?.payload.mode).toBe('full');
+      expect(afterConnector?.payload.deltaWatermark).not.toBe(boot.payload.deltaWatermark);
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
       else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
@@ -327,10 +358,78 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
+  it('Fix E delta-gates a dirty repair gate too (MAMA_BOARD_RECONCILE=1)', async () => {
+    const runtime = await registerOwnerFullRuntime('none');
+    try {
+      // Boot dirt earns the first run.
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = runtime.ledger.claimNextWorkOrder();
+      expect(boot?.payload.mode).toBe('full');
+      expect(boot?.payload.deltaWatermark).toEqual(expect.any(String));
+      if (!boot) throw new Error('boot full expected');
+      publishBoardSlots(runtime.apiServer);
+      runtime.ledger.completeWorkOrder(boot.id);
+
+      // The run went unverified, so the repair gate stays dirty - but nothing
+      // the board reads has moved, so the duplicate full run is skipped.
+      expect(runtime.boardRefreshGate.needsFullRepair()).toBe(true);
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
+
+      // A native owner task is a board input that never touches any connector.
+      runtime.ledger.create({ title: 'off-connector item' });
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(runtime.ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
+    } finally {
+      runtime.routeHandle.stop();
+      runtime.db.close();
+    }
+  });
+
+  it('Fix E never skips a run that left no published board behind', async () => {
+    const runtime = await registerOwnerFullRuntime('none');
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = runtime.ledger.claimNextWorkOrder();
+      if (!boot) throw new Error('boot full expected');
+      // Completed without publishing: not evidence of a rebuilt board.
+      runtime.ledger.completeWorkOrder(boot.id);
+
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(runtime.ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
+    } finally {
+      runtime.routeHandle.stop();
+      runtime.db.close();
+    }
+  });
+
+  it('Fix E re-opens the schedule once the staleness bound passes', async () => {
+    const runtime = await registerOwnerFullRuntime('none');
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = runtime.ledger.claimNextWorkOrder();
+      if (!boot) throw new Error('boot full expected');
+      publishBoardSlots(runtime.apiServer);
+      runtime.ledger.completeWorkOrder(boot.id);
+
+      // Quiet ticks inside the 2h bound stay skipped...
+      for (let tick = 0; tick < 4; tick += 1) {
+        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+        expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
+      }
+      // ...and the first tick past it runs anyway, whatever the signals say.
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(runtime.ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
+    } finally {
+      runtime.routeHandle.stop();
+      runtime.db.close();
+    }
+  });
+
   it('TG-06 safely generation-binds an eventless manual reconcile', async () => {
     const db = new Database(':memory:');
     try {
-      createConnectorEventTable(db);
+      createBoardInputTables(db);
       const { apiServer, ledger } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -359,7 +458,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
   it('TG-06 rejects an oversized manual reconcile channel before marking gate dirt', async () => {
     const db = new Database(':memory:');
     try {
-      createConnectorEventTable(db);
+      createBoardInputTables(db);
       const { apiServer, boardRefreshGate, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -534,7 +633,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
-      createConnectorEventTable(db);
+      createBoardInputTables(db);
       const { apiServer, ledger } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -546,6 +645,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         attempts: 1,
         mode: 'full',
         force: true,
+        // A forced full run is still a real rebuild, so it records a baseline.
+        deltaWatermark: expect.any(String),
       });
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
@@ -557,7 +658,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
   it('TG-06 stop owns boot, interval, and manual reconcile timers across restart', async () => {
     const db = new Database(':memory:');
     try {
-      createConnectorEventTable(db);
+      createBoardInputTables(db);
       const oldGate = new BoardRefreshGate({ initialGeneration: 700 });
       const first = await registerReconcileRuntime({
         db,

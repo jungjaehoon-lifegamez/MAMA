@@ -57,6 +57,8 @@ export interface TriggerAgentRuntimeOptions {
   requestTimeout?: number;
   provider?: string;
   dataDir?: string;
+  /** Managed Codex `model_reasoning_effort`; the claude lane keeps TRIGGER_AUTHOR_EFFORT. */
+  effort?: string;
 }
 
 export interface TriggerAgentRuntime {
@@ -456,6 +458,9 @@ export function createTriggerAgentRuntime(
     sandbox: 'read-only',
     requestTimeout: options.requestTimeout,
     command: options.command,
+    // Shared managed config.toml: this runner writes it too, so it must agree
+    // with every other Codex process or they flip each other's effort.
+    effort: options.effort,
   });
   const askInSession =
     (sessionKey: string): AskAgent =>

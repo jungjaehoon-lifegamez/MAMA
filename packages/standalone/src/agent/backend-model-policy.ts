@@ -1,3 +1,4 @@
+import { CODEX_REASONING_EFFORTS } from './codex-home.js';
 import type { BackendType } from './model-runner.js';
 
 const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
@@ -5,6 +6,54 @@ const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
   codex: 'gpt-5.4',
   cline: 'deepseek/deepseek-v4-flash',
 };
+
+/**
+ * Reasoning efforts each backend accepts. Cline takes none, so it constrains nothing.
+ * Codex mirrors CODEX_REASONING_EFFORTS - the managed-config writer is the enforcer,
+ * this table only lets the boot say so before the first model call.
+ */
+const EFFORTS_BY_BACKEND: Readonly<Record<BackendType, readonly string[] | null>> = {
+  claude: ['low', 'medium', 'high', 'max'],
+  codex: CODEX_REASONING_EFFORTS,
+  cline: null,
+};
+
+/**
+ * True only for an effort this backend actually accepts. Unset reads as false so a
+ * caller can use it to decide whether to apply the knob at all.
+ */
+export function effortSupportedByBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): boolean {
+  if (effort === undefined || effort === null || effort === '') {
+    return false;
+  }
+  const allowed = EFFORTS_BY_BACKEND[backend];
+  return allowed === null || allowed.includes(effort);
+}
+
+/**
+ * Boot gate for `agent.effort`. Without it an unsupported value boots clean and then
+ * throws on EVERY model call - in the owner-event lane that is a retry-then-dead page
+ * per batch, forever. Fail once, at boot, naming the key and the accepted values.
+ */
+export function assertEffortSupportedByBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): void {
+  if (effort === undefined || effort === null || effort === '') {
+    return;
+  }
+  const allowed = EFFORTS_BY_BACKEND[backend];
+  if (allowed === null || allowed.includes(effort)) {
+    return;
+  }
+  throw new Error(
+    `Invalid agent.effort "${effort}" for backend "${backend}" in ~/.mama/config.yaml; ` +
+      `expected one of ${allowed.join(', ')}`
+  );
+}
 
 export interface BackendModelChange {
   target: string;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertEffortSupportedByBackend,
+  effortSupportedByBackend,
   backendForModel,
   defaultModelForBackend,
   modelMatchesBackend,
@@ -217,6 +219,52 @@ describe('backend model policy', () => {
           },
         ],
       });
+    });
+  });
+
+  describe('assertEffortSupportedByBackend', () => {
+    it('accepts an unset effort on every backend', () => {
+      for (const backend of ['claude', 'codex', 'cline'] as const) {
+        expect(() => assertEffortSupportedByBackend(backend, undefined)).not.toThrow();
+      }
+    });
+
+    it.each(['low', 'medium', 'high', 'max'] as const)('accepts %s on claude', (effort) => {
+      expect(() => assertEffortSupportedByBackend('claude', effort)).not.toThrow();
+    });
+
+    it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)('accepts %s on codex', (effort) => {
+      expect(() => assertEffortSupportedByBackend('codex', effort)).not.toThrow();
+    });
+
+    it('rejects a codex-only effort on claude, naming the key and the allowed values', () => {
+      expect(() => assertEffortSupportedByBackend('claude', 'xhigh')).toThrow(
+        /agent\.effort.*xhigh.*claude.*low, medium, high, max/s
+      );
+    });
+
+    it('rejects an unknown effort on codex, naming the key and the allowed values', () => {
+      expect(() => assertEffortSupportedByBackend('codex', 'ultra')).toThrow(
+        /agent\.effort.*ultra.*codex.*low, medium, high, xhigh, max/s
+      );
+    });
+  });
+
+  describe('effortSupportedByBackend', () => {
+    it('keeps a codex-only effort off the claude thinking flag', () => {
+      expect(effortSupportedByBackend('claude', 'xhigh')).toBe(false);
+      expect(effortSupportedByBackend('codex', 'xhigh')).toBe(true);
+    });
+
+    it('accepts max on both backends and rejects unknown values everywhere', () => {
+      expect(effortSupportedByBackend('claude', 'max')).toBe(true);
+      expect(effortSupportedByBackend('codex', 'max')).toBe(true);
+      expect(effortSupportedByBackend('claude', 'ultra')).toBe(false);
+      expect(effortSupportedByBackend('codex', 'ultra')).toBe(false);
+    });
+
+    it('reports an unset effort as unsupported so callers skip the flag', () => {
+      expect(effortSupportedByBackend('claude', undefined)).toBe(false);
     });
   });
 });

@@ -89,6 +89,26 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(() => validateWorkOrderPayload('board', { mode: 'full', force: true })).not.toThrow();
     });
 
+    it('board: deltaWatermark is a bounded full-run-only field', () => {
+      expect(() =>
+        validateWorkOrderPayload('board', { mode: 'full', deltaWatermark: 'v1:alpha=1' })
+      ).not.toThrow();
+      expect(() => validateWorkOrderPayload('board', { mode: 'full', deltaWatermark: '' })).toThrow(
+        /deltaWatermark/
+      );
+      expect(() =>
+        validateWorkOrderPayload('board', { mode: 'full', deltaWatermark: 'x'.repeat(1001) })
+      ).toThrow(/deltaWatermark/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'reconcile',
+          channelKey: 'slack:C1',
+          deltaLines: ['delta'],
+          deltaWatermark: 'v1:alpha=1',
+        })
+      ).toThrow(/deltaWatermark is full-only/);
+    });
+
     it('TG-06 validates generation-bound full and reconcile repair payloads', () => {
       expect(() =>
         validateWorkOrderPayload('board', {

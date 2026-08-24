@@ -155,7 +155,12 @@ export interface WorkerTraceQueries {
   countObligatedTraceRowsSince: (maxId: number) => number;
 }
 
-const REQUIRED_FULL_BOARD_SLOTS = ['briefing', 'action_required', 'decisions', 'pipeline'] as const;
+export const REQUIRED_FULL_BOARD_SLOTS = [
+  'briefing',
+  'action_required',
+  'decisions',
+  'pipeline',
+] as const;
 
 /** Completed, attempt-bound report_publish evidence for a complete Board repair. */
 export function buildFullBoardTraceQueries(

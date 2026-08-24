@@ -334,8 +334,11 @@ export interface MultiAgentRuntimeOptions {
    */
   backend?: 'claude' | 'codex' | 'cline';
   model?: string;
-  /** Effort level for Claude 4.6 adaptive thinking */
-  effort?: 'low' | 'medium' | 'high' | 'max';
+  /**
+   * Global reasoning effort from agent.effort. Claude takes it as its thinking level;
+   * codex writes it into the shared managed config ('xhigh' is codex-only).
+   */
+  effort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;
   /** Codex working directory */

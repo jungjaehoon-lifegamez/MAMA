@@ -270,7 +270,25 @@ rl.on('line', line => {
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'inProgress')}});
     const complete = () => {
     send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:id,delta:'hello'}});
+    // Cumulative totals continue across turns AND child restarts (file-backed
+    // counter), like a real durable thread - pins that resumed-history offsets
+    // are never attributed to the current turn.
+    const usageSeqPath = ${JSON.stringify(join(root, 'usage-seq'))};
+    const useq = fs.existsSync(usageSeqPath) ? Number(fs.readFileSync(usageSeqPath, 'utf8')) : 0;
+    fs.writeFileSync(usageSeqPath, String(useq + 1));
+    if (mode === 'usage-no-total') {
     send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1}}}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2}}}});
+    } else if (mode === 'usage-mixed-total') {
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1}}}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2},total:{inputTokens:8+8*useq,outputTokens:6+6*useq,cachedInputTokens:3+3*useq}}}});
+    } else if (mode === 'usage-shrinking-total') {
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1},total:{inputTokens:10,outputTokens:8,cachedInputTokens:4}}}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2},total:{inputTokens:5,outputTokens:4,cachedInputTokens:2}}}});
+    } else {
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1},total:{inputTokens:3+8*useq,outputTokens:2+6*useq,cachedInputTokens:1+3*useq}}}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2},total:{inputTokens:8+8*useq,outputTokens:6+6*useq,cachedInputTokens:3+3*useq}}}});
+    }
     const status=mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed';
     const error=status==='failed'?{message:'turn boom',codexErrorInfo:null,additionalDetails:null}:null;
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,status,error)}});
@@ -385,14 +403,17 @@ describe('Story: Codex app-server process', () => {
     expect(result).toMatchObject({
       response: 'hello',
       session_id: 'thread-1',
-      usage: { input_tokens: 3, output_tokens: 2, cache_read_input_tokens: 1 },
+      // Turn usage is the SUM over the turn's model calls (cumulative-total
+      // delta), not the final call alone - a tool-loop turn's earlier calls
+      // were silently dropped before (measured ~5x undercount vs rollouts).
+      usage: { input_tokens: 8, output_tokens: 6, cache_read_input_tokens: 3 },
     });
     await first.stop();
 
     const second = new CodexAppServerProcess(item.options);
     await expect(second.prompt('again')).resolves.toMatchObject({
       response: 'hello',
-      usage: { input_tokens: 3, output_tokens: 2 },
+      usage: { input_tokens: 8, output_tokens: 6 },
     });
     await second.stop();
     const sent = messages(item.capture);
@@ -435,6 +456,33 @@ describe('Story: Codex app-server process', () => {
         }),
       })
     );
+  });
+
+  it('sums per-call usage when the server omits cumulative totals', async () => {
+    const item = fixture('usage-no-total');
+    const proc = new CodexAppServerProcess(item.options);
+    await expect(proc.prompt('hi')).resolves.toMatchObject({
+      usage: { input_tokens: 8, output_tokens: 6, cache_read_input_tokens: 3 },
+    });
+    await proc.stop();
+  });
+
+  it('keeps accumulated per-call usage when a cumulative total arrives mid-turn', async () => {
+    const item = fixture('usage-mixed-total');
+    const proc = new CodexAppServerProcess(item.options);
+    await expect(proc.prompt('hi')).resolves.toMatchObject({
+      usage: { input_tokens: 8, output_tokens: 6, cache_read_input_tokens: 3 },
+    });
+    await proc.stop();
+  });
+
+  it('clamps a shrinking cumulative total to zero instead of recording negative usage', async () => {
+    const item = fixture('usage-shrinking-total');
+    const proc = new CodexAppServerProcess(item.options);
+    await expect(proc.prompt('hi')).resolves.toMatchObject({
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    await proc.stop();
   });
 
   it('answers every headless server request with the exact safe body', async () => {
@@ -1177,7 +1225,7 @@ describe('Story: Codex app-server process', () => {
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(settled).toBe(false);
     writeFileSync(join(item.root, 'release'), '1');
-    await expect(pending).resolves.toMatchObject({ response: 'hello', usage: { input_tokens: 3 } });
+    await expect(pending).resolves.toMatchObject({ response: 'hello', usage: { input_tokens: 8 } });
     await runner.stop();
   });
 
@@ -2214,6 +2262,62 @@ describe('Story: Codex app-server process', () => {
     expect(repaired).toContain('shell_tool = false');
     expect(repaired).not.toContain('shell_tool = true');
     expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    await runner.stop();
+  });
+
+  it('writes the configured reasoning effort into the managed config', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess({ ...item.options, effort: 'xhigh' });
+    await runner.prompt('first');
+
+    const config = readFileSync(join(item.options.codexHome!, 'config.toml'), 'utf8');
+    expect(config).toContain('model_reasoning_effort = "xhigh"');
+    await runner.stop();
+  });
+
+  it('defaults the managed reasoning effort to high when unconfigured', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess(item.options);
+    await runner.prompt('first');
+
+    expect(readFileSync(join(item.options.codexHome!, 'config.toml'), 'utf8')).toContain(
+      'model_reasoning_effort = "high"'
+    );
+    await runner.stop();
+  });
+
+  it('rewrites the managed config when the configured reasoning effort changes', async () => {
+    const item = fixture();
+    const configPath = join(item.options.codexHome!, 'config.toml');
+    const first = new CodexAppServerProcess(item.options);
+    await first.prompt('first');
+    await first.stop();
+    expect(readFileSync(configPath, 'utf8')).toContain('model_reasoning_effort = "high"');
+
+    const changed = new CodexAppServerProcess({ ...item.options, effort: 'low' });
+    await changed.prompt('second');
+
+    expect(readFileSync(configPath, 'utf8')).toContain('model_reasoning_effort = "low"');
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    await changed.stop();
+  });
+
+  it('threads the runtime-process reasoning effort into the managed config', async () => {
+    const item = fixture();
+    const runner = new CodexRuntimeProcess({ ...item.options, effort: 'xhigh' });
+    await runner.prompt('first');
+
+    expect(readFileSync(join(item.options.codexHome!, 'config.toml'), 'utf8')).toContain(
+      'model_reasoning_effort = "xhigh"'
+    );
+    await runner.stop();
+  });
+
+  it('fails loud on an unsupported configured reasoning effort', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess({ ...item.options, effort: 'ultra' });
+
+    await expect(runner.prompt('first')).rejects.toThrow(/reasoning effort/i);
     await runner.stop();
   });
 });

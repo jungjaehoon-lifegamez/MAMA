@@ -35,6 +35,7 @@ import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
 import { getLatestVersion, upsertMetrics } from '../../db/agent-store.js';
 import { syncBuiltinSkills } from './utilities.js';
+import { assertEffortSupportedByBackend } from '../../agent/backend-model-policy.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -116,6 +117,10 @@ export function initMainAgentLoop(
     wikiPublishAdapter?: GatewayToolExecutorOptions['wikiPublishAdapter'];
   }
 ): AgentLoopInitResult {
+  // Boot gate: an unsupported effort must stop the daemon here, not on every
+  // later model call. The per-run throw downstream stays as the backstop.
+  assertEffortSupportedByBackend(runtimeBackend, config.agent.effort);
+
   const mamaHome = join(homedir(), '.mama');
 
   // Sync built-in skills on every start (non-destructive — skips existing files)
@@ -184,6 +189,9 @@ export function initMainAgentLoop(
       clineDataDir: config.agent.cline_data_dir,
       timeoutMs: config.agent.timeout,
       maxTurns: config.agent.max_turns,
+      // Consumed only by the codex branch, which writes it into the managed
+      // CODEX_HOME config; the claude backend takes effort via its own CLI flag.
+      codexEffort: config.agent.effort,
       useCodeAct,
       toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
       disallowedTools: osAgentDisallowed,

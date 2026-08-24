@@ -322,6 +322,93 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(fresh.payload.attempts).toBe(1);
     });
 
+    it('reports the newest COMPLETED full board run with its enqueue/complete times', () => {
+      expect(ledger.lastCompletedBoardFullRun()).toBeNull();
+
+      const older = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:1',
+        input: { mode: 'full', deltaWatermark: 'v1:alpha=1' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(older.id);
+      const first = ledger.lastCompletedBoardFullRun();
+      expect(first?.watermark).toBe('v1:alpha=1');
+      expect(first?.createdAt).toBeGreaterThan(0);
+      expect(first?.completedAt).toBeGreaterThanOrEqual(first!.createdAt);
+
+      const newer = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:2',
+        input: { mode: 'full', deltaWatermark: 'v1:alpha=2' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(newer.id);
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v1:alpha=2');
+    });
+
+    it('ignores open, failed, reconcile, and unwatermarked board rows as baselines', () => {
+      const done = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:1',
+        input: { mode: 'full', deltaWatermark: 'v1:alpha=1' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(done.id);
+
+      // A reconcile run is not a full run and never resets the full baseline.
+      const reconcile = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:reconcile:c:1',
+        input: { mode: 'reconcile', channelKey: 'c', deltaLines: ['x'] },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(reconcile.id);
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v1:alpha=1');
+
+      // A full run that never completed cannot discharge the interval either.
+      const failed = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:2',
+        input: { mode: 'full', deltaWatermark: 'v1:alpha=2' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.failWorkOrder(failed.id, 'boom');
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v1:alpha=1');
+
+      // A completed full run with no captured watermark (owner-forced request)
+      // erases the baseline: the next scheduled tick must enqueue, not skip.
+      const unwatermarked = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:manual:3',
+        input: { mode: 'full', force: true },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(unwatermarked.id);
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBeNull();
+    });
+
+    it('moves the owner-task term on create, update, and status transitions', () => {
+      const empty = ledger.ownerTaskTerm();
+      expect(empty.length).toBeGreaterThan(0);
+
+      const task = ledger.create({ title: 'board-visible item' });
+      const created = ledger.ownerTaskTerm();
+      expect(created).not.toBe(empty);
+
+      ledger.update(task.id, { status: 'in_progress' });
+      const moved = ledger.ownerTaskTerm();
+      expect(moved).not.toBe(created);
+
+      // A system workorder row is not board task truth and must not move it.
+      ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'w-term',
+        input: { batchId: 'b', events: [] },
+      });
+      expect(ledger.ownerTaskTerm()).toBe(moved);
+    });
+
     it('reads a durable owner-event workorder acceptance after terminal transition', () => {
       const order = ledger.enqueueWorkOrder({
         workKind: 'wiki',
