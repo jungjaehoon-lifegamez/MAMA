@@ -15,6 +15,7 @@ import { AgentLoop, loadBackendAgentsMd } from '../agent/agent-loop.js';
 import { ClineCLIAdapter } from '../agent/cline-cli-adapter.js';
 import { projectClineNativeTools } from '../agent/cline-native-tool-policy.js';
 import {
+  codexEffortForBackend,
   defaultModelForBackend,
   effortSupportedByBackend,
   resolveBackendScopedModel,
@@ -723,6 +724,9 @@ export class AgentProcessManager extends EventEmitter {
       codexHome: this.runtimeOptions.codexHome,
       codexIsolatedHome: this.runtimeOptions.codexIsolatedHome,
       codexRegistryRoot: this.runtimeOptions.codexRegistryRoot,
+      // This loop builds the Codex process itself, so it writes the shared managed
+      // config too - omitting the effort here rewrites it back to the default.
+      codexEffort: codexEffortForBackend(backend, this.runtimeOptions.effort),
     });
     return new ManagedCodeActProcess(
       loop,

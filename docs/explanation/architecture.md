@@ -264,7 +264,9 @@ per-channel isolation wins.
 Connector deltas belong to MAMA, not to a separate planning persona. The trigger loop persists
 each batch and its matched trigger procedures to `owner_event_inbox` before advancing the source
 cursor. `OwnerEventLoop` consumes that journal through the same daemon `AgentLoop` and current
-owner operating brief on durable per-channel sessions (`owner-event:<channelKey>`).
+owner operating brief as a stateless fresh run per batch on durable per-channel lane keys
+(`owner-event:<channelKey>`); only the lane key persists, never the model thread, because
+each batch prompt is self-contained and a resumed thread replays its whole history.
 
 The agent chooses the safe primitive sequence. The host fixes connector visibility and the owner
 Telegram destination through the envelope, then ACKs the event only after a completed durable

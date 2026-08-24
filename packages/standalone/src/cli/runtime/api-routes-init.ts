@@ -557,12 +557,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           readBoardPublishedAt: boardPublishedAt,
         });
         if (delta.warning) {
-          routesLogger.warn(
+          // error, not warn: DebugLogger defaults to MAMA_LOG_LEVEL=ERROR, so a
+          // warn here would be invisible on a normal daemon - and a gate whose
+          // signal is broken is permanently inert, which is exactly the kind of
+          // silent degradation this file logs loudly everywhere else.
+          routesLogger.error(
             `[stage2] board delta gate unavailable (${delta.warning}); enqueueing the full board anyway`
           );
         }
         if (!opts?.force && !delta.enqueue) {
-          console.log(
+          routesLogger.info(
             `[stage2] board full skipped: ${delta.reason} - nothing the board reads has moved since the last published full run`
           );
           return;

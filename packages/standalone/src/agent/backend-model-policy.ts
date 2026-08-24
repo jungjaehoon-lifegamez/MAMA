@@ -7,15 +7,26 @@ const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
   cline: 'deepseek/deepseek-v4-flash',
 };
 
+const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
+
+/** Every level any backend understands. agent.effort is global, so it must be one of these. */
+const KNOWN_REASONING_EFFORTS: readonly string[] = [
+  ...new Set<string>([...CLAUDE_REASONING_EFFORTS, ...CODEX_REASONING_EFFORTS]),
+];
+
 /**
- * Reasoning efforts each backend accepts. Cline takes none, so it constrains nothing.
- * Codex mirrors CODEX_REASONING_EFFORTS - the managed-config writer is the enforcer,
- * this table only lets the boot say so before the first model call.
+ * Reasoning efforts each backend accepts. Codex mirrors CODEX_REASONING_EFFORTS - the
+ * managed-config writer is the enforcer, this table only lets the boot say so before
+ * the first model call.
+ *
+ * Cline reads no effort of its own, but it must NOT be unconstrained: agent.effort is
+ * global, so a cline runtime still hands the value to codex and claude sub-agents. An
+ * unknown value there would pass the boot gate and then throw on every codex call.
  */
-const EFFORTS_BY_BACKEND: Readonly<Record<BackendType, readonly string[] | null>> = {
-  claude: ['low', 'medium', 'high', 'max'],
+const EFFORTS_BY_BACKEND: Readonly<Record<BackendType, readonly string[]>> = {
+  claude: CLAUDE_REASONING_EFFORTS,
   codex: CODEX_REASONING_EFFORTS,
-  cline: null,
+  cline: KNOWN_REASONING_EFFORTS,
 };
 
 /**
@@ -29,8 +40,23 @@ export function effortSupportedByBackend(
   if (effort === undefined || effort === null || effort === '') {
     return false;
   }
-  const allowed = EFFORTS_BY_BACKEND[backend];
-  return allowed === null || allowed.includes(effort);
+  return EFFORTS_BY_BACKEND[backend].includes(effort);
+}
+
+/**
+ * The effort to hand an AgentLoop as `codexEffort`. Only a codex-backed loop writes the
+ * shared managed config, so every other backend gets undefined - passing one backend's
+ * level to another is how the flip-flop returns.
+ *
+ * The VALUE is deliberately not filtered here: codex accepts every level the boot gate
+ * lets through, so a bad one is a real defect and must reach the loud throw in
+ * buildMAMACodexAppServerConfig rather than be quietly downgraded to the default.
+ */
+export function codexEffortForBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): string | undefined {
+  return backend === 'codex' && effort ? effort : undefined;
 }
 
 /**
@@ -46,7 +72,7 @@ export function assertEffortSupportedByBackend(
     return;
   }
   const allowed = EFFORTS_BY_BACKEND[backend];
-  if (allowed === null || allowed.includes(effort)) {
+  if (allowed.includes(effort)) {
     return;
   }
   throw new Error(

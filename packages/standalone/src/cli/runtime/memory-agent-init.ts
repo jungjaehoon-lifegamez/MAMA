@@ -24,7 +24,10 @@ import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import type { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { BackendType } from '../../agent/model-runner.js';
-import { resolveBackendScopedModel } from '../../agent/backend-model-policy.js';
+import {
+  codexEffortForBackend,
+  resolveBackendScopedModel,
+} from '../../agent/backend-model-policy.js';
 import type { AgentContext } from '../../agent/types.js';
 import type { MessageRouter } from '../../gateways/message-router.js';
 import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
@@ -133,6 +136,9 @@ export async function initMemoryAgent(
       maxTurns: 3,
       backend: memoryBackend,
       useCodeAct: memoryBackend === 'cline',
+      // A codex memory agent writes the shared managed config like every other
+      // Codex process, so it has to agree on the effort or it flips theirs.
+      codexEffort: codexEffortForBackend(memoryBackend, config.agent.effort),
       clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
       clineProvider: config.agent.cline_provider,
       clineDataDir: config.agent.cline_data_dir,

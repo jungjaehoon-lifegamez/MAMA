@@ -229,7 +229,8 @@ git commit -m "chore(release): bump mama-os to vX.Y.Z"
 git tag vX.Y.Z
 git push origin main --tags
 
-# 3. Create GitHub Release (this triggers .github/workflows/publish.yml;
+# 3. Create GitHub Release (the tag push in step 2 is what triggers
+#    .github/workflows/publish.yml — the release itself is documentation;
 #    see docs/development/release-process.md, the authoritative flow.
 #    If the release touches mama-core, publish
 #    mama-core FIRST: publish.yml rewrites workspace:* deps to ^<repo core
