@@ -2053,12 +2053,22 @@ export class TaskLedger implements TaskSource {
       throw new Error('enqueueWorkOrder: idempotencyKey must be non-empty');
     }
     const channel = `${WORKORDER_CHANNEL_PREFIX}${order.workKind}`;
+    // An owner-event occurrence key stays reserved after it COMPLETES, so a
+    // post-enqueue/pre-ACK crash cannot order the same work twice. 'failed' and
+    // 'cancelled' must NOT reserve it: those rows are dead, and treating them
+    // as a live acceptance made requeueWorkOrder hand back the row it had just
+    // marked failed (no attempts increment, nothing claimable) and made a
+    // boot-cancelled batch un-redeliverable for good. Every other kind
+    // reserves only while genuinely open.
     const durableOwnerEvent = order.idempotencyKey.startsWith('owner-event:');
+    const reservingStatuses = durableOwnerEvent
+      ? "'pending','in_progress','done'"
+      : "'pending','in_progress'";
     const open = this.db
       .prepare(
         `SELECT * FROM operator_tasks
          WHERE kind = 'system' AND source_channel = ? AND source_event_id = ?
-           ${durableOwnerEvent ? '' : "AND status IN ('pending','in_progress')"}
+           AND status IN (${reservingStatuses})
          ORDER BY id ASC LIMIT 1`
       )
       .get(channel, order.idempotencyKey) as TaskRow | undefined;

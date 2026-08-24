@@ -425,6 +425,86 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       );
     });
 
+    it('retries a failed owner-event workorder instead of returning the dead row', () => {
+      // Regression (PR #229 review): the durable owner-event dedup had no
+      // status filter, so requeueWorkOrder's replacement insert matched the row
+      // it had just marked 'failed' and handed it straight back - attempts
+      // never incremented and nothing was left for the consumer to claim.
+      const order = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'owner-event:wiki:retry',
+        input: { batchId: 'owner-event:wiki:retry', events: ['evt-1'] },
+      });
+      ledger.claimNextWorkOrder();
+
+      const replacement = ledger.requeueWorkOrder(order, 'transient failure');
+
+      expect(replacement.id).not.toBe(order.id);
+      expect(replacement.status).toBe('pending');
+      expect(replacement.payload.attempts).toBe(2);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(replacement.id);
+    });
+
+    it('re-enqueues an owner-event occurrence whose only row failed', () => {
+      const order = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'owner-event:board:failed',
+        input: { mode: 'full' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.failWorkOrder(order.id, 'boom');
+
+      const retry = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'owner-event:board:failed',
+        input: { mode: 'full' },
+      });
+
+      expect(retry.id).not.toBe(order.id);
+      expect(retry.status).toBe('pending');
+      expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
+    });
+
+    it('re-enqueues an owner-event occurrence cancelled by boot cleanup', () => {
+      // The 08-21..23 outage shape: boot cancels the open row, the batch is
+      // redelivered, and the dedup made the re-enqueue a no-op forever.
+      const order = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'owner-event:board:cancelled',
+        input: { mode: 'full' },
+      });
+      expect(ledger.cancelOpenWorkOrders('boot rollback')).toBe(1);
+
+      const retry = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'owner-event:board:cancelled',
+        input: { mode: 'full' },
+      });
+
+      expect(retry.id).not.toBe(order.id);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
+    });
+
+    it('still dedups a COMPLETED owner-event occurrence so work is never re-run', () => {
+      const order = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'owner-event:wiki:done',
+        input: { batchId: 'owner-event:wiki:done', events: ['evt-1'] },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(order.id);
+
+      const again = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'owner-event:wiki:done',
+        input: { batchId: 'owner-event:wiki:done', events: ['evt-1'] },
+      });
+
+      expect(again.id).toBe(order.id);
+      expect(again.status).toBe('done');
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+    });
+
     it('claims priority high>normal>low then id ASC (CASE, not lexicographic)', () => {
       const low = ledger.enqueueWorkOrder({
         workKind: 'wiki',
