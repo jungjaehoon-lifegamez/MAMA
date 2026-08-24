@@ -226,11 +226,12 @@ export interface ToolsConfig {
 }
 
 /**
- * Effort level for Claude Opus 4.6 adaptive thinking
- * Controls how much thinking the model does before responding
+ * Reasoning effort for the configured backend.
+ * The valid subset is backend-specific and is enforced where the value is used:
+ * 'max' is Claude Opus 4.6 only, 'xhigh' is the Codex managed-config only.
  * @see https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
  */
-export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
 /**
  * Agent configuration
@@ -252,9 +253,10 @@ export interface AgentConfig {
   /** Optional isolated Cline state directory. */
   cline_data_dir?: string;
   /**
-   * Effort level for Opus 4.6 adaptive thinking
-   * Only applies when model is 'claude-opus-4-6'
-   * @default 'medium'
+   * Reasoning effort for the configured backend.
+   * claude: adaptive thinking, 'max' requires 'claude-opus-4-6'.
+   * codex: managed CODEX_HOME `model_reasoning_effort`, one of low|medium|high|xhigh.
+   * @default 'medium' (claude), 'high' (codex)
    */
   effort?: EffortLevel;
   /** Maximum conversation turns */

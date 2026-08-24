@@ -89,6 +89,9 @@ export function createBackendModelRunner(
       },
       requestTimeout: timeoutMs,
       codexHome: config.agent.codex_home ? expandPath(config.agent.codex_home) : undefined,
+      // Shared managed config.toml: every writer must generate identical text or
+      // they rewrite each other's reasoning effort on the next prompt.
+      effort: config.agent.effort,
     });
   }
 

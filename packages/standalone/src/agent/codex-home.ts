@@ -392,11 +392,34 @@ function tomlInlineQuotedStringTable(values: Record<string, string>): string {
   return `{ ${entries.join(', ')} }`;
 }
 
-export function buildMAMACodexAppServerConfig(): string {
+export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
+
+export const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = 'high';
+
+/**
+ * Unset means the default; anything else must be a value Codex actually accepts.
+ * Coercing an unknown effort to the default would silently run the whole install
+ * at a reasoning level the owner did not ask for, so it throws instead.
+ */
+function resolveCodexReasoningEffort(effort?: string | null): CodexReasoningEffort {
+  if (effort === undefined || effort === null || effort === '') {
+    return DEFAULT_CODEX_REASONING_EFFORT;
+  }
+  if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(effort)) {
+    throw new Error(
+      `Unsupported Codex reasoning effort "${effort}"; expected one of ${CODEX_REASONING_EFFORTS.join(', ')}`
+    );
+  }
+  return effort as CodexReasoningEffort;
+}
+
+export function buildMAMACodexAppServerConfig(effort?: string | null): string {
   return [
     'approval_policy = "on-request"',
     'sandbox_mode = "workspace-write"',
-    'model_reasoning_effort = "high"',
+    `model_reasoning_effort = ${tomlString(resolveCodexReasoningEffort(effort))}`,
     'instructions = ""',
     'developer_instructions = ""',
     'include_apps_instructions = false',

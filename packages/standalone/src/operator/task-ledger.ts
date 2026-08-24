@@ -1998,6 +1998,52 @@ export class TaskLedger implements TaskSource {
     return row ? this.rowToWorkOrder(row) : null;
   }
 
+  /**
+   * The newest COMPLETED full board run - the baseline the scheduled
+   * full-board producer gates against (board-delta-gate.ts).
+   *
+   * Only `status='done'` full rows count: an open or failed run has not
+   * discharged its interval. `watermark` is null when the run captured none
+   * (an owner-forced refresh), which makes the next scheduled tick enqueue
+   * rather than skip.
+   */
+  lastCompletedBoardFullRun(): {
+    watermark: string | null;
+    createdAt: number;
+    completedAt: number;
+  } | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.deltaWatermark') AS watermark, created_at, updated_at
+           FROM operator_tasks
+          WHERE kind = 'system' AND source_channel = ? AND status = 'done'
+            AND json_extract(payload, '$.mode') = 'full'
+          ORDER BY id DESC LIMIT 1`
+      )
+      .get(`${WORKORDER_CHANNEL_PREFIX}board`) as
+      | { watermark: unknown; created_at: number; updated_at: number }
+      | undefined;
+    if (!row) return null;
+    return {
+      watermark:
+        typeof row.watermark === 'string' && row.watermark.length > 0 ? row.watermark : null,
+      createdAt: row.created_at,
+      completedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Board-input term for the NATIVE owner task ledger - the pipeline slot's
+   * projection source. Reuses payloadHash(): it already digests exactly the
+   * owner-row fields the pipeline slot renders, so a status or assignee edit
+   * moves the term even within the same millisecond as the row's creation,
+   * which a MAX(updated_at) marker would miss. System workorder rows are
+   * excluded by that same query - they are pipeline plumbing, not board truth.
+   */
+  ownerTaskTerm(): string {
+    return `t:${this.payloadHash()}`;
+  }
+
   private insertWorkOrder(order: EnqueueWorkOrderInput, attempts: number): WorkOrderRecord {
     assertEnum(order.workKind, WORKORDER_KINDS, 'workKind');
     if (order.priority !== undefined) {

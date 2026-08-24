@@ -16,6 +16,7 @@ import { ClineCLIAdapter } from '../agent/cline-cli-adapter.js';
 import { projectClineNativeTools } from '../agent/cline-native-tool-policy.js';
 import {
   defaultModelForBackend,
+  effortSupportedByBackend,
   resolveBackendScopedModel,
 } from '../agent/backend-model-policy.js';
 export { projectClineNativeTools } from '../agent/cline-native-tool-policy.js';
@@ -429,7 +430,16 @@ export class AgentProcessManager extends EventEmitter {
     options.model = model;
     const effort = agentConfig?.effort || this.runtimeOptions.effort;
     if (effort) {
-      options.effort = effort;
+      // options.effort is the claude --effort flag. Codex/cline runners take effort
+      // from runtimeOptions instead, so a codex-only global ('xhigh') must not leak
+      // onto a claude sub-agent's CLI. Say so rather than dropping it quietly.
+      if (effortSupportedByBackend('claude', effort)) {
+        options.effort = effort as NonNullable<PersistentProcessOptions['effort']>;
+      } else {
+        debugLogger.debug(
+          `[AgentProcessManager] effort "${effort}" is not a claude thinking level; not applied to agent "${agentId}"`
+        );
+      }
     }
 
     // MCP config: expose MCP tools to agents. Claude Code-Act agents retain the
@@ -600,6 +610,9 @@ export class AgentProcessManager extends EventEmitter {
       command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
       mcpConfigPath: options.mcpConfigPath,
+      // GLOBAL effort only. The per-agent effort is a claude thinking level; using it
+      // here would make each agent rewrite the shared managed config.toml differently.
+      effort: this.runtimeOptions.effort,
     });
   }
 

@@ -132,11 +132,14 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       source: 'owner-event',
       actorId: 'mama-owner',
       channelId: 'chatwork:C1',
-      resumeSession: true,
+      freshSession: true,
       agentContext: ownerContext,
       causeEventIds: ['evt-1'],
       sourceMessageRef: 'owner-event:1',
     });
+    // Stateless lane: resuming the per-channel thread replayed the whole growing
+    // history on every batch (45.9M tokens on 2026-08-20 alone, weekly quota blowout).
+    expect(seenOptions?.resumeSession).toBeUndefined();
     expect(outcomes).toEqual([['feedback-trigger', 'succeeded']]);
   });
 

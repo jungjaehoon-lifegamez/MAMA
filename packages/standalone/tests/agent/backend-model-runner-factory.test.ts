@@ -129,4 +129,22 @@ describe('TG-03/TG-04/TG-06: backend model runner factory', () => {
       }
     }
   );
+
+  it('threads the global agent.effort into the codex runner so every managed-config writer agrees', () => {
+    const createCodex = vi.fn(() => runner('codex'));
+    const configured = config('codex');
+    configured.agent.effort = 'xhigh';
+
+    createBackendModelRunner(configured, { allowedTools: ['Read'] }, { createCodex });
+
+    expect(createCodex).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
+  });
+
+  it('leaves the codex runner effort unset when config omits it', () => {
+    const createCodex = vi.fn(() => runner('codex'));
+
+    createBackendModelRunner(config('codex'), { allowedTools: ['Read'] }, { createCodex });
+
+    expect(createCodex.mock.calls[0][0]).toMatchObject({ effort: undefined });
+  });
 });

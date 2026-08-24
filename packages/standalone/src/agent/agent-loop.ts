@@ -891,6 +891,7 @@ export class AgentLoop {
         codexHome: options.codexHome,
         isolatedHome: options.codexIsolatedHome,
         registryRoot: options.codexRegistryRoot,
+        effort: options.codexEffort,
         mcpConfigPath: this.useCodeAct
           ? undefined
           : (options.mcpConfigPath ?? (useMCPMode ? mcpConfigPath : undefined)),

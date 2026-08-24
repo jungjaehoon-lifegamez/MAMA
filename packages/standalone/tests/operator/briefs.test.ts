@@ -3,8 +3,9 @@
  * homeDir (feedback: tests must isolate $HOME - never touch the live ~/.mama).
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -12,6 +13,7 @@ import {
   loadBrief,
   briefPath,
   briefsDir,
+  briefSeedManifestPath,
   buildDefaultBrief,
   projectWorkOrderBriefForPrompt,
 } from '../../src/operator/briefs.js';
@@ -461,6 +463,204 @@ describe('Story S2-T5: briefs', () => {
       const seeded = ensureBriefs(home);
       expect(seeded).toEqual([]);
       expect(readFileSync(briefPath('wiki', home), 'utf-8')).toBe('my custom wiki procedure');
+    });
+  });
+
+  describe('AC #2b: seed fingerprints - unedited seeds upgrade, edits still win', () => {
+    const sha256 = (text: string): string =>
+      createHash('sha256').update(text, 'utf-8').digest('hex');
+    const readManifest = (): Record<string, unknown> =>
+      JSON.parse(readFileSync(briefSeedManifestPath(home), 'utf-8')) as Record<string, unknown>;
+    const writeManifest = (seeds: Record<string, string>): void => {
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(
+        briefSeedManifestPath(home),
+        JSON.stringify({ version: 1, seeds }, null, 2),
+        'utf-8'
+      );
+    };
+
+    it('records the packaged seed hash for every brief it writes', () => {
+      ensureBriefs(home);
+
+      const manifest = readManifest();
+      expect(manifest.version).toBe(1);
+      const seeds = manifest.seeds as Record<string, string>;
+      for (const kind of WORKORDER_KINDS) {
+        expect(seeds[kind]).toBe(sha256(buildDefaultBrief(kind)));
+      }
+    });
+
+    it('re-seeds an untouched brief when the packaged seed moved on', () => {
+      const stale = '# stale packaged board seed\n';
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefPath('board', home), stale, 'utf-8');
+      writeManifest({ board: sha256(stale) });
+
+      const written = ensureBriefs(home);
+
+      expect(written).toContain('board');
+      expect(readFileSync(briefPath('board', home), 'utf-8')).toBe(buildDefaultBrief('board'));
+      expect((readManifest().seeds as Record<string, string>).board).toBe(
+        sha256(buildDefaultBrief('board'))
+      );
+    });
+
+    it('leaves an unchanged packaged seed alone (idempotent boots)', () => {
+      ensureBriefs(home);
+      const written = ensureBriefs(home);
+      expect(written).toEqual([]);
+    });
+
+    it('never overwrites a user-edited brief and warns once naming the file', () => {
+      const stale = '# stale packaged board seed\n';
+      const edited = `${stale}\n## Owner lesson\nKeep this.\n`;
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefPath('board', home), edited, 'utf-8');
+      writeManifest({ board: sha256(stale) });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const written = ensureBriefs(home);
+
+        expect(written).not.toContain('board');
+        expect(readFileSync(briefPath('board', home), 'utf-8')).toBe(edited);
+        const boardWarnings = warn.mock.calls
+          .map((call) => call.join(' '))
+          .filter((line) => line.includes(briefPath('board', home)));
+        expect(boardWarnings).toHaveLength(1);
+        expect(boardWarnings[0]).toMatch(/merge/i);
+        // The recorded fingerprint stays on the seed the owner forked from, so
+        // the warning keeps repeating until they actually merge.
+        expect((readManifest().seeds as Record<string, string>).board).toBe(sha256(stale));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('F9 recovers tracking when a crash lost the manifest write after the re-seed', () => {
+      // Crash window: the brief file was replaced with the new packaged seed,
+      // then the process died before the manifest write. The file is now
+      // byte-identical to the CURRENT packaged seed, so recording that hash is
+      // a true statement - not a claim about who wrote it.
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefPath('board', home), buildDefaultBrief('board'), 'utf-8');
+      writeManifest({ board: sha256('# a stale packaged board seed\n') });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const written = ensureBriefs(home);
+
+        expect(written).not.toContain('board');
+        expect(readFileSync(briefPath('board', home), 'utf-8')).toBe(buildDefaultBrief('board'));
+        expect((readManifest().seeds as Record<string, string>).board).toBe(
+          sha256(buildDefaultBrief('board'))
+        );
+        expect(
+          warn.mock.calls
+            .map((call) => call.join(' '))
+            .filter((line) => line.includes(briefPath('board', home)))
+        ).toHaveLength(0);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('F9 adopts an untracked brief that is byte-identical to the packaged seed', () => {
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefPath('board', home), buildDefaultBrief('board'), 'utf-8');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        ensureBriefs(home);
+
+        expect((readManifest().seeds as Record<string, string>).board).toBe(
+          sha256(buildDefaultBrief('board'))
+        );
+        expect(
+          warn.mock.calls
+            .map((call) => call.join(' '))
+            .filter((line) => line.includes(briefPath('board', home)))
+        ).toHaveLength(0);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('warns about an untracked pre-upgrade brief and records nothing for it', () => {
+      // Pre-upgrade installs have a brief file but no manifest entry. We cannot
+      // tell an untouched old seed from a heavily edited one, so recording
+      // EITHER hash would be a lie: recording the file hash would claim our
+      // authorship and silently overwrite owner edits on the next packaged-seed
+      // change; recording the packaged hash would claim the file already IS the
+      // current seed. Record nothing and tell the owner how to opt in.
+      const legacy = '# a brief that predates seed tracking\n';
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefPath('board', home), legacy, 'utf-8');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const written = ensureBriefs(home);
+
+        expect(written).not.toContain('board');
+        expect(readFileSync(briefPath('board', home), 'utf-8')).toBe(legacy);
+        const boardWarnings = warn.mock.calls
+          .map((call) => call.join(' '))
+          .filter((line) => line.includes(briefPath('board', home)));
+        expect(boardWarnings).toHaveLength(1);
+        expect(boardWarnings[0]).toMatch(/predates seed tracking/i);
+        expect(boardWarnings[0]).toMatch(/delet/i);
+        expect((readManifest().seeds as Record<string, string>).board).toBeUndefined();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('treats a corrupt manifest as untracked rather than failing the boot', () => {
+      mkdirSync(briefsDir(home), { recursive: true });
+      writeFileSync(briefSeedManifestPath(home), '{ not json', 'utf-8');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const written = ensureBriefs(home);
+        expect(written.sort()).toEqual([...WORKORDER_KINDS].sort());
+        expect((readManifest().seeds as Record<string, string>).board).toBe(
+          sha256(buildDefaultBrief('board'))
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('F10 replaces a corrupt manifest exactly once even with existing briefs', () => {
+      // Every brief exists and is owner-edited, so nothing new is seeded. The
+      // corrupt file must still be replaced, or tracking stays off forever and
+      // the untracked warnings repeat on every boot.
+      mkdirSync(briefsDir(home), { recursive: true });
+      for (const kind of WORKORDER_KINDS) {
+        writeFileSync(briefPath(kind, home), `# owner-authored ${kind}\n`, 'utf-8');
+      }
+      writeFileSync(briefSeedManifestPath(home), '{ not json', 'utf-8');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        const written = ensureBriefs(home);
+        expect(written).toEqual([]);
+        const manifest = readManifest();
+        expect(manifest.version).toBe(1);
+        expect(manifest.seeds).toEqual({});
+
+        // Second boot reads a valid (empty) manifest: no corrupt-file warning.
+        warn.mockClear();
+        ensureBriefs(home);
+        expect(
+          warn.mock.calls
+            .map((call) => call.join(' '))
+            .filter((line) => line.includes('unreadable'))
+        ).toHaveLength(0);
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 
