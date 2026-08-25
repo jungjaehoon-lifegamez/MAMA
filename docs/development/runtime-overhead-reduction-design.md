@@ -699,7 +699,7 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 
 검증 결과:
 
-- PR-A 집중 gate: 8 files, 197 tests passed.
-- Standalone: 382 files, 5,165 tests passed; 4 files / 7 tests skipped.
+- PR-A 집중 gate: 8 files, 198 tests passed.
+- Standalone: 382 files, 5,166 tests passed; 4 files / 7 tests skipped.
 - Root: typecheck exit 0, build exit 0, test 7/7 Turbo tasks passed.
 - 릴리즈, 실제 owner-event canary, 24시간 비용 비교는 아직 수행하지 않았다.

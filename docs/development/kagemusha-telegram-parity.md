@@ -102,8 +102,8 @@ scenario IDs from this document.
 - **Flag boundary:** `BoardRefreshGate` is always present. `MAMA_BOARD_RECONCILE=1` controls only
   debounced connector-delta reconcile and its operator route; boot, scheduled, manual, and
   owner-event full repair retain the host gate with the flag off.
-- **Verification:** the PR-A focused gate passed eight files and 197 tests. The complete standalone
-  suite passed 382 files and 5,165 tests, with four files and seven tests skipped. Root typecheck,
+- **Verification:** the PR-A focused gate passed eight files and 198 tests. The complete standalone
+  suite passed 382 files and 5,166 tests, with four files and seven tests skipped. Root typecheck,
   build, and all seven Turbo test tasks passed. This is code/test evidence only.
 - **Status:** CODE GREEN; PR-A review/merge, the PR-B Temporal change, release cutover, and a real
   owner-event canary remain pending.
@@ -678,8 +678,8 @@ change unless they are release-blocking security or data-loss issues.
       No earlier Board aggregate is reused after the later publisher changes.
 - [x] A clean detached checkout of the staged PR index passed 376 files and 5,033 tests, with four
       files and nine tests skipped (5,042 total); typecheck and build passed.
-- [x] The 2026-08-26 owner-event Board coalescing gate passed eight focused files / 197 tests, the
-      complete standalone suite (382 files / 5,165 tests; four files / seven tests skipped), root
+- [x] The 2026-08-26 owner-event Board coalescing gate passed eight focused files / 198 tests, the
+      complete standalone suite (382 files / 5,166 tests; four files / seven tests skipped), root
       typecheck and build, and all seven root Turbo test tasks. This does not claim live behavior.
 - [ ] Merge both Slice A PRs, rebuild/restart the next release, complete a real owner-event turn,
       and compare visible delivery plus 24-hour model-work cost against the saved baseline.
