@@ -18,7 +18,7 @@ interface OwnerEventRunner {
       source: 'owner-event';
       actorId: 'mama-owner';
       channelId: string;
-      resumeSession: true;
+      freshSession: true;
       agentContext: AgentContext;
       envelope: Envelope;
       causeEventIds: readonly string[];
@@ -55,8 +55,10 @@ export async function closeOwnerEventBeforeDatabase(
  * The background event turn of the MAMA owner agent.
  *
  * This is deliberately not a planning persona. It consumes the same durable
- * external events, runs the owner's current MAMA policy on a per-channel
- * session, and ACKs only a receipted action, delegation, or exact no-update.
+ * external events, runs the owner's current MAMA policy as a stateless fresh
+ * run per batch (each prompt is self-contained; resuming the per-channel
+ * thread only replayed the whole growing history on every batch), and ACKs
+ * only a receipted action, delegation, or exact no-update.
  */
 export class OwnerEventLoop {
   private readonly leaseMs: number;
@@ -98,7 +100,11 @@ export class OwnerEventLoop {
           source: 'owner-event',
           actorId: 'mama-owner',
           channelId: batch.channelKey,
-          resumeSession: true,
+          // Stateless lane (owner decision 2026-07-16: session context is a cache,
+          // not persistence). Resuming the per-channel thread replayed the whole
+          // growing history on every batch - each turn's prompt is already
+          // self-contained (brief + activations + completion contract + delta).
+          freshSession: true,
           agentContext: this.deps.agentContext,
           envelope,
           causeEventIds: batch.eventIds,

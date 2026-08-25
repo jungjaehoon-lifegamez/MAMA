@@ -50,6 +50,14 @@ import {
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
 import type { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
+import { REQUIRED_FULL_BOARD_SLOTS } from '../../operator/workorder-hooks.js';
+import {
+  agentNoticeTerm,
+  composeBoardInputWatermark,
+  connectorObservationTerm,
+  evaluateBoardFullDelta,
+  memoryRecencyTerm,
+} from '../../operator/board-delta-gate.js';
 import type { TaskLedger, WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
 import type { ExternalLifecycleCandidateSet } from '../../operator/external-lifecycle.js';
@@ -78,6 +86,8 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const routesLogger = new DebugLogger('api-routes');
 const HOST_MANUAL_FULL_REPAIR_CHANNEL = 'host:api-report-agent-refresh';
+/** The event bus keeps at most 50 notices; read the whole ring for the term. */
+const AGENT_NOTICE_TERM_LIMIT = 100;
 
 export interface KagemushaTaskQueryInput {
   sourceRoom?: string;
@@ -495,9 +505,70 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // workorder per entry. An enqueue failure is logged loudly and the next
     // occurrence retries - there is no fallback run path.
     const reconcileEnabled = boardRefreshGate !== null;
+    // Evidence that a board was actually WRITTEN, not just that a run reached
+    // 'done'. An unverified full run reaches 'done' too, so the delta gate
+    // requires a publish at or after the baseline run's enqueue time.
+    const boardPublishedAt = (): number => {
+      const slots = apiServer.reportStore.getAll();
+      let oldest = Number.POSITIVE_INFINITY;
+      for (const slotId of REQUIRED_FULL_BOARD_SLOTS) {
+        const updatedAt = slots[slotId]?.updatedAt;
+        if (!Number.isFinite(updatedAt)) return 0;
+        oldest = Math.min(oldest, updatedAt as number);
+      }
+      return Number.isFinite(oldest) ? oldest : 0;
+    };
     const runDashboardAgent = (opts?: { force?: boolean }): void => {
       try {
         if (!opts?.force && boardRefreshGate && !boardRefreshGate.needsFullRepair()) {
+          return;
+        }
+        // Cheap host-side delta gate (Fix E). It runs in BOTH configs, because
+        // under MAMA_BOARD_RECONCILE=1 every scheduled enqueue reaches this
+        // line WITH dirt: `needsFullRepair()` is true whenever a channel delta
+        // or an owner board request arrived since the last verified full run
+        // (board-refresh-gate.ts), which is an "inputs moved" claim - exactly
+        // the claim this gate re-checks against what the board actually reads.
+        // The "board was not rebuilt" case is NOT suppressed: it surfaces as
+        // the gate's own `unpublished` reason, measured from the report slots
+        // rather than assumed. A broken signal enqueues as before -
+        // availability of the board beats the token saving - but says so.
+        const delta = evaluateBoardFullDelta({
+          readWatermark: () => {
+            const ledger = toolExecutor.getTaskLedger();
+            if (!ledger) {
+              throw new Error('TaskLedger unavailable - cannot read the board input watermark');
+            }
+            const adapter = getAdapter();
+            return composeBoardInputWatermark([
+              connectorObservationTerm(adapter),
+              ledger.ownerTaskTerm(),
+              memoryRecencyTerm(adapter),
+              agentNoticeTerm(eventBus.getRecentNotices(AGENT_NOTICE_TERM_LIMIT)),
+            ]);
+          },
+          readBaseline: () => {
+            const ledger = toolExecutor.getTaskLedger();
+            if (!ledger) {
+              throw new Error('TaskLedger unavailable - cannot read the full-board baseline');
+            }
+            return ledger.lastCompletedBoardFullRun();
+          },
+          readBoardPublishedAt: boardPublishedAt,
+        });
+        if (delta.warning) {
+          // error, not warn: DebugLogger defaults to MAMA_LOG_LEVEL=ERROR, so a
+          // warn here would be invisible on a normal daemon - and a gate whose
+          // signal is broken is permanently inert, which is exactly the kind of
+          // silent degradation this file logs loudly everywhere else.
+          routesLogger.error(
+            `[stage2] board delta gate unavailable (${delta.warning}); enqueueing the full board anyway`
+          );
+        }
+        if (!opts?.force && !delta.enqueue) {
+          routesLogger.info(
+            `[stage2] board full skipped: ${delta.reason} - nothing the board reads has moved since the last published full run`
+          );
           return;
         }
         if (opts?.force && boardRefreshGate) {
@@ -517,6 +588,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           {
             mode: 'full',
             ...(repair ?? {}),
+            // Carried so this run's completion becomes the next tick's baseline.
+            ...(delta.watermark === null ? {} : { deltaWatermark: delta.watermark }),
             ...(opts?.force ? { force: true } : {}),
           },
           opts?.force ? 'high' : undefined

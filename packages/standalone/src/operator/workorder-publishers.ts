@@ -126,6 +126,12 @@ export interface BoardPayload {
   repairGeneration?: number;
   /** Exact full-run contract_no_update scope: full:<repairGeneration>. */
   noUpdateScope?: string;
+  /**
+   * Connector delta watermark captured before enqueue (full runs only). Host
+   * bookkeeping: once this run completes it becomes the baseline the scheduled
+   * producer's delta gate compares against (board-delta-gate.ts).
+   */
+  deltaWatermark?: string;
   channelKey?: string;
   readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
@@ -164,6 +170,7 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
     'force',
     'repairGeneration',
     'noUpdateScope',
+    'deltaWatermark',
     'channelKey',
     'deltaLines',
     'eventIds',
@@ -228,7 +235,13 @@ export function validateWorkOrderPayload(
         `workorder payload (board): eventIds[] must contain unique 1-1000 character strings`
       );
     }
+    if (payload.deltaWatermark !== undefined && !isBoundedString(payload.deltaWatermark)) {
+      throw new Error(`workorder payload (board): deltaWatermark must contain 1-1000 characters`);
+    }
     if (mode === 'reconcile') {
+      if (payload.deltaWatermark !== undefined) {
+        throw new Error(`workorder payload (board reconcile): deltaWatermark is full-only`);
+      }
       if (!isBoundedString(payload.channelKey)) {
         throw new Error(`workorder payload (board reconcile): channelKey required`);
       }

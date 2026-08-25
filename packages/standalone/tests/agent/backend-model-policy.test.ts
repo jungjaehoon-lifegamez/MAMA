@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertEffortSupportedByBackend,
+  effortSupportedByBackend,
   backendForModel,
   defaultModelForBackend,
   modelMatchesBackend,
@@ -8,6 +10,22 @@ import {
   resolveBackendScopedModel,
 } from '../../src/agent/backend-model-policy.js';
 
+/**
+ * Story F4: agent.effort is validated once, at boot, against the active backend
+ *
+ * An unsupported effort used to boot clean and then throw on EVERY model call - in
+ * the owner-event lane that is a retry-then-dead page per batch, forever. The boot
+ * gate fails once instead, naming the key and the accepted values. Because the
+ * setting is GLOBAL and sub-agents may run a different backend than the active one,
+ * a value no backend understands must be rejected whichever backend is active.
+ *
+ * Acceptance Criteria:
+ * - AC: an unset effort is accepted on every backend
+ * - AC: each backend accepts exactly its own effort levels
+ * - AC: a codex-only effort is rejected when claude is active
+ * - AC: an unknown effort is rejected on every backend, cline included
+ * - AC: the predicate keeps a codex-only effort off the claude thinking flag
+ */
 describe('backend model policy', () => {
   describe('backendForModel', () => {
     it.each([
@@ -217,6 +235,68 @@ describe('backend model policy', () => {
           },
         ],
       });
+    });
+  });
+
+  describe('assertEffortSupportedByBackend', () => {
+    it('accepts an unset effort on every backend', () => {
+      for (const backend of ['claude', 'codex', 'cline'] as const) {
+        expect(() => assertEffortSupportedByBackend(backend, undefined)).not.toThrow();
+      }
+    });
+
+    it.each(['low', 'medium', 'high', 'max'] as const)('accepts %s on claude', (effort) => {
+      expect(() => assertEffortSupportedByBackend('claude', effort)).not.toThrow();
+    });
+
+    it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)('accepts %s on codex', (effort) => {
+      expect(() => assertEffortSupportedByBackend('codex', effort)).not.toThrow();
+    });
+
+    it('rejects a codex-only effort on claude, naming the key and the allowed values', () => {
+      expect(() => assertEffortSupportedByBackend('claude', 'xhigh')).toThrow(
+        /agent\.effort.*xhigh.*claude.*low, medium, high, max/s
+      );
+    });
+
+    it('rejects an unknown effort on codex, naming the key and the allowed values', () => {
+      expect(() => assertEffortSupportedByBackend('codex', 'ultra')).toThrow(
+        /agent\.effort.*ultra.*codex.*low, medium, high, xhigh, max/s
+      );
+    });
+
+    // agent.effort is global: a cline runtime still hands it to codex sub-agents, so
+    // an unknown value must not slip through the boot gate just because cline itself
+    // ignores the knob. Otherwise it boots clean and throws on every codex call.
+    it('rejects an unknown effort while cline is active, since sub-agents still read it', () => {
+      expect(() => assertEffortSupportedByBackend('cline', 'ultra')).toThrow(
+        /agent\.effort.*ultra.*cline/s
+      );
+    });
+
+    it.each(['low', 'medium', 'high', 'max', 'xhigh'] as const)(
+      'accepts %s while cline is active, because another backend may use it',
+      (effort) => {
+        expect(() => assertEffortSupportedByBackend('cline', effort)).not.toThrow();
+      }
+    );
+  });
+
+  describe('effortSupportedByBackend', () => {
+    it('keeps a codex-only effort off the claude thinking flag', () => {
+      expect(effortSupportedByBackend('claude', 'xhigh')).toBe(false);
+      expect(effortSupportedByBackend('codex', 'xhigh')).toBe(true);
+    });
+
+    it('accepts max on both backends and rejects unknown values everywhere', () => {
+      expect(effortSupportedByBackend('claude', 'max')).toBe(true);
+      expect(effortSupportedByBackend('codex', 'max')).toBe(true);
+      expect(effortSupportedByBackend('claude', 'ultra')).toBe(false);
+      expect(effortSupportedByBackend('codex', 'ultra')).toBe(false);
+    });
+
+    it('reports an unset effort as unsupported so callers skip the flag', () => {
+      expect(effortSupportedByBackend('claude', undefined)).toBe(false);
     });
   });
 });

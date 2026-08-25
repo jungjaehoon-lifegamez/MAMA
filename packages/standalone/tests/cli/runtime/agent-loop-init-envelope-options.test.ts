@@ -252,4 +252,71 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
       expect((result.agentLoop as unknown as { useCodeAct: boolean }).useCodeAct).toBe(expected);
     });
   });
+
+  describe('AC: codex reasoning effort', () => {
+    function codexRuntimeOptions(config: MAMAConfig): { effort?: string } {
+      const { agentLoop } = initMainAgentLoop(
+        config,
+        { getToken: vi.fn() } as unknown as OAuthManager,
+        {} as SQLiteDatabase,
+        null as MetricsStore | null,
+        'codex',
+        new GatewayToolExecutor({})
+      );
+      return (agentLoop as unknown as { agent: { options: { effort?: string } } }).agent.options;
+    }
+
+    it('passes the configured agent effort into the codex runtime adapter', () => {
+      const config = createConfig();
+      config.agent.backend = 'codex';
+      config.agent.model = 'gpt-5.6-luna';
+      config.agent.effort = 'xhigh';
+
+      expect(codexRuntimeOptions(config).effort).toBe('xhigh');
+    });
+
+    it('leaves the codex runtime adapter effort unset when config omits it', () => {
+      const config = createConfig();
+      config.agent.backend = 'codex';
+      config.agent.model = 'gpt-5.6-luna';
+
+      expect(codexRuntimeOptions(config).effort).toBeUndefined();
+    });
+
+    it('accepts max, which both backends support', () => {
+      const config = createConfig();
+      config.agent.backend = 'codex';
+      config.agent.model = 'gpt-5.6-luna';
+      config.agent.effort = 'max';
+
+      expect(codexRuntimeOptions(config).effort).toBe('max');
+    });
+
+    it('fails the boot loudly on an effort the active backend does not support', () => {
+      const config = createConfig();
+      config.agent.backend = 'codex';
+      config.agent.model = 'gpt-5.6-luna';
+      config.agent.effort = 'ultra' as MAMAConfig['agent']['effort'];
+
+      expect(() => codexRuntimeOptions(config)).toThrow(
+        /agent\.effort.*ultra.*codex.*low, medium, high, xhigh, max/s
+      );
+    });
+
+    it('fails the boot loudly on a codex-only effort while the active backend is claude', () => {
+      const config = createConfig();
+      config.agent.effort = 'xhigh';
+
+      expect(() =>
+        initMainAgentLoop(
+          config,
+          { getToken: vi.fn() } as unknown as OAuthManager,
+          {} as SQLiteDatabase,
+          null as MetricsStore | null,
+          'claude',
+          new GatewayToolExecutor({})
+        )
+      ).toThrow(/agent\.effort.*xhigh.*claude/s);
+    });
+  });
 });

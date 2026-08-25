@@ -46,6 +46,26 @@ describe('Story: Codex home config generation', () => {
       expect(first).not.toContain('code-act-server.js');
     });
 
+    it.each(['low', 'medium', 'high', 'xhigh', 'max'] as const)(
+      'emits the configured reasoning effort %s',
+      (effort) => {
+        expect(buildMAMACodexAppServerConfig(effort)).toContain(
+          `model_reasoning_effort = "${effort}"`
+        );
+      }
+    );
+
+    it('defaults reasoning effort to high when unset', () => {
+      expect(buildMAMACodexAppServerConfig()).toContain('model_reasoning_effort = "high"');
+      expect(buildMAMACodexAppServerConfig(undefined)).toContain('model_reasoning_effort = "high"');
+      expect(buildMAMACodexAppServerConfig(null)).toContain('model_reasoning_effort = "high"');
+    });
+
+    it('throws on an unsupported reasoning effort instead of falling back', () => {
+      expect(() => buildMAMACodexAppServerConfig('ultra')).toThrow(/reasoning effort/i);
+      expect(() => buildMAMACodexAppServerConfig('none')).toThrow(/reasoning effort/i);
+    });
+
     pinnedCodexIt(
       'is accepted with table-level overrides by pinned Codex 0.144 strict config',
       () => {

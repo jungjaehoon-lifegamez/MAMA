@@ -1,3 +1,4 @@
+import { CODEX_REASONING_EFFORTS } from './codex-home.js';
 import type { BackendType } from './model-runner.js';
 
 const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
@@ -5,6 +6,80 @@ const DEFAULT_MODEL_BY_BACKEND: Readonly<Record<BackendType, string>> = {
   codex: 'gpt-5.4',
   cline: 'deepseek/deepseek-v4-flash',
 };
+
+const CLAUDE_REASONING_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
+
+/** Every level any backend understands. agent.effort is global, so it must be one of these. */
+const KNOWN_REASONING_EFFORTS: readonly string[] = [
+  ...new Set<string>([...CLAUDE_REASONING_EFFORTS, ...CODEX_REASONING_EFFORTS]),
+];
+
+/**
+ * Reasoning efforts each backend accepts. Codex mirrors CODEX_REASONING_EFFORTS - the
+ * managed-config writer is the enforcer, this table only lets the boot say so before
+ * the first model call.
+ *
+ * Cline reads no effort of its own, but it must NOT be unconstrained: agent.effort is
+ * global, so a cline runtime still hands the value to codex and claude sub-agents. An
+ * unknown value there would pass the boot gate and then throw on every codex call.
+ */
+const EFFORTS_BY_BACKEND: Readonly<Record<BackendType, readonly string[]>> = {
+  claude: CLAUDE_REASONING_EFFORTS,
+  codex: CODEX_REASONING_EFFORTS,
+  cline: KNOWN_REASONING_EFFORTS,
+};
+
+/**
+ * True only for an effort this backend actually accepts. Unset reads as false so a
+ * caller can use it to decide whether to apply the knob at all.
+ */
+export function effortSupportedByBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): boolean {
+  if (effort === undefined || effort === null || effort === '') {
+    return false;
+  }
+  return EFFORTS_BY_BACKEND[backend].includes(effort);
+}
+
+/**
+ * The effort to hand an AgentLoop as `codexEffort`. Only a codex-backed loop writes the
+ * shared managed config, so every other backend gets undefined - passing one backend's
+ * level to another is how the flip-flop returns.
+ *
+ * The VALUE is deliberately not filtered here: codex accepts every level the boot gate
+ * lets through, so a bad one is a real defect and must reach the loud throw in
+ * buildMAMACodexAppServerConfig rather than be quietly downgraded to the default.
+ */
+export function codexEffortForBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): string | undefined {
+  return backend === 'codex' && effort ? effort : undefined;
+}
+
+/**
+ * Boot gate for `agent.effort`. Without it an unsupported value boots clean and then
+ * throws on EVERY model call - in the owner-event lane that is a retry-then-dead page
+ * per batch, forever. Fail once, at boot, naming the key and the accepted values.
+ */
+export function assertEffortSupportedByBackend(
+  backend: BackendType,
+  effort: string | undefined | null
+): void {
+  if (effort === undefined || effort === null || effort === '') {
+    return;
+  }
+  const allowed = EFFORTS_BY_BACKEND[backend];
+  if (allowed.includes(effort)) {
+    return;
+  }
+  throw new Error(
+    `Invalid agent.effort "${effort}" for backend "${backend}" in ~/.mama/config.yaml; ` +
+      `expected one of ${allowed.join(', ')}`
+  );
+}
 
 export interface BackendModelChange {
   target: string;

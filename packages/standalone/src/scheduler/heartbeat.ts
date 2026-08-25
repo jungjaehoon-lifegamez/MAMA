@@ -131,13 +131,20 @@ export class HeartbeatScheduler {
         heartbeatContent = readFileSync(heartbeatPath, 'utf-8');
       }
 
+      // Emptiness is a host-side fact. Waking the model to read "(none)" burned
+      // 13.4M tokens over 9 days (290 empty polls on one accumulated thread).
+      if (!heartbeatContent.trim()) {
+        console.log('[Heartbeat] HEARTBEAT.md empty - skipping model call');
+        return;
+      }
+
       // Build heartbeat prompt
       const prompt = `[HEARTBEAT POLL]
 
 Current time: ${new Date().toISOString()}
 
 HEARTBEAT.md contents:
-${heartbeatContent || '(none)'}
+${heartbeatContent}
 
 Instructions:
 1. Check HEARTBEAT.md
@@ -150,8 +157,9 @@ Response format:
 - Notification: NOTIFY: [message content]
 - Task completed: DONE: [completion details]`;
 
-      // Run agent loop
-      const result = await this.agentLoop.run(prompt);
+      // Run agent loop as a stateless fresh session - a resumed heartbeat
+      // thread replays every prior poll on each tick and only grows.
+      const result = await this.agentLoop.run(prompt, { freshSession: true });
       const response = result.response.trim();
 
       memoryLogger.logEvent('heartbeat', response.substring(0, 100));
