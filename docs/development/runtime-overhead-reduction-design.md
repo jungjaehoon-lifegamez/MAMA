@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** 오너 검토 대기
+> **상태:** Eng review CLEAR, 구현 계획 작성 가능
 >
 > **작성일:** 2026-08-26
 >
@@ -112,9 +112,9 @@ additive migration과 호스트 상태 기계만 사용한다. 운영 효과를 
 
 ```text
 Slice A — Model-work control
-  A1. owner-event Board coalescing + durable acceptance
-  A2. Temporal host-bound context contract
-  A3. deterministic failure circuit breaker + retry classification
+  PR-A. owner-event Board coalescing + durable acceptance
+  PR-B. Temporal host-bound context contract
+        + deterministic failure circuit breaker + retry classification
   A4. 24-hour canary and cost comparison
 
 Slice B — Audit storage lifecycle
@@ -126,6 +126,10 @@ Slice C — launchd-safe daemon log rotation
 
 Slice A가 정상 출하되어도 B와 C는 자동 승인되지 않는다. B는 데이터 보존이라는 파괴적 결정을,
 C는 launchd와 열린 file descriptor의 수명주기 결정을 각각 요구한다.
+
+Slice A 자체도 한 거대 PR로 만들지 않는다. Board와 Temporal은 실패 도메인과 회귀 테스트가 다르므로
+`PR-A → PR-B → 릴리즈 1회`로 진행한다. PR-A가 main에 머지된 뒤 PR-B를 최신 main에서 시작하고, 두
+PR이 모두 clear된 뒤 한 릴리즈로 운영에 반영한다.
 
 ## 7. Slice A 상세 설계
 
@@ -156,6 +160,15 @@ type WorkOrderRequestOrigin =
 
 #### Durable intent
 
+`OwnerEventBoardRefreshLedger` 하나가 기존 `operatorDb`, `TaskLedger`, `BoardRefreshGate`를 조합한다.
+Board 수리 자체는 기존 `boardRepairKey()`와 TaskLedger의 open-row dedupe를 그대로 사용한다. 새
+테이블은 여러 owner-event batch가 workorder 하나를 공유할 때 필요한 many-to-one receipt 관계만
+보관한다.
+
+`BoardRefreshGate`는 full-repair coordination을 위해 항상 생성한다. 기존
+`MAMA_BOARD_RECONCILE=1`은 connector delta reconcile scheduler만 제어하고, owner-event coalescing이나
+scheduled full repair의 안전성을 끄지 않는다.
+
 operator DB에 additive 테이블 `owner_event_board_refresh_intents`를 추가한다.
 
 | 열                         | 의미                                                 |
@@ -163,38 +176,51 @@ operator DB에 additive 테이블 `owner_event_board_refresh_intents`를 추가�
 | `batch_id` PK/FK           | owner-event batch와 1:1                              |
 | `batch_key` UNIQUE         | 기존 event ID 정렬 해시로 만든 retry-stable identity |
 | `repair_generation`        | 해당 요청이 더럽힌 Board generation                  |
-| `status`                   | `accepted`, `attached`, `applied`, `failed`          |
-| `workorder_id` nullable    | 실제 수리에 연결된 workorder                         |
-| `last_error` nullable      | bounded operator 진단 문자열                         |
+| `workorder_id` FK          | 실제 수리에 연결된 workorder                         |
+| `applied_at` nullable      | verified repair가 해당 generation을 처리한 시각      |
 | `created_at`, `updated_at` | 복구와 retention 기준                                |
+
+`applied_at IS NULL` 행만 `(repair_generation, batch_id)`로 찾는 partial index를 둔다. owner-event
+inbox가 삭제될 때 intent도 `ON DELETE CASCADE`로 삭제한다. `TaskLedger`가 같은 DB connection에서 이미
+`foreign_keys = ON`을 설정하므로 별도 cleanup timer나 두 번째 retention 정책은 만들지 않는다.
 
 트랜잭션 순서:
 
-1. `batch_id`로 intent를 `INSERT OR IGNORE`한다.
-2. Board gate를 dirty로 만들고 generation을 intent에 고정한다.
-3. 기존의 열린 non-force Board repair가 있으면 intent를 그 workorder에 `attached`한다.
-4. 없으면 공용 `boardRepairKey()`로 `mode: 'full', force: false` 작업 하나를 enqueue하고 연결한다.
-5. durable intent가 최소 `accepted` 상태가 된 뒤에만 `workorder_request` 성공을 반환한다.
+1. DB transaction 전에 Board gate를 dirty로 만든다. 이후 DB가 실패해도 안전한 extra repair만 남고
+   work loss는 생기지 않는다.
+2. 같은 operator DB transaction 안에서 `batch_id` intent를 조회한다. 이미 있으면 같은 durable
+   acceptance를 반환한다.
+3. 새 batch라면 기존의 열린 non-force Board repair를 찾고, 없으면 공용 `boardRepairKey()`로
+   `mode: 'full', force: false` 작업 하나를 enqueue한다.
+4. 선택된 workorder ID와 generation을 가진 intent를 삽입한다.
+5. intent와 workorder가 함께 commit된 뒤에만 `workorder_request` 성공을 반환한다.
 
 동일 batch retry는 같은 intent를 읽는다. 새 batch가 활성 수리 중 도착하면 그 수리에 연결하되 새
-generation은 남긴다. 여기서 `attached`는 “요청이 수리 coordinator에 접수됐다”는 뜻이지 현재
+generation은 남긴다. 여기서 workorder 연결은 “요청이 수리 coordinator에 접수됐다”는 뜻이지 현재
 attempt가 그 generation까지 처리했다는 뜻이 아니다. 활성 수리가 자기 captured generation까지만
 지우므로, 이후 generation이 남으면 완료 hook이 기존 terminal row가 공용 key를 놓은 뒤 후속 수리를
 하나 enqueue하고 아직 적용되지 않은 intent를 새 workorder에 다시 연결한다. 결과적으로 burst는
-`1 open repair + 1 durable follow-up obligation`으로 수렴한다.
+`1 open repair + 1 durable follow-up obligation`으로 수렴한다. 별도 `status` state machine은 만들지
+않는다. `applied_at IS NULL`이 유일한 미적용 상태다.
 
 #### 완료와 ACK
 
 - owner-event terminal receipt는 더 이상 Board task의 exact occurrence key만 찾지 않는다.
-- 해당 `batch_id`의 intent가 `accepted` 이상이고 연결된 workorder가 존재하면 `delegated` receipt를
-  반환한다. 이는 기존 `accepted workorder` 의미를 유지한다. Board 수리 완료를 기다려 owner-event
-  inbox를 붙잡는 계약으로 바꾸지 않는다.
-- workorder 완료 hook은 captured generation 이하 intent를 `applied`로 전환한다.
+- 해당 `batch_id` intent와 연결된 workorder가 존재하면 `delegated` receipt를 반환한다. 이는 기존
+  `accepted workorder` 의미를 유지한다. Board 수리 완료를 기다려 owner-event inbox를 붙잡는 계약으로
+  바꾸지 않는다.
+- verified workorder hook만 captured generation 이하 intent에 `applied_at`을 기록한다.
+- verified hook 뒤에 더 높은 미적용 generation이 남으면 현재 workorder ID를 run-local follow-up set에
+  넣는다. WorkOrderConsumer가 그 row를 terminal로 commit한 뒤 내보내는 기존 `onEvent(complete)`가 set을
+  consume해 non-force repair를 즉시 요청한다. 이 요청은 accepted intent가 있으므로 delta-skip을
+  우회하지만 `force: true`가 아니며, exact no-update receipt로 안전하게 끝날 수 있다.
+- unverified completion과 failed/exhausted event는 즉시 follow-up을 만들지 않는다. dirt와 intent를
+  유지하고 기존 scheduled self-heal과 경보를 사용해 hot loop를 막는다.
 - 수리 실패는 intent를 삭제하지 않는다. gate dirt와 intent를 남기고 기존 Board 경보/자기회복
   경로가 후속 수리를 맡는다.
-- boot recovery는 `accepted/attached` intent의 최대 generation보다 큰 값으로 Board gate를
-  초기화하고 boot-dirty full repair 하나에 미적용 intent를 다시 연결한다. 메모리 gate만 보고 수리
-  완료를 추정하지 않는다.
+- boot recovery는 미적용 intent의 최대 generation보다 큰 값으로 Board gate를 초기화하고 boot-dirty
+  full repair 하나에 미적용 intent를 다시 연결한다. verified hook 이후 process death가 나도 다음 boot가
+  같은 의무를 복구한다. 메모리 gate만 보고 수리 완료를 추정하지 않는다.
 - `owner_event_inbox` 삭제 시 intent도 FK/trigger로 정리한다. ACK된 inbox의 기존 retention과 같은
   수명을 따르며, durable receipt가 필요한 동안 먼저 삭제하지 않는다.
 
@@ -218,7 +244,8 @@ connector를 직접 만들면 executor가 `memory_scope_out_of_scope`, `connecto
 
 #### 변경
 
-1. canonical tool registry와 HostBridge가 동일한 `context_compile` 설명을 생성한다.
+1. 작은 shared contract constant에서 canonical tool registry와 HostBridge가 동일한
+   `context_compile` 설명을 읽는다. 문구를 두 파일에 복사하지 않는다.
 2. Temporal managed brief는 다음 계약을 명시한다.
    - `scopes`, `connectors`를 모델이 공급하지 않는다.
    - host-bound execution context가 현재 generation의 project, connector, memory grant를 적용한다.
@@ -246,12 +273,13 @@ sandbox console, 코드 문자열은 분류 권위가 아니다.
 
 ```text
 fingerprint = sha256(
-  outerTool + nestedTool + normalizedFailureCode + authorityBoundary
+  ordered(failedNestedTool + normalizedFailureCode)
 )
 ```
 
-`authorityBoundary`는 scope/destination/principal 계열을 구분하지만 실제 ID나 민감한 입력은 포함하지
-않는다. 오류 메시지 전체를 hash하지 않아 숫자·정렬·표현 차이로 회피되지 않게 한다.
+fingerprint는 기존 trusted `hostToolExecutions`의 실패한 `{name, code}`만 사용한다. principal, scope,
+destination ID 또는 오류 메시지 전체를 새 audit surface에 추가하지 않는다. 동일 run 안에서만 비교하므로
+권한 identity를 fingerprint에 중복 포함할 필요가 없다.
 
 결정적 오류 집합은 명시적 allowlist로 시작한다.
 
@@ -267,14 +295,19 @@ committed-after-abort, missing result는 기존 구조적 비재시도 정책을
 
 #### 차단 규칙
 
+- `RunScope`에 Temporal run 전용 `codeActCalls`, `lastDeterministicFingerprint`,
+  `consecutiveDeterministicFailures`만 추가한다. AgentLoop instance state나 session state에 저장하지
+  않는다.
 - 같은 Temporal run에서 같은 결정적 fingerprint가 연속 3회 나오면 즉시
-  `TOOL_CONTRACT_REPEAT`로 종료한다.
-- 추가 안전망으로 Temporal run의 outer Code-Act 호출은 최대 8회다. 일반 owner turn과 다른 lane은
-  기존 50-call ceiling을 유지한다.
+  `TOOL_CONTRACT_REPEAT`로 종료한다. 성공하거나 다른 fingerprint가 나오면 연속 카운터를 reset한다.
+- 추가 안전망으로 Temporal run의 outer Code-Act 호출은 실행 전 최대 8회다. 일반 owner turn과 다른
+  lane은 기존 50-call ceiling을 유지한다.
 - 종료 결과는 `retryable: false`, `failureClass: 'deterministic_contract'`, fingerprint의 짧은
   비민감 prefix를 갖는다.
-- WorkOrderConsumer는 trusted structured result만 보고 `allowRetry: false`로 generation을 실패
-  처리한다. 응답 prose에서 “재시도하지 마라”를 파싱하지 않는다.
+- `TOOL_CONTRACT_REPEAT`를 `HostToolTerminalCode`와 `AgentErrorCode`의 닫힌 vocabulary에 추가한다.
+  WorkOrderConsumer는 그 exact `AgentError.code`만 보고 `allowRetry: false`로 generation을 실패 처리한다.
+  응답 prose나 일반적인 `retryable: false`를 넓게 해석하지 않는다.
+- mutation terminal code가 있으면 circuit breaker보다 먼저 반환한다.
 - provider/transient failure는 현재 retry 정책을 유지한다.
 
 #### 패리티 영향
@@ -315,24 +348,26 @@ temporal generation claimed
 
 ## 9. 오류 처리와 복구
 
-| 실패 지점                       | 처리                                                 |
-| ------------------------------- | ---------------------------------------------------- |
-| intent INSERT 실패              | workorder 요청 실패, owner-event retry; ACK 금지     |
-| intent 저장 후 enqueue 전 crash | boot recovery가 intent로 repair를 재생성             |
-| enqueue 후 ACK 전 crash         | 동일 batch intent/workorder를 찾아 ACK; 새 작업 금지 |
-| Board 실행 중 새 event          | 새 generation 유지, 현재 완료 후 follow-up 최대 하나 |
-| Board publish 검증 실패         | dirt와 intent 유지, existing alarm/self-heal 사용    |
-| context_compile 권한 위반       | fail-closed + fingerprint 카운트                     |
-| 결정적 실패 3회                 | 비재시도 generation 실패                             |
-| provider 429/5xx                | 기존 transient retry                                 |
-| mutation outcome unknown        | 기존 no-retry receipt-first recovery 우선            |
-| daemon shutdown                 | 기존 active workorder drain/boot recovery 계약 유지  |
+| 실패 지점                         | 처리                                                   |
+| --------------------------------- | ------------------------------------------------------ |
+| intent INSERT 실패                | workorder 요청 실패, owner-event retry; ACK 금지       |
+| intent/workorder transaction 실패 | 전체 rollback, dirty gate가 다음 repair를 보장         |
+| enqueue 후 ACK 전 crash           | 동일 batch intent/workorder를 찾아 ACK; 새 작업 금지   |
+| Board 실행 중 새 event            | 새 generation 유지, 현재 완료 후 follow-up 최대 하나   |
+| Board publish 검증 실패           | dirt와 intent 유지, 즉시 loop 없이 scheduled self-heal |
+| context_compile 권한 위반         | fail-closed + fingerprint 카운트                       |
+| 결정적 실패 3회                   | 비재시도 generation 실패                               |
+| provider 429/5xx                  | 기존 transient retry                                   |
+| mutation outcome unknown          | 기존 no-retry receipt-first recovery 우선              |
+| daemon shutdown                   | 기존 active workorder drain/boot recovery 계약 유지    |
 
 ## 10. Migration과 호환성
 
 - `owner_event_board_refresh_intents`는 operator DB에 additive `CREATE TABLE IF NOT EXISTS` migration으로
   추가한다.
 - 기존 `owner_event_inbox`, `operator_tasks`, `owner_event_effects` 행은 수정하지 않는다.
+- 기존 `MAMA_BOARD_RECONCILE` 설정은 delta reconcile scheduler만 제어한다. full repair gate와
+  owner-event intent 접수는 항상 활성이다.
 - 구버전은 새 테이블을 읽지 않으므로 rollback-safe다. 단, 새 버전이 만든 non-force repair는 기존
   Board payload schema와 호환되어야 한다.
 - migration 실패 시 daemon은 owner-event 처리를 시작하지 않고 fail loudly 한다. 메모리-only
@@ -347,12 +382,16 @@ temporal generation claimed
 ### A1 Board/receipt
 
 1. `TG-06`: 동일 owner-event batch retry가 intent와 workorder 하나만 만든다.
-2. `TG-06`: 서로 다른 20개 batch burst가 open repair 하나에 attach되고 follow-up은 최대 하나다.
+2. `TG-06`: 서로 다른 20개 batch burst가 open repair 하나에 연결되고 durable follow-up obligation은
+   최대 하나다.
 3. `TG-06`: enqueue 후 ACK 전 crash가 새 workorder 없이 durable acceptance를 복구한다.
 4. `TG-06`: 새 generation은 오래된 repair 완료로 지워지지 않는다.
 5. `TG-06`: prose-only 또는 intent 없는 성공은 ACK되지 않는다.
 6. `TG-03/TG-04`: owner manual Board 요청은 여전히 `force: true`; owner-event는 `force: false`다.
-7. migration I/O 실패는 fail-closed하고 기존 DB bytes를 보존한다.
+7. verified completion만 terminal 이후 immediate follow-up을 만들고, unverified/failed completion은 hot
+   loop를 만들지 않는다.
+8. `MAMA_BOARD_RECONCILE`이 꺼져도 owner-event coalescing과 scheduled full gate는 유지된다.
+9. migration I/O 실패는 fail-closed하고 기존 DB bytes를 보존한다.
 
 ### A2 Temporal context
 
@@ -382,24 +421,27 @@ temporal generation claimed
 
 ## 12. 출시와 운영 검증
 
-### 단계 1 — shadow 계측
+### 단계 1 — 릴리즈 내 계측
 
-한 릴리스 동안 기존 동작을 바꾸지 않고 다음 counter를 추가한다.
+별도 shadow 릴리스를 만들지 않는다. 이미 확보한 운영 기준선을 before 값으로 고정한다. 새 append-only
+telemetry table도 만들지 않고 durable intent, 기존 `operator_tasks`, `agent_activity`, `model_runs`, Codex
+rollout에서 아래 값을 계산한다. 코드에 새로 필요한 것은 기존 metric sink의 breaker termination counter
+하나다.
 
-- owner-event Board intents accepted/attached/applied/failed
+- owner-event Board intents accepted/applied/pending
 - Board repair open/follow-up/coalesced batch 수
 - Temporal deterministic fingerprint count와 breaker termination
 - workorder별 model runs, tokens, duration, retry class
 
 민감한 event ID, connector payload, chat ID, scope ID는 로그에 기록하지 않는다.
 
-### 단계 2 — Slice A 활성화
+### 단계 2 — PR-A/PR-B 머지 후 Slice A 활성화
 
 - 기능 플래그는 rollback용으로만 두며 기본값은 새 경로다.
 - old path를 fallback으로 호출하지 않는다. 새 durable path가 실패하면 fail loudly 한다.
 - build/install/restart는 별도 단계로 구분하고 launchd 단일 인스턴스를 확인한다.
 
-### 단계 3 — 24시간 canary
+### 단계 3 — 단일 릴리즈와 24시간 canary
 
 UI나 synthetic connector event를 사용하지 않는다. 실제 운영 이벤트와 로컬 DB/rollout/receipt/log만
 읽는다.
@@ -473,3 +515,168 @@ Slice C는 다음을 별도 설계한다.
 이 문서 승인 후에만 `Slice A` 구현 계획을 작성한다. 구현 계획은 파일·테스트·migration 순서를
 구체화하고, RED→GREEN 단위로 나눈다. Slice B와 Slice C는 Slice A의 24시간 canary 결과와 무관하게
 각각 별도 설계 승인 게이트를 거친다.
+
+## 17. What already exists
+
+| 문제                            | 기존 권위/코드                                       | 재사용 결정                       |
+| ------------------------------- | ---------------------------------------------------- | --------------------------------- |
+| full Board dirt와 generation    | `BoardRefreshGate`                                   | 항상 생성하고 그대로 사용         |
+| 열린 full repair dedupe         | `boardRepairKey()` + TaskLedger partial unique index | 새 queue를 만들지 않음            |
+| workorder durable acceptance    | `operator_tasks`                                     | 실제 repair row 권위 유지         |
+| owner-event batch 수명주기      | `OwnerEventInbox`                                    | intent FK/retention의 부모로 사용 |
+| owner-event terminal recovery   | `getTerminalReceipt()`                               | exact batch intent lookup을 추가  |
+| Board effect verification       | `applyBoardRefreshVerdict()`                         | verified generation만 적용 처리   |
+| Temporal envelope defaults      | `ContextCompileService.coerceCompileInput()`         | 실행 의미 변경 없이 설명만 정합화 |
+| trusted nested tool audit       | `hostToolExecutions`                                 | fingerprint의 유일한 입력         |
+| run-local concurrency isolation | `RunScope`                                           | breaker counter를 여기에만 저장   |
+| Temporal retry suppression      | `failTemporalWorkOrder(..., allowRetry)`             | exact terminal code만 연결        |
+| backend terminal propagation    | `HostToolTerminalCode` → `AgentErrorCode`            | 닫힌 vocabulary 확장              |
+
+새 queue, 새 worker, 새 model session, 새 외부 서비스는 필요 없다. 새 stateful class는
+`OwnerEventBoardRefreshLedger` 하나다. Temporal breaker는 `RunScope`와 pure helper로 구현한다.
+
+## 18. Code path and user-flow coverage plan
+
+```text
+PR-A: OWNER-EVENT BOARD
+=======================
+workorder_request(board)
+  ├─ owner_manual
+  │   └─ [★★★ EXISTING+REGRESSION] force:true, unique manual key
+  └─ owner_event
+      ├─ [★★★ NEW] same batch already linked → same durable receipt
+      ├─ [★★★ NEW] no open repair → dirty → atomic intent+repair insert
+      ├─ [★★★ NEW] open repair → dirty → atomic intent attach
+      └─ [★★★ NEW] transaction error → no ACK, dirty remains safe
+
+verified Board completion
+  ├─ [★★★ NEW] no newer generation → apply intents, no follow-up
+  ├─ [★★★ NEW] newer generation → terminal commit → one immediate follow-up
+  ├─ [★★★ NEW] process dies before follow-up → boot repair recovers pending intent
+  └─ [★★★ NEW] unverified/failed → no immediate hot loop, scheduled self-heal
+
+owner-event recovery
+  ├─ [★★★ NEW] enqueue committed, ACK missing → intent receipt ACKs without model
+  ├─ [★★★ NEW] prose only / missing intent → retry
+  └─ [★★★ NEW] inbox retention deletes intent through FK cascade
+
+configuration
+  ├─ [★★★ NEW] MAMA_BOARD_RECONCILE=1 → delta reconcile + full gate
+  └─ [★★★ NEW] MAMA_BOARD_RECONCILE off → no delta reconcile, full gate still active
+
+PR-B: TEMPORAL
+==============
+context_compile projection
+  ├─ [★★★ NEW] registry + HostBridge use one description constant
+  ├─ [★★★ NEW] Temporal brief requires omitted scopes/connectors
+  ├─ [★★★ EXISTING+REGRESSION] omitted fields use trusted envelope
+  └─ [★★★ EXISTING+REGRESSION] explicit widening remains denied
+
+outer Code-Act call
+  ├─ non-Temporal → [★★★ REGRESSION] existing 50-call behavior unchanged
+  └─ Temporal
+      ├─ [★★★ NEW] call 1..8 counted before execution
+      ├─ [★★★ NEW] successful/different result resets consecutive fingerprint
+      ├─ [★★★ NEW] same deterministic {tool,code} x3 → TOOL_CONTRACT_REPEAT
+      ├─ [★★★ NEW] call 9 attempted → TOOL_CONTRACT_REPEAT before host execution
+      ├─ [★★★ NEW] provider/transport/no-code failure → not fingerprinted
+      ├─ [★★★ NEW] mutation terminal result → existing terminal code wins
+      └─ [★★★ NEW] concurrent/next run → independent zeroed RunScope
+
+terminal propagation [→EVAL: real Temporal canary]
+  ├─ [★★★ NEW] Claude parsed tool path preserves exact code
+  ├─ [★★★ NEW] Codex native host bridge preserves exact code
+  ├─ [★★★ NEW] Cline custom tool path preserves exact code
+  └─ [★★★ NEW] WorkOrderConsumer suppresses only TOOL_CONTRACT_REPEAT retry
+```
+
+모든 새 branch는 RED 테스트를 먼저 작성한다. prompt 품질의 최종 eval은 synthetic connector traffic이
+아니라 실제 Temporal generation이 `context_compile → task_temporal_reconcile receipt`를 완주하는
+24시간 canary다.
+
+## 19. Production failure modes
+
+| 실패                                    | 방어                             | 테스트                            | 사용자/운영자 표면               |
+| --------------------------------------- | -------------------------------- | --------------------------------- | -------------------------------- |
+| intent insert와 task enqueue 사이 crash | 같은 SQLite transaction          | crash-boundary integration        | batch 재시도, silent ACK 없음    |
+| gate dirty 후 DB rollback               | safe extra dirt                  | transaction failure unit          | 다음 scheduled repair, error log |
+| 여러 batch 동시 접수                    | single writer + unique batch/key | duplicate/concurrency integration | workorder 한 개                  |
+| verified hook 뒤 terminal 전 crash      | 미적용 intent boot scan          | boot recovery integration         | 다음 boot repair                 |
+| verified terminal 뒤 nudge 전 crash     | boot-dirty + pending intent      | boot recovery integration         | 다음 boot repair                 |
+| unverified Board가 즉시 반복            | verified-only follow-up signal   | unverified completion regression  | 기존 경보, scheduled retry       |
+| flag off에서 coalescing 비활성          | gate unconditional               | config matrix                     | 동일 owner-event 계약            |
+| model이 failure audit를 위조            | executor-returned audit만 사용   | forged prose/result regression    | 위조는 breaker 권위 없음         |
+| mutation과 contract failure가 함께 존재 | mutation terminal 우선           | precedence regression             | receipt-first no-retry           |
+| provider outage를 결정적 오류로 오분류  | closed code allowlist            | 429/5xx/transport matrix          | 기존 backoff/retry               |
+| breaker state가 다른 run에 누출         | RunScope local state             | concurrent-run regression         | 정상 owner/chat 영향 없음        |
+| backend가 terminal code를 잃음          | closed transport vocabulary      | Claude/Codex/Cline matrix         | workorder 1회 실패, 재실행 없음  |
+
+테스트와 오류 처리가 모두 없는 silent failure는 설계상 0개다.
+
+## 20. Performance review
+
+- owner-event마다 작은 intent row 한 개가 추가되지만 기존 7일 inbox retention과 함께 삭제된다.
+- 미적용 scan은 partial index만 읽는다. 전체 acked history scan은 없다.
+- 첫/중복 접수는 같은 SQLite connection의 짧은 write transaction 하나다. 모델 실행 시간과 비교하면
+  미미하며, 외부 I/O를 transaction 안에서 수행하지 않는다.
+- fingerprint는 최대 8회, 작은 `{name, code}` 배열만 hash한다. payload나 connector text를 hash하지
+  않는다.
+- 새 append-only telemetry row를 만들지 않는다. canary는 durable intent와 기존 운영 기록을 집계한다.
+- 기대 효과는 기준선 owner-event Board 7,204,986 tokens와 Temporal 5,179,840 tokens의 반복 부분을
+  직접 줄이는 것이다. 로컬 검증 마이크로초 경로는 그대로다.
+
+## 21. NOT in scope
+
+- Slice B 감사 데이터 삭제/압축: retention 권위와 backup 정책을 별도 승인해야 한다.
+- Slice C daemon 로그 회전: launchd open-file lifecycle을 별도 검증해야 한다.
+- 전역 reasoning effort 변경: 원인 제어가 아니라 품질/비용 정책 변경이다.
+- owner-event AgentLoop 호출 자체 제거: 이벤트의 의미 판단은 MAMA의 일이다.
+- Board 내부 tool sequence 하드코딩: TG-03/TG-04 agent freedom을 위반한다.
+- Telegram/브라우저 synthetic canary: 실제 이벤트가 없으면 완료를 보류한다.
+- 기존 대형 파일 일반 리팩터링: 이번 변경에 필요한 seam만 추출한다.
+
+Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 `TODOS.md`에 중복 항목을 추가하지 않는다.
+
+## 22. Implementation and PR structure
+
+| 단계                           | 모듈                              | 의존성                                 |
+| ------------------------------ | --------------------------------- | -------------------------------------- |
+| PR-A intent ledger             | `operator/`                       | 기존 inbox/task ledger/gate            |
+| PR-A wiring and recovery       | `cli/`, `operator/`               | PR-A intent ledger                     |
+| PR-A focused/full verification | `tests/operator/`, `tests/cli/`   | PR-A 구현                              |
+| PR-B context contract          | `agent/`, `operator/`             | PR-A 머지 후 최신 main                 |
+| PR-B circuit breaker           | `agent/`, `operator/`             | PR-B context contract와 병렬 작성 가능 |
+| PR-B focused/full verification | `tests/agent/`, `tests/operator/` | PR-B 구현                              |
+| release/canary                 | release + local runtime           | PR-A와 PR-B 머지                       |
+
+기술적으로 PR-A와 PR-B 구현은 병렬 가능하지만, 본 작업은 순차 진행한다. 두 PR 모두 패리티 문서를
+수정하고 최종 릴리즈가 하나이므로, PR-A의 실제 review 결과를 PR-B 계획에 반영하는 편이 merge conflict와
+동일한 실수를 줄인다.
+
+## 23. Eng review completion summary
+
+- Step 0 Scope Challenge: 두 PR, 한 릴리즈로 scope 분리
+- Architecture Review: 4 issues found, 4 resolved
+- Code Quality Review: 3 issues found, 3 resolved
+- Test Review: coverage diagram produced, 30개 path를 RED/regression test requirement로 반영
+- Performance Review: 2 issues found, 2 resolved
+- NOT in scope: 작성 완료
+- What already exists: 작성 완료
+- TODOS.md updates: 0, 기존 설계와 중복이라 추가하지 않음
+- Failure modes: 12개 검토, critical silent gap 0
+- Outside voice: skipped, 별도 agent 요청 없음
+- Parallelization: 2개 구현 lane을 의도적으로 순차 실행
+- Lake Score: 9/9 교정에서 complete option 선택
+
+## GSTACK REVIEW REPORT
+
+| Review        | Trigger               | Why                             | Runs | Status       | Findings                                  |
+| ------------- | --------------------- | ------------------------------- | ---: | ------------ | ----------------------------------------- |
+| CEO Review    | `/plan-ceo-review`    | Scope & strategy                |    0 | —            | Backend cost-control change라 생략        |
+| Codex Review  | `/codex review`       | Independent 2nd opinion         |    0 | —            | Nested Codex 금지, 별도 agent 요청 없음   |
+| Eng Review    | `/plan-eng-review`    | Architecture & tests (required) |    1 | CLEAR (PLAN) | 39 issues/paths reviewed, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps                      |    0 | —            | UI 변경 없음                              |
+| DX Review     | `/plan-devex-review`  | Developer experience gaps       |    0 | —            | 공개 API/SDK 변경 없음                    |
+
+- **UNRESOLVED:** 0
+- **VERDICT:** ENG CLEARED, ready to write the implementation plan.
