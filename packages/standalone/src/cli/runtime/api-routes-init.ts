@@ -287,7 +287,7 @@ export interface RegisterApiRoutesParams {
   sessionsDb?: SQLiteDatabase;
   /** Stage-2 consumer: per-kind completion hooks register here (started by start.ts AFTER this returns). */
   workOrderConsumer?: WorkOrderConsumer;
-  /** Shared host-owned Board repair gate; null preserves reconcile-disabled legacy behavior. */
+  /** Shared host-owned Board repair gate. Production passes it unconditionally. */
   boardRefreshGate: BoardRefreshGate | null;
   /** Durable exact-batch intents coalesced onto shared non-force Board repairs. */
   ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;

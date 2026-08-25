@@ -918,6 +918,8 @@ export interface OwnerWorkOrderRequestHandlerDeps {
   taskLedger: TaskLedger;
   boardRefreshGate: BoardRefreshGate | null;
   ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
+  /** Explicit per-agent config gate; an always-on repair gate is not execution authority. */
+  boardWorkOrderEnabled?: boolean;
   now?: () => number;
   log?: (line: string) => void;
   logError?: (line: string, detail: unknown) => void;
@@ -941,6 +943,9 @@ export function buildOwnerWorkOrderRequestHandler(
       let idempotencyKey: string;
       let payload: Record<string, unknown>;
       if (kind === 'board') {
+        if (deps.boardWorkOrderEnabled === false) {
+          throw new Error('Board workorder agent is disabled');
+        }
         if (!deps.boardRefreshGate) {
           throw new Error('Board refresh gate is unavailable');
         }
@@ -1725,6 +1730,10 @@ export async function runAgentLoop(
     operatorDb,
     taskLedger
   );
+  const boardWorkOrderEnabled = Boolean(
+    config.multi_agent?.agents?.['dashboard-agent'] &&
+    config.multi_agent.agents['dashboard-agent'].enabled !== false
+  );
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
@@ -1981,6 +1990,7 @@ export async function runAgentLoop(
         taskLedger,
         boardRefreshGate,
         ownerEventBoardRefreshLedger,
+        boardWorkOrderEnabled,
       })
     );
   }

@@ -88,7 +88,8 @@ scenario IDs from this document.
 - **TG-03/TG-04:** MAMA still decides whether to delegate Board work through
   `workorder_request`; the host does not prescribe the model's tool sequence. The gateway derives
   owner-event batch identity only from host execution state, while direct owner requests keep the
-  distinct manual forced-refresh contract.
+  distinct manual forced-refresh contract. An explicitly disabled `dashboard-agent` refuses Board
+  delegation before creating an intent; the always-on repair gate is not execution authority.
 - **TG-05:** each connector batch still receives one fresh, self-contained owner-event model run.
   Coalescing begins only after MAMA chooses Board delegation: twenty exact batches persist twenty
   receipts but share one open non-force Board workorder.

@@ -219,6 +219,32 @@ describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
     db.close();
   });
 
+  it('fails closed when the Board worker is explicitly disabled despite an always-on gate', () => {
+    const ctx = createHarness(350);
+    const handler = buildOwnerWorkOrderRequestHandler({
+      taskLedger: ctx.taskLedger,
+      boardRefreshGate: ctx.boardRefreshGate,
+      ownerEventBoardRefreshLedger: ctx.ownerEventBoardRefreshLedger,
+      boardWorkOrderEnabled: false,
+      now: () => 1_000,
+      log: vi.fn(),
+      logError: vi.fn(),
+    });
+    const eventId = 'evt-disabled-board';
+    const batchId = ctx.enqueueBatch(eventId);
+
+    expect(
+      handler('board', {
+        kind: 'owner_event',
+        batchId,
+        eventIds: [eventId],
+      })
+    ).toEqual({ accepted: false, reason: 'enqueue-failed' });
+    expect(ctx.taskLedger.countPendingWorkOrders()).toBe(0);
+    expect(ctx.ownerEventBoardRefreshLedger.findAcceptance(batchId)).toBeNull();
+    ctx.db.close();
+  });
+
   it('leaves synthetic dirt when a manual Board enqueue fails', () => {
     const ctx = createHarness(400);
     ctx.db.close();
