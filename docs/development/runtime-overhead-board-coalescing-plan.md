@@ -69,6 +69,11 @@ export interface OwnerEventBoardRefreshAcceptance {
   appliedAt: number | null;
 }
 
+export function resolveInitialBoardRepairGeneration(
+  now: number,
+  pendingGeneration: number | null
+): number;
+
 export class OwnerEventBoardRefreshLedger {
   constructor(db: SQLiteDatabase, taskLedger: BoardWorkOrderPort, clock?: () => number);
   maxPendingGeneration(): number | null;
@@ -355,17 +360,34 @@ git commit -m "fix(standalone): schedule verified board follow-ups"
 - Consumes: `maxPendingGeneration()`, `findAcceptance(batchId)`, always-on gate.
 - Produces: exact batch terminal recovery without another model run.
 
-- [ ] **Step 1: Write failing production-wiring tests**
+- [ ] **Step 1: Write failing boot and recovery behavior tests**
 
 ```ts
-expect(startSource).toContain('new OwnerEventBoardRefreshLedger(operatorDb, taskLedger)');
-expect(startSource).toContain('ownerEventBoardRefreshLedger.findAcceptance(batch.id)');
-expect(startSource).not.toContain(
-  "process.env.MAMA_BOARD_RECONCILE === '1' ? new BoardRefreshGate() : null"
-);
+it('ACKs a persisted Board acceptance after restart without waking the model', async () => {
+  const accepted = boardIntents.accept({
+    batchId,
+    eventIds: ['evt-1'],
+    repair: { repairGeneration: 20, noUpdateScope: 'full:20' },
+  });
+  expect(accepted.workOrderId).toBeGreaterThan(0);
+
+  const runner = { run: vi.fn(() => Promise.reject(new Error('must not run'))) };
+  const loop = new OwnerEventLoop({
+    ...ownerLoopDeps,
+    runner,
+    getTerminalReceipt: (batch) =>
+      boardIntents.findAcceptance(batch.id)
+        ? { status: 'delegated', tools: ['workorder_request'] }
+        : null,
+  });
+
+  expect(await loop.tick()).toBe('processed');
+  expect(runner.run).not.toHaveBeenCalled();
+  expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+});
 ```
 
-Also prove persisted acceptance wins before model execution and after runner error.
+Also prove the same lookup wins after a simulated runner error and that no intent leaves the batch pending.
 
 - [ ] **Step 2: Run wiring/config tests and verify RED**
 
@@ -373,7 +395,7 @@ Also prove persisted acceptance wins before model execution and after runner err
 pnpm --dir packages/standalone exec vitest run tests/cli/owner-event-wiring.test.ts tests/cli/start-board-refresh-gate.test.ts tests/cli/runtime/api-routes-init-reconcile.test.ts
 ```
 
-Expected: FAIL on conditional gate construction and exact-key-only recovery.
+Expected: FAIL because the Board intent ledger and acceptance lookup do not exist.
 
 - [ ] **Step 3: Reorder boot construction and make the gate unconditional**
 
@@ -381,14 +403,17 @@ Expected: FAIL on conditional gate construction and exact-key-only recovery.
 const taskLedger = new TaskLedger(operatorDb);
 const ownerEventInbox = new OwnerEventInbox(operatorDb);
 const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(operatorDb, taskLedger);
-const initialBoardGeneration = Math.max(
+const initialBoardGeneration = resolveInitialBoardRepairGeneration(
   Date.now(),
-  (ownerEventBoardRefreshLedger.maxPendingGeneration() ?? -1) + 1
+  ownerEventBoardRefreshLedger.maxPendingGeneration()
 );
 const boardRefreshGate = new BoardRefreshGate({ initialGeneration: initialBoardGeneration });
 ```
 
-Keep the env flag only around `ReconcileScheduler` and its explicit reconcile route.
+Define `resolveInitialBoardRepairGeneration(now, pendingGeneration)` as a tested pure function in
+`owner-event-board-refresh.ts`: it validates safe non-negative integers and returns
+`Math.max(now, (pendingGeneration ?? -1) + 1)`. Keep the env flag only around `ReconcileScheduler`
+and its explicit reconcile route.
 
 - [ ] **Step 4: Add exact batch terminal recovery**
 
@@ -403,7 +428,7 @@ Keep external effects, Wiki, memory-curation, and exact no-update lookup unchang
 
 - [ ] **Step 5: Add boot and flag matrix assertions and verify GREEN**
 
-Assert pending intents seed a greater boot generation and reattach to one boot repair, no pending intent preserves normal boot behavior, flag off disables only delta reconcile, and no owner-event path sets force. Run Step 2 plus ledger/hook tests. Expected: PASS.
+Using real ledger/gate/route components, assert pending intents seed a greater boot generation and reattach to one boot repair, no pending intent preserves normal boot behavior, flag off disables only delta reconcile, and no owner-event path sets force. Run Step 2 plus ledger/hook tests. Expected: PASS.
 
 - [ ] **Step 6: Commit Task 4**
 
