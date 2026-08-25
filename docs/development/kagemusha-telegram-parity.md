@@ -83,6 +83,30 @@ scenario IDs from this document.
   passed with 4 files/7 tests skipped. Root typecheck and production build both passed.
 - **Status:** CODE GREEN; release cutover and a real owner Telegram feedback event remain pending.
 
+### Owner-event Board coalescing evidence: 2026-08-26
+
+- **TG-03/TG-04:** MAMA still decides whether to delegate Board work through
+  `workorder_request`; the host does not prescribe the model's tool sequence. The gateway derives
+  owner-event batch identity only from host execution state, while direct owner requests keep the
+  distinct manual forced-refresh contract.
+- **TG-05:** each connector batch still receives one fresh, self-contained owner-event model run.
+  Coalescing begins only after MAMA chooses Board delegation: twenty exact batches persist twenty
+  receipts but share one open non-force Board workorder.
+- **TG-06:** `owner_event_board_refresh_intents` atomically binds each retained inbox batch to its
+  repair generation and shared workorder. A persisted acceptance ACKs the exact batch before a
+  replayed model run, including after runner failure. Only a verified full Board effect with a
+  complete receipt applies captured generations. Later generations schedule one post-terminal
+  non-force repair; unverified or failed effects do not hot-loop. Pending intents survive restart,
+  seed a higher boot generation, and reattach to one repair.
+- **Flag boundary:** `BoardRefreshGate` is always present. `MAMA_BOARD_RECONCILE=1` controls only
+  debounced connector-delta reconcile and its operator route; boot, scheduled, manual, and
+  owner-event full repair retain the host gate with the flag off.
+- **Verification:** the PR-A focused gate passed eight files and 197 tests. The complete standalone
+  suite passed 382 files and 5,165 tests, with four files and seven tests skipped. Root typecheck,
+  build, and all seven Turbo test tasks passed. This is code/test evidence only.
+- **Status:** CODE GREEN; PR-A review/merge, the PR-B Temporal change, release cutover, and a real
+  owner-event canary remain pending.
+
 ### Sender-boundary completion evidence: 2026-08-13
 
 | ID    | Evidence update                                                                                                                                                                                                                                                                                      | Verification                                                                                                                                                                                                                                                       | Status                     |
@@ -191,11 +215,13 @@ Source paths below are relative to `packages/standalone/src`; test paths are rel
   contract carries `repairGeneration`, the exact `noUpdateScope`, the canonical wrapped
   `report_publish` call, and the force/no-update distinction. Evidence: `operator/briefs.ts` and
   `tests/operator/briefs.test.ts`.
-- **TG-06 generation-aware Board repair gate:** when `MAMA_BOARD_RECONCILE=1`, one host-owned
-  `BoardRefreshGate` spans boot and scheduled full repair, debounced reconcile deltas,
-  `/api/report/agent-refresh`, and direct owner workorder requests. Dirt is marked before
-  validation/enqueue; a completion clears only the generation captured by that attempt, so later
-  deltas survive. A full attempt clears only after an attempt-bound accepted all-four-slot publish,
+- **TG-06 generation-aware Board repair gate:** one host-owned `BoardRefreshGate` always spans boot
+  and scheduled full repair, `/api/report/agent-refresh`, owner workorder requests, and completion
+  verification.
+  `MAMA_BOARD_RECONCILE=1` additionally enables debounced reconcile deltas and the explicit
+  reconcile route. Dirt is marked before validation/enqueue; a completion clears only the
+  generation captured by that attempt, so later deltas survive. A full attempt clears only after
+  an attempt-bound accepted all-four-slot publish,
   or after an exact `contract_no_update` proof for the captured scope on a non-force scheduled
   repair. Manual and owner `force: true` paths cannot discharge dirt with no-update prose. Open
   scheduled repair retries share one idempotency key.
@@ -651,10 +677,18 @@ change unless they are release-blocking security or data-loss issues.
       No earlier Board aggregate is reused after the later publisher changes.
 - [x] A clean detached checkout of the staged PR index passed 376 files and 5,033 tests, with four
       files and nine tests skipped (5,042 total); typecheck and build passed.
-- [ ] Rebuild/restart the release, confirm the `0.37.0` runtime cutover, complete a real owner
-      Telegram turn, and observe visible Telegram report delivery.
+- [x] The 2026-08-26 owner-event Board coalescing gate passed eight focused files / 197 tests, the
+      complete standalone suite (382 files / 5,165 tests; four files / seven tests skipped), root
+      typecheck and build, and all seven root Turbo test tasks. This does not claim live behavior.
+- [ ] Merge both Slice A PRs, rebuild/restart the next release, complete a real owner-event turn,
+      and compare visible delivery plus 24-hour model-work cost against the saved baseline.
 
 ## Change log
+
+- 2026-08-26: Recorded TG-03/TG-04/TG-05/TG-06 code evidence for durable exact-batch Board
+  acceptance, many-to-one non-force coalescing, verified-generation application, post-terminal
+  follow-up, crash recovery, and flag semantics. The focused, standalone, and root gates passed.
+  PR-A review/merge, PR-B, release cutover, and a real owner-event canary remain pending.
 
 - 2026-08-19: Recorded the uncommitted operator stabilization patch for TG-03/TG-04/TG-05/TG-06:
   named-object Code-Act declarations with wrapped/legacy report compatibility, actual

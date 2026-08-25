@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, 구현 계획 작성 가능
+> **상태:** Eng review CLEAR, PR-A CODE GREEN, PR-B 구현 대기
 >
 > **작성일:** 2026-08-26
 >
@@ -681,3 +681,25 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 
 - **UNRESOLVED:** 0
 - **VERDICT:** ENG CLEARED, ready to write the implementation plan.
+
+## 24. PR-A implementation evidence
+
+2026-08-26 기준 PR-A는 코드와 테스트가 완료됐고, 아직 운영 릴리즈는 하지 않았다.
+
+- exact owner-event batch마다 durable intent를 한 행 저장하고 열린 Board repair 하나로
+  coalesce한다. 직접 owner 요청만 기존 `force: true` 계약을 유지한다.
+- intent acceptance와 workorder enqueue는 같은 SQLite transaction이다. 재시작 시 미적용 최대
+  generation보다 높은 gate를 만들고 pending intent를 새 non-force repair에 재연결한다.
+- full Board의 action verifier와 receipt가 모두 성공한 경우만 captured generation까지 적용한다.
+  실행 중 들어온 더 최신 generation은 현재 workorder terminal 뒤 한 번만 follow-up한다.
+- owner-event terminal receipt는 external effect 다음으로 durable Board acceptance를 확인하고,
+  Wiki/memory permanent key와 exact no-update 경로를 그대로 보존한다.
+- `MAMA_BOARD_RECONCILE`은 delta reconcile scheduler와 route만 제어한다. full repair gate는 항상
+  존재한다.
+
+검증 결과:
+
+- PR-A 집중 gate: 8 files, 197 tests passed.
+- Standalone: 382 files, 5,165 tests passed; 4 files / 7 tests skipped.
+- Root: typecheck exit 0, build exit 0, test 7/7 Turbo tasks passed.
+- 릴리즈, 실제 owner-event canary, 24시간 비용 비교는 아직 수행하지 않았다.
