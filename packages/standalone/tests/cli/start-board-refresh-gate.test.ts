@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildOwnerWorkOrderRequestHandler } from '../../src/cli/commands/start.js';
+import {
+  buildOwnerEventBoardRefreshRuntime,
+  buildOwnerWorkOrderRequestHandler,
+} from '../../src/cli/commands/start.js';
 import { BoardRefreshGate } from '../../src/operator/board-refresh-gate.js';
 import { OwnerEventBoardRefreshLedger } from '../../src/operator/owner-event-board-refresh.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
@@ -45,6 +48,48 @@ describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
       enqueueBatch,
     };
   }
+
+  it('seeds a restarted gate above every pending durable intent generation', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+    const inbox = new OwnerEventInbox(db, () => 1_000);
+    const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 100);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-restart'],
+      lines: ['line:evt-restart'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    firstRuntime.ownerEventBoardRefreshLedger.accept({
+      batchId,
+      eventIds: ['evt-restart'],
+      repair: { repairGeneration: 150, noUpdateScope: 'full:150' },
+    });
+
+    const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 50);
+
+    expect(restarted.boardRefreshGate.captureFullRepair()).toEqual({
+      repairGeneration: 151,
+      noUpdateScope: 'full:151',
+    });
+    expect(restarted.boardRefreshGate.needsFullRepair()).toBe(true);
+    db.close();
+  });
+
+  it('uses wall time unchanged when no pending Board intent exists', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+    new OwnerEventInbox(db, () => 1_000);
+
+    const runtime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 700);
+
+    expect(runtime.boardRefreshGate.captureFullRepair()).toEqual({
+      repairGeneration: 700,
+      noUpdateScope: 'full:700',
+    });
+    db.close();
+  });
 
   it.each(['wiki', 'memory-curation'] as const)(
     'preserves permanent owner-event %s handoff identity after terminal completion',

@@ -47,7 +47,7 @@ import type {
   CodeActResult,
   GraphHandlerOptions,
 } from '../../api/graph-api-types.js';
-import Database from '../../sqlite.js';
+import Database, { type SQLiteDatabase } from '../../sqlite.js';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
@@ -120,9 +120,12 @@ import {
   validateWorkOrderPayload,
   wikiBatchKey,
 } from '../../operator/workorder-publishers.js';
-import { OwnerEventInbox } from '../../operator/owner-event-inbox.js';
+import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
-import { OwnerEventBoardRefreshLedger } from '../../operator/owner-event-board-refresh.js';
+import {
+  OwnerEventBoardRefreshLedger,
+  resolveInitialBoardRepairGeneration,
+} from '../../operator/owner-event-board-refresh.js';
 import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
@@ -851,6 +854,65 @@ export function buildSystemAgentProcessDefaults(config: {
 }
 
 const OWNER_BOARD_FULL_REPAIR_CHANNEL = 'host:owner-workorder:board-full';
+
+export function buildOwnerEventBoardRefreshRuntime(
+  operatorDb: SQLiteDatabase,
+  taskLedger: TaskLedger,
+  now: () => number = Date.now
+): {
+  ownerEventBoardRefreshLedger: OwnerEventBoardRefreshLedger;
+  boardRefreshGate: BoardRefreshGate;
+} {
+  const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
+    operatorDb,
+    taskLedger,
+    now
+  );
+  const initialGeneration = resolveInitialBoardRepairGeneration(
+    now(),
+    ownerEventBoardRefreshLedger.maxPendingGeneration()
+  );
+  return {
+    ownerEventBoardRefreshLedger,
+    boardRefreshGate: new BoardRefreshGate({ initialGeneration }),
+  };
+}
+
+export function resolveOwnerEventTerminalReceipt(
+  batch: OwnerEventBatch,
+  deps: {
+    ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
+    ownerEventBoardRefreshLedger: Pick<OwnerEventBoardRefreshLedger, 'findAcceptance'>;
+    taskLedger: Pick<TaskLedger, 'findWorkOrderByOccurrence' | 'maxNoUpdateId'>;
+  }
+):
+  | { status: 'acted'; tools: string[] }
+  | { status: 'delegated'; tools: ['workorder_request'] }
+  | { status: 'no_update'; tools: [] }
+  | null {
+  const confirmedEffects = deps.ownerEventEffectLedger.confirmedKinds(batch.id);
+  if (confirmedEffects.length > 0) {
+    return { status: 'acted', tools: confirmedEffects };
+  }
+  const acceptedWorkOrder =
+    deps.ownerEventBoardRefreshLedger.findAcceptance(batch.id) ??
+    deps.taskLedger.findWorkOrderByOccurrence('board', boardBatchKey(batch.eventIds)) ??
+    deps.taskLedger.findWorkOrderByOccurrence(
+      'wiki',
+      ownerEventWorkOrderKey('wiki', batch.eventIds)
+    ) ??
+    deps.taskLedger.findWorkOrderByOccurrence(
+      'memory-curation',
+      ownerEventWorkOrderKey('memory-curation', batch.eventIds)
+    );
+  if (acceptedWorkOrder) {
+    return { status: 'delegated', tools: ['workorder_request'] };
+  }
+  if (deps.taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
+    return { status: 'no_update', tools: [] };
+  }
+  return null;
+}
 
 export interface OwnerWorkOrderRequestHandlerDeps {
   taskLedger: TaskLedger;
@@ -1652,15 +1714,17 @@ export async function runAgentLoop(
     operatorDb.close();
     throw err;
   }
-  // One host-owned gate spans owner workorder requests, route scheduling,
-  // delta ingestion, and completion verification for this boot.
-  const boardRefreshGate = process.env.MAMA_BOARD_RECONCILE === '1' ? new BoardRefreshGate() : null;
   // Durable MAMA owner-event journal. It uses new tables rather than replaying
   // the legacy default-off Conductor shadow backlog on cutover.
   const ownerEventInbox = new OwnerEventInbox(operatorDb);
-  const ownerEventBoardRefreshLedgerRef: { current: OwnerEventBoardRefreshLedger | null } = {
-    current: null,
-  };
+  // The host-owned gate is always present. MAMA_BOARD_RECONCILE controls only
+  // delta reconcile scheduling; exact owner-event Board acceptance, boot
+  // recovery, manual refresh, and full verification share this runtime in all
+  // configurations.
+  const { ownerEventBoardRefreshLedger, boardRefreshGate } = buildOwnerEventBoardRefreshRuntime(
+    operatorDb,
+    taskLedger
+  );
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
@@ -1902,7 +1966,7 @@ export async function runAgentLoop(
         if (
           event.type === 'complete' &&
           event.workKind === 'board' &&
-          ownerEventBoardRefreshLedgerRef.current?.consumePostTerminalFollowup(event.workOrderId)
+          ownerEventBoardRefreshLedger.consumePostTerminalFollowup(event.workOrderId)
         ) {
           boardRepairNudge.current?.();
         }
@@ -1916,9 +1980,7 @@ export async function runAgentLoop(
       buildOwnerWorkOrderRequestHandler({
         taskLedger,
         boardRefreshGate,
-        ...(ownerEventBoardRefreshLedgerRef.current
-          ? { ownerEventBoardRefreshLedger: ownerEventBoardRefreshLedgerRef.current }
-          : {}),
+        ownerEventBoardRefreshLedger,
       })
     );
   }
@@ -2301,29 +2363,12 @@ export async function runAgentLoop(
             }),
           issueEnvelope: ownerEventIssueEnvelope,
           getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
-          getTerminalReceipt: (batch) => {
-            const confirmedEffects = ownerEventEffectLedger.confirmedKinds(batch.id);
-            if (confirmedEffects.length > 0) {
-              return { status: 'acted' as const, tools: confirmedEffects };
-            }
-            const acceptedWorkOrder =
-              taskLedger.findWorkOrderByOccurrence('board', boardBatchKey(batch.eventIds)) ??
-              taskLedger.findWorkOrderByOccurrence(
-                'wiki',
-                ownerEventWorkOrderKey('wiki', batch.eventIds)
-              ) ??
-              taskLedger.findWorkOrderByOccurrence(
-                'memory-curation',
-                ownerEventWorkOrderKey('memory-curation', batch.eventIds)
-              );
-            if (acceptedWorkOrder) {
-              return { status: 'delegated' as const, tools: ['workorder_request'] };
-            }
-            if (taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
-              return { status: 'no_update' as const, tools: [] };
-            }
-            return null;
-          },
+          getTerminalReceipt: (batch) =>
+            resolveOwnerEventTerminalReceipt(batch, {
+              ownerEventEffectLedger,
+              ownerEventBoardRefreshLedger,
+              taskLedger,
+            }),
           recordTriggerOutcome: (triggerId, outcome) =>
             triggerRegistry.recordOutcome(triggerId, outcome),
           onDead: async (message) => {
@@ -2417,9 +2462,7 @@ export async function runAgentLoop(
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
-    ...(ownerEventBoardRefreshLedgerRef.current
-      ? { ownerEventBoardRefreshLedger: ownerEventBoardRefreshLedgerRef.current }
-      : {}),
+    ownerEventBoardRefreshLedger,
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
   gateways.push({ stop: async () => apiRoutesHandle.stop() });

@@ -21,7 +21,10 @@ import type { ReportStore } from '../../../src/api/report-handler.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
 import { OwnerEventInbox } from '../../../src/operator/owner-event-inbox.js';
 import { OwnerEventBoardRefreshLedger } from '../../../src/operator/owner-event-board-refresh.js';
-import { buildOwnerWorkOrderRequestHandler } from '../../../src/cli/commands/start.js';
+import {
+  buildOwnerEventBoardRefreshRuntime,
+  buildOwnerWorkOrderRequestHandler,
+} from '../../../src/cli/commands/start.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
 import Database from '../../../src/sqlite.js';
 import type { AgentLoop } from '../../../src/agent/index.js';
@@ -99,6 +102,7 @@ async function registerReconcileRuntime(input: {
   connectorConfigLoadResult: ConnectorConfigLoadResult;
   ledger?: TaskLedger;
   boardRefreshGate?: BoardRefreshGate | null;
+  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
   eventBus?: AgentEventBus;
   rawConnectorScope?: readonly string[];
   getAdapter?: () => { prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] } };
@@ -107,7 +111,11 @@ async function registerReconcileRuntime(input: {
   boardRefreshGate: BoardRefreshGate | null;
   eventBus: AgentEventBus;
   ledger: TaskLedger;
-  routeHandle: { stop: () => void };
+  routeHandle: {
+    readonly boardReconcileEnabled: boolean;
+    requestBoardRepair: () => void;
+    stop: () => void;
+  };
 }> {
   const policy = resolvePrivateConnectorPolicy(input.connectorConfigLoadResult);
   const eventBus = input.eventBus ?? new AgentEventBus();
@@ -117,11 +125,7 @@ async function registerReconcileRuntime(input: {
   });
   const ledger = input.ledger ?? new TaskLedger(input.db);
   const boardRefreshGate =
-    input.boardRefreshGate !== undefined
-      ? input.boardRefreshGate
-      : process.env.MAMA_BOARD_RECONCILE === '1'
-        ? new BoardRefreshGate()
-        : null;
+    input.boardRefreshGate !== undefined ? input.boardRefreshGate : new BoardRefreshGate();
   toolExecutor.setTaskLedger(ledger);
   const apiServer = createApiServer({
     scheduler: new CronScheduler(),
@@ -145,6 +149,9 @@ async function registerReconcileRuntime(input: {
     privateConnectorPolicy: policy,
     rawConnectorScope: input.rawConnectorScope ?? input.connectorConfigLoadResult.enabledNames,
     boardRefreshGate,
+    ...(input.ownerEventBoardRefreshLedger
+      ? { ownerEventBoardRefreshLedger: input.ownerEventBoardRefreshLedger }
+      : {}),
     getAdapter: input.getAdapter ?? (() => input.db),
   });
 
@@ -343,6 +350,66 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(ledger.claimNextWorkOrder()).toBeNull();
     } finally {
+      db.close();
+    }
+  });
+
+  it('TG-06 flag-off boot reattaches persisted intents to one non-force repair', async () => {
+    const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
+    process.env.MAMA_BOARD_RECONCILE = '0';
+    try {
+      createBoardInputTables(db);
+      const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+      const inbox = new OwnerEventInbox(db, () => 1_000);
+      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 20);
+      const batchId = inbox.enqueue({
+        channelKey: 'kagemusha:feedback',
+        eventIds: ['evt-boot-repair'],
+        lines: ['line:evt-boot-repair'],
+        activations: [],
+      });
+      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+      firstRuntime.boardRefreshGate.markChannelDirty('host:test-owner-event');
+      const accepted = firstRuntime.ownerEventBoardRefreshLedger.accept({
+        batchId,
+        eventIds: ['evt-boot-repair'],
+        repair: firstRuntime.boardRefreshGate.captureFullRepair(),
+      });
+      const abandoned = taskLedger.claimNextWorkOrder();
+      if (!abandoned) throw new Error('abandoned Board workorder expected');
+      taskLedger.failWorkOrder(abandoned.id, 'simulated daemon cutover');
+
+      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 10);
+      const { ledger, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+        ledger: taskLedger,
+        boardRefreshGate: restarted.boardRefreshGate,
+        ownerEventBoardRefreshLedger: restarted.ownerEventBoardRefreshLedger,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const repair = ledger.claimNextWorkOrder();
+      expect(repair).toMatchObject({
+        idempotencyKey: 'board:full:repair',
+        priority: 'high',
+        payload: {
+          mode: 'full',
+          force: false,
+          repairGeneration: 22,
+          noUpdateScope: 'full:22',
+        },
+      });
+      expect(repair?.id).not.toBe(accepted.workOrderId);
+      expect(restarted.ownerEventBoardRefreshLedger.findAcceptance(batchId)?.workOrderId).toBe(
+        repair?.id
+      );
+      expect(routeHandle.boardReconcileEnabled).toBe(false);
+      routeHandle.stop();
+    } finally {
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
       db.close();
     }
   });
@@ -568,6 +635,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       const followup = runtime.ledger.claimNextWorkOrder();
       expect(followup).toMatchObject({
         idempotencyKey: 'board:full:repair',
+        priority: 'high',
         payload: {
           mode: 'full',
           force: false,
@@ -759,13 +827,13 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
-  it('TG-06 forced agent refresh keeps the disabled legacy payload', async () => {
+  it('TG-06 flag off keeps the host gate on for forced full refreshes', async () => {
     const db = new Database(':memory:');
     const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createBoardInputTables(db);
-      const { apiServer, ledger } = await registerReconcileRuntime({
+      const { apiServer, ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
@@ -776,9 +844,13 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         attempts: 1,
         mode: 'full',
         force: true,
+        repairGeneration: expect.any(Number),
+        noUpdateScope: expect.stringMatching(/^full:\d+$/),
         // A forced full run is still a real rebuild, so it records a baseline.
         deltaWatermark: expect.any(String),
       });
+      expect(routeHandle.boardReconcileEnabled).toBe(false);
+      routeHandle.stop();
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
       else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;

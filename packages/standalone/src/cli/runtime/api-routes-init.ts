@@ -296,6 +296,7 @@ export interface RegisterApiRoutesParams {
 }
 
 export interface ApiRoutesHandle {
+  readonly boardReconcileEnabled: boolean;
   requestBoardRepair(): void;
   stop(): void;
 }
@@ -326,6 +327,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   let boardReconcileScheduler:
     | import('../../operator/board-reconcile.js').ReconcileScheduler
     | null = null;
+  let boardReconcileEnabled = false;
   let requestBoardRepair = (): void => {
     routesLogger.error('[stage2] Board repair nudge ignored: dashboard-agent is not configured');
   };
@@ -518,7 +520,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // Schedule/boot/manual all funnel here: one occurrence-keyed board
     // workorder per entry. An enqueue failure is logged loudly and the next
     // occurrence retries - there is no fallback run path.
-    const reconcileEnabled = boardRefreshGate !== null;
+    const reconcileEnabled = process.env.MAMA_BOARD_RECONCILE === '1';
+    boardReconcileEnabled = reconcileEnabled;
     // Evidence that a board was actually WRITTEN, not just that a run reached
     // 'done'. An unverified full run reaches 'done' too, so the delta gate
     // requires a publish at or after the baseline run's enqueue time.
@@ -623,7 +626,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             ...(opts?.acceptedIntent ? { force: false } : {}),
             ...(opts?.force ? { force: true } : {}),
           },
-          opts?.force ? 'high' : undefined
+          opts?.force || opts?.acceptedIntent ? 'high' : undefined
         );
         if (acceptedIntentLedger) {
           acceptedIntentLedger.attachPendingToWorkOrder(workOrder.id);
@@ -641,7 +644,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // ONE constant feeds both the timer and the declared cadence - if they
     // drift apart the watchdog pages on a schedule nobody is running.
     const DASHBOARD_AGENT_INTERVAL_MS = 30 * 60 * 1000;
-    boardBootTimeout = setTimeout(runDashboardAgent, 10_000);
+    boardBootTimeout = setTimeout(() => {
+      if (
+        ownerEventBoardRefreshLedger &&
+        ownerEventBoardRefreshLedger.maxPendingGeneration() !== null
+      ) {
+        requestBoardRepair();
+        return;
+      }
+      runDashboardAgent();
+    }, 10_000);
     getLegCadence()?.declare('dashboard-agent', DASHBOARD_AGENT_INTERVAL_MS);
     boardInterval = setInterval(() => {
       getLegCadence()?.beat('dashboard-agent');
@@ -1938,6 +1950,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log('✓ Viewer UI available at /viewer');
   console.log('✓ Setup wizard available at /setup');
   return {
+    boardReconcileEnabled,
     requestBoardRepair,
     stop: () => {
       if (boardBootTimeout) clearTimeout(boardBootTimeout);
