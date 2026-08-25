@@ -509,14 +509,20 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   }
 
   if (dashboardAgentConfigured) {
-    // ── Dashboard board publisher ─────────────────────────────────────
     // Persona seeding stays: the optional legacy dashboard-agent config is
-    // still usable via multi-agent delegation; only its RUN path here was
-    // replaced by board workorders (consumer lane, brief-owned prompt).
+    // still usable via multi-agent delegation. It does not own the Stage-2
+    // Board worker runtime below.
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
     ensureDashboardPersona();
     routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
+  } else {
+    routesLogger.debug(
+      '[Dashboard Agent] Optional legacy persona disabled; Stage-2 Board runtime remains enabled'
+    );
+  }
 
+  {
+    // ── Stage-2 Board publisher and verifier ───────────────────────────
     // Schedule/boot/manual all funnel here: one occurrence-keyed board
     // workorder per entry. An enqueue failure is logged loudly and the next
     // occurrence retries - there is no fallback run path.
@@ -875,8 +881,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
       console.log('[reconcile] Board reconcile leg enabled (MAMA_BOARD_RECONCILE=1)');
     }
-  } else {
-    routesLogger.debug('[Dashboard Agent] Skipped; dashboard-agent is not configured');
   }
 
   // ── Wiki Agent ──────────────────────────────────────────────────────

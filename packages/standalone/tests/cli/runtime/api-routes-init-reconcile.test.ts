@@ -43,7 +43,7 @@ const enabledConnectorConfig: ConnectorConfigLoadResult = {
   enabledNames: ['kagemusha'],
 };
 
-function createConfig(): MAMAConfig {
+function createConfig(dashboardEnabled = true): MAMAConfig {
   return {
     ...DEFAULT_CONFIG,
     agent: { ...DEFAULT_CONFIG.agent },
@@ -62,7 +62,7 @@ function createConfig(): MAMAConfig {
           display_name: 'Dashboard',
           trigger_prefix: '@dashboard',
           persona_file: 'dashboard.md',
-          enabled: true,
+          enabled: dashboardEnabled,
         },
       },
     },
@@ -100,6 +100,7 @@ function publishBoardSlots(apiServer: { reportStore: ReportStore }): void {
 async function registerReconcileRuntime(input: {
   db: Database;
   connectorConfigLoadResult: ConnectorConfigLoadResult;
+  config?: MAMAConfig;
   ledger?: TaskLedger;
   boardRefreshGate?: BoardRefreshGate | null;
   ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
@@ -135,7 +136,7 @@ async function registerReconcileRuntime(input: {
   });
 
   const routeHandle = await registerApiRoutes({
-    config: createConfig(),
+    config: input.config ?? createConfig(),
     apiServer,
     eventBus,
     oauthManager: {} as OAuthManager,
@@ -349,6 +350,30 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
 
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(ledger.claimNextWorkOrder()).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('TG-04 keeps the Stage-2 Board runtime independent of disabled legacy persona config', async () => {
+    const db = new Database(':memory:');
+    try {
+      createBoardInputTables(db);
+      const { ledger, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+        config: createConfig(false),
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(ledger.claimNextWorkOrder()).toMatchObject({
+        workKind: 'board',
+        idempotencyKey: 'board:full:repair',
+        payload: { mode: 'full', repairGeneration: expect.any(Number) },
+      });
+      expect(routeHandle.boardReconcileEnabled).toBe(true);
+      routeHandle.stop();
     } finally {
       db.close();
     }
