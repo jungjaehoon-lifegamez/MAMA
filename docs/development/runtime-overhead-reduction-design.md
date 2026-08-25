@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR-A MERGED, PR-B CODE GREEN / diff review 대기
+> **상태:** Eng review CLEAR, PR-A/PR-B MERGED, v0.39.0 release 준비
 >
 > **작성일:** 2026-08-26
 >
@@ -707,7 +707,7 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 ## 25. PR-B implementation evidence
 
 2026-08-26 기준 PR-B의 context contract, Temporal circuit breaker, backend terminal 전달,
-WorkOrder retry 정책은 코드와 테스트가 완료됐고 diff review를 기다린다.
+WorkOrder retry 정책은 코드와 테스트, diff review, PR #231 merge까지 완료됐다.
 
 - canonical ToolRegistry와 Code-Act HostBridge는 하나의 host-bound `context_compile` 설명을
   사용한다. Temporal brief는 `scopes`, `connectors`, `seed_refs`를 모델 선택 영역에서 제거하고
@@ -730,4 +730,5 @@ WorkOrder retry 정책은 코드와 테스트가 완료됐고 diff review를 기
 - Standalone: 383 files, 5,188 tests passed; 4 files / 7 tests skipped.
 - Root: typecheck 3/3, build 2/2, test 7/7 Turbo tasks passed.
 - 변경 파일 Prettier와 `git diff --check`가 통과했다.
-- diff review, PR-B merge, 단일 shared release, 실제 Temporal/owner-event canary는 아직 수행하지 않았다.
+- diff review와 PR-B merge는 완료됐다. 단일 shared release와 실제 Temporal/owner-event canary는 아직
+  수행하지 않았다.

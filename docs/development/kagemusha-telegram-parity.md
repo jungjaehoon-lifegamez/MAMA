@@ -130,7 +130,7 @@ scenario IDs from this document.
   suite passed 383 files and 5,188 tests, with four files and seven tests skipped. Root typecheck
   passed 3/3 tasks, build passed 2/2 tasks, and all seven Turbo test tasks passed. Changed-file
   Prettier and `git diff --check` passed.
-- **Status:** CODE GREEN; diff review, PR-B merge, the shared release, and a real Temporal canary
+- **Status:** CODE GREEN and merged as PR #231; the shared release and a real Temporal canary
   remain pending.
 
 ### Sender-boundary completion evidence: 2026-08-13
@@ -706,7 +706,10 @@ change unless they are release-blocking security or data-loss issues.
 - [x] The 2026-08-26 owner-event Board coalescing gate passed eight focused files / 198 tests, the
       complete standalone suite (382 files / 5,166 tests; four files / seven tests skipped), root
       typecheck and build, and all seven root Turbo test tasks. This does not claim live behavior.
-- [ ] Merge both Slice A PRs, rebuild/restart the next release, complete a real owner-event turn,
+- [x] The 2026-08-26 Temporal contract-repeat gate passed nine focused files / 368 tests, the
+      complete standalone suite (383 files / 5,188 tests; four files / seven tests skipped), root
+      typecheck, build, lint, and all seven root Turbo test tasks. PR #231 is merged.
+- [ ] Rebuild/restart v0.39.0, complete a real owner-event and Temporal turn,
       and compare visible delivery plus 24-hour model-work cost against the saved baseline.
 
 ## Change log
@@ -714,7 +717,12 @@ change unless they are release-blocking security or data-loss issues.
 - 2026-08-26: Recorded TG-03/TG-04/TG-05/TG-06 code evidence for durable exact-batch Board
   acceptance, many-to-one non-force coalescing, verified-generation application, post-terminal
   follow-up, crash recovery, and flag semantics. The focused, standalone, and root gates passed.
-  PR-A review/merge, PR-B, release cutover, and a real owner-event canary remain pending.
+  PR #230 and PR #231 are merged. The v0.39.0 release cutover and real canaries remain pending.
+
+- 2026-08-26: Recorded TG-03/TG-04/TG-05/TG-06 code evidence for host-bound Temporal context,
+  run-local deterministic failure fingerprints, the eight-call ceiling, mutation precedence,
+  Claude/Codex/Cline terminal propagation, and exact retry suppression. Focused, standalone, root,
+  lint, format, and diff gates passed; PR #231 is merged.
 
 - 2026-08-19: Recorded the uncommitted operator stabilization patch for TG-03/TG-04/TG-05/TG-06:
   named-object Code-Act declarations with wrapped/legacy report compatibility, actual

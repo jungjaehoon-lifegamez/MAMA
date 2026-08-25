@@ -1,6 +1,6 @@
 # Runtime overhead PR-B: Temporal contract and circuit breaker plan
 
-> **Status:** code and verification green, diff review in progress
+> **Status:** reviewed and merged as PR #231, shared release pending
 >
 > **Date:** 2026-08-26
 >
@@ -111,5 +111,5 @@ GREEN:
 - [x] Root typecheck, build, and tests pass.
 - [x] Changed-file Prettier and `git diff --check` pass.
 - [x] Update the design and Kagemusha TG-03/TG-04/TG-05/TG-06 evidence.
-- [ ] Run diff review, clear all findings, open PR-B, clear CI and review comments,
+- [x] Run diff review, clear all findings, open PR-B, clear CI and review comments,
       then merge before the single shared release.
