@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
@@ -63,6 +64,11 @@ export function briefPath(kind: WorkOrderKind, homeDir: string = homedir()): str
   return join(briefsDir(homeDir), `brief-${kind}.md`);
 }
 
+/** Sidecar recording WHICH packaged seed each brief file was written from. */
+export function briefSeedManifestPath(homeDir: string = homedir()): string {
+  return join(briefsDir(homeDir), 'seed-manifest.json');
+}
+
 /** null = missing (caller fails the workorder); read errors propagate loudly. */
 export function loadBrief(kind: WorkOrderKind, homeDir: string = homedir()): string | null {
   const path = briefPath(kind, homeDir);
@@ -83,6 +89,7 @@ Your work order input is a JSON object:
   NO_UPDATE; rebuild and publish even if nothing changed.
 - repairGeneration: the host-captured Board repair generation.
 - noUpdateScope: the exact host-authored scope for a full-run no-op.
+- deltaWatermark: host bookkeeping for the scheduler's delta gate. Ignore it.
 - channelKey + deltaLines: present in reconcile mode only.
 - attempts: retry counter (informational).
 
@@ -285,27 +292,144 @@ export function projectWorkOrderBriefForPrompt(
   return `${projected}${separator}${overlay}\n`;
 }
 
+const SEED_MANIFEST_VERSION = 1;
+
+interface BriefSeedManifest {
+  version: number;
+  seeds: Record<string, string>;
+}
+
+function seedHash(text: string): string {
+  return createHash('sha256').update(text, 'utf-8').digest('hex');
+}
+
+/** A manifest we cannot read is treated as absent: every brief is untracked
+ *  (warn, never overwrite), which is the same safe state a pre-upgrade install
+ *  is already in. Failing the boot here would strand the whole daemon over a
+ *  bookkeeping file. */
+function loadSeedManifest(homeDir: string): BriefSeedManifest & { corrupt: boolean } {
+  const path = briefSeedManifestPath(homeDir);
+  if (!existsSync(path)) return { version: SEED_MANIFEST_VERSION, seeds: {}, corrupt: false };
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('seed manifest is not an object');
+    }
+    const seeds = (parsed as { seeds?: unknown }).seeds;
+    if (typeof seeds !== 'object' || seeds === null || Array.isArray(seeds)) {
+      throw new Error('seed manifest has no seeds map');
+    }
+    const projected: Record<string, string> = {};
+    for (const [kind, hash] of Object.entries(seeds as Record<string, unknown>)) {
+      if (typeof hash === 'string') projected[kind] = hash;
+    }
+    return { version: SEED_MANIFEST_VERSION, seeds: projected, corrupt: false };
+  } catch (err) {
+    console.warn(
+      `[stage2] unreadable brief seed manifest (${path}); treating every brief as untracked: ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
+    // corrupt: the caller REPLACES the file even when it records nothing new,
+    // or tracking stays off forever and this warning repeats on every boot.
+    return { version: SEED_MANIFEST_VERSION, seeds: {}, corrupt: true };
+  }
+}
+
+function writeAtomically(path: string, content: string): void {
+  // tmp+rename (PR bot round): a partial direct write would read as a
+  // user-owned brief on the next boot and never be repaired.
+  const tmpPath = `${path}.tmp`;
+  writeFileSync(tmpPath, content, 'utf-8');
+  renameSync(tmpPath, path);
+}
+
 /**
- * Boot seeding (plan B2/C6/E9): write packaged defaults for MISSING briefs
- * only - user/agent edits always win (existsSync guard). DELIBERATE deviation
- * from the persona managed-marker pattern: briefs have NO auto-upgrade; after
- * seeding they are agent/user-owned (Stage-3 self-improvement substrate), so
- * packaged default changes do not propagate to existing installs.
+ * Boot seeding (plan B2/C6/E9): write packaged defaults for MISSING briefs, and
+ * re-seed briefs the owner never touched.
+ *
+ * The seed manifest records the hash of the seed each brief was written FROM,
+ * which is what separates the two cases the old existsSync guard could not:
+ * a file still byte-identical to its recorded seed is ours to upgrade, while
+ * any other content is owner-owned and is never overwritten (Stage-3
+ * self-improvement substrate). An owner-edited brief whose packaged seed has
+ * since moved on gets ONE loud warning per boot so the owner can merge; the
+ * recorded hash deliberately stays on the seed they forked from, otherwise the
+ * warning would silence itself before the merge happened.
+ *
+ * A file byte-identical to the CURRENT packaged seed is recorded as such
+ * whatever the manifest said, because that record is a statement about the
+ * bytes, not a claim about who wrote them. This is what recovers the crash
+ * window between the brief write and the manifest write, and it lets a
+ * genuinely untouched pre-upgrade brief rejoin tracking.
+ *
+ * Any OTHER brief with no manifest entry (pre-upgrade install) is never
+ * overwritten and never recorded: we cannot tell an old seed from an edited
+ * one, so both possible records would be a false claim. The warning names the
+ * file and the opt-in (delete it to re-seed).
+ *
+ * Returns the kinds whose files this call wrote.
  */
 export function ensureBriefs(homeDir: string = homedir()): WorkOrderKind[] {
   mkdirSync(briefsDir(homeDir), { recursive: true });
-  const seeded: WorkOrderKind[] = [];
+  const manifest = loadSeedManifest(homeDir);
+  const written: WorkOrderKind[] = [];
+  let manifestChanged = manifest.corrupt;
+
   for (const kind of WORKORDER_KINDS) {
     const path = briefPath(kind, homeDir);
+    const seed = buildDefaultBrief(kind);
+    const packagedHash = seedHash(seed);
+
     if (!existsSync(path)) {
-      // tmp+rename (PR bot round): a partial direct write would read as a
-      // user-owned brief on the next boot and never be repaired.
-      const tmpPath = `${path}.tmp`;
-      writeFileSync(tmpPath, buildDefaultBrief(kind), 'utf-8');
-      renameSync(tmpPath, path);
-      seeded.push(kind);
+      writeAtomically(path, seed);
+      manifest.seeds[kind] = packagedHash;
+      manifestChanged = true;
+      written.push(kind);
       console.log(`[stage2] seeded default brief: ${path}`);
+      continue;
     }
+
+    const recordedHash = manifest.seeds[kind];
+    if (recordedHash === packagedHash) continue;
+
+    const currentHash = seedHash(readFileSync(path, 'utf-8'));
+    if (currentHash === packagedHash) {
+      // Already the current seed byte-for-byte: nothing to write, and the
+      // record is true regardless of what the manifest claimed before.
+      manifest.seeds[kind] = packagedHash;
+      manifestChanged = true;
+      continue;
+    }
+
+    if (recordedHash === undefined) {
+      console.warn(
+        `[stage2] brief ${path} predates seed tracking: it will never be upgraded ` +
+          `automatically. Delete the file to re-seed it from the packaged default.`
+      );
+      continue;
+    }
+
+    if (currentHash === recordedHash) {
+      writeAtomically(path, seed);
+      manifest.seeds[kind] = packagedHash;
+      manifestChanged = true;
+      written.push(kind);
+      console.log(`[stage2] re-seeded untouched brief: ${path}`);
+      continue;
+    }
+
+    console.warn(
+      `[stage2] brief ${path} is owner-edited and the packaged default has changed. ` +
+        `Your edits win - nothing was overwritten - but merge the new packaged brief ` +
+        `manually, or delete the file to re-seed it.`
+    );
   }
-  return seeded;
+
+  if (manifestChanged) {
+    writeAtomically(
+      briefSeedManifestPath(homeDir),
+      `${JSON.stringify({ version: SEED_MANIFEST_VERSION, seeds: manifest.seeds }, null, 2)}\n`
+    );
+  }
+  return written;
 }

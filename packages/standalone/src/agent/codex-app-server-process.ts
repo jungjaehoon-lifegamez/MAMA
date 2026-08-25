@@ -43,6 +43,8 @@ export interface CodexAppServerProcessOptions {
   isolatedHome?: string;
   registryRoot?: string;
   mcpConfigPath?: string;
+  /** Managed `model_reasoning_effort`; unset means the built-in default, unknown values throw. */
+  effort?: string;
   /** Stable identity/rules fingerprint; dynamic conversation context must be excluded. */
   policyFingerprint?: string;
 }
@@ -101,6 +103,8 @@ interface PendingTurn {
   hostToolBridge?: HostToolBridge;
   abortController: AbortController;
   intentionalStop: boolean;
+  usageBaseline?: { input: number; output: number; cached: number };
+  usageShrinkWarned?: boolean;
   abortError?: Error;
   settledTerminalError?: HostToolTerminalError;
   onDelta?: (text: string) => void;
@@ -430,7 +434,7 @@ export class CodexAppServerProcess {
       | 'isolatedHome'
       | 'registryRoot'
     >
-  > & { mcpConfigPath?: string; policyFingerprint?: string };
+  > & { mcpConfigPath?: string; policyFingerprint?: string; effort?: string };
   private readonly registry: CodexThreadRegistry;
   private child: ChildProcessWithoutNullStreams | undefined;
   private stdout: ReadlineInterface | undefined;
@@ -725,7 +729,7 @@ export class CodexAppServerProcess {
     ensurePrivateDirectory(this.options.codexHome);
     ensurePrivateDirectory(this.options.isolatedHome);
     const configPath = join(this.options.codexHome, 'config.toml');
-    const config = buildMAMACodexAppServerConfig();
+    const config = buildMAMACodexAppServerConfig(this.options.effort);
     const configFingerprint = fingerprintText(config);
     const configSignature = managedFileSignature(configPath);
     if (
@@ -1277,14 +1281,51 @@ export class CodexAppServerProcess {
       if (typeof data.turnId !== 'string' || data.turnId !== turn.turnId) {
         return;
       }
-      const last = object(object(data.tokenUsage)?.last);
+      const tokenUsage = object(data.tokenUsage);
+      const last = object(tokenUsage?.last);
+      const total = object(tokenUsage?.total);
       this.refreshTurnIdleTimeout(turn);
-      turn.usage = {
-        input_tokens: typeof last?.inputTokens === 'number' ? last.inputTokens : 0,
-        output_tokens: typeof last?.outputTokens === 'number' ? last.outputTokens : 0,
-        cache_read_input_tokens:
-          typeof last?.cachedInputTokens === 'number' ? last.cachedInputTokens : undefined,
-      };
+      const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
+      if (total) {
+        // Turn usage = cumulative-thread delta. The baseline derives from the
+        // first total-bearing event (total minus its own call, minus any usage
+        // already accumulated from total-less events this turn), so a resumed
+        // thread's unseen history is never attributed to this turn, and a
+        // multi-call tool-loop turn keeps its earlier calls (recording only
+        // `last` undercounted ~5x against the rollout ground truth).
+        turn.usageBaseline ??= {
+          input: num(total.inputTokens) - num(last?.inputTokens) - turn.usage.input_tokens,
+          output: num(total.outputTokens) - num(last?.outputTokens) - turn.usage.output_tokens,
+          cached:
+            num(total.cachedInputTokens) -
+            num(last?.cachedInputTokens) -
+            (turn.usage.cache_read_input_tokens ?? 0),
+        };
+        // A total below the baseline (compaction/rollback resetting the thread
+        // counter) must never write negative usage into the metrics DB.
+        const input = num(total.inputTokens) - turn.usageBaseline.input;
+        const output = num(total.outputTokens) - turn.usageBaseline.output;
+        const cached = num(total.cachedInputTokens) - turn.usageBaseline.cached;
+        if ((input < 0 || output < 0 || cached < 0) && !turn.usageShrinkWarned) {
+          turn.usageShrinkWarned = true;
+          console.warn(
+            '[CodexAppServer] cumulative token total shrank below the turn baseline; clamping usage to 0'
+          );
+        }
+        turn.usage = {
+          input_tokens: Math.max(0, input),
+          output_tokens: Math.max(0, output),
+          cache_read_input_tokens: Math.max(0, cached),
+        };
+      } else {
+        // No cumulative total on this event: accumulate per-call usage.
+        turn.usage = {
+          input_tokens: turn.usage.input_tokens + num(last?.inputTokens),
+          output_tokens: turn.usage.output_tokens + num(last?.outputTokens),
+          cache_read_input_tokens:
+            (turn.usage.cache_read_input_tokens ?? 0) + num(last?.cachedInputTokens),
+        };
+      }
       return;
     }
     if (method !== 'turn/completed') {

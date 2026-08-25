@@ -1586,6 +1586,7 @@ export async function runAgentLoop(
       {
         backend: runtimeBackend,
         model: config.agent.model,
+        effort: config.agent.effort,
         clineCwd: workspaceRoot,
         clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
         clineProvider: config.agent.cline_provider,
@@ -2021,6 +2022,7 @@ export async function runAgentLoop(
             : process.env.MAMA_CODEX_COMMAND,
         provider: config.agent.cline_provider,
         dataDir: config.agent.cline_data_dir,
+        effort: config.agent.effort,
       });
       stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();
       const ownerEventEnvelopeAuthority = envelopeBootstrap.envelopeAuthority;

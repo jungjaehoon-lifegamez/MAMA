@@ -7,6 +7,10 @@
 import { initConfig, configExists } from '../config/config-manager.js';
 import { OAuthManager, getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
+import {
+  assertEffortSupportedByBackend,
+  codexEffortForBackend,
+} from '../../agent/backend-model-policy.js';
 import { resolveClineCommandForStartup } from '../runtime/utilities.js';
 
 /**
@@ -45,6 +49,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
 
   const backend = config.agent.backend;
   process.env.MAMA_BACKEND = backend;
+  // Same gate the daemon boot uses: refuse an unusable effort before the first call.
+  assertEffortSupportedByBackend(backend, config.agent.effort);
 
   let oauthManager: OAuthManager;
   if (backend === 'codex') {
@@ -80,6 +86,9 @@ export async function runCommand(options: RunOptions): Promise<void> {
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
     useCodeAct: backend === 'cline',
+    // `mama run` writes the same managed config the daemon uses, so a one-shot
+    // run must not reset the daemon's configured effort.
+    codexEffort: codexEffortForBackend(backend, config.agent.effort),
     toolsConfig: config.agent.tools,
     clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
     clineProvider: config.agent.cline_provider,

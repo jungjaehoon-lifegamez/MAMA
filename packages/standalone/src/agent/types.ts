@@ -1049,6 +1049,8 @@ export interface AgentLoopOptions {
   codexIsolatedHome?: string;
   /** Durable managed Codex thread registry root. */
   codexRegistryRoot?: string;
+  /** Managed Codex `model_reasoning_effort`; unset means the built-in default. */
+  codexEffort?: string;
   /**
    * Resume existing CLI session instead of starting new one
    * When true, uses --resume flag and skips system prompt injection

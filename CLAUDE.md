@@ -229,7 +229,8 @@ git commit -m "chore(release): bump mama-os to vX.Y.Z"
 git tag vX.Y.Z
 git push origin main --tags
 
-# 3. Create GitHub Release (this triggers .github/workflows/publish.yml;
+# 3. Create GitHub Release (the tag push in step 2 is what triggers
+#    .github/workflows/publish.yml — the release itself is documentation;
 #    see docs/development/release-process.md, the authoritative flow.
 #    If the release touches mama-core, publish
 #    mama-core FIRST: publish.yml rewrites workspace:* deps to ^<repo core
@@ -330,7 +331,9 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   allowlisted chat's private DM gets the owner surface. Static sourceMapping to
   owner_console is downgraded at runtime and flagged by the code audit.
 - **Owner-event lane:** connector batches persist before source cursor commit and run through the
-  same MAMA owner agent on `owner-event:<channelKey>` sessions. Completion requires a confirmed
+  same MAMA owner agent as a stateless FRESH run per batch on `owner-event:<channelKey>` lane keys
+  (each prompt is self-contained; resuming the per-channel thread replayed the whole growing
+  history every batch — 45.9M tokens on 2026-08-20 alone). Completion requires a confirmed
   Telegram/Drive effect, accepted workorder, or exact no-update receipt; a separate background
   Conductor no longer owns or acknowledges connector work.
 - **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`

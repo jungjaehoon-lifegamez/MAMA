@@ -551,6 +551,21 @@ describe('trigger agent provider boundary', () => {
     expect(JSON.stringify(createCodexRuntime.mock.calls)).not.toMatch(/mcp|tool_call/i);
   });
 
+  it('threads the configured effort into the Codex trigger runner', () => {
+    const createCodexRuntime = vi.fn(() => ({
+      prompt: vi.fn().mockResolvedValue({ response: '[]' }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    createTriggerAgentRuntime(
+      'codex',
+      { model: 'gpt-5.4', cwd: '/safe/workspace', effort: 'xhigh' },
+      { createCodexRuntime }
+    );
+
+    expect(createCodexRuntime).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
+  });
+
   it('uses isolated Cline routes for isolated author and review calls', async () => {
     const prompt = vi
       .fn()
