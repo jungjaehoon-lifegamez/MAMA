@@ -292,7 +292,10 @@ export interface CompletedToolExchange {
 }
 
 export interface PromptTerminalError {
-  code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  code:
+    | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
+    | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+    | 'TOOL_CONTRACT_REPEAT';
   message: string;
 }
 
@@ -1258,7 +1261,8 @@ export type AgentErrorCode =
   | 'MCP_RESULT_MISSING'
   | 'MCP_COMPLETED_MUTATION_INTERRUPTED'
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
-  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+  | 'TOOL_CONTRACT_REPEAT';
 
 /**
  * Custom error class for agent loop errors

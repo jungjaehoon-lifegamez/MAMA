@@ -5,6 +5,7 @@ import type { FunctionDescriptor } from './types.js';
 import type { RoleConfig } from '../../cli/config/types.js';
 import { RoleManager } from '../role-manager.js';
 import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../../connectors/private-connector-policy.js';
+import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from '../context-compile-contract.js';
 
 /** Tool metadata for .d.ts generation */
 export interface ToolMeta {
@@ -80,7 +81,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'context_compile',
-    description: 'Compile a scoped context packet from visible evidence',
+    description: CONTEXT_COMPILE_TOOL_DESCRIPTION,
     params: [
       { name: 'task', type: 'string', required: true },
       {

@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR-A CODE GREEN, PR-B 구현 대기
+> **상태:** Eng review CLEAR, PR-A MERGED, PR-B CODE GREEN / diff review 대기
 >
 > **작성일:** 2026-08-26
 >
@@ -684,7 +684,7 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 
 ## 24. PR-A implementation evidence
 
-2026-08-26 기준 PR-A는 코드와 테스트가 완료됐고, 아직 운영 릴리즈는 하지 않았다.
+2026-08-26 기준 PR-A는 PR #230으로 main에 squash merge됐고, 아직 운영 릴리즈는 하지 않았다.
 
 - exact owner-event batch마다 durable intent를 한 행 저장하고 열린 Board repair 하나로
   coalesce한다. 직접 owner 요청만 기존 `force: true` 계약을 유지한다.
@@ -703,3 +703,31 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 - Standalone: 382 files, 5,166 tests passed; 4 files / 7 tests skipped.
 - Root: typecheck exit 0, build exit 0, test 7/7 Turbo tasks passed.
 - 릴리즈, 실제 owner-event canary, 24시간 비용 비교는 아직 수행하지 않았다.
+
+## 25. PR-B implementation evidence
+
+2026-08-26 기준 PR-B의 context contract, Temporal circuit breaker, backend terminal 전달,
+WorkOrder retry 정책은 코드와 테스트가 완료됐고 diff review를 기다린다.
+
+- canonical ToolRegistry와 Code-Act HostBridge는 하나의 host-bound `context_compile` 설명을
+  사용한다. Temporal brief는 `scopes`, `connectors`, `seed_refs`를 모델 선택 영역에서 제거하고
+  현재 generation의 grant와 task seed를 호스트가 적용한다고 명시한다. 기존 explicit widening
+  거부 경계는 유지된다.
+- breaker는 한 `RunScope`의 숫자 세 개만 사용한다. trusted `hostToolExecutions`의 실패한 ordered
+  `{name, code}`가 closed allowlist에 모두 속할 때만 SHA-256 fingerprint를 만들며, 세 번째 연속
+  동일 fingerprint 또는 아홉 번째 outer Code-Act 시도에서 `TOOL_CONTRACT_REPEAT`를 반환한다.
+- 정상/non-code/transient 결과는 streak을 reset한다. non-Temporal lane은 기존 50-call emergency
+  cap을 유지하고, mutation terminal code는 breaker보다 먼저 반환된다.
+- Claude parsed tool, Codex app-server, Cline projected tool 경로가 exact terminal code를 보존한다.
+  WorkOrderConsumer는 exact `AgentError.code`만 보고 retry를 막고, durable receipt/generation
+  arbitration을 먼저 수행한다. 문자열 위조와 다른 `retryable: false` 오류는 재시도를 막지 못한다.
+- 정상 run의 추가 비용은 run-local 숫자 세 개다. fingerprint hash는 실패한 Temporal Code-Act에서만,
+  최대 8회의 bounded audit 배열에 대해 실행된다.
+
+검증 결과:
+
+- PR-B 집중 gate: 9 files, 368 tests passed.
+- Standalone: 383 files, 5,188 tests passed; 4 files / 7 tests skipped.
+- Root: typecheck 3/3, build 2/2, test 7/7 Turbo tasks passed.
+- 변경 파일 Prettier와 `git diff --check`가 통과했다.
+- diff review, PR-B merge, 단일 shared release, 실제 Temporal/owner-event canary는 아직 수행하지 않았다.

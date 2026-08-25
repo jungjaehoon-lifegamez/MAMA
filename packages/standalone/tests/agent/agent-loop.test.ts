@@ -362,8 +362,21 @@ describe('AgentLoop', () => {
       },
     }) as T;
 
+  const temporalWorkContext = () => ({
+    attemptId: 71,
+    generationKey: 'task:7:due:1784646000000',
+    taskId: 7,
+    temporalEpoch: 2,
+    occurrenceKey: 'due:1784646000000',
+    checkAt: 1784646000000,
+    revision: 8,
+    sourceChannel: null,
+    sourceEventId: null,
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    gatewayExecutorExecuteMock.mockReset().mockResolvedValue({ success: true });
     codexRuntimeProcessMock.mockClear();
     codexSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
     persistentPromptMock.mockReset().mockResolvedValue({
@@ -1629,6 +1642,55 @@ describe('AgentLoop', () => {
       );
     });
 
+    it('TG-03/TG-04 terminates a Claude Temporal run after three equal trusted denials', async () => {
+      persistentPromptMock
+        .mockResolvedValueOnce({
+          response: '```js\ncontext_compile({ task: "one", connectors: ["trello"] })\n```',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          session_id: 'claude-session',
+        })
+        .mockResolvedValueOnce({
+          response: '```js\ncontext_compile({ task: "two", connectors: ["trello"] })\n```',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          session_id: 'claude-session',
+        })
+        .mockResolvedValueOnce({
+          response: '```js\ncontext_compile({ task: "three", connectors: ["trello"] })\n```',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          session_id: 'claude-session',
+        })
+        .mockResolvedValueOnce({
+          response: 'must not reach a fourth model turn',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          session_id: 'claude-session',
+        });
+      gatewayExecutorExecuteMock.mockReset().mockResolvedValue({
+        success: false,
+        error: 'temporal_tool_failed;sha256=synthetic;length=9',
+        hostToolExecutions: [
+          { name: 'context_compile', success: false, code: 'connector_out_of_scope' },
+        ],
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('reconcile temporal work', {
+          source: 'operator',
+          channelId: 'worker:temporal',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+          temporalWorkContext: temporalWorkContext(),
+        })
+      ).rejects.toMatchObject({ code: 'TOOL_CONTRACT_REPEAT', retryable: false });
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(3);
+      expect(persistentPromptMock).toHaveBeenCalledTimes(3);
+    });
+
     it('stops the Claude tool loop after an ambiguous Code-Act mutation', async () => {
       persistentPromptMock.mockResolvedValueOnce({
         response: '```js\ntelegram_send("chat-1", "hello")\n```',
@@ -2199,6 +2261,218 @@ describe('AgentLoop', () => {
       expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(15);
       expect(nativeResults).toHaveLength(15);
       expect(nativeResults.every((result) => result.abort !== true)).toBe(true);
+    });
+
+    it('TG-03/TG-04 terminates differently written native Temporal calls on the third equal denial', async () => {
+      const nativeResults: Array<Awaited<ReturnType<HostToolBridge['execute']>>> = [];
+      gatewayExecutorExecuteMock.mockReset().mockResolvedValue({
+        success: false,
+        error: 'temporal_tool_failed;sha256=synthetic;length=9',
+        hostToolExecutions: [
+          { name: 'context_compile', success: false, code: 'connector_out_of_scope' },
+        ],
+      });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 3; index += 1) {
+            nativeResults.push(
+              await bridge.execute({
+                callId: `temporal-denial-${index}`,
+                name: 'code_act',
+                input: { code: `context_compile({ task: "attempt-${index}" })` },
+              })
+            );
+          }
+          return {
+            response: 'stopped',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('reconcile temporal work', {
+        source: 'operator',
+        channelId: 'worker:temporal',
+        agentContext: withOuterCodeAct(codexContext()),
+        temporalWorkContext: temporalWorkContext(),
+      });
+
+      expect(nativeResults[0]).toMatchObject({ isError: true, abort: false });
+      expect(nativeResults[1]).toMatchObject({ isError: true, abort: false });
+      expect(nativeResults[2]).toMatchObject({
+        isError: true,
+        abort: true,
+        terminalCode: 'TOOL_CONTRACT_REPEAT',
+        content: expect.stringContaining('deterministic_contract'),
+      });
+    });
+
+    it('blocks the ninth native Temporal outer call before Gateway execution', async () => {
+      const nativeResults: Array<Awaited<ReturnType<HostToolBridge['execute']>>> = [];
+      gatewayExecutorExecuteMock.mockReset().mockResolvedValue({ success: true });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 9; index += 1) {
+            nativeResults.push(
+              await bridge.execute({
+                callId: `temporal-call-${index}`,
+                name: 'code_act',
+                input: { code: `step_${index}()` },
+              })
+            );
+          }
+          return {
+            response: 'stopped',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('reconcile temporal work', {
+        source: 'operator',
+        channelId: 'worker:temporal',
+        agentContext: withOuterCodeAct(codexContext()),
+        temporalWorkContext: temporalWorkContext(),
+      });
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(8);
+      expect(nativeResults[8]).toMatchObject({
+        isError: true,
+        abort: true,
+        terminalCode: 'TOOL_CONTRACT_REPEAT',
+      });
+    });
+
+    it('does not fingerprint Temporal provider or missing-code failures', async () => {
+      const nativeResults: Array<Awaited<ReturnType<HostToolBridge['execute']>>> = [];
+      gatewayExecutorExecuteMock.mockReset().mockResolvedValue({
+        success: false,
+        error: 'temporal_tool_failed;sha256=synthetic;length=9',
+        hostToolExecutions: [{ name: 'context_compile', success: false }],
+      });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 3; index += 1) {
+            nativeResults.push(
+              await bridge.execute({
+                callId: `temporal-unclassified-${index}`,
+                name: 'code_act',
+                input: { code: `step_${index}()` },
+              })
+            );
+          }
+          return {
+            response: 'done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('reconcile temporal work', {
+        source: 'operator',
+        channelId: 'worker:temporal',
+        agentContext: withOuterCodeAct(codexContext()),
+        temporalWorkContext: temporalWorkContext(),
+      });
+
+      expect(nativeResults).toHaveLength(3);
+      expect(nativeResults.every((result) => result.terminalCode === undefined)).toBe(true);
+      expect(nativeResults.every((result) => result.abort !== true)).toBe(true);
+    });
+
+    it('TG-06 keeps a mutation terminal code ahead of a would-be third repeat', async () => {
+      const nativeResults: Array<Awaited<ReturnType<HostToolBridge['execute']>>> = [];
+      gatewayExecutorExecuteMock
+        .mockReset()
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'first deterministic denial',
+          hostToolExecutions: [
+            { name: 'context_compile', success: false, code: 'connector_out_of_scope' },
+          ],
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'second deterministic denial',
+          hostToolExecutions: [
+            { name: 'context_compile', success: false, code: 'connector_out_of_scope' },
+          ],
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          retryable: false,
+          abort: true,
+          error: 'mutation outcome unknown',
+          hostToolExecutions: [
+            { name: 'context_compile', success: false, code: 'connector_out_of_scope' },
+          ],
+        });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 3; index += 1) {
+            nativeResults.push(
+              await bridge.execute({
+                callId: `precedence-${index}`,
+                name: 'code_act',
+                input: { code: `step_${index}()` },
+              })
+            );
+          }
+          return {
+            response: 'stopped',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('reconcile temporal work', {
+        source: 'operator',
+        channelId: 'worker:temporal',
+        agentContext: withOuterCodeAct(codexContext()),
+        temporalWorkContext: temporalWorkContext(),
+      });
+
+      expect(nativeResults[2]).toMatchObject({
+        abort: true,
+        terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      });
     });
 
     it('structurally aborts a native turn after an ambiguous Code-Act mutation', async () => {
