@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.0] - 2026-08-26
+
+### Added
+
+- **Owner-event Board delegations now coalesce without losing exact receipts.** Every connector
+  batch persists one durable intent, while bursts share one open non-force full repair. Acceptance
+  is atomic with workorder enqueue, survives restart, and can ACK the exact batch before a replayed
+  model run. Only a verified all-slot publish or exact no-update receipt applies a generation;
+  later generations schedule one post-terminal repair instead of one model run per event.
+- **Temporal workers stop repeated deterministic tool-contract failures.** A run-local breaker
+  fingerprints only trusted failed `{tool, code}` audit entries from a closed allowlist. The third
+  equal consecutive denial, or ninth outer Code-Act attempt, ends as non-retryable
+  `TOOL_CONTRACT_REPEAT`. Claude, Codex, and Cline preserve that terminal code, and another
+  Temporal model run is suppressed only after exact typed-code validation and durable receipt
+  arbitration.
+
+### Changed
+
+- **Temporal context compilation is host-bound by default.** ToolRegistry and the Code-Act
+  HostBridge share one `context_compile` contract. The Temporal brief removes `scopes`,
+  `connectors`, and raw seeds from model-selected authority; the host applies current generation
+  grants and the active task seed. Explicit narrowing still uses the existing authorization checks,
+  and widening remains fail-closed.
+- **Board repair no longer depends on the optional legacy dashboard persona.** The independent
+  Stage-2 publisher and verifier remain active regardless of `dashboard-agent` persona settings.
+  Direct owner refreshes stay forced, while owner-event repairs stay non-force and replay-safe.
+
 ## mama-os [0.38.0] - 2026-08-25
 
 ### Fixed
