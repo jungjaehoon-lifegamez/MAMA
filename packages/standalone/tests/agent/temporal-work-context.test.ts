@@ -575,6 +575,14 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         envelope,
         modelRunId: 'mr_wo_inherit',
         causeEventIds: ['evi_host_1', 'evi_host_2'],
+        ownerEventEffects: {
+          batchId: 42,
+          effectKeys: {
+            telegram_send: 'telegram-delivery',
+            drive_upload: 'drive-upload',
+          },
+        },
+        source: 'owner-event',
         agentContext: {
           ...executionContext.agentContext!,
           role: {
@@ -588,7 +596,11 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         },
       }
     );
-    expect(handler).toHaveBeenCalledWith('board', ['evi_host_1', 'evi_host_2']);
+    expect(handler).toHaveBeenCalledWith('board', {
+      kind: 'owner_event',
+      batchId: 42,
+      eventIds: ['evi_host_1', 'evi_host_2'],
+    });
   });
 
   it('the HOST seeds the compile with the bound source - the agent never restates it (S2)', async () => {

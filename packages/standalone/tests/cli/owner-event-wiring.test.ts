@@ -1,15 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Database from '../../src/sqlite.js';
 import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
+import { OwnerEventBoardRefreshLedger } from '../../src/operator/owner-event-board-refresh.js';
+import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
 import { OwnerEventLoop } from '../../src/operator/owner-event-loop.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { resolveOwnerEventTerminalReceipt } from '../../src/cli/commands/start.js';
 import { buildOwnerEventAgentContext } from '../../src/operator/owner-event-policy.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import type { Envelope } from '../../src/envelope/types.js';
 
 describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
+  function ownerContext() {
+    return buildOwnerEventAgentContext({
+      backend: 'codex',
+      model: 'gpt-5.6-sol',
+      ownerRole: DEFAULT_ROLES.definitions.owner_console,
+      privateConnectorPolicy: resolvePrivateConnectorPolicy({
+        ok: true,
+        config: { kagemusha: { enabled: true } },
+        enabledNames: ['kagemusha'],
+      }),
+    });
+  }
+
+  function envelope(): Envelope {
+    return {
+      scope: { allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }] },
+    } as Envelope;
+  }
+
   it('moves one connector event from durable intake to a receipted MAMA owner turn', async () => {
     const db = new Database(':memory:');
     const registry = new TriggerRegistry(db);
@@ -134,5 +157,92 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       failed: 0,
     });
     registry.close();
+  });
+
+  it('ACKs a persisted Board acceptance after restart without waking the model', async () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db);
+    const inbox = new OwnerEventInbox(db);
+    const effects = new OwnerEventEffectLedger(db);
+    const boardIntents = new OwnerEventBoardRefreshLedger(db, taskLedger);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-restart'],
+      lines: ['feedback arrived'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    boardIntents.accept({
+      batchId,
+      eventIds: ['evt-restart'],
+      repair: { repairGeneration: 20, noUpdateScope: 'full:20' },
+    });
+    const runner = { run: vi.fn(() => Promise.reject(new Error('must not run'))) };
+    const loop = new OwnerEventLoop({
+      inbox,
+      runner,
+      agentContext: ownerContext(),
+      buildPrompt: () => 'must not build',
+      issueEnvelope: async () => envelope(),
+      getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+      getTerminalReceipt: (batch) =>
+        resolveOwnerEventTerminalReceipt(batch, {
+          ownerEventEffectLedger: effects,
+          ownerEventBoardRefreshLedger: boardIntents,
+          taskLedger,
+        }),
+      log: () => undefined,
+    });
+
+    expect(await loop.tick()).toBe('processed');
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+    db.close();
+  });
+
+  it('lets a durable Board acceptance win after the accepting runner throws', async () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db);
+    const inbox = new OwnerEventInbox(db);
+    const effects = new OwnerEventEffectLedger(db);
+    const boardIntents = new OwnerEventBoardRefreshLedger(db, taskLedger);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-error'],
+      lines: ['feedback arrived'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    const runner = {
+      run: vi.fn(async () => {
+        boardIntents.accept({
+          batchId,
+          eventIds: ['evt-error'],
+          repair: { repairGeneration: 21, noUpdateScope: 'full:21' },
+        });
+        throw new Error('runner transport failed after acceptance');
+      }),
+    };
+    const loop = new OwnerEventLoop({
+      inbox,
+      runner,
+      agentContext: ownerContext(),
+      buildPrompt: () => 'handle feedback',
+      issueEnvelope: async () => envelope(),
+      getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+      getTerminalReceipt: (batch) =>
+        resolveOwnerEventTerminalReceipt(batch, {
+          ownerEventEffectLedger: effects,
+          ownerEventBoardRefreshLedger: boardIntents,
+          taskLedger,
+        }),
+      log: () => undefined,
+    });
+
+    expect(await loop.tick()).toBe('processed');
+    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+    expect(boardIntents.findAcceptance(batchId)).not.toBeNull();
+    db.close();
   });
 });

@@ -2394,6 +2394,108 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('TG-06 host-bound workorder origin', () => {
+      it('derives owner-event identity from trusted execution state and ignores model fields', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const handler = vi.fn(() => ({ accepted: true }));
+        executor.setWorkOrderRequestHandler(handler);
+        executor.setAgentContext({
+          ...createOwnerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          role: {
+            ...DEFAULT_ROLES.definitions.owner_console,
+            allowedTools: ['workorder_request'],
+          },
+        });
+
+        const result = await executor.execute(
+          'workorder_request',
+          { kind: 'board', batchId: 999, eventIds: ['model-forged'] } as never,
+          {
+            agentId: 'owner_console',
+            source: 'owner-event',
+            channelId: 'chatwork:feedback',
+            sourceMessageRef: 'owner-event:42',
+            modelRunId: 'mr-owner-event-workorder',
+            executionSurface: 'direct',
+            causeEventIds: ['evt-host'],
+            ownerEventEffects: {
+              batchId: 42,
+              effectKeys: {
+                telegram_send: 'telegram-delivery',
+                drive_upload: 'drive-upload',
+              },
+            },
+          }
+        );
+
+        expect(result).toMatchObject({ success: true });
+        expect(handler).toHaveBeenCalledWith('board', {
+          kind: 'owner_event',
+          batchId: 42,
+          eventIds: ['evt-host'],
+        });
+      });
+
+      it('uses owner_manual for a direct owner chat request', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const handler = vi.fn(() => ({ accepted: true }));
+        executor.setWorkOrderRequestHandler(handler);
+        executor.setAgentContext(createOwnerContext());
+
+        const result = await executor.execute(
+          'workorder_request',
+          { kind: 'board' },
+          {
+            agentId: 'owner_console',
+            source: 'telegram',
+            channelId: 'owner-chat',
+            modelRunId: 'mr-owner-manual-workorder',
+            executionSurface: 'direct',
+          }
+        );
+
+        expect(result).toMatchObject({ success: true });
+        expect(handler).toHaveBeenCalledWith('board', { kind: 'owner_manual' });
+      });
+
+      it('fails closed when an owner-event run lacks its host-issued batch authority', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const handler = vi.fn(() => ({ accepted: true }));
+        executor.setWorkOrderRequestHandler(handler);
+        executor.setAgentContext({
+          ...createOwnerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          role: {
+            ...DEFAULT_ROLES.definitions.owner_console,
+            allowedTools: ['workorder_request'],
+          },
+        });
+
+        const result = await executor.execute(
+          'workorder_request',
+          { kind: 'board' },
+          {
+            agentId: 'owner_console',
+            source: 'owner-event',
+            channelId: 'chatwork:feedback',
+            sourceMessageRef: 'owner-event:42',
+            modelRunId: 'mr-owner-event-missing-authority',
+            executionSurface: 'direct',
+            causeEventIds: ['evt-host'],
+          }
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          code: 'workorder_owner_event_authority_missing',
+        });
+        expect(handler).not.toHaveBeenCalled();
+      });
+    });
+
     describe('Story GT-SEC-1: Bash safety checks', () => {
       describe('AC #1: dangerous Bash commands are blocked', () => {
         it.each([

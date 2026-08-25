@@ -99,9 +99,16 @@ describe('Story S2-T3: extracted workorder hooks', () => {
 
     it('clears all captured dirt only after a host-verified full effect', () => {
       const cleared: number[] = [];
+      const applied: Array<[number, number]> = [];
       const gate = {
         completeVerifiedReconcile: () => undefined,
         completeVerifiedFull: (generation: number) => cleared.push(generation),
+      };
+      const intents = {
+        markVerified: (workOrderId: number, generation: number) => {
+          applied.push([workOrderId, generation]);
+          return { applied: 1, followupPending: false };
+        },
       };
       const workOrder = {
         id: 13,
@@ -109,10 +116,54 @@ describe('Story S2-T3: extracted workorder hooks', () => {
         payload: { attempts: 1, mode: 'full', repairGeneration: 88, noUpdateScope: 'full:88' },
       } as unknown as WorkOrderRecord;
 
-      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate);
+      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate, intents);
       expect(cleared).toEqual([]);
-      applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate);
+      expect(applied).toEqual([]);
+      applyBoardRefreshVerdict(
+        workOrder,
+        true,
+        { disposition: 'fail', reason: 'receipt incomplete' },
+        gate,
+        intents
+      );
+      expect(cleared).toEqual([]);
+      expect(applied).toEqual([]);
+
+      applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate, intents);
       expect(cleared).toEqual([88]);
+      expect(applied).toEqual([[13, 88]]);
+    });
+
+    it('does not apply full-repair intents from a reconcile verdict', () => {
+      const applied: Array<[number, number]> = [];
+      const workOrder = {
+        id: 14,
+        workKind: 'board',
+        payload: {
+          attempts: 1,
+          mode: 'reconcile',
+          channelKey: 'telegram:owner',
+          repairGeneration: 89,
+        },
+      } as unknown as WorkOrderRecord;
+
+      applyBoardRefreshVerdict(
+        workOrder,
+        true,
+        { disposition: 'complete' },
+        {
+          completeVerifiedReconcile: () => undefined,
+          completeVerifiedFull: () => undefined,
+        },
+        {
+          markVerified: (workOrderId, generation) => {
+            applied.push([workOrderId, generation]);
+            return { applied: 1, followupPending: false };
+          },
+        }
+      );
+
+      expect(applied).toEqual([]);
     });
   });
 
