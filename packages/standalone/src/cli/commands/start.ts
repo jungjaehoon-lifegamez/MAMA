@@ -1658,6 +1658,9 @@ export async function runAgentLoop(
   // Durable MAMA owner-event journal. It uses new tables rather than replaying
   // the legacy default-off Conductor shadow backlog on cutover.
   const ownerEventInbox = new OwnerEventInbox(operatorDb);
+  const ownerEventBoardRefreshLedgerRef: { current: OwnerEventBoardRefreshLedger | null } = {
+    current: null,
+  };
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
@@ -1707,6 +1710,7 @@ export async function runAgentLoop(
   resolveWorkerRequestTimeoutMs();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
+  const boardRepairNudge: { current: (() => void) | null } = { current: null };
   let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
@@ -1895,6 +1899,13 @@ export async function runAgentLoop(
         } catch {
           /* telemetry only */
         }
+        if (
+          event.type === 'complete' &&
+          event.workKind === 'board' &&
+          ownerEventBoardRefreshLedgerRef.current?.consumePostTerminalFollowup(event.workOrderId)
+        ) {
+          boardRepairNudge.current?.();
+        }
       },
     });
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
@@ -1902,7 +1913,13 @@ export async function runAgentLoop(
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
     toolExecutor.setWorkOrderRequestHandler(
-      buildOwnerWorkOrderRequestHandler({ taskLedger, boardRefreshGate })
+      buildOwnerWorkOrderRequestHandler({
+        taskLedger,
+        boardRefreshGate,
+        ...(ownerEventBoardRefreshLedgerRef.current
+          ? { ownerEventBoardRefreshLedger: ownerEventBoardRefreshLedgerRef.current }
+          : {}),
+      })
     );
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -2400,7 +2417,11 @@ export async function runAgentLoop(
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
+    ...(ownerEventBoardRefreshLedgerRef.current
+      ? { ownerEventBoardRefreshLedger: ownerEventBoardRefreshLedgerRef.current }
+      : {}),
   });
+  boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
   gateways.push({ stop: async () => apiRoutesHandle.stop() });
 
   // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
