@@ -400,13 +400,19 @@ export class WorkOrderConsumer {
       }
       const reason = errMessage(err);
       const transient = classifyTransientModelError(reason);
+      const temporalContractRepeat =
+        wo.workKind === 'temporal' && isTemporalToolContractRepeat(err);
       // Name transient upstream errors identically to an in-band 529 so the
       // operator sees a class, not an anonymous digest. Transient = retryable
       // (not an ambiguous mutation); per-kind max_attempts bounds the rest.
       this.handleFailure(
         wo,
-        transient ? `model-transport-error: ${transient}` : reason,
-        transient ? true : !isAmbiguousCodeActMutation(err)
+        temporalContractRepeat
+          ? 'TOOL_CONTRACT_REPEAT'
+          : transient
+            ? `model-transport-error: ${transient}`
+            : reason,
+        temporalContractRepeat ? false : transient ? true : !isAmbiguousCodeActMutation(err)
       );
       return;
     }
@@ -638,7 +644,11 @@ export class WorkOrderConsumer {
       workOrderId: wo.id,
       reason: receiptReason,
     });
-    this.alarm('board', `board work failed: ${receiptReason} (workorder #${wo.id})`, 'board-candidate-receipts');
+    this.alarm(
+      'board',
+      `board work failed: ${receiptReason} (workorder #${wo.id})`,
+      'board-candidate-receipts'
+    );
     this.log(`[workorder-consumer] failed board#${wo.id}: ${receiptReason}`);
   }
 
@@ -681,6 +691,7 @@ export class WorkOrderConsumer {
     allowRetry = true,
     tokensUsed?: number
   ): void {
+    const deterministicContractRepeat = reason === 'TOOL_CONTRACT_REPEAT' && !allowRetry;
     const auditReason = temporalFailureAuditReason(reason);
     const logReason = temporalFailureLogReason(reason);
     let state: TemporalAttemptState;
@@ -811,7 +822,9 @@ export class WorkOrderConsumer {
     }
     this.log(
       result.retrySuppressed
-        ? `[workorder-consumer] failed temporal#${wo.id}: non-retryable ambiguous mutation outcome`
+        ? deterministicContractRepeat
+          ? `[workorder-consumer] failed temporal#${wo.id}: repeated deterministic tool contract failure`
+          : `[workorder-consumer] failed temporal#${wo.id}: non-retryable ambiguous mutation outcome`
         : `[workorder-consumer] failed temporal#${wo.id}: ${logReason}`
     );
     this.emitEvent({
@@ -823,7 +836,9 @@ export class WorkOrderConsumer {
     this.alarm(
       'temporal',
       result.retrySuppressed
-        ? `temporal automatic retry suppressed - a mutation outcome is ambiguous: ${logReason} (workorder #${wo.id})`
+        ? deterministicContractRepeat
+          ? `temporal automatic retry suppressed - repeated deterministic contract failure: ${logReason} (workorder #${wo.id})`
+          : `temporal automatic retry suppressed - a mutation outcome is ambiguous: ${logReason} (workorder #${wo.id})`
         : `temporal work failed - retries exhausted: ${logReason} (workorder #${wo.id}, ${result.attempt}/${result.maxAttempts})`
     );
   }
@@ -904,6 +919,10 @@ function isAmbiguousCodeActMutation(error: unknown): boolean {
   );
 }
 
+function isTemporalToolContractRepeat(error: unknown): boolean {
+  return error instanceof AgentError && error.code === 'TOOL_CONTRACT_REPEAT';
+}
+
 /**
  * A closed vocabulary of failure shapes, and the ONLY thing the log learns about a cause.
  *
@@ -919,6 +938,7 @@ function isAmbiguousCodeActMutation(error: unknown): boolean {
  * table separates those without quoting a single byte of the error.
  */
 const TEMPORAL_FAILURE_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^TOOL_CONTRACT_REPEAT$/, 'deterministic-contract-repeat'],
   [/\b429\b|rate.?limit|too many requests/i, 'rate-limited'],
   [/\b5\d{2}\b|overloaded|server error|internal error/i, 'upstream-5xx'],
   [/timed?.?out|etimedout|deadline|aborted/i, 'timeout'],

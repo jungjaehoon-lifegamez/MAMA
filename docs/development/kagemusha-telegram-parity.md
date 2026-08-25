@@ -105,8 +105,33 @@ scenario IDs from this document.
 - **Verification:** the PR-A focused gate passed eight files and 198 tests. The complete standalone
   suite passed 382 files and 5,166 tests, with four files and seven tests skipped. Root typecheck,
   build, and all seven Turbo test tasks passed. This is code/test evidence only.
-- **Status:** CODE GREEN; PR-A review/merge, the PR-B Temporal change, release cutover, and a real
-  owner-event canary remain pending.
+- **Status:** CODE GREEN and merged as PR #230; the shared release and a real owner-event canary
+  remain pending.
+
+### Temporal contract-repeat evidence: 2026-08-26
+
+- **TG-03/TG-04:** the canonical registry and Code-Act HostBridge now expose one host-bound
+  `context_compile` description. The Temporal brief requires the model to omit `scopes`,
+  `connectors`, and `seed_refs`; the host applies the generation grants and active task seed.
+  Explicit narrowing still passes through the existing authorization checks, and widening remains
+  denied. MAMA remains free to compose different Code-Act programs; only repeated trusted denials
+  are bounded.
+- **TG-05:** `codeActCalls`, `lastDeterministicFingerprint`, and
+  `consecutiveDeterministicFailures` live only in one `RunScope`. Concurrent and subsequent runs
+  start at zero, while non-Temporal owner/chat lanes retain the existing 50-call emergency cap.
+- **TG-06:** only executor-returned failed `{name, code}` audit entries from the closed
+  deterministic allowlist can form a fingerprint. The third equal consecutive fingerprint or
+  ninth outer call returns non-retryable `TOOL_CONTRACT_REPEAT`. Existing mutation terminal codes
+  take precedence. Claude parsed tools, Codex app-server, and Cline projected tools preserve the
+  exact code. `WorkOrderConsumer` suppresses another Temporal model run only after exact typed-code
+  validation and durable receipt/generation arbitration; prose and unrelated non-retryable errors
+  retain the existing retry policy.
+- **Verification:** the focused PR-B gate passed nine files and 368 tests. The complete standalone
+  suite passed 383 files and 5,188 tests, with four files and seven tests skipped. Root typecheck
+  passed 3/3 tasks, build passed 2/2 tasks, and all seven Turbo test tasks passed. Changed-file
+  Prettier and `git diff --check` passed.
+- **Status:** CODE GREEN; diff review, PR-B merge, the shared release, and a real Temporal canary
+  remain pending.
 
 ### Sender-boundary completion evidence: 2026-08-13
 

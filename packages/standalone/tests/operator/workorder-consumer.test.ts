@@ -46,6 +46,22 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
   return { deps, ledger, notices, activeSends, events, logs };
 }
 
+function enqueueTemporalDue(ledger: TaskLedger): string {
+  const task = ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+  const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+  const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
+  ledger.enqueueTemporalGeneration({
+    generationKey,
+    taskId: task.id,
+    temporalEpoch: task.temporalEpoch,
+    occurrenceKey,
+    checkAt: task.dueAt!,
+    sourceChannel: null,
+    sourceEventId: null,
+  });
+  return generationKey;
+}
+
 describe('Story S2-T3: WorkOrderConsumer', () => {
   let ctx: ReturnType<typeof makeDeps>;
 
@@ -212,6 +228,62 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
     expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
     expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
+  });
+
+  it('suppresses only the exact trusted TOOL_CONTRACT_REPEAT Temporal retry', async () => {
+    const generationKey = enqueueTemporalDue(ctx.ledger);
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new AgentError(
+          'Temporal deterministic host-tool contract failure repeated',
+          'TOOL_CONTRACT_REPEAT'
+        );
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
+    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
+    expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
+    expect(ctx.activeSends.join('\n')).toContain('deterministic contract');
+    expect(ctx.activeSends.join('\n')).not.toContain('ambiguous');
+  });
+
+  it('does not trust plain TOOL_CONTRACT_REPEAT text to suppress a Temporal retry', async () => {
+    enqueueTemporalDue(ctx.ledger);
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new Error('TOOL_CONTRACT_REPEAT');
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
+    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
+  });
+
+  it('does not broaden retry suppression to unrelated non-retryable AgentError codes', async () => {
+    enqueueTemporalDue(ctx.ledger);
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new AgentError(
+          'unrelated deterministic-looking error',
+          'CLI_ERROR',
+          undefined,
+          false
+        );
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
+    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
   });
 
   describe('token telemetry: run usage rides the completion event', () => {

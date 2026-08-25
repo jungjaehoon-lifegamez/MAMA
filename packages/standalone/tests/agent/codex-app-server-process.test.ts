@@ -1008,6 +1008,29 @@ describe('Story: Codex app-server process', () => {
     await runner.stop();
   });
 
+  it('TG-03/TG-04 preserves TOOL_CONTRACT_REPEAT across the app-server interrupt', async () => {
+    const item = fixture('tool-stop');
+    const runner = new CodexAppServerProcess(item.options);
+
+    const failure = await runner
+      .prompt('hi', undefined, {
+        hostToolBridge: hostBridge(async () => ({
+          content: 'Temporal deterministic contract failure repeated',
+          isError: true,
+          abort: true,
+          terminalCode: 'TOOL_CONTRACT_REPEAT',
+        })),
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(HostToolTerminalError);
+    expect(failure).toMatchObject({
+      terminalCode: 'TOOL_CONTRACT_REPEAT',
+      retryable: false,
+    });
+    await runner.stop();
+  });
+
   it.each(['tool-terminal-exit', 'tool-interrupt-hang'])(
     'preserves a trusted terminal mutation code when %s disrupts settlement',
     async (mode) => {
