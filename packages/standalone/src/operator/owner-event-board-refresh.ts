@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from '../sqlite.js';
 import { applyOwnerEventBoardRefreshMigration } from '../db/migrations/owner-event-board-refresh.js';
 import { boardFullNoUpdateScope, type FullRepairCapture } from './board-refresh-gate.js';
-import { boardBatchKey, boardRepairKey } from './workorder-publishers.js';
+import { boardBatchKey, boardRepairKey, validateWorkOrderPayload } from './workorder-publishers.js';
 import type { EnqueueWorkOrderInput, WorkOrderRecord } from './task-ledger.js';
 
 export interface OwnerEventBoardRefreshAcceptance {
@@ -144,15 +144,17 @@ export class OwnerEventBoardRefreshLedger {
         }
         return existing;
       }
+      const payload = {
+        mode: 'full' as const,
+        force: false,
+        repairGeneration: input.repair.repairGeneration,
+        noUpdateScope: input.repair.noUpdateScope,
+      };
+      validateWorkOrderPayload('board', payload);
       const workOrder = this.taskLedger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: boardRepairKey(),
-        input: {
-          mode: 'full',
-          force: false,
-          repairGeneration: input.repair.repairGeneration,
-          noUpdateScope: input.repair.noUpdateScope,
-        },
+        input: payload,
         priority: 'high',
       });
       const now = this.clock();

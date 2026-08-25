@@ -26,6 +26,7 @@ import type {
   AgentContext,
   GatewayToolExecutionContext,
   PrincipalRepository,
+  WorkOrderRequestOrigin,
 } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { PromptEnhancer } from '../../agent/prompt-enhancer.js';
@@ -121,6 +122,7 @@ import {
 } from '../../operator/workorder-publishers.js';
 import { OwnerEventInbox } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
+import { OwnerEventBoardRefreshLedger } from '../../operator/owner-event-board-refresh.js';
 import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
@@ -853,6 +855,7 @@ const OWNER_BOARD_FULL_REPAIR_CHANNEL = 'host:owner-workorder:board-full';
 export interface OwnerWorkOrderRequestHandlerDeps {
   taskLedger: TaskLedger;
   boardRefreshGate: BoardRefreshGate | null;
+  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
   now?: () => number;
   log?: (line: string) => void;
   logError?: (line: string, detail: unknown) => void;
@@ -863,51 +866,58 @@ export function buildOwnerWorkOrderRequestHandler(
   deps: OwnerWorkOrderRequestHandlerDeps
 ): (
   kind: 'board' | 'wiki' | 'memory-curation',
-  causeEventIds?: readonly string[]
+  origin?: WorkOrderRequestOrigin
 ) => { accepted: boolean; reason?: string } {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((line: string) => ownerWorkOrderLogger.info(line));
   const logError =
     deps.logError ?? ((line: string, detail: unknown) => ownerWorkOrderLogger.error(line, detail));
 
-  return (kind, causeEventIds) => {
+  return (kind, origin = { kind: 'owner_manual' }) => {
     try {
       const requestedAt = now();
       let idempotencyKey: string;
       let payload: Record<string, unknown>;
       if (kind === 'board') {
+        if (!deps.boardRefreshGate) {
+          throw new Error('Board refresh gate is unavailable');
+        }
+        if (origin.kind === 'owner_event') {
+          if (!deps.ownerEventBoardRefreshLedger) {
+            throw new Error('Owner-event Board refresh ledger is unavailable');
+          }
+          const existing = deps.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId);
+          if (existing) {
+            log(`[stage2] owner workorder already accepted: board#${existing.workOrderId}`);
+            return { accepted: true };
+          }
+          deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
+          const accepted = deps.ownerEventBoardRefreshLedger.accept({
+            batchId: origin.batchId,
+            eventIds: origin.eventIds,
+            repair: deps.boardRefreshGate.captureFullRepair(),
+          });
+          log(`[stage2] owner workorder accepted: board#${accepted.workOrderId}`);
+          return { accepted: true };
+        }
         // TG-06: host dirt is recorded before validation or enqueue can fail.
         // The fixed synthetic channel never trusts model/event identifiers.
-        const repair = deps.boardRefreshGate
-          ? (() => {
-              deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
-              return deps.boardRefreshGate.captureFullRepair();
-            })()
-          : null;
-        if (causeEventIds && causeEventIds.length > 0) {
-          idempotencyKey = boardBatchKey(causeEventIds);
-          payload = {
-            mode: 'full',
-            force: true,
-            eventIds: [...causeEventIds],
-            ...(repair ?? {}),
-          };
-        } else {
-          idempotencyKey = boardManualKey(requestedAt);
-          payload = { mode: 'full', force: true, ...(repair ?? {}) };
-        }
+        deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
+        const repair = deps.boardRefreshGate.captureFullRepair();
+        idempotencyKey = boardManualKey(requestedAt);
+        payload = { mode: 'full', force: true, ...repair };
       } else if (kind === 'wiki') {
-        if (causeEventIds && causeEventIds.length > 0) {
-          idempotencyKey = ownerEventWorkOrderKey('wiki', causeEventIds);
-          payload = { batchId: idempotencyKey, events: [...causeEventIds] };
+        if (origin.kind === 'owner_event') {
+          idempotencyKey = ownerEventWorkOrderKey('wiki', origin.eventIds);
+          payload = { batchId: idempotencyKey, events: [...origin.eventIds] };
         } else {
           idempotencyKey = wikiBatchKey('manual', requestedAt);
           payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
         }
       } else {
         idempotencyKey =
-          causeEventIds && causeEventIds.length > 0
-            ? ownerEventWorkOrderKey('memory-curation', causeEventIds)
+          origin.kind === 'owner_event'
+            ? ownerEventWorkOrderKey('memory-curation', origin.eventIds)
             : promotionManualKey(requestedAt);
         payload = { scheduledAt: new Date(requestedAt).toISOString() };
       }
