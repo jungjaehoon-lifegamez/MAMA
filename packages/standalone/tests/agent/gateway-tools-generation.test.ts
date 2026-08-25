@@ -5,6 +5,8 @@
 import { describe, it, expect } from 'vitest';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { buildGatewayToolCatalog } from '../../src/agent/gateway-tool-catalog.js';
+import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from '../../src/agent/context-compile-contract.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 describe('Gateway tools generation', () => {
@@ -83,6 +85,19 @@ describe('Gateway tools generation', () => {
       expect(tool?.params).toContain('scopes?');
       expect(tool?.params).toContain('connectors?');
       expect(tool?.params).toContain('seed_refs?');
+    });
+
+    it('TG-03/TG-04 gives the registry and Code-Act bridge one host-bound compile contract', () => {
+      const registryTool = ToolRegistry.getTool('context_compile');
+      const bridgeTool = HostBridge.getToolRegistry().find(
+        (candidate) => candidate.name === 'context_compile'
+      );
+
+      expect(registryTool?.description).toBe(CONTEXT_COMPILE_TOOL_DESCRIPTION);
+      expect(bridgeTool?.description).toBe(CONTEXT_COMPILE_TOOL_DESCRIPTION);
+      expect(CONTEXT_COMPILE_TOOL_DESCRIPTION).toContain('OMIT scopes and connectors');
+      expect(CONTEXT_COMPILE_TOOL_DESCRIPTION).toContain('host-bound');
+      expect(CONTEXT_COMPILE_TOOL_DESCRIPTION).toContain('narrow');
     });
 
     it('should use dash separator for description', () => {

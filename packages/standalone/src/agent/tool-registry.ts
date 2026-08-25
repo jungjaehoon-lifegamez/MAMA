@@ -11,6 +11,7 @@ import type { GatewayToolName } from './types.js';
 import type { HostToolDefinition } from './model-runner.js';
 import { minimatch } from 'minimatch';
 import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../connectors/private-connector-policy.js';
+import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from './context-compile-contract.js';
 
 // ─── Tool Metadata ───────────────────────────────────────────────────────────
 
@@ -86,8 +87,7 @@ register({
 });
 register({
   name: 'context_compile',
-  description:
-    'Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3/read-only agents.',
+  description: CONTEXT_COMPILE_TOOL_DESCRIPTION,
   category: 'memory',
   params:
     'task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?',
