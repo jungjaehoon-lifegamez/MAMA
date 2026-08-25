@@ -1,120 +1,236 @@
 import { describe, expect, it, vi } from 'vitest';
-import Database from '../../src/sqlite.js';
+
+import {
+  buildOwnerEventBoardRefreshRuntime,
+  buildOwnerWorkOrderRequestHandler,
+} from '../../src/cli/commands/start.js';
 import { BoardRefreshGate } from '../../src/operator/board-refresh-gate.js';
+import { OwnerEventBoardRefreshLedger } from '../../src/operator/owner-event-board-refresh.js';
+import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
-import { buildOwnerWorkOrderRequestHandler } from '../../src/cli/commands/start.js';
+import Database from '../../src/sqlite.js';
 
-describe('TG-06 owner board workorder repair generation', () => {
-  it.each(['board', 'wiki', 'memory-curation'] as const)(
-    'dedupes a receipted owner-event %s handoff even after the first workorder is terminal',
-    (kind) => {
-      const db = new Database(':memory:');
-      const ledger = new TaskLedger(db);
-      let now = 1_000;
-      const handler = buildOwnerWorkOrderRequestHandler({
-        taskLedger: ledger,
-        boardRefreshGate: null,
-        now: () => now,
-        log: vi.fn(),
-        logError: vi.fn(),
-      });
-
-      expect(handler(kind, ['evt-owner-1'])).toEqual({ accepted: true });
-      const first = ledger.claimNextWorkOrder();
-      if (!first) throw new Error('owner-event workorder expected');
-      expect(first.idempotencyKey).toMatch(new RegExp(`^owner-event:${kind}:`));
-      ledger.completeWorkOrder(first.id);
-
-      now = 9_000;
-      expect(handler(kind, ['evt-owner-1'])).toEqual({ accepted: true });
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-      expect(
-        (
-          db.prepare(`SELECT COUNT(*) AS n FROM operator_tasks WHERE kind = 'system'`).get() as {
-            n: number;
-          }
-        ).n
-      ).toBe(1);
-      db.close();
-    }
-  );
-
-  it('marks eventless and event-backed owner full requests dirty before enqueue and carries exact scopes', () => {
+describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
+  function createHarness(initialGeneration = 100) {
     const db = new Database(':memory:');
-    const ledger = new TaskLedger(db);
-    const gate = new BoardRefreshGate({ initialGeneration: 100 });
+    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+    const inbox = new OwnerEventInbox(db, () => 1_000);
+    const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
+      db,
+      taskLedger,
+      () => 1_000
+    );
+    const boardRefreshGate = new BoardRefreshGate({ initialGeneration });
     const handler = buildOwnerWorkOrderRequestHandler({
-      taskLedger: ledger,
-      boardRefreshGate: gate,
+      taskLedger,
+      boardRefreshGate,
+      ownerEventBoardRefreshLedger,
       now: () => 1_000,
       log: vi.fn(),
       logError: vi.fn(),
     });
+    const enqueueBatch = (eventId: string): number => {
+      const batchId = inbox.enqueue({
+        channelKey: 'chatwork:feedback',
+        eventIds: [eventId],
+        lines: [`line:${eventId}`],
+        activations: [],
+      });
+      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+      return batchId;
+    };
+    return {
+      db,
+      taskLedger,
+      ownerEventBoardRefreshLedger,
+      boardRefreshGate,
+      handler,
+      enqueueBatch,
+    };
+  }
 
-    expect(handler('board')).toEqual({ accepted: true });
-    const eventless = ledger.claimNextWorkOrder();
-    expect(eventless?.payload).toEqual({
+  it('seeds a restarted gate above every pending durable intent generation', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+    const inbox = new OwnerEventInbox(db, () => 1_000);
+    const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 100);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-restart'],
+      lines: ['line:evt-restart'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    firstRuntime.ownerEventBoardRefreshLedger.accept({
+      batchId,
+      eventIds: ['evt-restart'],
+      repair: { repairGeneration: 150, noUpdateScope: 'full:150' },
+    });
+
+    const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 50);
+
+    expect(restarted.boardRefreshGate.captureFullRepair()).toEqual({
+      repairGeneration: 151,
+      noUpdateScope: 'full:151',
+    });
+    expect(restarted.boardRefreshGate.needsFullRepair()).toBe(true);
+    db.close();
+  });
+
+  it('uses wall time unchanged when no pending Board intent exists', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+    new OwnerEventInbox(db, () => 1_000);
+
+    const runtime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 700);
+
+    expect(runtime.boardRefreshGate.captureFullRepair()).toEqual({
+      repairGeneration: 700,
+      noUpdateScope: 'full:700',
+    });
+    db.close();
+  });
+
+  it.each(['wiki', 'memory-curation'] as const)(
+    'preserves permanent owner-event %s handoff identity after terminal completion',
+    (kind) => {
+      const ctx = createHarness();
+      const origin = {
+        kind: 'owner_event' as const,
+        batchId: ctx.enqueueBatch('evt-owner-1'),
+        eventIds: ['evt-owner-1'],
+      };
+
+      expect(ctx.handler(kind, origin)).toEqual({ accepted: true });
+      const first = ctx.taskLedger.claimNextWorkOrder();
+      if (!first) throw new Error('owner-event workorder expected');
+      expect(first.idempotencyKey).toMatch(new RegExp(`^owner-event:${kind}:`));
+      ctx.taskLedger.completeWorkOrder(first.id);
+
+      expect(ctx.handler(kind, origin)).toEqual({ accepted: true });
+      expect(ctx.taskLedger.claimNextWorkOrder()).toBeNull();
+      expect(
+        (
+          ctx.db
+            .prepare(`SELECT COUNT(*) AS n FROM operator_tasks WHERE kind = 'system'`)
+            .get() as {
+            n: number;
+          }
+        ).n
+      ).toBe(1);
+      ctx.db.close();
+    }
+  );
+
+  it('keeps a direct owner manual Board request forced and uniquely keyed', () => {
+    const ctx = createHarness(100);
+
+    expect(ctx.handler('board', { kind: 'owner_manual' })).toEqual({ accepted: true });
+    expect(ctx.taskLedger.claimNextWorkOrder()?.payload).toEqual({
       attempts: 1,
       mode: 'full',
       force: true,
       repairGeneration: 101,
       noUpdateScope: 'full:101',
     });
-    if (!eventless) throw new Error('eventless owner board workorder expected');
-    ledger.completeWorkOrder(eventless.id);
-
-    expect(handler('board', ['evt-host-1'])).toEqual({ accepted: true });
-    expect(ledger.claimNextWorkOrder()?.payload).toEqual({
-      attempts: 1,
-      mode: 'full',
-      force: true,
-      eventIds: ['evt-host-1'],
-      repairGeneration: 102,
-      noUpdateScope: 'full:102',
-    });
-    db.close();
+    ctx.db.close();
   });
 
-  it('leaves synthetic dirt when owner board enqueue fails', () => {
-    const db = new Database(':memory:');
-    const ledger = new TaskLedger(db);
-    const gate = new BoardRefreshGate({ initialGeneration: 200 });
-    const logError = vi.fn();
-    const handler = buildOwnerWorkOrderRequestHandler({
-      taskLedger: ledger,
-      boardRefreshGate: gate,
-      now: () => 2_000,
-      log: vi.fn(),
-      logError,
+  it('coalesces owner-event Board requests into one shared non-force workorder', () => {
+    const ctx = createHarness(200);
+    const origins = Array.from({ length: 20 }, (_, index) => {
+      const eventId = `evt-${index + 1}`;
+      return {
+        kind: 'owner_event' as const,
+        batchId: ctx.enqueueBatch(eventId),
+        eventIds: [eventId],
+      };
     });
-    db.close();
 
-    expect(handler('board')).toEqual({ accepted: false, reason: 'enqueue-failed' });
-    expect(gate.captureFullRepair()).toEqual({
+    for (const origin of origins) {
+      expect(ctx.handler('board', origin)).toEqual({ accepted: true });
+    }
+
+    expect(ctx.taskLedger.countPendingWorkOrders()).toBe(1);
+    const workOrder = ctx.taskLedger.claimNextWorkOrder();
+    expect(workOrder?.idempotencyKey).toBe('board:full:repair');
+    expect(workOrder?.payload).toEqual({
+      attempts: 1,
+      mode: 'full',
+      force: false,
       repairGeneration: 201,
       noUpdateScope: 'full:201',
     });
-    expect(gate.needsFullRepair()).toBe(true);
-    expect(logError).toHaveBeenCalledOnce();
+    expect(
+      new Set(
+        origins.map(
+          (origin) => ctx.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId)?.workOrderId
+        )
+      ).size
+    ).toBe(1);
+    expect(ctx.ownerEventBoardRefreshLedger.maxPendingGeneration()).toBe(220);
+    ctx.db.close();
   });
 
-  it('preserves legacy owner board payloads when reconcile is disabled', () => {
+  it('returns the same durable acceptance when one owner-event batch retries', () => {
+    const ctx = createHarness(300);
+    const origin = {
+      kind: 'owner_event' as const,
+      batchId: ctx.enqueueBatch('evt-retry'),
+      eventIds: ['evt-retry'],
+    };
+
+    expect(ctx.handler('board', origin)).toEqual({ accepted: true });
+    const first = ctx.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId);
+    expect(ctx.handler('board', origin)).toEqual({ accepted: true });
+
+    expect(ctx.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId)).toEqual(first);
+    expect(ctx.taskLedger.countPendingWorkOrders()).toBe(1);
+    ctx.db.close();
+  });
+
+  it('fails closed instead of restoring the forced owner-event path when coordination is absent', () => {
     const db = new Database(':memory:');
-    const ledger = new TaskLedger(db);
+    const taskLedger = new TaskLedger(db);
+    const inbox = new OwnerEventInbox(db);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-missing'],
+      lines: ['line'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
     const handler = buildOwnerWorkOrderRequestHandler({
-      taskLedger: ledger,
+      taskLedger,
       boardRefreshGate: null,
-      now: () => 3_000,
+      ownerEventBoardRefreshLedger: undefined,
       log: vi.fn(),
       logError: vi.fn(),
     });
 
-    expect(handler('board')).toEqual({ accepted: true });
-    expect(ledger.claimNextWorkOrder()?.payload).toEqual({
-      attempts: 1,
-      mode: 'full',
-      force: true,
-    });
+    expect(
+      handler('board', {
+        kind: 'owner_event',
+        batchId,
+        eventIds: ['evt-missing'],
+      })
+    ).toEqual({ accepted: false, reason: 'enqueue-failed' });
+    expect(taskLedger.countPendingWorkOrders()).toBe(0);
     db.close();
+  });
+
+  it('leaves synthetic dirt when a manual Board enqueue fails', () => {
+    const ctx = createHarness(400);
+    ctx.db.close();
+
+    expect(ctx.handler('board', { kind: 'owner_manual' })).toEqual({
+      accepted: false,
+      reason: 'enqueue-failed',
+    });
+    expect(ctx.boardRefreshGate.captureFullRepair()).toEqual({
+      repairGeneration: 401,
+      noUpdateScope: 'full:401',
+    });
+    expect(ctx.boardRefreshGate.needsFullRepair()).toBe(true);
   });
 });

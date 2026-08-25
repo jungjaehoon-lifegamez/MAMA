@@ -70,6 +70,7 @@ import type {
   ExternalBindingToolInput,
   ExternalLifecycleReconcileToolInput,
   PrincipalRepository,
+  WorkOrderRequestOrigin,
 } from './types.js';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
@@ -662,7 +663,7 @@ export class GatewayToolExecutor {
   private workOrderRequestHandler:
     | ((
         kind: 'board' | 'wiki' | 'memory-curation',
-        causeEventIds?: readonly string[]
+        origin: WorkOrderRequestOrigin
       ) => { accepted: boolean; reason?: string })
     | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
@@ -884,7 +885,7 @@ export class GatewayToolExecutor {
   setWorkOrderRequestHandler(
     fn: (
       kind: 'board' | 'wiki' | 'memory-curation',
-      causeEventIds?: readonly string[]
+      origin: WorkOrderRequestOrigin
     ) => { accepted: boolean; reason?: string }
   ): void {
     this.workOrderRequestHandler = fn;
@@ -2666,12 +2667,30 @@ export class GatewayToolExecutor {
             };
           }
           // The batch rides from HOST execution state, never from tool input -
-          // an agent-supplied cause is forgeable (S2 review #14). Conductor
-          // runs carry their inbox batch here; chat runs carry nothing.
-          const enqueued = this.workOrderRequestHandler(
-            requestedKind,
-            this.getExecutionState().causeEventIds
-          );
+          // an agent-supplied cause is forgeable (S2 review #14).
+          const state = this.getExecutionState();
+          let origin: WorkOrderRequestOrigin;
+          if (state.source === 'owner-event') {
+            const batchId = state.ownerEventEffects?.batchId;
+            const eventIds = state.causeEventIds;
+            if (
+              !Number.isSafeInteger(batchId) ||
+              Number(batchId) <= 0 ||
+              !Array.isArray(eventIds) ||
+              eventIds.length === 0 ||
+              eventIds.some((eventId) => typeof eventId !== 'string' || eventId.trim().length === 0)
+            ) {
+              return {
+                success: false,
+                code: 'workorder_owner_event_authority_missing',
+                error: 'Owner-event workorder request requires host-issued batch authority.',
+              };
+            }
+            origin = { kind: 'owner_event', batchId: Number(batchId), eventIds };
+          } else {
+            origin = { kind: 'owner_manual' };
+          }
+          const enqueued = this.workOrderRequestHandler(requestedKind, origin);
           if (!enqueued.accepted) {
             return {
               success: false,
