@@ -157,7 +157,7 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.38.0 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
+**Status:** MAMA OS v0.39.0 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
 backends with backend-owned durable context, role-scoped Code-Act projection, bounded recovery,
 and explicit non-replayable mutation outcomes. MAMA itself owns connector-event work as
 stateless fresh runs per batch on durable per-channel lane keys; configured private connectors
