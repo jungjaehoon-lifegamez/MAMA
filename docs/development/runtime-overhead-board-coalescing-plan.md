@@ -95,7 +95,7 @@ export class OwnerEventBoardRefreshLedger {
 }
 ```
 
-- [ ] **Step 1: Write failing acceptance and duplicate tests**
+- [x] **Step 1: Write failing acceptance and duplicate tests**
 
 ```ts
 it('atomically binds one exact batch to one shared non-force Board workorder', () => {
@@ -121,7 +121,7 @@ it('returns the same acceptance for the same batch without enqueueing again', ()
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 ```bash
 pnpm --dir packages/standalone exec vitest run tests/operator/owner-event-board-refresh.test.ts
@@ -129,7 +129,7 @@ pnpm --dir packages/standalone exec vitest run tests/operator/owner-event-board-
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement the additive migration and atomic accept**
+- [x] **Step 3: Implement the additive migration and atomic accept**
 
 ```sql
 CREATE TABLE IF NOT EXISTS owner_event_board_refresh_intents (
@@ -151,7 +151,7 @@ Validate the batch ID, event IDs, generation, and scope. In one `db.transaction(
 Add a source-wiring assertion in `owner-event-wiring.test.ts` during Task 4 so daemon boot must construct
 the ledger, whose constructor invokes the migration after both referenced parent tables exist.
 
-- [ ] **Step 4: Add burst, rollback, cleanup, and generation tests**
+- [x] **Step 4: Add burst, rollback, cleanup, and generation tests**
 
 ```ts
 it('coalesces twenty batches onto one open workorder', () => {
@@ -174,11 +174,11 @@ it('applies only captured generations and emits one follow-up signal', () => {
 
 Also assert rollback leaves neither new task nor intent, FK cleanup removes the intent, `maxPendingGeneration()` ignores applied rows, `attachPendingToWorkOrder()` changes only pending rows, and no `markVerified()` means no follow-up signal.
 
-- [ ] **Step 5: Run the focused test and verify GREEN**
+- [x] **Step 5: Run the focused test and verify GREEN**
 
 Run Step 2. Expected: PASS.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```bash
 git add packages/standalone/src/db/migrations/owner-event-board-refresh.ts packages/standalone/src/operator/owner-event-board-refresh.ts packages/standalone/tests/operator/owner-event-board-refresh.test.ts
@@ -208,7 +208,7 @@ export type WorkOrderRequestOrigin =
   | { kind: 'owner_event'; batchId: number; eventIds: readonly string[] };
 ```
 
-- [ ] **Step 1: Write failing origin tests**
+- [x] **Step 1: Write failing origin tests**
 
 ```ts
 expect(handler).toHaveBeenCalledWith('board', {
@@ -220,7 +220,7 @@ expect(handler).toHaveBeenCalledWith('board', {
 
 Assert chat produces `owner_manual`, model-supplied identity fields are ignored, and `source: 'owner-event'` without host `ownerEventEffects` plus non-empty causes fails closed.
 
-- [ ] **Step 2: Run gateway and handler tests and verify RED**
+- [x] **Step 2: Run gateway and handler tests and verify RED**
 
 ```bash
 pnpm --dir packages/standalone exec vitest run tests/agent/gateway-tool-executor.test.ts tests/cli/start-board-refresh-gate.test.ts
@@ -228,7 +228,7 @@ pnpm --dir packages/standalone exec vitest run tests/agent/gateway-tool-executor
 
 Expected: FAIL on the old handler signature and forced owner-event payload.
 
-- [ ] **Step 3: Derive the closed origin from trusted execution state**
+- [x] **Step 3: Derive the closed origin from trusted execution state**
 
 Owner-event origin requires:
 
@@ -242,7 +242,7 @@ state.source === 'owner-event' &&
 
 Never read origin from tool input. Pass `owner_manual` for other admitted owner requests.
 
-- [ ] **Step 4: Route only owner-event Board through the ledger**
+- [x] **Step 4: Route only owner-event Board through the ledger**
 
 ```ts
 const generation = deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
@@ -256,11 +256,11 @@ deps.ownerEventBoardRefreshLedger.accept({
 
 Use one captured generation. Manual Board, Wiki, and memory-curation keep their existing keys; Wiki/memory take host event IDs from `origin.eventIds`.
 
-- [ ] **Step 5: Add behavior regressions and verify GREEN**
+- [x] **Step 5: Add behavior regressions and verify GREEN**
 
 Assert 20 requests yield 20 intents/one non-force task, same-batch retry yields no task, manual remains forced, missing ledger fails without old-path fallback, and Wiki/memory permanent keys are unchanged. Run Step 2 plus Task 1 test. Expected: PASS.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add packages/standalone/src/agent/types.ts packages/standalone/src/agent/gateway-tool-executor.ts packages/standalone/src/cli/commands/start.ts packages/standalone/tests/agent/gateway-tool-executor.test.ts packages/standalone/tests/cli/start-board-refresh-gate.test.ts
@@ -284,7 +284,7 @@ git commit -m "fix(standalone): coalesce owner-event board requests"
 - Consumes: ledger `markVerified()`, `attachPendingToWorkOrder()`, `consumePostTerminalFollowup()`.
 - Produces: `ApiRoutesHandle.requestBoardRepair(): void`.
 
-- [ ] **Step 1: Write failing verified-only hook tests**
+- [x] **Step 1: Write failing verified-only hook tests**
 
 ```ts
 it('marks intents only after a verified full repair', () => {
@@ -298,11 +298,11 @@ it('does not mark intents after unverified or failed results', () => {
 });
 ```
 
-- [ ] **Step 2: Write failing terminal-order route tests**
+- [x] **Step 2: Write failing terminal-order route tests**
 
 Assert accepted-intent nudge bypasses only watermark skip, never sets force, attaches pending rows to the returned task, runs after current task terminal, and unverified/failed/exhausted events never nudge.
 
-- [ ] **Step 3: Run hook/route tests and verify RED**
+- [x] **Step 3: Run hook/route tests and verify RED**
 
 ```bash
 pnpm --dir packages/standalone exec vitest run tests/operator/workorder-hooks.test.ts tests/cli/runtime/api-routes-init-reconcile.test.ts
@@ -310,7 +310,7 @@ pnpm --dir packages/standalone exec vitest run tests/operator/workorder-hooks.te
 
 Expected: FAIL because no intent port or nudge exists.
 
-- [ ] **Step 4: Implement verified application and terminal nudge**
+- [x] **Step 4: Implement verified application and terminal nudge**
 
 Change `runDashboardAgent` options to `{ force?: boolean; acceptedIntent?: boolean }`. `acceptedIntent` requires a pending intent, bypasses only `delta.enqueue === false`, uses `boardRepairKey()` without force, and calls `attachPendingToWorkOrder(newId)`. Make `enqueueWorkOrderOrThrow()` return the workorder.
 
@@ -332,11 +332,11 @@ return {
 
 In WorkOrderConsumer `onEvent`, consume the ledger set only for `complete` Board events, then call `boardRepairNudge.current?.()`. Assign the ref from `apiRoutesHandle.requestBoardRepair` before consumer boot recovery/start.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run Step 3 plus Task 1 test. Expected: PASS.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```bash
 git add packages/standalone/src/operator/workorder-hooks.ts packages/standalone/src/cli/runtime/api-routes-init.ts packages/standalone/src/cli/commands/start.ts packages/standalone/tests/operator/workorder-hooks.test.ts packages/standalone/tests/cli/runtime/api-routes-init-reconcile.test.ts
@@ -360,7 +360,7 @@ git commit -m "fix(standalone): schedule verified board follow-ups"
 - Consumes: `maxPendingGeneration()`, `findAcceptance(batchId)`, always-on gate.
 - Produces: exact batch terminal recovery without another model run.
 
-- [ ] **Step 1: Write failing boot and recovery behavior tests**
+- [x] **Step 1: Write failing boot and recovery behavior tests**
 
 ```ts
 it('ACKs a persisted Board acceptance after restart without waking the model', async () => {
@@ -389,7 +389,7 @@ it('ACKs a persisted Board acceptance after restart without waking the model', a
 
 Also prove the same lookup wins after a simulated runner error and that no intent leaves the batch pending.
 
-- [ ] **Step 2: Run wiring/config tests and verify RED**
+- [x] **Step 2: Run wiring/config tests and verify RED**
 
 ```bash
 pnpm --dir packages/standalone exec vitest run tests/cli/owner-event-wiring.test.ts tests/cli/start-board-refresh-gate.test.ts tests/cli/runtime/api-routes-init-reconcile.test.ts
@@ -397,7 +397,7 @@ pnpm --dir packages/standalone exec vitest run tests/cli/owner-event-wiring.test
 
 Expected: FAIL because the Board intent ledger and acceptance lookup do not exist.
 
-- [ ] **Step 3: Reorder boot construction and make the gate unconditional**
+- [x] **Step 3: Reorder boot construction and make the gate unconditional**
 
 ```ts
 const taskLedger = new TaskLedger(operatorDb);
@@ -415,7 +415,7 @@ Define `resolveInitialBoardRepairGeneration(now, pendingGeneration)` as a tested
 `Math.max(now, (pendingGeneration ?? -1) + 1)`. Keep the env flag only around `ReconcileScheduler`
 and its explicit reconcile route.
 
-- [ ] **Step 4: Add exact batch terminal recovery**
+- [x] **Step 4: Add exact batch terminal recovery**
 
 ```ts
 const boardAcceptance = ownerEventBoardRefreshLedger.findAcceptance(batch.id);
@@ -426,11 +426,11 @@ if (boardAcceptance) {
 
 Keep external effects, Wiki, memory-curation, and exact no-update lookup unchanged.
 
-- [ ] **Step 5: Add boot and flag matrix assertions and verify GREEN**
+- [x] **Step 5: Add boot and flag matrix assertions and verify GREEN**
 
 Using real ledger/gate/route components, assert pending intents seed a greater boot generation and reattach to one boot repair, no pending intent preserves normal boot behavior, flag off disables only delta reconcile, and no owner-event path sets force. Run Step 2 plus ledger/hook tests. Expected: PASS.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```bash
 git add packages/standalone/src/cli/commands/start.ts packages/standalone/src/cli/runtime/api-routes-init.ts packages/standalone/tests/cli/owner-event-wiring.test.ts packages/standalone/tests/cli/start-board-refresh-gate.test.ts packages/standalone/tests/cli/runtime/api-routes-init-reconcile.test.ts
@@ -451,11 +451,11 @@ git commit -m "fix(standalone): recover owner-event board acceptance"
 - Consumes: committed PR-A code/test evidence.
 - Produces: TG evidence and exact verification record.
 
-- [ ] **Step 1: Record TG evidence without claiming live behavior**
+- [x] **Step 1: Record TG evidence without claiming live behavior**
 
 Add a dated section stating: TG-03/TG-04 preserve the agent's workorder choice; TG-05 keeps the fresh owner-event run and coalesces only downstream Board work; TG-06 atomically binds exact batch acceptance, recovers it after crash, and follows verified generations. Status: `CODE GREEN; release and real-event canary pending`.
 
-- [ ] **Step 2: Run focused PR-A tests**
+- [x] **Step 2: Run focused PR-A tests**
 
 ```bash
 pnpm --dir packages/standalone exec vitest run \
@@ -471,7 +471,7 @@ pnpm --dir packages/standalone exec vitest run \
 
 Expected: all selected tests PASS.
 
-- [ ] **Step 3: Run package and root gates**
+- [x] **Step 3: Run package and root gates**
 
 ```bash
 pnpm --dir packages/standalone typecheck
@@ -484,7 +484,7 @@ pnpm test
 
 Expected: every command exits 0.
 
-- [ ] **Step 4: Run changed-file format and whitespace gates**
+- [x] **Step 4: Run changed-file format and whitespace gates**
 
 ```bash
 pnpm exec prettier --check docs/development/kagemusha-telegram-parity.md docs/development/runtime-overhead-reduction-design.md packages/standalone/src/db/migrations/owner-event-board-refresh.ts packages/standalone/src/operator/owner-event-board-refresh.ts packages/standalone/src/operator/workorder-hooks.ts packages/standalone/src/agent/types.ts packages/standalone/src/agent/gateway-tool-executor.ts packages/standalone/src/cli/commands/start.ts packages/standalone/src/cli/runtime/api-routes-init.ts packages/standalone/tests/operator/owner-event-board-refresh.test.ts packages/standalone/tests/operator/workorder-hooks.test.ts packages/standalone/tests/agent/gateway-tool-executor.test.ts packages/standalone/tests/cli/start-board-refresh-gate.test.ts packages/standalone/tests/cli/runtime/api-routes-init-reconcile.test.ts packages/standalone/tests/cli/owner-event-wiring.test.ts
@@ -493,13 +493,13 @@ git diff --check
 
 Expected: exit 0. Report unrelated root format debt separately.
 
-- [ ] **Step 5: Commit evidence**
+- [x] **Step 5: Commit evidence**
 
 ```bash
 git add docs/development/kagemusha-telegram-parity.md docs/development/runtime-overhead-reduction-design.md
 git commit -m "docs: record owner-event board coalescing evidence"
 ```
 
-- [ ] **Step 6: Run the diff-scoped review gate**
+- [x] **Step 6: Run the diff-scoped review gate**
 
 Invoke `review` before `ship`. Fix every P0-P3 finding with a RED→GREEN regression, rerun affected focused suites, and commit coherent corrections. Create the PR only after the review log is CLEAN.
