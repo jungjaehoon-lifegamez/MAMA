@@ -437,8 +437,9 @@ rollout에서 아래 값을 계산한다. 코드에 새로 필요한 것은 기�
 
 ### 단계 2 — PR-A/PR-B 머지 후 Slice A 활성화
 
-- 기능 플래그는 rollback용으로만 두며 기본값은 새 경로다.
 - old path를 fallback으로 호출하지 않는다. 새 durable path가 실패하면 fail loudly 한다.
+- rollback은 이전 패키지로 재설치하고 launchd를 재시작한다. schema는 additive이고 구버전이 새 테이블을
+  읽지 않으므로 별도 장기 기능 플래그를 유지하지 않는다.
 - build/install/restart는 별도 단계로 구분하고 launchd 단일 인스턴스를 확인한다.
 
 ### 단계 3 — 단일 릴리즈와 24시간 canary
