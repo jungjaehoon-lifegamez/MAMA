@@ -835,6 +835,46 @@ describe('ClineCLIAdapter Hub persistence', () => {
     expect(client.aborted).toContain('hub-session-1');
   });
 
+  it('TG-03/TG-04 preserves TOOL_CONTRACT_REPEAT through the projected Cline tool', async () => {
+    const { adapter, client } = createHarness();
+    client.gatewayExecutions = 2;
+    const execute = vi.fn<HostToolBridge['execute']>(async () => ({
+      content: 'Temporal deterministic contract failure repeated',
+      isError: true,
+      abort: true,
+      terminalCode: 'TOOL_CONTRACT_REPEAT',
+    }));
+    const bridge: HostToolBridge = {
+      tools: [
+        {
+          type: 'function',
+          name: 'code_act',
+          description: 'Execute MAMA gateway functions.',
+          inputSchema: {
+            type: 'object',
+            properties: { code: { type: 'string' } },
+            required: ['code'],
+            additionalProperties: false,
+          },
+        },
+      ],
+      execute,
+    };
+
+    const result = await adapter.prompt('use gateway twice', undefined, {
+      sessionId: 'temporal-contract-repeat',
+      resumeSession: false,
+      hostToolBridge: bridge,
+    });
+
+    expect(result.terminalError).toEqual({
+      code: 'TOOL_CONTRACT_REPEAT',
+      message: 'Temporal deterministic contract failure repeated',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(client.aborted).toContain('hub-session-1');
+  });
+
   it('TG-06 preserves a generic host abort and prevents tool replay', async () => {
     const { adapter, client } = createHarness();
     client.gatewayExecutions = 2;

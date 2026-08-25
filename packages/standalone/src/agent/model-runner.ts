@@ -55,7 +55,7 @@ export interface HostToolCallResult {
   stop?: boolean;
   /** Fail the active model turn after returning this error result to the host. */
   abort?: boolean;
-  /** Trusted terminal mutation code; never derived from model-visible text. */
+  /** Trusted host-tool terminal code; never derived from model-visible text. */
   terminalCode?: HostToolTerminalCode;
 }
 
@@ -67,16 +67,18 @@ export interface HostToolBridge {
 
 export type HostToolTerminalCode =
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
-  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+  | 'TOOL_CONTRACT_REPEAT';
 
 export function isHostToolTerminalCode(value: unknown): value is HostToolTerminalCode {
   return (
     value === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
-    value === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+    value === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN' ||
+    value === 'TOOL_CONTRACT_REPEAT'
   );
 }
 
-/** Typed transport for a trusted host-tool terminal result across Codex app-server. */
+/** Typed transport for a trusted host-tool terminal result across model runtimes. */
 export class HostToolTerminalError extends Error {
   readonly retryable = false;
 
