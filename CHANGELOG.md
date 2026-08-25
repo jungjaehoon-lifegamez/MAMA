@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.38.0] - 2026-08-25
+
+### Fixed
+
+- **Owner-event runs are stateless.** Each connector batch is a fresh owner-agent run on its
+  durable per-channel lane key instead of resuming a growing thread. Resuming replayed the
+  whole history every batch (45.9M tokens on 2026-08-20 alone, exhausting the weekly provider
+  quota and stopping the agent for two days). The batch prompt was already self-contained.
+- **Owner-event retries can no longer be dead-ended by the ledger.** The durable owner-event
+  workorder dedup reserved `failed` and `cancelled` rows, so a requeued or boot-cancelled
+  occurrence silently blocked every later enqueue. Reserving statuses are now
+  `pending`/`in_progress`/`done`; completed occurrences still never re-run.
+- **The heartbeat no longer wakes the model for an empty HEARTBEAT.md.** Emptiness is a
+  host-side check (13.4M tokens over 9 days were spent answering 290 empty polls), and a
+  non-empty heartbeat runs a fresh session instead of an accumulating one.
+- **Codex token usage is recorded fully.** Turn usage is the cumulative-total delta across all
+  of the turn's model calls (composable with total-less events, clamped at zero against
+  non-monotonic totals) instead of the final call only, which undercounted ~5x.
+
+### Added
+
+- **Configurable Codex reasoning effort.** `agent.effort` in `config.yaml`
+  (`low|medium|high|xhigh|max`) now reaches every Codex managed-config writer - main loop,
+  managed Code-Act runner, memory agent, trigger author, multi-agent runner, and `mama run` -
+  so the shared managed config no longer flip-flops between processes. The value is validated
+  once at boot against the active backend and fails the boot loudly when invalid; Claude
+  sub-agents never receive a Codex-only effort.
+- **The scheduled full-board run is delta-gated.** A composite watermark over connector
+  observations, owner-task payloads, memory recency, and agent notices skips the 30-minute
+  full-board enqueue when nothing the board reads has changed, bounded by a 2-hour staleness
+  escape; a run whose predecessor left no published board is never skipped, and a broken
+  signal enqueues loudly rather than skipping silently.
+- **Workorder briefs upgrade themselves when unedited.** Brief seeds carry a fingerprint
+  manifest: briefs the owner never edited re-seed when the packaged seed changes, edited
+  briefs warn once per boot instead of silently running stale, interrupted seeding
+  self-heals, and a corrupt manifest is replaced exactly once.
+
 ## mama-os [0.37.0] - 2026-08-19
 
 ### Changed
