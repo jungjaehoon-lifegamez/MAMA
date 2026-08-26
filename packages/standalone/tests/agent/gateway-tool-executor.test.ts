@@ -1684,7 +1684,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           };
           const input = {
             chat_id: '7777',
-            file_path: realpathSync(outputPath),
+            file_path: outputPath,
             message: ' exact caption ',
             delivery_key: 'telegram-delivery',
           };

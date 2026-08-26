@@ -135,14 +135,14 @@ describe('TG-03/TG-04/TG-06 host-issued owner-event effects', () => {
     const previousWorkspace = process.env.MAMA_WORKSPACE;
     process.env.MAMA_WORKSPACE = workspace;
     try {
-      expect(
-        buildOwnerEventTelegramIntent({
-          chatId: '7777',
-          message: ' exact caption ',
-          filePath: imagePath,
-          deliveryId: 'owner-event:41:telegram:telegram-delivery',
-        })
-      ).toEqual({
+      const fileInput = {
+        chatId: '7777',
+        message: ' exact caption ',
+        filePath: imagePath,
+        deliveryId: 'owner-event:41:telegram:telegram-delivery',
+      };
+      const fileIntent = buildOwnerEventTelegramIntent(fileInput);
+      expect(fileIntent).toEqual({
         version: 1,
         chatId: '7777',
         variant: 'image',
@@ -151,6 +151,14 @@ describe('TG-03/TG-04/TG-06 host-issued owner-event effects', () => {
         filePath: realpathSync(imagePath),
         stickerEmotion: null,
       });
+      rmSync(imagePath);
+      expect(buildOwnerEventTelegramIntent(fileInput, fileIntent)).toEqual(fileIntent);
+      expect(() =>
+        buildOwnerEventTelegramIntent(
+          { ...fileInput, filePath: join(workspace, 'different.png') },
+          fileIntent
+        )
+      ).toThrow(/ENOENT/);
       expect(
         buildOwnerEventTelegramIntent({
           chatId: '7777',

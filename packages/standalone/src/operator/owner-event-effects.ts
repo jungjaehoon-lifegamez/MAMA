@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import type { OwnerEventEffectAuthority } from '../agent/types.js';
 import type { SQLiteDatabase } from '../sqlite.js';
@@ -53,6 +53,28 @@ export function resolvePrivateWorkspaceFile(filePath: string): string {
   return realPath;
 }
 
+function resolveReservedTelegramFilePath(requested: string, trusted?: string): string {
+  if (!trusted) return resolvePrivateWorkspaceFile(requested);
+  if (requested === trusted || resolve(requested) === trusted) return trusted;
+  try {
+    return resolvePrivateWorkspaceFile(requested);
+  } catch (error) {
+    // Transient media may be deleted after delivery. Reuse the already-proven path only when the
+    // surviving parent realpath proves that this is the same canonical filename.
+    try {
+      const requestedPath = resolve(requested);
+      const canonicalMissingPath = join(
+        realpathSync(dirname(requestedPath)),
+        basename(requestedPath)
+      );
+      if (canonicalMissingPath === trusted) return trusted;
+    } catch {
+      // Preserve the original validation error when equivalence cannot be proven.
+    }
+    throw error;
+  }
+}
+
 /** Canonicalize exactly the payload Telegram will receive, before reserving the effect. */
 export function buildOwnerEventTelegramIntent(
   input: OwnerEventTelegramIntentInput,
@@ -75,10 +97,10 @@ export function buildOwnerEventTelegramIntent(
   }
 
   if (input.filePath) {
-    const filePath =
-      input.filePath === trustedExisting?.filePath
-        ? trustedExisting.filePath
-        : resolvePrivateWorkspaceFile(input.filePath);
+    const filePath = resolveReservedTelegramFilePath(
+      input.filePath,
+      trustedExisting?.filePath ?? undefined
+    );
     return {
       version: 1,
       chatId: input.chatId,
