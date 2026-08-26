@@ -395,6 +395,21 @@ line: RECONCILED <comma-separated slots or none>.`;
       expect(projected).not.toContain('row per open item');
     });
 
+    it('separates a preserved owner-edited legacy pipeline from the current projection at EOF', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
+        'OWNER CUSTOM EOF RULE MUST STAY.',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).toContain('OWNER CUSTOM EOF RULE MUST STAY.\n\nThe pipeline slot');
+      expect(projected).not.toContain('OWNER CUSTOM EOF RULE MUST STAY.The pipeline slot');
+    });
+
     it('TG-05/TG-06 appends one current marked contract when no managed block exists', () => {
       const path = briefPath('board', home);
       const raw = '# Owner board brief\n\nKeep every user-authored byte.\n';

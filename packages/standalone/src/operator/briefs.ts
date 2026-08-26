@@ -302,7 +302,10 @@ function projectCurrentBoardPipeline(raw: string): string {
     .digest('hex');
   const current = `${buildPipelineTrackerInstructions().join('\n')}\n\n`;
   if (!LEGACY_GENERATED_BOARD_PIPELINE_HASHES.has(sectionHash)) {
-    return raw.slice(0, end) + current + raw.slice(end);
+    const before = raw.slice(0, end);
+    const separator =
+      end !== raw.length || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    return before + separator + current + raw.slice(end);
   }
   return raw.slice(0, start) + current + raw.slice(end);
 }

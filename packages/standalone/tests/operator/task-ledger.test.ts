@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { promotionKey } from '../../src/operator/workorder-publishers.js';
 
 describe('TaskLedger', () => {
   let db: SQLiteDatabase;
@@ -404,6 +405,27 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
 
       expect(twelveHour.id).not.toBe(sixHour.id);
       expect(twelveHour.status).toBe('pending');
+    });
+
+    it('keeps a fractional-hours promotion slot reserved after interval normalization', () => {
+      const key = promotionKey(20_000_000, 4_444_444.404);
+      expect(key).toMatch(/^promotion:v2:\d+:\d+$/);
+      const completed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: key,
+        input: { scheduledAt: '2026-08-26T12:00:00.000Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(completed.id);
+      ledger.completeWorkOrder(completed.id);
+
+      const sameSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: key,
+        input: { scheduledAt: '2026-08-26T12:00:01.000Z' },
+      });
+
+      expect(sameSlot.id).toBe(completed.id);
+      expect(sameSlot.status).toBe('done');
     });
 
     it('reports the newest COMPLETED full board run with its enqueue/complete times', () => {

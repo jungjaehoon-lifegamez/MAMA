@@ -109,14 +109,23 @@ export function wikiBatchKey(trigger: string, now: number): string {
   return `wiki:${now}-${trigger}`;
 }
 
+export function normalizePromotionIntervalMs(intervalMs: number): number {
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error('promotion interval must be a positive finite number');
+  }
+  const normalized = Math.round(intervalMs);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new Error('promotion interval must normalize to a positive safe integer');
+  }
+  return normalized;
+}
+
 export function promotionKey(
   now: number,
   intervalMs: number = DEFAULT_PROMOTION_INTERVAL_MS
 ): string {
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    throw new Error('promotion interval must be a positive finite number');
-  }
-  return `promotion:v2:${intervalMs}:${Math.floor(now / intervalMs)}`;
+  const normalizedIntervalMs = normalizePromotionIntervalMs(intervalMs);
+  return `promotion:v2:${normalizedIntervalMs}:${Math.floor(now / normalizedIntervalMs)}`;
 }
 
 export function promotionManualKey(now: number): string {
