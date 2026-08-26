@@ -291,9 +291,10 @@ marks the effect `unknown`; it never converts missing local proof into confirmat
 
 ### 7.4 Legacy rows
 
-Existing rows whose intent has no `version` remain authoritative for no-replay. A confirmed legacy
-row returns success and is classified by the canary as payload-unobservable from its missing
-version; no new tool-result field or log line is added. It is never re-sent. No body or receipt is
+Existing rows whose intent has no `version` remain authoritative proof that the effect must never
+be replayed. A confirmed legacy row returns success and is classified by the canary as
+payload-unobservable from its missing version; no new tool-result field or log line is added. It is
+never re-sent. No body or receipt is
 inferred from model history. A transmitting/unknown legacy row stays reconcile-only and pages
 through the existing path.
 
@@ -423,7 +424,7 @@ LIVE-ONLY EVIDENCE: 3 canary assertions
 5. File/image intent binds the existing resolved path, caption, and variant without adding a new
    byte-snapshot contract.
 6. Sticker intent binds normalized emotion.
-7. Legacy confirmed rows remain no-replay and explicitly unobservable.
+7. Legacy confirmed rows are never replayed and remain explicitly unobservable.
 8. Missing or malformed local delivery receipt after a returned send leaves the effect unknown and
    does not resend.
 9. Image-to-file fallback stores the actual delivered variant and matching ledger identity.
@@ -445,7 +446,7 @@ LIVE-ONLY EVIDENCE: 3 canary assertions
 | Telegram retry changes body/target/variant      | Exact stored intent mismatch rejects                         | Yes  | Clear tool failure, no second send |
 | Telegram send outcome is ambiguous              | Effect remains unknown and reconcile-only                    | Yes  | Existing alarm/recovery path       |
 | Send returns but durable ledger receipt missing | Mark unknown; never infer confirmation or resend             | Yes  | Observability alarm, no duplicate  |
-| Legacy confirmed effect lacks body              | Preserve no-replay; canary labels unobservable               | Yes  | No false quality claim             |
+| Legacy confirmed effect lacks body              | Never replay; canary labels unobservable                     | Yes  | No false quality claim             |
 | Inbox retention deletes effect                  | Existing cleanup removes derived payload and receipt         | Yes  | Bounded local retention            |
 
 Critical silent gaps after planned tests: 0.
@@ -497,7 +498,8 @@ After install and a single launchd restart, reset the cutover time and require:
 
 1. at least ten actual owner-event Board intents;
 2. no more than three Board repairs for the measured ten-intent five-minute stream;
-3. at least 60% Board token reduction against 7,204,986 tokens per twenty baseline intents;
+3. at least 60% Board token reduction against the intent-count-scaled baseline,
+   `7,204,986 * actualIntentCount / 20`;
 4. exact batch acceptance and verified-generation application with no false ACK;
 5. every new Telegram effect joined to its exact local body, existing ledger payload identity, and
    delivered receipt;
@@ -515,8 +517,8 @@ Telegram UI, browser, and Computer Use remain forbidden.
 - Reinstall v0.39.0 and restart the single launchd service.
 - No schema column is added. v0.39.0 already understands `due_at` and merely ignores it while
   claiming system workorders, so rollback may run a delayed row early but cannot lose an intent.
-- New V1 effect rows remain confirmed and no-replay. v0.39.0 reads their `chatId` and `variant`
-  fields and ignores additional JSON keys; result JSON remains optional.
+- New V1 effect rows remain confirmed and are never replayed. v0.39.0 reads their `chatId` and
+  `variant` fields and ignores additional JSON keys; result JSON remains optional.
 - No destructive down migration is required.
 
 ## 16. Eng review completion summary
