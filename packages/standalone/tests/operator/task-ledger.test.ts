@@ -540,6 +540,42 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()).toBeNull();
     });
 
+    it('skips a future high-priority row without blocking a ready lower-priority row', () => {
+      let now = 1_000;
+      const timedLedger = new TaskLedger(db, { now: () => now, timeZone: 'UTC' });
+      const delayed = timedLedger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:delayed',
+        input: {},
+        priority: 'high',
+      });
+      const ready = timedLedger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:ready',
+        input: {},
+        priority: 'normal',
+      });
+      db.prepare(`UPDATE operator_tasks SET due_at = ? WHERE id = ?`).run(now + 1_000, delayed.id);
+
+      expect(timedLedger.claimNextWorkOrder()?.id).toBe(ready.id);
+      expect(timedLedger.claimNextWorkOrder()).toBeNull();
+      now += 1_000;
+      expect(timedLedger.claimNextWorkOrder()?.id).toBe(delayed.id);
+    });
+
+    it('claims a system row exactly at due_at', () => {
+      const now = 1_000;
+      const timedLedger = new TaskLedger(db, { now: () => now, timeZone: 'UTC' });
+      const row = timedLedger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:due',
+        input: {},
+      });
+      db.prepare(`UPDATE operator_tasks SET due_at = ? WHERE id = ?`).run(now, row.id);
+
+      expect(timedLedger.claimNextWorkOrder()?.id).toBe(row.id);
+    });
+
     it('ignores and preserves pending workorders owned by a future version', () => {
       const futureId = insertFutureWorkOrder('pending', 'temporal:slot-1');
       const known = ledger.enqueueWorkOrder({

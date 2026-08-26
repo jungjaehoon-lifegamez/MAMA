@@ -151,7 +151,27 @@ scenario IDs from this document.
   observability gap, not successful delivery evidence.
 - **Temporal:** no real post-cutover Temporal generation has been observed. Synthetic traffic is
   forbidden, so the Temporal canary remains pending.
-- **Status:** LIVE CANARY NOT CLEAR. Keep the automation active and do not infer success.
+- **Status:** LIVE CANARY NOT CLEAR. The failed v0.39.0 automation was retired; do not infer
+  success while the claim-window and delivery-observability remediation proceeds.
+
+### Owner-event Board claim-window remediation evidence: 2026-08-26
+
+- **TG-05/TG-06:** owner-event bursts retain every exact batch intent while sharing one pending
+  non-force repair whose existing `operator_tasks.due_at` blocks claim for twenty minutes. No new
+  schema, timer, worker, queue, or hash path is involved.
+- **Pre-claim behavior:** `fixes due_at on the first intent and widens only the pending payload`
+  pins the first fixed deadline and widening without lowering a restart-seeded capture. `does not
+mutate an in-progress repair when a later intent arrives` pins claim-first immutability and the
+  existing terminal follow-up path.
+- **Claim and schedule behavior:** `skips a future high-priority row without blocking a ready
+lower-priority row` pins generic workorder readiness without priority starvation. `TG-06
+promotes one delayed owner-event repair on the normal schedule` pins reuse and promotion of the
+  same pending row instead of another model run or a second queue.
+- **Verified completion:** `cancels an empty delayed repair after another verified full run applies
+its intents` pins verified-generation application before an obsolete delayed row can be claimed.
+- **Verification:** the four focused files pass 95 tests. The complete standalone suite passes 383
+  files and 5,194 tests, with four files and seven tests skipped; typecheck and production build
+  pass. This is branch code/test evidence only, not merged, released, or live-canary evidence.
 
 ### Sender-boundary completion evidence: 2026-08-13
 

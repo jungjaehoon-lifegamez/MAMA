@@ -3232,20 +3232,22 @@ export class TaskLedger implements TaskSource {
     let claimedId: number | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const claimAt = this.now();
       const row = this.db
         .prepare(
           `SELECT * FROM operator_tasks
            WHERE kind = 'system' AND status = 'pending'
              AND source_channel IN (${KNOWN_WORKORDER_CHANNELS_SQL})
+             AND (due_at IS NULL OR due_at <= ?)
            ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC,
                     id ASC
            LIMIT 1`
         )
-        .get(...KNOWN_WORKORDER_CHANNELS) as TaskRow | undefined;
+        .get(...KNOWN_WORKORDER_CHANNELS, claimAt) as TaskRow | undefined;
       if (row) {
         this.db
           .prepare(`UPDATE operator_tasks SET status = 'in_progress', updated_at = ? WHERE id = ?`)
-          .run(this.now(), row.id);
+          .run(claimAt, row.id);
         claimedId = row.id;
       }
       this.db.exec('COMMIT');

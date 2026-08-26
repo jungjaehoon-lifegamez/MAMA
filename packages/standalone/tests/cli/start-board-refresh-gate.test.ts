@@ -12,20 +12,21 @@ import Database from '../../src/sqlite.js';
 
 describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
   function createHarness(initialGeneration = 100) {
+    let now = 1_000;
     const db = new Database(':memory:');
-    const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
-    const inbox = new OwnerEventInbox(db, () => 1_000);
+    const taskLedger = new TaskLedger(db, { now: () => now, timeZone: 'UTC' });
+    const inbox = new OwnerEventInbox(db, () => now);
     const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
       db,
       taskLedger,
-      () => 1_000
+      () => now
     );
     const boardRefreshGate = new BoardRefreshGate({ initialGeneration });
     const handler = buildOwnerWorkOrderRequestHandler({
       taskLedger,
       boardRefreshGate,
       ownerEventBoardRefreshLedger,
-      now: () => 1_000,
+      now: () => now,
       log: vi.fn(),
       logError: vi.fn(),
     });
@@ -46,6 +47,9 @@ describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
       boardRefreshGate,
       handler,
       enqueueBatch,
+      setNow(value: number): void {
+        now = value;
+      },
     };
   }
 
@@ -152,14 +156,16 @@ describe('TG-03/TG-04/TG-06 owner Board workorder coordination', () => {
     }
 
     expect(ctx.taskLedger.countPendingWorkOrders()).toBe(1);
+    expect(ctx.taskLedger.claimNextWorkOrder()).toBeNull();
+    ctx.setNow(20 * 60 * 1_000 + 1_000);
     const workOrder = ctx.taskLedger.claimNextWorkOrder();
     expect(workOrder?.idempotencyKey).toBe('board:full:repair');
     expect(workOrder?.payload).toEqual({
       attempts: 1,
       mode: 'full',
       force: false,
-      repairGeneration: 201,
-      noUpdateScope: 'full:201',
+      repairGeneration: 220,
+      noUpdateScope: 'full:220',
     });
     expect(
       new Set(
