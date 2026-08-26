@@ -257,6 +257,121 @@ describe('Story S2-T5: briefs', () => {
       expect(readFileSync(path, 'utf-8')).toBe(raw);
     });
 
+    it('projects one contract when a pre-tracking brief contains the legacy generated contract', () => {
+      const path = briefPath('board', home);
+      const legacyContract = `## Work order contract (Stage 2)
+Your work order input is a JSON object:
+- mode: "full" | "reconcile"
+- force: true when the owner explicitly requested a fresh board - do NOT reply
+  NO_UPDATE; rebuild and publish even if nothing changed.
+- channelKey + deltaLines: present in reconcile mode only.
+- attempts: retry counter (informational).
+
+mode "full" = the scheduled board rewrite. Before writing, check whether an
+update is needed: agent_notices({limit: 100}) for the last board publish
+boundary, then a recency check (mama_search({limit: 30}) with NO query,
+compare created_at). If nothing substantive is newer and force is not set,
+respond NO_UPDATE and stop. Otherwise follow "How to Write" and publish ALL
+FOUR slots in ONE report_publish call.
+
+mode "reconcile" = a single-channel delta reconcile for input.channelKey using
+input.deltaLines. Apply the RECONCILE RUN rules from this brief (the mode
+field replaces the "RECONCILE RUN" message sentinel): judge affected slots,
+publish ONLY those, use task_create/task_update with source_channel and
+source_event_id from the delta, or contract_no_update({reason, scope:
+"reconcile:<channelKey>"}) when nothing is affected. Finish with exactly one
+line: RECONCILED <comma-separated slots or none>.`;
+      const raw = `# Owner board brief\n\n${legacyContract}\n\n## Assignee sync\nKeep this owner-authored section byte-for-byte.\n`;
+      ensureBriefs(home);
+      writeFileSync(path, raw, 'utf-8');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt(
+        'board',
+        loadBrief('board', home)!,
+        disabled
+      );
+
+      expect(projected.match(/^## Work order contract \(Stage 2\)$/gm)).toHaveLength(1);
+      expect(projected).not.toContain('FOUR slots in ONE report_publish call.');
+      expect(projected).toContain(
+        '## Assignee sync\nKeep this owner-authored section byte-for-byte.\n'
+      );
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(readFileSync(path, 'utf-8')).toBe(raw);
+    });
+
+    it('preserves an owner-edited legacy contract section instead of deleting custom rules', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        '## Work order contract (Stage 2)',
+        'Your work order input is a JSON object:',
+        '- mode: "full" | "reconcile"',
+        'mode "full" = the scheduled board rewrite.',
+        'OWNER CUSTOM RULE: keep this exact line.',
+        'mode "reconcile" = a single-channel delta reconcile.',
+        '',
+        '## Owner appendix',
+        'Keep this section.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).toContain('OWNER CUSTOM RULE: keep this exact line.');
+      expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
+      expect(projected).toContain('## Owner appendix\nKeep this section.\n');
+    });
+
+    it('projects the bounded pipeline rule into a pre-tracking board brief', () => {
+      const legacyPipeline = [
+        'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
+        'projection source. Render one report-table with a row per open item:',
+        '  #id | title | status badge | assignee (or "unassigned") | D-day | source | latest event',
+        '- D-day: compute from the item\'s deadline against the run prompt\'s "Today is" date',
+        '  (D-3 = due in 3 days, D+2 = 2 days overdue). No deadline -> "-".',
+        '- Overdue -> badge-danger. Unassigned AND due within 7 days -> badge-warning with the',
+        '  literal word "unassigned" visible.',
+        '- Items with auto_created true and confirmed false render "(unconfirmed)" after the title',
+        '  so model-created items are visually distinct from owner-confirmed ones.',
+        '- done/cancelled items never appear.',
+        'When a briefing/action_required/decisions card refers to a tracked item, cite its #id.',
+      ].join('\n');
+      const raw = `# Owner board brief\n\n- The pipeline slot is an ITEM TRACKER projected from the NATIVE ledger (task_list):\n${legacyPipeline}\n\n## Owner appendix\nKeep this section.\n`;
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).toContain('include_terminal: false');
+      expect(projected).toContain('ranked top 12 projection');
+      expect(projected).toContain('Do not follow nextCursor');
+      expect(projected).not.toContain('row per open item');
+      expect(projected).toContain('## Owner appendix\nKeep this section.\n');
+    });
+
+    it('preserves owner edits inside a legacy pipeline section', () => {
+      const raw = [
+        '# Owner board brief',
+        '',
+        'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
+        'projection source. Render one report-table with a row per open item:',
+        'OWNER CUSTOM PIPELINE RULE MUST STAY.',
+        '',
+        '## Owner appendix',
+        'Keep this section.',
+        '',
+      ].join('\n');
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).toContain('OWNER CUSTOM PIPELINE RULE MUST STAY.');
+      expect(projected).toContain('ranked top 12 projection');
+      expect(projected).toContain('## Owner appendix\nKeep this section.\n');
+    });
+
     it('TG-05/TG-06 appends one current marked contract when no managed block exists', () => {
       const path = briefPath('board', home);
       const raw = '# Owner board brief\n\nKeep every user-authored byte.\n';

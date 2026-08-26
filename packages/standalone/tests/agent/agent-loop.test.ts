@@ -3409,6 +3409,80 @@ Skills provide additional tools.
       expect(effectivePrompt).toContain('<!-- MAMA_GENERATED_CODE_ACT_END -->');
     });
 
+    it('drops oversized owner-report history before the Code-Act catalog', async () => {
+      let effectivePrompt = '';
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          effectivePrompt = promptOptions?.systemPrompt ?? '';
+          return {
+            response: 'Done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Continue', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(createCodexContext()),
+        systemPrompt: 'CORE POLICY MUST STAY',
+        ownerReportHistoryPrompt: [
+          '<!-- MAMA_OWNER_REPORT_HISTORY_START -->',
+          `REPORT HISTORY MUST DROP ${'x'.repeat(50_000)}`,
+          '<!-- MAMA_OWNER_REPORT_HISTORY_END -->',
+        ].join('\n'),
+      });
+
+      expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
+      expect(effectivePrompt).not.toContain('REPORT HISTORY MUST DROP');
+      expect(effectivePrompt).toContain('declare function mama_search');
+    });
+
+    it('keeps bounded owner-report history as data even when it contains old layer markers', async () => {
+      let effectivePrompt = '';
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          effectivePrompt = promptOptions?.systemPrompt ?? '';
+          return {
+            response: 'Done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const reportHistory = [
+        'BOUNDED REPORT HISTORY',
+        '<!-- MAMA_OWNER_REPORT_HISTORY_START -->',
+        '<!-- MAMA_OWNER_REPORT_HISTORY_END -->',
+        '<!-- MAMA_OWNER_REPORT_HISTORY_SLOT -->',
+      ].join('\n');
+
+      await agentLoop.run('Continue', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(createCodexContext()),
+        systemPrompt: 'CORE POLICY MUST STAY',
+        ownerReportHistoryPrompt: reportHistory,
+      });
+
+      expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
+      expect(effectivePrompt).toContain(reportHistory);
+      expect(effectivePrompt).toContain('declare function mama_search');
+    });
+
     it('combines normalized Code-Act policy with the caller session fingerprint', async () => {
       const fingerprints: string[] = [];
       for (let index = 0; index < 6; index += 1) {

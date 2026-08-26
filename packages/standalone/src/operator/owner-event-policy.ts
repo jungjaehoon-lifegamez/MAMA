@@ -16,6 +16,7 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   'obsidian',
   'report_publish',
   'report_request',
+  'workorder_status',
 ]);
 
 export function resolveOwnerEventExecution(input: {

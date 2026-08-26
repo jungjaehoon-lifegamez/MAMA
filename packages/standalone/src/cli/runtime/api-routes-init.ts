@@ -1054,7 +1054,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         const now = Date.now();
         enqueueWorkOrderOrThrow(
           'memory-curation',
-          opts?.manual ? promotionManualKey(now) : promotionKey(now),
+          opts?.manual ? promotionManualKey(now) : promotionKey(now, PROMOTION_INTERVAL_MS),
           { scheduledAt: new Date(now).toISOString() },
           opts?.manual ? 'high' : undefined
         );

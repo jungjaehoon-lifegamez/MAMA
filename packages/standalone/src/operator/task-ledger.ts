@@ -303,6 +303,8 @@ export interface UpdateTaskInput {
 
 export interface ListTasksFilter {
   status?: TaskStatus;
+  /** False narrows the result to active owner work; explicit status still wins. */
+  includeTerminal?: boolean;
   channel?: string;
   search?: string;
   limit?: number;
@@ -667,6 +669,8 @@ export class TaskLedger implements TaskSource {
     if (filter.status) {
       where.push('status = ?');
       params.push(filter.status);
+    } else if (filter.includeTerminal === false) {
+      where.push("status NOT IN ('done', 'cancelled')");
     }
     if (filter.channel) {
       where.push('source_channel = ?');
@@ -1970,8 +1974,9 @@ export class TaskLedger implements TaskSource {
 
   /**
    * Enqueue a workorder. Idempotent per occurrence key: an open (pending or
-   * in_progress) keyed row dedups; a terminal keyed row frees the slot (the
-   * unique index excludes terminal statuses) and a fresh row is inserted.
+   * in_progress) keyed row dedups. Completed owner-event occurrences and
+   * scheduled promotion slots also dedup; other terminal rows free the key
+   * and a fresh row is inserted.
    */
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord {
     if (order.workKind === 'temporal') {
@@ -2053,17 +2058,19 @@ export class TaskLedger implements TaskSource {
       throw new Error('enqueueWorkOrder: idempotencyKey must be non-empty');
     }
     const channel = `${WORKORDER_CHANNEL_PREFIX}${order.workKind}`;
-    // An owner-event occurrence key stays reserved after it COMPLETES, so a
-    // post-enqueue/pre-ACK crash cannot order the same work twice. 'failed' and
-    // 'cancelled' must NOT reserve it: those rows are dead, and treating them
-    // as a live acceptance made requeueWorkOrder hand back the row it had just
-    // marked failed (no attempts increment, nothing claimable) and made a
-    // boot-cancelled batch un-redeliverable for good. Every other kind
-    // reserves only while genuinely open.
+    // Owner-event occurrences and scheduled six-hour promotion slots stay
+    // reserved after they COMPLETE. The former prevents post-enqueue/pre-ACK
+    // replay; the latter prevents daemon restarts from repeating an already
+    // discharged slot. Manual promotions use promotion:manual:<time> and do
+    // not enter this branch. 'failed' and 'cancelled' must NOT reserve either
+    // occurrence: those rows are dead and must remain retryable.
     const durableOwnerEvent = order.idempotencyKey.startsWith('owner-event:');
-    const reservingStatuses = durableOwnerEvent
-      ? "'pending','in_progress','done'"
-      : "'pending','in_progress'";
+    const completedScheduledPromotion =
+      order.workKind === 'memory-curation' && /^promotion:\d+$/.test(order.idempotencyKey);
+    const reservingStatuses =
+      durableOwnerEvent || completedScheduledPromotion
+        ? "'pending','in_progress','done'"
+        : "'pending','in_progress'";
     const open = this.db
       .prepare(
         `SELECT * FROM operator_tasks

@@ -1527,7 +1527,8 @@ export class AgentLoop {
 
       const prepareSystemPrompt = (
         requestedSystemPrompt: string | undefined,
-        isResumingSession: boolean
+        isResumingSession: boolean,
+        ownerReportHistoryPrompt: string = ''
       ): string => {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
         let gatewayToolsPrompt = '';
@@ -1575,14 +1576,26 @@ export class AgentLoop {
             }
           }
         }
-        const fullPrompt = gatewayToolsPrompt
-          ? `${baseSystemPrompt}\n\n---\n\n${gatewayToolsPrompt}`
+        const baseWithOwnerReportHistory = ownerReportHistoryPrompt
+          ? `${baseSystemPrompt}\n\n${ownerReportHistoryPrompt}`
           : baseSystemPrompt;
+        const fullPrompt = gatewayToolsPrompt
+          ? `${baseWithOwnerReportHistory}\n\n---\n\n${gatewayToolsPrompt}`
+          : baseWithOwnerReportHistory;
 
         // Monitor and enforce prompt size
         const monitor = new PromptSizeMonitor();
         const runLayers: PromptLayer[] = [
           { name: 'systemPrompt', content: baseSystemPrompt, priority: 1 },
+          ...(ownerReportHistoryPrompt
+            ? [
+                {
+                  name: 'ownerReportHistory',
+                  content: ownerReportHistoryPrompt,
+                  priority: 3,
+                } as PromptLayer,
+              ]
+            : []),
           ...(gatewayToolsPrompt
             ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
             : []),
@@ -1594,15 +1607,29 @@ export class AgentLoop {
 
         let effectivePrompt = fullPrompt;
         if (!checkResult.withinBudget) {
-          const { layers: trimmed, result: enforceResult } = monitor.enforce(runLayers);
-          if (enforceResult.truncatedLayers.length > 0) {
-            console.warn(
-              `[AgentLoop] Truncated layers: ${enforceResult.truncatedLayers.join(', ')}`
-            );
+          const boundedLayers = ownerReportHistoryPrompt
+            ? runLayers.map((layer) =>
+                layer.name === 'ownerReportHistory' ? { ...layer, content: '' } : layer
+              )
+            : runLayers;
+          const { layers: trimmed, result: enforceResult } = monitor.enforce(boundedLayers);
+          const truncatedLayers = [
+            ...(ownerReportHistoryPrompt ? ['ownerReportHistory'] : []),
+            ...enforceResult.truncatedLayers,
+          ];
+          if (truncatedLayers.length > 0) {
+            console.warn(`[AgentLoop] Truncated layers: ${truncatedLayers.join(', ')}`);
           }
           const tBase = trimmed.find((l) => l.name === 'systemPrompt')?.content || baseSystemPrompt;
+          const tOwnerReportHistory =
+            trimmed.find((l) => l.name === 'ownerReportHistory')?.content || '';
           const tTools = trimmed.find((l) => l.name === 'gatewayTools')?.content || '';
-          effectivePrompt = tTools ? `${tBase}\n\n---\n\n${tTools}` : tBase;
+          const tBaseWithOwnerReportHistory = tOwnerReportHistory
+            ? `${tBase}\n\n${tOwnerReportHistory}`
+            : tBase;
+          effectivePrompt = tTools
+            ? `${tBaseWithOwnerReportHistory}\n\n---\n\n${tTools}`
+            : tBaseWithOwnerReportHistory;
           console.log(
             `[AgentLoop] System prompt truncated: ${fullPrompt.length} → ${effectivePrompt.length} chars`
           );
@@ -1610,7 +1637,8 @@ export class AgentLoop {
 
         console.log(
           `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
-            `(base: ${baseSystemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+            `(base: ${baseSystemPrompt.length}, history: ${ownerReportHistoryPrompt.length}, ` +
+            `tools: ${gatewayToolsPrompt.length})`
         );
         return effectivePrompt;
       };
@@ -1623,12 +1651,14 @@ export class AgentLoop {
         perCallSystemPrompt = options?.systemPrompt ?? this.defaultSystemPrompt;
       } else if (
         options?.systemPrompt ||
+        options?.ownerReportHistoryPrompt ||
         options?.gatewayToolsPrompt !== undefined ||
         (this.isGatewayMode && this.useCodeAct)
       ) {
         perCallSystemPrompt = prepareSystemPrompt(
           options?.systemPrompt,
-          options?.resumeSession === true
+          options?.resumeSession === true,
+          options?.ownerReportHistoryPrompt
         );
       } else {
         perCallSystemPrompt = this.defaultSystemPrompt;
@@ -1646,7 +1676,11 @@ export class AgentLoop {
       const resumeInstructions =
         isDurableRuntime && freshSystemPromptBuilder
           ? async (): Promise<string> =>
-              prepareSystemPrompt(await freshSystemPromptBuilder(), false)
+              prepareSystemPrompt(
+                await freshSystemPromptBuilder(),
+                false,
+                options?.freshSessionOwnerReportHistoryPrompt?.()
+              )
           : undefined;
 
       // Reset StopContinuation state for this channel to prevent leaking
@@ -1848,7 +1882,8 @@ export class AgentLoop {
               if (options?.freshSessionSystemPrompt) {
                 requestSystemPrompt = prepareSystemPrompt(
                   await options.freshSessionSystemPrompt(),
-                  false
+                  false,
+                  options.freshSessionOwnerReportHistoryPrompt?.()
                 );
               }
             } catch (rebuildError) {
@@ -1964,7 +1999,8 @@ export class AgentLoop {
               if (options?.freshSessionSystemPrompt) {
                 resetSystemPrompt = prepareSystemPrompt(
                   await options.freshSessionSystemPrompt(),
-                  false
+                  false,
+                  options.freshSessionOwnerReportHistoryPrompt?.()
                 );
               }
 

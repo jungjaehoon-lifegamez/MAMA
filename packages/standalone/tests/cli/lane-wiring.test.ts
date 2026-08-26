@@ -94,6 +94,17 @@ describe('report lane: instructions against the grant', () => {
     }
   });
 
+  it('bounds native-board gathering instead of asking the report to page the ledger', () => {
+    const lines = buildFullReportGatherLines({
+      lastSuccessIso: '2026-07-28T00:00:00Z',
+    }).join('\n');
+
+    expect(lines).toContain('include_terminal: false');
+    expect(lines).toContain('limit: 12');
+    expect(lines).toContain('limit: 5');
+    expect(lines).toContain('do not follow nextCursor');
+  });
+
   it('instructs the delta tool with the last successful report as its window', () => {
     const [withAnchor] = buildFullReportGatherLines({
       lastSuccessIso: '2026-07-28T00:00:00Z',

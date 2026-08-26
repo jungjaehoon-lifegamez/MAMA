@@ -60,6 +60,7 @@ describe('TG-03/TG-04 owner-event policy', () => {
         'obsidian',
         'report_publish',
         'report_request',
+        'workorder_status',
       ]) {
         expect(context.role.allowedTools).not.toContain(ownerMessageOnlyOrNonIdempotent);
       }

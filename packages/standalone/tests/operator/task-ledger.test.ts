@@ -322,6 +322,52 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(fresh.payload.attempts).toBe(1);
     });
 
+    it('keeps a completed scheduled promotion slot discharged across daemon restarts', () => {
+      const completed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(completed.id);
+      ledger.completeWorkOrder(completed.id);
+
+      const sameSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+      const nextSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82767',
+        input: { scheduledAt: '2026-08-26T19:38:10.920Z' },
+      });
+
+      expect(sameSlot.id).toBe(completed.id);
+      expect(sameSlot.status).toBe('done');
+      expect(nextSlot.id).not.toBe(completed.id);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(nextSlot.id);
+    });
+
+    it('allows a failed scheduled promotion slot to be attempted again', () => {
+      const failed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(failed.id);
+      ledger.failWorkOrder(failed.id, 'provider unavailable');
+
+      const retry = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+
+      expect(retry.id).not.toBe(failed.id);
+      expect(retry.status).toBe('pending');
+      expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
+    });
+
     it('reports the newest COMPLETED full board run with its enqueue/complete times', () => {
       expect(ledger.lastCompletedBoardFullRun()).toBeNull();
 

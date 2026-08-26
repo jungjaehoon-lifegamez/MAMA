@@ -46,8 +46,9 @@ export function assertStage2FlagCompatible(env: NodeJS.ProcessEnv = process.env)
 
 // ── Occurrence keys (plan D5/M2) ──────────────────────────────────────────
 // Keys identify one OCCURRENCE: same scheduled slot dedups against itself,
-// the next slot (or any manual request) mints a fresh key. Terminal rows free
-// their key (ledger index predicate), so retries insert fresh rows.
+// the next slot (or any manual request) mints a fresh key. Failed/cancelled
+// rows free their key so retries can insert fresh rows. TaskLedger keeps a
+// completed scheduled promotion slot reserved through the rest of that slot.
 
 const BOARD_SLOT_MS = 30 * 60 * 1000;
 const PROMOTION_SLOT_MS = 6 * 60 * 60 * 1000;
@@ -108,8 +109,11 @@ export function wikiBatchKey(trigger: string, now: number): string {
   return `wiki:${now}-${trigger}`;
 }
 
-export function promotionKey(now: number): string {
-  return `promotion:${Math.floor(now / PROMOTION_SLOT_MS)}`;
+export function promotionKey(now: number, intervalMs: number = PROMOTION_SLOT_MS): string {
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error('promotion interval must be a positive finite number');
+  }
+  return `promotion:${Math.floor(now / intervalMs)}`;
 }
 
 export function promotionManualKey(now: number): string {

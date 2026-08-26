@@ -128,8 +128,9 @@ export function buildWorkerSystemPrompt(
   const toolInstructions =
     backend === 'codex'
       ? [
-          'Follow the brief in the user message. Use the injected native host tools directly.',
-          'Call them through the model tool interface; never emit Markdown or JavaScript substitutes.',
+          'Follow the brief in the user message. Use the single injected native `code_act` tool.',
+          'Pass JavaScript to code_act and call allowlisted gateway functions only inside its sandbox;',
+          'never call agent_notices, task_list, or another gateway function as a top-level native tool.',
         ]
       : backend === 'cline'
         ? [

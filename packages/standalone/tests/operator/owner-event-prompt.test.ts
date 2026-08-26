@@ -38,6 +38,10 @@ describe('TG-03/TG-04 MAMA owner-event prompt', () => {
     expect(prompt).toContain('telegram_send({chat_id:"owner-chat"');
     expect(prompt).toContain('delivery_key');
     expect(prompt).toContain('host-issued occurrence per external effect kind');
+    expect(prompt).toContain('Start from this exact connector delta');
+    expect(prompt).toContain('Do not run a general status report or cross-check unrelated sources');
+    expect(prompt).toContain('Widen evidence only when');
+    expect(prompt).toContain('Do not call workorder_status after an accepted workorder_request');
     expect(prompt).toContain('telegram_send.delivery_key=telegram-delivery');
     expect(prompt).toContain('drive_upload.effect_key=drive-upload');
     expect(prompt.indexOf('When client feedback arrives')).toBeLessThan(

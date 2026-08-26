@@ -65,4 +65,14 @@ describe('board slot instructions', () => {
     expect(lines).toContain('never use it');
     expect(lines).not.toContain('blocked/overdue');
   });
+
+  it('projects one nonterminal top-12 page without asking the worker to paginate', () => {
+    const lines = buildBoardPublishLines().join('\n');
+
+    expect(lines).toContain('include_terminal: false');
+    expect(lines).toContain('top 12');
+    expect(lines).toContain('Do not follow nextCursor');
+    expect(lines).toContain('total as coverage');
+    expect(lines).not.toContain('row per open item');
+  });
 });

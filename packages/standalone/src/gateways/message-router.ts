@@ -1104,6 +1104,7 @@ This protects your credentials from being exposed in chat logs.`;
         // CONTINUE turns: Codex server retains full conversation via threadId,
         // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
         let systemPrompt: string;
+        let ownerReportHistoryPrompt = '';
         const historyContext = message.metadata?.historyContext;
 
         // Public turns never inspect private workspace rules, skills, or AGENTS files.
@@ -1148,6 +1149,7 @@ This protects your credentials from being exposed in chat logs.`;
               true,
               trelloAvailable
             );
+            ownerReportHistoryPrompt = this.buildOwnerReportHistoryPrompt(session);
           }
         }
 
@@ -1242,6 +1244,7 @@ This protects your credentials from being exposed in chat logs.`;
         const envelope = this.buildReactiveEnvelope(message, agentContext);
         const options: AgentLoopOptions = {
           systemPrompt: effectivePrompt,
+          ...(ownerReportHistoryPrompt ? { ownerReportHistoryPrompt } : {}),
           sessionPolicyFingerprint,
           userId: message.userId,
           model: roleModel, // Role-specific model override
@@ -1296,6 +1299,10 @@ This protects your credentials from being exposed in chat logs.`;
               trelloAvailable
             );
           };
+          if (!isPublicLane) {
+            options.freshSessionOwnerReportHistoryPrompt = () =>
+              this.buildOwnerReportHistoryPrompt(session);
+          }
         }
 
         if (shouldResume) {
@@ -1854,28 +1861,6 @@ ${sessionHistory}
       logger.info(`Injected ${sessionHistory.length} chars of history (new session)`);
     }
 
-    // TG-05 (design Decision 7): an actual new backend conversation restores
-    // the committed owner-report projections of the SAME final turns the
-    // history window restores. Resume paths never reach this builder with
-    // isNewSession, so a successful resume cannot replay consumed reports.
-    if (isNewSession && this.ownerReportInbox && session.source === 'telegram') {
-      const restoredTurns = this.sessionStore
-        .getHistory(session.id)
-        .filter((turn) => turn.state !== 'provisional')
-        .slice(-5);
-      const reportHistory = this.ownerReportInbox.historyBlock(
-        { source: 'telegram', channelId: session.channelId },
-        restoredTurns
-      );
-      if (reportHistory) {
-        prompt += `
-## Previously Consumed Owner Reports (reference only)
-${reportHistory}
-`;
-        logger.info(`Injected ${reportHistory.length} chars of owner-report history (new session)`);
-      }
-    }
-
     // Add channel history only for new sessions without DB history
     if (!hasHistory && isNewSession && historyContext) {
       prompt += `
@@ -1936,6 +1921,26 @@ ${historyContext}
     }
 
     return this.projectPrivatePromptText(prompt);
+  }
+
+  /** TG-05 Decision 7: exact receipt history travels as a separate budget layer. */
+  private buildOwnerReportHistoryPrompt(session: Session): string {
+    if (!this.ownerReportInbox || session.source !== 'telegram') {
+      return '';
+    }
+    const restoredTurns = this.sessionStore
+      .getHistory(session.id)
+      .filter((turn) => turn.state !== 'provisional')
+      .slice(-5);
+    const reportHistory = this.ownerReportInbox.historyBlock(
+      { source: 'telegram', channelId: session.channelId },
+      restoredTurns
+    );
+    if (!reportHistory) {
+      return '';
+    }
+    logger.info(`Prepared ${reportHistory.length} chars of owner-report history (new session)`);
+    return `## Previously Consumed Owner Reports (reference only)\n${reportHistory}`;
   }
 
   private buildSessionPolicyFingerprint(

@@ -19,6 +19,7 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 // relocate INTO this file when the persona modules are deleted at cutover.
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
+import { buildPipelineTrackerInstructions } from './board-slot-instructions.js';
 import { buildTemporalWorkerBrief } from './temporal-worker.js';
 import {
   resolveWorkOrderPrivateSurface,
@@ -130,6 +131,22 @@ const MANAGED_BOARD_WORKORDER_CONTRACT = [
   BOARD_WORKORDER_CONTRACT.trim(),
   MANAGED_BOARD_CONTRACT_END,
 ].join('\n');
+
+// Exact pre-marker packaged Board contracts, oldest through current. Any edit
+// changes the digest and makes the section user-owned.
+const LEGACY_GENERATED_BOARD_CONTRACT_HASHES = new Set([
+  '6fe8700103524238e776a2ec601f079331542c1b213a4e313f7c2939c39c5fd7',
+  'f51ea671c34f5963ca9370c5ab2686bbe3a456c0a9fea15c2d35dba0501eaf4d',
+  'b94be94db7e0fbb96756f891033b354a64492fd3c73ed9bc687feb63f90b3211',
+  '19afbded8c5969899ec855bfc7dbbe9097633d46c009a95587305da43af83356',
+  '8bad1ecd6b0214d529d8d4d3b08893d825131cfa8788debba4050b0da32f3404',
+]);
+
+const LEGACY_GENERATED_BOARD_PIPELINE_HASHES = new Set([
+  'a19d0660d7523a27ad6eb53d853521200aa078aa53a6f5c2a255f72bb6ea3a41',
+  'f7a94281401301f32cae579c17e9382dbb2161fe5e36952d5765a9ebb143778a',
+  '51f8167c881eed88ca490e32179d415dac9dac6f3fa921e66195e80fc645e6b2',
+]);
 
 const WIKI_WORKORDER_CONTRACT = `
 ## Work order contract (Stage 2)
@@ -251,6 +268,46 @@ function findManagedBoardContracts(raw: string): Array<{ start: number; end: num
   return contracts;
 }
 
+function stripLegacyGeneratedBoardContract(raw: string): string {
+  const heading = '## Work order contract (Stage 2)';
+  const start = raw.indexOf(heading);
+  if (start === -1) return raw;
+  if (
+    findManagedBoardContracts(raw).some(
+      (contract) => start >= contract.start && start <= contract.end
+    )
+  ) {
+    return raw;
+  }
+  const nextHeadingOffset = raw.slice(start + heading.length).search(/\n##[ \t]+/);
+  const end =
+    nextHeadingOffset === -1 ? raw.length : start + heading.length + nextHeadingOffset + 1;
+  const section = raw.slice(start, end);
+  const sectionHash = createHash('sha256').update(section.trim(), 'utf8').digest('hex');
+  if (!LEGACY_GENERATED_BOARD_CONTRACT_HASHES.has(sectionHash)) {
+    return raw;
+  }
+  return raw.slice(0, start) + raw.slice(end);
+}
+
+function projectCurrentBoardPipeline(raw: string): string {
+  const legacyStart =
+    'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the';
+  const start = raw.indexOf(legacyStart);
+  if (start === -1) return raw;
+  const nextHeadingOffset = raw.slice(start).search(/\n##[ \t]+/);
+  if (nextHeadingOffset === -1) return raw;
+  const end = start + nextHeadingOffset + 1;
+  const sectionHash = createHash('sha256')
+    .update(raw.slice(start, end).trim(), 'utf8')
+    .digest('hex');
+  const current = `${buildPipelineTrackerInstructions().join('\n')}\n\n`;
+  if (!LEGACY_GENERATED_BOARD_PIPELINE_HASHES.has(sectionHash)) {
+    return raw.slice(0, end) + current + raw.slice(end);
+  }
+  return raw.slice(0, start) + current + raw.slice(end);
+}
+
 function projectCurrentBoardContract(raw: string): string {
   const managed = findManagedBoardContracts(raw);
   if (managed.length === 0) {
@@ -280,7 +337,11 @@ export function projectWorkOrderBriefForPrompt(
   const overlay = buildPrivatePromptOverlay(resolveWorkOrderPrivateSurface(kind), policy);
   const withoutMarkedOverlay = stripMarkedPrivatePromptOverlays(raw);
   const contracted =
-    kind === 'board' ? projectCurrentBoardContract(withoutMarkedOverlay) : withoutMarkedOverlay;
+    kind === 'board'
+      ? projectCurrentBoardContract(
+          stripLegacyGeneratedBoardContract(projectCurrentBoardPipeline(withoutMarkedOverlay))
+        )
+      : withoutMarkedOverlay;
   const projected = stripDisabledPrivatePromptRecipes(
     stripLegacyPrivateLines(kind, contracted),
     overlay.length > 0
