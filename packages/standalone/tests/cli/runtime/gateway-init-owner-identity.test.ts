@@ -7,6 +7,21 @@ const gatewayMocks = vi.hoisted(() => ({
   slackOptions: vi.fn(),
   telegramOptions: vi.fn(),
   setTelegramTrust: vi.fn(),
+  telegramSendMessage: vi.fn().mockResolvedValue(undefined),
+  telegramSendFile: vi.fn().mockResolvedValue(undefined),
+  telegramSendImage: vi.fn().mockResolvedValue(undefined),
+  telegramSendSticker: vi.fn().mockResolvedValue(true),
+  telegramSendMessageFromActiveTurn: vi.fn().mockResolvedValue(undefined),
+  telegramSendFileFromActiveTurn: vi.fn().mockResolvedValue(undefined),
+  telegramSendImageFromActiveTurn: vi.fn().mockResolvedValue(undefined),
+  telegramSendStickerFromActiveTurn: vi.fn().mockResolvedValue(true),
+  telegramReadReceipt: vi.fn().mockReturnValue({
+    deliveryId: 'delivery-1',
+    variant: 'text',
+    state: 'delivered',
+    payloadIdentity: 'a'.repeat(64),
+    confirmedAt: 1_000,
+  }),
 }));
 
 vi.mock('../../../src/gateways/index.js', () => {
@@ -45,6 +60,42 @@ vi.mock('../../../src/gateways/index.js', () => {
       constructor(options: unknown) {
         super(options);
         gatewayMocks.telegramOptions(options);
+      }
+
+      override async sendMessage(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendMessage(...args);
+      }
+
+      override async sendFile(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendFile(...args);
+      }
+
+      override async sendImage(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendImage(...args);
+      }
+
+      override async sendSticker(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendSticker(...args);
+      }
+
+      async sendMessageFromActiveTurn(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendMessageFromActiveTurn(...args);
+      }
+
+      async sendFileFromActiveTurn(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendFileFromActiveTurn(...args);
+      }
+
+      async sendImageFromActiveTurn(...args: unknown[]): Promise<void> {
+        await gatewayMocks.telegramSendImageFromActiveTurn(...args);
+      }
+
+      async sendStickerFromActiveTurn(...args: unknown[]): Promise<boolean> {
+        return gatewayMocks.telegramSendStickerFromActiveTurn(...args) as Promise<boolean>;
+      }
+
+      readOutboundDeliveryReceipt(...args: unknown[]): unknown {
+        return gatewayMocks.telegramReadReceipt(...args);
       }
     },
     MessageRouter: class {},
@@ -124,5 +175,69 @@ describe('Gateway owner identity initialization', () => {
         }),
       })
     );
+  });
+
+  it('TG-01/TG-06 preserves Telegram delivery identity and active-turn capabilities', async () => {
+    const config = {
+      telegram: {
+        enabled: true,
+        token: 'telegram-token-synthetic',
+        allowed_chats: ['telegram-chat-1'],
+      },
+    } as unknown as MAMAConfig;
+    const toolExecutor = { setTelegramGateway: vi.fn() };
+    const agentLoop = { setTelegramGateway: vi.fn() };
+
+    await initGateways(
+      config,
+      {} as never,
+      toolExecutor as never,
+      agentLoop as never,
+      'codex',
+      {} as never
+    );
+
+    const adapter = toolExecutor.setTelegramGateway.mock.calls[0]?.[0] as {
+      sendMessage(chatId: string, text: string, deliveryId?: string): Promise<void>;
+      sendFile(chatId: string, path: string, caption?: string, deliveryId?: string): Promise<void>;
+      sendImage(chatId: string, path: string, caption?: string, deliveryId?: string): Promise<void>;
+      sendSticker(chatId: string, emotion: string, deliveryId?: string): Promise<boolean>;
+      sendMessageFromActiveTurn(chatId: string, text: string, deliveryId?: string): Promise<void>;
+      readOutboundDeliveryReceipt(deliveryId: string, variant: string): unknown;
+    };
+    expect(agentLoop.setTelegramGateway).toHaveBeenCalledWith(adapter);
+
+    await adapter.sendMessage('7777', 'body', 'delivery-text');
+    await adapter.sendFile('7777', '/private/file', 'caption', 'delivery-file');
+    await adapter.sendImage('7777', '/private/image', 'caption', 'delivery-image');
+    await adapter.sendSticker('7777', 'happy', 'delivery-sticker');
+    await adapter.sendMessageFromActiveTurn('7777', 'active body', 'delivery-active');
+    const receipt = adapter.readOutboundDeliveryReceipt('delivery-1', 'text');
+
+    expect(gatewayMocks.telegramSendMessage).toHaveBeenCalledWith('7777', 'body', 'delivery-text');
+    expect(gatewayMocks.telegramSendFile).toHaveBeenCalledWith(
+      '7777',
+      '/private/file',
+      'caption',
+      'delivery-file'
+    );
+    expect(gatewayMocks.telegramSendImage).toHaveBeenCalledWith(
+      '7777',
+      '/private/image',
+      'caption',
+      'delivery-image'
+    );
+    expect(gatewayMocks.telegramSendSticker).toHaveBeenCalledWith(
+      '7777',
+      'happy',
+      'delivery-sticker'
+    );
+    expect(gatewayMocks.telegramSendMessageFromActiveTurn).toHaveBeenCalledWith(
+      '7777',
+      'active body',
+      'delivery-active'
+    );
+    expect(gatewayMocks.telegramReadReceipt).toHaveBeenCalledWith('delivery-1', 'text');
+    expect(receipt).toMatchObject({ state: 'delivered', variant: 'text' });
   });
 });

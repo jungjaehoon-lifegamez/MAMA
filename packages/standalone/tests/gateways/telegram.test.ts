@@ -349,7 +349,7 @@ describe('TelegramGateway - message splitting', () => {
     await gateway.stop();
   });
 
-  it('treats a delivered owner-event occurrence as complete even if retry wording changes', async () => {
+  it('TG-06 rejects changed text for an already-delivered owner-event occurrence', async () => {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
     const ledgerPath = join(
       await makeMediaRoot(join(tmpdir(), 'mama-telegram-owner-event-ledger-')),
@@ -365,9 +365,90 @@ describe('TelegramGateway - message splitting', () => {
     await gateway.sendMessage('7777', 'first translation', 'owner-event:41:message:0');
     await expect(
       gateway.sendMessage('7777', 'wording changed on retry', 'owner-event:41:message:0')
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/delivery.*binding.*mismatch/i);
 
     expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['first translation']);
+    await gateway.stop();
+  });
+
+  it('TG-01/TG-06 reads one exact delivered receipt after long multi-chunk text', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      messageLedgerPath: join(
+        await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-text-')),
+        'ledger.json'
+      ),
+    });
+    await gateway.start();
+    const deliveryId = 'owner-event:41:telegram:telegram-delivery';
+    const text = `${'a'.repeat(4_096)}🌕${'b'.repeat(300)}`;
+
+    expect(gateway.readOutboundDeliveryReceipt(deliveryId, 'text')).toBeNull();
+    await gateway.sendMessage('7777', text, deliveryId);
+
+    expect(gateway.readOutboundDeliveryReceipt(deliveryId, 'text')).toMatchObject({
+      deliveryId,
+      variant: 'text',
+      state: 'delivered',
+      payloadIdentity: expect.stringMatching(/^[a-f0-9]{64}$/),
+      confirmedAt: expect.any(Number),
+    });
+    expect(mockApi.sendMessage).toHaveBeenCalledTimes(2);
+    await gateway.stop();
+  });
+
+  it('TG-06 reads receipts only from the actual delivered transport variant', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    mockApi.sendDocument.mockReset().mockResolvedValue({ message_id: 2 });
+    mockApi.sendPhoto.mockReset().mockResolvedValue({ message_id: 3 });
+    mockApi.getStickerSet.mockReset().mockResolvedValue({ stickers: [] });
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      messageLedgerPath: join(
+        await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-variants-')),
+        'ledger.json'
+      ),
+    });
+    await gateway.start();
+
+    await gateway.sendFile('7777', '/private/file.bin', 'caption', 'delivery-file');
+    await gateway.sendImage('7777', '/private/image.png', 'caption', 'delivery-image');
+    await gateway.sendSticker('7777', 'happy', 'delivery-sticker');
+
+    expect(gateway.readOutboundDeliveryReceipt('delivery-file', 'file')).toMatchObject({
+      variant: 'file',
+      state: 'delivered',
+    });
+    expect(gateway.readOutboundDeliveryReceipt('delivery-file', 'image')).toBeNull();
+    expect(gateway.readOutboundDeliveryReceipt('delivery-image', 'image')).toMatchObject({
+      variant: 'image',
+      state: 'delivered',
+    });
+    expect(gateway.readOutboundDeliveryReceipt('delivery-sticker', 'sticker')).toMatchObject({
+      variant: 'sticker',
+      state: 'delivered',
+    });
+    await gateway.stop();
+  });
+
+  it('TG-06 does not expose a receipt while delivery remains retryable', async () => {
+    mockApi.sendMessage.mockReset().mockRejectedValueOnce(new Error('ambiguous timeout'));
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      messageLedgerPath: join(
+        await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-pending-')),
+        'ledger.json'
+      ),
+    });
+    await gateway.start();
+
+    await expect(gateway.sendMessage('7777', 'pending', 'delivery-pending')).rejects.toThrow();
+    mockApi.sendMessage.mockResolvedValue({ message_id: 1 });
+    expect(gateway.readOutboundDeliveryReceipt('delivery-pending', 'text')).toBeNull();
     await gateway.stop();
   });
 });
