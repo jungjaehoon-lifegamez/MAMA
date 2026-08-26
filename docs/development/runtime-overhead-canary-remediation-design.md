@@ -256,7 +256,8 @@ compares the stored canonical intent with the newly normalized intent:
 
 - exact match plus `transmitting/unknown` returns reconcile-only;
 - exact match plus `confirmed` returns the stored receipt without sending;
-- any payload, target, variant, file hash, or delivery identity mismatch fails closed.
+- any normalized intent or delivery identity mismatch fails closed. File/image identity remains the
+  existing resolved path plus caption; no byte hash is introduced.
 
 The old test that treats rephrased text as the same successful effect becomes a RED mismatch test.
 
@@ -497,7 +498,7 @@ After install and a single launchd restart, reset the cutover time and require:
 2. no more than three Board repairs for the measured ten-intent five-minute stream;
 3. at least 60% Board token reduction against 7,204,986 tokens per twenty baseline intents;
 4. exact batch acceptance and verified-generation application with no false ACK;
-5. every new Telegram effect joined to exact local body, delivery identity, payload hash, and
+5. every new Telegram effect joined to its exact local body, existing ledger payload identity, and
    delivered receipt;
 6. no duplicate delivery, truncation, Code-Act/internal metadata exposure, Telegram 409, or
    provider finish error;
@@ -520,7 +521,8 @@ Telegram UI, browser, and Computer Use remain forbidden.
 ## 16. Eng review completion summary
 
 - Step 0 Scope Challenge: scope reduced. Removed the proposed schema column, migration class,
-  file snapshot, byte hash, duplicate hash module, and speculative index.
+  file snapshot, byte hash, duplicate hash module, and speculative index. A final consistency pass
+  also removed the two residual hash requirements from retry and canary criteria.
 - Architecture Review: 4 issues found, 4 resolved. Scheduled promotion, accept/claim ordering,
   empty delayed work, and missing post-send receipt now have explicit state transitions.
 - Code Quality Review: 2 issues found, 2 resolved. Existing modules own the behavior; the gateway
@@ -544,7 +546,7 @@ Telegram UI, browser, and Computer Use remain forbidden.
 | ------------- | ---------------------- | ------------------------------- | ---: | ------ | ------------------------------------------------------ |
 | CEO Review    | `/plan-ceo-review`     | Scope & strategy                |    0 | -      | Backend cost correction; not required                  |
 | Codex Review  | collaboration subagent | Independent second opinion      |    0 | -      | Not requested                                          |
-| Eng Review    | `/plan-eng-review`     | Architecture & tests (required) |    1 | CLEAR  | 15 issues/gaps reviewed, 0 unresolved, 0 critical gaps |
+| Eng Review    | `/plan-eng-review`     | Architecture & tests (required) |    1 | CLEAR  | 16 issues/gaps reviewed, 0 unresolved, 0 critical gaps |
 | Design Review | `/plan-design-review`  | UI/UX gaps                      |    0 | -      | No UI change                                           |
 | DX Review     | `/plan-devex-review`   | Developer experience gaps       |    0 | -      | No public API/SDK change                               |
 
