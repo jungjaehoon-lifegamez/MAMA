@@ -385,9 +385,10 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createBoardInputTables(db);
-      const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+      let taskNow = 20;
+      const taskLedger = new TaskLedger(db, { now: () => taskNow, timeZone: 'UTC' });
       const inbox = new OwnerEventInbox(db, () => 1_000);
-      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 20);
+      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
       const batchId = inbox.enqueue({
         channelKey: 'kagemusha:feedback',
         eventIds: ['evt-boot-repair'],
@@ -401,11 +402,13 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         eventIds: ['evt-boot-repair'],
         repair: firstRuntime.boardRefreshGate.captureFullRepair(),
       });
+      expect(taskLedger.claimNextWorkOrder()).toBeNull();
+      taskNow += 20 * 60 * 1_000;
       const abandoned = taskLedger.claimNextWorkOrder();
       if (!abandoned) throw new Error('abandoned Board workorder expected');
       taskLedger.failWorkOrder(abandoned.id, 'simulated daemon cutover');
 
-      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 10);
+      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
       const { ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -415,6 +418,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       });
       await vi.advanceTimersByTimeAsync(10_000);
 
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      taskNow += 20 * 60 * 1_000;
       const repair = ledger.claimNextWorkOrder();
       expect(repair).toMatchObject({
         idempotencyKey: 'board:full:repair',
@@ -422,8 +427,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         payload: {
           mode: 'full',
           force: false,
-          repairGeneration: 22,
-          noUpdateScope: 'full:22',
+          repairGeneration: 21,
+          noUpdateScope: 'full:21',
         },
       });
       expect(repair?.id).not.toBe(accepted.workOrderId);
