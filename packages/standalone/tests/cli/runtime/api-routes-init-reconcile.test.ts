@@ -444,6 +444,69 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
+  it('TG-06 promotes one delayed owner-event repair on the normal schedule', async () => {
+    const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
+    process.env.MAMA_BOARD_RECONCILE = '0';
+    try {
+      createBoardInputTables(db);
+      const taskLedger = new TaskLedger(db, { now: Date.now, timeZone: 'UTC' });
+      const inbox = new OwnerEventInbox(db, Date.now);
+      const boardRefreshGate = new BoardRefreshGate({ initialGeneration: 500 });
+      boardRefreshGate.completeVerifiedFull(500);
+      const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
+        db,
+        taskLedger,
+        Date.now
+      );
+      const { ledger, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+        ledger: taskLedger,
+        boardRefreshGate,
+        ownerEventBoardRefreshLedger,
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000 - 10_000);
+
+      const batchId = inbox.enqueue({
+        channelKey: 'kagemusha:feedback',
+        eventIds: ['evt-scheduled-promotion'],
+        lines: ['line:evt-scheduled-promotion'],
+        activations: [],
+      });
+      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+      boardRefreshGate.markChannelDirty('host:test-owner-event');
+      const accepted = ownerEventBoardRefreshLedger.accept({
+        batchId,
+        eventIds: ['evt-scheduled-promotion'],
+        repair: boardRefreshGate.captureFullRepair(),
+      });
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000);
+
+      expect(ledger.countPendingWorkOrders()).toBe(1);
+      expect(ledger.claimNextWorkOrder()).toMatchObject({
+        id: accepted.workOrderId,
+        idempotencyKey: 'board:full:repair',
+        payload: {
+          mode: 'full',
+          force: false,
+          repairGeneration: 501,
+          noUpdateScope: 'full:501',
+        },
+      });
+      routeHandle.stop();
+    } finally {
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
+      db.close();
+    }
+  });
+
   it('Fix E delta-gates the 30-minute full schedule when reconcile is disabled', async () => {
     const db = new Database(':memory:');
     const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
