@@ -6,7 +6,11 @@ The Tier System is MAMA's graceful degradation mechanism. It ensures MAMA always
 
 ## Overview
 
-MAMA defines multiple tier systems. The first is the **Search Capability Tiers** (2 tiers for graceful degradation), and the second is the **[Tool Permission Tiers](#tool-permission-tiers-multi-agent-system)** (3 tiers for agent access control).
+MAMA defines multiple tier systems. The first is the **Search Capability Tiers** (2 tiers for
+graceful degradation), and the second is the
+**[Internal Worker Tool Tiers](#internal-worker-tool-tiers-advancedlegacy)** (3 tiers for managed
+subprocess tool access). Neither system grants human-team access to Cases, memory, artifacts, or
+destinations.
 
 ### Search Capability Tiers
 
@@ -287,9 +291,13 @@ function search(query) {
 
 ---
 
-## Tool Permission Tiers (Multi-Agent System)
+## Internal Worker Tool Tiers (Advanced/Legacy)
 
-Separate from the search tiers above, the **Multi-Agent System** uses a tier field to control which native tools a subprocess agent may use. Ground truth: `packages/standalone/src/multi-agent/tool-permission-manager.ts`.
+Separate from the search tiers above, legacy/internal managed workers use a tier field to control
+which native tools a subprocess may use. These tiers do not define human-team access and do not
+grant a member access to a Case, memory, artifact, or destination. Human access belongs to the v1
+principal-grant contract. Ground truth for the surviving process-level tier is
+`packages/standalone/src/multi-agent/tool-permission-manager.ts`.
 
 ### Defaults (verbatim from code)
 

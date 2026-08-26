@@ -175,7 +175,9 @@ describe('MessageRouter owner-report inbox consumption', () => {
     const prompts: string[] = [];
     const optionsSeen: Array<{
       systemPrompt?: string;
+      ownerReportHistoryPrompt?: string;
       freshSessionSystemPrompt?: () => Promise<string>;
+      freshSessionOwnerReportHistoryPrompt?: () => string;
     }> = [];
     const router = new MessageRouter(
       sessionStore,
@@ -183,7 +185,12 @@ describe('MessageRouter owner-report inbox consumption', () => {
         run: vi.fn(
           async (
             prompt: string,
-            options?: { systemPrompt?: string; freshSessionSystemPrompt?: () => Promise<string> }
+            options?: {
+              systemPrompt?: string;
+              ownerReportHistoryPrompt?: string;
+              freshSessionSystemPrompt?: () => Promise<string>;
+              freshSessionOwnerReportHistoryPrompt?: () => string;
+            }
           ) => {
             prompts.push(prompt);
             optionsSeen.push(options ?? {});
@@ -218,8 +225,10 @@ describe('MessageRouter owner-report inbox consumption', () => {
     // ...but an actual backend replacement rebuilds the committed history block.
     const freshPrompt = await optionsSeen[1]?.freshSessionSystemPrompt?.();
     expect(freshPrompt).toBeDefined();
-    expect(freshPrompt).toContain('<recent_owner_report_history projection="v1">');
-    expect(freshPrompt).toContain('distinctive statement');
+    expect(freshPrompt).not.toContain('<recent_owner_report_history projection="v1">');
+    const freshReportHistory = optionsSeen[1]?.freshSessionOwnerReportHistoryPrompt?.();
+    expect(freshReportHistory).toContain('<recent_owner_report_history projection="v1">');
+    expect(freshReportHistory).toContain('distinctive statement');
   });
 
   it('surfaces a finalization conflict instead of reporting success', async () => {

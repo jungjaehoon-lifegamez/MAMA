@@ -55,6 +55,28 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
       expect(result.tasks[0]?.assignee).toBe('worker-a');
     });
 
+    it('returns one bounded nonterminal page when include_terminal is false', async () => {
+      await executor.execute('task_create', { title: 'pending', status: 'pending' });
+      await executor.execute('task_create', { title: 'active', status: 'in_progress' });
+      await executor.execute('task_create', { title: 'finished', status: 'done' });
+      await executor.execute('task_create', { title: 'dropped', status: 'cancelled' });
+
+      const result = (await executor.execute('task_list', {
+        include_terminal: false,
+        limit: 12,
+      })) as {
+        tasks: Array<{ status: string }>;
+        total: number;
+        returned: number;
+        nextCursor: string | null;
+      };
+
+      expect(result.tasks.map((task) => task.status).sort()).toEqual(['in_progress', 'pending']);
+      expect(result.total).toBe(2);
+      expect(result.returned).toBe(2);
+      expect(result.nextCursor).toBeNull();
+    });
+
     it('accepts exact due_at and returns the normalized temporal projection', async () => {
       const created = (await executor.execute('task_create', {
         title: 'exact',

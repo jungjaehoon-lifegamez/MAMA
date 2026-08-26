@@ -3064,6 +3064,7 @@ export class GatewayToolExecutor {
           }
           const listInput = input as {
             status?: string;
+            include_terminal?: boolean;
             channel?: string;
             search?: string;
             limit?: number;
@@ -3075,6 +3076,7 @@ export class GatewayToolExecutor {
           // that says "the open items are..." from one page states more than it read.
           const page = this.taskLedger.listPage({
             status: listInput.status as never,
+            includeTerminal: listInput.include_terminal,
             channel: listInput.channel,
             search: listInput.search,
             limit: listInput.limit,

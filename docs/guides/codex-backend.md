@@ -7,8 +7,9 @@
 
 ## Overview
 
-MAMA OS runs Codex CLI through its stdio app-server protocol and can mix Codex and Claude
-agents in the same multi-agent workflow. The configured backend name is `codex`.
+MAMA OS runs Codex CLI through its stdio app-server protocol. The configured backend name is
+`codex`. Backend choice is an internal execution detail: users still contact one MAMA, and MAMA
+may use the configured model runtime without exposing an agent roster or workflow UI.
 
 The runtime keeps one managed app-server process, multiplexes conversations onto durable Codex
 threads, and exposes the tools allowed for each run as native app-server host tools. MAMA still
@@ -65,7 +66,12 @@ agent:
   codex_ephemeral: false
 ```
 
-### Per-agent override
+### Legacy internal-worker override
+
+Existing installations may still configure different backends for named internal workers. This is
+an advanced compatibility surface, not the v1 human-team interaction model. New deployments
+should prefer the global `agent` configuration unless a measured internal task requires a separate
+worker process.
 
 ```yaml
 multi_agent:

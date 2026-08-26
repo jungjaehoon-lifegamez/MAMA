@@ -95,6 +95,10 @@ describe('HostBridge', () => {
       const list = bridge.getAvailableFunctions(3).find((fn) => fn.name === 'task_list');
       expect(create?.params.map((param) => param.name)).toContain('due_at');
       expect(update?.params.map((param) => param.name)).toContain('due_at');
+      expect(list?.params).toContainEqual(
+        expect.objectContaining({ name: 'include_terminal', type: 'boolean' })
+      );
+      expect(list?.description).toContain('ranked top-N projection');
       expect(list?.returnType).toContain('temporal_state');
     });
 

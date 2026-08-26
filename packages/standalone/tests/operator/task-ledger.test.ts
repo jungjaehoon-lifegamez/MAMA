@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { promotionKey } from '../../src/operator/workorder-publishers.js';
 
 describe('TaskLedger', () => {
   let db: SQLiteDatabase;
@@ -320,6 +321,111 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       });
       expect(fresh.id).not.toBe(a.id);
       expect(fresh.payload.attempts).toBe(1);
+    });
+
+    it('keeps a completed scheduled promotion slot discharged across daemon restarts', () => {
+      const completed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(completed.id);
+      ledger.completeWorkOrder(completed.id);
+
+      const sameSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+      const nextSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82767',
+        input: { scheduledAt: '2026-08-26T19:38:10.920Z' },
+      });
+
+      expect(sameSlot.id).toBe(completed.id);
+      expect(sameSlot.status).toBe('done');
+      expect(nextSlot.id).not.toBe(completed.id);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(nextSlot.id);
+    });
+
+    it('allows a failed scheduled promotion slot to be attempted again', () => {
+      const failed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(failed.id);
+      ledger.failWorkOrder(failed.id, 'provider unavailable');
+
+      const retry = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+
+      expect(retry.id).not.toBe(failed.id);
+      expect(retry.status).toBe('pending');
+      expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
+    });
+
+    it('keeps a released six-hour legacy slot reserved by the interval-aware key', () => {
+      const legacy = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(legacy.id);
+      ledger.completeWorkOrder(legacy.id);
+
+      const compatible = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:21600000:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+
+      expect(compatible.id).toBe(legacy.id);
+      expect(compatible.status).toBe('done');
+    });
+
+    it('does not collide completed promotion slots from different configured intervals', () => {
+      const sixHour = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:21600000:1',
+        input: { scheduledAt: '2026-08-26T06:00:00.000Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(sixHour.id);
+      ledger.completeWorkOrder(sixHour.id);
+
+      const twelveHour = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:43200000:1',
+        input: { scheduledAt: '2026-08-26T12:00:00.000Z' },
+      });
+
+      expect(twelveHour.id).not.toBe(sixHour.id);
+      expect(twelveHour.status).toBe('pending');
+    });
+
+    it('keeps a fractional-hours promotion slot reserved after interval normalization', () => {
+      const key = promotionKey(20_000_000, 4_444_444.404);
+      expect(key).toMatch(/^promotion:v2:\d+:\d+$/);
+      const completed = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: key,
+        input: { scheduledAt: '2026-08-26T12:00:00.000Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(completed.id);
+      ledger.completeWorkOrder(completed.id);
+
+      const sameSlot = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: key,
+        input: { scheduledAt: '2026-08-26T12:00:01.000Z' },
+      });
+
+      expect(sameSlot.id).toBe(completed.id);
+      expect(sameSlot.status).toBe('done');
     });
 
     it('reports the newest COMPLETED full board run with its enqueue/complete times', () => {

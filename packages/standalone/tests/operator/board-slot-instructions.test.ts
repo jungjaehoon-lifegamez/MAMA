@@ -11,7 +11,7 @@ import {
   buildBoardPublishLines,
 } from '../../src/operator/board-slot-instructions.js';
 
-describe('board slot instructions', () => {
+describe('Story BOARD-SLOT: board slot instructions', () => {
   it('pins the four-slot order the board renders', () => {
     expect([...BOARD_SLOT_ORDER]).toEqual(['briefing', 'action_required', 'decisions', 'pipeline']);
   });
@@ -64,5 +64,15 @@ describe('board slot instructions', () => {
     expect(lines).toContain('D-day is an optional display aid');
     expect(lines).toContain('never use it');
     expect(lines).not.toContain('blocked/overdue');
+  });
+
+  it('AC #1 projects one nonterminal top-12 page without asking the worker to paginate', () => {
+    const lines = buildBoardPublishLines().join('\n');
+
+    expect(lines).toContain('include_terminal: false');
+    expect(lines).toContain('top 12');
+    expect(lines).toContain('Do not follow nextCursor');
+    expect(lines).toContain('total as coverage');
+    expect(lines).not.toContain('row per open item');
   });
 });

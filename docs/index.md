@@ -1,13 +1,17 @@
-# MAMA Plugin Documentation
+# MAMA Documentation
 
-**MAMA:** Memory-Augmented MCP Assistant
+**MAMA OS:** The work agent behind your messenger
 **Navigation Hub**
 
-> "Tracks WHY you decided, not just WHAT you chose"
->
-> "Prevents vibe coding breakage by remembering your reasoning"
->
-> "Always-on AI agent with Discord, Slack, Telegram integrations"
+> One accountable MAMA remembers the Case, does authorized work, and returns verified artifacts.
+
+The contract-first memory plugin remains a core substrate: it tracks why a decision was made and
+prevents later coding sessions from silently breaking that reasoning.
+
+MAMA exposes one accountable work agent through existing messengers. A human team can submit
+requests and files, continue scoped Cases, and receive verified artifacts without selecting or
+coordinating named AI personas. Current releases are owner-first; the complete human-team grant
+and Work Case contract is the v1 direction.
 
 ## ✨ Key Strengths
 
@@ -22,6 +26,9 @@
 ## Quick Links
 
 - **[Main README](../README.md)** - Quick overview, installation, and key features
+- **[Work Agent](explanation/work-agent.md)** - Product identity, human team, Cases, and artifacts
+- **[Normative v1 Design](development/2026-08-26-one-front-team-work-agent-design.md)** - One-front team work-agent contract and roadmap boundary
+- **[Phase 2b Access Plan](development/2026-08-26-phase2b-human-team-access-plan.md)** - Human principal grants and effective-scope implementation plan
 - **[GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)** - Source code and issues
 
 ---
@@ -53,9 +60,9 @@ _Step-by-step instructions for specific tasks_
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
-- [Codex Backend](guides/codex-backend.md) - Codex app-server setup and per-agent backend selection
+- [Codex Backend](guides/codex-backend.md) - Codex app-server setup and managed runtime behavior
 - [Cline Backend](guides/cline-backend.md) - Cline CLI and DeepSeek backend setup
-- [Multi-Agent Personas](guides/multi-agent-advanced.md) - Personas, tool tiers, hot-reload
+- [Internal Worker Orchestration](guides/multi-agent-advanced.md) - Advanced/legacy worker and persona configuration; not the v1 team model
 - [Code-Act Sandbox](guides/code-act-sandbox.md) - QuickJS/WASM isolated code execution
 
 ### 📖 [Reference](reference/) - Information-Oriented
@@ -73,6 +80,7 @@ _Conceptual explanations and design decisions_
 
 - [Architecture](explanation/architecture.md) - System architecture overview
 - [MAMA OS](explanation/mama-os.md) - The built-in Viewer: Operator, Knowledge, System
+- [Work Agent](explanation/work-agent.md) - Why MAMA has one front, scoped Cases, and domain capabilities
 - [Tier System](explanation/tier-system.md) - Tier system design and philosophy
 - [Decision Graph](explanation/decision-graph.md) - Decision evolution tracking
 - [Semantic Search](explanation/semantic-search.md) - How semantic search works
@@ -127,12 +135,12 @@ _Contributing, testing, and development guidelines_
 3. Configure [Gateway Integrations](guides/gateway-config.md)
 4. Troubleshoot with [Standalone Troubleshooting](guides/standalone-troubleshooting.md)
 
-### 🧪 I Want to Configure Agents and Scheduled Work
+### 🧪 I Need Internal Workers or Scheduled Work
 
-1. Read [Multi-Agent Personas](guides/multi-agent-advanced.md) - personas, tool tiers, hot-reload
-2. Set up [Codex Backend](guides/codex-backend.md) to pick a backend per agent
-3. Learn about [Code-Act Sandbox](guides/code-act-sandbox.md) for efficient code execution
-4. Understand the work order pipeline in [Architecture](explanation/architecture.md) - it is what runs
+1. Read [Internal Worker Orchestration](guides/multi-agent-advanced.md) - advanced/legacy process and tool-tier behavior
+2. Set up [Codex Backend](guides/codex-backend.md) for the runtime backend
+3. Learn about [Code-Act Sandbox](guides/code-act-sandbox.md) for bounded domain composition
+4. Understand the workorder pipeline in [Architecture](explanation/architecture.md) - it runs
    scheduled board, wiki and memory work
 
 ### 🛠️ I Need to Operate a Live Install

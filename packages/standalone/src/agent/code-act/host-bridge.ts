@@ -564,9 +564,15 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'List work items from YOUR task board - you maintain it, the owner only views it (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. Page with cursor until nextCursor is null before claiming anything about all open items; total is the full match count.',
+      'List work items from YOUR task board - you maintain it, the owner only views it (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. Use include_terminal:false for a ranked top-N projection of active work; total is coverage and a bounded projection must not page. Only page with cursor when the requested outcome truly requires every matching row.',
     params: [
       { name: 'status', type: 'string', required: false },
+      {
+        name: 'include_terminal',
+        type: 'boolean',
+        required: false,
+        description: 'False excludes done and cancelled unless status is explicit',
+      },
       { name: 'channel', type: 'string', required: false },
       { name: 'search', type: 'string', required: false },
       { name: 'limit', type: 'number', required: false },

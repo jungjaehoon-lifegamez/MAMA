@@ -1,387 +1,129 @@
-# MAMA OS - Unified Web Interface
+# MAMA OS
 
-> **PARTIALLY HISTORICAL (v0.21-era).** The walkthrough below predates the
-> operator runtime and the Viewer/operator unification. The one surface today
-> is `/viewer`, opening on the operator board; the workorder pipeline,
-> MAMA owner-event agent, and effect ledger are documented in
-> [architecture](architecture.md).
+MAMA OS is the always-on local runtime behind MAMA. It connects messengers and other sources,
+maintains local memory and Cases, executes bounded work, and returns reports or files through an
+authorized destination.
 
-**Category:** Explanation (Conceptual Understanding)  
-**Audience:** Users wanting to understand what MAMA OS is and why it exists
+## Two surfaces with different jobs
 
----
+### Messenger: the work front
 
-## What is MAMA OS?
+Telegram, Slack, and Discord are where a user normally:
 
-MAMA OS ships one browser surface: the **Viewer at `/viewer`**, which opens on the operator
-board. `/` redirects there. It is organized as three groups of views:
+- delegates work;
+- attaches input files;
+- answers a clarification;
+- receives progress or an approval request;
+- receives the final artifact.
 
-**Operator** - the primary group:
+The user contacts one MAMA identity. Internal models, workers, and domain tools are not exposed as
+a team the user must coordinate.
 
-1. **Board** - four agent-published report slots (briefing, action required, decisions,
-   pipeline) updating live over SSE
-2. **Tasks** - the task board fed from your channels
-3. **Triggers** - the trigger loop's own library, with an owner veto tray
+### Viewer: the operator and inspection surface
 
-**Knowledge**:
+The Viewer at `http://localhost:3847/viewer` opens on the operator board. It groups read-oriented
+views into:
 
-4. **Memory** - decision graph and memory search
-5. **Wiki** - Obsidian-backed document browsing (the vault itself is organized as a daily journal plus lesson pages; see the wiki v5 layout)
+- **Operator:** Board, Tasks, Triggers;
+- **Knowledge:** Memory, Wiki;
+- **System:** Runtime, Connectors, Logs.
 
-**System** - read-only truth, not a config editor:
+The Viewer helps an owner inspect what MAMA knows and what the runtime is doing. It is not a new
+collaboration app and is not required for ordinary messenger delegation.
 
-6. **Runtime** - the authoritative runtime snapshot: backend, model, gateways, health
-7. **Connectors** - connector status and last poll
-8. **Logs** - runtime and daemon log inspection
-
-Think of it as your **personal AI operating system** - accessible from any browser, optimized for
-mobile, and designed to keep you connected to your AI assistant wherever you are.
-
-**Access:** `http://localhost:3847/viewer` (the one console: Operator, Knowledge and System; `/` redirects here)
-
----
-
-## Why MAMA OS?
-
-### The Problem
-
-Before MAMA OS, you had several separate tools:
-
-- **Graph Viewer** (v1.4) - Desktop-only decision visualization
-- **Mobile Chat** (v1.5) - Remote chat isolated from the rest of the UI
-- **Logs/admin surfaces** - Operational visibility living elsewhere
-- **MCP Tools** - Command-line only memory management
-
-Each lived in isolation. You couldn't inspect agents while chatting. You couldn't move between
-wiki, feed, memory, and logs with one persistent shell. You couldn't keep the same conversational
-surface open while navigating the rest of the Viewer.
-
-### The Solution
-
-MAMA OS **unifies everything** into a single Progressive Web App (PWA):
+## Runtime shape
 
 ```text
-┌──────────────────────────────────────────────────────────────────────┐
-│                         MAMA OS (Browser)                            │
-├──────────────────────────────────────────────────────────────────────┤
-│  Dashboard │ Memory │ Feed │ Wiki │ Agents │ Logs │ Settings         │
-│                                                                      │
-│  • System status      • Decision search   • Connector activity      │
-│  • Gateway health     • Graph visual      • Wiki document browsing  │
-│  • Memory stats       • Agent inspection  • Real-time daemon logs   │
-│                                                        [Chat Overlay]│
-└──────────────────────────────────────────────────────────────────────┘
-                      ↕ WebSocket
-┌─────────────────────────────────────────────────┐
-│         MAMA Standalone Server (Node.js)         │
-│  • Operator trigger loop (author/fire/report)    │
-│  • Gateway integrations (Discord, Slack, etc.)   │
-│  • SQLite + vector embeddings                    │
-│  • HTTP embedding server (port 3849)             │
-└─────────────────────────────────────────────────┘
+Telegram / Slack / Discord / connector sources
+                     │
+                     ▼
+             authenticated ingress
+                     │
+                     ▼
+          MAMA AgentLoop + Case context
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+   memory tools   domain tools  workorders
+          │          │          │
+          └──────────┼──────────┘
+                     ▼
+          artifacts + effects + receipts
+                     │
+                     ▼
+             authorized delivery
+
+Viewer ── HTTP/SSE ── runtime, board, tasks, knowledge, connectors, logs
 ```
 
-Chat is a global overlay opened from a floating control, not a top-level tab.
+## One MAMA, optional internal workers
 
-**Key Benefits:**
+MAMA may use a separate process or model for background work, parallel read-only analysis, or
+independent review. These are internal execution resources.
 
-- ✅ **One URL, everything** - No switching between tools
-- ✅ **Mobile-first design** - Works on phone, tablet, desktop
-- ✅ **Install as app** - PWA support for offline capability
-- ✅ **Real-time sync** - WebSocket keeps everything live
-- ✅ **Voice-enabled** - Hands-free interaction with Web Speech API
+The product invariant is:
 
----
-
-## Architecture Overview
-
-### Client-Server Communication
-
-```
-┌──────────────────────────────────────────────────────┐
-│                   Browser (Any Device)                │
-├──────────────────────────────────────────────────────┤
-│                                                        │
-│  MAMA OS Viewer (viewer.html)                         │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │  Tab Navigation                                             │  │
-│  │  • Dashboard • Memory • Feed • Wiki • Agents • Logs • Settings │  │
-│  │  + Chat shell (shared across tabs)                          │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                        │
-│  JavaScript Modules (viewer.html imports feature modules)   │
-│  ┌────────────┬────────────┬──────────────┬──────────────┐  │
-│  │ chat.js    │ graph.js   │ memory.js    │ dashboard.js │  │
-│  ├────────────┼────────────┼──────────────┼──────────────┤  │
-│  │connector-feed.js │ wiki.js │ agents.js  │ settings.js  │  │
-│  ├────────────┴────────────┴──────────────┴──────────────┤  │
-│  │ logs + shared UI command/page-context utilities       │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                        │
-└──────────────────────────────────────────────────────┘
-                      ↕ HTTP/WebSocket
-┌──────────────────────────────────────────────────────┐
-│         MAMA Standalone Server (localhost:3847)       │
-├──────────────────────────────────────────────────────┤
-│                                                        │
-│  HTTP Server                                          │
-│  • /viewer → Static files (HTML, CSS, JS)            │
-│  • /api/graph → Decision graph data                  │
-│  • /api/search → Semantic search                     │
-│  • /api/save → Save decisions                        │
-│                                                        │
-│  WebSocket Server                                     │
-│  • /ws → Real-time chat with Claude Code             │
-│  • Streaming responses                                │
-│  • Tool execution display                             │
-│                                                        │
-│  Core Services                                        │
-│  • SQLite + pure-TS cosine similarity                │
-│  • Transformers.js (local embeddings)                │
-│  • Claude Code CLI (subprocess-based agent)           │
-│  • Gateway integrations (Discord, Slack, etc.)       │
-│                                                        │
-└──────────────────────────────────────────────────────┘
+```text
+one user-facing MAMA
+one final result
+one mutation authority per artifact lineage
 ```
 
-**Key Technologies:**
+Named personas and legacy multi-agent configuration are advanced compatibility surfaces. They do
+not define the v1 product and should not be required during normal onboarding.
 
-- **Frontend:** Vanilla JavaScript (ES6 modules), Tailwind CSS, vis.js (graph), marked.js (markdown)
-- **Backend:** Node.js, Express, WebSocket, SQLite, Transformers.js
-- **Communication:** REST API (HTTP), WebSocket (real-time chat)
-- **Deployment:** Single-page app (SPA) with PWA manifest
+## Durable state
 
----
+MAMA keeps different authorities separate:
 
-## The Tabs
+- `mama-memory.db`: memory, connector evidence, model/tool traces, Cases, principals;
+- `mama-sessions.db`: messenger sessions, channel messages, agent activity;
+- `operator/triggers.db`: owner events, workorders, temporal state, effects;
+- workspace files: inbound media and generated artifacts;
+- delivery ledgers: local proof of external sends.
 
-> **HISTORICAL (v0.21-era) — this section describes surfaces that no longer exist.**
-> The tabs below (Dashboard, Feed, Agents, Settings) and the Floating Chat were retired
-> when the Viewer and the operator board were unified. The shipped surface is described
-> under "What is MAMA OS?" above: Operator (Board, Tasks, Triggers), Knowledge (Memory,
-> Wiki), System (Runtime, Connectors, Logs), with no chat in the browser. The section is
-> kept as a record of what the interface used to be.
+Redis is not required for the current one-daemon deployment. Durable work remains in SQLite and
+live in-process updates use local queues, events, or SSE.
 
-### 1. Dashboard Tab
+## Work and recovery
 
-**Purpose:** System overview and health monitoring
+Work that can outlive one model turn is represented by durable rows before the side effect occurs.
 
-**What you see:**
+- Owner events are persisted before connector cursors advance.
+- Workorders have explicit status and retry behavior.
+- External effects reserve an occurrence before transmission.
+- Delivered results require a local or provider receipt.
+- Restart recovery uses durable state instead of regenerating successful mutations.
 
-- **Gateway Status** - Discord, Slack, Telegram, Chatwork connection health
-- **Memory Statistics** - Total decisions, this week's activity, outcome breakdown
-- **Agent Configuration** - Current Claude model, max turns, timeout settings
-- **Top Topics** - Most frequently used decision topics
+Model prose is not a receipt.
 
-**Use case:** Quick health check before starting work. See if your gateways are connected, how many decisions you've saved, and what topics you're focusing on.
+## Human-team direction
 
----
+Current releases are owner-first. The v1 team direction adds human principals with explicit scope
+and action grants while preserving one MAMA front.
 
-### Floating Chat (Global Overlay)
-
-**Purpose:** Real-time conversation with Claude Code from any device
-
-> **Note:** Chat is not a tab — it's a floating panel accessible from any tab via the bottom-right chat button.
-
-**Features:**
-
-- **WebSocket chat** - Streaming responses with tool execution display
-- **Voice input** - Web Speech API with Korean optimization (continuous mode)
-- **Text-to-speech** - Adjustable speed (1.8x default for Korean)
-- **Hands-free mode** - Auto-listen after TTS completes
-- **Slash commands** - `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
-- **Auto-checkpoint** - 5-minute idle auto-save
-- **Session resume** - Auto-detect resumable sessions with banner UI
-- **Long press to copy** - 750ms press on messages (mobile + desktop)
-
-**Voice Input Details:**
-
-- **Language:** Auto-detects browser language (defaults to Korean)
-- **Continuous mode:** Keep talking, it keeps listening
-- **Interim results:** See text as you speak (real-time feedback)
-- **Silence detection:** 2.5 seconds of silence auto-stops recording
-- **Multi-alternative:** Uses top 3 recognition candidates for accuracy
-
-**TTS Details:**
-
-- **Auto-play toggle** - Enable/disable automatic reading of assistant responses
-- **Adjustable speed** - 1.8x default (optimized for Korean), range 0.5-2.0x
-- **Voice selection** - Auto-selects Korean voice if available
-- **Hands-free integration** - Auto-starts listening after TTS finishes
-
-**Tool Execution Display:**
-
-When Claude Code uses tools (Read, Write, Bash, etc.), you see real-time cards:
-
-```
-┌─────────────────────────────────┐
-│ 📄 Read                    ⏳   │
-│ config.json                     │
-└─────────────────────────────────┘
+```text
+principal grants
+∩ connector/source authority
+∩ active Case/artifact scope
+∩ tool envelope
+= effective scope
 ```
 
-After completion:
+The next access foundation is Phase 2b. Shared Work Cases and real multi-human artifact workflows
+build on it. See [The Work Agent Behind Your Messenger](work-agent.md) and the normative
+[One-Front Team Work Agent design](../development/2026-08-26-one-front-team-work-agent-design.md).
 
-```
-┌─────────────────────────────────┐
-│ 📄 Read                    ✓    │
-│ config.json                     │
-└─────────────────────────────────┘
-```
+## Security boundary
 
-**Reasoning Header:**
+MAMA runs on the operator's machine and can reach only what its host configuration and credentials
+allow. A messenger sender does not inherit owner power merely by reaching the bot.
 
-When an agent responds, a Reasoning Header is displayed above the message. If tools were used via the Code-Act sandbox, the tool call details appear in the header, providing full transparency into which tools the agent combined and how.
+- Sender identity is resolved before model execution.
+- Private media paths are host verified.
+- Context and tools are narrowed by the active authority.
+- Mutation and external delivery require explicit authority and receipts.
+- Private memory is not a shared-team default.
 
-**Use case:** Chat with Claude Code while away from your desk. Use voice input while cooking, commuting, or relaxing. See exactly what tools Claude is using in real-time.
-
----
-
-### 2. Memory Tab
-
-**Purpose:** Browse, search, and manage your MAMA decision graph
-
-**Features:**
-
-- **Interactive graph visualization** - vis.js network with physics simulation
-- **Checkpoint sidebar** - Always-visible timeline of session checkpoints
-- **Semantic search** - Natural language queries across all decisions
-- **Filter by topic/outcome** - Narrow down to specific categories
-- **3-depth highlighting** - Click a node to see connected decisions (3 levels deep)
-- **Detail panel** - View full decision, reasoning, confidence, similar decisions
-- **Outcome updates** - Mark decisions as SUCCESS/FAILED/PARTIAL directly from viewer
-- **Export** - JSON, Markdown, CSV formats
-
-**Graph Visualization:**
-
-- **Node size** - Larger nodes = more connections (1-2: small, 3-5: medium, 6+: large)
-- **Node color** - Each topic gets a unique color from palette
-- **Border color** - Outcome status (green: success, red: failed, yellow: partial, gray: pending)
-- **Edge types:**
-  - `supersedes` - Solid gray line (newer version replaces older)
-  - `builds_on` - Dashed blue line (extends prior work)
-  - `debates` - Dashed red line (presents alternative view)
-  - `synthesizes` - Thick purple line (merges multiple approaches)
-
-**Checkpoint Sidebar:**
-
-- **Always visible** - No need to switch tabs to see session history
-- **Click to navigate** - Jump to any checkpoint's related decisions
-- **Timestamp display** - See when each checkpoint was created
-
-**Use case:** Understand how your thinking evolved. See which decisions worked (green borders) and which failed (red borders). Find related decisions by clicking nodes. Export your decision history for documentation.
-
----
-
-### 3. Agents Tab
-
-**Purpose:** Managed-agent inspection and control
-
-**What you see:**
-
-- **Agent list** - Managed agents exposed in the current runtime
-- **Config** - Model, backend, enablement, and tool permissions
-- **Activity / Validation / History** - Run traces, validation outcomes, and version history
-
-**Use case:** Inspect `os-agent`, `wiki-agent`, `dashboard-agent`, and other managed agents from the same Viewer surface the user sees.
-
----
-
-### 4. Wiki and Logs
-
-**Purpose:** Shared operational context for documents and runtime output
-
-**Features:**
-
-- **Wiki tab** - Browse vault-backed documents from the same Viewer shell
-- **Logs tab** - Read live daemon logs without leaving the Viewer
-- **Same-view context** - Selected wiki pages and agent detail tabs are published back to the frontdoor agent
-
-Legacy `Skills` and `Playground` tabs were removed. Their remaining responsibilities were folded into the current `Agents`, `Wiki`, and `Logs` surfaces.
-
----
-
-### 5. Settings Tab
-
-**Purpose:** Configure gateways, agent, and heartbeat scheduler
-
-**Gateway Connections:**
-
-- **Discord** - Bot token, default channel ID
-- **Slack** - Bot token, app token
-- **Telegram** - Bot token
-- **Chatwork** - API token
-
-**Heartbeat Scheduler:**
-
-- **Enable/disable** - Toggle scheduled heartbeat reports
-- **Interval** - Minutes between heartbeats (5-1440)
-- **Quiet hours** - Start/end hours for silent period (e.g., 23:00-08:00)
-
-**Agent Configuration:**
-
-- **Model** - default `claude-sonnet-5`; overridable per agent via the multi-agent API.
-- **Max turns** - Maximum conversation turns (1-50)
-- **Timeout** - Seconds before timeout (30-600)
-
-**Use case:** Set up your Discord bot, configure quiet hours for heartbeat reports, switch Claude models for different tasks.
-
----
-
-## Progressive Web App (PWA) Support
-
-MAMA OS is a **Progressive Web App**, meaning you can install it on your phone/tablet like a native app.
-
-### Installation
-
-**On Mobile (iOS/Android):**
-
-1. Open `http://localhost:3847/viewer` in Safari/Chrome
-2. Tap the **Share** button (iOS) or **Menu** (Android)
-3. Select **"Add to Home Screen"**
-4. MAMA OS icon appears on your home screen
-
-**On Desktop (Chrome/Edge):**
-
-1. Open `http://localhost:3847/viewer`
-2. Click the **install icon** in the address bar
-3. Click **"Install"**
-4. MAMA OS opens as a standalone window
-
-### PWA Features
-
-- ✅ **Offline capability** - Static assets cached for offline viewing
-- ✅ **App-like experience** - No browser chrome, full-screen mode
-- ✅ **Home screen icon** - Quick access like any other app
-- ✅ **Splash screen** - Professional loading experience
-- ✅ **Mobile-optimized** - 44px touch targets, responsive design
-
-**Manifest:**
-
-```json
-{
-  "name": "MAMA - Memory-Augmented Assistant",
-  "short_name": "MAMA",
-  "theme_color": "#0a0a0f",
-  "background_color": "#0a0a0f",
-  "display": "standalone",
-  "icons": [
-    { "src": "/viewer/icons/icon-192.png", "sizes": "192x192" },
-    { "src": "/viewer/icons/icon-512.png", "sizes": "512x512" }
-  ]
-}
-```
-
----
-
-## WebSocket Real-Time Communication
-
-MAMA OS uses **WebSocket** for real-time chat with Claude Code. This enables:
-
-### Streaming Responses
-
-Instead of waiting for the full response, you see text **as Claude types**:
-
-```
-User: "Explain MAMA OS"
-```
+For operational configuration, see [Standalone Setup](../guides/standalone-setup.md). For security
+details, see [Security](../guides/security.md).

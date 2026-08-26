@@ -1,7 +1,7 @@
-title: "MAMA Docs"
-description: "Memory-Augmented AI Assistant - Always-on AI agent with decision evolution tracking"
-url: "https://jungjaehoon-lifegamez.github.io"
-baseurl: "/MAMA"
+title: 'MAMA Docs'
+description: 'MAMA - the local work agent behind your messenger'
+url: 'https://jungjaehoon-lifegamez.github.io'
+baseurl: '/MAMA'
 markdown: kramdown
 highlighter: rouge
 
@@ -9,8 +9,8 @@ highlighter: rouge
 remote_theme: just-the-docs/just-the-docs
 
 # Logo and branding
-logo: "/assets/images/logo.svg"
-favicon_ico: "/assets/images/favicon.ico"
+logo: '/assets/images/logo.svg'
+favicon_ico: '/assets/images/favicon.ico'
 
 # Search
 search_enabled: true
@@ -51,41 +51,41 @@ collections:
 # Defaults
 defaults:
   - scope:
-      path: ""
+      path: ''
     values:
       layout: default
   - scope:
-      path: "tutorials"
+      path: 'tutorials'
     values:
       nav_order: 1
       parent: Tutorials
   - scope:
-      path: "guides"
+      path: 'guides'
     values:
       nav_order: 2
       parent: Guides
   - scope:
-      path: "reference"
+      path: 'reference'
     values:
       nav_order: 3
       parent: Reference
   - scope:
-      path: "explanation"
+      path: 'explanation'
     values:
       nav_order: 4
       parent: Explanation
 
 # Aux links (top right)
 aux_links:
-  "GitHub":
-    - "https://github.com/jungjaehoon-lifegamez/MAMA"
-  "npm":
-    - "https://www.npmjs.com/package/@jungjaehoon/mama-server"
+  'GitHub':
+    - 'https://github.com/jungjaehoon-lifegamez/MAMA'
+  'npm':
+    - 'https://www.npmjs.com/package/@jungjaehoon/mama-server'
 
 aux_links_new_tab: true
 
 # Footer
-footer_content: "MIT License &copy; 2024-2026 SpineLift Team"
+footer_content: 'MIT License &copy; 2024-2026 SpineLift Team'
 
 # Color scheme
 color_scheme: dark

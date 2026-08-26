@@ -963,10 +963,14 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex' | 'cline';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** Exact owner-report receipt history, kept separate so budgeting can drop it whole. */
+  ownerReportHistoryPrompt?: string;
   /** Exact policy-keyed Gateway Tools catalog for this run (Claude non-Code-Act only). */
   gatewayToolsPrompt?: string;
   /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
   freshSessionSystemPrompt?: () => Promise<string>;
+  /** Lazily rebuild owner-report receipt history for the same replacement session. */
+  freshSessionOwnerReportHistoryPrompt?: () => string;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
   /** User identifier for the frontdoor message source */

@@ -523,7 +523,7 @@ gateways:
 ```
 # Start conversation
 User: /start
-MAMA: Hello! I'm MAMA, your AI assistant with memory. How can I help?
+MAMA: Hello! I'm MAMA. Send me the work or files you want me to inspect.
 
 # Regular chat
 User: What's the capital of France?
@@ -842,8 +842,8 @@ missing_scope
 ## Next Steps
 
 - **Configure agent settings:** See [Standalone Setup Guide](standalone-setup.md)
-- **Set up heartbeat monitoring:** See [Heartbeat Configuration](heartbeat-config.md)
-- **Build custom skills:** See [Skills Development Guide](skills-development.md)
+- **Set up heartbeat monitoring:** See [Standalone Configuration](standalone-setup.md#configuration)
+- **Build custom skills:** See [Skills API](../reference/api.md#skills-api)
 - **Secure external access:** See [Security Guide](security.md)
 
 ---
@@ -853,9 +853,4 @@ missing_scope
 - [MAMA Standalone README](../../packages/standalone/README.md) - Overview and installation
 - [Standalone Setup Guide](standalone-setup.md) - General setup and initialization
 - [Security Guide](security.md) - External access and authentication
-- [CLI Reference](../reference/cli.md) - Command-line interface documentation
-
----
-
-**Last Updated:** 2026-07-04
-**MAMA OS Version:** 0.1.0
+- [CLI Reference](../reference/commands.md#mama-cli) - Command-line interface documentation

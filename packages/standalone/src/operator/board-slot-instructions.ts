@@ -43,9 +43,12 @@ export function buildBoardHtmlVocabulary(): string[] {
 export function buildPipelineTrackerInstructions(): string[] {
   return [
     'The pipeline slot is an ITEM TRACKER, not a summary. Build it from',
-    'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
-    'projection source. Render one report-table with a row per open item:',
+    'task_list({order: "deadline_priority", limit: 12, include_terminal: false}) -- the native',
+    'task ledger is the projection source. This is a ranked top 12 projection, not a complete',
+    'ledger export. Render one report-table with a row per returned item:',
     '  #id | title | workflow status | temporal fact | D-day | assignee (or "unassigned") | source | latest event',
+    '- Do not follow nextCursor for this slot. Show returned rows only and use total as coverage',
+    '  when the owner needs to know that more active items exist.',
     '- Temporal fact: use temporal_state as the canonical category. Show exact_overdue as',
     '  "overdue since <due_at>" and date_overdue as "overdue since <deadline>".',
     '- Workflow judgment: render status independently; overdue never changes status to blocked.',

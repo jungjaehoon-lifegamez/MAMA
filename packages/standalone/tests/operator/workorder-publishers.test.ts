@@ -60,6 +60,21 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(wikiBatchKey('extraction:completed', t)).toContain('extraction:completed');
       expect(promotionKey(t)).toBe(promotionKey(t + 60 * 60 * 1000)); // same 6h slot
     });
+
+    it('keys scheduled promotions by the configured interval instead of a fixed six hours', () => {
+      const oneHour = 60 * 60 * 1000;
+      const t = 12 * oneHour;
+
+      expect(promotionKey(t, oneHour)).toBe(promotionKey(t + oneHour - 1, oneHour));
+      expect(promotionKey(t, oneHour)).not.toBe(promotionKey(t + oneHour, oneHour));
+      expect(promotionKey(6 * oneHour, 6 * oneHour)).not.toBe(
+        promotionKey(12 * oneHour, 12 * oneHour)
+      );
+      expect(promotionKey(t, 4_444_444.404)).toContain('promotion:v2:4444444:');
+      expect(() => promotionKey(t, 0)).toThrow(/interval/i);
+      expect(() => promotionKey(t, 0.1)).toThrow(/positive safe integer/i);
+      expect(() => promotionKey(t, Number.MAX_SAFE_INTEGER + 1)).toThrow(/safe integer/i);
+    });
   });
 
   describe('AC #4: payload schemas reject loudly', () => {
