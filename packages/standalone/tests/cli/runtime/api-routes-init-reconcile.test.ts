@@ -409,6 +409,10 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       taskLedger.failWorkOrder(abandoned.id, 'simulated daemon cutover');
 
       const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
+      expect(restarted.boardRefreshGate.captureFullRepair()).toEqual({
+        repairGeneration: 1_200_020,
+        noUpdateScope: 'full:1200020',
+      });
       const { ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -427,8 +431,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         payload: {
           mode: 'full',
           force: false,
-          repairGeneration: 21,
-          noUpdateScope: 'full:21',
+          repairGeneration: 1_200_020,
+          noUpdateScope: 'full:1200020',
         },
       });
       expect(repair?.id).not.toBe(accepted.workOrderId);

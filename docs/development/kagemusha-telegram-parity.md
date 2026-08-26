@@ -160,9 +160,9 @@ scenario IDs from this document.
   non-force repair whose existing `operator_tasks.due_at` blocks claim for twenty minutes. No new
   schema, timer, worker, queue, or hash path is involved.
 - **Pre-claim behavior:** `fixes due_at on the first intent and widens only the pending payload`
-  pins the first fixed deadline and maximum durable generation. `does not mutate an in-progress
-repair when a later intent arrives` pins claim-first immutability and the existing terminal
-  follow-up path.
+  pins the first fixed deadline and widening without lowering a restart-seeded capture. `does not
+mutate an in-progress repair when a later intent arrives` pins claim-first immutability and the
+  existing terminal follow-up path.
 - **Claim and schedule behavior:** `skips a future high-priority row without blocking a ready
 lower-priority row` pins generic workorder readiness without priority starvation. `TG-06
 promotes one delayed owner-event repair on the normal schedule` pins reuse and promotion of the

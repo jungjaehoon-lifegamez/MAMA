@@ -299,10 +299,16 @@ export class OwnerEventBoardRefreshLedger {
     if (generation === null) return result.changes;
     const storedPayload = JSON.parse(row.payload) as Record<string, unknown>;
     const { attempts, ...publisherPayload } = storedPayload;
+    const currentGeneration =
+      Number.isSafeInteger(publisherPayload.repairGeneration) &&
+      (publisherPayload.repairGeneration as number) >= 0
+        ? (publisherPayload.repairGeneration as number)
+        : generation;
+    const repairGeneration = Math.max(currentGeneration, generation);
     const nextPublisherPayload = {
       ...publisherPayload,
-      repairGeneration: generation,
-      noUpdateScope: boardFullNoUpdateScope(generation),
+      repairGeneration,
+      noUpdateScope: boardFullNoUpdateScope(repairGeneration),
     };
     validateWorkOrderPayload('board', nextPublisherPayload);
     const dueAt = options.readyNow ? now : (row.due_at ?? now + OWNER_EVENT_BOARD_CLAIM_WINDOW_MS);

@@ -234,11 +234,15 @@ Replace `accept()`'s deferred wrapper with explicit `BEGIN IMMEDIATE` / `COMMIT`
 
 ```ts
 const generation = this.maxPendingGeneration();
+const currentGeneration = Number.isSafeInteger(publisherPayload.repairGeneration)
+  ? (publisherPayload.repairGeneration as number)
+  : generation;
+const repairGeneration = Math.max(currentGeneration, generation);
 const dueAt = options.readyNow ? now : (row.due_at ?? now + OWNER_EVENT_BOARD_CLAIM_WINDOW_MS);
 const payload = {
   ...JSON.parse(row.payload),
-  repairGeneration: generation,
-  noUpdateScope: boardFullNoUpdateScope(generation),
+  repairGeneration,
+  noUpdateScope: boardFullNoUpdateScope(repairGeneration),
 };
 validateWorkOrderPayload('board', payload);
 ```

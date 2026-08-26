@@ -177,8 +177,9 @@ coalescing only and does not duplicate or lose accepted intents.
 In the same `BEGIN IMMEDIATE` transaction that inserts a new exact intent:
 
 1. `enqueueWorkOrder()` creates or returns the shared `boardRepairKey()` row.
-2. If the row is `pending`, the ledger atomically updates its payload to the maximum accepted
-   `repairGeneration` and matching `noUpdateScope`.
+2. If the row is `pending`, the ledger atomically widens its payload to the greater of the current
+   captured `repairGeneration` and the maximum accepted generation, with matching
+   `noUpdateScope`. It never lowers a restart- or schedule-seeded generation.
 3. The first row's `due_at` is preserved. A later intent cannot move the deadline.
 4. The exact intent binds to that workorder and commits.
 
