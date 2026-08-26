@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.2] - 2026-08-27
+
+### Changed
+
+- **Product documentation now defines one front for delegated work.** The architecture and v1 plan
+  align around one visible Work Agent reached through existing messengers. Today's shipped product
+  remains owner-only; human-team grants, shared Cases, and migration of named compatibility
+  surfaces remain explicit v1 work rather than a v0.39.2 capability claim.
+- **Board and report runs carry bounded working context.** Ranked active-task projections stop at
+  the requested page, overlapping review rows are deduplicated by task ID, and oversized owner
+  report history is dropped as one structured layer before it can displace current tool policy.
+  Owner-event runs start from the exact connector delta and no longer poll accepted workorders.
+
+### Fixed
+
+- **Scheduled memory promotion no longer repeats a completed slot after restart.** Versioned keys
+  include the normalized configured interval and slot, preserve compatibility with released
+  six-hour keys, keep failed slots retryable, and reject invalid sub-millisecond intervals.
+- **Runtime brief upgrades preserve owner-authored instructions.** Only exact fingerprints of
+  generated legacy Board contracts and pipelines are replaced. Owner-edited sections remain
+  intact, including final sections at EOF, with the current bounded pipeline appended cleanly.
+
 ## mama-os [0.39.1] - 2026-08-26
 
 ### Fixed
