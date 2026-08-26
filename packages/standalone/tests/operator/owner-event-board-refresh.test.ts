@@ -119,6 +119,86 @@ describe('TG-06 owner-event Board refresh intents', () => {
     expect(ledger.maxPendingGeneration()).toBe(39);
   });
 
+  it('fixes due_at on the first intent and widens only the pending payload', () => {
+    const first = ledger.accept({
+      batchId: enqueueBatch(['evt-window-first']),
+      eventIds: ['evt-window-first'],
+      repair: { repairGeneration: 11, noUpdateScope: 'full:11' },
+    });
+    const firstRow = db
+      .prepare(`SELECT due_at FROM operator_tasks WHERE id = ?`)
+      .get(first.workOrderId) as { due_at: number | null };
+    expect(firstRow.due_at).toBe(1_201_000);
+
+    now = 61_000;
+    ledger.accept({
+      batchId: enqueueBatch(['evt-window-second']),
+      eventIds: ['evt-window-second'],
+      repair: { repairGeneration: 12, noUpdateScope: 'full:12' },
+    });
+
+    expect(tasks.findWorkOrderByOccurrence('board', boardRepairKey())?.payload).toMatchObject({
+      repairGeneration: 12,
+      noUpdateScope: 'full:12',
+    });
+    const widenedRow = db
+      .prepare(`SELECT due_at FROM operator_tasks WHERE id = ?`)
+      .get(first.workOrderId) as { due_at: number | null };
+    expect(widenedRow.due_at).toBe(1_201_000);
+  });
+
+  it('does not mutate an in-progress repair when a later intent arrives', () => {
+    const first = ledger.accept({
+      batchId: enqueueBatch(['evt-claimed-first']),
+      eventIds: ['evt-claimed-first'],
+      repair: { repairGeneration: 20, noUpdateScope: 'full:20' },
+    });
+    now = 1_201_000;
+    expect(tasks.claimNextWorkOrder()?.id).toBe(first.workOrderId);
+
+    ledger.accept({
+      batchId: enqueueBatch(['evt-claimed-late']),
+      eventIds: ['evt-claimed-late'],
+      repair: { repairGeneration: 21, noUpdateScope: 'full:21' },
+    });
+
+    expect(
+      tasks.findWorkOrderByOccurrence('board', boardRepairKey())?.payload.repairGeneration
+    ).toBe(20);
+    expect(ledger.maxPendingGeneration()).toBe(21);
+  });
+
+  it('cancels an empty delayed repair after another verified full run applies its intents', () => {
+    const delayed = ledger.accept({
+      batchId: enqueueBatch(['evt-applied-elsewhere']),
+      eventIds: ['evt-applied-elsewhere'],
+      repair: { repairGeneration: 30, noUpdateScope: 'full:30' },
+    });
+    const manual = tasks.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:manual:test',
+      input: {
+        mode: 'full',
+        force: true,
+        repairGeneration: 30,
+        noUpdateScope: 'full:30',
+      },
+      priority: 'high',
+    });
+    expect(tasks.claimNextWorkOrder()?.id).toBe(manual.id);
+
+    expect(ledger.markVerified(manual.id, 30)).toEqual({
+      applied: 1,
+      followupPending: false,
+    });
+    const delayedRow = db
+      .prepare(`SELECT status FROM operator_tasks WHERE id = ?`)
+      .get(delayed.workOrderId) as { status: string };
+    expect(delayedRow.status).toBe('cancelled');
+    now = 1_201_000;
+    expect(tasks.claimNextWorkOrder()).toBeNull();
+  });
+
   it('rolls back the newly enqueued workorder when intent persistence fails', () => {
     const batchId = enqueueBatch(['evt-rollback']);
     db.exec(`
@@ -179,6 +259,7 @@ describe('TG-06 owner-event Board refresh intents', () => {
       repair: { repairGeneration: 21, noUpdateScope: 'full:21' },
     });
     ledger.markVerified(first.workOrderId, 20);
+    now = 1_201_000;
     expect(tasks.claimNextWorkOrder()?.id).toBe(first.workOrderId);
     tasks.completeWorkOrder(first.workOrderId);
     const replacement = tasks.enqueueWorkOrder({

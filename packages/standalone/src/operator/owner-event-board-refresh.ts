@@ -24,6 +24,18 @@ interface StoredInboxIdentityRow {
   event_ids_json: string;
 }
 
+interface StoredBoardWorkOrderRow {
+  status: string;
+  payload: string;
+  due_at: number | null;
+}
+
+export const OWNER_EVENT_BOARD_CLAIM_WINDOW_MS = 20 * 60 * 1000;
+
+export interface AttachPendingBoardWorkOptions {
+  readyNow?: boolean;
+}
+
 export interface BoardWorkOrderPort {
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
 }
@@ -134,7 +146,8 @@ export class OwnerEventBoardRefreshLedger {
       );
     }
 
-    const transaction = this.db.transaction(() => {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
       const existing = this.readAcceptance(input.batchId);
       if (existing) {
         if (existing.batchKey !== batchKey) {
@@ -142,6 +155,7 @@ export class OwnerEventBoardRefreshLedger {
             `owner-event Board batch ${input.batchId} conflicts with its durable acceptance`
           );
         }
+        this.db.exec('COMMIT');
         return existing;
       }
       const payload = {
@@ -167,13 +181,17 @@ export class OwnerEventBoardRefreshLedger {
            VALUES (?, ?, ?, ?, NULL, ?, ?)`
         )
         .run(input.batchId, batchKey, input.repair.repairGeneration, workOrder.id, now, now);
+      this.attachPendingToWorkOrderInTransaction(workOrder.id, {}, now);
       const inserted = this.readAcceptance(input.batchId);
       if (!inserted) {
         throw new Error('owner-event Board acceptance disappeared after insert');
       }
+      this.db.exec('COMMIT');
       return inserted;
-    });
-    return transaction();
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   findAcceptance(batchId: number): OwnerEventBoardRefreshAcceptance | null {
@@ -181,34 +199,66 @@ export class OwnerEventBoardRefreshLedger {
     return this.readAcceptance(batchId);
   }
 
-  attachPendingToWorkOrder(workOrderId: number): number {
-    this.assertBoardWorkOrder(workOrderId);
-    const result = this.db
-      .prepare(
-        `UPDATE owner_event_board_refresh_intents
-            SET workorder_id = ?, updated_at = ?
-          WHERE applied_at IS NULL AND workorder_id <> ?`
-      )
-      .run(workOrderId, this.clock(), workOrderId);
-    return result.changes;
+  attachPendingToWorkOrder(
+    workOrderId: number,
+    options: AttachPendingBoardWorkOptions = {}
+  ): number {
+    const now = this.clock();
+    assertNonNegativeSafeInteger(now, 'owner-event Board attachment time');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const changes = this.attachPendingToWorkOrderInTransaction(workOrderId, options, now);
+      this.db.exec('COMMIT');
+      return changes;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   markVerified(
     workOrderId: number,
     capturedGeneration: number
   ): { applied: number; followupPending: boolean } {
-    this.assertBoardWorkOrder(workOrderId);
     assertNonNegativeSafeInteger(capturedGeneration, 'captured Board repair generation');
     const now = this.clock();
     assertNonNegativeSafeInteger(now, 'owner-event Board application time');
-    const applied = this.db
-      .prepare(
-        `UPDATE owner_event_board_refresh_intents
-            SET applied_at = ?, updated_at = ?
-          WHERE applied_at IS NULL AND repair_generation <= ?`
-      )
-      .run(now, now, capturedGeneration).changes;
-    const followupPending = this.maxPendingGeneration() !== null;
+    let applied = 0;
+    let followupPending = false;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.assertBoardWorkOrder(workOrderId);
+      applied = this.db
+        .prepare(
+          `UPDATE owner_event_board_refresh_intents
+              SET applied_at = ?, updated_at = ?
+            WHERE applied_at IS NULL AND repair_generation <= ?`
+        )
+        .run(now, now, capturedGeneration).changes;
+      this.db
+        .prepare(
+          `UPDATE operator_tasks
+              SET status = 'cancelled', latest_event = ?, updated_at = ?
+            WHERE kind = 'system'
+              AND source_channel = 'workorder:board'
+              AND source_event_id = ?
+              AND status = 'pending'
+              AND NOT EXISTS (
+                SELECT 1 FROM owner_event_board_refresh_intents intent
+                 WHERE intent.workorder_id = operator_tasks.id AND intent.applied_at IS NULL
+              )`
+        )
+        .run(
+          'owner-event Board obligations applied by verified full repair',
+          now,
+          boardRepairKey()
+        );
+      followupPending = this.maxPendingGeneration() !== null;
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     if (followupPending) {
       this.postTerminalFollowups.add(workOrderId);
     }
@@ -230,18 +280,65 @@ export class OwnerEventBoardRefreshLedger {
     return row ? acceptanceFromRow(row) : null;
   }
 
-  private assertBoardWorkOrder(workOrderId: number): void {
+  private attachPendingToWorkOrderInTransaction(
+    workOrderId: number,
+    options: AttachPendingBoardWorkOptions,
+    now: number
+  ): number {
+    const row = this.readBoardWorkOrder(workOrderId);
+    const result = this.db
+      .prepare(
+        `UPDATE owner_event_board_refresh_intents
+            SET workorder_id = ?, updated_at = ?
+          WHERE applied_at IS NULL AND workorder_id <> ?`
+      )
+      .run(workOrderId, now, workOrderId);
+    if (row.status !== 'pending') return result.changes;
+
+    const generation = this.maxPendingGeneration();
+    if (generation === null) return result.changes;
+    const storedPayload = JSON.parse(row.payload) as Record<string, unknown>;
+    const { attempts, ...publisherPayload } = storedPayload;
+    const currentGeneration =
+      Number.isSafeInteger(publisherPayload.repairGeneration) &&
+      (publisherPayload.repairGeneration as number) >= 0
+        ? (publisherPayload.repairGeneration as number)
+        : generation;
+    const repairGeneration = Math.max(currentGeneration, generation);
+    const nextPublisherPayload = {
+      ...publisherPayload,
+      repairGeneration,
+      noUpdateScope: boardFullNoUpdateScope(repairGeneration),
+    };
+    validateWorkOrderPayload('board', nextPublisherPayload);
+    const dueAt = options.readyNow ? now : (row.due_at ?? now + OWNER_EVENT_BOARD_CLAIM_WINDOW_MS);
+    this.db
+      .prepare(
+        `UPDATE operator_tasks
+            SET payload = ?, due_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'pending'`
+      )
+      .run(JSON.stringify({ ...nextPublisherPayload, attempts }), dueAt, now, workOrderId);
+    return result.changes;
+  }
+
+  private readBoardWorkOrder(workOrderId: number): StoredBoardWorkOrderRow {
     if (!Number.isSafeInteger(workOrderId) || workOrderId <= 0) {
       throw new Error('Board workorder id must be a positive safe integer');
     }
     const row = this.db
       .prepare(
-        `SELECT id FROM operator_tasks
+        `SELECT status, payload, due_at FROM operator_tasks
           WHERE id = ? AND kind = 'system' AND source_channel = 'workorder:board'`
       )
-      .get(workOrderId) as { id: number } | undefined;
+      .get(workOrderId) as StoredBoardWorkOrderRow | undefined;
     if (!row) {
       throw new Error(`Board workorder ${workOrderId} does not exist`);
     }
+    return row;
+  }
+
+  private assertBoardWorkOrder(workOrderId: number): void {
+    this.readBoardWorkOrder(workOrderId);
   }
 }

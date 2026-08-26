@@ -385,9 +385,10 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createBoardInputTables(db);
-      const taskLedger = new TaskLedger(db, { now: () => 1_000, timeZone: 'UTC' });
+      let taskNow = 20;
+      const taskLedger = new TaskLedger(db, { now: () => taskNow, timeZone: 'UTC' });
       const inbox = new OwnerEventInbox(db, () => 1_000);
-      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 20);
+      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
       const batchId = inbox.enqueue({
         channelKey: 'kagemusha:feedback',
         eventIds: ['evt-boot-repair'],
@@ -401,11 +402,17 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         eventIds: ['evt-boot-repair'],
         repair: firstRuntime.boardRefreshGate.captureFullRepair(),
       });
+      expect(taskLedger.claimNextWorkOrder()).toBeNull();
+      taskNow += 20 * 60 * 1_000;
       const abandoned = taskLedger.claimNextWorkOrder();
       if (!abandoned) throw new Error('abandoned Board workorder expected');
       taskLedger.failWorkOrder(abandoned.id, 'simulated daemon cutover');
 
-      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => 10);
+      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
+      expect(restarted.boardRefreshGate.captureFullRepair()).toEqual({
+        repairGeneration: 1_200_020,
+        noUpdateScope: 'full:1200020',
+      });
       const { ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
@@ -415,6 +422,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       });
       await vi.advanceTimersByTimeAsync(10_000);
 
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      taskNow += 20 * 60 * 1_000;
       const repair = ledger.claimNextWorkOrder();
       expect(repair).toMatchObject({
         idempotencyKey: 'board:full:repair',
@@ -422,8 +431,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         payload: {
           mode: 'full',
           force: false,
-          repairGeneration: 22,
-          noUpdateScope: 'full:22',
+          repairGeneration: 1_200_020,
+          noUpdateScope: 'full:1200020',
         },
       });
       expect(repair?.id).not.toBe(accepted.workOrderId);
@@ -431,6 +440,69 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         repair?.id
       );
       expect(routeHandle.boardReconcileEnabled).toBe(false);
+      routeHandle.stop();
+    } finally {
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
+      db.close();
+    }
+  });
+
+  it('TG-06 promotes one delayed owner-event repair on the normal schedule', async () => {
+    const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
+    process.env.MAMA_BOARD_RECONCILE = '0';
+    try {
+      createBoardInputTables(db);
+      const taskLedger = new TaskLedger(db, { now: Date.now, timeZone: 'UTC' });
+      const inbox = new OwnerEventInbox(db, Date.now);
+      const boardRefreshGate = new BoardRefreshGate({ initialGeneration: 500 });
+      boardRefreshGate.completeVerifiedFull(500);
+      const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
+        db,
+        taskLedger,
+        Date.now
+      );
+      const { ledger, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+        ledger: taskLedger,
+        boardRefreshGate,
+        ownerEventBoardRefreshLedger,
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000 - 10_000);
+
+      const batchId = inbox.enqueue({
+        channelKey: 'kagemusha:feedback',
+        eventIds: ['evt-scheduled-promotion'],
+        lines: ['line:evt-scheduled-promotion'],
+        activations: [],
+      });
+      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+      boardRefreshGate.markChannelDirty('host:test-owner-event');
+      const accepted = ownerEventBoardRefreshLedger.accept({
+        batchId,
+        eventIds: ['evt-scheduled-promotion'],
+        repair: boardRefreshGate.captureFullRepair(),
+      });
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000);
+
+      expect(ledger.countPendingWorkOrders()).toBe(1);
+      expect(ledger.claimNextWorkOrder()).toMatchObject({
+        id: accepted.workOrderId,
+        idempotencyKey: 'board:full:repair',
+        payload: {
+          mode: 'full',
+          force: false,
+          repairGeneration: 501,
+          noUpdateScope: 'full:501',
+        },
+      });
       routeHandle.stop();
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;

@@ -543,14 +543,15 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     };
     const runDashboardAgent = (opts?: { force?: boolean; acceptedIntent?: boolean }): void => {
       try {
-        const acceptedIntentLedger = opts?.acceptedIntent
-          ? ownerEventBoardRefreshLedger
-          : undefined;
+        const pendingIntentLedger =
+          ownerEventBoardRefreshLedger?.maxPendingGeneration() !== null
+            ? ownerEventBoardRefreshLedger
+            : undefined;
         if (opts?.acceptedIntent) {
-          if (!acceptedIntentLedger || !boardRefreshGate) {
+          if (!ownerEventBoardRefreshLedger || !boardRefreshGate) {
             throw new Error('Owner-event Board repair runtime unavailable for accepted intent');
           }
-          if (acceptedIntentLedger.maxPendingGeneration() === null) {
+          if (!pendingIntentLedger) {
             return;
           }
         }
@@ -604,7 +605,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             `[stage2] board delta gate unavailable (${delta.warning}); enqueueing the full board anyway`
           );
         }
-        if (!opts?.force && !opts?.acceptedIntent && !delta.enqueue) {
+        if (!opts?.force && !opts?.acceptedIntent && !pendingIntentLedger && !delta.enqueue) {
           routesLogger.info(
             `[stage2] board full skipped: ${delta.reason} - nothing the board reads has moved since the last published full run`
           );
@@ -634,8 +635,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           },
           opts?.force || opts?.acceptedIntent ? 'high' : undefined
         );
-        if (acceptedIntentLedger) {
-          acceptedIntentLedger.attachPendingToWorkOrder(workOrder.id);
+        if (pendingIntentLedger && workOrder.idempotencyKey === boardRepairKey()) {
+          pendingIntentLedger.attachPendingToWorkOrder(workOrder.id, {
+            readyNow: !opts?.acceptedIntent,
+          });
         }
       } catch (err) {
         routesLogger.error(
