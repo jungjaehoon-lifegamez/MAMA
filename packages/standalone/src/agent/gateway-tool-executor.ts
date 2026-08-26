@@ -11,18 +11,10 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
-import {
-  readFileSync,
-  existsSync,
-  writeFileSync,
-  mkdirSync,
-  copyFileSync,
-  lstatSync,
-  realpathSync,
-} from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, realpathSync } from 'fs';
 import { AsyncLocalStorage } from 'async_hooks';
 import { createHash, randomUUID } from 'crypto';
-import { join, dirname, resolve, relative, isAbsolute, basename, extname, sep } from 'path';
+import { join, dirname, resolve, relative, isAbsolute, basename, extname } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -118,7 +110,15 @@ import {
   type PrivateConnectorPolicy,
 } from '../connectors/private-connector-policy.js';
 import { getMemberCandidateStore } from '../gateways/member-candidate-store.js';
+import type { TelegramOutboundDeliveryReceipt } from '../gateways/telegram.js';
 import type { ReportPublishResult } from '../api/report-handler.js';
+import {
+  buildOwnerEventTelegramIntent,
+  isOwnerEventTelegramIntentV1,
+  resolvePrivateWorkspaceFile,
+  type OwnerEventTelegramIntentV1,
+  type OwnerEventTelegramVariant,
+} from '../operator/owner-event-effects.js';
 
 const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -583,6 +583,10 @@ export interface TelegramGatewayInterface {
     emotion: string,
     idempotencyKey?: string
   ): Promise<boolean>;
+  readOutboundDeliveryReceipt?(
+    deliveryId: string,
+    variant: OwnerEventTelegramVariant
+  ): TelegramOutboundDeliveryReceipt | null;
 }
 
 /**
@@ -610,18 +614,19 @@ function isDefinitiveTelegramPhotoRejection(error: unknown): boolean {
   return TELEGRAM_DEFINITIVE_PHOTO_REJECTIONS.some((code) => message.includes(code));
 }
 
-function resolvePrivateWorkspaceFile(filePath: string): string {
-  const root = resolve(process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'));
-  const stats = lstatSync(filePath);
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new Error('Outbound file must be a regular file, not a symlink');
-  }
-  const realPath = realpathSync(filePath);
-  const realRoot = realpathSync(root);
-  if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) {
-    throw new Error(`Outbound file must stay under the private MAMA workspace: ${realRoot}`);
-  }
-  return realPath;
+function isExactTelegramDeliveryReceipt(
+  value: TelegramOutboundDeliveryReceipt | null | undefined,
+  deliveryId: string,
+  variant: OwnerEventTelegramVariant
+): value is TelegramOutboundDeliveryReceipt {
+  return (
+    value?.deliveryId === deliveryId &&
+    value.variant === variant &&
+    value.state === 'delivered' &&
+    /^[a-f0-9]{64}$/.test(value.payloadIdentity) &&
+    Number.isFinite(value.confirmedAt) &&
+    value.confirmedAt >= 0
+  );
 }
 
 export class GatewayToolExecutor {
@@ -3832,47 +3837,65 @@ export class GatewayToolExecutor {
 
     const sourceMessageRef = this.getExecutionState().sourceMessageRef;
     const ownerEvent = sourceMessageRef?.startsWith('owner-event:') === true;
-    const deliveryVariant = sticker_emotion
-      ? 'sticker'
-      : file_path
-        ? TELEGRAM_PHOTO_EXTENSIONS.has(extname(file_path).toLowerCase())
-          ? 'image'
-          : 'file'
-        : 'text';
     let ownerEffect: { batchId: number; actionKey: string } | null = null;
     let ownerLedger: import('../operator/owner-event-effects.js').OwnerEventEffectLedger | null =
       null;
+    let ownerIntent: OwnerEventTelegramIntentV1 | null = null;
+    let idempotencyKey: string | undefined;
+    // TG-06 owner-event delivery state:
+    // reserve exact intent -> send -> delivered ledger receipt -> confirm
+    //                      `-> error/missing receipt -> unknown -> reconcile-only
     try {
       if (ownerEvent) {
         ownerEffect = this.requireOwnerEventEffect(delivery_key, 'telegram_send');
         ownerLedger = this.requireOwnerEventEffectLedger();
+        idempotencyKey = `${sourceMessageRef}:telegram:${delivery_key}`;
+        const existing = ownerLedger.inspect(
+          ownerEffect.batchId,
+          ownerEffect.actionKey,
+          'telegram_send'
+        );
+        if (existing && !isOwnerEventTelegramIntentV1(existing.intent)) {
+          return existing.state === 'confirmed'
+            ? { success: true }
+            : {
+                success: false,
+                error:
+                  'owner-event Telegram legacy effect is reconcile-only; automatic replay is disabled',
+              };
+        }
+        const trustedExisting =
+          existing && isOwnerEventTelegramIntentV1(existing.intent) ? existing.intent : undefined;
+        ownerIntent = buildOwnerEventTelegramIntent(
+          {
+            chatId: chat_id,
+            deliveryId: idempotencyKey,
+            message,
+            filePath: file_path,
+            stickerEmotion: sticker_emotion,
+          },
+          trustedExisting
+        );
         const reservation = ownerLedger.begin(
           ownerEffect.batchId,
           ownerEffect.actionKey,
           'telegram_send',
-          { chatId: chat_id, variant: deliveryVariant }
+          ownerIntent
         );
         if (reservation.state === 'confirmed') return { success: true };
-        if (reservation.intent.chatId !== chat_id) {
+        if (reservation.state === 'reconcile') {
           return {
             success: false,
-            error: 'owner-event Telegram target differs from the host-reserved destination',
-          };
-        }
-        if (reservation.intent.variant !== deliveryVariant) {
-          return {
-            success: false,
-            error: 'owner-event Telegram retry must use the originally reserved delivery variant',
+            error: 'owner-event Telegram effect is reconcile-only; automatic replay is disabled',
           };
         }
       }
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    const idempotencyKey = sourceMessageRef
-      ? ownerEvent
-        ? `${sourceMessageRef}:telegram:${delivery_key}`
-        : createHash('sha256')
+    if (!ownerEvent) {
+      idempotencyKey = sourceMessageRef
+        ? createHash('sha256')
             .update(
               JSON.stringify([
                 sourceMessageRef,
@@ -3883,68 +3906,104 @@ export class GatewayToolExecutor {
               ])
             )
             .digest('hex')
-      : undefined;
+        : undefined;
+    }
 
+    let deliveredVariant: OwnerEventTelegramVariant | null = ownerIntent?.variant ?? null;
     try {
-      if (sticker_emotion) {
-        await (this.telegramGateway.sendStickerFromActiveTurn?.(
-          chat_id,
-          sticker_emotion,
-          idempotencyKey
-        ) ?? this.telegramGateway.sendSticker(chat_id, sticker_emotion, idempotencyKey));
-      } else if (file_path) {
-        const safePath = resolvePrivateWorkspaceFile(file_path);
-        if (TELEGRAM_PHOTO_EXTENSIONS.has(extname(safePath).toLowerCase())) {
+      if (ownerIntent?.variant === 'sticker' || sticker_emotion) {
+        const emotion = ownerIntent?.stickerEmotion ?? sticker_emotion;
+        if (!emotion) throw new Error('Telegram sticker emotion is missing after normalization');
+        await (this.telegramGateway.sendStickerFromActiveTurn?.(chat_id, emotion, idempotencyKey) ??
+          this.telegramGateway.sendSticker(chat_id, emotion, idempotencyKey));
+        deliveredVariant = 'sticker';
+      } else if (ownerIntent?.filePath || file_path) {
+        const safePath = ownerIntent?.filePath ?? resolvePrivateWorkspaceFile(file_path!);
+        const caption = ownerIntent?.message ?? message;
+        const sendAsImage = ownerIntent
+          ? ownerIntent.variant === 'image'
+          : TELEGRAM_PHOTO_EXTENSIONS.has(extname(safePath).toLowerCase());
+        if (sendAsImage) {
           try {
             if (idempotencyKey) {
               await (this.telegramGateway.sendImageFromActiveTurn?.(
                 chat_id,
                 safePath,
-                message,
+                caption ?? undefined,
                 idempotencyKey
-              ) ?? this.telegramGateway.sendImage(chat_id, safePath, message, idempotencyKey));
+              ) ??
+                this.telegramGateway.sendImage(
+                  chat_id,
+                  safePath,
+                  caption ?? undefined,
+                  idempotencyKey
+                ));
             } else {
-              await (this.telegramGateway.sendImageFromActiveTurn?.(chat_id, safePath, message) ??
-                this.telegramGateway.sendImage(chat_id, safePath, message));
+              await (this.telegramGateway.sendImageFromActiveTurn?.(
+                chat_id,
+                safePath,
+                caption ?? undefined
+              ) ?? this.telegramGateway.sendImage(chat_id, safePath, caption ?? undefined));
             }
+            deliveredVariant = 'image';
           } catch (error) {
             if (!isDefinitiveTelegramPhotoRejection(error)) throw error;
             if (idempotencyKey) {
               await (this.telegramGateway.sendFileFromActiveTurn?.(
                 chat_id,
                 safePath,
-                message,
+                caption ?? undefined,
                 idempotencyKey
-              ) ?? this.telegramGateway.sendFile(chat_id, safePath, message, idempotencyKey));
+              ) ??
+                this.telegramGateway.sendFile(
+                  chat_id,
+                  safePath,
+                  caption ?? undefined,
+                  idempotencyKey
+                ));
             } else {
-              await (this.telegramGateway.sendFileFromActiveTurn?.(chat_id, safePath, message) ??
-                this.telegramGateway.sendFile(chat_id, safePath, message));
+              await (this.telegramGateway.sendFileFromActiveTurn?.(
+                chat_id,
+                safePath,
+                caption ?? undefined
+              ) ?? this.telegramGateway.sendFile(chat_id, safePath, caption ?? undefined));
             }
+            deliveredVariant = 'file';
           }
         } else {
           if (idempotencyKey) {
             await (this.telegramGateway.sendFileFromActiveTurn?.(
               chat_id,
               safePath,
-              message,
+              caption ?? undefined,
               idempotencyKey
-            ) ?? this.telegramGateway.sendFile(chat_id, safePath, message, idempotencyKey));
+            ) ??
+              this.telegramGateway.sendFile(
+                chat_id,
+                safePath,
+                caption ?? undefined,
+                idempotencyKey
+              ));
           } else {
-            await (this.telegramGateway.sendFileFromActiveTurn?.(chat_id, safePath, message) ??
-              this.telegramGateway.sendFile(chat_id, safePath, message));
+            await (this.telegramGateway.sendFileFromActiveTurn?.(
+              chat_id,
+              safePath,
+              caption ?? undefined
+            ) ?? this.telegramGateway.sendFile(chat_id, safePath, caption ?? undefined));
           }
+          deliveredVariant = 'file';
         }
-      } else if (message) {
+      } else if (ownerIntent?.message || message) {
+        const text = ownerIntent?.message ?? message;
+        if (!text) throw new Error('Telegram text message is missing after normalization');
         if (idempotencyKey) {
-          await (this.telegramGateway.sendMessageFromActiveTurn?.(
-            chat_id,
-            message,
-            idempotencyKey
-          ) ?? this.telegramGateway.sendMessage(chat_id, message, idempotencyKey));
+          await (this.telegramGateway.sendMessageFromActiveTurn?.(chat_id, text, idempotencyKey) ??
+            this.telegramGateway.sendMessage(chat_id, text, idempotencyKey));
         } else {
-          await (this.telegramGateway.sendMessageFromActiveTurn?.(chat_id, message) ??
-            this.telegramGateway.sendMessage(chat_id, message));
+          await (this.telegramGateway.sendMessageFromActiveTurn?.(chat_id, text) ??
+            this.telegramGateway.sendMessage(chat_id, text));
         }
+        deliveredVariant = 'text';
       } else {
         return {
           success: false,
@@ -3953,7 +4012,21 @@ export class GatewayToolExecutor {
       }
 
       if (ownerEffect && ownerLedger) {
-        ownerLedger.confirm(ownerEffect.batchId, ownerEffect.actionKey, 'telegram_send', null);
+        const receipt =
+          idempotencyKey && deliveredVariant
+            ? this.telegramGateway.readOutboundDeliveryReceipt?.(idempotencyKey, deliveredVariant)
+            : null;
+        if (
+          !idempotencyKey ||
+          !deliveredVariant ||
+          !isExactTelegramDeliveryReceipt(receipt, idempotencyKey, deliveredVariant)
+        ) {
+          throw new Error('Owner-event Telegram send is missing its exact local delivery receipt');
+        }
+        ownerLedger.confirm(ownerEffect.batchId, ownerEffect.actionKey, 'telegram_send', {
+          version: 1,
+          ...receipt,
+        });
       }
       return { success: true };
     } catch (err) {

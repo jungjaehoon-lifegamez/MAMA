@@ -1229,14 +1229,23 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('Telegram output parity', () => {
-      it('dedupes owner-event Telegram actions by stable semantic key across retry reordering', async () => {
+      it('TG-01/TG-06 confirms exact owner-event text from the existing delivery receipt', async () => {
         const keys: Array<string | undefined> = [];
         const api = createMockApi();
         api.beginModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0));
         api.commitModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0, 'completed'));
         api.failModelRun = vi.fn().mockResolvedValue(modelRunForAttempt(0, 'failed'));
         const executor = new GatewayToolExecutor({ mamaApi: api });
-        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
+        const db = new Database(':memory:');
+        executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(db, () => 1_000));
+        const receipt = {
+          deliveryId: 'owner-event:41:telegram:telegram-delivery',
+          variant: 'text' as const,
+          state: 'delivered' as const,
+          payloadIdentity: 'a'.repeat(64),
+          confirmedAt: 900,
+        };
+        const readOutboundDeliveryReceipt = vi.fn().mockReturnValue(receipt);
         executor.setTelegramGateway({
           sendMessage: vi.fn(async (_chatId, _message, idempotencyKey) => {
             keys.push(idempotencyKey);
@@ -1244,6 +1253,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           sendFile: vi.fn(),
           sendImage: vi.fn(),
           sendSticker: vi.fn(),
+          readOutboundDeliveryReceipt,
         });
         executor.setAgentContext({
           ...createViewerContext(),
@@ -1269,30 +1279,57 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         };
         const retryRun = { ...firstRun, modelRunId: 'mr-owner-event-retry' };
 
-        await executor.execute(
-          'telegram_send',
-          { chat_id: '7777', message: 'first translation', delivery_key: 'telegram-delivery' },
-          firstRun
-        );
-        await executor.execute(
-          'telegram_send',
-          {
-            chat_id: '7777',
-            message: 'duplicate notice in the same batch',
-            delivery_key: 'telegram-delivery',
-          },
-          firstRun
-        );
-        await executor.execute(
-          'telegram_send',
-          {
-            chat_id: '7777',
-            message: 'rephrased translation on retry',
-            delivery_key: 'telegram-delivery',
-          },
-          retryRun
-        );
+        await expect(
+          executor.execute(
+            'telegram_send',
+            { chat_id: '7777', message: 'first translation', delivery_key: 'telegram-delivery' },
+            firstRun
+          )
+        ).resolves.toEqual({ success: true });
+        await expect(
+          executor.execute(
+            'telegram_send',
+            { chat_id: '7777', message: 'first translation', delivery_key: 'telegram-delivery' },
+            retryRun
+          )
+        ).resolves.toEqual({ success: true });
+        await expect(
+          executor.execute(
+            'telegram_send',
+            {
+              chat_id: '7777',
+              message: 'rephrased translation on retry',
+              delivery_key: 'telegram-delivery',
+            },
+            retryRun
+          )
+        ).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('intent mismatch'),
+        });
+
         expect(keys).toEqual(['owner-event:41:telegram:telegram-delivery']);
+        expect(readOutboundDeliveryReceipt).toHaveBeenCalledWith(
+          'owner-event:41:telegram:telegram-delivery',
+          'text'
+        );
+        const row = db
+          .prepare(
+            `SELECT status, intent_json, result_json FROM owner_event_effects
+              WHERE batch_id = 41 AND action_key = 'telegram-delivery'`
+          )
+          .get() as { status: string; intent_json: string; result_json: string };
+        expect(row.status).toBe('confirmed');
+        expect(JSON.parse(row.intent_json)).toEqual({
+          version: 1,
+          chatId: '7777',
+          variant: 'text',
+          deliveryId: 'owner-event:41:telegram:telegram-delivery',
+          message: 'first translation',
+          filePath: null,
+          stickerEmotion: null,
+        });
+        expect(JSON.parse(row.result_json)).toEqual({ version: 1, ...receipt });
       });
 
       it('rejects a syntactically valid owner-event key that the host did not issue', async () => {
@@ -1389,16 +1426,16 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(sendMessage).not.toHaveBeenCalled();
       });
 
-      it('does not change Telegram transport variant after an ambiguous owner-event send', async () => {
+      it('TG-06 keeps an ambiguous owner-event send reconcile-only without another transport', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
         executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(new Database(':memory:')));
         const sendMessage = vi.fn().mockRejectedValue(new Error('unknown transport outcome'));
-        const sendFile = vi.fn();
         executor.setTelegramGateway({
           sendMessage,
-          sendFile,
+          sendFile: vi.fn(),
           sendImage: vi.fn(),
           sendSticker: vi.fn(),
+          readOutboundDeliveryReceipt: vi.fn(),
         });
         executor.setAgentContext({
           ...createViewerContext(),
@@ -1434,7 +1471,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           'telegram_send',
           {
             chat_id: '7777',
-            file_path: '/private/workspace/retry.png',
+            message: 'first',
             delivery_key: 'telegram-delivery',
           },
           { ...run, modelRunId: 'mr-owner-event-telegram-variant-retry' }
@@ -1442,10 +1479,258 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         expect(retry).toMatchObject({
           success: false,
-          error: expect.stringContaining('originally reserved delivery variant'),
+          error: expect.stringContaining('reconcile'),
         });
         expect(sendMessage).toHaveBeenCalledTimes(1);
-        expect(sendFile).not.toHaveBeenCalled();
+
+        const changed = await executor.execute(
+          'telegram_send',
+          {
+            chat_id: '7777',
+            message: 'changed after unknown outcome',
+            delivery_key: 'telegram-delivery',
+          },
+          { ...run, modelRunId: 'mr-owner-event-telegram-changed-retry' }
+        );
+        expect(changed).toMatchObject({
+          success: false,
+          error: expect.stringContaining('intent mismatch'),
+        });
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+      });
+
+      it('TG-06 marks a returned send unknown when the durable delivery receipt is missing', async () => {
+        const db = new Database(':memory:');
+        const ledger = new OwnerEventEffectLedger(db, () => 1_000);
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(ledger);
+        const sendMessage = vi.fn().mockResolvedValue(undefined);
+        executor.setTelegramGateway({
+          sendMessage,
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+          readOutboundDeliveryReceipt: vi.fn().mockReturnValue(null),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+        const run = {
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: 'owner-event:46',
+          modelRunId: 'mr-owner-event-missing-receipt',
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId: 46,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        };
+        const input = {
+          chat_id: '7777',
+          message: 'receipt required',
+          delivery_key: 'telegram-delivery',
+        };
+
+        await expect(executor.execute('telegram_send', input, run)).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('delivery receipt'),
+        });
+        await expect(
+          executor.execute('telegram_send', input, {
+            ...run,
+            modelRunId: 'mr-owner-event-missing-receipt-retry',
+          })
+        ).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('reconcile'),
+        });
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(ledger.confirmedKinds(46)).toEqual([]);
+        expect(ledger.inspect(46, 'telegram-delivery', 'telegram_send')).toMatchObject({
+          state: 'reconcile',
+          intent: { version: 1, message: 'receipt required' },
+        });
+      });
+
+      it('TG-06 keeps legacy confirmed and unknown Telegram effects no-replay', async () => {
+        const ledger = new OwnerEventEffectLedger(new Database(':memory:'), () => 1_000);
+        ledger.begin(47, 'telegram-delivery', 'telegram_send', {
+          chatId: '7777',
+          variant: 'text',
+        });
+        ledger.confirm(47, 'telegram-delivery', 'telegram_send', null);
+        ledger.begin(48, 'telegram-delivery', 'telegram_send', {
+          chatId: '7777',
+          variant: 'text',
+        });
+        ledger.markUnknown(48, 'telegram-delivery', 'telegram_send', 'legacy ambiguity');
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setOwnerEventEffectLedger(ledger);
+        const sendMessage = vi.fn();
+        executor.setTelegramGateway({
+          sendMessage,
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+          readOutboundDeliveryReceipt: vi.fn(),
+        });
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'owner-event',
+          platform: 'cli',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+        const execution = (batchId: number) => ({
+          agentId: 'owner_console',
+          source: 'owner-event',
+          channelId: 'chatwork:C1',
+          sourceMessageRef: `owner-event:${batchId}`,
+          modelRunId: `mr-owner-event-legacy-${batchId}`,
+          executionSurface: 'direct' as const,
+          ownerEventEffects: {
+            batchId,
+            effectKeys: {
+              telegram_send: 'telegram-delivery',
+              drive_upload: 'drive-upload',
+            },
+          },
+        });
+
+        await expect(
+          executor.execute(
+            'telegram_send',
+            { chat_id: '7777', message: 'unobservable', delivery_key: 'telegram-delivery' },
+            execution(47)
+          )
+        ).resolves.toEqual({ success: true });
+        await expect(
+          executor.execute(
+            'telegram_send',
+            {
+              chat_id: '7777',
+              file_path: '/already-removed/legacy-output.png',
+              delivery_key: 'telegram-delivery',
+            },
+            execution(48)
+          )
+        ).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('reconcile'),
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+      });
+
+      it('TG-03/TG-06 confirms the actual file receipt after definite photo rejection', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'mama-owner-event-photo-fallback-'));
+        const outputPath = join(workspace, 'translated.png');
+        await writeFile(outputPath, 'image-result');
+        const previousWorkspace = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        try {
+          const db = new Database(':memory:');
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setOwnerEventEffectLedger(new OwnerEventEffectLedger(db, () => 1_000));
+          const sendImage = vi.fn().mockRejectedValue(new Error('PHOTO_INVALID_DIMENSIONS'));
+          const sendFile = vi.fn().mockResolvedValue(undefined);
+          const readOutboundDeliveryReceipt = vi.fn((_deliveryId: string, variant: string) =>
+            variant === 'file'
+              ? {
+                  deliveryId: 'owner-event:49:telegram:telegram-delivery',
+                  variant: 'file',
+                  state: 'delivered',
+                  payloadIdentity: 'c'.repeat(64),
+                  confirmedAt: 950,
+                }
+              : null
+          );
+          executor.setTelegramGateway({
+            sendMessage: vi.fn(),
+            sendFile,
+            sendImage,
+            sendSticker: vi.fn(),
+            readOutboundDeliveryReceipt,
+          });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            source: 'owner-event',
+            platform: 'cli',
+            roleName: 'owner_console',
+            role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+          });
+          const run = {
+            agentId: 'owner_console',
+            source: 'owner-event',
+            channelId: 'chatwork:C1',
+            sourceMessageRef: 'owner-event:49',
+            modelRunId: 'mr-owner-event-photo-fallback',
+            executionSurface: 'direct' as const,
+            ownerEventEffects: {
+              batchId: 49,
+              effectKeys: {
+                telegram_send: 'telegram-delivery',
+                drive_upload: 'drive-upload',
+              },
+            },
+          };
+          const input = {
+            chat_id: '7777',
+            file_path: outputPath,
+            message: ' exact caption ',
+            delivery_key: 'telegram-delivery',
+          };
+
+          await expect(executor.execute('telegram_send', input, run)).resolves.toEqual({
+            success: true,
+          });
+
+          const row = db
+            .prepare(
+              `SELECT intent_json, result_json FROM owner_event_effects
+                WHERE batch_id = 49 AND action_key = 'telegram-delivery'`
+            )
+            .get() as { intent_json: string; result_json: string };
+          expect(JSON.parse(row.intent_json)).toMatchObject({
+            version: 1,
+            variant: 'image',
+            filePath: realpathSync(outputPath),
+            message: ' exact caption ',
+          });
+          expect(JSON.parse(row.result_json)).toMatchObject({
+            version: 1,
+            variant: 'file',
+            state: 'delivered',
+            payloadIdentity: 'c'.repeat(64),
+          });
+          expect(sendImage).toHaveBeenCalledTimes(1);
+          expect(sendFile).toHaveBeenCalledTimes(1);
+          expect(readOutboundDeliveryReceipt).toHaveBeenCalledWith(
+            'owner-event:49:telegram:telegram-delivery',
+            'file'
+          );
+          await rm(outputPath);
+          await expect(
+            executor.execute('telegram_send', input, {
+              ...run,
+              modelRunId: 'mr-owner-event-photo-confirmed-retry',
+            })
+          ).resolves.toEqual({ success: true });
+          expect(sendImage).toHaveBeenCalledTimes(1);
+          expect(sendFile).toHaveBeenCalledTimes(1);
+        } finally {
+          if (previousWorkspace === undefined) delete process.env.MAMA_WORKSPACE;
+          else process.env.MAMA_WORKSPACE = previousWorkspace;
+          await rm(workspace, { recursive: true, force: true });
+        }
       });
 
       it('reconciles an ambiguous owner-event Drive upload from the host reservation without another create', async () => {

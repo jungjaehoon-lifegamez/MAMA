@@ -206,14 +206,41 @@ export async function initGateways(
 
       // Wire tool executor
       const telegramGatewayInterface = {
-        sendMessage: async (chatId: string, message: string) =>
-          telegramGateway!.sendMessage(chatId, message),
-        sendFile: async (chatId: string, filePath: string, caption?: string) =>
-          telegramGateway!.sendFile(chatId, filePath, caption),
-        sendImage: async (chatId: string, imagePath: string, caption?: string) =>
-          telegramGateway!.sendImage(chatId, imagePath, caption),
-        sendSticker: async (chatId: string | number, emotion: string) =>
-          telegramGateway!.sendSticker(chatId, emotion),
+        sendMessage: async (chatId: string, message: string, deliveryId?: string) =>
+          telegramGateway!.sendMessage(chatId, message, deliveryId),
+        sendFile: async (chatId: string, filePath: string, caption?: string, deliveryId?: string) =>
+          telegramGateway!.sendFile(chatId, filePath, caption, deliveryId),
+        sendImage: async (
+          chatId: string,
+          imagePath: string,
+          caption?: string,
+          deliveryId?: string
+        ) => telegramGateway!.sendImage(chatId, imagePath, caption, deliveryId),
+        sendSticker: async (chatId: string | number, emotion: string, deliveryId?: string) =>
+          telegramGateway!.sendSticker(chatId, emotion, deliveryId),
+        sendMessageFromActiveTurn: async (chatId: string, message: string, deliveryId?: string) =>
+          telegramGateway!.sendMessageFromActiveTurn(chatId, message, deliveryId),
+        sendFileFromActiveTurn: async (
+          chatId: string,
+          filePath: string,
+          caption?: string,
+          deliveryId?: string
+        ) => telegramGateway!.sendFileFromActiveTurn(chatId, filePath, caption, deliveryId),
+        sendImageFromActiveTurn: async (
+          chatId: string,
+          imagePath: string,
+          caption?: string,
+          deliveryId?: string
+        ) => telegramGateway!.sendImageFromActiveTurn(chatId, imagePath, caption, deliveryId),
+        sendStickerFromActiveTurn: async (
+          chatId: string | number,
+          emotion: string,
+          deliveryId?: string
+        ) => telegramGateway!.sendStickerFromActiveTurn(chatId, emotion, deliveryId),
+        readOutboundDeliveryReceipt: (
+          deliveryId: string,
+          variant: 'text' | 'file' | 'image' | 'sticker'
+        ) => telegramGateway!.readOutboundDeliveryReceipt(deliveryId, variant),
       };
       toolExecutor.setTelegramGateway(telegramGatewayInterface);
       agentLoop.setTelegramGateway(telegramGatewayInterface);

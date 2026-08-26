@@ -171,7 +171,33 @@ promotes one delayed owner-event repair on the normal schedule` pins reuse and p
 its intents` pins verified-generation application before an obsolete delayed row can be claimed.
 - **Verification:** the four focused files pass 95 tests. The complete standalone suite passes 383
   files and 5,194 tests, with four files and seven tests skipped; typecheck and production build
-  pass. This is branch code/test evidence only, not merged, released, or live-canary evidence.
+  pass.
+- **Status:** CODE GREEN, merged as PR #234. Patch release and live-canary evidence remain pending.
+
+### Owner-event Telegram exact-receipt remediation evidence: 2026-08-26
+
+- **TG-01/TG-06 exact visible payload:** `OwnerEventEffectLedger` retains one versioned canonical
+  text, caption/path, or sticker intent before transmission. An exact confirmed retry returns the
+  stored receipt without transport; changed target, requested variant, delivery ID, body, path, or
+  emotion fails closed. Legacy rows remain authoritative no-replay evidence without inferred
+  payloads.
+- **TG-01 existing delivery authority:** `TelegramGateway` exposes one narrow read of its existing
+  outbound ledger. A delivered receipt includes the existing payload identity, actual transport
+  variant, and delivered timestamp. Long text still uses the established chunk progression. A
+  missing, pending, or malformed local proof cannot become effect confirmation.
+- **TG-03/TG-04 production wiring:** `initGateways` now forwards Telegram idempotency keys,
+  active-turn methods, and the receipt read instead of reducing the real gateway to four
+  mock-shaped methods. This preserves same-chat active-turn delivery and makes the owner-event
+  receipt path work in the launchd runtime, not only executor tests.
+- **TG-03/TG-06 fallback and failure:** definite photo rejection keeps the existing document
+  fallback and confirms the actual `file` ledger receipt. Ambiguous photo or transport outcomes do
+  not fall back or replay. A returned send without an exact delivered ledger row marks the effect
+  unknown and leaves later attempts reconcile-only.
+- **Verification:** the four focused files pass 203 tests. The complete standalone suite passes
+  383 files and 5,206 tests, with four files and seven tests skipped; standalone typecheck and
+  production build pass. Root lint, changed-file format, and `git diff --check` pass. PR review,
+  merge, release, and live canary remain pending.
+- **Status:** BRANCH CODE GREEN; no operational claim.
 
 ### Sender-boundary completion evidence: 2026-08-13
 

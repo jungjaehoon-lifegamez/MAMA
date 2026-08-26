@@ -186,6 +186,16 @@ export interface TelegramGatewayOptions {
   ) => { principalId: string; kind: 'owner' | 'member'; status: string } | null;
 }
 
+export type TelegramOutboundVariant = 'text' | 'file' | 'image' | 'sticker';
+
+export interface TelegramOutboundDeliveryReceipt {
+  deliveryId: string;
+  variant: TelegramOutboundVariant;
+  state: 'delivered';
+  payloadIdentity: string;
+  confirmedAt: number;
+}
+
 /**
  * Telegram Gateway class
  */
@@ -896,8 +906,6 @@ export class TelegramGateway extends BaseGateway {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: createHash('sha256').update(text).digest('hex'),
     };
-    const prior = this.messageLedger.get(ledgerKey);
-    if (idempotencyKey.startsWith('owner-event:') && prior?.state === 'delivered') return;
     const { entry: existing } = this.messageLedger.claim(ledgerKey, binding);
     if (existing?.state === 'delivered') return;
 
@@ -1027,8 +1035,6 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
     const ledgerKey = this.outboundLedgerKey(idempotencyKey, kind);
-    const prior = this.messageLedger.get(ledgerKey);
-    if (idempotencyKey.startsWith('owner-event:') && prior?.state === 'delivered') return;
     const { entry: existing } = this.messageLedger.claim(ledgerKey, {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: createHash('sha256').update(payload).digest('hex'),
@@ -1109,6 +1115,28 @@ export class TelegramGateway extends BaseGateway {
   private outboundLedgerKey(idempotencyKey: string, kind: string): string {
     const digest = createHash('sha256').update(`${kind}\0${idempotencyKey}`).digest('hex');
     return `outbound:${digest}`;
+  }
+
+  /** Read the existing durable proof for one exact outbound delivery occurrence. */
+  readOutboundDeliveryReceipt(
+    deliveryId: string,
+    variant: TelegramOutboundVariant
+  ): TelegramOutboundDeliveryReceipt | null {
+    const entry = this.messageLedger.get(this.outboundLedgerKey(deliveryId, variant));
+    if (
+      entry?.state !== 'delivered' ||
+      typeof entry.payloadIdentity !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(entry.payloadIdentity)
+    ) {
+      return null;
+    }
+    return {
+      deliveryId,
+      variant,
+      state: 'delivered',
+      payloadIdentity: entry.payloadIdentity,
+      confirmedAt: entry.updatedAt,
+    };
   }
 
   async sendSticker(
