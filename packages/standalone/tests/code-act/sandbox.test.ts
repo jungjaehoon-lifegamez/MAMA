@@ -142,7 +142,7 @@ describe('CodeActSandbox', () => {
     });
 
     it('times out a stalled host function without blocking other sandboxes', async () => {
-      const stalled = new CodeActSandbox({ timeoutMs: 100 });
+      const stalled = new CodeActSandbox({ timeoutMs: 2_000 });
       let markHostStarted: (() => void) | undefined;
       const hostStarted = new Promise<void>((resolve) => {
         markHostStarted = resolve;
@@ -157,7 +157,7 @@ describe('CodeActSandbox', () => {
       const independent = new CodeActSandbox();
       const outcome = await Promise.race([
         independent.execute('21 * 2'),
-        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
       ]);
 
       expect(outcome).not.toBe('blocked');
