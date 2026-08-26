@@ -1,6 +1,7 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR-A/PR-B MERGED, v0.39.0 release 준비
+> **상태:** Eng review CLEAR, PR-A/PR-B MERGED, v0.39.0 RELEASED/CUTOVER,
+> 실제 owner-event·Temporal canary 진행 중
 >
 > **작성일:** 2026-08-26
 >
@@ -702,7 +703,8 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 - PR-A 집중 gate: 8 files, 198 tests passed.
 - Standalone: 382 files, 5,166 tests passed; 4 files / 7 tests skipped.
 - Root: typecheck exit 0, build exit 0, test 7/7 Turbo tasks passed.
-- 릴리즈, 실제 owner-event canary, 24시간 비용 비교는 아직 수행하지 않았다.
+- v0.39.0 릴리즈·전역 설치·단일 launchd cutover는 완료됐다. 실제 owner-event canary와
+  24시간 비용 비교는 아직 완료되지 않았다.
 
 ## 25. PR-B implementation evidence
 
@@ -730,5 +732,20 @@ WorkOrder retry 정책은 코드와 테스트, diff review, PR #231 merge까지 
 - Standalone: 383 files, 5,188 tests passed; 4 files / 7 tests skipped.
 - Root: typecheck 3/3, build 2/2, test 7/7 Turbo tasks passed.
 - 변경 파일 Prettier와 `git diff --check`가 통과했다.
-- diff review와 PR-B merge는 완료됐다. 단일 shared release와 실제 Temporal/owner-event canary는 아직
-  수행하지 않았다.
+- diff review와 PR-B merge, 단일 shared v0.39.0 release와 launchd cutover는 완료됐다. 실제
+  Temporal/owner-event canary는 아직 완료되지 않았다.
+
+## 26. v0.39.0 release와 진행 중인 운영 canary
+
+2026-08-26 기준 Slice A의 배포 단계는 완료됐다.
+
+- PR #230과 PR #231이 main에 merge됐고, release PR #232가 v0.39.0 tag를 만들었다.
+- GitHub release와 npm `@jungjaehoon/mama-os@0.39.0` publish가 완료됐다.
+- 전역 0.39.0 설치를 launchd `com.mama.server` 단일 인스턴스로 재시작했다. 런타임은
+  `backend=codex`, `model=gpt-5.6-luna`를 보고하고 health 98/100을 유지한다.
+- cutover 이후 관측된 Board, Wiki, memory-curation workorder는 모두 완료됐고, model/tool trace에서
+  실패가 관측되지 않았다. 이 실행은 owner-event 또는 Temporal canary를 대신하지 않는다.
+- 아직 cutover 이후 실제 owner-event batch와 실제 Temporal generation이 관측되지 않았다. synthetic
+  Telegram 메시지, connector event, workorder는 만들지 않는다.
+- 따라서 24시간 무회귀 창이 지나더라도 실제 두 경로의 receipt와 비용 증거가 없으면 완료로 판정하지
+  않는다. canary 자동화를 유지한다.

@@ -1,6 +1,6 @@
 # Runtime overhead PR-B: Temporal contract and circuit breaker plan
 
-> **Status:** reviewed and merged as PR #231, shared release pending
+> **Status:** reviewed and merged as PR #231, released in v0.39.0, real Temporal canary pending
 >
 > **Date:** 2026-08-26
 >
