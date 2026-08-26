@@ -685,7 +685,8 @@ Slice B와 C는 본 문서에 이미 이유·범위·승인 게이트가 있어 
 
 ## 24. PR-A implementation evidence
 
-2026-08-26 기준 PR-A는 PR #230으로 main에 squash merge됐고, 아직 운영 릴리즈는 하지 않았다.
+2026-08-26 기준 PR-A는 PR #230으로 main에 squash merge됐고, v0.39.0 운영 릴리즈·전역 설치·단일
+launchd cutover까지 완료됐다.
 
 - exact owner-event batch마다 durable intent를 한 행 저장하고 열린 Board repair 하나로
   coalesce한다. 직접 owner 요청만 기존 `force: true` 계약을 유지한다.
