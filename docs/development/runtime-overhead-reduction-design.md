@@ -1,7 +1,7 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR-A/PR-B MERGED, v0.39.0 RELEASED/CUTOVER,
-> 실제 owner-event·Temporal canary 진행 중
+> **상태:** Eng review CLEAR, PR #234/#235 MERGED, v0.39.1 RELEASE PREP,
+> 기존 v0.39.0 canary 실패 후 교정 릴리즈 대기
 >
 > **작성일:** 2026-08-26
 >
@@ -758,3 +758,17 @@ WorkOrder retry 정책은 코드와 테스트, diff review, PR #231 merge까지 
   event, workorder는 만들지 않는다.
 - 따라서 24시간 무회귀 창이 지나더라도 실제 Temporal receipt, owner-event 비용 목표, Telegram payload
   증거가 모두 확보되지 않으면 완료로 판정하지 않는다. canary 자동화를 유지한다.
+
+## 27. v0.39.1 교정 릴리즈 준비
+
+v0.39.0 운영 canary가 드러낸 두 결손을 기존 경계 안에서 교정했다.
+
+- PR #234는 새 queue나 timer 없이 기존 `operator_tasks.due_at`을 claim-not-before 경계로 사용해
+  owner-event Board intent를 한 pending repair로 모은다. 첫 deadline은 고정하고 generation은 넓히기만
+  하며, scheduled tick은 같은 row를 승격한다.
+- PR #235는 새 ledger나 schema 없이 기존 `owner_event_effects` JSON에 exact Telegram payload를 남기고,
+  기존 Telegram message ledger의 delivered row를 effect confirmation authority로 연결한다. 운영 gateway
+  adapter가 delivery ID와 active-turn method를 버리던 결손도 같은 PR에서 닫았다.
+- 두 PR은 각각 main에 merge됐고 `@jungjaehoon/mama-os` 0.39.1 패치 릴리즈로 한 번만 설치·재시작한다.
+- v0.39.1 cutover 이후 canary 기준 시각을 새로 잡는다. 이전 v0.39.0 창은 실패 원인 증거로 보존하지만
+  새 24시간 판정에 합산하지 않는다.

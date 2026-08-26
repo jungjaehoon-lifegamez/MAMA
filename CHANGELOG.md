@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.1] - 2026-08-26
+
+### Fixed
+
+- **Owner-event Board repairs now wait long enough to coalesce real traffic.** The first accepted
+  intent pins one existing workorder deadline, later pending intents widen that same row, and the
+  normal schedule promotes it without creating another queue or model path. Ready lower-priority
+  work is no longer blocked by a future high-priority row, and restart-seeded generations only
+  widen so boot dirt cannot trigger an extra repair.
+- **Owner-event Telegram effects retain their exact visible payload and delivered receipt.** Text,
+  captions, resolved paths, and sticker emotion are reserved before transmission. Exact confirmed
+  retries replay the stored receipt with zero transport calls; changed or unknown retries remain
+  fail-closed. The existing Telegram delivery ledger supplies the payload identity, actual
+  image-to-file fallback variant, and delivery time.
+- **The production Telegram adapter preserves delivery capabilities.** Idempotency keys,
+  active-turn methods, and receipt reads now reach the real gateway instead of being dropped by the
+  boot adapter. Confirmed transient-file sends remain successful after the local source ages out,
+  but only when the surviving path proves the same canonical file.
+
 ## mama-os [0.39.0] - 2026-08-26
 
 ### Added

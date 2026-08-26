@@ -1,6 +1,6 @@
 # Runtime overhead remediation PR-B: Telegram exact receipt implementation plan
 
-> Status: reviewed implementation plan for `codex/v0-39-telegram-receipt`.
+> Status: implemented and merged as PR #235; v0.39.1 release/cutover pending.
 >
 > Scope: TG-01/TG-03/TG-04/TG-06 owner-event Telegram delivery only. This PR does not add a
 > ledger, schema, service, worker, timer, queue, file snapshot, or second payload hash.
