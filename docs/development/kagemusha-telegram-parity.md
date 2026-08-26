@@ -134,6 +134,25 @@ scenario IDs from this document.
 - **Status:** CODE GREEN, merged as PR #231, and released in v0.39.0; a real Temporal canary
   remains pending.
 
+### v0.39.0 live canary partial evidence: 2026-08-26
+
+- **TG-03/TG-04/TG-06:** real owner-event traffic produced host-bound exact batch intents and
+  non-force Board workorders. Verified repair completion applied only captured generations, and a
+  later generation scheduled one terminal-safe follow-up. One owner-event attempt that produced no
+  terminal receipt returned to durable backoff instead of false ACK.
+- **TG-05 cost:** the first four applied batches required three Board repairs and 1,907,491
+  authoritative `workorder_complete.tokens_used`, versus a saved four-batch baseline of 1,440,997.
+  This preliminary window is about 32% higher, not the required 60% reduction. The formal ratio
+  remains pending until at least ten actual batches are available.
+- **TG-06 delivery observability:** Telegram effects reached `confirmed`, but the local effect row
+  retained only destination identity and variant. It did not retain the outbound body, delivery
+  identity, or provider receipt, and the tool trace retained no payload hash. Visible wording,
+  duplicate delivery, truncation, and internal-meta exposure therefore cannot be judged. This is an
+  observability gap, not successful delivery evidence.
+- **Temporal:** no real post-cutover Temporal generation has been observed. Synthetic traffic is
+  forbidden, so the Temporal canary remains pending.
+- **Status:** LIVE CANARY NOT CLEAR. Keep the automation active and do not infer success.
+
 ### Sender-boundary completion evidence: 2026-08-13
 
 | ID    | Evidence update                                                                                                                                                                                                                                                                                      | Verification                                                                                                                                                                                                                                                       | Status                     |
@@ -711,10 +730,18 @@ change unless they are release-blocking security or data-loss issues.
       complete standalone suite (383 files / 5,188 tests; four files / seven tests skipped), root
       typecheck, build, lint, and all seven root Turbo test tasks. PR #231 is merged.
 - [x] Release, install, and rebuild/restart v0.39.0 as one healthy launchd-owned daemon.
+- [x] Observe a real owner-event burst preserve exact durable intent, non-force workorders,
+      verified-generation application, receipt-first ACK, and durable retry on a missing receipt.
 - [ ] Complete a real owner-event and Temporal turn, then compare visible delivery plus 24-hour
       model-work cost against the saved baseline.
 
 ## Change log
+
+- 2026-08-26: Recorded the first v0.39.0 real owner-event window. Exact-batch acceptance,
+  non-force workorders, verified-generation application, and missing-receipt backoff worked, but
+  the first four batches used three Board repairs and 1,907,491 tokens, above the saved baseline.
+  Telegram effects lacked a retained outbound body and provider receipt, so visible delivery could
+  not be judged. Temporal and the 24-hour gate remain pending.
 
 - 2026-08-26: Recorded TG-03/TG-04/TG-05/TG-06 code evidence for durable exact-batch Board
   acceptance, many-to-one non-force coalescing, verified-generation application, post-terminal

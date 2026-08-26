@@ -743,9 +743,17 @@ WorkOrder retry 정책은 코드와 테스트, diff review, PR #231 merge까지 
 - GitHub release와 npm `@jungjaehoon/mama-os@0.39.0` publish가 완료됐다.
 - 전역 0.39.0 설치를 launchd `com.mama.server` 단일 인스턴스로 재시작했다. 런타임은
   `backend=codex`, `model=gpt-5.6-luna`를 보고하고 health 98/100을 유지한다.
-- cutover 이후 관측된 Board, Wiki, memory-curation workorder는 모두 완료됐고, model/tool trace에서
-  실패가 관측되지 않았다. 이 실행은 owner-event 또는 Temporal canary를 대신하지 않는다.
-- 아직 cutover 이후 실제 owner-event batch와 실제 Temporal generation이 관측되지 않았다. synthetic
-  Telegram 메시지, connector event, workorder는 만들지 않는다.
-- 따라서 24시간 무회귀 창이 지나더라도 실제 두 경로의 receipt와 비용 증거가 없으면 완료로 판정하지
-  않는다. canary 자동화를 유지한다.
+- cutover 이후 실제 owner-event traffic이 시작됐다. 첫 운영 창에서 exact batch intent, non-force Board
+  payload, verified-generation 적용과 terminal 이후 follow-up은 구조적으로 동작했다. 그러나 처음 완료된
+  4개 batch가 3개 Board repair와 1,907,491 tokens를 사용해, 같은 batch 수의 저장 기준선
+  1,440,997 tokens보다 약 32% 높았다. 설계의 공식 판정선인 실제 10개 batch까지 계속 측정한다.
+- owner-event의 Telegram effect는 confirmed였지만 `owner_event_effects`에는 목적지 identity와 variant만
+  남고, 발신 본문·delivery identity·provider receipt가 보존되지 않았다. `tool_traces`에도 본문이나 input
+  hash가 없어 visible response, duplicate delivery, truncation, 내부 메타 노출을 판정할 수 없다. 이는
+  정상 전달 증거가 아니라 canary 관측성 결손이다.
+- 한 실제 owner-event 시도는 terminal receipt 없이 끝나 inbox가 durable backoff로 돌아갔다. false ACK는
+  없었지만 정상 왕복으로 세지 않는다.
+- 아직 cutover 이후 실제 Temporal generation은 관측되지 않았다. synthetic Telegram 메시지, connector
+  event, workorder는 만들지 않는다.
+- 따라서 24시간 무회귀 창이 지나더라도 실제 Temporal receipt, owner-event 비용 목표, Telegram payload
+  증거가 모두 확보되지 않으면 완료로 판정하지 않는다. canary 자동화를 유지한다.
