@@ -1,7 +1,7 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR #234/#235 MERGED, v0.39.1 RELEASE PREP,
-> 기존 v0.39.0 canary 실패 후 교정 릴리즈 대기
+> **상태:** Eng review CLEAR, PR #234/#235 MERGED, v0.39.1 RELEASED/CUTOVER,
+> 실제 owner-event·Temporal 24시간 canary 진행 중
 >
 > **작성일:** 2026-08-26
 >
@@ -759,7 +759,7 @@ WorkOrder retry 정책은 코드와 테스트, diff review, PR #231 merge까지 
 - 따라서 24시간 무회귀 창이 지나더라도 실제 Temporal receipt, owner-event 비용 목표, Telegram payload
   증거가 모두 확보되지 않으면 완료로 판정하지 않는다. canary 자동화를 유지한다.
 
-## 27. v0.39.1 교정 릴리즈 준비
+## 27. v0.39.1 교정 릴리즈와 새 canary
 
 v0.39.0 운영 canary가 드러낸 두 결손을 기존 경계 안에서 교정했다.
 
@@ -769,6 +769,13 @@ v0.39.0 운영 canary가 드러낸 두 결손을 기존 경계 안에서 교정�
 - PR #235는 새 ledger나 schema 없이 기존 `owner_event_effects` JSON에 exact Telegram payload를 남기고,
   기존 Telegram message ledger의 delivered row를 effect confirmation authority로 연결한다. 운영 gateway
   adapter가 delivery ID와 active-turn method를 버리던 결손도 같은 PR에서 닫았다.
-- 두 PR은 각각 main에 merge됐고 `@jungjaehoon/mama-os` 0.39.1 패치 릴리즈로 한 번만 설치·재시작한다.
-- v0.39.1 cutover 이후 canary 기준 시각을 새로 잡는다. 이전 v0.39.0 창은 실패 원인 증거로 보존하지만
-  새 24시간 판정에 합산하지 않는다.
+- 두 PR은 각각 main에 merge됐다. release PR #236 이후 tag `v0.39.1`, GitHub Release, npm
+  `@jungjaehoon/mama-os@0.39.1`이 같은 main commit을 기준으로 게시됐다.
+- 전역 0.39.1 설치 후 launchd `com.mama.server` 하나만 kickstart했다. 새 runtime은 PID 18939,
+  `startedAt=1787729886609`, `backend=codex`, `model=gpt-5.6-luna`이며 `mama status`는 98/100 healthy를
+  보고한다.
+- cutover는 실행 중이던 기존 Board #4230을 중단했다. boot recovery가 이를 stale/exhausted failure로
+  종결했고, 새 #4231은 20분 `due_at` claim window로 pending, #4232 Wiki는 in-progress가 됐다. #4230은
+  기록된 cutover 부작용으로 보존하되 같은 실패가 후속 작업에서 반복되면 새 회귀로 판정한다.
+- v0.39.1 cutover 이후 canary 기준 시각을 새로 잡았다. 이전 v0.39.0 창은 실패 원인 증거로 보존하지만
+  새 24시간 판정에 합산하지 않는다. `mama-v0-39-1-canary` heartbeat가 실제 이벤트만 매시간 읽는다.
