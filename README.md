@@ -147,7 +147,7 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.39.1        | The always-on server: connectors, trigger loop, reports, task board, and web UI. "MAMA" means this.            | `mama start`         |
+| [mama-os](packages/standalone/) 0.39.2        | The always-on server: connectors, trigger loop, reports, task board, and web UI. "MAMA" means this.            | `mama start`         |
 | [mama-core](packages/mama-core/) 2.2.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core with no independent product logic.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |

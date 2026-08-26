@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Canary Remediation
 
-> **Status:** PR #234/#235 merged, v0.39.1 released/cut over, 24-hour live canary active
+> **Status:** PR #238 merged, v0.39.2 release candidate, new 24-hour live canary pending
 >
 > **Date:** 2026-08-26
 >
