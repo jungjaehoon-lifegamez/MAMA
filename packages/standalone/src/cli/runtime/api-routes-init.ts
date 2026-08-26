@@ -46,6 +46,7 @@ import {
   boardManualKey,
   boardReconcileKey,
   wikiBatchKey,
+  normalizePromotionIntervalMs,
   promotionKey,
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
@@ -1042,8 +1043,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   // agent promote DURABLE judgments only -- task states stay on the board.
   const memoryAgentConfigured = hasEnabledAgentConfig('memory');
   if (memoryAgentConfigured) {
-    const PROMOTION_INTERVAL_MS =
-      Math.max(1, Number(process.env.MAMA_MEMORY_PROMOTION_HOURS) || 6) * 60 * 60 * 1000;
+    const PROMOTION_INTERVAL_MS = normalizePromotionIntervalMs(
+      Math.max(1, Number(process.env.MAMA_MEMORY_PROMOTION_HOURS) || 6) * 60 * 60 * 1000
+    );
     const PROMOTION_INITIAL_DELAY_MS = 10 * 60 * 1000; // let connectors poll first
 
     // Promotion runs are workorders: enqueue-only, the consumer lane runs
@@ -1054,7 +1056,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         const now = Date.now();
         enqueueWorkOrderOrThrow(
           'memory-curation',
-          opts?.manual ? promotionManualKey(now) : promotionKey(now),
+          opts?.manual ? promotionManualKey(now) : promotionKey(now, PROMOTION_INTERVAL_MS),
           { scheduledAt: new Date(now).toISOString() },
           opts?.manual ? 'high' : undefined
         );

@@ -232,14 +232,15 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).not.toMatch(/sandbox/i);
   });
 
-  it('uses injected native host tools for Codex without embedding text or JS substitutes', () => {
+  it('routes Codex gateway functions through the single injected code_act tool', () => {
     const prompt = buildWorkerSystemPrompt(
       '# Gateway Tools\n\n```tool_call\n{"name":"mama_search","input":{}}\n```',
       'codex'
     );
 
-    expect(prompt).toContain('native host tools directly');
-    expect(prompt).toContain('never emit Markdown or JavaScript substitutes');
+    expect(prompt).toContain('single injected native `code_act` tool');
+    expect(prompt).toContain('gateway functions only inside its sandbox');
+    expect(prompt).not.toContain('native host tools directly');
     expect(prompt).not.toContain('# Gateway Tools');
     expect(prompt).not.toContain('```tool_call');
     expect(prompt).not.toContain('tool_call JSON');

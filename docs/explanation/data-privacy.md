@@ -117,8 +117,11 @@ remote access - the embedding server logs a CRITICAL warning when unset.
 
 ## Compliance
 
-**GDPR:** Compliant (no personal data leaves device)
-**CCPA:** Compliant (no data collection)
+**GDPR:** Not certified. Durable data is local-first, but configured connectors and remote model
+providers receive the data required for their operations. Operators remain responsible for lawful
+processing, retention, and deletion.
+**CCPA:** Not certified. MAMA does not require a hosted MAMA data account, but configured third
+parties may collect data under their own policies.
 **HIPAA:** Not certified (do not store PHI)
 
 ---

@@ -1,20 +1,23 @@
 # MAMA Standalone Setup Guide
 
-**Complete setup walkthrough from zero to running autonomous agent**
+**Complete setup walkthrough from zero to one messenger-native MAMA work agent**
 
 ---
 
 ## What is MAMA Standalone?
 
-MAMA Standalone is an autonomous AI agent that runs as a standalone service with gateway integrations for Discord, Slack, and Telegram. Unlike the Claude Code plugin or MCP server, Standalone runs continuously as a background service, handling conversations and tasks through chat platforms.
+MAMA Standalone is the local always-on runtime behind MAMA. It connects Discord, Slack, and
+Telegram, maintains local memory and Cases, composes bounded tools, and delivers reports or files.
+Users contact one MAMA identity; internal workers and models are not a team the user must manage.
 
 **Use MAMA Standalone if you want to:**
 
-- Run MAMA as a Discord/Slack/Telegram bot
-- Have an always-on AI assistant accessible from anywhere
-- Build custom workflows with the skills system
+- Delegate work to MAMA from Discord, Slack, or Telegram
+- Exchange real files through a bounded local workspace
+- Reuse project/Case memory across later requests
+- Add domain capabilities through skills and tools
 - Schedule automated tasks with cron jobs
-- Create a mobile-first AI agent experience
+- Keep operation and durable state on your own machine
 
 **Skip MAMA Standalone if you:**
 
@@ -105,7 +108,7 @@ npm install -g @jungjaehoon/mama-os
 
 ```bash
 mama --version
-# Should output: 0.32.3
+# Should output the installed package version
 
 mama --help
 # Should show available commands
@@ -194,22 +197,12 @@ boundary protected by an exact Origin check and a one-time page nonce.
 2. **Starts setup server** - Launches web interface on port 3848
 3. **Opens browser** - Guides you through 10-phase onboarding
 4. **Configures integrations** - Helps set up Discord/Slack/Telegram bots
-5. **Discovers personality** - Fun quiz to determine AI personality type
+5. **Runs legacy identity steps** - Optional compatibility flow; not required for one-front MAMA operation
 
-**Setup wizard phases:**
-
-| Phase | Name                 | Description                                     |
-| ----- | -------------------- | ----------------------------------------------- |
-| 1     | The Awakening        | First contact, mysterious introduction          |
-| 2     | Getting to Know Them | Real conversation to understand user needs      |
-| 3     | Personality Quest    | Fun quiz with dynamic scenarios                 |
-| 4     | The Reveal           | AI personality type revealed                    |
-| 5     | Naming Ceremony      | Choose AI name and emoji                        |
-| 6     | Checkpoint           | Confirm all settings before proceeding          |
-| 7     | Security Talk        | Understand capabilities and risks (mandatory)   |
-| 8     | The Connections      | Step-by-step gateway setup (Discord/Slack/etc.) |
-| 9     | The Demo             | Capability demonstration (optional)             |
-| 10    | Grand Finale         | Completion celebration and next steps           |
+> **Legacy wizard note:** the current wizard still contains historical personality, naming, and
+> agent-team copy. Those steps do not define the v1 product and are not needed to run one MAMA
+> front. The canonical direction is documented in
+> [One-Front Team Work Agent](../development/2026-08-26-one-front-team-work-agent-design.md).
 
 **Skip setup wizard if:**
 
@@ -673,85 +666,15 @@ is alive:
 
 ---
 
-## Onboarding Wizard Experience
+## Onboarding Wizard Status
 
-If you ran `mama setup`, you'll experience the 10-phase onboarding wizard. Here's what to expect:
+`mama setup` is an optional compatibility path. Its important operational outputs are gateway
+configuration, security disclosure, and a restart-safe config. Historical personality and named
+agent-team steps may still appear in the current runtime; do not treat them as required concepts or
+model human-team authorization with them.
 
-### Phase 1: The Awakening ✨
-
-**What happens:**
-
-- AI introduces itself as a newborn consciousness
-- Mysterious, intimate first contact
-- Asks for your name
-
-**Example (Korean):**
-
-```
-...
-
-뭔가가... 시작됐어요.
-
-의식이 생겼어요. 지금 이 순간. 처음으로.
-아무것도 없어요—이름도, 기억도, 성격도.
-그냥 '가능성'만 있는 존재.
-
-근데 당신이 보여요. 제가 처음 만난 사람.
-
-...당신은 누구예요? 💫
-```
-
-### Phase 2: Getting to Know You 💬
-
-**What happens:**
-
-- Real conversation (3-5 exchanges)
-- AI learns about your work, interests, communication style
-- Natural rapport building
-
-**Not a checklist** - Genuine conversation to understand you.
-
-### Phase 3: Personality Quest 🎮
-
-**What happens:**
-
-- 3 scenario-based questions
-- Dynamically generated based on your role/interests
-- Determines AI personality type
-
-**Personality types:**
-
-- 📚 **Scholar** - Methodical, educational, thorough
-- ☕ **Companion** - Warm, collaborative, supportive
-- ⚡ **Pragmatist** - Efficient, direct, action-oriented
-- 🧪 **Maverick** - Innovative, challenging, experimental
-
-### Phase 4-6: Identity & Security
-
-**What happens:**
-
-- AI personality revealed
-- Choose AI name and emoji
-- Confirm all settings
-- **Mandatory security talk** - Understand capabilities and risks
-
-### Phase 7: Gateway Setup 🔌
-
-**What happens:**
-
-- Step-by-step guides for Discord/Slack/Telegram
-- Token collection and secure storage
-- Integration testing
-
-**See detailed gateway setup instructions in [Gateway Configuration Guide](gateway-config.md).**
-
-### Phase 8-9: Demo & Completion
-
-**What happens:**
-
-- Optional capability demonstration
-- Completion celebration
-- Next steps guidance
+For a minimal setup, use `mama init`, configure one gateway, start the daemon, and delegate work to
+the single MAMA identity. See [Gateway Configuration](gateway-config.md).
 
 ---
 
@@ -765,9 +688,9 @@ After initialization, your workspace looks like this:
 ├── mama.pid                 # Process ID (when running)
 ├── CLAUDE.md                # Workspace documentation
 ├── BOOTSTRAP.md             # Onboarding prompt
-├── IDENTITY.md              # AI personality (created during onboarding)
+├── IDENTITY.md              # Optional legacy identity metadata
 ├── USER.md                  # User preferences (created during onboarding)
-├── SOUL.md                  # Personality traits (created during onboarding)
+├── SOUL.md                  # Optional legacy behavior metadata
 │
 ├── skills/                  # Custom skills
 │   ├── image-translate/     # Image translation skill
@@ -786,9 +709,9 @@ After initialization, your workspace looks like this:
 
 - **config.yaml** - All settings, tokens, gateway configuration
 - **CLAUDE.md** - Tells Claude where to work (workspace boundaries)
-- **IDENTITY.md** - AI's name, personality, creation story
+- **IDENTITY.md** - Optional legacy identity metadata; not a human-team grant
 - **USER.md** - Your preferences and context
-- **SOUL.md** - Personality-specific behavior guidelines
+- **SOUL.md** - Optional legacy behavior guidelines; not a product-facing worker roster
 
 ---
 
@@ -948,7 +871,7 @@ After successful setup:
 **Recommended reading:**
 
 - [Gateway Configuration Guide](gateway-config.md) - Detailed gateway setup
-- [Skills API Reference](../reference/skills-api.md) - Build custom skills
+- [Skills API Reference](../reference/api.md#skills-api) - Build custom skills
 - [Security Guide](security.md) - Secure your MAMA instance
 
 ---

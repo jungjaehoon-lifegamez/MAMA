@@ -1,196 +1,212 @@
-# MAMA OS — Vision Document
+# MAMA OS Vision
 
-## Your Memory, Your Device, Your Life
+## The work agent behind your messenger
 
-MAMA OS is a local AI runtime that remembers your digital life. It connects the apps you use, remembers what matters, tracks how things evolve, and works for you — on your device, under your control.
+MAMA is one local, always-on work agent for a human team. People contact it through the messengers
+they already use, attach the real files, and state the result they need. MAMA remembers the ongoing
+Case, uses the required domain capabilities, and returns verified artifacts.
 
-## The Problem
+> Humans describe the work. MAMA decides how to execute it. Internal coordination is not a task
+> the user should have to perform.
 
-Every AI today has amnesia.
+## The problem
 
-You tell Claude about a decision on Monday. On Tuesday, it asks you the same question. You explain your project to GPT in January. In February, it has no idea. These are brilliant minds that forget everything the moment you close the window.
+Work is split across messages, files, tools, and time.
 
-This makes AI a tool. A very good tool, but still something you pick up and put down. Not a partner. Not something that grows with you.
+- Feedback arrives in a PDF.
+- The current asset lives in Drive or a Blender project.
+- A teammate remembers which revision was sent.
+- Another teammate knows what the client meant.
+- A model can inspect one piece, but the next session starts from zero.
+- The human carries files and context between every tool.
 
-Meanwhile, your digital life is scattered across dozens of apps. Kakao messages, Slack threads, Google Calendar events, GitHub PRs, emails, documents. Each app knows a fragment. None of them talk to each other. And none of them remember the connections between fragments.
+Adding a visible team of named AI personas often moves the coordination burden rather than removing
+it. The human must decide which agent owns the work, transfer context at every handoff, and resolve
+conflicting answers.
 
-You are the only one holding the full picture. That is exhausting.
+The real missing system is one accountable worker that can continue the same Case across people,
+messages, files, and domain tools.
 
-## The Insight
+## The product promise
 
-LLMs are getting better at something remarkable: making sense of chaos.
-
-We discovered this while building Kagemusha, a team task intelligence agent that monitors KakaoTalk, LINE, Slack, Chatwork, and Telegram simultaneously. Five messaging channels, dozens of conversations, hundreds of messages per day.
-
-What we found: as LLM capability improves, the AI stops being confused by the noise. It can read 50 messages across 5 channels and tell you: "Client A requested a logo revision on Kakao. Designer Kim said Wednesday. This is the third revision — the previous two took 3 days each. You might want to flag the timeline."
-
-That is not search. That is not summarization. That is **understanding with context**.
-
-And context comes from memory.
-
-## Why Memory Changes Everything
-
-| Without Memory | With Memory |
-|---------------|-------------|
-| "Here are 3 auth options" | "Last month you chose JWT. Here's why, and what changed since" |
-| "Your calendar is free Wednesday" | "Client A meetings usually run 1 hour. Last time 3 issues were unresolved. Here's a suggested agenda" |
-| "Here's how transformers work" | "You learned CNNs 2 months ago. Transformers build on the same matrix operations you already understand" |
-| Tool you use | Partner that grows with you |
-
-Memory enables three things no memoryless AI can do:
-
-1. **Continuity** — conversations that span days, weeks, months. Decisions that evolve. Projects that progress.
-
-2. **Pattern Recognition** — "You always underestimate design review time." "Client A's feedback cycle takes exactly one week." "Your best writing happens between 10pm and 1am."
-
-3. **Anticipation** — not just answering questions, but knowing what you need before you ask. Because it has seen your patterns, your calendar, your messages, and your history.
-
-## Why Local
-
-Your AI's memory contains the most intimate details of your digital life: your decisions and the reasoning behind them, your mistakes, your work patterns, your relationships, your health observations, your creative process.
-
-This cannot live on someone else's server.
-
-| Cloud Memory | Local Memory |
-|-------------|-------------|
-| Owned by a corporation | Owned by you |
-| Accessible to unknown parties | Accessible only to you |
-| Deleted when service shuts down | Persists as long as you want |
-| Locked to one AI provider | Works with any AI |
-| Trained on by the provider (maybe) | Never leaves your device |
-
-Local memory means **AI provider independence**. Today you use Claude. Tomorrow you might use GPT. Your memory — three years of decisions, patterns, and context — stays with you. No other service offers this.
-
-Local memory means **data sovereignty**. Your health patterns, your financial decisions, your team dynamics, your personal reflections — these are yours. Period.
-
-## How It Works
-
-MAMA OS does not try to be every app. It does not replace your calendar, your messenger, or your task manager. Instead, it provides three things:
-
-### 1. Memory Engine (mama-core)
-
-A local graph database that stores structured facts extracted from your digital life.
-
-Not raw data dumps. Structured knowledge:
-- **Facts**: "Client A requested logo revision on March 15"
-- **Decisions**: "Chose JWT over session tokens because of mobile support"
-- **Evolution**: First draft → client feedback → revision → final approval
-- **Patterns**: "Design reviews average 3 days for this client"
-
-Each fact has: topic, scope, timestamp, confidence, and relationships (supersedes, builds_on, debates).
-
-### 2. Always-On Runtime
-
-A daemon that runs on your device, continuously:
-- Receiving data from connected apps
-- Extracting and structuring facts
-- Tracking evolution chains
-- Responding to queries
-- Sending notifications when something needs attention
-
-This is what Claude Desktop cannot do. Claude waits for you to ask. MAMA OS watches, learns, and acts.
-
-### 3. App Ecosystem (Managed Apps)
-
-Applications that connect to specific data sources and feed structured facts to mama-core:
-
-```
-MAMA OS Runtime
-  mama-core (memory engine)
-       ^           ^           ^           ^
-   Kagemusha    Calendar    GitHub Bot   Mail Bot
-   (messengers)  (schedule)  (code)      (email)
+```text
+message + actual files
+        ↓
+MAMA remembers the purpose, Case, people, and artifact lineage
+        ↓
+MAMA inspects, compares, modifies, audits, verifies, or delivers
+        ↓
+verified artifact + receipt + remembered next state
 ```
 
-Each app:
-- Registers via AppManifest (name, capabilities, health endpoint)
-- Managed by MAMA OS supervisor (start/stop/restart/health)
-- Saves facts to mama-core with per-app scopes
-- Searches mama-core for cross-app context
+Examples:
 
-Apps do not talk to each other directly. They communicate through shared memory. This is simpler, more resilient, and more powerful than direct integration.
+- Read a client feedback PDF, translate it into Korean, turn the requirements into an Excel audit,
+  compare them with the latest received file, and send the results through Telegram.
+- Open a character asset through blenderSpine, inspect the actual CharacterJob, make an authorized
+  candidate revision, verify the preview and export, and return the files with evidence.
+- Continue a Case when another authorized human uploads the next revision or asks whether every
+  feedback item was resolved.
 
-## Cross-App Intelligence
+## One MAMA
 
-Single-app memory is useful. Cross-app memory is transformative.
+The product exposes one MAMA identity.
 
-**Messenger + Calendar:**
-"Kakao message says client wants to meet this week. Your calendar shows Wednesday 2pm is open. Previous meetings with this client lasted 1 hour and always generated 3-4 action items. Shall I block 2 hours and prepare an agenda from last meeting's unresolved items?"
+Internally, MAMA may use:
 
-**Messenger + Code + Task:**
-"Slack thread shows the auth bug is urgent. GitHub has a related PR from last week that was never merged. The developer said on Kakao yesterday they'd fix it today. No commit yet. Want me to follow up?"
+- deterministic tools;
+- provider models;
+- domain runtimes;
+- read-only parallel workers;
+- an independent reviewer;
+- background workorders.
 
-**Calendar + Health + Patterns:**
-"You have 6 meetings tomorrow, but this week your sleep has averaged 5 hours. Last time this happened, you cancelled the Friday demo and rescheduled. Want me to move the non-critical meetings?"
+Those are implementation details. The user does not select a translator, developer, reviewer, or
+team lead. MAMA owns the final answer, the artifact state, and the truthful report of what did or
+did not complete.
 
-No single app can produce these insights. Only connected memory can.
-
-## Who This Is For
-
-**Phase 1 — Developers and Tech Teams (now)**
-- Claude Code users who want persistent project memory
-- Teams using multiple messengers (Kakao + Slack + Chatwork)
-- Anyone tired of explaining the same context to AI every session
-
-**Phase 2 — Knowledge Workers**
-- Project managers tracking decisions across tools
-- Writers and creators maintaining creative continuity
-- Researchers accumulating knowledge over months
-
-**Phase 3 — Everyone**
-- Personal health tracking (local, private, never uploaded)
-- Family coordination (shared local memory)
-- Life management (the AI assistant that actually knows your life)
-
-## What We Have Proven
-
-1. **Memory quality works.** MemoryBench achieved 100% accuracy on a 10-question sample from LongMemEval covering all question types (multi-session, temporal reasoning, knowledge updates). 100-question benchmark is in progress. mama-core can accurately recall and reason about facts extracted from conversations.
-
-2. **Multi-channel monitoring works.** Kagemusha monitors 5 messaging platforms simultaneously and produces actionable summaries. LLMs handle the complexity without confusion.
-
-3. **Local-first works.** 384-dimensional embeddings run locally via Transformers.js. SQLite with cosine similarity handles thousands of decisions. No API calls needed for memory operations.
-
-4. **The app platform pattern works.** Kagemusha runs as a Managed App with AppManifest registration, health checks, and mama-core integration. The supervisor pattern is proven.
-
-## Architecture
-
-```
-MAMA OS v1.0
-
-  Core Layer:
-    mama-core         Memory engine (graph, embeddings, search, evolution)
-    mama-runtime      Always-on daemon (events, cron, process management)
-    mama-gateways     Messenger adapters (Discord, Slack, Telegram)
-    platform-core     App contracts (manifest, supervisor, registry)
-
-  Control Tower:
-    Event stream      What is happening right now
-    Memory explorer   What has been learned
-    App health        Is everything running
-    Security log      Is everything safe
-
-  Managed Apps:
-    Kagemusha         Team channel monitoring (Kakao, LINE, Slack, Chatwork, Telegram)
-    (future)          Calendar intelligence
-    (future)          Code review context
-    (future)          Email triage
-    (future)          Document memory
+```text
+one user-facing MAMA
+one MAMA operation coordinator
+one writer per artifact lineage
+many optional internal workers
+one verified result
 ```
 
-## Principles
+## The team is human
 
-1. **Local first.** Your memory never leaves your device unless you explicitly choose to share it.
+Each human has a durable principal linked to verified messenger identities. The owner grants
+access to concrete work, not AI personas.
 
-2. **AI agnostic.** mama-core works with Claude, GPT, Gemini, or any future model. Your memory outlives any AI service.
+Permissions answer:
 
-3. **Apps collect, MAMA remembers.** Apps are specialists (messengers, calendar, code). MAMA OS is the memory that connects them.
+- Which projects and Cases may this person read?
+- Which inputs may they upload?
+- Which artifacts may they ask MAMA to modify?
+- Which exact revisions may they approve?
+- Which destinations may receive the result?
 
-4. **Evolution over snapshots.** We do not just store facts. We track how facts change: first draft → revision → final. Decision → reconsideration → new decision.
+Shared work and private memory remain distinct. A member who can inspect a shared Case does not gain
+access to the owner's private record or another member's direct messages.
 
-5. **Transparency.** You can always see what MAMA knows, why it knows it, and where it came from. No black box memory.
+## Work Cases and artifacts
 
-6. **Silence is golden.** MAMA OS does not interrupt unless something genuinely needs your attention. It watches, learns, and waits until you ask — or until something truly matters.
+A Work Case is the durable thread of purpose:
 
-## The One-Line Vision
+- requests and source messages;
+- input files and feedback;
+- artifact revisions and lineage;
+- decisions and unresolved blockers;
+- inspection, mutation, and verification receipts;
+- revision-bound approvals;
+- final delivery.
 
-**MAMA OS: your digital life, remembered locally, connected intelligently, always yours.**
+MAMA does not place every file into model memory. Files remain in bounded artifact storage or a
+domain store. MAMA remembers stable references, digests, purpose, lineage, decisions, and evidence.
+
+The existing Case-first memory substrate already groups decisions, events, observations, and
+artifact sources. Human authorization is a separate principal-grant boundary and must not be
+conflated with source membership in a Case.
+
+## Domain runtimes
+
+MAMA does not need to reimplement every professional tool.
+
+Domain runtimes provide bounded capabilities:
+
+```text
+PDF/spreadsheet    extract · translate · compare · render · verify
+Drive              find · download · upload within host authority
+blenderSpine       inspect · propose · compile · preview · export · verify
+future domains     expose the same artifact-and-receipt contract
+```
+
+A domain UI appears only when the artifact requires human visual or spatial judgment. Blender's
+Guided Workspace is an example. It is not a second agent front. Messenger remains the normal place
+to request work, receive progress, make simple approvals, and receive final artifacts.
+
+## Memory changes the worker
+
+Memory gives MAMA continuity across tasks and people.
+
+- It knows which feedback belongs to which revision.
+- It knows why the team accepted or rejected a change.
+- It remembers recurring delivery formats and project rules.
+- It can distinguish a current decision from a superseded one.
+- It can continue from another authorized member's request without exposing private context.
+
+Memory remains local-first and model-provider independent. Selected prompts and compiled context
+may go to the configured model provider, but the durable record remains under the operator's
+control.
+
+## Autonomy with authority boundaries
+
+MAMA chooses the execution method. Humans and host policy control authority.
+
+- Inspection and audit are read-only by default.
+- Mutation requires explicit intent and requester authority.
+- Mutation creates a new revision rather than overwriting the source.
+- Two workers do not write the same artifact lineage concurrently.
+- Approval is bound to an exact revision.
+- External delivery requires an authorized destination and receipt.
+- Missing evidence produces a blocker, not a success claim.
+
+## Why messenger-first
+
+Messenger already supplies the essential front-end primitives:
+
+- describe a goal;
+- attach a file;
+- answer a clarification;
+- receive progress;
+- approve a decision;
+- receive the result.
+
+MAMA does not need to become another chat product. Complexity belongs in the runtime and domain
+tools. The front should expose work state and evidence, not an AI organization chart.
+
+The Viewer remains an operator and inspection surface for board, tasks, memory, connectors,
+runtime status, and logs. It is not the primary place a team must visit to delegate work.
+
+## What is shipped
+
+Current releases already provide important foundations:
+
+- messenger gateways and sender boundaries;
+- an owner-first MAMA runtime;
+- local memory and Case-first state;
+- durable owner/member principals and external identities;
+- connector event provenance;
+- workorders, model/tool traces, and external-effect receipts;
+- bounded Code-Act composition and private media paths;
+- one supervised single-daemon deployment.
+
+These foundations do not prove the full human-team product.
+
+## What v1 still requires
+
+1. principal scope grants and server-computed effective scope;
+2. member-private and source grants;
+3. immediate grant/revocation behavior;
+4. team-safe context compilation and result re-authorization;
+5. Work Case binding for principals, artifacts, actions, approvals, and deliveries;
+6. stale-base conflict handling for concurrent human requests;
+7. one real domain pilot exchanging and continuing actual files through a messenger;
+8. repeated multi-person use before the v1.0 claim.
+
+## What we deliberately do not build
+
+- a replacement messenger;
+- user-facing named AI teams;
+- an agent marketplace or organization chart;
+- a generic workflow designer;
+- Redis, presence, typing, or multi-node infrastructure before a measured need;
+- a generic replacement for mature domain state;
+- multi-organization tenancy before the one-owner human-team model works.
+
+## The one-line vision
+
+**MAMA is the work agent behind your messenger: one accountable front that remembers the Case and
+finishes real artifact work for a human team.**
+
+See the normative [One-Front Team Work Agent design](../development/2026-08-26-one-front-team-work-agent-design.md).

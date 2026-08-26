@@ -1,10 +1,16 @@
 # MAMA Documentation Index
+
 # https://jungjaehoon-lifegamez.github.io/MAMA
 
 ## Overview
-MAMA (Memory-Augmented MCP Assistant) is an always-on AI companion that remembers decision evolution.
+
+MAMA (Memory-Augmented MCP Assistant) is the local work agent behind your messenger. It remembers
+scoped Cases and decision evolution, composes bounded domain tools, and returns verified reports or
+artifacts through authorized destinations. Current releases are owner-first; v1 adds human-team
+principal grants and shared Work Cases without exposing a user-facing AI team.
 
 ## Packages
+
 - @jungjaehoon/mama-os: Standalone AI agent with Discord/Slack/Telegram bots
 - @jungjaehoon/mama-server: MCP server for Claude Code/Desktop
 - mama-core: Shared embedding and database components
@@ -12,12 +18,14 @@ MAMA (Memory-Augmented MCP Assistant) is an always-on AI companion that remember
 ## Documentation
 
 ### Tutorials
+
 /tutorials/getting-started.md - Quick start guide
 /tutorials/first-decision.md - Save your first decision
 /tutorials/understanding-tiers.md - Tier system explained
 /tutorials/hook-setup.md - Configure auto-recall hooks
 
 ### Guides
+
 /guides/installation.md - Complete installation
 /guides/standalone-setup.md - Set up always-on agent
 /guides/gateway-config.md - Discord, Slack, Telegram setup
@@ -29,21 +37,27 @@ MAMA (Memory-Augmented MCP Assistant) is an always-on AI companion that remember
 /guides/code-act-sandbox.md - Code-Act sandbox and HTTP policy
 
 ### Reference
+
 /reference/commands.md - Slash commands
 /reference/api.md - MCP tool API
-/reference/skills-api.md - Skills system API
+/reference/api.md#skills-api - Skills system API
 /reference/hooks.md - Hook configuration
 /reference/configuration-options.md - All config settings
 
 ### Explanation
+
 /explanation/architecture.md - System architecture
 /explanation/mama-os.md - MAMA OS dashboard
+/explanation/work-agent.md - One-front work agent, human team, Case and artifact model
 /explanation/decision-graph.md - Decision evolution
 /explanation/semantic-search.md - How search works
 /explanation/tier-system.md - Tier design
 /explanation/data-privacy.md - Privacy principles
 
 ### Development
+
+/development/2026-08-26-one-front-team-work-agent-design.md - Normative product identity and v1 team contract
+/development/2026-08-26-phase2b-human-team-access-plan.md - Next v1 implementation slice for human principal grants
 /development/contributing.md - How to contribute
 /development/developer-playbook.md - Architecture standards
 /development/testing.md - Test suite
@@ -53,17 +67,21 @@ MAMA (Memory-Augmented MCP Assistant) is an always-on AI companion that remember
 ## Quick Install
 
 # MAMA OS (Standalone)
+
 npm install -g @jungjaehoon/mama-os
 mama init && mama start
 
 # MCP Server
+
 npx @jungjaehoon/mama-server
 
 # Claude Code Plugin
+
 /plugin marketplace add jungjaehoon-lifegamez/claude-plugins
 /plugin install mama
 
 ## Links
+
 - GitHub: https://github.com/jungjaehoon-lifegamez/MAMA
 - npm: https://www.npmjs.com/package/@jungjaehoon/mama-server
 - Issues: https://github.com/jungjaehoon-lifegamez/MAMA/issues

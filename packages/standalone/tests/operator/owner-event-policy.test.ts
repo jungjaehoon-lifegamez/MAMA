@@ -7,7 +7,7 @@ import {
   resolveOwnerEventExecution,
 } from '../../src/operator/owner-event-policy.js';
 
-describe('TG-03/TG-04 owner-event policy', () => {
+describe('Story TG-03/TG-04: owner-event policy', () => {
   it('disables automatic owner work when no host envelope authority exists', () => {
     expect(resolveOwnerEventExecution({ issuance: 'off', hasAuthority: false })).toEqual({
       enabled: false,
@@ -19,7 +19,7 @@ describe('TG-03/TG-04 owner-event policy', () => {
   });
 
   it.each(['claude', 'codex', 'cline'] as const)(
-    'keeps MAMA owner abilities on the %s backend without a Conductor role',
+    'AC #2 keeps MAMA owner abilities on the %s backend without a Conductor role',
     (backend) => {
       const privatePolicy = resolvePrivateConnectorPolicy({
         ok: true,
@@ -60,6 +60,7 @@ describe('TG-03/TG-04 owner-event policy', () => {
         'obsidian',
         'report_publish',
         'report_request',
+        'workorder_status',
       ]) {
         expect(context.role.allowedTools).not.toContain(ownerMessageOnlyOrNonIdempotent);
       }
