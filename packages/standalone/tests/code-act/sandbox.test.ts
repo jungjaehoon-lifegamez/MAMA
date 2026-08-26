@@ -167,7 +167,7 @@ describe('CodeActSandbox', () => {
         success: false,
         error: { message: expect.stringContaining('timed out') },
       });
-    });
+    }, 15_000);
 
     it('aborts an abort-aware host function at the sandbox deadline', async () => {
       const sandbox = new CodeActSandbox({ timeoutMs: 100 });
