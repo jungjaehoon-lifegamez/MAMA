@@ -57,7 +57,7 @@ Those are capabilities, not people the user manages.
 One front means:
 
 - one user-facing MAMA identity;
-- one Case owner for the current operation;
+- one MAMA operation coordinator for the current operation;
 - one final explanation;
 - one mutation authority per artifact lineage.
 

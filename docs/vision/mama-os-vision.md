@@ -67,7 +67,7 @@ did not complete.
 
 ```text
 one user-facing MAMA
-one Case owner for the operation
+one MAMA operation coordinator
 one writer per artifact lineage
 many optional internal workers
 one verified result

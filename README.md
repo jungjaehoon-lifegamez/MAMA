@@ -65,7 +65,7 @@ And four things it is **not**:
 - Not a chatbot with good memory. It is a server that can inspect, act, verify, and deliver while
   nobody is looking at a MAMA app.
 - Not a memory database. Memory is the substrate; verified work and artifacts are the product.
-- Not a hosted service. There is no MAMA account and no MAMA server. It runs on
+- Not a hosted service. There is no hosted MAMA account or service. The local MAMA server runs on
   the logins you already have.
 
 ## Why not a workflow builder, an agent team, or your chat app's AI?

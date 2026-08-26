@@ -417,7 +417,7 @@ export function buildFullReportGatherLines({
   // the NATIVE board; message evidence is the SituationReporter's accumulated
   // window, never a re-fetch through a personal system.
   return [
-    'task_list({ include_terminal: false, order: "deadline_priority", limit: 12 }) for the ranked active native-board projection; use total as coverage and do not follow nextCursor for this bounded report, plus task_list({ status: "review", limit: 5 }) for items awaiting owner review',
+    'task_list({ include_terminal: false, order: "deadline_priority", limit: 12 }) for the ranked active native-board projection; use total as coverage and do not follow nextCursor for this bounded report, plus task_list({ status: "review", limit: 5 }) for items awaiting owner review; deduplicate by task id before rendering because review rows may appear in both bounded projections',
     'mama_recall(query) for memory relevant to what you find',
     'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
     lastSuccessIso

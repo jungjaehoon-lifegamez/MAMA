@@ -67,6 +67,9 @@ describe('Story S2-T2: publisher contracts', () => {
 
       expect(promotionKey(t, oneHour)).toBe(promotionKey(t + oneHour - 1, oneHour));
       expect(promotionKey(t, oneHour)).not.toBe(promotionKey(t + oneHour, oneHour));
+      expect(promotionKey(6 * oneHour, 6 * oneHour)).not.toBe(
+        promotionKey(12 * oneHour, 12 * oneHour)
+      );
       expect(() => promotionKey(t, 0)).toThrow(/interval/i);
     });
   });

@@ -4,7 +4,6 @@
 > superseded. MAMA now treats multi-agent execution as an internal strategy behind one accountable
 > front. See
 > [One-Front Team Work Agent](../development/2026-08-26-one-front-team-work-agent-design.md).
-
 > 2026-08-13 리서치 v2. 질문은 "기술이 뭐가 다른가"가 아니라 **"유저가 왜 지갑을 여는가"**.
 > 출처: 공식 런치 카피(x.ai), 얼리액세스 후기, 리뷰 5종. 8/12 마케팅 학습의 후속.
 

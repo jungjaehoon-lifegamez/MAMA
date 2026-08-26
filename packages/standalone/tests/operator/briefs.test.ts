@@ -372,6 +372,29 @@ line: RECONCILED <comma-separated slots or none>.`;
       expect(projected).toContain('## Owner appendix\nKeep this section.\n');
     });
 
+    it('projects a recognized legacy pipeline when it is the final section at EOF', () => {
+      const legacyPipeline = [
+        'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
+        'projection source. Render one report-table with a row per open item:',
+        '  #id | title | status badge | assignee (or "unassigned") | D-day | source | latest event',
+        '- D-day: compute from the item\'s deadline against the run prompt\'s "Today is" date',
+        '  (D-3 = due in 3 days, D+2 = 2 days overdue). No deadline -> "-".',
+        '- Overdue -> badge-danger. Unassigned AND due within 7 days -> badge-warning with the',
+        '  literal word "unassigned" visible.',
+        '- Items with auto_created true and confirmed false render "(unconfirmed)" after the title',
+        '  so model-created items are visually distinct from owner-confirmed ones.',
+        '- done/cancelled items never appear.',
+        'When a briefing/action_required/decisions card refers to a tracked item, cite its #id.',
+      ].join('\n');
+      const raw = `# Owner board brief\n\n${legacyPipeline}`;
+      const disabled = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
+
+      const projected = projectWorkOrderBriefForPrompt('board', raw, disabled);
+
+      expect(projected).toContain('include_terminal: false');
+      expect(projected).not.toContain('row per open item');
+    });
+
     it('TG-05/TG-06 appends one current marked contract when no managed block exists', () => {
       const path = briefPath('board', home);
       const raw = '# Owner board brief\n\nKeep every user-authored byte.\n';

@@ -59,7 +59,7 @@ import type {
   TaskHintLookup,
 } from './external-lifecycle.js';
 import { validateExternalLifecycleDecision } from './external-lifecycle-candidates.js';
-import { validateWorkOrderPayload } from './workorder-publishers.js';
+import { DEFAULT_PROMOTION_INTERVAL_MS, validateWorkOrderPayload } from './workorder-publishers.js';
 
 export const TASK_STATUSES = [
   'pending',
@@ -76,6 +76,19 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TASK_PRIORITIES = ['high', 'normal', 'low'] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+
+function scheduledPromotionReservationKeys(idempotencyKey: string): string[] | null {
+  const legacy = /^promotion:(\d+)$/.exec(idempotencyKey);
+  if (legacy) {
+    return [idempotencyKey, `promotion:v2:${DEFAULT_PROMOTION_INTERVAL_MS}:${legacy[1]}`];
+  }
+  const versioned = /^promotion:v2:(\d+):(\d+)$/.exec(idempotencyKey);
+  if (!versioned) return null;
+  const [, intervalMs, slot] = versioned;
+  return Number(intervalMs) === DEFAULT_PROMOTION_INTERVAL_MS
+    ? [idempotencyKey, `promotion:${slot}`]
+    : [idempotencyKey];
+}
 
 export const TASK_KINDS = ['owner', 'system'] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
@@ -2065,20 +2078,26 @@ export class TaskLedger implements TaskSource {
     // not enter this branch. 'failed' and 'cancelled' must NOT reserve either
     // occurrence: those rows are dead and must remain retryable.
     const durableOwnerEvent = order.idempotencyKey.startsWith('owner-event:');
-    const completedScheduledPromotion =
-      order.workKind === 'memory-curation' && /^promotion:\d+$/.test(order.idempotencyKey);
+    const scheduledPromotionKeys =
+      order.workKind === 'memory-curation'
+        ? scheduledPromotionReservationKeys(order.idempotencyKey)
+        : null;
+    const completedScheduledPromotion = scheduledPromotionKeys !== null;
     const reservingStatuses =
       durableOwnerEvent || completedScheduledPromotion
         ? "'pending','in_progress','done'"
         : "'pending','in_progress'";
+    const reservationKeys = scheduledPromotionKeys ?? [order.idempotencyKey];
+    const reservationPlaceholders = reservationKeys.map(() => '?').join(',');
     const open = this.db
       .prepare(
         `SELECT * FROM operator_tasks
-         WHERE kind = 'system' AND source_channel = ? AND source_event_id = ?
+         WHERE kind = 'system' AND source_channel = ?
+           AND source_event_id IN (${reservationPlaceholders})
            AND status IN (${reservingStatuses})
          ORDER BY id ASC LIMIT 1`
       )
-      .get(channel, order.idempotencyKey) as TaskRow | undefined;
+      .get(channel, ...reservationKeys) as TaskRow | undefined;
     if (open) {
       return this.rowToWorkOrder(open);
     }

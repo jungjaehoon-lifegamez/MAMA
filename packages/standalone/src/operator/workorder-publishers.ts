@@ -51,7 +51,7 @@ export function assertStage2FlagCompatible(env: NodeJS.ProcessEnv = process.env)
 // completed scheduled promotion slot reserved through the rest of that slot.
 
 const BOARD_SLOT_MS = 30 * 60 * 1000;
-const PROMOTION_SLOT_MS = 6 * 60 * 60 * 1000;
+export const DEFAULT_PROMOTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export function boardFullKey(now: number): string {
   return `board:full:${Math.floor(now / BOARD_SLOT_MS)}`;
@@ -109,11 +109,14 @@ export function wikiBatchKey(trigger: string, now: number): string {
   return `wiki:${now}-${trigger}`;
 }
 
-export function promotionKey(now: number, intervalMs: number = PROMOTION_SLOT_MS): string {
+export function promotionKey(
+  now: number,
+  intervalMs: number = DEFAULT_PROMOTION_INTERVAL_MS
+): string {
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     throw new Error('promotion interval must be a positive finite number');
   }
-  return `promotion:${Math.floor(now / intervalMs)}`;
+  return `promotion:v2:${intervalMs}:${Math.floor(now / intervalMs)}`;
 }
 
 export function promotionManualKey(now: number): string {

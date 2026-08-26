@@ -296,8 +296,7 @@ function projectCurrentBoardPipeline(raw: string): string {
   const start = raw.indexOf(legacyStart);
   if (start === -1) return raw;
   const nextHeadingOffset = raw.slice(start).search(/\n##[ \t]+/);
-  if (nextHeadingOffset === -1) return raw;
-  const end = start + nextHeadingOffset + 1;
+  const end = nextHeadingOffset === -1 ? raw.length : start + nextHeadingOffset + 1;
   const sectionHash = createHash('sha256')
     .update(raw.slice(start, end).trim(), 'utf8')
     .digest('hex');

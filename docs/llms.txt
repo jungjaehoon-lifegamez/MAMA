@@ -40,7 +40,7 @@ principal grants and shared Work Cases without exposing a user-facing AI team.
 
 /reference/commands.md - Slash commands
 /reference/api.md - MCP tool API
-/reference/skills-api.md - Skills system API
+/reference/api.md#skills-api - Skills system API
 /reference/hooks.md - Hook configuration
 /reference/configuration-options.md - All config settings
 

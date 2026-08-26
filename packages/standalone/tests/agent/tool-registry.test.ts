@@ -29,7 +29,7 @@ describe('ToolRegistry', () => {
       expect(ToolRegistry.getTool('nonexistent')).toBeUndefined();
     });
 
-    it('documents the bounded nonterminal task-list projection', () => {
+    it('STORY-016 AC #1 documents the bounded nonterminal task-list projection', () => {
       const tool = ToolRegistry.getTool('task_list');
 
       expect(tool?.params).toContain('include_terminal?');

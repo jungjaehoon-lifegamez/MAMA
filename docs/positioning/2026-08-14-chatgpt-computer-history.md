@@ -3,7 +3,6 @@
 > **Historical research note.** This remains useful input about ambient context and inspectable
 > memory. Product direction is now governed by the
 > [One-Front Team Work Agent design](../development/2026-08-26-one-front-team-work-agent-design.md).
-
 > 오너 지시 리서치. 렌즈는 유저 어필(기술 스택 아님) + MAMA 함의. 같은 주에 Grok Bot(8/11)과
 > 함께 — 양대 메이저가 "상시·능동·기억 기반 어시스턴트"로 수렴하는 주간.
 

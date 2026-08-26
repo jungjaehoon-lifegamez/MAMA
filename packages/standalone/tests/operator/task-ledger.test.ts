@@ -368,6 +368,44 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()?.id).toBe(retry.id);
     });
 
+    it('keeps a released six-hour legacy slot reserved by the interval-aware key', () => {
+      const legacy = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:82766',
+        input: { scheduledAt: '2026-08-26T13:38:10.920Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(legacy.id);
+      ledger.completeWorkOrder(legacy.id);
+
+      const compatible = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:21600000:82766',
+        input: { scheduledAt: '2026-08-26T13:48:10.920Z' },
+      });
+
+      expect(compatible.id).toBe(legacy.id);
+      expect(compatible.status).toBe('done');
+    });
+
+    it('does not collide completed promotion slots from different configured intervals', () => {
+      const sixHour = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:21600000:1',
+        input: { scheduledAt: '2026-08-26T06:00:00.000Z' },
+      });
+      expect(ledger.claimNextWorkOrder()?.id).toBe(sixHour.id);
+      ledger.completeWorkOrder(sixHour.id);
+
+      const twelveHour = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'promotion:v2:43200000:1',
+        input: { scheduledAt: '2026-08-26T12:00:00.000Z' },
+      });
+
+      expect(twelveHour.id).not.toBe(sixHour.id);
+      expect(twelveHour.status).toBe('pending');
+    });
+
     it('reports the newest COMPLETED full board run with its enqueue/complete times', () => {
       expect(ledger.lastCompletedBoardFullRun()).toBeNull();
 

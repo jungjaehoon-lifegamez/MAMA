@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildOwnerEventPrompt } from '../../src/operator/owner-event-prompt.js';
 
-describe('TG-03/TG-04 MAMA owner-event prompt', () => {
-  it('places owner policy, skill, and trigger procedure above fenced external data', () => {
+describe('Story TG-03/TG-04: MAMA owner-event prompt', () => {
+  it('AC #1 places owner policy, skill, and trigger procedure above fenced external data', () => {
     const prompt = buildOwnerEventPrompt({
       batch: {
         id: 41,

@@ -1630,12 +1630,12 @@ export class AgentLoop {
           effectivePrompt = tTools
             ? `${tBaseWithOwnerReportHistory}\n\n---\n\n${tTools}`
             : tBaseWithOwnerReportHistory;
-          console.log(
+          logger.debug(
             `[AgentLoop] System prompt truncated: ${fullPrompt.length} → ${effectivePrompt.length} chars`
           );
         }
 
-        console.log(
+        logger.debug(
           `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
             `(base: ${baseSystemPrompt.length}, history: ${ownerReportHistoryPrompt.length}, ` +
             `tools: ${gatewayToolsPrompt.length})`

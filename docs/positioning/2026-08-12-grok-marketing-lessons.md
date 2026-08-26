@@ -4,7 +4,6 @@
 > with evidence. Any interpretation that turns internal workers into a user-facing roster is
 > superseded by the
 > [One-Front Team Work Agent design](../development/2026-08-26-one-front-team-work-agent-design.md).
-
 > 경쟁·비교우위 문서가 아니다. Grok Bot(xAI, 2026-08-11 출시)의 마케팅이 **무엇을 잘했는지**만 뽑아 MAMA에 흡수한다. Grok이 잘한 것은 하나다: **기술을 감정으로 번역했다.** 우리는 기술은 있는데 그 번역이 약하다.
 
 ## 5교훈과 MAMA 적용

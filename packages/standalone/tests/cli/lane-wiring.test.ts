@@ -103,6 +103,7 @@ describe('report lane: instructions against the grant', () => {
     expect(lines).toContain('limit: 12');
     expect(lines).toContain('limit: 5');
     expect(lines).toContain('do not follow nextCursor');
+    expect(lines).toContain('deduplicate by task id');
   });
 
   it('instructs the delta tool with the last successful report as its window', () => {
