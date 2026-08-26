@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Canary Remediation
 
-> **Status:** Direction A approved, Eng review CLEAR, implementation plan pending
+> **Status:** PR #234/#235 merged, v0.39.1 released/cut over, 24-hour live canary active
 >
 > **Date:** 2026-08-26
 >
