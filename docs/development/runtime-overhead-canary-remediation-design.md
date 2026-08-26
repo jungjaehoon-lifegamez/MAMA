@@ -270,6 +270,7 @@ After the awaited Telegram gateway call succeeds, confirm with versioned result 
 interface OwnerEventTelegramReceiptV1 {
   version: 1;
   deliveryId: string;
+  variant: 'text' | 'file' | 'image' | 'sticker';
   payloadIdentity: string;
   state: 'delivered';
   confirmedAt: number;
@@ -323,6 +324,7 @@ the generic ready-row claim predicate. Do not duplicate the twenty-minute rule i
 | `operator/owner-event-effects.ts`                   | Versioned intent/result types and pure exact-intent comparison       |
 | `agent/gateway-tool-executor.ts`                    | Normalize once, reserve, send, read existing ledger receipt, confirm |
 | `gateways/telegram.ts`                              | One narrow read method for an existing outbound delivery row         |
+| `cli/runtime/gateway-init.ts`                       | Preserve delivery ID, active-turn methods, and receipt read          |
 | Existing owner-effect, executor, and Telegram tests | RED exact payload, retry, fallback, legacy, missing-receipt cases    |
 
 Keep normalization and version parsing out of the already-large gateway executor. The executor
@@ -374,6 +376,7 @@ CODE PATH COVERAGE
     |-- [RED ***] transport ambiguity -> unknown, zero automatic resend
     |-- [RED ***] missing ledger receipt after send -> unknown, no false confirm
     |-- [RED ***] image rejection -> file fallback + actual variant receipt
+    |-- [RED ***] production adapter -> forwards delivery ID + active-turn + receipt read
     `-- [RED ***] legacy confirmed/unknown -> no replay, no inferred payload
 
 USER FLOW COVERAGE
@@ -391,7 +394,7 @@ USER FLOW COVERAGE
 [+] [->EVAL] Temporal parity
     `-- [LIVE] real host-bound receipt or one-run deterministic breaker
 
-PLANNED UNIT/INTEGRATION COVERAGE: 22/22 paths (100%)
+PLANNED UNIT/INTEGRATION COVERAGE: 23/23 paths (100%)
 LIVE-ONLY EVIDENCE: 3 canary assertions
 ```
 
@@ -432,6 +435,8 @@ LIVE-ONLY EVIDENCE: 3 canary assertions
 11. Logs and public telemetry contain only identity-free counts/hashes, never the retained body.
 12. Internal metadata is absent from the persisted canary payload in a real post-release event; unit
     tests pin only the structural inspection surface, not model quality.
+13. The production gateway adapter forwards every Telegram delivery identity, active-turn method,
+    and receipt read instead of reducing the real gateway to an unreceipted mock-shaped surface.
 
 ## 11. Production failure modes
 
@@ -530,7 +535,7 @@ Telegram UI, browser, and Computer Use remain forbidden.
   empty delayed work, and missing post-send receipt now have explicit state transitions.
 - Code Quality Review: 2 issues found, 2 resolved. Existing modules own the behavior; the gateway
   executor keeps orchestration only.
-- Test Review: coverage diagram produced, 22/22 planned code paths covered, 7 missing regression
+- Test Review: coverage diagram produced, 23/23 planned code paths covered, 8 missing regression
   cases added to the RED plan.
 - Performance Review: 2 issues found, 2 resolved. No new timer, poller, file I/O, hash path, or
   unmeasured index remains.

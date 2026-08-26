@@ -103,7 +103,7 @@ Implementation:
 Gate:
 
 ```bash
-pnpm --dir packages/standalone vitest run tests/operator/owner-event-effects.test.ts
+pnpm --dir packages/standalone exec vitest run tests/operator/owner-event-effects.test.ts
 ```
 
 ### Task 2: Expose one narrow read on the existing Telegram gateway with RED tests
@@ -133,7 +133,7 @@ Implementation:
 Gate:
 
 ```bash
-pnpm --dir packages/standalone vitest run tests/gateways/telegram.test.ts
+pnpm --dir packages/standalone exec vitest run tests/gateways/telegram.test.ts
 ```
 
 ### Task 3: Preserve the real production adapter capabilities with a RED wiring test
@@ -157,7 +157,7 @@ Implementation:
 Gate:
 
 ```bash
-pnpm --dir packages/standalone vitest run tests/cli/runtime/gateway-init-owner-identity.test.ts
+pnpm --dir packages/standalone exec vitest run tests/cli/runtime/gateway-init-owner-identity.test.ts
 ```
 
 ### Task 4: Orchestrate reserve, send, receipt, confirm/unknown with RED tests
@@ -196,7 +196,7 @@ Implementation:
 Gate:
 
 ```bash
-pnpm --dir packages/standalone vitest run \
+pnpm --dir packages/standalone exec vitest run \
   tests/operator/owner-event-effects.test.ts \
   tests/gateways/telegram.test.ts \
   tests/cli/runtime/gateway-init-owner-identity.test.ts \
@@ -220,9 +220,9 @@ Documentation:
 Regression gates:
 
 ```bash
-pnpm --dir packages/standalone typecheck
-pnpm --dir packages/standalone build
-pnpm --dir packages/standalone test
+pnpm --dir packages/standalone run typecheck
+pnpm --dir packages/standalone run build
+pnpm --dir packages/standalone run test
 pnpm exec prettier --check \
   packages/standalone/src/operator/owner-event-effects.ts \
   packages/standalone/src/agent/gateway-tool-executor.ts \

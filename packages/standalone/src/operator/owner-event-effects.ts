@@ -1,13 +1,150 @@
+import { lstatSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { extname, join, resolve, sep } from 'node:path';
+
 import type { OwnerEventEffectAuthority } from '../agent/types.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OwnerEventBatch } from './owner-event-inbox.js';
 
 export type OwnerEventEffectKind = 'telegram_send' | 'drive_upload';
 
+export type OwnerEventTelegramVariant = 'text' | 'file' | 'image' | 'sticker';
+
+export interface OwnerEventTelegramIntentV1 extends Record<string, unknown> {
+  version: 1;
+  chatId: string;
+  variant: OwnerEventTelegramVariant;
+  deliveryId: string;
+  message: string | null;
+  filePath: string | null;
+  stickerEmotion: string | null;
+}
+
+export interface OwnerEventTelegramReceiptV1 extends Record<string, unknown> {
+  version: 1;
+  deliveryId: string;
+  variant: OwnerEventTelegramVariant;
+  state: 'delivered';
+  payloadIdentity: string;
+  confirmedAt: number;
+}
+
+export interface OwnerEventTelegramIntentInput {
+  chatId: string;
+  deliveryId: string;
+  message?: string;
+  filePath?: string;
+  stickerEmotion?: string;
+}
+
+const TELEGRAM_PHOTO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+export function resolvePrivateWorkspaceFile(filePath: string): string {
+  const root = resolve(process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'));
+  const stats = lstatSync(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error('Outbound file must be a regular file, not a symlink');
+  }
+  const realPath = realpathSync(filePath);
+  const realRoot = realpathSync(root);
+  if (realPath !== realRoot && !realPath.startsWith(`${realRoot}${sep}`)) {
+    throw new Error(`Outbound file must stay under the private MAMA workspace: ${realRoot}`);
+  }
+  return realPath;
+}
+
+/** Canonicalize exactly the payload Telegram will receive, before reserving the effect. */
+export function buildOwnerEventTelegramIntent(
+  input: OwnerEventTelegramIntentInput,
+  trustedExisting?: OwnerEventTelegramIntentV1
+): OwnerEventTelegramIntentV1 {
+  if (!input.chatId) throw new Error('chat_id is required');
+  if (!input.deliveryId) throw new Error('owner-event Telegram delivery ID is required');
+
+  const stickerEmotion = input.stickerEmotion?.trim().toLowerCase();
+  if (stickerEmotion) {
+    return {
+      version: 1,
+      chatId: input.chatId,
+      variant: 'sticker',
+      deliveryId: input.deliveryId,
+      message: null,
+      filePath: null,
+      stickerEmotion,
+    };
+  }
+
+  if (input.filePath) {
+    const filePath =
+      input.filePath === trustedExisting?.filePath
+        ? trustedExisting.filePath
+        : resolvePrivateWorkspaceFile(input.filePath);
+    return {
+      version: 1,
+      chatId: input.chatId,
+      variant: TELEGRAM_PHOTO_EXTENSIONS.has(extname(filePath).toLowerCase()) ? 'image' : 'file',
+      deliveryId: input.deliveryId,
+      message: input.message ?? null,
+      filePath,
+      stickerEmotion: null,
+    };
+  }
+
+  if (input.message !== undefined) {
+    if (!input.message.trim()) throw new Error('Telegram text message must not be blank');
+    return {
+      version: 1,
+      chatId: input.chatId,
+      variant: 'text',
+      deliveryId: input.deliveryId,
+      message: input.message,
+      filePath: null,
+      stickerEmotion: null,
+    };
+  }
+
+  throw new Error('Either message, file_path, or sticker_emotion is required');
+}
+
+export function isOwnerEventTelegramIntentV1(
+  value: Record<string, unknown>
+): value is OwnerEventTelegramIntentV1 {
+  return (
+    value.version === 1 &&
+    typeof value.chatId === 'string' &&
+    (value.variant === 'text' ||
+      value.variant === 'file' ||
+      value.variant === 'image' ||
+      value.variant === 'sticker') &&
+    typeof value.deliveryId === 'string' &&
+    (typeof value.message === 'string' || value.message === null) &&
+    (typeof value.filePath === 'string' || value.filePath === null) &&
+    (typeof value.stickerEmotion === 'string' || value.stickerEmotion === null)
+  );
+}
+
+export function ownerEventTelegramIntentsEqual(
+  left: OwnerEventTelegramIntentV1,
+  right: OwnerEventTelegramIntentV1
+): boolean {
+  return (
+    left.chatId === right.chatId &&
+    left.variant === right.variant &&
+    left.deliveryId === right.deliveryId &&
+    left.message === right.message &&
+    left.filePath === right.filePath &&
+    left.stickerEmotion === right.stickerEmotion
+  );
+}
+
 export type OwnerEventEffectBeginResult =
   | { state: 'execute'; intent: Record<string, unknown> }
   | { state: 'reconcile'; intent: Record<string, unknown> }
-  | { state: 'confirmed'; result: Record<string, unknown> | null };
+  | {
+      state: 'confirmed';
+      intent: Record<string, unknown>;
+      result: Record<string, unknown> | null;
+    };
 
 interface StoredEffectRow {
   effect_kind: string;
@@ -93,14 +230,24 @@ export class OwnerEventEffectLedger {
       if (row.effect_kind !== effectKind) {
         throw new Error(`Owner-event action ${actionKey} is already bound to ${row.effect_kind}`);
       }
+      const storedIntent = JSON.parse(row.intent_json) as Record<string, unknown>;
+      if (
+        effectKind === 'telegram_send' &&
+        isOwnerEventTelegramIntentV1(storedIntent) &&
+        (!isOwnerEventTelegramIntentV1(intent) ||
+          !ownerEventTelegramIntentsEqual(storedIntent, intent))
+      ) {
+        throw new Error('Owner-event Telegram intent mismatch for the host-issued delivery key');
+      }
       if (row.status !== 'confirmed') {
         return {
           state: 'reconcile',
-          intent: JSON.parse(row.intent_json) as Record<string, unknown>,
+          intent: storedIntent,
         } as const;
       }
       return {
         state: 'confirmed',
+        intent: storedIntent,
         result: row.result_json ? (JSON.parse(row.result_json) as Record<string, unknown>) : null,
       } as const;
     });
@@ -130,6 +277,7 @@ export class OwnerEventEffectLedger {
     }
     return {
       state: 'confirmed',
+      intent: JSON.parse(row.intent_json) as Record<string, unknown>,
       result: row.result_json ? (JSON.parse(row.result_json) as Record<string, unknown>) : null,
     };
   }
