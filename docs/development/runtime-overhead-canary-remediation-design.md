@@ -1,6 +1,6 @@
 # MAMA Runtime Overhead Canary Remediation
 
-> **Status:** Direction A approved, written-spec review pending
+> **Status:** Direction A approved, Eng review CLEAR, implementation plan pending
 >
 > **Date:** 2026-08-26
 >
@@ -57,7 +57,7 @@ green and operationally unproven.
    receipt-first recovery boundaries.
 7. Clear the change only with real owner-event and Temporal traffic plus a fresh 24-hour canary.
 
-## 3. Non-goals
+## 3. NOT in scope
 
 - Removing or weakening validation.
 - Reusing a model session for owner-event or Board work.
@@ -69,7 +69,21 @@ green and operationally unproven.
 - Adding UI, browser, or synthetic canary traffic.
 - Implementing the still-separate audit-retention or daemon-log-rotation slices.
 
-## 4. Approaches considered
+## 4. What already exists
+
+| Need                                | Existing authority                                  | Decision                                               |
+| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------------ |
+| Open workorder dedupe               | `TaskLedger` partial unique occurrence index        | Reuse `boardRepairKey()`                               |
+| Workorder eligibility time          | `operator_tasks.due_at`                             | Reuse only for `kind='system'` claim-not-before        |
+| Exact owner-event batch acceptance  | `OwnerEventBoardRefreshLedger`                      | Extend the existing transaction, no new coordinator    |
+| Captured Board generation           | `BoardRefreshGate` and `applyBoardRefreshVerdict()` | Widen only while pending; keep in-progress immutable   |
+| Post-terminal repair obligation     | `postTerminalFollowups`                             | Keep one delayed follow-up, no new timer               |
+| External effect reservation         | `OwnerEventEffectLedger`                            | Version the existing JSON intent and result            |
+| Telegram target/payload idempotency | `TelegramMessageLedger`                             | Reuse its current delivery identity and delivered row  |
+| Telegram path containment           | `resolvePrivateWorkspaceFile()`                     | Keep unchanged; do not add byte snapshots or file hash |
+| Owner-event retention               | inbox cleanup triggers                              | Derived body and receipt expire with the inbox row     |
+
+## 5. Approaches considered
 
 ### A. Durable bounded claim window plus exact delivery receipt, selected
 
@@ -96,41 +110,51 @@ This is the smallest code change, but it does not address the observed serializa
 were accepted after the previous repair had already started or finished, so the measured path would
 still create almost one repair per Board-delegated event.
 
-## 5. Board claim-window contract
+## 6. Board claim-window contract
 
-### 5.1 Dedicated queue availability column
-
-Add an additive nullable column to `operator_tasks`:
-
-```sql
-available_at INTEGER CHECK (available_at IS NULL OR available_at >= 0)
+```text
+owner-event judgment chooses Board
+  -> exact intent + shared pending workorder commit
+  -> system due_at blocks claim for 20 minutes
+       -> later accepted intent widens pending generation
+       -> scheduled full tick promotes the same row to ready
+  -> consumer claims one ready row
+  -> verified generation applies exact intents
+       -> no newer intent: terminal
+       -> newer in-progress intent: one new delayed follow-up
 ```
 
-`available_at` is queue metadata for `kind='system'` workorders. It is not an owner deadline and
-must not reuse `due_at`, whose meaning belongs to owner-task Temporal reconciliation. Add a partial
-claim index over open system rows ordered by availability, priority, and id.
+### 6.1 Reuse the existing queue row
 
-`EnqueueWorkOrderInput` gains an optional host-only `availableAt`. It is stored in the column and
-never copied into the model-visible workorder payload.
+Do not add another queue table, timer, worker, service, or schema column. `operator_tasks` already
+has nullable `due_at`. Its meaning is discriminated by `kind`:
+
+- `kind='owner'`: existing user-visible task due time;
+- `kind='system'`: earliest time the internal workorder may be claimed.
 
 `claimNextWorkOrder()` filters before priority ordering:
 
 ```sql
-status = 'pending' AND (available_at IS NULL OR available_at <= now)
+kind = 'system' AND status = 'pending' AND (due_at IS NULL OR due_at <= now)
 ```
 
 A deferred high-priority Board row therefore does not block a ready Wiki, memory-curation, or
-Temporal row. Manual, boot, and non-owner-event workorders continue to use `available_at = NULL`
+Temporal row. Manual, boot, and non-owner-event workorders continue to use `due_at = NULL`
 unless they are attaching pending owner-event intents. A scheduled full tick that finds the same
-open `boardRepairKey()` row promotes that pending row to `available_at = now`; an owner-event
+open `boardRepairKey()` row promotes that pending row to `due_at = now`; an owner-event
 window cannot push an already-due scheduled repair later.
 
-### 5.2 Fixed twenty-minute window
+The existing status index already narrows claims to pending rows. Do not add another index until
+the query is measured as a bottleneck. Existing Temporal triggers restrict their `due_at` behavior
+to `kind='owner'`, so workorder availability does not enter owner-task reconciliation or the Viewer
+task contract.
+
+### 6.2 Fixed twenty-minute window
 
 The first owner-event Board acceptance creates the shared non-force repair with:
 
 ```text
-available_at = accepted_at + 20 minutes
+due_at = accepted_at + 20 minutes
 ```
 
 The window is fixed from the first accepted intent. It is not extended indefinitely. Twenty
@@ -148,14 +172,14 @@ This is a product cost/freshness contract, not a tuning flag. A rollback to v0.3
 existing delayed row early because the old binary ignores the additive column; that weakens cost
 coalescing only and does not duplicate or lose accepted intents.
 
-### 5.3 Pending generation widening
+### 6.3 Pending generation widening
 
 In the same `BEGIN IMMEDIATE` transaction that inserts a new exact intent:
 
 1. `enqueueWorkOrder()` creates or returns the shared `boardRepairKey()` row.
 2. If the row is `pending`, the ledger atomically updates its payload to the maximum accepted
    `repairGeneration` and matching `noUpdateScope`.
-3. The first row's `available_at` is preserved. A later intent cannot move the deadline.
+3. The first row's `due_at` is preserved. A later intent cannot move the deadline.
 4. The exact intent binds to that workorder and commits.
 
 The update is conditional on `status='pending'`. An in-progress workorder is immutable. A later
@@ -166,22 +190,36 @@ signal.
 The worker sees only the final pending payload at claim. Verified completion can therefore apply
 every generation accepted before claim in one run.
 
-### 5.4 Recovery
+### 6.4 Recovery
 
-- A daemon restart preserves `available_at`; boot does not create an immediate duplicate.
+- A daemon restart preserves `due_at`; boot does not create an immediate duplicate.
 - A stale in-progress workorder follows the existing fail/recovery policy. Unapplied intents create
   one new delayed repair.
 - A scheduled full tick atomically promotes an existing delayed pending repair to ready and widens
   it to the current captured generation. It does not enqueue a second row.
+- A different verified full repair may apply every generation while the delayed row is still
+  pending. The intent ledger then cancels that now-empty pending row in the same transaction, so it
+  cannot run later with no obligation.
 - A transaction failure rolls back the workorder, generation widening, and exact intent together.
 - Unverified, failed, and exhausted repairs keep intents unapplied and do not hot-loop.
 - Manual `force=true` repair remains a unique immediate occurrence and may run before the delayed
   owner-event repair. Its verified captured generation may apply pending intents only through the
   existing generation verifier; it does not rewrite their workorder identity.
 
-## 6. Telegram payload and receipt contract
+## 7. Telegram payload and receipt contract
 
-### 6.1 Canonical intent
+```text
+validated telegram_send input
+  -> canonical {target, variant, body/caption, path/emotion, deliveryId}
+  -> owner effect begin(transmitting, exact intent)
+  -> existing Telegram gateway + message ledger
+       -> mismatch: reject
+       -> unknown: reconcile only
+       -> delivered: local ledger receipt
+  -> owner effect confirm(deliveryId, payloadIdentity, deliveredAt)
+```
+
+### 7.1 Canonical intent
 
 Normalize and validate before reserving an owner-event Telegram effect. Persist versioned intent
 V1 in `owner_event_effects.intent_json`:
@@ -193,24 +231,25 @@ interface OwnerEventTelegramIntentV1 {
   variant: 'text' | 'file' | 'image' | 'sticker';
   deliveryId: string;
   message: string | null;
-  file: { path: string; sha256: string } | null;
+  filePath: string | null;
   stickerEmotion: string | null;
-  payloadSha256: string;
 }
 ```
 
 - Text retains the exact transmitted Unicode body.
-- File/image uses the resolved private-workspace path plus a content hash and exact caption.
+- File/image retains the resolved private-workspace path and exact caption, matching the existing
+  Telegram message-ledger identity. Existing path containment remains the byte-access boundary.
 - Sticker retains the normalized emotion.
-- `payloadSha256` hashes a canonical JSON tuple of every semantic field except itself.
+- Do not add a second payload-hash algorithm or claim byte-level file attestation. Exact retry
+  comparison uses the normalized intent fields already stored in this row.
 - Empty or whitespace-only text is rejected before reservation.
-- File containment and regular-file validation happen before reservation. The content hash binds a
-  retry to the bytes, not only to a pathname.
+- File containment and regular-file validation happen before reservation through the existing
+  private-workspace resolver.
 
 Owner-event rows already retain source connector text and are deleted with the inbox retention
 trigger. The derived outbound body follows that same bounded lifetime and is never logged.
 
-### 6.2 Exact retry identity
+### 7.2 Exact retry identity
 
 `OwnerEventEffectLedger.begin()` still owns pending-before-send. When a row exists, the executor
 compares the stored canonical intent with the newly normalized intent:
@@ -221,7 +260,7 @@ compares the stored canonical intent with the newly normalized intent:
 
 The old test that treats rephrased text as the same successful effect becomes a RED mismatch test.
 
-### 6.3 Delivered receipt
+### 7.3 Delivered receipt
 
 After the awaited Telegram gateway call succeeds, confirm with versioned result V1:
 
@@ -229,32 +268,70 @@ After the awaited Telegram gateway call succeeds, confirm with versioned result 
 interface OwnerEventTelegramReceiptV1 {
   version: 1;
   deliveryId: string;
-  intentPayloadSha256: string;
-  deliveryLedgerKey: string;
-  deliveryPayloadIdentity: string;
+  payloadIdentity: string;
   state: 'delivered';
   confirmedAt: number;
 }
 ```
 
 The gateway's existing message ledger marks `delivered` only after every API call or chunk has
-returned. Add a narrow read-only receipt method that resolves the gateway-owned ledger key,
-`payloadIdentity`, state, and update time for the exact `deliveryId` and transport variant. The
-effect result stores those returned fields next to the canonical intent hash. File/image ledger
-identity may use different inputs from the canonical effect hash, so equality is never inferred;
-the stored ledger key is used for the direct join. No chat ID or user text enters logs.
+returned. Add one narrow read method on the existing Telegram gateway that returns the persisted
+ledger state and `payloadIdentity` for an exact delivery ID and actual transport variant. This is a
+method on the existing gateway, not a new receipt service or ledger. The executor calls it after the
+awaited send and stores the returned identity. Image-to-file fallback records the actual delivered
+variant. The effect row carries the exact body for inspection, while the Telegram ledger and effect
+result carry the same identity for the direct join. No chat ID or user text enters logs.
 
 A failure after reservation remains `unknown`, preserving current receipt-first recovery. Telegram
-409, provider rejection, and transport ambiguity keep their existing classification.
+409, provider rejection, and transport ambiguity keep their existing classification. If the send
+returns but the existing gateway ledger receipt cannot be read or validated, the executor also
+marks the effect `unknown`; it never converts missing local proof into confirmation or another send.
 
-### 6.4 Legacy rows
+### 7.4 Legacy rows
 
 Existing rows whose intent has no `version` remain authoritative for no-replay. A confirmed legacy
-row returns success with an explicit local `legacy_payload_unobserved` classification and is never
-re-sent. No body or receipt is inferred from model history. A transmitting/unknown legacy row stays
-reconcile-only and pages through the existing path.
+row returns success and is classified by the canary as payload-unobservable from its missing
+version; no new tool-result field or log line is added. It is never re-sent. No body or receipt is
+inferred from model history. A transmitting/unknown legacy row stays reconcile-only and pages
+through the existing path.
 
-## 7. Safety and parity
+## 8. Code organization
+
+Keep both PRs inside existing modules. Add no class, service, worker, timer, queue, or hash module.
+
+### PR-A: Board claim window
+
+| Module                                                 | Change                                                                 |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `operator/task-ledger.ts`                              | Filter system claims by `due_at`; preserve ready priority ordering     |
+| `operator/owner-event-board-refresh.ts`                | Set fixed delay, widen pending generation, promote/cancel pending rows |
+| `cli/runtime/api-routes-init.ts`                       | Scheduled promotion and delayed terminal follow-up                     |
+| `cli/commands/start.ts`                                | Keep terminal receipt and boot wiring on the existing ledger           |
+| Existing TaskLedger, owner-event, CLI, and route tests | RED cadence, race, recovery, promotion, cancellation cases             |
+
+The intent ledger owns all SQL that changes its attached Board workorder. `TaskLedger` owns only
+the generic ready-row claim predicate. Do not duplicate the twenty-minute rule in `start.ts` or
+`api-routes-init.ts`.
+
+### PR-B: Telegram observation receipt
+
+| Module                                              | Change                                                               |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| `operator/owner-event-effects.ts`                   | Versioned intent/result types and pure exact-intent comparison       |
+| `agent/gateway-tool-executor.ts`                    | Normalize once, reserve, send, read existing ledger receipt, confirm |
+| `gateways/telegram.ts`                              | One narrow read method for an existing outbound delivery row         |
+| Existing owner-effect, executor, and Telegram tests | RED exact payload, retry, fallback, legacy, missing-receipt cases    |
+
+Keep normalization and version parsing out of the already-large gateway executor. The executor
+orchestrates existing boundaries; pure intent construction and compatibility checks live beside
+`OwnerEventEffectLedger`.
+
+Inline comments should include two small ASCII state diagrams:
+
+- `owner-event-board-refresh.ts`: pending window -> claim -> verified/follow-up transitions;
+- `gateway-tool-executor.ts`: reserve -> send -> receipt -> confirm/unknown precedence.
+
+## 9. Safety and parity
 
 - **TG-03/TG-04:** MAMA still chooses whether to request Board or Telegram work. The host controls
   batching and exact external-send identity, never the model's tool sequence.
@@ -267,34 +344,109 @@ reconcile-only and pages through the existing path.
 - mutation terminal and unknown outcomes still take precedence over retries;
 - no secret, chat ID, raw source text, or outbound body is added to logs or public telemetry.
 
-## 8. TDD plan
+## 10. TDD plan
+
+```text
+CODE PATH COVERAGE
+==================
+[+] Owner-event Board acceptance
+    |-- [RED ***] first intent -> delayed shared row + exact receipt
+    |-- [RED ***] later pending intent -> widen generation, preserve due_at
+    |-- [RED ***] accept wins claim race -> widened row claimed once
+    |-- [RED ***] claim wins race -> immutable run + one delayed follow-up
+    `-- [RED ***] transaction failure -> no task, no intent, dirt retained
+
+[+] Workorder claim and completion
+    |-- [RED ***] before due_at -> skip without blocking ready lower priority work
+    |-- [RED ***] at/after due_at -> atomic pending -> in_progress claim
+    |-- [RED ***] scheduled tick -> promote same pending row, no duplicate
+    |-- [RED ***] verified full -> apply captured generations
+    |-- [RED ***] other verified full -> cancel empty delayed row
+    `-- [RED ***] unverified/failed -> retain obligation, no hot loop
+
+[+] Owner-event Telegram send
+    |-- [RED ***] text/file/image/sticker -> exact versioned intent before send
+    |-- [RED ***] same confirmed intent -> receipt replay, zero transport calls
+    |-- [RED ***] changed intent -> fail closed, zero transport calls
+    |-- [RED ***] transport ambiguity -> unknown, zero automatic resend
+    |-- [RED ***] missing ledger receipt after send -> unknown, no false confirm
+    |-- [RED ***] image rejection -> file fallback + actual variant receipt
+    `-- [RED ***] legacy confirmed/unknown -> no replay, no inferred payload
+
+USER FLOW COVERAGE
+==================
+[+] [->EVAL] five-minute owner-event stream
+    |-- [RED ***] ten accepted Board intents -> at most three repairs
+    |-- [RED ***] exact batch ACK before delayed execution
+    `-- [LIVE] >=60% token reduction on real traffic
+
+[+] [->EVAL] visible Telegram feedback
+    |-- [RED ***] exact Unicode/multi-chunk body + matching delivered identity
+    |-- [RED ***] no duplicate on exact retry
+    `-- [LIVE] no truncation or internal metadata in real payload
+
+[+] [->EVAL] Temporal parity
+    `-- [LIVE] real host-bound receipt or one-run deterministic breaker
+
+PLANNED UNIT/INTEGRATION COVERAGE: 22/22 paths (100%)
+LIVE-ONLY EVIDENCE: 3 canary assertions
+```
 
 ### Board RED tests
 
 1. Ten owner-event Board intents accepted at five-minute intervals produce two delayed workorders,
    not ten immediate repairs.
-2. A pending workorder is unclaimable before `available_at` and claimable after it.
+2. A pending workorder is unclaimable before its system `due_at` and claimable after it.
 3. A deferred high-priority Board row does not block a ready lower-priority workorder.
 4. Every intent accepted before claim widens the pending payload generation and exact no-update
    scope atomically.
-5. An intent accepted after claim cannot mutate the in-progress payload and creates one delayed
+5. At the accept/claim race, accept-first widens the pending payload and claim-first leaves the
+   in-progress payload immutable; the latter creates one delayed post-terminal repair.
+6. An intent accepted after claim cannot mutate the in-progress payload and creates one delayed
    post-terminal repair.
-6. Restart preserves the delay and exact intent bindings.
-7. Manual forced and scheduled repairs remain immediate and preserve their existing keys.
-8. Migration failure is fail-loud and rollback preserves existing database bytes.
+7. Another verified full repair cancels a delayed pending row after applying all of its intents.
+8. Restart preserves the delay and exact intent bindings.
+9. Manual forced and scheduled repairs remain immediate and preserve their existing keys.
+10. Existing owner-task `due_at`, Temporal scans, and Viewer task projection remain unchanged for
+    `kind='owner'`.
+11. An intent transaction failure rolls back both the delayed task mutation and exact batch row.
 
 ### Telegram RED tests
 
-1. Exact Unicode text, delivery identity, and payload hash are retained before send.
+1. Exact Unicode text and delivery identity are retained before send.
 2. Rephrased retry text for the same host key is rejected and never reported as the prior success.
-3. A confirmed effect stores a delivered receipt whose ledger key and payload identity match the
-   Telegram message ledger, while retaining the separate canonical intent hash.
+3. A confirmed effect stores a delivered receipt whose payload identity matches the Telegram
+   message ledger.
 4. Long multi-chunk text retains one exact payload and one delivered receipt.
-5. File/image intent binds resolved path, bytes, caption, and variant; changed bytes fail closed.
+5. File/image intent binds the existing resolved path, caption, and variant without adding a new
+   byte-snapshot contract.
 6. Sticker intent binds normalized emotion.
 7. Legacy confirmed rows remain no-replay and explicitly unobservable.
-8. Internal metadata is absent from the persisted canary payload in a real post-release event; unit
-   tests pin only the structural inspection surface, not model quality.
+8. Missing or malformed local delivery receipt after a returned send leaves the effect unknown and
+   does not resend.
+9. Image-to-file fallback stores the actual delivered variant and matching ledger identity.
+10. Inbox retention cleanup removes the retained body and receipt with the effect row.
+11. Logs and public telemetry contain only identity-free counts/hashes, never the retained body.
+12. Internal metadata is absent from the persisted canary payload in a real post-release event; unit
+    tests pin only the structural inspection surface, not model quality.
+
+## 11. Production failure modes
+
+| Failure                                         | Handling                                                     | Test | Operator/user surface              |
+| ----------------------------------------------- | ------------------------------------------------------------ | ---- | ---------------------------------- |
+| Accept and claim race                           | `BEGIN IMMEDIATE` serializes; loser follows next valid state | Yes  | One run or one delayed follow-up   |
+| Intent insert or pending payload update fails   | One transaction rolls back; gate dirt remains                | Yes  | Retry with bounded error           |
+| Deferred high-priority row exists               | Ready-row filter lets other work proceed                     | Yes  | No Wiki/Temporal starvation        |
+| Scheduled tick meets delayed owner repair       | Promote same row and widen generation                        | Yes  | Scheduled freshness preserved      |
+| Manual repair applies delayed obligations       | Cancel empty pending row                                     | Yes  | No later zero-obligation run       |
+| Daemon restarts before claim                    | Persisted `due_at` and exact intents survive                 | Yes  | Same delayed repair resumes        |
+| Telegram retry changes body/target/variant      | Exact stored intent mismatch rejects                         | Yes  | Clear tool failure, no second send |
+| Telegram send outcome is ambiguous              | Effect remains unknown and reconcile-only                    | Yes  | Existing alarm/recovery path       |
+| Send returns but durable ledger receipt missing | Mark unknown; never infer confirmation or resend             | Yes  | Observability alarm, no duplicate  |
+| Legacy confirmed effect lacks body              | Preserve no-replay; canary labels unobservable               | Yes  | No false quality claim             |
+| Inbox retention deletes effect                  | Existing cleanup removes derived payload and receipt         | Yes  | Bounded local retention            |
+
+Critical silent gaps after planned tests: 0.
 
 ### Regression gates
 
@@ -305,7 +457,35 @@ reconcile-only and pages through the existing path.
 - changed-file Prettier and `git diff --check`;
 - Kagemusha TG-03/TG-04/TG-05/TG-06 evidence update.
 
-## 9. Release and canary
+## 12. Performance budget
+
+- Current production has about 4,220 operator task rows. The existing status index narrows claim
+  candidates before the `due_at` filter; pending rows are bounded by one serial consumer. Do not
+  add an index unless post-change query timing proves the current scan material.
+- Each accepted Board intent adds no new row beyond the existing intent and workorder records. A
+  pending window performs one small payload/`due_at` update in the existing transaction.
+- No file copy, content hash, background timer, or extra polling query is introduced.
+- Exact Telegram text or caption is stored once in the existing effect JSON and deleted with the
+  retained inbox row. It is not copied into tool traces, agent activity, or daemon logs.
+- Normal owner and non-owner lanes pay no new model or hashing cost. The intended saving comes only
+  from reducing fresh full-Board model runs.
+- The twenty-minute wait is an explicit freshness tradeoff. Direct Telegram feedback remains
+  immediate, manual Board refresh remains immediate, and a scheduled tick can promote the row.
+
+## 13. Workstream order
+
+| Lane | Modules                                         | Depends on      |
+| ---- | ----------------------------------------------- | --------------- |
+| A    | operator ledger, TaskLedger, CLI runtime, tests | Approved design |
+| B    | owner effect, gateway executor, Telegram, tests | Approved design |
+| C    | parity docs, release, local runtime, canary     | A and B merged  |
+
+Lanes A and B have no required source-file overlap and are technically parallelizable. Execute them
+sequentially anyway: PR-A establishes the queue contract, PR-B rebases on current main, and both
+touch the same parity/release evidence. This keeps review and rollback attribution clear. Lane C
+starts only after both are merged.
+
+## 14. Release and canary
 
 Ship the Board claim-window contract and Telegram payload receipt in separate PRs from the same
 reviewed design, then one patch release. Board queue timing and external-send persistence are
@@ -328,10 +508,45 @@ After install and a single launchd restart, reset the cutover time and require:
 If actual traffic is absent, the canary waits. Synthetic messages, connector events, workorders,
 Telegram UI, browser, and Computer Use remain forbidden.
 
-## 10. Rollback
+## 15. Rollback
 
 - Reinstall v0.39.0 and restart the single launchd service.
-- The additive `available_at` column is ignored by v0.39.0.
+- No schema column is added. v0.39.0 already understands `due_at` and merely ignores it while
+  claiming system workorders, so rollback may run a delayed row early but cannot lose an intent.
 - New V1 effect rows remain confirmed and no-replay. v0.39.0 reads their `chatId` and `variant`
   fields and ignores additional JSON keys; result JSON remains optional.
 - No destructive down migration is required.
+
+## 16. Eng review completion summary
+
+- Step 0 Scope Challenge: scope reduced. Removed the proposed schema column, migration class,
+  file snapshot, byte hash, duplicate hash module, and speculative index.
+- Architecture Review: 4 issues found, 4 resolved. Scheduled promotion, accept/claim ordering,
+  empty delayed work, and missing post-send receipt now have explicit state transitions.
+- Code Quality Review: 2 issues found, 2 resolved. Existing modules own the behavior; the gateway
+  executor keeps orchestration only.
+- Test Review: coverage diagram produced, 22/22 planned code paths covered, 7 missing regression
+  cases added to the RED plan.
+- Performance Review: 2 issues found, 2 resolved. No new timer, poller, file I/O, hash path, or
+  unmeasured index remains.
+- NOT in scope: written.
+- What already exists: written.
+- TODOS.md updates: 0. Existing audit-retention and documentation debt remain separate.
+- Failure modes: 11 reviewed, 0 critical silent gaps.
+- Outside voice: skipped. The user requested gstack review, not a second model review.
+- Parallelization: 2 independent source lanes, intentionally executed sequentially for review and
+  rollback clarity.
+- Lake Score: 7/7 review recommendations chose the complete minimal option.
+
+## GSTACK REVIEW REPORT
+
+| Review        | Trigger                | Why                             | Runs | Status | Findings                                               |
+| ------------- | ---------------------- | ------------------------------- | ---: | ------ | ------------------------------------------------------ |
+| CEO Review    | `/plan-ceo-review`     | Scope & strategy                |    0 | -      | Backend cost correction; not required                  |
+| Codex Review  | collaboration subagent | Independent second opinion      |    0 | -      | Not requested                                          |
+| Eng Review    | `/plan-eng-review`     | Architecture & tests (required) |    1 | CLEAR  | 15 issues/gaps reviewed, 0 unresolved, 0 critical gaps |
+| Design Review | `/plan-design-review`  | UI/UX gaps                      |    0 | -      | No UI change                                           |
+| DX Review     | `/plan-devex-review`   | Developer experience gaps       |    0 | -      | No public API/SDK change                               |
+
+- **UNRESOLVED:** 0
+- **VERDICT:** ENG CLEARED, ready to write the implementation plan.
