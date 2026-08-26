@@ -784,6 +784,8 @@ v0.39.0 운영 canary가 드러낸 두 결손을 기존 경계 안에서 교정�
 v0.39.1 canary의 후속 조사에서 안전 검증 자체가 아니라 반복 모델 입력과 예약 key 경계에 남은
 오버헤드를 확인했고, PR #238에서 기존 메커니즘 안에서 닫았다.
 
+**MAMA decision record:** `decision_runtime_model_work_boundaries_1787771678852_9ebc641d`
+
 - Board와 report는 active top-12와 review top-5만 읽고 task ID로 중복을 제거한다. 전체 ledger paging은
   요청 결과가 실제로 요구할 때만 사용한다.
 - owner-report history는 문자열 marker가 아니라 구조화된 prompt layer다. 예산을 넘으면 현재 Code-Act
