@@ -830,6 +830,12 @@ change unless they are release-blocking security or data-loss issues.
   history before bounded truncation. The replacement regression proves prompt-structure markers
   are neutralized while public conversation continuity remains available.
 
+- 2026-08-27: PR #238 aligned TG-05/TG-06 runtime context with the one-front Work Agent boundary.
+  Owner-report history is a structured removable layer, owner-event runs stay exact-delta-first,
+  accepted workorders are not status-polled, and generated legacy Board pipelines are projected
+  only by known fingerprints. Scheduled promotion keys now remain restart-idempotent across
+  configured intervals without adding a queue, worker, timer, or schema.
+
 - 2026-08-13: Closed the sender-boundary round-2 review: fail-closed public child-runtime
   containment (TG-04), principal-before-queue Telegram lane isolation (TG-01), and lane-scoped or
   zero-persistence history behavior (TG-05). The external Slack file-share fixture now exercises

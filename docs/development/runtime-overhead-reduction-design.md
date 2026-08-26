@@ -1,7 +1,6 @@
 # MAMA Runtime Overhead Reduction — 검증을 보존하고 모델 낭비를 제거하는 설계
 
-> **상태:** Eng review CLEAR, PR #234/#235 MERGED, v0.39.1 RELEASED/CUTOVER,
-> 실제 owner-event·Temporal 24시간 canary 진행 중
+> **상태:** PR #238 MERGED, v0.39.2 release candidate, 새 owner-event·Temporal 24시간 canary 대기
 >
 > **작성일:** 2026-08-26
 >
@@ -779,3 +778,20 @@ v0.39.0 운영 canary가 드러낸 두 결손을 기존 경계 안에서 교정�
   기록된 cutover 부작용으로 보존하되 같은 실패가 후속 작업에서 반복되면 새 회귀로 판정한다.
 - v0.39.1 cutover 이후 canary 기준 시각을 새로 잡았다. 이전 v0.39.0 창은 실패 원인 증거로 보존하지만
   새 24시간 판정에 합산하지 않는다. `mama-v0-39-1-canary` heartbeat가 실제 이벤트만 매시간 읽는다.
+
+## 28. v0.39.2 모델 작업 경계 후속
+
+v0.39.1 canary의 후속 조사에서 안전 검증 자체가 아니라 반복 모델 입력과 예약 key 경계에 남은
+오버헤드를 확인했고, PR #238에서 기존 메커니즘 안에서 닫았다.
+
+- Board와 report는 active top-12와 review top-5만 읽고 task ID로 중복을 제거한다. 전체 ledger paging은
+  요청 결과가 실제로 요구할 때만 사용한다.
+- owner-report history는 문자열 marker가 아니라 구조화된 prompt layer다. 예산을 넘으면 현재 Code-Act
+  정책을 자르기 전에 history 전체를 한 번 버린다.
+- owner-event는 exact connector delta에서 시작하고 accepted workorder를 다시 status-poll하지 않는다.
+- scheduled memory promotion key는 version, 정수 millisecond interval, slot을 함께 보존한다. released
+  six-hour key와 호환되며 failed/cancelled slot은 계속 retry 가능하다.
+- generated legacy Board brief만 exact fingerprint로 runtime projection하고 owner 편집본과 disk bytes는
+  보존한다.
+- v0.39.2 cutover 이후 실제 owner-event, Temporal, Telegram 왕복과 24시간 비용 회귀를 새 기준으로
+  측정한다. synthetic event나 workorder는 만들지 않는다.
