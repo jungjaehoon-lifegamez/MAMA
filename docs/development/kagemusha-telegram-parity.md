@@ -195,9 +195,9 @@ its intents` pins verified-generation application before an obsolete delayed row
   unknown and leaves later attempts reconcile-only.
 - **Verification:** the four focused files pass 203 tests. The complete standalone suite passes
   383 files and 5,206 tests, with four files and seven tests skipped; standalone typecheck and
-  production build pass. Root lint, changed-file format, and `git diff --check` pass. PR review,
-  merge, release, and live canary remain pending.
-- **Status:** BRANCH CODE GREEN; no operational claim.
+  production build pass. Root lint, changed-file format, and `git diff --check` pass. Release and
+  live canary remain pending.
+- **Status:** CODE GREEN, merged as PR #235. v0.39.1 release and live canary remain pending.
 
 ### Sender-boundary completion evidence: 2026-08-13
 
@@ -776,6 +776,7 @@ change unless they are release-blocking security or data-loss issues.
       complete standalone suite (383 files / 5,188 tests; four files / seven tests skipped), root
       typecheck, build, lint, and all seven root Turbo test tasks. PR #231 is merged.
 - [x] Release, install, and rebuild/restart v0.39.0 as one healthy launchd-owned daemon.
+- [ ] Release, install, and rebuild/restart v0.39.1 as one healthy launchd-owned daemon.
 - [x] Observe a real owner-event burst preserve exact durable intent, non-force workorders,
       verified-generation application, receipt-first ACK, and durable retry on a missing receipt.
 - [ ] Complete a real owner-event and Temporal turn, then compare visible delivery plus 24-hour
