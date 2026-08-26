@@ -1,59 +1,120 @@
 # Architecture Overview
 
-**MAMA system architecture and design principles**
+**MAMA's local memory, one-front work-agent runtime, and thin client adapters**
 
 ---
 
 ## System Overview
 
+The diagram states the v1 product boundary. The current release line is owner-first: durable
+principals exist, but human-member scope grants and the complete effective-scope path remain the
+next implementation slice after the active runtime-overhead remediation canary.
+
+```text
+Human principals
+  Telegram · Slack · Discord                  Claude Code · Desktop · other MCP clients
+             │                                               │
+             ▼                                               ▼
+     authenticated gateways                         thin plugin/MCP adapters
+             │                                               │
+             └──────────────────┬────────────────────────────┘
+                                ▼
+                    MAMA local authority boundary
+                  ┌─────────────────────────────────┐
+                  │ principal + effective scope      │
+                  │ Case context + local memory      │
+                  │ one user-facing AgentLoop        │
+                  │ Code-Act + bounded domain tools  │
+                  │ workorders + effects + receipts  │
+                  └──────────────┬──────────────────┘
+                                 │
+             ┌───────────────────┼────────────────────┐
+             ▼                   ▼                    ▼
+      local SQLite state   bounded workspace    provider runtime
+      memory and Cases     and artifact refs    Claude/Codex/Cline
+             │                   │                    │
+             └───────────────────┴────────────────────┘
+                                 ▼
+                   verified result + authorized delivery
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    MAMA Plugin Ecosystem                      │
-├──────────────────────────────────────────────────────────────┤
-│                                                               │
-│  Claude Code           Claude Desktop     Others              │
-│  ┌────────────┐        ┌────────────┐     ┌──────────────┐   │
-│  │ Commands   │        │            │     │ Cursor, Aider│   │
-│  │ Skills     │──┐     │ MCP Client │     │ (embedding   │   │
-│  │ Hooks      │  │     │            │     │  clients)    │   │
-│  └────────────┘  │     └──────┬─────┘     └──────┬───────┘   │
-│         │        │            │                   │           │
-│         │        │   ┌────────▼───────────────────┘           │
-│         │        │   │  MCP Server (stdio)        │           │
-│         └────────┴──▶│  5 Tools: save/search/     │           │
-│                      │  update/contracts/timeline │           │
-│                      └──────┬──────────┬──────────┘           │
-│                             │          │                      │
-│            ┌────────────────▼──┐  ┌────▼──────────────────┐   │
-│            │ SQLite + pure-TS  │  │ HTTP Embedding Server │   │
-│            │ cosine similarity │  │ :3849 (model in mem)  │   │
-│            │ mama-memory.db    │  └───────────────────────┘   │
-│            └───────────────────┘                              │
-│                                                               │
-└──────────────────────────────────────────────────────────────┘
-```
+
+MAMA has one user-facing identity. Internal workers may provide parallel read-only analysis,
+background work, or independent review, but they do not create a second product front or widen the
+requester's authority.
 
 ---
 
 ## Core Principles
 
-### 1. Local-First Architecture
+### 1. One front, scoped authority
 
-- All data in `~/.claude/mama-memory.db`
-- No network calls (except model download)
-- 100% privacy guaranteed
+- Humans delegate outcomes to one MAMA rather than selecting named AI personas.
+- Sender identity is resolved before model execution.
+- Effective scope is bounded by host authority, principal grants, active Case/artifact scope, and
+  the tool envelope.
+- One artifact lineage has one mutation authority at a time.
+- Internal workers return evidence to the MAMA operation that owns the final result.
 
-### 2. Tier-Based Graceful Degradation
+### 2. Local-First Architecture
+
+- Durable memory and operational state remain in local SQLite databases.
+- Embeddings can run locally.
+- Connector traffic goes only to configured services, and selected prompt/context goes to the
+  configured model provider.
+- MAMA has no hosted storage account or mandatory MAMA cloud.
+
+Selected prompts and compiled context are transmitted to the configured provider when a remote
+model is used. “Local-first” describes durable storage and local memory operations, not an offline
+claim for every model run.
+
+### 3. Tier-Based Graceful Degradation
 
 - Tier 1: Full features (vector search + graph)
 - Tier 2: Fallback (exact match only)
 - Always transparent about current state
 
-### 3. Decision Evolution Tracking
+### 4. Case and decision evolution
 
 - Supersedes graph for decision chains
+- Case-first grouping for decisions, events, observations, and artifact sources
 - Not just conclusions, but the journey
 - Learn from failures, not just successes
+
+### 5. Durable effects before success prose
+
+- Work that may outlive a turn is persisted before side effects.
+- Mutations and external sends require structured receipts.
+- Restart recovery consults durable state instead of repeating a successful occurrence.
+- Model prose cannot upgrade an unverified operation to success.
+
+## Product data flow
+
+```text
+messenger request + inbound files
+        │
+        ▼
+principal resolution and lane admission
+        │
+        ▼
+Case/context compile with effective scope
+        │
+        ▼
+inspect / compare / mutate / audit / deliver
+        │
+        ├── deterministic and domain tools
+        ├── optional internal read-only/review workers
+        └── durable workorders for long-running/background work
+        │
+        ▼
+artifact/effect verification and receipt
+        │
+        ▼
+authorized messenger destination + remembered Case state
+```
+
+Current releases provide the owner-first form of this flow. The v1 human-team scope and Work Case
+contract are defined in
+[MAMA One-Front Team Work Agent](../development/2026-08-26-one-front-team-work-agent-design.md).
 
 ---
 

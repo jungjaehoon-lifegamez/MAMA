@@ -1,5 +1,9 @@
 # ChatGPT "Computer History" (2026-08-13/14 출시) — 어필 포인트와 MAMA 함의
 
+> **Historical research note.** This remains useful input about ambient context and inspectable
+> memory. Product direction is now governed by the
+> [One-Front Team Work Agent design](../development/2026-08-26-one-front-team-work-agent-design.md).
+
 > 오너 지시 리서치. 렌즈는 유저 어필(기술 스택 아님) + MAMA 함의. 같은 주에 Grok Bot(8/11)과
 > 함께 — 양대 메이저가 "상시·능동·기억 기반 어시스턴트"로 수렴하는 주간.
 
@@ -27,8 +31,7 @@ Pro/Business/Enterprise, 기본 꺼짐, EEA/UK/스위스 제외 시작.
   기억한다. MAMA는 **채널에서 일어난 일(남들이 말한 것, 조직의 사건)**을 기억한다.
   전자는 개인 활동 로그, 후자는 출처 있는 조직 기록. 겹치지 않지만 같은 감정을 판다:
   "설명 안 해도 아는 어시스턴트".
-- **수렴 신호(중요)**: 같은 주에 xAI는 상시 에이전트(Grok Bot), OpenAI는 앰비언트 컨텍스트
-  +스킬 제안+예약 태스크. 양대 메이저가 MAMA의 카테고리(상시·능동·기억)를 양방향에서 검증 중.
+- **수렴 신호(중요)**: 같은 주에 xAI는 상시 에이전트(Grok Bot), OpenAI는 앰비언트 컨텍스트 +스킬 제안+예약 태스크. 양대 메이저가 MAMA의 카테고리(상시·능동·기억)를 양방향에서 검증 중.
   단 **조직의 뇌(채널·팀·증거) 축은 둘 다 비어 있다** — Grok은 단일유저 로스터, OpenAI는
   단일유저 단일머신.
 - **정직한 주의**: "Finder에서 메모리 파일 열람+소급 삭제"는 Grok의 "감사 뷰 coming"과 달리

@@ -5,20 +5,22 @@
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-6227%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Right now, you read every channel yourself so nothing slips past you.
-> MAMA reads them instead, and sends you the few things that need you.
-> Every claim links to its source.
+> Send MAMA a message and the real files. It remembers the Case, does the work it is
+> authorized to do, and sends back a verified artifact. Every claim and mutation links to
+> its source.
 
-**MAMA OS is an always-on agent server.** You install it on your own machine, and it
-stays running around the clock — like Home Assistant or Plex, but its job is your work
-channels. `mama start` brings it up. Its Viewer lives at `localhost:3847`. Its
-reports arrive in your chat app.
+**MAMA OS is the work agent behind your messenger.** You install one local server and contact one
+MAMA through Telegram, Slack, or Discord. Internally it can compose models, bounded workers, and
+domain tools, but users do not choose or coordinate an AI team. MAMA remembers work as scoped
+Cases and returns reports or real files with receipts. `mama start` brings it up; its Viewer lives
+at `localhost:3847`.
 
 ![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: deadline slipped Fri to Wed, B waiting 9h on your quote, invoice paid $1,200 in, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)
 
-## The product is a message that arrives
+## The product is work you hand off in a message
 
-You pick the hours. At those hours, in Telegram, Slack, or Discord:
+Today, the owner-first runtime reads connected sources, performs bounded background work, and
+delivers an evidence-linked briefing without being asked:
 
 ```text
 ■ Briefing — Wed 08:00
@@ -35,35 +37,46 @@ You pick the hours. At those hours, in Telegram, Slack, or Discord:
 
 The names are made up. The format is exactly what it sends.
 
-Nobody asked for that message. Overnight, the MAMA server on your machine read 14
+Nobody asked for that report. Overnight, the MAMA server on your machine read 14
 sources: Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, and more.
 It decided what needed you, and wrote it down with links.
 
-It also did the small work already — done by a standing roster of workers,
-not one giant bot: a board keeper that files tasks from conversations, a wiki
-writer that keeps the daily page, a deadline watcher that rechecks dates, and a
-memory curator that decides what deserves to be remembered. Each one leaves
-receipts you can open.
+It also performs real work through bounded capabilities: filing tasks from conversations, keeping
+the daily wiki, rechecking dates, translating feedback, creating files, or invoking a domain
+runtime. Internal workers are an execution strategy, not user-facing teammates. MAMA remains the
+single accountable front and every durable effect leaves a receipt.
+
+The v1 direction extends that same contract to a human team. An authorized member can continue a
+shared Case, submit a new file revision, request an audit or mutation, approve an exact result, and
+receive the artifact without learning an agent organization chart.
 
 ## What that replaces
 
 - The morning scan across channels that mostly did not change.
 - Scrolling back to find out when that deadline moved, and who said so.
 - The handoff note you have to write before you step away.
+- Re-explaining which feedback belongs to which file revision.
+- Choosing and coordinating a different AI persona for every step of one job.
 
-And three things it is **not**:
+And four things it is **not**:
 
-- Not a chatbot with good memory. It is a server that runs while nobody is talking to it.
-- Not a memory database. Storage is the input; the report is the product.
+- Not a user-facing team of AI personas. MAMA may use hidden workers, but the human delegates the
+  outcome, not the orchestration.
+- Not a chatbot with good memory. It is a server that can inspect, act, verify, and deliver while
+  nobody is looking at a MAMA app.
+- Not a memory database. Memory is the substrate; verified work and artifacts are the product.
 - Not a hosted service. There is no MAMA account and no MAMA server. It runs on
   the logins you already have.
 
-## Why not a task agent, or your chat app's AI?
+## Why not a workflow builder, an agent team, or your chat app's AI?
 
-Both exist and both are good. They just answer a different question.
+All exist and all are useful. They just assign the coordination cost differently.
 
-- **A task coworker finishes work you already know about.** You still have to notice that
-  the deadline moved before you can delegate it. MAMA's job is to notice for you.
+- **A workflow builder requires the steps up front.** Real work changes after the agent reads the
+  feedback and the current file. MAMA chooses the tool composition while the host enforces identity,
+  file, mutation, approval, and delivery boundaries.
+- **A visible agent team makes the human the manager.** MAMA may parallelize independent research
+  or use an independent reviewer, but one MAMA owns the user conversation and final result.
 - **A chat integration reads Slack when you ask.** But your clients are on Chatwork,
   iMessage, and Telegram DMs. MAMA reads fourteen sources, including the messy ones where
   the money actually talks.
@@ -96,6 +109,7 @@ A system that acts on its own must be easy to check afterwards.
   not displayed.
 
 More detail: [Architecture](docs/explanation/architecture.md) ·
+[Work Agent](docs/explanation/work-agent.md) ·
 [Security guide](docs/guides/security.md)
 
 ## Quick start
@@ -133,9 +147,9 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.39.1        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
+| [mama-os](packages/standalone/) 0.39.1        | The always-on server: connectors, trigger loop, reports, task board, and web UI. "MAMA" means this.            | `mama start`         |
 | [mama-core](packages/mama-core/) 2.2.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
-| [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
+| [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core with no independent product logic.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
 | [memorybench](packages/memorybench/) 1.0.0    | The benchmark harness behind the retrieval numbers.                                                            | To reproduce a score |
 
@@ -160,13 +174,18 @@ Dependency direction is one-way: nothing depends on the daemon.
 
 ## Roadmap
 
-|                    |                                                                                                                                                                                                                                                                                                                            |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                 |
-| Done (v0.30–v0.37) | Durable event intake → causes wired not relabeled → effect receipts → MAMA-owned owner-event lane (stateless fresh run per batch). The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                        |
-| **Now**            | v1.0 Phase 1 — sender authentication at every chat ingress: owners are admitted, external senders are diverted, and addressed Telegram group messages enter an isolated public lane. The gate every team feature stands on.                                                                                                |
-| Next               | Unpacked below.                                                                                                                                                                                                                                                                                                            |
-| v1.0               | **The brain of a team, not just its owner.** The owner registers members and sets each one's level: what they can read, which agents they can use. Shared, scoped knowledge — an owner's private record stays private. Member agents ship behind owner approval. One owner, always; multi-organization stays out until v2. |
+|                    |                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                                                               |
+| Done (v0.30–v0.37) | Durable event intake → causes wired not relabeled → effect receipts → MAMA-owned owner-event lane (stateless fresh run per batch). The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                                                                      |
+| **Now**            | Complete the current runtime-overhead remediation release and real-event canary, then resume v1.0 Phase 2b. Phase 1 sender authentication and Phase 2a durable owner/member principals are shipped foundations, not the complete team product.                                                                                                                           |
+| Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                                                          |
+| v1.0               | **One MAMA for a human team.** Members receive explicit project/Case/artifact/action grants. MAMA remembers shared work, keeps private memory private, and performs analysis, mutation, audit, approval, and delivery through bounded domain capabilities. Internal workers stay behind the single MAMA front. One owner, always; multi-organization stays out until v2. |
+
+The normative product direction is
+[MAMA One-Front Team Work Agent](docs/development/2026-08-26-one-front-team-work-agent-design.md).
+The next implementation slice is the
+[v1 Phase 2b Human-Team Access Foundation](docs/development/2026-08-26-phase2b-human-team-access-plan.md).
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
 

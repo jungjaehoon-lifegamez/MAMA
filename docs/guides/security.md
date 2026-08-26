@@ -1142,9 +1142,9 @@ system-prompt: none                system-prompt: persona+skills+tools (injected
 
 ### Why This Is Needed
 
-MAMA includes everything the agent needs in `--system-prompt`:
+MAMA includes everything the managed runtime needs in `--system-prompt`:
 
-- Persona (conductor, developer, etc.)
+- Runtime identity and capability instructions (including a legacy persona when configured)
 - Skill catalog
 - Gateway tool definitions
 
