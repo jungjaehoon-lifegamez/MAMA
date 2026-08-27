@@ -222,12 +222,76 @@ function fingerprintMemberEffectiveScope(
     .digest('hex');
 }
 
-function isDenseArray(value: readonly unknown[]): boolean {
-  return Object.keys(value).length === value.length;
+function isSortedUnique(values: readonly string[]): boolean {
+  for (let index = 1; index < values.length; index += 1) {
+    if (values[index - 1] >= values[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
-function isSortedUnique(values: readonly string[]): boolean {
-  return values.every((value, index) => index === 0 || values[index - 1] < value);
+function exactOwnDataValues(
+  value: object,
+  expectedNames: readonly string[]
+): Record<string, unknown> | null {
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    return null;
+  }
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== expectedNames.length) {
+    return null;
+  }
+  const sortedNames = [...names].sort();
+  const sortedExpected = [...expectedNames].sort();
+  for (let index = 0; index < sortedExpected.length; index += 1) {
+    if (sortedNames[index] !== sortedExpected[index]) {
+      return null;
+    }
+  }
+  const values = Object.create(null) as Record<string, unknown>;
+  for (const name of expectedNames) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor || !('value' in descriptor) || descriptor.enumerable !== true) {
+      return null;
+    }
+    values[name] = descriptor.value;
+  }
+  return values;
+}
+
+function exactFrozenArrayValues(value: unknown): unknown[] | null {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    !Object.isFrozen(value) ||
+    Object.getOwnPropertySymbols(value).length > 0
+  ) {
+    return null;
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+  if (
+    !lengthDescriptor ||
+    !('value' in lengthDescriptor) ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0
+  ) {
+    return null;
+  }
+  const length = lengthDescriptor.value as number;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== length + 1 || !names.includes('length')) {
+    return null;
+  }
+  const copy: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !('value' in descriptor) || descriptor.enumerable !== true) {
+      return null;
+    }
+    copy.push(descriptor.value);
+  }
+  return copy;
 }
 
 export function assertCanonicalMemberEffectiveScope(
@@ -236,75 +300,93 @@ export function assertCanonicalMemberEffectiveScope(
 ): asserts value is MemberEffectiveScope {
   if (
     !isRecord(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype ||
     !Object.isFrozen(value) ||
-    Object.keys(value).sort().join('\0') !== MEMBER_EFFECTIVE_SCOPE_KEYS.join('\0') ||
     !isCanonicalComponent(principalId)
   ) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
 
-  const channelGrant = value.channelGrant;
-  const memoryScopes = value.memoryScopes;
-  const fingerprint = value.fingerprint;
+  const outer = exactOwnDataValues(value, MEMBER_EFFECTIVE_SCOPE_KEYS);
+  if (!outer) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+  const channelGrant = outer.channelGrant;
+  const memoryScopes = outer.memoryScopes;
+  const fingerprint = outer.fingerprint;
   if (
     !isRecord(channelGrant) ||
     Object.getPrototypeOf(channelGrant) !== null ||
     !Object.isFrozen(channelGrant) ||
-    !Array.isArray(memoryScopes) ||
-    !isDenseArray(memoryScopes) ||
-    !Object.isFrozen(memoryScopes) ||
+    Object.getOwnPropertySymbols(channelGrant).length > 0 ||
     typeof fingerprint !== 'string' ||
     !/^[a-f0-9]{64}$/.test(fingerprint)
   ) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
 
-  const connectorNames = Object.keys(channelGrant);
+  const connectorNames = Object.getOwnPropertyNames(channelGrant);
   if (!isSortedUnique(connectorNames)) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
+  const channelsByConnector = new Map<string, Set<string>>();
   for (const connector of connectorNames) {
-    const channels = channelGrant[connector];
+    const descriptor = Object.getOwnPropertyDescriptor(channelGrant, connector);
+    if (!descriptor || !('value' in descriptor) || descriptor.enumerable !== true) {
+      throw new Error('Member effective scope snapshot is empty or invalid');
+    }
+    const channelValues = exactFrozenArrayValues(descriptor.value);
     if (
       !isCanonicalComponent(connector, true) ||
-      !Array.isArray(channels) ||
-      channels.length === 0 ||
-      !isDenseArray(channels) ||
-      !Object.isFrozen(channels) ||
-      !channels.every((channel) => isCanonicalComponent(channel)) ||
-      !isSortedUnique(channels)
+      !channelValues ||
+      channelValues.length === 0 ||
+      !channelValues.every((channel) => isCanonicalComponent(channel))
     ) {
       throw new Error('Member effective scope snapshot is empty or invalid');
     }
+    const channels = channelValues as string[];
+    if (!isSortedUnique(channels)) {
+      throw new Error('Member effective scope snapshot is empty or invalid');
+    }
+    channelsByConnector.set(connector, new Set(channels));
   }
 
-  if (
-    !memoryScopes.every(
-      (scope) =>
-        isRecord(scope) &&
-        Object.isFrozen(scope) &&
-        Object.keys(scope).sort().join('\0') === 'id\0kind' &&
-        (scope.kind === 'project' ||
-          scope.kind === 'channel' ||
-          scope.kind === 'user' ||
-          scope.kind === 'global') &&
-        isCanonicalComponent(scope.id)
-    )
-  ) {
+  const memoryScopeValues = exactFrozenArrayValues(memoryScopes);
+  if (!memoryScopeValues) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
-  const canonicalScopes = canonicalMemoryScopes(memoryScopes as readonly MemoryScopeRef[]);
-  if (JSON.stringify(canonicalScopes) !== JSON.stringify(memoryScopes)) {
+  const copiedScopes: MemoryScopeRef[] = [];
+  for (const candidate of memoryScopeValues) {
+    if (
+      !isRecord(candidate) ||
+      Object.getPrototypeOf(candidate) !== Object.prototype ||
+      !Object.isFrozen(candidate)
+    ) {
+      throw new Error('Member effective scope snapshot is empty or invalid');
+    }
+    const fields = exactOwnDataValues(candidate, ['id', 'kind']);
+    if (
+      !fields ||
+      (fields.kind !== 'project' &&
+        fields.kind !== 'channel' &&
+        fields.kind !== 'user' &&
+        fields.kind !== 'global') ||
+      !isCanonicalComponent(fields.id)
+    ) {
+      throw new Error('Member effective scope snapshot is empty or invalid');
+    }
+    copiedScopes.push({ kind: fields.kind, id: fields.id });
+  }
+  const canonicalScopes = canonicalMemoryScopes(copiedScopes);
+  if (JSON.stringify(canonicalScopes) !== JSON.stringify(copiedScopes)) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
 
+  const canonicalGrant = canonicalChannelGrant(channelsByConnector);
+  const canonicalFrozenScopes = freezeMemoryScopes(canonicalScopes);
   if (
     fingerprint !==
-    fingerprintMemberEffectiveScope(
-      principalId,
-      channelGrant as Readonly<ChannelGrant>,
-      memoryScopes
-    )
+    fingerprintMemberEffectiveScope(principalId, canonicalGrant, canonicalFrozenScopes)
   ) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }

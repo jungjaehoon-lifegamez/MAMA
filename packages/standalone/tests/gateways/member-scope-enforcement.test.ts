@@ -253,6 +253,101 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
         ),
       }),
     },
+    {
+      name: 'custom-prototype channel array',
+      scope: (() => {
+        const channels = ['member-channel'];
+        const prototype = Object.create(Array.prototype) as Record<string, unknown>;
+        Object.assign(prototype, {
+          every: () => true,
+          includes: () => true,
+        });
+        Object.setPrototypeOf(channels, prototype);
+        Object.freeze(channels);
+        const channelGrant = Object.create(null) as Record<string, readonly string[]>;
+        channelGrant.telegram = channels;
+        channelGrant.trello = MEMBER_SCOPE.channelGrant.trello;
+        Object.freeze(channelGrant);
+        return Object.freeze({ ...MEMBER_SCOPE, channelGrant });
+      })(),
+    },
+    {
+      name: 'own-method channel array',
+      scope: (() => {
+        const channels = ['member-channel'];
+        Object.defineProperty(channels, 'includes', {
+          value: () => true,
+          enumerable: false,
+        });
+        Object.freeze(channels);
+        const channelGrant = Object.create(null) as Record<string, readonly string[]>;
+        channelGrant.telegram = channels;
+        channelGrant.trello = MEMBER_SCOPE.channelGrant.trello;
+        Object.freeze(channelGrant);
+        return Object.freeze({ ...MEMBER_SCOPE, channelGrant });
+      })(),
+    },
+    {
+      name: 'custom-prototype memoryScopes array',
+      scope: (() => {
+        const memoryScopes = [...MEMBER_SCOPE.memoryScopes];
+        const prototype = Object.create(Array.prototype) as Record<string, unknown>;
+        Object.assign(prototype, {
+          every: () => true,
+          map: () => [{ kind: 'global', id: 'owner-private' }],
+        });
+        Object.setPrototypeOf(memoryScopes, prototype);
+        Object.freeze(memoryScopes);
+        return Object.freeze({ ...MEMBER_SCOPE, memoryScopes });
+      })(),
+    },
+    {
+      name: 'own-method memoryScopes array',
+      scope: (() => {
+        const memoryScopes = [...MEMBER_SCOPE.memoryScopes];
+        Object.defineProperty(memoryScopes, 'map', {
+          value: () => [{ kind: 'global', id: 'owner-private' }],
+          enumerable: false,
+        });
+        Object.freeze(memoryScopes);
+        return Object.freeze({ ...MEMBER_SCOPE, memoryScopes });
+      })(),
+    },
+    {
+      name: 'custom-prototype memory scope record',
+      scope: (() => {
+        const first = Object.create({ inheritedAuthority: 'owner-private' }) as {
+          kind: 'project';
+          id: string;
+        };
+        first.kind = 'project';
+        first.id = 'project-team-alpha';
+        Object.freeze(first);
+        const memoryScopes = Object.freeze([first, MEMBER_SCOPE.memoryScopes[1]]);
+        return Object.freeze({ ...MEMBER_SCOPE, memoryScopes });
+      })(),
+    },
+    {
+      name: 'own-method memory scope record',
+      scope: (() => {
+        const first = { kind: 'project' as const, id: 'project-team-alpha' };
+        Object.defineProperty(first, 'toJSON', {
+          value: () => ({ kind: 'project', id: 'project-team-alpha' }),
+          enumerable: false,
+        });
+        Object.freeze(first);
+        const memoryScopes = Object.freeze([first, MEMBER_SCOPE.memoryScopes[1]]);
+        return Object.freeze({ ...MEMBER_SCOPE, memoryScopes });
+      })(),
+    },
+    {
+      name: 'custom-prototype outer snapshot',
+      scope: (() => {
+        const scope = { ...MEMBER_SCOPE };
+        Object.setPrototypeOf(scope, { inheritedAuthority: 'owner-private' });
+        return Object.freeze(scope);
+      })(),
+    },
     { name: 'missing snapshot', scope: undefined },
   ] as const)('rejects a $name member snapshot before model execution', async ({ scope }) => {
     const db = new Database(':memory:');
