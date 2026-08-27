@@ -62,8 +62,10 @@ import type {
   ExternalBindingToolInput,
   ExternalLifecycleReconcileToolInput,
   PrincipalRepository,
+  MemberScopeInput,
   WorkOrderRequestOrigin,
 } from './types.js';
+import type { PrincipalScopeGrantRef } from '@jungjaehoon/mama-core';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
 import { extractAttachmentText } from './attachment-text-extractor.js';
@@ -390,6 +392,9 @@ const OWNER_CONSOLE_MEMBER_TOOLS = new Set([
   'member_suspend',
   'member_offboard',
   'member_list',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'member_scope_list',
 ]);
 
 class ContextPacketProvenanceError extends Error {}
@@ -408,6 +413,64 @@ function stringField(record: Record<string, unknown>, field: string): string | u
 function numberField(record: Record<string, unknown>, field: string): number | undefined {
   const value = record[field];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function memberScopeRef(input: MemberScopeInput): PrincipalScopeGrantRef {
+  if (input.kind === 'source') {
+    return { kind: 'source', connector: input.connector, channelId: input.channel_id };
+  }
+  return {
+    kind: 'memory',
+    scopeKind: input.scope_kind,
+    scopeId: input.scope_id,
+  };
+}
+
+function hasExactFields(record: Record<string, unknown>, fields: readonly string[]): boolean {
+  const actual = Object.keys(record).sort();
+  const expected = [...fields].sort();
+  return (
+    actual.length === expected.length && actual.every((field, index) => field === expected[index])
+  );
+}
+
+function parseMemberScopeMutationInput(
+  input: unknown
+): { principalId: string; scope: MemberScopeInput } | null {
+  const record = asRecord(input);
+  if (!record || !hasExactFields(record, ['principal_id', 'scope'])) {
+    return null;
+  }
+  const principalId = record.principal_id;
+  const scope = asRecord(record.scope);
+  if (typeof principalId !== 'string' || principalId.trim().length === 0 || !scope) {
+    return null;
+  }
+  if (
+    scope.kind === 'source' &&
+    hasExactFields(scope, ['kind', 'connector', 'channel_id']) &&
+    typeof scope.connector === 'string' &&
+    typeof scope.channel_id === 'string'
+  ) {
+    return {
+      principalId,
+      scope: { kind: 'source', connector: scope.connector, channel_id: scope.channel_id },
+    };
+  }
+  if (
+    scope.kind === 'memory' &&
+    hasExactFields(scope, ['kind', 'scope_kind', 'scope_id']) &&
+    (scope.scope_kind === 'project' ||
+      scope.scope_kind === 'channel' ||
+      scope.scope_kind === 'global') &&
+    typeof scope.scope_id === 'string'
+  ) {
+    return {
+      principalId,
+      scope: { kind: 'memory', scope_kind: scope.scope_kind, scope_id: scope.scope_id },
+    };
+  }
+  return null;
 }
 
 function sanitizeRecallText(value: string | undefined): string | undefined {
@@ -2877,6 +2940,69 @@ export class GatewayToolExecutor {
           }));
           return { success: true, members };
         }
+        case 'member_scope_grant':
+        case 'member_scope_revoke': {
+          const parsed = parseMemberScopeMutationInput(input);
+          if (!parsed) {
+            return {
+              success: false,
+              code: 'member_scope_input_invalid',
+              error: `${toolName} requires exactly one principal_id and one closed scope.`,
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const ownerPrincipalId = this.getExecutionState().agentContext?.principalId;
+          if (typeof ownerPrincipalId !== 'string' || ownerPrincipalId.trim().length === 0) {
+            return {
+              success: false,
+              code: 'owner_principal_required',
+              error: `${toolName} requires the active owner principal from host context.`,
+            };
+          }
+          const { principalId: targetPrincipalId, scope } = parsed;
+          const mutation = {
+            targetPrincipalId,
+            ownerPrincipalId,
+            scope: memberScopeRef(scope),
+            now: Date.now(),
+          };
+          const status =
+            toolName === 'member_scope_grant'
+              ? this.principalRepository.grantScope(mutation)
+              : this.principalRepository.revokeScope(mutation);
+          return { success: true, principalId: targetPrincipalId, status };
+        }
+        case 'member_scope_list': {
+          const listInput = asRecord(input);
+          const principalId = listInput?.principal_id;
+          if (
+            !listInput ||
+            !hasExactFields(listInput, ['principal_id']) ||
+            typeof principalId !== 'string' ||
+            principalId.trim().length === 0
+          ) {
+            return {
+              success: false,
+              code: 'member_scope_input_invalid',
+              error: 'member_scope_list requires exactly one principal_id.',
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const grants = this.principalRepository.listActiveGrants(principalId);
+          return { success: true, principalId, grants };
+        }
         case 'board_read': {
           if (!this.reportReader) {
             return {
@@ -4422,13 +4548,17 @@ export class GatewayToolExecutor {
       : undefined;
     const contextTier = projectedAgentContext?.tier;
     const tier = contextTier === undefined ? 1 : contextTier;
+    const codeActDisallowedTools =
+      projectedAgentContext?.roleName === 'owner_console'
+        ? state.disallowedGatewayTools
+        : [...new Set([...(state.disallowedGatewayTools ?? []), ...OWNER_CONSOLE_MEMBER_TOOLS])];
     let policy;
     try {
       policy = projectCodeActToolPolicy({
         tier,
         roleName: projectedAgentContext?.roleName,
         role: projectedAgentContext?.role,
-        disallowedTools: state.disallowedGatewayTools,
+        disallowedTools: codeActDisallowedTools,
         requestedAllowedTools: input.allowedTools,
         requestedBlockedTools: input.blockedTools,
         envelopeDestinationKinds:

@@ -38,30 +38,42 @@ const MEMBER_TOOLS = [
   'member_suspend',
   'member_offboard',
   'member_list',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'member_scope_list',
 ] as const;
 
-function agentContext(roleName: 'owner_console' | 'public_lane'): AgentContext {
+function agentContext(
+  roleName: 'owner_console' | 'public_lane',
+  principalId?: string
+): AgentContext {
   const role = DEFAULT_ROLES.definitions[roleName];
-  return {
-    source: 'telegram',
-    platform: 'telegram',
-    roleName,
-    role,
-    session: {
-      sessionId: `p2a-${roleName}`,
-      startedAt: new Date(0),
+  return Object.assign(
+    {
+      source: 'telegram',
+      platform: 'telegram',
+      roleName,
+      role,
+      session: {
+        sessionId: `p2a-${roleName}`,
+        startedAt: new Date(0),
+      },
+      capabilities: [],
+      limitations: [],
     },
-    capabilities: [],
-    limitations: [],
-  };
+    principalId === undefined ? {} : { principalId }
+  );
 }
 
-function ownerExecutor(repository: PrincipalRepository): GatewayToolExecutor {
+function ownerExecutor(
+  repository: PrincipalRepository,
+  ownerPrincipalId?: string
+): GatewayToolExecutor {
   const executor = new GatewayToolExecutor({
     envelopeIssuanceMode: 'off',
     principalRepository: repository,
   });
-  executor.setAgentContext(agentContext('owner_console'));
+  executor.setAgentContext(agentContext('owner_console', ownerPrincipalId));
   return executor;
 }
 
@@ -279,7 +291,7 @@ describe('P2a principal registry completion matrix', () => {
       expect(logger.warn).toHaveBeenCalledTimes(2);
     });
 
-    it('TG-04 projects all five member tools and refuses them for a non-owner executor role', async () => {
+    it('TG-04 projects all member tools and refuses them for a non-owner executor role', async () => {
       const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
         ok: true,
         config: {},
@@ -292,6 +304,12 @@ describe('P2a principal registry completion matrix', () => {
         blockedTools: ownerRole.blockedTools,
         privateConnectorPolicy: disabledPrivatePolicy,
       });
+      const publicCatalog = buildGatewayToolCatalog({
+        surface: 'multi-agent-generic',
+        allowedTools: DEFAULT_ROLES.definitions.public_lane.allowedTools,
+        blockedTools: DEFAULT_ROLES.definitions.public_lane.blockedTools,
+        privateConnectorPolicy: disabledPrivatePolicy,
+      });
       const executor = ownerExecutor(repository);
       const codeActNames = new HostBridge(executor)
         .getAvailableFunctions(2)
@@ -299,6 +317,7 @@ describe('P2a principal registry completion matrix', () => {
 
       expect(ToolRegistry.getValidToolNames()).toEqual(expect.arrayContaining([...MEMBER_TOOLS]));
       expect(nativeCatalog.toolNames).toEqual(expect.arrayContaining([...MEMBER_TOOLS]));
+      expect(publicCatalog.toolNames).not.toEqual(expect.arrayContaining([...MEMBER_TOOLS]));
       expect(codeActNames).toEqual(expect.arrayContaining([...MEMBER_TOOLS]));
 
       executor.setAgentContext(agentContext('public_lane'));
@@ -308,12 +327,213 @@ describe('P2a principal registry completion matrix', () => {
             ? { candidate_id: 'candidate-refused' }
             : toolName === 'member_suspend' || toolName === 'member_offboard'
               ? { principal_id: 'principal-refused' }
-              : {};
+              : toolName === 'member_scope_grant' || toolName === 'member_scope_revoke'
+                ? {
+                    principal_id: 'principal-refused',
+                    scope: { kind: 'source', connector: 'telegram', channel_id: 'refused' },
+                  }
+                : toolName === 'member_scope_list'
+                  ? { principal_id: 'principal-refused' }
+                  : {};
         await expect(executor.execute(toolName, input)).resolves.toMatchObject({
           success: false,
           error: expect.stringContaining('owner_console'),
         });
       }
+    });
+
+    it('TG-04 grants, lists, and revokes canonical member scopes with owner identity from context', async () => {
+      expect(
+        repository.ensureOwner({
+          connector: 'telegram',
+          namespace: 'global',
+          externalId: 'p2b-owner',
+          now: 100,
+        })
+      ).toBe('created');
+      const ownerPrincipalId = repository.resolveByExternal(
+        'telegram',
+        'global',
+        'p2b-owner'
+      )!.principalId;
+      const memberPrincipalId = repository.registerMember({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: 'p2b-member',
+        now: 101,
+      });
+      const executor = ownerExecutor(repository, ownerPrincipalId);
+      const sourceInput = {
+        principal_id: memberPrincipalId,
+        scope: { kind: 'source', connector: 'Telegram', channel_id: 'shared-channel' },
+      };
+      const memoryInput = {
+        principal_id: memberPrincipalId,
+        scope: { kind: 'memory', scope_kind: 'project', scope_id: 'mama' },
+      };
+
+      await expect(executor.execute('member_scope_grant', sourceInput)).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        status: 'created',
+      });
+      await expect(executor.execute('member_scope_grant', sourceInput)).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        status: 'exists',
+      });
+      await expect(executor.execute('member_scope_grant', memoryInput)).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        status: 'created',
+      });
+      await expect(
+        executor.execute('member_scope_list', { principal_id: memberPrincipalId })
+      ).resolves.toEqual({
+        success: true,
+        principalId: memberPrincipalId,
+        grants: expect.arrayContaining([
+          expect.objectContaining({
+            targetPrincipalId: memberPrincipalId,
+            scope: { kind: 'source', connector: 'telegram', channelId: 'shared-channel' },
+            grantedByPrincipalId: ownerPrincipalId,
+            createdAt: expect.any(Number),
+          }),
+          expect.objectContaining({
+            targetPrincipalId: memberPrincipalId,
+            scope: { kind: 'memory', scopeKind: 'project', scopeId: 'mama' },
+            grantedByPrincipalId: ownerPrincipalId,
+            createdAt: expect.any(Number),
+          }),
+        ]),
+      });
+      await expect(executor.execute('member_scope_revoke', sourceInput)).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        status: 'revoked',
+      });
+      await expect(executor.execute('member_scope_revoke', sourceInput)).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        status: 'absent',
+      });
+      await expect(
+        executor.execute('member_scope_list', { principal_id: memberPrincipalId })
+      ).resolves.toMatchObject({
+        success: true,
+        principalId: memberPrincipalId,
+        grants: [
+          {
+            targetPrincipalId: memberPrincipalId,
+            scope: { kind: 'memory', scopeKind: 'project', scopeId: 'mama' },
+            grantedByPrincipalId: ownerPrincipalId,
+          },
+        ],
+      });
+    });
+
+    it('TG-04 refuses member scope controls from a public member even with wildcard role tools', async () => {
+      const memberPrincipalId = repository.registerMember({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: 'p2b-denied-member',
+        now: 110,
+      });
+      const executor = ownerExecutor(repository);
+      executor.setAgentContext({
+        ...agentContext('public_lane', memberPrincipalId),
+        role: { ...DEFAULT_ROLES.definitions.public_lane, allowedTools: ['*'], blockedTools: [] },
+      });
+
+      for (const [toolName, input] of [
+        [
+          'member_scope_grant',
+          {
+            principal_id: memberPrincipalId,
+            scope: { kind: 'source', connector: 'telegram', channel_id: 'forbidden' },
+          },
+        ],
+        [
+          'member_scope_revoke',
+          {
+            principal_id: memberPrincipalId,
+            scope: { kind: 'source', connector: 'telegram', channel_id: 'forbidden' },
+          },
+        ],
+        ['member_scope_list', { principal_id: memberPrincipalId }],
+      ] as const) {
+        await expect(executor.execute(toolName, input)).resolves.toMatchObject({
+          success: false,
+          error: expect.stringContaining('owner_console'),
+        });
+      }
+
+      const nested = await executor.execute('code_act', {
+        code: '({ grant: typeof member_scope_grant, revoke: typeof member_scope_revoke, list: typeof member_scope_list })',
+      });
+      expect(nested.success).toBe(true);
+      expect(JSON.parse(String(nested.message)).value).toEqual({
+        grant: 'undefined',
+        revoke: 'undefined',
+        list: 'undefined',
+      });
+    });
+
+    it('TG-04 rejects model-supplied owner identity and non-closed scope inputs', async () => {
+      expect(
+        repository.ensureOwner({
+          connector: 'telegram',
+          namespace: 'global',
+          externalId: 'p2b-closed-owner',
+          now: 120,
+        })
+      ).toBe('created');
+      const ownerPrincipalId = repository.resolveByExternal(
+        'telegram',
+        'global',
+        'p2b-closed-owner'
+      )!.principalId;
+      const memberPrincipalId = repository.registerMember({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: 'p2b-closed-member',
+        now: 121,
+      });
+      const executor = ownerExecutor(repository, ownerPrincipalId);
+
+      for (const input of [
+        {
+          principal_id: memberPrincipalId,
+          owner_principal_id: 'model-forged-owner',
+          scope: { kind: 'source', connector: 'telegram', channel_id: 'shared-channel' },
+        },
+        {
+          principal_id: memberPrincipalId,
+          scope: {
+            kind: 'source',
+            connector: 'telegram',
+            channel_id: 'shared-channel',
+            scope_id: 'smuggled-field',
+          },
+        },
+      ]) {
+        await expect(executor.execute('member_scope_grant', input as never)).resolves.toMatchObject(
+          {
+            success: false,
+            code: 'member_scope_input_invalid',
+          }
+        );
+      }
+      await expect(
+        executor.execute('member_scope_list', {
+          principal_id: memberPrincipalId,
+          include_history: true,
+        } as never)
+      ).resolves.toMatchObject({
+        success: false,
+        code: 'member_scope_input_invalid',
+      });
+      expect(repository.listActiveGrants(memberPrincipalId)).toEqual([]);
     });
 
     it('TG-04 refuses model-supplied identities without a host candidate', async () => {

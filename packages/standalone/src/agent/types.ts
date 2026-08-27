@@ -21,6 +21,8 @@ import type {
   BeginModelRunInput,
   ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
+  PrincipalScopeGrantRecord,
+  PrincipalScopeGrantRef,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
 
@@ -79,6 +81,19 @@ export interface PrincipalRepository {
     now: number;
   }): 'created' | 'exists' | 'conflict';
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+  grantScope(input: {
+    targetPrincipalId: string;
+    ownerPrincipalId: string;
+    scope: PrincipalScopeGrantRef;
+    now: number;
+  }): 'created' | 'exists';
+  revokeScope(input: {
+    targetPrincipalId: string;
+    ownerPrincipalId: string;
+    scope: PrincipalScopeGrantRef;
+    now: number;
+  }): 'revoked' | 'absent';
+  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
 
 // ============================================================================
@@ -111,6 +126,9 @@ export interface SessionInfo {
  * Provides information about the agent's current operating environment
  */
 export interface AgentContext {
+  /** Durable sender principal supplied by the host identity boundary. */
+  principalId?: string;
+
   /**
    * Message source identifier
    * @example "discord", "viewer", "telegram"
@@ -720,6 +738,23 @@ export interface MemberPrincipalInput {
 
 export type MemberListInput = Record<string, never>;
 
+export type MemberScopeInput =
+  | { kind: 'source'; connector: string; channel_id: string }
+  | {
+      kind: 'memory';
+      scope_kind: 'project' | 'channel' | 'global';
+      scope_id: string;
+    };
+
+export interface MemberScopeMutationInput {
+  principal_id: string;
+  scope: MemberScopeInput;
+}
+
+export interface MemberScopeListInput {
+  principal_id: string;
+}
+
 /**
  * Union type for all MCP tool inputs
  */
@@ -742,6 +777,8 @@ export type GatewayToolInput =
   | MemberRegisterInput
   | MemberPrincipalInput
   | MemberListInput
+  | MemberScopeMutationInput
+  | MemberScopeListInput
   | TemporalReconcileToolInput
   | ExternalBindingToolInput
   | ExternalLifecycleReconcileToolInput;
@@ -796,6 +833,9 @@ export type GatewayToolName =
   | 'member_suspend'
   | 'member_offboard'
   | 'member_list'
+  | 'member_scope_grant'
+  | 'member_scope_revoke'
+  | 'member_scope_list'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI
