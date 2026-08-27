@@ -34,7 +34,15 @@ export function overlayMemberPrincipal(
   base: PrincipalContext,
   row: { principalId: string; kind: 'owner' | 'member'; status: string } | null
 ): PrincipalContext {
-  if (base.class !== 'external' || row?.kind !== 'member' || row.status !== 'active') {
+  if (!row || row.status !== 'active') {
+    return base;
+  }
+
+  if (base.class === 'owner' && row.kind === 'owner') {
+    return freezePrincipal({ ...base, principalId: row.principalId });
+  }
+
+  if (base.class !== 'external' || row.kind !== 'member') {
     return base;
   }
 

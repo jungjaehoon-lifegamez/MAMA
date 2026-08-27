@@ -877,6 +877,9 @@ export class MessageRouter implements TurnProcessor {
       capabilities,
       limitations
     );
+    if (message.principal?.principalId) {
+      ctx.principalId = message.principal.principalId;
+    }
     ctx.backend = this.config.backend;
     if (message.principal?.class === 'member') {
       ctx.tier = 2;

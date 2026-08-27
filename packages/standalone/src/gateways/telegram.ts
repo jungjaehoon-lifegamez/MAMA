@@ -426,7 +426,7 @@ export class TelegramGateway extends BaseGateway {
       ownerUserIds:
         this.config.ownerUserIds === undefined ? undefined : new Set(this.config.ownerUserIds),
     });
-    if (principal.class === 'external' && this.principalResolver) {
+    if (this.principalResolver) {
       principal = overlayMemberPrincipal(
         principal,
         this.principalResolver('telegram', 'global', String(msg.from.id))

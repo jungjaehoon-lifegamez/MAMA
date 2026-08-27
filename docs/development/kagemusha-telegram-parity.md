@@ -252,6 +252,25 @@ owner-console envelope access to a member with forced console eligibility`, and 
 session key stable when only member principalId changes`. This is an internal P2a substrate;
   member access is not public until P2b grants land.
 
+### P2b owner scope-control authority: 2026-08-27
+
+- **TG-04 verified-owner identity:** Telegram resolves the durable registry row for every
+  allowlisted sender, but the overlay may attach an owner principal ID only when the independently
+  verified Telegram principal is already `owner`, the row is also `owner`, and the row is active.
+  An owner DB row never elevates an external sender. `MessageRouter` carries that host principal ID
+  into `AgentContext`, and scope mutations derive grantor authority only from that context.
+- **TG-04 execution and denial:** the real migration-065 repository test drives verified Telegram
+  principal resolution, active-owner overlay, a real MessageRouter owner turn, and
+  `GatewayToolExecutor` to a persisted grant. No-context and diverted external turns cannot reach
+  the tools; public and member roles cannot invoke them directly or see them inside nested
+  Code-Act, even under a synthetic wildcard role.
+- **Evidence:** `telegram.test.ts` case `TG-04 attaches the active registry ID to a verified owner
+before routing`; `principal.test.ts` case `TG-04 attaches an active owner registry ID only to an
+already verified owner`; and the owner success plus denial cases in
+  `p2a-member-registry-e2e.test.ts`.
+- **Status:** CODE GREEN for the owner scope-control surface. The complete Telegram/Slack/Discord
+  human-member E2E and live canary remain Task 5 gates.
+
 ### Backend-scoped model runtime closure: 2026-08-15
 
 - **TG-05:** a same-backend per-role model override now reaches the real Codex app-server session

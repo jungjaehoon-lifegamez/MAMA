@@ -255,7 +255,36 @@ describe('Gateway principal resolution', () => {
       }
     );
 
-    it('returns an owner unchanged regardless of the registry row', () => {
+    it('TG-04 attaches an active owner registry ID only to an already verified owner', () => {
+      const owner = resolveTelegramPrincipal({
+        userId: 'owner-user',
+        chatId: 'owner-user',
+        chatType: 'private',
+        allowedChats: new Set(['owner-user']),
+        ownerUserIds: new Set(['owner-user']),
+      });
+      const external = resolveTelegramPrincipal({
+        userId: 'external-user',
+        chatId: 'owner-user',
+        chatType: 'private',
+        allowedChats: new Set(['owner-user']),
+        ownerUserIds: new Set(['owner-user']),
+      });
+      const ownerRow = {
+        principalId: 'registry-owner',
+        kind: 'owner' as const,
+        status: 'active',
+      };
+
+      expect(overlayMemberPrincipal(owner, ownerRow)).toEqual({
+        ...owner,
+        principalId: 'registry-owner',
+      });
+      expect(overlayMemberPrincipal(external, ownerRow)).toBe(external);
+      expect(overlayMemberPrincipal(owner, { ...ownerRow, status: 'suspended' })).toBe(owner);
+    });
+
+    it('returns an owner unchanged for a member registry row', () => {
       const owner = resolveConnectorPrincipal({
         connector: 'slack',
         namespace: 'team-a',
