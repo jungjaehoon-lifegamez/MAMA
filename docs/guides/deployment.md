@@ -11,9 +11,9 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.39.3  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.39.4  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
-| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.2.0   |
+| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.2.1   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
 
 ---
@@ -61,9 +61,9 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.39.3          |
+| `packages/standalone/package.json`                       | `version` | 0.39.4          |
 | `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
-| `packages/mama-core/package.json`                        | `version` | 2.2.0           |
+| `packages/mama-core/package.json`                        | `version` | 2.2.1           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
 | `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.11.0          |
 
@@ -144,7 +144,7 @@ Record changes in `CHANGELOG.md`:
 # Versions must already be committed on protected main.
 gh workflow run release.yml --ref main \
   -f release_type=minor \
-  -f packages=mama-os \
+  -f packages=mama-core,mama-os \
   -f dry_run=false \
   -f bump_versions=false
 
@@ -152,16 +152,25 @@ gh workflow run release.yml --ref main \
 gh run list --workflow release.yml --limit 1
 ```
 
-The workflow publishes every selected package, including `@jungjaehoon/mama-os`. Use a
-comma-separated package list such as `mama-core,mama-server,mama-os,mama-plugin`, or `all`, when a
-release spans more than MAMA OS. Do not request an inline version bump on protected `main`.
+The workflow publishes every selected package. When MAMA OS depends on unpublished Core changes,
+select `mama-core,mama-os` so Core publishes first and the prepared OS dependency points at that
+version. Use a comma-separated package list such as
+`mama-core,mama-server,mama-os,mama-plugin`, or `all`, for broader releases. Do not request an
+inline version bump on protected `main`.
 
 ### Step 6: Verify npm Artifacts
 
 ```bash
-npm info @jungjaehoon/mama-os version
+MAMA_OS_RELEASE=0.39.4
+MAMA_CORE_RELEASE=2.2.1
+npm info @jungjaehoon/mama-os@"$MAMA_OS_RELEASE" version
+npm info @jungjaehoon/mama-core@"$MAMA_CORE_RELEASE" version
+npm info @jungjaehoon/mama-os@"$MAMA_OS_RELEASE" dependencies.@jungjaehoon/mama-core
 npm info @jungjaehoon/mama-server version
 ```
+
+When Core changed, the OS → Core dependency command must contain the exact compatible range
+prepared by the workflow, for example `^2.2.1` for MAMA OS 0.39.4.
 
 For a MAMA OS release, install the exact published version, restart the local daemon, and verify
 both the process and HTTP health before enabling a new opt-in runtime:
@@ -233,13 +242,13 @@ git push origin main
 
 ### MAMA OS (@jungjaehoon/mama-os)
 
-| Item                  | Details                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| **Deployment target** | npm registry (public)                                          |
-| **Deploy method**     | `.github/workflows/release.yml` with `packages=mama-os`        |
-| **Deploy frequency**  | On standalone runtime changes (MINOR/PATCH)                    |
-| **Installation**      | `npm install -g @jungjaehoon/mama-os@<version>`                |
-| **Verification**      | npm version, daemon restart/status, `/health`, temporal canary |
+| Item                  | Details                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| **Deployment target** | npm registry (public)                                                          |
+| **Deploy method**     | `.github/workflows/release.yml`; include `mama-core,mama-os` when Core changed |
+| **Deploy frequency**  | On standalone runtime changes (MINOR/PATCH)                                    |
+| **Installation**      | `npm install -g @jungjaehoon/mama-os@<version>`                                |
+| **Verification**      | npm version, daemon restart/status, `/health`, temporal canary                 |
 
 ### Claude Code Plugin (mama)
 
@@ -335,6 +344,8 @@ Verify the following after deployment:
 ```markdown
 - [ ] npm package version: `npm info @jungjaehoon/mama-server version`
 - [ ] MAMA OS npm version: `npm info @jungjaehoon/mama-os version`
+- [ ] Exact MAMA Core version: `npm info @jungjaehoon/mama-core@<version> version`
+- [ ] OS → Core dependency: `npm info @jungjaehoon/mama-os@<version> dependencies.@jungjaehoon/mama-core`
 - [ ] Exact MAMA OS version installed: `npm install -g @jungjaehoon/mama-os@<version>`
 - [ ] Daemon restart and process status: `mama stop && mama start && mama status`
 - [ ] HTTP health: `curl -fsS http://127.0.0.1:3847/health`

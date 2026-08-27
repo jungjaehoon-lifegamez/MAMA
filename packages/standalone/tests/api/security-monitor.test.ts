@@ -108,7 +108,7 @@ describe('security-monitor', () => {
     };
 
     recordSecurityEvent(event);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flushSecurityMonitor();
 
     const securityLog = await readFile(getSecurityLogPath(), 'utf8');
     expect(securityLog).toContain('"honeypot_hit"');

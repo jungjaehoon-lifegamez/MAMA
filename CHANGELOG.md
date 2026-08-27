@@ -2,15 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.4] / mama-core [2.2.1] - 2026-08-27
+
+### Fixed
+
+- **Installed Phase 2b runtimes now include their required core authority.** MAMA OS 0.39.4
+  depends on MAMA Core 2.2.1, which contains migration 065 and the principal-scope grant
+  repository. MAMA OS 0.39.3 could resolve the previously published Core 2.2.0 package, leaving an
+  installed database at migration 64 even though workspace tests passed against the newer local
+  source. Fresh and upgraded 0.39.4 installs can apply the grant table before human-member traffic.
+
 ## mama-os [0.39.3] - 2026-08-27
 
 ### Added
 
-- **The 0.39.3 package contains the verified human-team access foundation.** An owner can grant,
+- **The standalone-side human-team access foundation landed in 0.39.3 source.** An owner can grant,
   revoke, and inspect exact connector-channel or shared-memory access for registered members.
   Telegram, Slack, and Discord keep the same single MAMA front without exposing internal workers or
-  named agent roles. Installation, restart validation, and a real member canary remain before the
-  foundation is called shipped on a host.
+  named agent roles. The published 0.39.3 install could resolve Core 2.2.0 and was incomplete;
+  0.39.4 is the first package containing the required migration and repository.
 - **Members receive one server-computed authority snapshot per turn.** Their current conversation,
   private principal memory, and explicitly shared sources are carried unchanged through retrieval,
   context compilation, Code-Act, provenance, and result filtering. Callers may narrow that scope but
