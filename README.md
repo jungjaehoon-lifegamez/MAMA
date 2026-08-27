@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-6227%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-6359%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Send MAMA a message and the real files. It remembers the Case, does the work it is
 > authorized to do, and sends back a verified artifact. Every claim and mutation links to
@@ -178,13 +178,13 @@ Dependency direction is one-way: nothing depends on the daemon.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Done (v0.15–v0.29) | Search overhaul → connector framework → operator runtime → owner console → durable workorder pipeline → evidence & effects. Full history in the [CHANGELOG](CHANGELOG.md).                                                                                                                                                                                               |
 | Done (v0.30–v0.37) | Durable event intake → causes wired not relabeled → effect receipts → MAMA-owned owner-event lane (stateless fresh run per batch). The default-off Conductor experiment was retired; MAMA itself owns connector events on Claude, Codex, and Cline.                                                                                                                      |
-| **Now**            | Complete the current runtime-overhead remediation release and real-event canary, then resume v1.0 Phase 2b. Phase 1 sender authentication and Phase 2a durable owner/member principals are shipped foundations, not the complete team product.                                                                                                                           |
+| **Now**            | v1.0 Phase 2b is implemented and reviewed in [PR #240](https://github.com/jungjaehoon-lifegamez/MAMA/pull/240), but is not shipped yet. Merge, patch release, install, restart validation, and a real human-member canary remain. Phase 1 sender authentication and Phase 2a durable owner/member principals are the currently shipped foundations.                      |
 | Next               | Unpacked below.                                                                                                                                                                                                                                                                                                                                                          |
 | v1.0               | **One MAMA for a human team.** Members receive explicit project/Case/artifact/action grants. MAMA remembers shared work, keeps private memory private, and performs analysis, mutation, audit, approval, and delivery through bounded domain capabilities. Internal workers stay behind the single MAMA front. One owner, always; multi-organization stays out until v2. |
 
 The normative product direction is
 [MAMA One-Front Team Work Agent](docs/development/2026-08-26-one-front-team-work-agent-design.md).
-The next implementation slice is the
+The current release candidate is the
 [v1 Phase 2b Human-Team Access Foundation](docs/development/2026-08-26-phase2b-human-team-access-plan.md).
 
 Each "Next" item comes from a measurement, or from a competitor doing it better:
@@ -215,10 +215,10 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 6,227 passing tests across five packages
+pnpm test     # 6,359 passing tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-26_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-27_
 
 ## License
 

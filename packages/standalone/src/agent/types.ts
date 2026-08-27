@@ -11,6 +11,7 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type { MemberEffectiveScope } from '../gateways/member-effective-scope.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 import type { ContextCompileService } from './context-compile-service.js';
@@ -20,6 +21,8 @@ import type {
   BeginModelRunInput,
   ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
+  PrincipalScopeGrantRecord,
+  PrincipalScopeGrantRef,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
 
@@ -78,6 +81,19 @@ export interface PrincipalRepository {
     now: number;
   }): 'created' | 'exists' | 'conflict';
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+  grantScope(input: {
+    targetPrincipalId: string;
+    ownerPrincipalId: string;
+    scope: PrincipalScopeGrantRef;
+    now: number;
+  }): 'created' | 'exists';
+  revokeScope(input: {
+    targetPrincipalId: string;
+    ownerPrincipalId: string;
+    scope: PrincipalScopeGrantRef;
+    now: number;
+  }): 'revoked' | 'absent';
+  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
 
 // ============================================================================
@@ -110,6 +126,9 @@ export interface SessionInfo {
  * Provides information about the agent's current operating environment
  */
 export interface AgentContext {
+  /** Durable sender principal supplied by the host identity boundary. */
+  principalId?: string;
+
   /**
    * Message source identifier
    * @example "discord", "viewer", "telegram"
@@ -211,6 +230,10 @@ export type GatewayToolExecutionContext = {
   /** Parent gateway tool when execution is nested (for example inside code_act). */
   parentToolName?: string;
   backgroundTasks?: BackgroundTaskRegistry;
+  /** Host-derived channel authority detached at ingress; read tools reuse it without re-querying. */
+  channelGrantSnapshot?: Readonly<Record<string, readonly string[]>>;
+  /** Member reads and bounded transport must never fall back to the live owner grant. */
+  memberScopeRequired?: boolean;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
@@ -715,6 +738,23 @@ export interface MemberPrincipalInput {
 
 export type MemberListInput = Record<string, never>;
 
+export type MemberScopeInput =
+  | { kind: 'source'; connector: string; channel_id: string }
+  | {
+      kind: 'memory';
+      scope_kind: 'project' | 'channel' | 'global';
+      scope_id: string;
+    };
+
+export interface MemberScopeMutationInput {
+  principal_id: string;
+  scope: MemberScopeInput;
+}
+
+export interface MemberScopeListInput {
+  principal_id: string;
+}
+
 /**
  * Union type for all MCP tool inputs
  */
@@ -737,6 +777,8 @@ export type GatewayToolInput =
   | MemberRegisterInput
   | MemberPrincipalInput
   | MemberListInput
+  | MemberScopeMutationInput
+  | MemberScopeListInput
   | TemporalReconcileToolInput
   | ExternalBindingToolInput
   | ExternalLifecycleReconcileToolInput;
@@ -791,6 +833,9 @@ export type GatewayToolName =
   | 'member_suspend'
   | 'member_offboard'
   | 'member_list'
+  | 'member_scope_grant'
+  | 'member_scope_revoke'
+  | 'member_scope_list'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI
@@ -973,6 +1018,10 @@ export interface AgentLoopOptions {
   freshSessionOwnerReportHistoryPrompt?: () => string;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
+  /** One host-derived, detached authority snapshot for the admitted member turn. */
+  memberEffectiveScope?: MemberEffectiveScope;
+  /** Fail-closed marker carried independently from the member snapshot itself. */
+  memberScopeRequired?: boolean;
   /** User identifier for the frontdoor message source */
   userId?: string;
   /** Maximum number of conversation turns (default: 10) */

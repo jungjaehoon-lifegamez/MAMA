@@ -8,7 +8,7 @@ import {
   resolveTelegramPrincipal,
 } from '../../src/gateways/principal.js';
 
-describe('Gateway principal resolution', () => {
+describe('Story TG-01/TG-04: gateway principal resolution', () => {
   describe('PrincipalContext contract', () => {
     it('accepts a member class and keeps principalId optional through freezing', () => {
       const memberClass: PrincipalClass = 'member';
@@ -203,7 +203,7 @@ describe('Gateway principal resolution', () => {
     });
   });
 
-  describe('overlayMemberPrincipal()', () => {
+  describe('Phase 2b Task 3 AC: overlay active members and verified owners without widening', () => {
     it('TG-04 replaces an external Telegram principal with a frozen active member without changing its public lane', () => {
       const external = resolveTelegramPrincipal({
         userId: '1002',
@@ -231,7 +231,7 @@ describe('Gateway principal resolution', () => {
     });
 
     it.each(['slack', 'discord'] as const)(
-      'keeps the exact Phase-1 divert lane for an active %s member',
+      'admits an active %s member to the public lane',
       (connector) => {
         const external = resolveConnectorPrincipal({
           connector,
@@ -249,13 +249,42 @@ describe('Gateway principal resolution', () => {
 
         expect(member.class).toBe('member');
         expect(member.principalId).toBe(`${connector}-member-principal`);
-        expect(member.lane).toBe(external.lane);
-        expect(member.lane).toBe('divert');
+        expect(external.lane).toBe('divert');
+        expect(member.lane).toBe('public');
         expect(Object.isFrozen(member)).toBe(true);
       }
     );
 
-    it('returns an owner unchanged regardless of the registry row', () => {
+    it('TG-04 attaches an active owner registry ID only to an already verified owner', () => {
+      const owner = resolveTelegramPrincipal({
+        userId: 'owner-user',
+        chatId: 'owner-user',
+        chatType: 'private',
+        allowedChats: new Set(['owner-user']),
+        ownerUserIds: new Set(['owner-user']),
+      });
+      const external = resolveTelegramPrincipal({
+        userId: 'external-user',
+        chatId: 'owner-user',
+        chatType: 'private',
+        allowedChats: new Set(['owner-user']),
+        ownerUserIds: new Set(['owner-user']),
+      });
+      const ownerRow = {
+        principalId: 'registry-owner',
+        kind: 'owner' as const,
+        status: 'active',
+      };
+
+      expect(overlayMemberPrincipal(owner, ownerRow)).toEqual({
+        ...owner,
+        principalId: 'registry-owner',
+      });
+      expect(overlayMemberPrincipal(external, ownerRow)).toBe(external);
+      expect(overlayMemberPrincipal(owner, { ...ownerRow, status: 'suspended' })).toBe(owner);
+    });
+
+    it('returns an owner unchanged for a member registry row', () => {
       const owner = resolveConnectorPrincipal({
         connector: 'slack',
         namespace: 'team-a',

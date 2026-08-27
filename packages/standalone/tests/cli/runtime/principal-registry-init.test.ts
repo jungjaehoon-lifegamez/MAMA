@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MAMAConfig } from '../../../src/cli/config/types.js';
+import type { AgentLoopOptions } from '../../../src/agent/types.js';
 
 const networkClients = vi.hoisted(() => ({
   discordLogin: vi.fn().mockResolvedValue('synthetic-token'),
@@ -91,9 +92,16 @@ import { NodeSQLiteAdapter } from '../../../../mama-core/src/db-adapter/node-sql
 import type { DatabaseAdapter as CoreDatabaseAdapter } from '../../../../mama-core/src/db-manager.js';
 import { createPrincipalRepository } from '../../../../mama-core/src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../../../mama-core/src/test-utils.js';
+import { createRuntimeMessageRouter } from '../../../src/cli/commands/start.js';
 import { initGateways, type GatewayInitResult } from '../../../src/cli/runtime/gateway-init.js';
 import { resetRoleManager } from '../../../src/agent/role-manager.js';
-import { DiscordGateway, SlackGateway, TelegramGateway } from '../../../src/gateways/index.js';
+import { createMockMamaApi } from '../../../src/gateways/context-injector.js';
+import {
+  DiscordGateway,
+  SessionStore,
+  SlackGateway,
+  TelegramGateway,
+} from '../../../src/gateways/index.js';
 
 describe('Principal registry startup wiring', () => {
   const config = {
@@ -123,7 +131,7 @@ describe('Principal registry startup wiring', () => {
     const dbPath = join(tempDir, 'core.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 64);
+    applyMigrationsThrough(migrationDb, 65);
     migrationDb.close();
 
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as CoreDatabaseAdapter;
@@ -137,6 +145,7 @@ describe('Principal registry startup wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRoleManager();
+    adapter.prepare('DELETE FROM principal_scope_grants').run();
     adapter.prepare('DELETE FROM external_identities').run();
     adapter.prepare('DELETE FROM principals').run();
   });
@@ -201,6 +210,77 @@ describe('Principal registry startup wiring', () => {
       expect(networkClients.telegramStart).toHaveBeenCalledOnce();
     } finally {
       await stopGateways(result);
+    }
+  });
+
+  it('builds the production MessageRouter with one live real-repository member snapshot', async () => {
+    const repository = createPrincipalRepository(adapter);
+    expect(
+      repository.ensureOwner({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: 'owner-synthetic',
+        now: 100,
+      })
+    ).toBe('created');
+    const owner = repository.resolveByExternal('telegram', 'global', 'owner-synthetic');
+    const memberPrincipalId = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'global',
+      externalId: 'member-synthetic',
+      now: 101,
+    });
+    expect(owner?.principalId).toBeDefined();
+    repository.grantScope({
+      targetPrincipalId: memberPrincipalId,
+      ownerPrincipalId: owner?.principalId ?? '',
+      scope: { kind: 'source', connector: 'slack', channelId: 'shared' },
+      now: 102,
+    });
+    const configuredGrant = vi.fn(() => ({ slack: ['shared', 'sibling'] }));
+    const routerDb = new Database(':memory:');
+    const sessionStore = new SessionStore(routerDb as never);
+    const runOptions: AgentLoopOptions[] = [];
+    const messageRouter = createRuntimeMessageRouter({
+      sessionStore,
+      agentLoopClient: {
+        childRuntimeToolCapable: false,
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: 'member response' };
+        }),
+      },
+      mamaApiClient: createMockMamaApi([]),
+      config: { backend: 'codex' },
+      memberGrantReader: repository,
+      configuredGrant,
+    });
+
+    try {
+      await messageRouter.process({
+        source: 'telegram',
+        channelId: 'member-dm',
+        userId: 'member-synthetic',
+        text: 'member turn',
+        principal: {
+          class: 'member',
+          lane: 'public',
+          canonicalId: 'telegram:global:member-synthetic',
+          principalId: memberPrincipalId,
+          consoleEligible: false,
+        },
+      });
+
+      expect(configuredGrant).toHaveBeenCalledOnce();
+      expect(runOptions[0]?.memberEffectiveScope).toMatchObject({
+        channelGrant: {
+          slack: ['shared'],
+          telegram: ['member-dm'],
+        },
+        memoryScopes: [{ kind: 'user', id: memberPrincipalId }],
+      });
+    } finally {
+      sessionStore.close();
     }
   });
 

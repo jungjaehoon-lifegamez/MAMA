@@ -217,6 +217,9 @@ export interface IModelRunner {
   /** Read-only durable-session policy preflight. Codex uses this to rotate before a request. */
   getSessionPolicyStatus?(options: PromptOptions): SessionPolicyStatus;
 
+  /** Retire one exact routed backend session before replacing its authority policy. */
+  resetSession?(sessionId?: string): void | Promise<void>;
+
   /** Set the session/channel ID */
   setSessionId(id: string): void;
 

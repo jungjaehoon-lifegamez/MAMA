@@ -7,6 +7,8 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   'member_register',
   'member_suspend',
   'member_offboard',
+  'member_scope_grant',
+  'member_scope_revoke',
   'console_brief_update',
   'task_create',
   'task_update',

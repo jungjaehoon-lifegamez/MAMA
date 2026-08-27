@@ -30,7 +30,7 @@ import os from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { EventEmitter } from 'events';
-import { HostToolTerminalError } from './model-runner.js';
+import { HostToolTerminalError, type SessionPolicyStatus } from './model-runner.js';
 import {
   ClaudeToolStreamProtocolError,
   McpCompletedMutationInterruptedError,
@@ -89,6 +89,8 @@ const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF
 
 export interface PersistentProcessOptions {
   sessionId: string;
+  /** Host-computed authority fingerprint bound to this process generation. */
+  policyFingerprint?: string;
   model?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
@@ -1179,7 +1181,12 @@ export function formatClaudeArgsForLog(args: readonly string[]): string[] {
 export class PersistentProcessPool {
   private processes: Map<
     string,
-    { process: PersistentClaudeProcess; lastUsedAt: number; pendingToolUseSince?: number }
+    {
+      process: PersistentClaudeProcess;
+      lastUsedAt: number;
+      pendingToolUseSince?: number;
+      policyFingerprint?: string;
+    }
   > = new Map();
   private defaultOptions: Partial<PersistentProcessOptions>;
   private idleTimeoutMs: number;
@@ -1327,7 +1334,11 @@ export class PersistentProcessPool {
       });
       createdProcess.on('idle', touchIfCurrent);
 
-      this.processes.set(channelKey, { process: createdProcess, lastUsedAt: now });
+      this.processes.set(channelKey, {
+        process: createdProcess,
+        lastUsedAt: now,
+        policyFingerprint: mergedOptions.policyFingerprint,
+      });
       await createdProcess.start();
       created = true;
     } else if (entry) {
@@ -1393,6 +1404,17 @@ export class PersistentProcessPool {
       entry.process.stop();
       this.processes.delete(channelKey);
     }
+  }
+
+  getSessionPolicyStatus(
+    channelKey: string,
+    policyFingerprint: string | undefined
+  ): SessionPolicyStatus {
+    const entry = this.processes.get(channelKey);
+    if (!entry?.process.isAlive()) {
+      return 'missing';
+    }
+    return entry.policyFingerprint === policyFingerprint ? 'compatible' : 'mismatch';
   }
 
   /**

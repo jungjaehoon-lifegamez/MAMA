@@ -8,7 +8,7 @@
  */
 
 import type { GatewayToolName } from './types.js';
-import type { HostToolDefinition } from './model-runner.js';
+import type { HostToolDefinition, HostToolJsonValue } from './model-runner.js';
 import { minimatch } from 'minimatch';
 import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../connectors/private-connector-policy.js';
 import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from './context-compile-contract.js';
@@ -182,6 +182,62 @@ register({
   category: 'os_monitoring',
   params: 'no params',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+});
+const memberScopeSchema: HostToolJsonValue = {
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        kind: { const: 'source' },
+        connector: { type: 'string' },
+        channel_id: { type: 'string' },
+      },
+      required: ['kind', 'connector', 'channel_id'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: {
+        kind: { const: 'memory' },
+        scope_kind: { enum: ['project', 'channel', 'global'] },
+        scope_id: { type: 'string' },
+      },
+      required: ['kind', 'scope_kind', 'scope_id'],
+      additionalProperties: false,
+    },
+  ],
+};
+for (const name of ['member_scope_grant', 'member_scope_revoke'] as const) {
+  register({
+    name,
+    description:
+      name === 'member_scope_grant'
+        ? 'Grant one exact shared source or memory scope to an active member.'
+        : 'Revoke one exact shared source or memory scope from an active member.',
+    category: 'os_monitoring',
+    params: 'principal_id, scope',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        principal_id: { type: 'string' },
+        scope: memberScopeSchema,
+      },
+      required: ['principal_id', 'scope'],
+      additionalProperties: false,
+    },
+  });
+}
+register({
+  name: 'member_scope_list',
+  description: 'List canonical active scope grants for one member principal.',
+  category: 'os_monitoring',
+  params: 'principal_id',
+  inputSchema: {
+    type: 'object',
+    properties: { principal_id: { type: 'string' } },
+    required: ['principal_id'],
+    additionalProperties: false,
+  },
 });
 register({
   name: 'workorder_request',

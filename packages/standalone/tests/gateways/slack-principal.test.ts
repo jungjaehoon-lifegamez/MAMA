@@ -200,8 +200,14 @@ describe('Slack ingress principal admission', () => {
     expect(principalResolver).not.toHaveBeenCalled();
   });
 
-  it('overlays an active member with the real team namespace while preserving divert admission', async () => {
-    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+  it('admits an active member with the real team namespace to the public lane', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
     const principalResolver = vi.fn().mockReturnValue({
       principalId: 'slack-member-principal',
       kind: 'member',
@@ -220,7 +226,14 @@ describe('Slack ingress principal admission', () => {
     await deliver('message', makeEvent({ user: 'member-user', ts: '1000.0008' }));
 
     expect(principalResolver).toHaveBeenCalledWith('slack', 'team-principal', 'member-user');
-    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
+    expect(turnProcessor.processTurn).toHaveBeenCalledTimes(1);
+    expect(routed[0]?.principal).toEqual({
+      class: 'member',
+      lane: 'public',
+      canonicalId: 'slack:team-principal:member-user',
+      principalId: 'slack-member-principal',
+      consoleEligible: false,
+    });
   });
 
   it('processes an app mention once when the unmentioned message event arrives first', async () => {

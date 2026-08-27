@@ -62,8 +62,10 @@ import type {
   ExternalBindingToolInput,
   ExternalLifecycleReconcileToolInput,
   PrincipalRepository,
+  MemberScopeInput,
   WorkOrderRequestOrigin,
 } from './types.js';
+import type { PrincipalScopeGrantRef } from '@jungjaehoon/mama-core';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
 import { extractAttachmentText } from './attachment-text-extractor.js';
@@ -230,7 +232,7 @@ let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
 type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
 
 type GatewayExecutionContext = GatewayToolExecutionContext;
-type ChannelGrantSnapshot = Record<string, readonly string[]>;
+type ChannelGrantSnapshot = Readonly<Record<string, readonly string[]>>;
 type GatewayContextSnapshot = {
   agentId: string;
   source: string;
@@ -258,6 +260,8 @@ type ActiveGatewayExecutionContext = {
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** One live grant read shared by every read-authority check in this gateway call. */
   channelGrantSnapshot?: ChannelGrantSnapshot;
+  /** Fail closed instead of falling back to owner/global grant authority. */
+  memberScopeRequired?: boolean;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
@@ -388,6 +392,9 @@ const OWNER_CONSOLE_MEMBER_TOOLS = new Set([
   'member_suspend',
   'member_offboard',
   'member_list',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'member_scope_list',
 ]);
 
 class ContextPacketProvenanceError extends Error {}
@@ -406,6 +413,64 @@ function stringField(record: Record<string, unknown>, field: string): string | u
 function numberField(record: Record<string, unknown>, field: string): number | undefined {
   const value = record[field];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function memberScopeRef(input: MemberScopeInput): PrincipalScopeGrantRef {
+  if (input.kind === 'source') {
+    return { kind: 'source', connector: input.connector, channelId: input.channel_id };
+  }
+  return {
+    kind: 'memory',
+    scopeKind: input.scope_kind,
+    scopeId: input.scope_id,
+  };
+}
+
+function hasExactFields(record: Record<string, unknown>, fields: readonly string[]): boolean {
+  const actual = Object.keys(record).sort();
+  const expected = [...fields].sort();
+  return (
+    actual.length === expected.length && actual.every((field, index) => field === expected[index])
+  );
+}
+
+function parseMemberScopeMutationInput(
+  input: unknown
+): { principalId: string; scope: MemberScopeInput } | null {
+  const record = asRecord(input);
+  if (!record || !hasExactFields(record, ['principal_id', 'scope'])) {
+    return null;
+  }
+  const principalId = record.principal_id;
+  const scope = asRecord(record.scope);
+  if (typeof principalId !== 'string' || principalId.trim().length === 0 || !scope) {
+    return null;
+  }
+  if (
+    scope.kind === 'source' &&
+    hasExactFields(scope, ['kind', 'connector', 'channel_id']) &&
+    typeof scope.connector === 'string' &&
+    typeof scope.channel_id === 'string'
+  ) {
+    return {
+      principalId,
+      scope: { kind: 'source', connector: scope.connector, channel_id: scope.channel_id },
+    };
+  }
+  if (
+    scope.kind === 'memory' &&
+    hasExactFields(scope, ['kind', 'scope_kind', 'scope_id']) &&
+    (scope.scope_kind === 'project' ||
+      scope.scope_kind === 'channel' ||
+      scope.scope_kind === 'global') &&
+    typeof scope.scope_id === 'string'
+  ) {
+    return {
+      principalId,
+      scope: { kind: 'memory', scope_kind: scope.scope_kind, scope_id: scope.scope_id },
+    };
+  }
+  return null;
 }
 
 function sanitizeRecallText(value: string | undefined): string | undefined {
@@ -753,6 +818,8 @@ export class GatewayToolExecutor {
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
+      channelGrantSnapshot: executionContext?.channelGrantSnapshot,
+      memberScopeRequired: executionContext?.memberScopeRequired,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
     };
   }
@@ -800,6 +867,8 @@ export class GatewayToolExecutor {
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - one snapshot belongs to one gateway call only.
       channelGrantSnapshot: active.channelGrantSnapshot,
+      // Never merged from fallback - this marker belongs to one admitted member run.
+      memberScopeRequired: active.memberScopeRequired,
       // Never merged from fallback - blocks are strictly per-call.
       disallowedGatewayTools: active.disallowedGatewayTools,
     };
@@ -1331,7 +1400,7 @@ export class GatewayToolExecutor {
         output_summary: ctx.envelope?.envelope_hash
           ? `envelope_hash=${ctx.envelope.envelope_hash}`
           : undefined,
-        error_message: errorMessage,
+        error_message: errorMessage ? gatewayFailureRef(errorMessage, false) : undefined,
         execution_status: errorMessage ? 'failed' : 'completed',
         trigger_reason: 'envelope_enforcer',
       });
@@ -1361,10 +1430,15 @@ export class GatewayToolExecutor {
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
-    const channelGrantSnapshot =
-      baseCtx.envelope && MIRROR_READABLE_TOOLS.has(toolName)
-        ? snapshotChannelGrant(this.channelGrantProvider)
-        : undefined;
+    const channelGrantSnapshot = baseCtx.envelope
+      ? MIRROR_READABLE_TOOLS.has(toolName)
+        ? baseCtx.memberScopeRequired
+          ? baseCtx.channelGrantSnapshot
+          : (baseCtx.channelGrantSnapshot ?? snapshotChannelGrant(this.channelGrantProvider))
+        : toolName === 'code_act'
+          ? baseCtx.channelGrantSnapshot
+          : undefined
+      : undefined;
     const ctx = { ...baseCtx, gatewayCallId, channelGrantSnapshot };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
     const computedScopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
@@ -1376,7 +1450,8 @@ export class GatewayToolExecutor {
         }
       : {
           ...computedScopeAudit,
-          requestedScopes: digestRequestedScopesForAudit(computedScopeAudit.requestedScopes),
+          requestedScopes: digestScopesForAudit(computedScopeAudit.requestedScopes),
+          envelopeScopesSnapshot: digestScopesForAudit(computedScopeAudit.envelopeScopesSnapshot),
         };
     if (ctx.temporalWorkContext && TEMPORAL_WRITE_TOOLS.has(toolName)) {
       await this.executionContextStorage.run(ctx, async () => {
@@ -2082,9 +2157,12 @@ export class GatewayToolExecutor {
         return;
       }
 
-      const errorMessage =
+      const rawErrorMessage =
         error instanceof Error ? error.message : error ? String(error) : getFailureMessage(result);
       const resultCode = result && 'code' in result ? String(result.code) : undefined;
+      const errorMessage = scopeAudit.mismatch
+        ? `scope_mismatch:${resultCode ?? 'denied'}`
+        : rawErrorMessage;
       const executionStatus = error || result?.success === false ? 'failed' : 'completed';
 
       logActivity(this.sessionsDb, {
@@ -2105,7 +2183,9 @@ export class GatewayToolExecutor {
         scopeMismatch: scopeAudit.mismatch,
         details: {
           source: ctx?.source ?? 'unknown',
-          channel_id: ctx?.channelId ?? 'unknown',
+          ...(scopeAudit.mismatch
+            ? { channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown') }
+            : { channel_id: ctx?.channelId ?? 'unknown' }),
           tool: toolName,
           gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),
@@ -2143,7 +2223,7 @@ export class GatewayToolExecutor {
         value: 1,
         labels: {
           source: ctx?.source ?? 'unknown',
-          channel_id: ctx?.channelId ?? 'unknown',
+          channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
           tool: toolName,
         },
       });
@@ -2155,7 +2235,7 @@ export class GatewayToolExecutor {
       securityLogger.warn('[envelope] scope mismatch', {
         envelope_hash: ctx?.envelope?.envelope_hash ?? null,
         source: ctx?.source ?? 'unknown',
-        channel_id: ctx?.channelId ?? 'unknown',
+        channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
         tool: toolName,
         ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
       });
@@ -2169,6 +2249,18 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     gatewayCallId: string
   ): Promise<GatewayToolResult> {
+    const activeState = this.getExecutionState();
+    if (
+      activeState.memberScopeRequired === true &&
+      activeState.channelGrantSnapshot === undefined &&
+      (MIRROR_READABLE_TOOLS.has(toolName) || toolName === 'code_act')
+    ) {
+      return {
+        success: false,
+        code: 'member_scope_missing',
+        error: 'Member read authority snapshot is unavailable.',
+      } as GatewayToolResult;
+    }
     this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
@@ -2849,6 +2941,69 @@ export class GatewayToolExecutor {
                 }),
           }));
           return { success: true, members };
+        }
+        case 'member_scope_grant':
+        case 'member_scope_revoke': {
+          const parsed = parseMemberScopeMutationInput(input);
+          if (!parsed) {
+            return {
+              success: false,
+              code: 'member_scope_input_invalid',
+              error: `${toolName} requires exactly one principal_id and one closed scope.`,
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const ownerPrincipalId = this.getExecutionState().agentContext?.principalId;
+          if (typeof ownerPrincipalId !== 'string' || ownerPrincipalId.trim().length === 0) {
+            return {
+              success: false,
+              code: 'owner_principal_required',
+              error: `${toolName} requires the active owner principal from host context.`,
+            };
+          }
+          const { principalId: targetPrincipalId, scope } = parsed;
+          const mutation = {
+            targetPrincipalId,
+            ownerPrincipalId,
+            scope: memberScopeRef(scope),
+            now: Date.now(),
+          };
+          const status =
+            toolName === 'member_scope_grant'
+              ? this.principalRepository.grantScope(mutation)
+              : this.principalRepository.revokeScope(mutation);
+          return { success: true, principalId: targetPrincipalId, status };
+        }
+        case 'member_scope_list': {
+          const listInput = asRecord(input);
+          const principalId = listInput?.principal_id;
+          if (
+            !listInput ||
+            !hasExactFields(listInput, ['principal_id']) ||
+            typeof principalId !== 'string' ||
+            principalId.trim().length === 0
+          ) {
+            return {
+              success: false,
+              code: 'member_scope_input_invalid',
+              error: 'member_scope_list requires exactly one principal_id.',
+            };
+          }
+          if (!this.principalRepository) {
+            return {
+              success: false,
+              code: 'principal_repository_unavailable',
+              error: 'Principal repository is not wired on this deployment.',
+            };
+          }
+          const grants = this.principalRepository.listActiveGrants(principalId);
+          return { success: true, principalId, grants };
         }
         case 'board_read': {
           if (!this.reportReader) {
@@ -4395,13 +4550,17 @@ export class GatewayToolExecutor {
       : undefined;
     const contextTier = projectedAgentContext?.tier;
     const tier = contextTier === undefined ? 1 : contextTier;
+    const codeActDisallowedTools =
+      projectedAgentContext?.roleName === 'owner_console'
+        ? state.disallowedGatewayTools
+        : [...new Set([...(state.disallowedGatewayTools ?? []), ...OWNER_CONSOLE_MEMBER_TOOLS])];
     let policy;
     try {
       policy = projectCodeActToolPolicy({
         tier,
         roleName: projectedAgentContext?.roleName,
         role: projectedAgentContext?.role,
-        disallowedTools: state.disallowedGatewayTools,
+        disallowedTools: codeActDisallowedTools,
         requestedAllowedTools: input.allowedTools,
         requestedBlockedTools: input.blockedTools,
         envelopeDestinationKinds:
@@ -4935,13 +5094,17 @@ function memoryScopeKey(scope: MemoryScope): string {
   return `${scope.kind}:${scope.id}`;
 }
 
-function digestRequestedScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
+function digestAuditIdentifier(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function digestScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
   if (!scopes) {
     return null;
   }
   return scopes.map((scope) => ({
     kind: scope.kind,
-    id: `sha256:${createHash('sha256').update(scope.id).digest('hex')}`,
+    id: digestAuditIdentifier(scope.id),
   }));
 }
 

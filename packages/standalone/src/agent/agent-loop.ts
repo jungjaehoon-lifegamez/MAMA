@@ -610,6 +610,8 @@ export function buildAgentToolExecutionContext(
     channelId: options.channelId,
     envelope: options.envelope,
     executionSurface: 'model_tool',
+    channelGrantSnapshot: options.memberEffectiveScope?.channelGrant,
+    memberScopeRequired: options.memberScopeRequired,
   };
   if (options.sourceTurnId !== undefined) {
     context.sourceTurnId = options.sourceTurnId;
@@ -867,7 +869,13 @@ export class AgentLoop {
           'codeAct',
           getCodeActInstructions(backend, policy.names) + '\n```typescript\n' + typeDefs + '\n```'
         );
-        promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
+        promptLayers.push({
+          name: 'codeAct',
+          content: codeActPrompt,
+          priority: 2,
+          protectedPrefix: GENERATED_CODE_ACT_START,
+          protectedSuffix: GENERATED_CODE_ACT_END,
+        });
       } else if (!this.useCodeAct && backend !== 'codex') {
         const gatewayToolsPrompt = getRunGatewayToolsPrompt(
           options.agentContext,
@@ -878,6 +886,8 @@ export class AgentLoop {
             name: 'gatewayTools',
             content: wrapGeneratedPromptSection('gatewayTools', gatewayToolsPrompt),
             priority: 2,
+            protectedPrefix: GENERATED_GATEWAY_TOOLS_START,
+            protectedSuffix: GENERATED_GATEWAY_TOOLS_END,
           });
         }
       }
@@ -1336,6 +1346,7 @@ export class AgentLoop {
     const isCodex = this.backend === 'codex';
     const isCline = this.backend === 'cline';
     const isDurableRuntime = isCodex || isCline;
+    const tracksSessionPolicy = isDurableRuntime || this.backend === 'claude';
     const clineRole = options?.agentContext?.role;
     const clineAllowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeAllowedTools
@@ -1597,7 +1608,19 @@ export class AgentLoop {
               ]
             : []),
           ...(gatewayToolsPrompt
-            ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+            ? [
+                {
+                  name: 'gatewayTools',
+                  content: gatewayToolsPrompt,
+                  priority: 2,
+                  protectedPrefix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
+                    ? GENERATED_CODE_ACT_START
+                    : GENERATED_GATEWAY_TOOLS_START,
+                  protectedSuffix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
+                    ? GENERATED_CODE_ACT_END
+                    : GENERATED_GATEWAY_TOOLS_END,
+                } as PromptLayer,
+              ]
             : []),
         ];
         const checkResult = monitor.check(runLayers);
@@ -1849,7 +1872,7 @@ export class AgentLoop {
         };
         try {
           const durablePolicyStatus =
-            isDurableRuntime && turn === 1 && shouldResume
+            tracksSessionPolicy && turn === 1 && shouldResume
               ? this.agent.getSessionPolicyStatus?.({
                   model: options?.model,
                   resumeSession: true,
@@ -1874,6 +1897,12 @@ export class AgentLoop {
               `[AgentLoop] ${this.backend} durable session ${durablePolicyStatus}; ` +
                 'opening the full policy before model request'
             );
+            if (this.backend === 'claude' && durablePolicyStatus === 'mismatch') {
+              if (!this.agent.resetSession) {
+                throw new Error('Claude model runner cannot retire a stale policy session');
+              }
+              await this.agent.resetSession(resolvedCliSessionId ?? undefined);
+            }
             const newSessionId = this.sessionPool.resetSession(channelKey);
             options?.onCliSessionReset?.(newSessionId);
             resolvedCliSessionId = newSessionId;

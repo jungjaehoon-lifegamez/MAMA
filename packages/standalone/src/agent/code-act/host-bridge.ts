@@ -213,6 +213,41 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
+    name: 'member_scope_grant',
+    description: 'Grant one exact shared source or memory scope to an active member',
+    params: [
+      { name: 'principal_id', type: 'string', required: true },
+      {
+        name: 'scope',
+        type: '{ kind: "source"; connector: string; channel_id: string } | { kind: "memory"; scope_kind: "project" | "channel" | "global"; scope_id: string }',
+        required: true,
+      },
+    ],
+    returnType: '{ principalId: string; status: "created" | "exists" }',
+    category: 'os',
+  },
+  {
+    name: 'member_scope_revoke',
+    description: 'Revoke one exact shared source or memory scope from an active member',
+    params: [
+      { name: 'principal_id', type: 'string', required: true },
+      {
+        name: 'scope',
+        type: '{ kind: "source"; connector: string; channel_id: string } | { kind: "memory"; scope_kind: "project" | "channel" | "global"; scope_id: string }',
+        required: true,
+      },
+    ],
+    returnType: '{ principalId: string; status: "revoked" | "absent" }',
+    category: 'os',
+  },
+  {
+    name: 'member_scope_list',
+    description: 'List canonical active grants for one member principal',
+    params: [{ name: 'principal_id', type: 'string', required: true }],
+    returnType: '{ principalId: string; grants: Array<object> }',
+    category: 'os',
+  },
+  {
     name: 'workorder_request',
     description: 'Enqueue a priority system workorder and acknowledge it without waiting',
     params: [
@@ -723,6 +758,7 @@ export const READ_ONLY_TOOLS = new Set([
   'board_read',
   'member_candidates',
   'member_list',
+  'member_scope_list',
   'audit_findings_read',
   'workorder_status',
   'Read',
@@ -784,6 +820,8 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'member_register',
   'member_suspend',
   'member_offboard',
+  'member_scope_grant',
+  'member_scope_revoke',
   'drive_upload',
 ]);
 

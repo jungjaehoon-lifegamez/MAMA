@@ -803,6 +803,37 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  it('TG-04 attaches the active registry ID to a verified owner before routing', async () => {
+    const principalResolver = vi.fn(() => ({
+      principalId: 'principal-live-owner',
+      kind: 'owner' as const,
+      status: 'active',
+    }));
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'], ownerUserIds: ['7777'] },
+      principalResolver,
+    });
+    await gateway.start();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 7777, 901),
+      text: 'manage member scope',
+    });
+
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(principalResolver).toHaveBeenCalledWith('telegram', 'global', '7777');
+    expect(routed.principal).toEqual({
+      class: 'owner',
+      lane: 'owner',
+      canonicalId: 'telegram:global:7777',
+      consoleEligible: true,
+      principalId: 'principal-live-owner',
+    });
+    await gateway.stop();
+  });
+
   it('preserves a photo caption as the routed message text', async () => {
     const gateway = await makeGateway();
 
