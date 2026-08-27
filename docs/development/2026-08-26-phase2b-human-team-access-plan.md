@@ -209,16 +209,19 @@ otherwise pull an out-of-scope source back into a granted result.
 ### TDD execution order
 
 The numbered sections describe dependency ownership, but strict implementation order is
-`Task 1 repository RED/GREEN → Task 2 resolver RED/GREEN → Task 0 full matrix RED → Tasks 3–4
-GREEN → Task 5 E2E`. Before Tasks 1–2 there is no real grant/revoke or effective-scope input seam,
-so forcing the full Task 0 matrix first would produce missing-method/import failures instead of
-observable authorization failures. Tasks 1 and 2 must each start with focused failing tests; the
-full matrix then uses those real inputs and remains RED for the still-missing ingress, session, and
-shared enforcement wiring.
+`Task 1 repository RED/GREEN → Task 2 resolver RED/GREEN → Task 3 ingress/session RED/GREEN → Task
+4 enforcement RED/GREEN → Tasks 0/5 full matrix`. Before Tasks 1–2 there is no real grant/revoke or
+effective-scope input seam, so forcing the full Task 0 matrix first would produce
+missing-method/import failures instead of observable authorization failures. A monolithic
+pre-wiring MessageRouter harness also duplicates more setup than the production change. Each Task
+3/4 boundary therefore receives its own focused failing acceptance cell immediately before its
+minimal implementation. Task 5 assembles those real paths into the full matrix and must be GREEN
+before release.
 
 ### Task 0: RED acceptance matrix
 
-Extend the P2a E2E matrix before production code:
+Track these cells as the Phase 2b acceptance contract. Add each executable cell before the
+production boundary that makes it GREEN, then assemble the full P2a E2E matrix in Task 5:
 
 - active member with zero shared/source grants sees only the verified current conversation and
   their own private scope;
