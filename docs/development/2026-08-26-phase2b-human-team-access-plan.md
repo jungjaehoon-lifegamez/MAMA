@@ -1,8 +1,8 @@
 # v1 Phase 2b: Human-Team Access Foundation
 
-**Status:** Reviewed plan; implementation waits for the current runtime-overhead canary gate
+**Status:** Reviewed plan; implementation starts after the completed v0.39.2 runtime-overhead release and monitor cleanup
 **Date:** 2026-08-26
-**Depends on:** completed runtime-overhead remediation canary; shipped Phase 1 sender boundary; shipped Phase 2a principal registry
+**Depends on:** completed v0.39.2 runtime-overhead release and monitor cleanup; shipped Phase 1 sender boundary; shipped Phase 2a principal registry
 **Product authority:** [MAMA One-Front Team Work Agent](2026-08-26-one-front-team-work-agent-design.md)
 
 ## Goal

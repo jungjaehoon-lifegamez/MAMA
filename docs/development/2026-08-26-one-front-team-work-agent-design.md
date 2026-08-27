@@ -330,8 +330,9 @@ internal execution mechanisms. This documentation alignment does not authorize t
 
 ### Current release line
 
-Finish the current runtime-overhead remediation release and real-event canary. Do not infer the v1
-team product from code/test evidence alone.
+The current runtime-overhead remediation release and real-event canary are complete; v1 Phase 2b
+is the current implementation slice and is not shipped yet. Do not infer the v1 team product from
+code/test evidence alone.
 
 ### v1 Phase 2b: access foundation
 
