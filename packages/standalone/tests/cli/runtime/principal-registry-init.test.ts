@@ -91,6 +91,7 @@ import { NodeSQLiteAdapter } from '../../../../mama-core/src/db-adapter/node-sql
 import type { DatabaseAdapter as CoreDatabaseAdapter } from '../../../../mama-core/src/db-manager.js';
 import { createPrincipalRepository } from '../../../../mama-core/src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../../../mama-core/src/test-utils.js';
+import { createRuntimeMemberScopeResolver } from '../../../src/cli/commands/start.js';
 import { initGateways, type GatewayInitResult } from '../../../src/cli/runtime/gateway-init.js';
 import { resetRoleManager } from '../../../src/agent/role-manager.js';
 import { DiscordGateway, SlackGateway, TelegramGateway } from '../../../src/gateways/index.js';
@@ -123,7 +124,7 @@ describe('Principal registry startup wiring', () => {
     const dbPath = join(tempDir, 'core.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 64);
+    applyMigrationsThrough(migrationDb, 65);
     migrationDb.close();
 
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as CoreDatabaseAdapter;
@@ -137,6 +138,7 @@ describe('Principal registry startup wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetRoleManager();
+    adapter.prepare('DELETE FROM principal_scope_grants').run();
     adapter.prepare('DELETE FROM external_identities').run();
     adapter.prepare('DELETE FROM principals').run();
   });
@@ -202,6 +204,52 @@ describe('Principal registry startup wiring', () => {
     } finally {
       await stopGateways(result);
     }
+  });
+
+  it('composes one live member-snapshot resolver over the real principal repository', () => {
+    const repository = createPrincipalRepository(adapter);
+    expect(
+      repository.ensureOwner({
+        connector: 'telegram',
+        namespace: 'global',
+        externalId: 'owner-synthetic',
+        now: 100,
+      })
+    ).toBe('created');
+    const owner = repository.resolveByExternal('telegram', 'global', 'owner-synthetic');
+    const memberPrincipalId = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'global',
+      externalId: 'member-synthetic',
+      now: 101,
+    });
+    expect(owner?.principalId).toBeDefined();
+    repository.grantScope({
+      targetPrincipalId: memberPrincipalId,
+      ownerPrincipalId: owner?.principalId ?? '',
+      scope: { kind: 'source', connector: 'slack', channelId: 'shared' },
+      now: 102,
+    });
+    const configuredGrant = vi.fn(() => ({ slack: ['shared', 'sibling'] }));
+    const resolveMemberScope = createRuntimeMemberScopeResolver(repository, configuredGrant);
+
+    const snapshot = resolveMemberScope({
+      principal: {
+        class: 'member',
+        lane: 'public',
+        canonicalId: 'telegram:global:member-synthetic',
+        principalId: memberPrincipalId,
+        consoleEligible: false,
+      },
+      current: { connector: 'telegram', lane: 'public', channelId: 'member-dm' },
+    });
+
+    expect(configuredGrant).toHaveBeenCalledOnce();
+    expect(snapshot.channelGrant).toEqual({
+      slack: ['shared'],
+      telegram: ['member-dm'],
+    });
+    expect(snapshot.memoryScopes).toEqual([{ kind: 'user', id: memberPrincipalId }]);
   });
 
   it('keeps Phase 1 real-gateway initialization unchanged without a resolver', async () => {

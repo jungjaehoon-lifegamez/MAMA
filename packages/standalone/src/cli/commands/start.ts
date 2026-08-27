@@ -35,6 +35,8 @@ import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-a
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
+import { resolveMemberEffectiveScope } from '../../gateways/member-effective-scope.js';
+import type { MemberScopeResolver } from '../../gateways/message-router.js';
 import { TelegramReportContextStore } from '../../gateways/telegram-report-context-store.js';
 import { OwnerReportInbox } from '../../gateways/owner-report-inbox.js';
 import {
@@ -104,6 +106,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
+import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import {
   ensureConsoleBrief,
@@ -174,6 +177,23 @@ export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrinc
 export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
   const repository = createCorePrincipalRegistry(adapter);
   return repository.resolveByExternal.bind(repository);
+}
+
+export function createRuntimeMemberScopeResolver(
+  repository: Pick<PrincipalRepository, 'listActiveGrants'>,
+  configuredGrant: () => ChannelGrant = liveBoundaryChannels
+): MemberScopeResolver {
+  return ({ principal, current }) => {
+    if (!principal.principalId) {
+      throw new Error('Active member principal is missing its durable principal id');
+    }
+    return resolveMemberEffectiveScope({
+      principal,
+      current,
+      configuredGrant: configuredGrant(),
+      principalGrants: repository.listActiveGrants(principal.principalId),
+    });
+  };
 }
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
@@ -1308,6 +1328,7 @@ export async function runAgentLoop(
     envelopeBootstrap.envelopeAuthority,
     {
       privateConnectorPolicy,
+      memberScopeResolver: createRuntimeMemberScopeResolver(principalRegistry),
       // TG-05 (design Decision 8): the V2 carry reader is NOT wired - the
       // boot-time migration owns last-full-report.json, and no component
       // reads or writes V2 afterward. Wiring FileReportCarryStore here would

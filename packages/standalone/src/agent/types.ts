@@ -11,6 +11,7 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type { MemberEffectiveScope } from '../gateways/member-effective-scope.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 import type { ContextCompileService } from './context-compile-service.js';
@@ -20,6 +21,7 @@ import type {
   BeginModelRunInput,
   ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
+  PrincipalScopeGrantRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
 
@@ -78,6 +80,7 @@ export interface PrincipalRepository {
     now: number;
   }): 'created' | 'exists' | 'conflict';
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
 
 // ============================================================================
@@ -973,6 +976,8 @@ export interface AgentLoopOptions {
   freshSessionOwnerReportHistoryPrompt?: () => string;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
+  /** One host-derived, detached authority snapshot for the admitted member turn. */
+  memberEffectiveScope?: MemberEffectiveScope;
   /** User identifier for the frontdoor message source */
   userId?: string;
   /** Maximum number of conversation turns (default: 10) */

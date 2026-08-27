@@ -19,6 +19,7 @@ import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type InjectedContext, type MamaApiClient } from './context-injector.js';
 import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
+import type { MemberEffectiveScope, MemberEffectiveScopeInput } from './member-effective-scope.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
@@ -94,7 +95,13 @@ export interface MessageRouterDependencies {
   reportCarry?: ReportCarryPort;
   /** TG-05/TG-06: delivered-pending owner reports consumed by verified owner turns. */
   ownerReportInbox?: OwnerReportInboxPort;
+  /** Resolve exactly one detached authority snapshot for each admitted member turn. */
+  memberScopeResolver?: MemberScopeResolver;
 }
+
+export type MemberScopeResolver = (
+  input: Pick<MemberEffectiveScopeInput, 'principal' | 'current'>
+) => MemberEffectiveScope;
 
 /**
  * The owner's message, as the cause of whatever the turn it started changes.
@@ -177,6 +184,7 @@ interface SessionPolicyFingerprintInput {
   rulesContent?: string;
   model: string;
   stableRolePolicy?: string;
+  memberEffectiveScopeFingerprint?: string;
 }
 
 export function hashSessionPolicyFingerprint({
@@ -185,6 +193,7 @@ export function hashSessionPolicyFingerprint({
   rulesContent,
   model,
   stableRolePolicy,
+  memberEffectiveScopeFingerprint,
 }: SessionPolicyFingerprintInput): string {
   const hash = createHash('sha256')
     .update(baseInstructions)
@@ -196,6 +205,9 @@ export function hashSessionPolicyFingerprint({
     .update(model);
   if (stableRolePolicy) {
     hash.update('\0').update(stableRolePolicy);
+  }
+  if (memberEffectiveScopeFingerprint) {
+    hash.update('\0member-effective-scope\0').update(memberEffectiveScopeFingerprint);
   }
   return hash.digest('hex');
 }
@@ -457,6 +469,7 @@ export class MessageRouter implements TurnProcessor {
   private readonly privateConnectorPolicy: PrivateConnectorPolicy;
   private readonly reportCarry?: ReportCarryPort;
   private readonly ownerReportInbox?: OwnerReportInboxPort;
+  private readonly memberScopeResolver?: MemberScopeResolver;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private gatewayRegistry: GatewayRegistry | null = null;
@@ -708,6 +721,7 @@ export class MessageRouter implements TurnProcessor {
       dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
     this.reportCarry = dependencies.reportCarry;
     this.ownerReportInbox = dependencies.ownerReportInbox;
+    this.memberScopeResolver = dependencies.memberScopeResolver;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -838,8 +852,9 @@ export class MessageRouter implements TurnProcessor {
       message.principal === undefined && HOST_MESSAGE_SOURCES.has(message.source)
         ? { ...message, principal: makeHostPrincipal(message.source) }
         : message;
-    const lane = admittedMessage.principal?.lane;
-    const principalClass = admittedMessage.principal?.class;
+    const admittedPrincipal = admittedMessage.principal;
+    const lane = admittedPrincipal?.lane;
+    const principalClass = admittedPrincipal?.class;
     const impossibleMemberOwnerLane = principalClass === 'member' && lane === 'owner';
     if ((lane !== 'owner' && lane !== 'public') || impossibleMemberOwnerLane) {
       logSecurityEventOnly({
@@ -878,6 +893,21 @@ export class MessageRouter implements TurnProcessor {
       };
     }
 
+    let memberEffectiveScope: MemberEffectiveScope | undefined;
+    if (admittedPrincipal?.class === 'member') {
+      if (!this.memberScopeResolver) {
+        throw new Error('Active member scope resolver is not configured');
+      }
+      memberEffectiveScope = this.memberScopeResolver({
+        principal: admittedPrincipal,
+        current: {
+          connector: admittedMessage.source,
+          lane: 'public',
+          channelId: admittedMessage.channelId,
+        },
+      });
+    }
+
     const channelKey = buildChannelKey(
       admittedMessage.source,
       laneChannelId(admittedMessage.channelId, lane)
@@ -895,10 +925,14 @@ export class MessageRouter implements TurnProcessor {
         processOptions?.onQueued?.();
         await previous.catch(() => {});
       }
-      return await this.processInChannel(admittedMessage, {
-        ...processOptions,
-        onQueued: previous ? undefined : processOptions?.onQueued,
-      });
+      return await this.processInChannel(
+        admittedMessage,
+        {
+          ...processOptions,
+          onQueued: previous ? undefined : processOptions?.onQueued,
+        },
+        memberEffectiveScope
+      );
     } finally {
       release();
       if (this.channelTails.get(channelKey) === currentTail) {
@@ -909,7 +943,8 @@ export class MessageRouter implements TurnProcessor {
 
   private async processInChannel(
     message: NormalizedMessage,
-    processOptions?: ProcessOptions
+    processOptions?: ProcessOptions,
+    memberEffectiveScope?: MemberEffectiveScope
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
     const lane = message.principal?.lane ?? 'owner';
@@ -1176,6 +1211,7 @@ This protects your credentials from being exposed in chat logs.`;
           ? hashSessionPolicyFingerprint({
               baseInstructions: PUBLIC_LANE_SYSTEM_PROMPT,
               model: roleModel,
+              memberEffectiveScopeFingerprint: memberEffectiveScope?.fingerprint,
             })
           : this.buildSessionPolicyFingerprint(agentContext, enhanced, roleModel, trelloAvailable);
 
@@ -1246,6 +1282,7 @@ This protects your credentials from being exposed in chat logs.`;
           systemPrompt: effectivePrompt,
           ...(ownerReportHistoryPrompt ? { ownerReportHistoryPrompt } : {}),
           sessionPolicyFingerprint,
+          ...(memberEffectiveScope ? { memberEffectiveScope } : {}),
           userId: message.userId,
           model: roleModel, // Role-specific model override
           maxTurns: roleMaxTurns, // Role-specific max turns
