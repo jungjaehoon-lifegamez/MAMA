@@ -41,6 +41,7 @@ import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import { hashSessionPolicyFingerprint } from '../../src/gateways/message-router.js';
 
 interface CanonicalDeclarationParam {
   name: string;
@@ -943,6 +944,109 @@ describe('AgentLoop', () => {
         );
       }
     );
+
+    it('replaces principal A policy with principal B once, then resumes stable B minimally', async () => {
+      const scopeA = Object.freeze({
+        channelGrant: Object.freeze({ telegram: Object.freeze(['member-channel']) }),
+        memoryScopes: Object.freeze([
+          Object.freeze({ kind: 'user' as const, id: 'principal-member-a' }),
+        ]),
+        fingerprint: 'a'.repeat(64),
+      });
+      const scopeB = Object.freeze({
+        channelGrant: Object.freeze({ telegram: Object.freeze(['member-channel']) }),
+        memoryScopes: Object.freeze([
+          Object.freeze({ kind: 'user' as const, id: 'principal-member-b' }),
+        ]),
+        fingerprint: 'b'.repeat(64),
+      });
+      const policyFor = (scopeFingerprint: string): string =>
+        hashSessionPolicyFingerprint({
+          baseInstructions: 'public member instructions',
+          model: 'gpt-5.4',
+          memberEffectiveScopeFingerprint: scopeFingerprint,
+        });
+      const policyA = policyFor(scopeA.fingerprint);
+      const policyB = policyFor(scopeB.fingerprint);
+      const delivered: Array<{
+        resume: boolean;
+        prompt: string;
+        fingerprint?: string;
+        sessionId?: string;
+      }> = [];
+      codexSessionPolicyStatusMock
+        .mockReturnValueOnce('compatible')
+        .mockReturnValueOnce('mismatch')
+        .mockReturnValue('compatible');
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          delivered.push({
+            resume: promptOptions?.resumeSession ?? true,
+            prompt: promptOptions?.systemPrompt ?? '',
+            fingerprint: promptOptions?.sessionPolicyFingerprint,
+            sessionId: promptOptions?.sessionId,
+          });
+          return {
+            response: 'policy-consistent member response',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: promptOptions?.sessionId ?? 'member-thread',
+          };
+        }
+      );
+      const freshMemberBPrompt = vi
+        .fn()
+        .mockResolvedValue(
+          'Public conversation so far:\nUser: member A visible turn\nAssistant: visible response'
+        );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const common = {
+        source: 'telegram',
+        channelId: 'member-channel',
+        agentContext: createCodexContext(),
+        resumeSession: true,
+      } as const;
+
+      await agentLoop.run('member A turn', {
+        ...common,
+        systemPrompt: 'member A minimal continuation',
+        sessionPolicyFingerprint: policyA,
+        memberEffectiveScope: scopeA,
+      });
+      await agentLoop.run('member B first turn', {
+        ...common,
+        systemPrompt: 'stale member A continuation must not survive',
+        sessionPolicyFingerprint: policyB,
+        memberEffectiveScope: scopeB,
+        freshSessionSystemPrompt: freshMemberBPrompt,
+      });
+      await agentLoop.run('member B unchanged turn', {
+        ...common,
+        systemPrompt: 'member B minimal continuation',
+        sessionPolicyFingerprint: policyB,
+        memberEffectiveScope: scopeB,
+        freshSessionSystemPrompt: freshMemberBPrompt,
+      });
+
+      expect(policyA).not.toBe(policyB);
+      expect(delivered).toHaveLength(3);
+      expect(delivered[0]).toMatchObject({ resume: true, fingerprint: policyA });
+      expect(delivered[1]).toMatchObject({ resume: false, fingerprint: policyB });
+      expect(delivered[1]?.prompt).toContain('member A visible turn');
+      expect(delivered[1]?.prompt).not.toContain('stale member A continuation must not survive');
+      expect(delivered[1]?.sessionId).not.toBe(delivered[0]?.sessionId);
+      expect(delivered[2]).toMatchObject({ resume: true, fingerprint: policyB });
+      expect(delivered[2]?.prompt).toContain('member B minimal continuation');
+      expect(freshMemberBPrompt).toHaveBeenCalledOnce();
+      expect(codexSessionPolicyStatusMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ sessionPolicyFingerprint: policyB })
+      );
+    });
 
     it('removes disabled code_act guidance from resumed Claude prompts', async () => {
       let effectivePrompt = '';

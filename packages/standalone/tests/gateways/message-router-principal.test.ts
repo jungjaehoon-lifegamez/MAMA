@@ -195,10 +195,8 @@ describe('MessageRouter principal admission gate', () => {
       principal: activeMemberMessage().principal,
       current: { connector: 'telegram', lane: 'public', channelId: 'member-stable' },
     });
-    expect(runOptions.map((options) => options.memberEffectiveScope)).toEqual([
-      MEMBER_SCOPE,
-      MEMBER_SCOPE,
-    ]);
+    expect(runOptions[0]?.memberEffectiveScope).toBe(MEMBER_SCOPE);
+    expect(runOptions[1]?.memberEffectiveScope).toBe(MEMBER_SCOPE);
     expect(runOptions[0]?.sessionPolicyFingerprint).toBeDefined();
     expect(runOptions[1]?.sessionPolicyFingerprint).toBe(runOptions[0]?.sessionPolicyFingerprint);
   });
@@ -209,10 +207,10 @@ describe('MessageRouter principal admission gate', () => {
       fingerprint: 'b'.repeat(64),
     });
     const runOptions: AgentLoopOptions[] = [];
-    const memberScopeResolver = vi
-      .fn<() => MemberEffectiveScope>()
-      .mockReturnValueOnce(MEMBER_SCOPE)
-      .mockReturnValueOnce(changedScope);
+    const memberScopeResolver = vi.fn(
+      ({ principal }: { principal: NonNullable<NormalizedMessage['principal']> }) =>
+        principal.principalId === 'principal-member-a' ? MEMBER_SCOPE : changedScope
+    );
     const memberRouter = new MessageRouter(
       sessionStore,
       {
@@ -235,20 +233,43 @@ describe('MessageRouter principal admission gate', () => {
       )
     );
     await memberRouter.process(
-      activeMemberMessage({ channelId: 'member-rotation', text: 'before revoke' })
+      activeMemberMessage({
+        channelId: 'member-rotation',
+        userId: 'member-a',
+        text: 'member A visible turn',
+        principal: {
+          class: 'member',
+          lane: 'public',
+          canonicalId: 'telegram:global:member-a',
+          principalId: 'principal-member-a',
+          consoleEligible: false,
+        },
+      })
     );
-    await memberRouter.process(
-      activeMemberMessage({ channelId: 'member-rotation', text: 'after revoke' })
-    );
+    const memberBMessage = activeMemberMessage({
+      channelId: 'member-rotation',
+      userId: 'member-b',
+      text: 'member B turn',
+      principal: {
+        class: 'member',
+        lane: 'public',
+        canonicalId: 'telegram:global:member-b',
+        principalId: 'principal-member-b',
+        consoleEligible: false,
+      },
+    });
+    await memberRouter.process(memberBMessage);
+    await memberRouter.process({ ...memberBMessage, text: 'member B unchanged turn' });
 
-    expect(memberScopeResolver).toHaveBeenCalledTimes(2);
+    expect(memberScopeResolver).toHaveBeenCalledTimes(3);
     expect(runOptions[1]?.sessionPolicyFingerprint).not.toBe(
       runOptions[2]?.sessionPolicyFingerprint
     );
+    expect(runOptions[3]?.sessionPolicyFingerprint).toBe(runOptions[2]?.sessionPolicyFingerprint);
     expect(runOptions[2]?.memberEffectiveScope).toBe(changedScope);
     const rebuiltMemberPrompt = await runOptions[2]?.freshSessionSystemPrompt?.();
-    expect(rebuiltMemberPrompt).toContain('before revoke');
-    expect(rebuiltMemberPrompt).toContain('after revoke');
+    expect(rebuiltMemberPrompt).toContain('member A visible turn');
+    expect(rebuiltMemberPrompt).toContain('member B turn');
     expect(rebuiltMemberPrompt).not.toContain('owner private turn');
   });
 
@@ -271,6 +292,20 @@ describe('MessageRouter principal admission gate', () => {
     await expect(
       memberRouter.process(activeMemberMessage({ channelId: 'member-failure' }))
     ).rejects.toThrow('synthetic member scope failure');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('fails an active member turn closed when no snapshot resolver is configured', async () => {
+    const run = vi.fn().mockResolvedValue({ response: 'must not run' });
+    const memberRouter = new MessageRouter(
+      sessionStore,
+      { childRuntimeToolCapable: false, run },
+      createMockMamaApi([])
+    );
+
+    await expect(
+      memberRouter.process(activeMemberMessage({ channelId: 'member-missing-resolver' }))
+    ).rejects.toThrow('Active member scope resolver is not configured');
     expect(run).not.toHaveBeenCalled();
   });
 

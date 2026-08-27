@@ -21,7 +21,6 @@ import type {
   BeginModelRunInput,
   ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
-  PrincipalScopeGrantRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
 
@@ -80,7 +79,6 @@ export interface PrincipalRepository {
     now: number;
   }): 'created' | 'exists' | 'conflict';
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
-  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
 
 // ============================================================================

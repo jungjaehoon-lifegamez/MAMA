@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MAMAConfig } from '../../../src/cli/config/types.js';
+import type { AgentLoopOptions } from '../../../src/agent/types.js';
 
 const networkClients = vi.hoisted(() => ({
   discordLogin: vi.fn().mockResolvedValue('synthetic-token'),
@@ -91,10 +92,16 @@ import { NodeSQLiteAdapter } from '../../../../mama-core/src/db-adapter/node-sql
 import type { DatabaseAdapter as CoreDatabaseAdapter } from '../../../../mama-core/src/db-manager.js';
 import { createPrincipalRepository } from '../../../../mama-core/src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../../../mama-core/src/test-utils.js';
-import { createRuntimeMemberScopeResolver } from '../../../src/cli/commands/start.js';
+import { createRuntimeMessageRouter } from '../../../src/cli/commands/start.js';
 import { initGateways, type GatewayInitResult } from '../../../src/cli/runtime/gateway-init.js';
 import { resetRoleManager } from '../../../src/agent/role-manager.js';
-import { DiscordGateway, SlackGateway, TelegramGateway } from '../../../src/gateways/index.js';
+import { createMockMamaApi } from '../../../src/gateways/context-injector.js';
+import {
+  DiscordGateway,
+  SessionStore,
+  SlackGateway,
+  TelegramGateway,
+} from '../../../src/gateways/index.js';
 
 describe('Principal registry startup wiring', () => {
   const config = {
@@ -206,7 +213,7 @@ describe('Principal registry startup wiring', () => {
     }
   });
 
-  it('composes one live member-snapshot resolver over the real principal repository', () => {
+  it('builds the production MessageRouter with one live real-repository member snapshot', async () => {
     const repository = createPrincipalRepository(adapter);
     expect(
       repository.ensureOwner({
@@ -231,25 +238,50 @@ describe('Principal registry startup wiring', () => {
       now: 102,
     });
     const configuredGrant = vi.fn(() => ({ slack: ['shared', 'sibling'] }));
-    const resolveMemberScope = createRuntimeMemberScopeResolver(repository, configuredGrant);
-
-    const snapshot = resolveMemberScope({
-      principal: {
-        class: 'member',
-        lane: 'public',
-        canonicalId: 'telegram:global:member-synthetic',
-        principalId: memberPrincipalId,
-        consoleEligible: false,
+    const routerDb = new Database(':memory:');
+    const sessionStore = new SessionStore(routerDb as never);
+    const runOptions: AgentLoopOptions[] = [];
+    const messageRouter = createRuntimeMessageRouter({
+      sessionStore,
+      agentLoopClient: {
+        childRuntimeToolCapable: false,
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: 'member response' };
+        }),
       },
-      current: { connector: 'telegram', lane: 'public', channelId: 'member-dm' },
+      mamaApiClient: createMockMamaApi([]),
+      config: { backend: 'codex' },
+      memberGrantReader: repository,
+      configuredGrant,
     });
 
-    expect(configuredGrant).toHaveBeenCalledOnce();
-    expect(snapshot.channelGrant).toEqual({
-      slack: ['shared'],
-      telegram: ['member-dm'],
-    });
-    expect(snapshot.memoryScopes).toEqual([{ kind: 'user', id: memberPrincipalId }]);
+    try {
+      await messageRouter.process({
+        source: 'telegram',
+        channelId: 'member-dm',
+        userId: 'member-synthetic',
+        text: 'member turn',
+        principal: {
+          class: 'member',
+          lane: 'public',
+          canonicalId: 'telegram:global:member-synthetic',
+          principalId: memberPrincipalId,
+          consoleEligible: false,
+        },
+      });
+
+      expect(configuredGrant).toHaveBeenCalledOnce();
+      expect(runOptions[0]?.memberEffectiveScope).toMatchObject({
+        channelGrant: {
+          slack: ['shared'],
+          telegram: ['member-dm'],
+        },
+        memoryScopes: [{ kind: 'user', id: memberPrincipalId }],
+      });
+    } finally {
+      sessionStore.close();
+    }
   });
 
   it('keeps Phase 1 real-gateway initialization unchanged without a resolver', async () => {

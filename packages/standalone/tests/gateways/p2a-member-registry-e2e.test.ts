@@ -85,7 +85,7 @@ describe('P2a principal registry completion matrix', () => {
     const dbPath = join(tempDir, 'core.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 64);
+    applyMigrationsThrough(migrationDb, 65);
     migrationDb.close();
 
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as CoreDatabaseAdapter;
@@ -93,6 +93,7 @@ describe('P2a principal registry completion matrix', () => {
   });
 
   beforeEach(() => {
+    adapter.prepare('DELETE FROM principal_scope_grants').run();
     adapter.prepare('DELETE FROM external_identities').run();
     adapter.prepare('DELETE FROM principals').run();
     repository = createPrincipalRepository(adapter);
