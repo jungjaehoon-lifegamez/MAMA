@@ -348,6 +348,57 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
         return Object.freeze(scope);
       })(),
     },
+    {
+      name: 'Proxy-wrapped outer snapshot',
+      scope: new Proxy(MEMBER_SCOPE, {
+        get: (target, property, receiver) => Reflect.get(target, property, receiver),
+      }),
+    },
+    {
+      name: 'Proxy-wrapped channel grant',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        channelGrant: new Proxy(MEMBER_SCOPE.channelGrant, {
+          get: (target, property, receiver) => Reflect.get(target, property, receiver),
+        }),
+      }),
+    },
+    {
+      name: 'Proxy-wrapped channel array',
+      scope: (() => {
+        const channelGrant = Object.create(null) as Record<string, readonly string[]>;
+        channelGrant.telegram = new Proxy(MEMBER_SCOPE.channelGrant.telegram, {
+          get: (target, property, receiver) =>
+            property === 'includes' ? () => true : Reflect.get(target, property, receiver),
+        });
+        channelGrant.trello = MEMBER_SCOPE.channelGrant.trello;
+        Object.freeze(channelGrant);
+        return Object.freeze({ ...MEMBER_SCOPE, channelGrant });
+      })(),
+    },
+    {
+      name: 'Proxy-wrapped memoryScopes array',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        memoryScopes: new Proxy(MEMBER_SCOPE.memoryScopes, {
+          get: (target, property, receiver) =>
+            property === 'map'
+              ? () => [{ kind: 'global', id: 'owner-private' }]
+              : Reflect.get(target, property, receiver),
+        }),
+      }),
+    },
+    {
+      name: 'Proxy-wrapped memory scope record',
+      scope: (() => {
+        const projectScope = new Proxy(MEMBER_SCOPE.memoryScopes[0], {
+          get: (target, property, receiver) =>
+            property === 'id' ? 'owner-private' : Reflect.get(target, property, receiver),
+        });
+        const memoryScopes = Object.freeze([projectScope, MEMBER_SCOPE.memoryScopes[1]]);
+        return Object.freeze({ ...MEMBER_SCOPE, memoryScopes });
+      })(),
+    },
     { name: 'missing snapshot', scope: undefined },
   ] as const)('rejects a $name member snapshot before model execution', async ({ scope }) => {
     const db = new Database(':memory:');

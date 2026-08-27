@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { types as nodeUtilTypes } from 'node:util';
 
 import type { MemoryScopeRef, PrincipalScopeGrantRecord } from '@jungjaehoon/mama-core';
 import {
@@ -235,7 +236,7 @@ function exactOwnDataValues(
   value: object,
   expectedNames: readonly string[]
 ): Record<string, unknown> | null {
-  if (Object.getOwnPropertySymbols(value).length > 0) {
+  if (nodeUtilTypes.isProxy(value) || Object.getOwnPropertySymbols(value).length > 0) {
     return null;
   }
   const names = Object.getOwnPropertyNames(value);
@@ -262,6 +263,7 @@ function exactOwnDataValues(
 
 function exactFrozenArrayValues(value: unknown): unknown[] | null {
   if (
+    nodeUtilTypes.isProxy(value) ||
     !Array.isArray(value) ||
     Object.getPrototypeOf(value) !== Array.prototype ||
     !Object.isFrozen(value) ||
@@ -299,6 +301,7 @@ export function assertCanonicalMemberEffectiveScope(
   principalId: string
 ): asserts value is MemberEffectiveScope {
   if (
+    nodeUtilTypes.isProxy(value) ||
     !isRecord(value) ||
     Object.getPrototypeOf(value) !== Object.prototype ||
     !Object.isFrozen(value) ||
@@ -315,6 +318,7 @@ export function assertCanonicalMemberEffectiveScope(
   const memoryScopes = outer.memoryScopes;
   const fingerprint = outer.fingerprint;
   if (
+    nodeUtilTypes.isProxy(channelGrant) ||
     !isRecord(channelGrant) ||
     Object.getPrototypeOf(channelGrant) !== null ||
     !Object.isFrozen(channelGrant) ||
@@ -358,6 +362,7 @@ export function assertCanonicalMemberEffectiveScope(
   const copiedScopes: MemoryScopeRef[] = [];
   for (const candidate of memoryScopeValues) {
     if (
+      nodeUtilTypes.isProxy(candidate) ||
       !isRecord(candidate) ||
       Object.getPrototypeOf(candidate) !== Object.prototype ||
       !Object.isFrozen(candidate)
