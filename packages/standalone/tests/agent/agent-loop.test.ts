@@ -16,6 +16,7 @@ import {
 } from '../../src/agent/agent-loop.js';
 import { HostToolTerminalError, ModelRunnerError } from '../../src/agent/model-runner.js';
 import type { HostToolBridge, PromptOptions } from '../../src/agent/model-runner.js';
+import { PromptSizeMonitor } from '../../src/agent/prompt-size-monitor.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import {
   AgentError,
@@ -41,6 +42,7 @@ import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import { hashSessionPolicyFingerprint } from '../../src/gateways/message-router.js';
 
 interface CanonicalDeclarationParam {
   name: string;
@@ -134,13 +136,19 @@ function parseDeliveredCodeActDeclarations(systemPrompt: string): CanonicalDecla
 }
 
 const {
+  claudeResetSessionMock,
+  claudeSessionPolicyStatusMock,
   clineAdapterOptionsMock,
+  clineSessionPolicyStatusMock,
   codexRuntimeProcessMock,
   codexSessionPolicyStatusMock,
   laneManagerEnqueueWithSessionMock,
   sessionPoolInvalidateMock,
 } = vi.hoisted(() => ({
+  claudeResetSessionMock: vi.fn(),
+  claudeSessionPolicyStatusMock: vi.fn().mockReturnValue('compatible'),
   clineAdapterOptionsMock: vi.fn(),
+  clineSessionPolicyStatusMock: vi.fn().mockReturnValue('compatible'),
   codexRuntimeProcessMock: vi.fn(),
   codexSessionPolicyStatusMock: vi.fn().mockReturnValue('compatible'),
   laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
@@ -199,7 +207,10 @@ vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
     PersistentCLIAdapter: vi.fn().mockImplementation((options) => {
       persistentCLIAdapterOptionsMock(options);
       return {
+        backendType: 'claude',
         prompt: persistentPromptMock,
+        getSessionPolicyStatus: claudeSessionPolicyStatusMock,
+        resetSession: claudeResetSessionMock,
         setSystemPrompt: persistentSetSystemPromptMock,
         setSessionId: vi.fn(),
         close: vi.fn(),
@@ -215,6 +226,7 @@ vi.mock('../../src/agent/cline-cli-adapter.js', () => {
       return {
         backendType: 'cline',
         prompt: persistentPromptMock,
+        getSessionPolicyStatus: clineSessionPolicyStatusMock,
         setSystemPrompt: persistentSetSystemPromptMock,
         setSessionId: vi.fn(),
         isHealthy: vi.fn().mockReturnValue(true),
@@ -379,6 +391,9 @@ describe('AgentLoop', () => {
     gatewayExecutorExecuteMock.mockReset().mockResolvedValue({ success: true });
     codexRuntimeProcessMock.mockClear();
     codexSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
+    claudeSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
+    claudeResetSessionMock.mockReset();
+    clineSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
     persistentPromptMock.mockReset().mockResolvedValue({
       response: 'Mock response',
       usage: { input_tokens: 10, output_tokens: 5 },
@@ -938,9 +953,237 @@ describe('AgentLoop', () => {
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
         expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
         expect(effectivePrompt).not.toContain('**drive_download**');
+        expect(
+          effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
+        ).toHaveLength(1);
+        expect(
+          effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->/g) ?? []
+        ).toHaveLength(1);
+        expect(
+          new PromptSizeMonitor().check([
+            { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
+          ]).withinBudget
+        ).toBe(true);
         expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
           expectedDefinitions
         );
+      }
+    );
+
+    it('replaces principal A policy with principal B once, then resumes stable B minimally', async () => {
+      const scopeA = Object.freeze({
+        channelGrant: Object.freeze({ telegram: Object.freeze(['member-channel']) }),
+        memoryScopes: Object.freeze([
+          Object.freeze({ kind: 'user' as const, id: 'principal-member-a' }),
+        ]),
+        fingerprint: 'a'.repeat(64),
+      });
+      const scopeB = Object.freeze({
+        channelGrant: Object.freeze({ telegram: Object.freeze(['member-channel']) }),
+        memoryScopes: Object.freeze([
+          Object.freeze({ kind: 'user' as const, id: 'principal-member-b' }),
+        ]),
+        fingerprint: 'b'.repeat(64),
+      });
+      const policyFor = (scopeFingerprint: string): string =>
+        hashSessionPolicyFingerprint({
+          baseInstructions: 'public member instructions',
+          model: 'gpt-5.4',
+          memberEffectiveScopeFingerprint: scopeFingerprint,
+        });
+      const policyA = policyFor(scopeA.fingerprint);
+      const policyB = policyFor(scopeB.fingerprint);
+      const delivered: Array<{
+        resume: boolean;
+        prompt: string;
+        fingerprint?: string;
+        sessionId?: string;
+      }> = [];
+      codexSessionPolicyStatusMock
+        .mockReturnValueOnce('compatible')
+        .mockReturnValueOnce('mismatch')
+        .mockReturnValue('compatible');
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          delivered.push({
+            resume: promptOptions?.resumeSession ?? true,
+            prompt: promptOptions?.systemPrompt ?? '',
+            fingerprint: promptOptions?.sessionPolicyFingerprint,
+            sessionId: promptOptions?.sessionId,
+          });
+          return {
+            response: 'policy-consistent member response',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: promptOptions?.sessionId ?? 'member-thread',
+          };
+        }
+      );
+      const freshMemberBPrompt = vi
+        .fn()
+        .mockResolvedValue(
+          'Public conversation so far:\nUser: member A visible turn\nAssistant: visible response'
+        );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const common = {
+        source: 'telegram',
+        channelId: 'member-channel',
+        agentContext: createCodexContext(),
+        resumeSession: true,
+      } as const;
+
+      await agentLoop.run('member A turn', {
+        ...common,
+        systemPrompt: 'member A minimal continuation',
+        sessionPolicyFingerprint: policyA,
+        memberEffectiveScope: scopeA,
+      });
+      await agentLoop.run('member B first turn', {
+        ...common,
+        systemPrompt: 'stale member A continuation must not survive',
+        sessionPolicyFingerprint: policyB,
+        memberEffectiveScope: scopeB,
+        freshSessionSystemPrompt: freshMemberBPrompt,
+      });
+      await agentLoop.run('member B unchanged turn', {
+        ...common,
+        systemPrompt: 'member B minimal continuation',
+        sessionPolicyFingerprint: policyB,
+        memberEffectiveScope: scopeB,
+        freshSessionSystemPrompt: freshMemberBPrompt,
+      });
+
+      expect(policyA).not.toBe(policyB);
+      expect(delivered).toHaveLength(3);
+      expect(delivered[0]).toMatchObject({ resume: true, fingerprint: policyA });
+      expect(delivered[1]).toMatchObject({ resume: false, fingerprint: policyB });
+      expect(delivered[1]?.prompt).toContain('member A visible turn');
+      expect(delivered[1]?.prompt).not.toContain('stale member A continuation must not survive');
+      expect(delivered[1]?.sessionId).not.toBe(delivered[0]?.sessionId);
+      expect(delivered[2]).toMatchObject({ resume: true, fingerprint: policyB });
+      expect(delivered[2]?.prompt).toContain('member B minimal continuation');
+      expect(freshMemberBPrompt).toHaveBeenCalledOnce();
+      expect(codexSessionPolicyStatusMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ sessionPolicyFingerprint: policyB })
+      );
+    });
+
+    it.each([
+      {
+        backend: 'claude' as const,
+        policyStatus: claudeSessionPolicyStatusMock,
+        retiresClaudeProcess: true,
+      },
+      {
+        backend: 'codex' as const,
+        policyStatus: codexSessionPolicyStatusMock,
+        retiresClaudeProcess: false,
+      },
+      {
+        backend: 'cline' as const,
+        policyStatus: clineSessionPolicyStatusMock,
+        retiresClaudeProcess: false,
+      },
+    ])(
+      'applies grant/read/revoke policy once for the $backend backend, then resumes stably',
+      async ({ backend, policyStatus, retiresClaudeProcess }) => {
+        const grantedPolicy = 'grant-policy';
+        const revokedPolicy = 'revoked-policy';
+        const delivered: Array<{
+          resume: boolean;
+          prompt: string;
+          sessionId?: string;
+        }> = [];
+        let cliSessionId = `stale-${backend}-route`;
+        policyStatus
+          .mockReturnValueOnce('compatible')
+          .mockReturnValueOnce('mismatch')
+          .mockReturnValue('compatible');
+        persistentPromptMock.mockImplementation(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            delivered.push({
+              resume: promptOptions?.resumeSession ?? true,
+              prompt: promptOptions?.systemPrompt ?? '',
+              sessionId: promptOptions?.sessionId,
+            });
+            return {
+              response: 'policy-consistent Claude response',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: promptOptions?.sessionId ?? 'claude-route',
+            };
+          }
+        );
+        const freshRevokedPrompt = vi.fn().mockResolvedValue('full revoked member policy');
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend,
+            systemPrompt: 'base prompt',
+            ...(backend === 'cline' ? { model: 'deepseek/deepseek-v4-flash' } : {}),
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const common = {
+          source: 'telegram',
+          channelId: 'member-channel',
+          agentContext: createChatBotContext(),
+          resumeSession: true,
+        } as const;
+
+        await agentLoop.run('granted read', {
+          ...common,
+          cliSessionId,
+          systemPrompt: 'granted minimal continuation',
+          sessionPolicyFingerprint: grantedPolicy,
+        });
+        await agentLoop.run('revoked read', {
+          ...common,
+          cliSessionId,
+          systemPrompt: 'revoked minimal continuation',
+          sessionPolicyFingerprint: revokedPolicy,
+          freshSessionSystemPrompt: freshRevokedPrompt,
+          onCliSessionReset: (replacementSessionId) => {
+            cliSessionId = replacementSessionId;
+          },
+        });
+        await agentLoop.run('stable revoked read', {
+          ...common,
+          cliSessionId,
+          systemPrompt: 'stable revoked minimal continuation',
+          sessionPolicyFingerprint: revokedPolicy,
+          freshSessionSystemPrompt: freshRevokedPrompt,
+        });
+
+        if (retiresClaudeProcess) {
+          expect(claudeResetSessionMock).toHaveBeenCalledOnce();
+          expect(claudeResetSessionMock).toHaveBeenCalledWith('stale-claude-route');
+        } else {
+          expect(claudeResetSessionMock).not.toHaveBeenCalled();
+        }
+        expect(delivered).toEqual([
+          {
+            resume: true,
+            prompt: expect.stringContaining('granted minimal continuation'),
+            sessionId: `stale-${backend}-route`,
+          },
+          {
+            resume: false,
+            prompt: expect.stringContaining('full revoked member policy'),
+            sessionId: 'fresh-test-session',
+          },
+          {
+            resume: true,
+            prompt: expect.stringContaining('stable revoked minimal continuation'),
+            sessionId: 'fresh-test-session',
+          },
+        ]);
+        expect(freshRevokedPrompt).toHaveBeenCalledOnce();
       }
     );
 

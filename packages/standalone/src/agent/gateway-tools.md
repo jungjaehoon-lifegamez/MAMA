@@ -55,6 +55,9 @@ Call tools via JSON block:
 - **member_suspend**(principal_id) — Suspend a registered member principal. Owner principals cannot be suspended.
 - **member_offboard**(principal_id) — Offboard a registered member principal. Owner principals cannot be offboarded.
 - **member_list**(no params) — List registered member principals and their current statuses.
+- **member_scope_grant**(principal_id, scope) — Grant one exact shared source or memory scope to an active member.
+- **member_scope_revoke**(principal_id, scope) — Revoke one exact shared source or memory scope from an active member.
+- **member_scope_list**(principal_id) — List canonical active scope grants for one member principal.
 - **workorder_request**(kind (board|wiki|memory-curation)) — Enqueue a priority workorder (board refresh, wiki compile, or memory curation) for the system worker lane. Enqueue-and-ack ONLY: the run happens later on the operator lane - reply with a short ack, never wait for or fabricate its result.
 - **workorder_status**(no params) — Read per-kind workorder status: last run time/result, failed count, and the latest failure reason. The owner-visible surface for "did the system run / did anything fail" questions.
 - **audit_findings_read**(no params) — Read the latest deterministic system-audit findings and pass items (state file projection).

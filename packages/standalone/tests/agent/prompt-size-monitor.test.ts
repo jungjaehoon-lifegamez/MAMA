@@ -161,6 +161,49 @@ describe('PromptSizeMonitor', () => {
       expect(monitorResult.truncatedLayers).toContain('big-rule');
     });
 
+    it('preserves host-authored opening and closing markers during partial truncation', () => {
+      const startMarker = '<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->';
+      const endMarker = '<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->';
+      const generatedCatalog = [startMarker, 'x'.repeat(8000), endMarker].join('\n');
+      const layers: Array<PromptLayer & { protectedPrefix?: string }> = [
+        { name: 'core', content: 'c'.repeat(3000), priority: 1 },
+        {
+          name: 'gatewayTools',
+          content: generatedCatalog,
+          priority: 2,
+          protectedPrefix: startMarker,
+          protectedSuffix: endMarker,
+        },
+      ];
+
+      const { layers: result } = monitor.enforce(layers, 3000);
+      const gatewayTools = result.find((layer) => layer.name === 'gatewayTools');
+
+      expect(gatewayTools?.content).toContain('gatewayTools truncated');
+      expect(gatewayTools?.content.startsWith(startMarker)).toBe(true);
+      expect(gatewayTools?.content.endsWith(endMarker)).toBe(true);
+    });
+
+    it('fully removes a generated layer when its marker pair cannot fit the remaining budget', () => {
+      const startMarker = '<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->';
+      const endMarker = '<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->';
+      const layers: Array<PromptLayer & { protectedPrefix?: string }> = [
+        { name: 'core', content: 'c'.repeat(7450), priority: 1 },
+        {
+          name: 'gatewayTools',
+          content: [startMarker, 'x'.repeat(8000), endMarker].join('\n'),
+          priority: 2,
+          protectedPrefix: startMarker,
+          protectedSuffix: endMarker,
+        },
+      ];
+
+      const { layers: result, result: monitorResult } = monitor.enforce(layers, 3000);
+
+      expect(result.find((layer) => layer.name === 'gatewayTools')).toBeUndefined();
+      expect(monitorResult.withinBudget).toBe(true);
+    });
+
     it('should return correct truncatedLayers list', () => {
       // 5000+3000+3000+3000+5000 = 19000 chars → 7600 tokens (> 6250 truncate)
       const layers: PromptLayer[] = [

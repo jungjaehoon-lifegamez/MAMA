@@ -229,8 +229,14 @@ describe('Discord ingress principal admission', () => {
     expect(principalResolver).not.toHaveBeenCalled();
   });
 
-  it('overlays an active member with the guild namespace while preserving divert admission', async () => {
-    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+  it('admits an active member with the guild namespace to the public lane', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
     const principalResolver = vi.fn().mockReturnValue({
       principalId: 'discord-member-principal',
       kind: 'member',
@@ -242,12 +248,24 @@ describe('Discord ingress principal admission', () => {
     await deliver(message);
 
     expect(principalResolver).toHaveBeenCalledWith('discord', 'guild-principal', 'member-user');
-    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
-    expect(seams.downloadFile).not.toHaveBeenCalled();
+    expect(turnProcessor.processTurn).toHaveBeenCalledTimes(1);
+    expect(routed[0]?.principal).toMatchObject({
+      class: 'member',
+      lane: 'public',
+      canonicalId: 'discord:guild-principal:member-user',
+      principalId: 'discord-member-principal',
+    });
+    expect(seams.downloadFile).toHaveBeenCalledTimes(1);
   });
 
-  it('uses the direct namespace for a diverted member DM', async () => {
-    const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
+  it('uses the direct namespace for an admitted member DM', async () => {
+    const routed: NormalizedMessage[] = [];
+    const turnProcessor: TurnProcessor = {
+      processTurn: vi.fn((message) => {
+        routed.push(message);
+        return completed();
+      }),
+    };
     const principalResolver = vi.fn().mockReturnValue({
       principalId: 'discord-direct-member-principal',
       kind: 'member',
@@ -263,6 +281,12 @@ describe('Discord ingress principal admission', () => {
     await deliver(message);
 
     expect(principalResolver).toHaveBeenCalledWith('discord', 'direct', 'direct-member-user');
-    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
+    expect(turnProcessor.processTurn).toHaveBeenCalledTimes(1);
+    expect(routed[0]?.principal).toMatchObject({
+      class: 'member',
+      lane: 'public',
+      canonicalId: 'discord:direct:direct-member-user',
+      principalId: 'discord-direct-member-principal',
+    });
   });
 });

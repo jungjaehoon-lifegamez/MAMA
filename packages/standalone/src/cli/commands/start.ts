@@ -35,6 +35,15 @@ import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-a
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
+import { resolveMemberEffectiveScope } from '../../gateways/member-effective-scope.js';
+import type {
+  AgentLoopClient,
+  MemberScopeResolver,
+  MessageRouterDependencies,
+  ReactiveEnvelopeConfig,
+} from '../../gateways/message-router.js';
+import type { MamaApiClient } from '../../gateways/context-injector.js';
+import type { MessageRouterConfig } from '../../gateways/types.js';
 import { TelegramReportContextStore } from '../../gateways/telegram-report-context-store.js';
 import { OwnerReportInbox } from '../../gateways/owner-report-inbox.js';
 import {
@@ -101,9 +110,11 @@ import {
   beginModelRunInAdapter,
   commitModelRunInAdapter,
   failModelRunInAdapter,
+  type PrincipalScopeGrantRecord,
 } from '@jungjaehoon/mama-core';
 import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
+import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import {
   ensureConsoleBrief,
@@ -143,6 +154,7 @@ import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
 import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
 import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
+import type { EnvelopeAuthority } from '../../envelope/authority.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -162,7 +174,11 @@ const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   enabledNames: [],
 });
 
-type CorePrincipalRegistry = OwnerBackfillRegistry & PrincipalRepository;
+export interface MemberScopeGrantReader {
+  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
+}
+
+type CorePrincipalRegistry = OwnerBackfillRegistry & PrincipalRepository & MemberScopeGrantReader;
 
 export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrincipalRegistry {
   const { createPrincipalRepository } = mamaCore as typeof mamaCore & {
@@ -174,6 +190,53 @@ export function createCorePrincipalRegistry(adapter: DatabaseAdapter): CorePrinc
 export function createCorePrincipalResolver(adapter: DatabaseAdapter): PrincipalResolver {
   const repository = createCorePrincipalRegistry(adapter);
   return repository.resolveByExternal.bind(repository);
+}
+
+export function createRuntimeMemberScopeResolver(
+  repository: MemberScopeGrantReader,
+  configuredGrant: () => ChannelGrant = liveBoundaryChannels
+): MemberScopeResolver {
+  return ({ principal, current }) => {
+    if (!principal.principalId) {
+      throw new Error('Active member principal is missing its durable principal id');
+    }
+    return resolveMemberEffectiveScope({
+      principal,
+      current,
+      configuredGrant: configuredGrant(),
+      principalGrants: repository.listActiveGrants(principal.principalId),
+    });
+  };
+}
+
+export interface RuntimeMessageRouterInput {
+  sessionStore: SessionStore;
+  agentLoopClient: AgentLoopClient;
+  mamaApiClient: MamaApiClient;
+  config?: MessageRouterConfig;
+  envelopeConfig?: ReactiveEnvelopeConfig;
+  envelopeAuthority?: EnvelopeAuthority;
+  dependencies?: Omit<MessageRouterDependencies, 'memberScopeResolver'>;
+  memberGrantReader: MemberScopeGrantReader;
+  configuredGrant?: () => ChannelGrant;
+}
+
+export function createRuntimeMessageRouter(input: RuntimeMessageRouterInput): MessageRouter {
+  return new MessageRouter(
+    input.sessionStore,
+    input.agentLoopClient,
+    input.mamaApiClient,
+    input.config,
+    input.envelopeConfig,
+    input.envelopeAuthority,
+    {
+      ...input.dependencies,
+      memberScopeResolver: createRuntimeMemberScopeResolver(
+        input.memberGrantReader,
+        input.configuredGrant
+      ),
+    }
+  );
 }
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
@@ -1299,22 +1362,23 @@ export async function runAgentLoop(
 
   // ── Phase 4: Memory Agent + MessageRouter ─────────────────────────────────
 
-  const messageRouter = new MessageRouter(
+  const messageRouter = createRuntimeMessageRouter({
     sessionStore,
     agentLoopClient,
     mamaApiClient,
-    resolveMessageRouterConfig(config, runtimeBackend),
-    envelopeBootstrap.envelopeConfig,
-    envelopeBootstrap.envelopeAuthority,
-    {
+    config: resolveMessageRouterConfig(config, runtimeBackend),
+    envelopeConfig: envelopeBootstrap.envelopeConfig,
+    envelopeAuthority: envelopeBootstrap.envelopeAuthority,
+    memberGrantReader: principalRegistry,
+    dependencies: {
       privateConnectorPolicy,
       // TG-05 (design Decision 8): the V2 carry reader is NOT wired - the
       // boot-time migration owns last-full-report.json, and no component
       // reads or writes V2 afterward. Wiring FileReportCarryStore here would
       // couple two owners to one file behind an implicit construction order.
       ownerReportInbox: new OwnerReportInbox(reportContextStore),
-    }
-  );
+    },
+  });
   messageRouter.setSessionsDb(db);
 
   // validationService wired after creation (Phase 5 below)

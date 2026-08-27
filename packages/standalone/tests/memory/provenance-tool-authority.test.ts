@@ -202,6 +202,44 @@ describe('mama_provenance authority', () => {
     });
   });
 
+  it('TG-04 uses the detached member snapshot for provenance without a live owner-grant read', async () => {
+    resolveLive.mockClear();
+    resolveLive.mockResolvedValue({
+      memoryId: 'mem_1',
+      status: 'unresolved',
+      modelRunId: null,
+      contextPacketId: null,
+      events: [],
+      unresolved: [],
+      supports: [],
+      reason: 'no_event_refs',
+    });
+    const channelGrantProvider = vi.fn(() => ({ board: ['owner-live-board'] }));
+    const channelGrantSnapshot = Object.freeze({ board: Object.freeze(['member-board']) });
+
+    const result = await call(createExecutor(channelGrantProvider), {
+      agentContext: agentContext(2),
+      envelope: envelope(2, {
+        raw_connectors: ['board'],
+        memory_scopes: [{ kind: 'global', id: 'system' }],
+      }),
+      channelGrantSnapshot,
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(channelGrantProvider).not.toHaveBeenCalled();
+    expect(resolveLive).toHaveBeenCalledWith(
+      'mem_1',
+      expect.objectContaining({
+        scopes: [
+          { kind: 'global', id: 'system' },
+          { kind: 'channel', id: 'board:member-board' },
+        ],
+        channels: { board: ['member-board'] },
+      })
+    );
+  });
+
   it('requires a memory id rather than resolving an empty handle', async () => {
     resolveLive.mockClear();
     const result = await createExecutor().execute(

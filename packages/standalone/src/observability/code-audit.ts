@@ -103,6 +103,9 @@ const OWNER_MEMBER_ADMIN_TOOLS = [
   'member_suspend',
   'member_offboard',
   'member_list',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'member_scope_list',
 ] as const;
 
 function fileSize(path: string): number | null {
