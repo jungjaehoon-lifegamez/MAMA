@@ -10,7 +10,10 @@ import type {
 } from '../../src/agent/types.js';
 import { resetRoleManager } from '../../src/agent/role-manager.js';
 import { createMockMamaApi } from '../../src/gateways/context-injector.js';
-import type { MemberEffectiveScope } from '../../src/gateways/member-effective-scope.js';
+import {
+  resolveMemberEffectiveScope,
+  type MemberEffectiveScope,
+} from '../../src/gateways/member-effective-scope.js';
 import {
   MessageRouter,
   type AgentLoopClient,
@@ -21,16 +24,32 @@ import type { NormalizedMessage } from '../../src/gateways/types.js';
 import Database from '../../src/sqlite.js';
 import { makeAuthorityHarness, makeSignedEnvelope } from '../envelope/fixtures.js';
 
-const MEMBER_SCOPE: MemberEffectiveScope = Object.freeze({
-  channelGrant: Object.freeze({
-    telegram: Object.freeze(['member-channel']),
-    trello: Object.freeze(['team-board']),
-  }),
-  memoryScopes: Object.freeze([
-    Object.freeze({ kind: 'user' as const, id: 'principal-member' }),
-    Object.freeze({ kind: 'project' as const, id: 'project-team-alpha' }),
-  ]),
-  fingerprint: 'c'.repeat(64),
+const MEMBER_PRINCIPAL = Object.freeze({
+  class: 'member' as const,
+  lane: 'public' as const,
+  canonicalId: 'telegram:global:member-external-id',
+  principalId: 'principal-member',
+  consoleEligible: false,
+});
+
+const MEMBER_SCOPE: MemberEffectiveScope = resolveMemberEffectiveScope({
+  principal: MEMBER_PRINCIPAL,
+  current: { connector: 'telegram', lane: 'public', channelId: 'member-channel' },
+  configuredGrant: { trello: ['team-board'] },
+  principalGrants: [
+    {
+      targetPrincipalId: 'principal-member',
+      scope: { kind: 'source', connector: 'trello', channelId: 'team-board' },
+      grantedByPrincipalId: 'principal-owner',
+      createdAt: 1,
+    },
+    {
+      targetPrincipalId: 'principal-member',
+      scope: { kind: 'memory', scopeKind: 'project', scopeId: 'project-team-alpha' },
+      grantedByPrincipalId: 'principal-owner',
+      createdAt: 2,
+    },
+  ],
 });
 
 const MEMBER_READ_TOOLS = [
@@ -47,13 +66,7 @@ function memberMessage(): NormalizedMessage {
     channelId: 'member-channel',
     userId: 'member-external-id',
     text: 'summarize the granted project evidence',
-    principal: {
-      class: 'member',
-      lane: 'public',
-      canonicalId: 'telegram:global:member-external-id',
-      principalId: 'principal-member',
-      consoleEligible: false,
-    },
+    principal: MEMBER_PRINCIPAL,
   };
 }
 
@@ -118,6 +131,7 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
     expect(captured).toHaveLength(1);
     const options = captured[0]!;
     expect(options.memberEffectiveScope).toBe(MEMBER_SCOPE);
+    expect(options.memberScopeRequired).toBe(true);
     expect(options.agentContext).toMatchObject({
       roleName: 'public_lane',
       tier: 2,
@@ -137,8 +151,8 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
       scope: {
         raw_connectors: ['telegram', 'trello'],
         memory_scopes: [
-          { kind: 'user', id: 'principal-member' },
           { kind: 'project', id: 'project-team-alpha' },
+          { kind: 'user', id: 'principal-member' },
         ],
         project_refs: [{ kind: 'project', id: 'project-team-alpha' }],
         allowed_destinations: [{ kind: 'telegram', id: 'member-channel' }],
@@ -192,11 +206,82 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
     sessionStore.close();
   });
 
+  it.each([
+    {
+      name: 'forged fingerprint',
+      scope: Object.freeze({ ...MEMBER_SCOPE, fingerprint: 'f'.repeat(64) }),
+    },
+    {
+      name: 'non-frozen channel array',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        channelGrant: Object.freeze({
+          telegram: ['member-channel'],
+          trello: Object.freeze(['team-board']),
+        }),
+      }),
+    },
+    {
+      name: 'sparse channel array',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        channelGrant: Object.freeze({
+          telegram: Object.freeze(Object.assign(new Array<string>(1), {})),
+          trello: Object.freeze(['team-board']),
+        }),
+      }),
+    },
+    {
+      name: 'duplicate channel entry',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        channelGrant: Object.freeze({
+          telegram: Object.freeze(['member-channel', 'member-channel']),
+          trello: Object.freeze(['team-board']),
+        }),
+      }),
+    },
+    {
+      name: 'prototype-shaped channel grant',
+      scope: Object.freeze({
+        ...MEMBER_SCOPE,
+        channelGrant: Object.freeze(
+          Object.assign(Object.create({ drive: ['private-root'] }), {
+            telegram: Object.freeze(['member-channel']),
+            trello: Object.freeze(['team-board']),
+          })
+        ),
+      }),
+    },
+    { name: 'missing snapshot', scope: undefined },
+  ] as const)('rejects a $name member snapshot before model execution', async ({ scope }) => {
+    const db = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const { authority } = makeAuthorityHarness(db);
+    const run = vi.fn().mockResolvedValue({ response: 'must not run' });
+    const router = new MessageRouter(
+      sessionStore,
+      { childRuntimeToolCapable: false, run },
+      createMockMamaApi([]),
+      { backend: 'codex' },
+      reactiveConfig(),
+      authority,
+      { memberScopeResolver: () => scope as MemberEffectiveScope }
+    );
+
+    await expect(router.process(memberMessage())).rejects.toThrow(
+      'Member effective scope snapshot is empty or invalid'
+    );
+    expect(run).not.toHaveBeenCalled();
+    sessionStore.close();
+  });
+
   it('carries the exact member channel grant through AgentLoop execution context', () => {
     const context = buildAgentToolExecutionContext({
       source: 'telegram',
       channelId: 'member-channel',
       memberEffectiveScope: MEMBER_SCOPE,
+      memberScopeRequired: true,
       agentContext: {
         source: 'telegram',
         platform: 'telegram',
@@ -218,7 +303,72 @@ describe('Phase 2b Task 4 member enforcement snapshot', () => {
     });
 
     expect(context?.channelGrantSnapshot).toBe(MEMBER_SCOPE.channelGrant);
+    expect(context?.memberScopeRequired).toBe(true);
   });
+
+  it.each(['mama_search', 'code_act'] as const)(
+    'denies member-required %s when the snapshot is missing without reading the live provider',
+    async (toolName) => {
+      const api = memberReadApi();
+      const channelGrantProvider = vi.fn(() => ({ trello: ['owner-live-board'] }));
+      const executor = new GatewayToolExecutor({
+        mamaApi: api,
+        channelGrantProvider,
+        envelopeIssuanceMode: 'enabled',
+      });
+      const context: GatewayToolExecutionContext = {
+        agentId: 'member',
+        source: 'telegram',
+        channelId: 'member-channel',
+        agentContext: {
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'public_lane',
+          role: {
+            model: 'gpt-5.4',
+            maxTurns: 4,
+            allowedTools: MEMBER_READ_TOOLS,
+            allowedPaths: [],
+            systemControl: false,
+            sensitiveAccess: false,
+          },
+          session: { sessionId: 'member-session', startedAt: new Date() },
+          capabilities: MEMBER_READ_TOOLS,
+          limitations: [],
+          tier: 2,
+          backend: 'codex',
+        },
+        envelope: makeSignedEnvelope({
+          source: 'telegram',
+          channel_id: 'member-channel',
+          tier: 2,
+          scope: {
+            project_refs: [{ kind: 'project', id: 'project-team-alpha' }],
+            raw_connectors: ['telegram', 'trello'],
+            memory_scopes: [
+              { kind: 'user', id: 'principal-member' },
+              { kind: 'project', id: 'project-team-alpha' },
+            ],
+            allowed_destinations: [{ kind: 'telegram', id: 'member-channel' }],
+          },
+        }),
+        executionSurface: 'model_tool',
+        memberScopeRequired: true,
+      };
+
+      const result = await executor.execute(
+        toolName,
+        toolName === 'code_act'
+          ? { code: `mama_search({ query: 'must not inherit owner scope' })` }
+          : { query: 'must not inherit owner scope' },
+        context
+      );
+
+      expect(result).toMatchObject({ success: false, code: 'member_scope_missing' });
+      expect(channelGrantProvider).not.toHaveBeenCalled();
+      expect(api.suggest).not.toHaveBeenCalled();
+    }
+  );
 
   it('uses the member snapshot for a real read call without re-reading the live grant provider', async () => {
     const api = memberReadApi();

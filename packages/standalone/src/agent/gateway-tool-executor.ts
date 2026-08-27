@@ -258,6 +258,8 @@ type ActiveGatewayExecutionContext = {
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** One live grant read shared by every read-authority check in this gateway call. */
   channelGrantSnapshot?: ChannelGrantSnapshot;
+  /** Fail closed instead of falling back to owner/global grant authority. */
+  memberScopeRequired?: boolean;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
@@ -754,6 +756,7 @@ export class GatewayToolExecutor {
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
       channelGrantSnapshot: executionContext?.channelGrantSnapshot,
+      memberScopeRequired: executionContext?.memberScopeRequired,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
     };
   }
@@ -801,6 +804,8 @@ export class GatewayToolExecutor {
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - one snapshot belongs to one gateway call only.
       channelGrantSnapshot: active.channelGrantSnapshot,
+      // Never merged from fallback - this marker belongs to one admitted member run.
+      memberScopeRequired: active.memberScopeRequired,
       // Never merged from fallback - blocks are strictly per-call.
       disallowedGatewayTools: active.disallowedGatewayTools,
     };
@@ -1332,7 +1337,7 @@ export class GatewayToolExecutor {
         output_summary: ctx.envelope?.envelope_hash
           ? `envelope_hash=${ctx.envelope.envelope_hash}`
           : undefined,
-        error_message: errorMessage,
+        error_message: errorMessage ? gatewayFailureRef(errorMessage, false) : undefined,
         execution_status: errorMessage ? 'failed' : 'completed',
         trigger_reason: 'envelope_enforcer',
       });
@@ -1364,7 +1369,9 @@ export class GatewayToolExecutor {
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const channelGrantSnapshot = baseCtx.envelope
       ? MIRROR_READABLE_TOOLS.has(toolName)
-        ? (baseCtx.channelGrantSnapshot ?? snapshotChannelGrant(this.channelGrantProvider))
+        ? baseCtx.memberScopeRequired
+          ? baseCtx.channelGrantSnapshot
+          : (baseCtx.channelGrantSnapshot ?? snapshotChannelGrant(this.channelGrantProvider))
         : toolName === 'code_act'
           ? baseCtx.channelGrantSnapshot
           : undefined
@@ -1380,7 +1387,8 @@ export class GatewayToolExecutor {
         }
       : {
           ...computedScopeAudit,
-          requestedScopes: digestRequestedScopesForAudit(computedScopeAudit.requestedScopes),
+          requestedScopes: digestScopesForAudit(computedScopeAudit.requestedScopes),
+          envelopeScopesSnapshot: digestScopesForAudit(computedScopeAudit.envelopeScopesSnapshot),
         };
     if (ctx.temporalWorkContext && TEMPORAL_WRITE_TOOLS.has(toolName)) {
       await this.executionContextStorage.run(ctx, async () => {
@@ -2086,9 +2094,12 @@ export class GatewayToolExecutor {
         return;
       }
 
-      const errorMessage =
+      const rawErrorMessage =
         error instanceof Error ? error.message : error ? String(error) : getFailureMessage(result);
       const resultCode = result && 'code' in result ? String(result.code) : undefined;
+      const errorMessage = scopeAudit.mismatch
+        ? `scope_mismatch:${resultCode ?? 'denied'}`
+        : rawErrorMessage;
       const executionStatus = error || result?.success === false ? 'failed' : 'completed';
 
       logActivity(this.sessionsDb, {
@@ -2109,7 +2120,7 @@ export class GatewayToolExecutor {
         scopeMismatch: scopeAudit.mismatch,
         details: {
           source: ctx?.source ?? 'unknown',
-          channel_id: ctx?.channelId ?? 'unknown',
+          channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
           tool: toolName,
           gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),
@@ -2147,7 +2158,7 @@ export class GatewayToolExecutor {
         value: 1,
         labels: {
           source: ctx?.source ?? 'unknown',
-          channel_id: ctx?.channelId ?? 'unknown',
+          channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
           tool: toolName,
         },
       });
@@ -2159,7 +2170,7 @@ export class GatewayToolExecutor {
       securityLogger.warn('[envelope] scope mismatch', {
         envelope_hash: ctx?.envelope?.envelope_hash ?? null,
         source: ctx?.source ?? 'unknown',
-        channel_id: ctx?.channelId ?? 'unknown',
+        channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
         tool: toolName,
         ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
       });
@@ -2173,6 +2184,18 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     gatewayCallId: string
   ): Promise<GatewayToolResult> {
+    const activeState = this.getExecutionState();
+    if (
+      activeState.memberScopeRequired === true &&
+      activeState.channelGrantSnapshot === undefined &&
+      (MIRROR_READABLE_TOOLS.has(toolName) || toolName === 'code_act')
+    ) {
+      return {
+        success: false,
+        code: 'member_scope_missing',
+        error: 'Member read authority snapshot is unavailable.',
+      } as GatewayToolResult;
+    }
     this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
@@ -4939,13 +4962,17 @@ function memoryScopeKey(scope: MemoryScope): string {
   return `${scope.kind}:${scope.id}`;
 }
 
-function digestRequestedScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
+function digestAuditIdentifier(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function digestScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
   if (!scopes) {
     return null;
   }
   return scopes.map((scope) => ({
     kind: scope.kind,
-    id: `sha256:${createHash('sha256').update(scope.id).digest('hex')}`,
+    id: digestAuditIdentifier(scope.id),
   }));
 }
 

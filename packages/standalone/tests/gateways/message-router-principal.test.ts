@@ -7,7 +7,10 @@ import type { AgentLoopOptions } from '../../src/agent/types.js';
 import Database from '../../src/sqlite.js';
 import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
-import type { MemberEffectiveScope } from '../../src/gateways/member-effective-scope.js';
+import {
+  resolveMemberEffectiveScope,
+  type MemberEffectiveScope,
+} from '../../src/gateways/member-effective-scope.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import { withOwnerPrincipal } from './helpers/principal-fixture.js';
@@ -63,13 +66,22 @@ function activeMemberMessage(overrides: Partial<NormalizedMessage> = {}): Normal
   });
 }
 
-const MEMBER_SCOPE: MemberEffectiveScope = Object.freeze({
-  channelGrant: Object.freeze({ telegram: Object.freeze(['synthetic-channel']) }),
-  memoryScopes: Object.freeze([
-    Object.freeze({ kind: 'user' as const, id: 'principal-member-synthetic' }),
-  ]),
-  fingerprint: 'a'.repeat(64),
-});
+function memberScope(principalId: string, channelId: string): MemberEffectiveScope {
+  return resolveMemberEffectiveScope({
+    principal: {
+      class: 'member',
+      lane: 'public',
+      canonicalId: `telegram:global:${principalId}`,
+      principalId,
+      consoleEligible: false,
+    },
+    current: { connector: 'telegram', lane: 'public', channelId },
+    configuredGrant: {},
+    principalGrants: [],
+  });
+}
+
+const MEMBER_SCOPE = memberScope('principal-member-synthetic', 'synthetic-channel');
 
 describe('MessageRouter principal admission gate', () => {
   let sessionStore: SessionStore;
@@ -202,14 +214,12 @@ describe('MessageRouter principal admission gate', () => {
   });
 
   it('rotates only the member durable policy when the effective grant fingerprint changes', async () => {
-    const changedScope = Object.freeze({
-      ...MEMBER_SCOPE,
-      fingerprint: 'b'.repeat(64),
-    });
+    const memberAScope = memberScope('principal-member-a', 'member-rotation');
+    const changedScope = memberScope('principal-member-b', 'member-rotation');
     const runOptions: AgentLoopOptions[] = [];
     const memberScopeResolver = vi.fn(
       ({ principal }: { principal: NonNullable<NormalizedMessage['principal']> }) =>
-        principal.principalId === 'principal-member-a' ? MEMBER_SCOPE : changedScope
+        principal.principalId === 'principal-member-a' ? memberAScope : changedScope
     );
     const memberRouter = new MessageRouter(
       sessionStore,

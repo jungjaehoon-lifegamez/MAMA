@@ -30,6 +30,8 @@ export interface MemberEffectiveScope {
   readonly fingerprint: string;
 }
 
+const MEMBER_EFFECTIVE_SCOPE_KEYS = ['channelGrant', 'fingerprint', 'memoryScopes'] as const;
+
 const MAX_SCOPE_COMPONENT_LENGTH = 512;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -210,6 +212,104 @@ function freezeMemoryScopes(
   return Object.freeze(scopes.map((scope) => Object.freeze({ ...scope })));
 }
 
+function fingerprintMemberEffectiveScope(
+  principalId: string,
+  channelGrant: Readonly<ChannelGrant>,
+  memoryScopes: readonly Readonly<MemoryScopeRef>[]
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ version: 1, principalId, channelGrant, memoryScopes }), 'utf8')
+    .digest('hex');
+}
+
+function isDenseArray(value: readonly unknown[]): boolean {
+  return Object.keys(value).length === value.length;
+}
+
+function isSortedUnique(values: readonly string[]): boolean {
+  return values.every((value, index) => index === 0 || values[index - 1] < value);
+}
+
+export function assertCanonicalMemberEffectiveScope(
+  value: unknown,
+  principalId: string
+): asserts value is MemberEffectiveScope {
+  if (
+    !isRecord(value) ||
+    !Object.isFrozen(value) ||
+    Object.keys(value).sort().join('\0') !== MEMBER_EFFECTIVE_SCOPE_KEYS.join('\0') ||
+    !isCanonicalComponent(principalId)
+  ) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+
+  const channelGrant = value.channelGrant;
+  const memoryScopes = value.memoryScopes;
+  const fingerprint = value.fingerprint;
+  if (
+    !isRecord(channelGrant) ||
+    Object.getPrototypeOf(channelGrant) !== null ||
+    !Object.isFrozen(channelGrant) ||
+    !Array.isArray(memoryScopes) ||
+    !isDenseArray(memoryScopes) ||
+    !Object.isFrozen(memoryScopes) ||
+    typeof fingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(fingerprint)
+  ) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+
+  const connectorNames = Object.keys(channelGrant);
+  if (!isSortedUnique(connectorNames)) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+  for (const connector of connectorNames) {
+    const channels = channelGrant[connector];
+    if (
+      !isCanonicalComponent(connector, true) ||
+      !Array.isArray(channels) ||
+      channels.length === 0 ||
+      !isDenseArray(channels) ||
+      !Object.isFrozen(channels) ||
+      !channels.every((channel) => isCanonicalComponent(channel)) ||
+      !isSortedUnique(channels)
+    ) {
+      throw new Error('Member effective scope snapshot is empty or invalid');
+    }
+  }
+
+  if (
+    !memoryScopes.every(
+      (scope) =>
+        isRecord(scope) &&
+        Object.isFrozen(scope) &&
+        Object.keys(scope).sort().join('\0') === 'id\0kind' &&
+        (scope.kind === 'project' ||
+          scope.kind === 'channel' ||
+          scope.kind === 'user' ||
+          scope.kind === 'global') &&
+        isCanonicalComponent(scope.id)
+    )
+  ) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+  const canonicalScopes = canonicalMemoryScopes(memoryScopes as readonly MemoryScopeRef[]);
+  if (JSON.stringify(canonicalScopes) !== JSON.stringify(memoryScopes)) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+
+  if (
+    fingerprint !==
+    fingerprintMemberEffectiveScope(
+      principalId,
+      channelGrant as Readonly<ChannelGrant>,
+      memoryScopes
+    )
+  ) {
+    throw new Error('Member effective scope snapshot is empty or invalid');
+  }
+}
+
 export function resolveMemberEffectiveScope(
   input: MemberEffectiveScopeInput
 ): MemberEffectiveScope {
@@ -243,17 +343,7 @@ export function resolveMemberEffectiveScope(
     narrowMemoryScopes(canonicalMemoryScopes(grantedMemoryScopes), input.narrowing?.memoryScopes)
   );
 
-  const fingerprint = createHash('sha256')
-    .update(
-      JSON.stringify({
-        version: 1,
-        principalId,
-        channelGrant,
-        memoryScopes,
-      }),
-      'utf8'
-    )
-    .digest('hex');
+  const fingerprint = fingerprintMemberEffectiveScope(principalId, channelGrant, memoryScopes);
 
   return Object.freeze({
     channelGrant,

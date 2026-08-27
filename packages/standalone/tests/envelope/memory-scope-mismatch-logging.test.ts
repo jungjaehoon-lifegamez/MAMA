@@ -36,6 +36,8 @@ type AuditRow = {
   requested_scopes: string | null;
   envelope_scopes_snapshot: string | null;
   scope_mismatch: number;
+  error_message: string | null;
+  details: string | null;
 };
 
 type MetricsStoreMock = Pick<MetricsStore, 'record'> & {
@@ -108,7 +110,7 @@ function readGatewayToolRows(db: Database): AuditRow[] {
   return db
     .prepare(
       `SELECT id, type, input_summary, execution_status, envelope_hash, gateway_call_id,
-              requested_scopes, envelope_scopes_snapshot, scope_mismatch
+              requested_scopes, envelope_scopes_snapshot, scope_mismatch, error_message, details
        FROM agent_activity
        WHERE type = 'gateway_tool_call'
        ORDER BY id ASC`
@@ -269,7 +271,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(row.scope_mismatch).toBe(1);
     expect(parseScopes(row.requested_scopes)).toEqual([auditScope('global', 'system')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
-      { kind: 'channel', id: 'telegram:abc' },
+      auditScope('channel', 'telegram:abc'),
     ]);
     expect(metricsStore.record).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -277,7 +279,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
         value: 1,
         labels: expect.objectContaining({
           source: 'telegram',
-          channel_id: 'abc',
+          channel_ref: auditScope('channel', 'abc').id,
           tool: 'mama_save',
         }),
       })
@@ -330,7 +332,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(row.scope_mismatch).toBe(0);
     expect(parseScopes(row.requested_scopes)).toEqual([auditScope('channel', 'telegram:abc')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
-      { kind: 'channel', id: 'telegram:abc' },
+      auditScope('channel', 'telegram:abc'),
     ]);
     expect(metricsStore.record).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'envelope_scope_mismatch' })
@@ -380,7 +382,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     });
     expect(parseScopes(row.requested_scopes)).toEqual([auditScope('channel', 'telegram:abc')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
-      { kind: 'channel', id: 'telegram:abc' },
+      auditScope('channel', 'telegram:abc'),
     ]);
     expect(metricsStore.record).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'envelope_scope_mismatch' })
@@ -528,6 +530,74 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       db.close();
     }
   );
+
+  it('stores and logs mismatch scope/channel identifiers only as digests', async () => {
+    const privateChannelId = 'telegram-private-channel-do-not-log';
+    const allowedScopeId = 'project-private-alpha-do-not-log';
+    const deniedScopeId = 'trello:private-denied-do-not-log';
+    const rawQuery = 'private raw user query do not log';
+    const { db, executor, mamaApi, metricsStore } = createExecutorHarness({
+      channelGrantProvider: () => ({ trello: ['granted'] }),
+    });
+    const envelope = makeSignedEnvelope({
+      source: 'telegram',
+      channel_id: privateChannelId,
+      scope: {
+        project_refs: [{ kind: 'project', id: allowedScopeId }],
+        raw_connectors: ['trello'],
+        memory_scopes: [{ kind: 'project', id: allowedScopeId }],
+        allowed_destinations: [],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      {
+        query: rawQuery,
+        scopes: [{ kind: 'channel', id: deniedScopeId }],
+      },
+      {
+        agentId: 'member',
+        source: 'telegram',
+        channelId: privateChannelId,
+        agentContext: createTelegramContext(privateChannelId),
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: false, code: 'memory_scope_out_of_scope' });
+    expect(mamaApi.suggest).not.toHaveBeenCalled();
+    const [row] = readGatewayToolRows(db);
+    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('channel', deniedScopeId)]);
+    expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
+      auditScope('project', allowedScopeId),
+    ]);
+    const persistedActivity = db
+      .prepare(
+        `SELECT type, input_summary, output_summary, error_message, details,
+                requested_scopes, envelope_scopes_snapshot
+         FROM agent_activity
+         ORDER BY id ASC`
+      )
+      .all();
+    const auditOutput = JSON.stringify({
+      persistedActivity,
+      metrics: metricsStore.record.mock.calls,
+    });
+    const warningOutput = JSON.stringify(securityWarnMock.mock.calls);
+    for (const privateValue of [privateChannelId, allowedScopeId, deniedScopeId, rawQuery]) {
+      expect(auditOutput).not.toContain(privateValue);
+      expect(warningOutput).not.toContain(privateValue);
+    }
+    expect(metricsStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'envelope_scope_mismatch',
+        labels: expect.not.objectContaining({ channel_id: privateChannelId }),
+      })
+    );
+    db.close();
+  });
 
   it.each(['mama_search', 'mama_recall'] as const)(
     'TG-03/TG-04 audits defaulted %s identity and live mirror scopes as allowed',

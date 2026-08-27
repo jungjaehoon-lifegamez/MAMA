@@ -19,7 +19,11 @@ import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type InjectedContext, type MamaApiClient } from './context-injector.js';
 import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
-import type { MemberEffectiveScope, MemberEffectiveScopeInput } from './member-effective-scope.js';
+import {
+  assertCanonicalMemberEffectiveScope,
+  type MemberEffectiveScope,
+  type MemberEffectiveScopeInput,
+} from './member-effective-scope.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
@@ -444,38 +448,9 @@ function memberReadOnlyRole(publicRole: RoleConfig): RoleConfig {
   };
 }
 
-function assertUsableMemberEffectiveScope(scope: MemberEffectiveScope): void {
-  const channelGrant = scope?.channelGrant;
-  const memoryScopes = scope?.memoryScopes;
-  const fingerprint = scope?.fingerprint;
-  const memoryScopesAreValid =
-    Array.isArray(memoryScopes) &&
-    memoryScopes.length > 0 &&
-    memoryScopes.every(
-      (memoryScope) =>
-        memoryScope !== null &&
-        typeof memoryScope === 'object' &&
-        (memoryScope.kind === 'global' ||
-          memoryScope.kind === 'user' ||
-          memoryScope.kind === 'channel' ||
-          memoryScope.kind === 'project') &&
-        typeof memoryScope.id === 'string' &&
-        memoryScope.id.length > 0
-    );
-  const channelGrantIsValid =
-    channelGrant !== null &&
-    typeof channelGrant === 'object' &&
-    !Array.isArray(channelGrant) &&
-    Object.keys(channelGrant).length > 0 &&
-    Object.entries(channelGrant).every(
-      ([connector, channels]) =>
-        connector.length > 0 &&
-        Array.isArray(channels) &&
-        channels.length > 0 &&
-        channels.every((channel) => typeof channel === 'string' && channel.length > 0)
-    );
-
-  if (!/^[a-f0-9]{64}$/.test(fingerprint ?? '') || !channelGrantIsValid || !memoryScopesAreValid) {
+function assertUsableMemberEffectiveScope(scope: MemberEffectiveScope, principalId: string): void {
+  assertCanonicalMemberEffectiveScope(scope, principalId);
+  if (Object.keys(scope.channelGrant).length === 0 || scope.memoryScopes.length === 0) {
     throw new Error('Member effective scope snapshot is empty or invalid');
   }
 }
@@ -1008,7 +983,7 @@ export class MessageRouter implements TurnProcessor {
           channelId: admittedMessage.channelId,
         },
       });
-      assertUsableMemberEffectiveScope(memberEffectiveScope);
+      assertUsableMemberEffectiveScope(memberEffectiveScope, admittedPrincipal.principalId ?? '');
     }
 
     const channelKey = buildChannelKey(
@@ -1390,6 +1365,7 @@ This protects your credentials from being exposed in chat logs.`;
           ...(ownerReportHistoryPrompt ? { ownerReportHistoryPrompt } : {}),
           sessionPolicyFingerprint,
           ...(memberEffectiveScope ? { memberEffectiveScope } : {}),
+          ...(memberEffectiveScope ? { memberScopeRequired: true } : {}),
           userId: message.userId,
           model: roleModel, // Role-specific model override
           maxTurns: roleMaxTurns, // Role-specific max turns

@@ -214,6 +214,8 @@ export type GatewayToolExecutionContext = {
   backgroundTasks?: BackgroundTaskRegistry;
   /** Host-derived channel authority detached at ingress; read tools reuse it without re-querying. */
   channelGrantSnapshot?: Readonly<Record<string, readonly string[]>>;
+  /** Member reads and bounded transport must never fall back to the live owner grant. */
+  memberScopeRequired?: boolean;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
@@ -978,6 +980,8 @@ export interface AgentLoopOptions {
   sessionPolicyFingerprint?: string;
   /** One host-derived, detached authority snapshot for the admitted member turn. */
   memberEffectiveScope?: MemberEffectiveScope;
+  /** Fail-closed marker carried independently from the member snapshot itself. */
+  memberScopeRequired?: boolean;
   /** User identifier for the frontdoor message source */
   userId?: string;
   /** Maximum number of conversation turns (default: 10) */
