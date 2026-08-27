@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.3] - 2026-08-27
+
+### Added
+
+- **The 0.39.3 package contains the verified human-team access foundation.** An owner can grant,
+  revoke, and inspect exact connector-channel or shared-memory access for registered members.
+  Telegram, Slack, and Discord keep the same single MAMA front without exposing internal workers or
+  named agent roles. Installation, restart validation, and a real member canary remain before the
+  foundation is called shipped on a host.
+- **Members receive one server-computed authority snapshot per turn.** Their current conversation,
+  private principal memory, and explicitly shared sources are carried unchanged through retrieval,
+  context compilation, Code-Act, provenance, and result filtering. Callers may narrow that scope but
+  cannot widen it.
+
+### Changed
+
+- **Grant changes take effect on the next member request without a cache or background invalidator.**
+  Claude, Codex, and Cline rotate only the affected durable session when its principal-bound policy
+  fingerprint changes; unchanged sessions continue normally.
+- **Member authorization stays host-bound and read-only.** File/system mutation, delegation,
+  external delivery, owner-console tools, wildcard grants, and cross-member private memory remain
+  denied. The ingress path performs one bounded grant query and adds no Redis, WebSocket, worker,
+  queue, timer, cache, or model-based permission check.
+
+### Fixed
+
+- **Claude policy checks, reset, and prompt execution now use the same route key.** A
+  `sessionKey`-only request can no longer inspect or retire one process generation while prompting a
+  different stale generation.
+- **Connector and prompt boundaries retain their real operational identity.** Active registered
+  Slack and Discord members reach the member lane, verified owners carry their durable principal ID,
+  sensitive scope-mismatch telemetry stays digest-only, and generated prompt sections remain atomic
+  under truncation.
+
 ## mama-os [0.39.2] - 2026-08-27
 
 ### Changed
