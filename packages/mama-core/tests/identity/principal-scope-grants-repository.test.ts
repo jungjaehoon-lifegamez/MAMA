@@ -6,7 +6,10 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
-import type { DatabaseAdapter as DBManagerAdapter } from '../../src/db-manager.js';
+import type {
+  DatabaseAdapter as DBManagerAdapter,
+  PreparedStatement,
+} from '../../src/db-manager.js';
 import {
   createPrincipalRepository,
   PrincipalScopeGrantError,
@@ -16,11 +19,12 @@ import { applyMigrationsThrough } from '../../src/test-utils.js';
 
 describe('Phase 2b principal scope grants over migration 065', () => {
   let adapter: DBManagerAdapter;
+  let dbPath: string;
   let tempDir: string;
 
   beforeAll(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'mama-principal-scope-grants-'));
-    const dbPath = join(tempDir, 'core.db');
+    dbPath = join(tempDir, 'core.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
     applyMigrationsThrough(migrationDb, 65);
@@ -60,6 +64,34 @@ describe('Phase 2b principal scope grants over migration 065', () => {
       now: 2,
     });
     return { ownerPrincipalId: owner!.principalId, memberPrincipalId };
+  }
+
+  function beforeMatchingWrite(
+    realAdapter: DBManagerAdapter,
+    sqlFragment: string,
+    beforeWrite: () => void
+  ): Pick<DBManagerAdapter, 'prepare' | 'transaction'> {
+    let invoked = false;
+    return {
+      prepare(sql: string): PreparedStatement {
+        const statement = realAdapter.prepare(sql);
+        if (!sql.includes(sqlFragment)) {
+          return statement;
+        }
+        return {
+          all: (...args: unknown[]) => statement.all(...args),
+          get: (...args: unknown[]) => statement.get(...args),
+          run: (...args: unknown[]) => {
+            if (!invoked) {
+              invoked = true;
+              beforeWrite();
+            }
+            return statement.run(...args);
+          },
+        };
+      },
+      transaction: <T>(fn: () => T): T => realAdapter.transaction(fn),
+    };
   }
 
   it('grants one canonical source idempotently through an active owner', () => {
@@ -140,6 +172,73 @@ describe('Phase 2b principal scope grants over migration 065', () => {
       { created_at: 20, revoked_at: 21 },
       { created_at: 23, revoked_at: null },
     ]);
+  });
+
+  it('returns exists when two SQLite connections grant the same scope concurrently', () => {
+    const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+    const input = {
+      targetPrincipalId: memberPrincipalId,
+      ownerPrincipalId,
+      scope: { kind: 'source' as const, connector: 'telegram', channelId: 'shared-race' },
+      now: 24,
+    };
+    const secondAdapter = new NodeSQLiteAdapter({ dbPath }) as unknown as DBManagerAdapter;
+    secondAdapter.connect();
+    try {
+      const secondRepository = createPrincipalRepository(secondAdapter);
+      let secondResult: 'created' | 'exists' | undefined;
+      const firstRepository = createPrincipalRepository(
+        beforeMatchingWrite(adapter, 'INSERT INTO principal_scope_grants', () => {
+          secondResult = secondRepository.grantScope({ ...input, now: 25 });
+        })
+      );
+
+      expect(firstRepository.grantScope(input)).toBe('exists');
+      expect(secondResult).toBe('created');
+      expect(
+        adapter
+          .prepare(
+            `SELECT COUNT(*) AS count
+             FROM principal_scope_grants
+             WHERE principal_id = ? AND revoked_at IS NULL`
+          )
+          .get(memberPrincipalId)
+      ).toEqual({ count: 1 });
+    } finally {
+      secondAdapter.disconnect();
+    }
+  });
+
+  it('returns absent when two SQLite connections revoke the same scope concurrently', () => {
+    const repository = createPrincipalRepository(adapter);
+    const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+    const input = {
+      targetPrincipalId: memberPrincipalId,
+      ownerPrincipalId,
+      scope: { kind: 'memory' as const, scopeKind: 'project' as const, scopeId: 'race-project' },
+      now: 26,
+    };
+    repository.grantScope(input);
+    const secondAdapter = new NodeSQLiteAdapter({ dbPath }) as unknown as DBManagerAdapter;
+    secondAdapter.connect();
+    try {
+      const secondRepository = createPrincipalRepository(secondAdapter);
+      let secondResult: 'revoked' | 'absent' | undefined;
+      const firstRepository = createPrincipalRepository(
+        beforeMatchingWrite(adapter, 'UPDATE principal_scope_grants', () => {
+          secondResult = secondRepository.revokeScope({ ...input, now: 28 });
+        })
+      );
+
+      expect(firstRepository.revokeScope({ ...input, now: 27 })).toBe('absent');
+      expect(secondResult).toBe('revoked');
+      expect(repository.listActiveGrants(memberPrincipalId)).toEqual([]);
+      expect(adapter.prepare('SELECT COUNT(*) AS count FROM principal_scope_grants').get()).toEqual(
+        { count: 1 }
+      );
+    } finally {
+      secondAdapter.disconnect();
+    }
   });
 
   it('lists a fresh detached snapshot instead of reusing prior results', () => {

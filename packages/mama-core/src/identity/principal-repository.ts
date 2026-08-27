@@ -279,23 +279,37 @@ export function createPrincipalRepository(
      FROM principals
      WHERE principal_id = ? AND kind = 'owner' AND status = 'active'`
   );
-  const selectActiveGrantStatement = adapter.prepare(
-    `SELECT 1
-     FROM principal_scope_grants
-     WHERE principal_id = ? AND grant_kind = ? AND scope_kind = ? AND scope_id = ?
-       AND revoked_at IS NULL`
-  );
   const insertGrantStatement = adapter.prepare(
     `INSERT INTO principal_scope_grants (
        principal_id, grant_kind, scope_kind, scope_id,
        granted_by_principal_id, created_at, revoked_at
-     ) VALUES (?, ?, ?, ?, ?, ?, NULL)`
+     )
+     SELECT ?, ?, ?, ?, ?, ?, NULL
+     WHERE EXISTS (
+       SELECT 1 FROM principals
+       WHERE principal_id = ? AND kind = 'member' AND status = 'active'
+     )
+       AND EXISTS (
+         SELECT 1 FROM principals
+         WHERE principal_id = ? AND kind = 'owner' AND status = 'active'
+       )
+     ON CONFLICT (principal_id, grant_kind, scope_kind, scope_id)
+       WHERE revoked_at IS NULL
+     DO NOTHING`
   );
   const revokeGrantStatement = adapter.prepare(
     `UPDATE principal_scope_grants
      SET revoked_at = ?
      WHERE principal_id = ? AND grant_kind = ? AND scope_kind = ? AND scope_id = ?
-       AND revoked_at IS NULL`
+       AND revoked_at IS NULL
+       AND EXISTS (
+         SELECT 1 FROM principals
+         WHERE principal_id = ? AND kind = 'member' AND status = 'active'
+       )
+       AND EXISTS (
+         SELECT 1 FROM principals
+         WHERE principal_id = ? AND kind = 'owner' AND status = 'active'
+       )`
   );
   const listActiveGrantsStatement = adapter.prepare(
     `SELECT
@@ -457,19 +471,21 @@ export function createPrincipalRepository(
     const canonicalScope = canonicalizeGrantScope(input.scope);
     const { grantKind, scopeKind, scopeId } = scopeColumns(canonicalScope);
     return adapter.transaction(() => {
-      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
-      if (selectActiveGrantStatement.get(input.targetPrincipalId, grantKind, scopeKind, scopeId)) {
-        return 'exists';
-      }
-      insertGrantStatement.run(
+      const result = insertGrantStatement.run(
         input.targetPrincipalId,
         grantKind,
         scopeKind,
         scopeId,
         input.ownerPrincipalId,
-        input.now
+        input.now,
+        input.targetPrincipalId,
+        input.ownerPrincipalId
       );
-      return 'created';
+      if (result.changes === 1) {
+        return 'created';
+      }
+      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
+      return 'exists';
     });
   }
 
@@ -477,15 +493,20 @@ export function createPrincipalRepository(
     const canonicalScope = canonicalizeGrantScope(input.scope);
     const { grantKind, scopeKind, scopeId } = scopeColumns(canonicalScope);
     return adapter.transaction(() => {
-      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
       const result = revokeGrantStatement.run(
         input.now,
         input.targetPrincipalId,
         grantKind,
         scopeKind,
-        scopeId
+        scopeId,
+        input.targetPrincipalId,
+        input.ownerPrincipalId
       );
-      return result.changes === 0 ? 'absent' : 'revoked';
+      if (result.changes === 1) {
+        return 'revoked';
+      }
+      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
+      return 'absent';
     });
   }
 
