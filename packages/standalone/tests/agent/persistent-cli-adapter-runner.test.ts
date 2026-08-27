@@ -1,19 +1,28 @@
 /**
  * Tests for PersistentCLIAdapter IModelRunner implementation (STORY-012)
  *
- * Tests the IModelRunner contract methods: backendType, isHealthy, getMetrics, stop.
- * Does NOT test prompt() (covered by existing integration tests).
+ * Tests the IModelRunner contract plus TG-05 prompt-route policy replacement.
  */
 
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
-import {
-  PersistentClaudeProcess,
-  PersistentProcessPool,
-} from '../../src/agent/persistent-cli-process.js';
-import type { IModelRunner, RunnerMetrics } from '../../src/agent/model-runner.js';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
-describe('PersistentCLIAdapter as IModelRunner', () => {
+const spawnMock = vi.hoisted(() => vi.fn());
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: spawnMock };
+});
+
+import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+import type { IModelRunner, RunnerMetrics } from '../../src/agent/model-runner.js';
+import { createFakeClaudeChild, type FakeClaudeChild } from '../helpers/fake-claude-child.js';
+
+describe('Story TG-05 / Phase 2b Task 3 AC: PersistentCLIAdapter as IModelRunner', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(() => createFakeClaudeChild());
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -79,19 +88,21 @@ describe('PersistentCLIAdapter as IModelRunner', () => {
   });
 
   it('reports a mismatch and stops the exact Claude route before replacement', async () => {
-    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
-    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
-    const adapter = new PersistentCLIAdapter({ sessionId: 'legacy-route' });
-    const pool = (
-      adapter as unknown as {
-        processPool: PersistentProcessPool;
-      }
-    ).processPool;
-    const staleProcess = await pool.getProcess('member-route', {
-      policyFingerprint: 'granted-policy',
+    const children: FakeClaudeChild[] = [];
+    spawnMock.mockImplementation(() => {
+      const child = createFakeClaudeChild();
+      children.push(child);
+      return child;
     });
-    await pool.getProcess('owner-route', { policyFingerprint: 'owner-policy' });
-    const staleStop = vi.spyOn(staleProcess, 'stop').mockImplementation(() => {});
+    const adapter = new PersistentCLIAdapter({ sessionId: 'legacy-route' });
+    await adapter.prompt('member request', undefined, {
+      sessionId: 'member-route',
+      sessionPolicyFingerprint: 'granted-policy',
+    });
+    await adapter.prompt('owner request', undefined, {
+      sessionId: 'owner-route',
+      sessionPolicyFingerprint: 'owner-policy',
+    });
 
     expect(
       adapter.getSessionPolicyStatus({
@@ -101,7 +112,8 @@ describe('PersistentCLIAdapter as IModelRunner', () => {
     ).toBe('mismatch');
     adapter.resetSession('member-route');
 
-    expect(staleStop).toHaveBeenCalledOnce();
+    expect(children[0]?.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(children[1]?.kill).not.toHaveBeenCalled();
     expect(adapter.getActiveProcessCount()).toBe(1);
     expect(
       adapter.getSessionPolicyStatus({
@@ -109,6 +121,20 @@ describe('PersistentCLIAdapter as IModelRunner', () => {
         sessionPolicyFingerprint: 'owner-policy',
       })
     ).toBe('compatible');
+    adapter.stop();
+  });
+
+  it('uses a sessionKey-only route for both the prompt and its policy status', async () => {
+    const adapter = new PersistentCLIAdapter({ sessionId: 'default-route' });
+    const policy = {
+      sessionKey: 'member-route',
+      sessionPolicyFingerprint: 'member-policy',
+    };
+
+    expect(adapter.getSessionPolicyStatus(policy)).toBe('missing');
+    await adapter.prompt('hello', undefined, policy);
+
+    expect(adapter.getSessionPolicyStatus(policy)).toBe('compatible');
     adapter.stop();
   });
 });

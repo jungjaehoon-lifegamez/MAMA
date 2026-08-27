@@ -1,12 +1,25 @@
 import { EventEmitter } from 'events';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const spawnMock = vi.hoisted(() => vi.fn());
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: spawnMock };
+});
 
 import {
   PersistentClaudeProcess,
   PersistentProcessPool,
 } from '../../src/agent/persistent-cli-process.js';
+import { createFakeClaudeChild, type FakeClaudeChild } from '../helpers/fake-claude-child.js';
 
 describe('PersistentProcessPool idle cleanup', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementation(() => createFakeClaudeChild());
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -266,28 +279,30 @@ describe('PersistentProcessPool idle cleanup', () => {
     expect(pool.getActiveCount()).toBe(0);
   });
 
-  it('tracks policy per live route and replaces only the revoked member route', async () => {
+  it('TG-05 / Phase 2b Task 3 AC replaces only the revoked member route', async () => {
     const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
-    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
-    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
+    const children: FakeClaudeChild[] = [];
+    spawnMock.mockImplementation(() => {
+      const child = createFakeClaudeChild();
+      children.push(child);
+      return child;
+    });
 
     expect(pool.getSessionPolicyStatus('member-route', 'granted-policy')).toBe('missing');
-    const staleMember = await pool.getProcess('member-route', {
+    await pool.getProcess('member-route', {
       policyFingerprint: 'granted-policy',
     });
-    const unrelated = await pool.getProcess('owner-route', {
+    await pool.getProcess('owner-route', {
       policyFingerprint: 'owner-policy',
     });
-    const staleMemberStop = vi.spyOn(staleMember, 'stop').mockImplementation(() => {});
-    const unrelatedStop = vi.spyOn(unrelated, 'stop').mockImplementation(() => {});
 
     expect(pool.getSessionPolicyStatus('member-route', 'granted-policy')).toBe('compatible');
     expect(pool.getSessionPolicyStatus('member-route', 'revoked-policy')).toBe('mismatch');
 
     pool.stopProcess('member-route');
 
-    expect(staleMemberStop).toHaveBeenCalledOnce();
-    expect(unrelatedStop).not.toHaveBeenCalled();
+    expect(children[0]?.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(children[1]?.kill).not.toHaveBeenCalled();
     expect(pool.getSessionPolicyStatus('member-route', 'revoked-policy')).toBe('missing');
     expect(pool.getSessionPolicyStatus('owner-route', 'owner-policy')).toBe('compatible');
 

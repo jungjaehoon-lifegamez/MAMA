@@ -331,8 +331,9 @@ internal execution mechanisms. This documentation alignment does not authorize t
 ### Current release line
 
 The current runtime-overhead remediation release and real-event canary are complete. v1 Phase 2b
-is implemented and reviewed in PR #240, but merge, patch release, install, and a real human-member
-canary remain. Do not infer the complete v1 team product from code/test evidence alone.
+is implemented and reviewed in PR #240, but merge, patch release, install, restart validation, and
+a real human-member canary remain. Do not infer the complete v1 team product from code/test evidence
+alone.
 
 ### v1 Phase 2b: access foundation
 

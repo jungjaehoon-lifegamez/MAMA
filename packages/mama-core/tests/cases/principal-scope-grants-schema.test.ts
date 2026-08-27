@@ -22,7 +22,7 @@ function insertPrincipal(
   ).run(principalId, kind);
 }
 
-describe('Phase 2b principal scope grant schema (migration 065)', () => {
+describe('Phase 2b Task 1 / AC #1: principal scope grant schema (migration 065)', () => {
   it('adds the grant authority immediately above migration 064', () => {
     const db = new Database(':memory:');
     db.pragma('foreign_keys = ON');

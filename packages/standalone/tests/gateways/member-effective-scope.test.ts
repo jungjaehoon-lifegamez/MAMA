@@ -55,7 +55,7 @@ function oneConnectorGrant(connector: string, channelId: string): ChannelGrant {
   return configured;
 }
 
-describe('Phase 2b member effective-scope resolver', () => {
+describe('Phase 2b Task 2 / AC #1: member effective-scope resolver', () => {
   it('returns only the intrinsic conversation/private scope plus explicitly granted shared authority', () => {
     const result = resolveMemberEffectiveScope(
       baseInput({

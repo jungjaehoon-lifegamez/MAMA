@@ -13,7 +13,7 @@ import {
 } from '../../src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../src/test-utils.js';
 
-describe('TG-01/TG-04 principal repository over current migration 065', () => {
+describe('Story TG-01/TG-04 / Phase 2b Task 1 AC: principal repository at migration 065', () => {
   let adapter: DBManagerAdapter;
   let tempDir: string;
 

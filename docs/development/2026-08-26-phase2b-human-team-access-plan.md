@@ -1,6 +1,6 @@
 # v1 Phase 2b: Human-Team Access Foundation
 
-**Status:** Implemented and reviewed in PR #240; patch release, install, and real human-member canary pending
+**Status:** Implemented and reviewed in PR #240; patch release, install, restart validation, and real human-member canary pending
 **Date:** 2026-08-26
 **Updated:** 2026-08-27
 **Depends on:** completed v0.39.2 runtime-overhead release and monitor cleanup; shipped Phase 1 sender boundary; shipped Phase 2a principal registry

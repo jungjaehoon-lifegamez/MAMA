@@ -101,7 +101,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     // for --session-id. Passing the SessionPool UUID would cause Claude CLI to reload disk
     // history on process restart, leading to "Prompt is too long" errors when accumulated
     // context exceeds the window. options.sessionId is the pool ROUTING key only.
-    const channelKey = options?.sessionId ?? this.channelKey;
+    const channelKey = options?.sessionId ?? options?.sessionKey ?? this.channelKey;
     const proc = await this.processPool.getProcess(channelKey, {
       model: options?.model || this.options.model,
       systemPrompt: options?.systemPrompt ?? this.options.systemPrompt,

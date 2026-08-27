@@ -17,7 +17,7 @@ import {
 } from '../../src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../src/test-utils.js';
 
-describe('Phase 2b principal scope grants over migration 065', () => {
+describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065', () => {
   let adapter: DBManagerAdapter;
   let dbPath: string;
   let tempDir: string;

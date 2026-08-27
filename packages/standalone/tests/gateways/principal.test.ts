@@ -8,7 +8,7 @@ import {
   resolveTelegramPrincipal,
 } from '../../src/gateways/principal.js';
 
-describe('Gateway principal resolution', () => {
+describe('Story TG-01/TG-04: gateway principal resolution', () => {
   describe('PrincipalContext contract', () => {
     it('accepts a member class and keeps principalId optional through freezing', () => {
       const memberClass: PrincipalClass = 'member';
@@ -203,7 +203,7 @@ describe('Gateway principal resolution', () => {
     });
   });
 
-  describe('overlayMemberPrincipal()', () => {
+  describe('Phase 2b Task 3 AC: overlay active members and verified owners without widening', () => {
     it('TG-04 replaces an external Telegram principal with a frozen active member without changing its public lane', () => {
       const external = resolveTelegramPrincipal({
         userId: '1002',
