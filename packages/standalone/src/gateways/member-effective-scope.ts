@@ -1,0 +1,243 @@
+import { createHash } from 'node:crypto';
+
+import type { MemoryScopeRef, PrincipalScopeGrantRecord } from '@jungjaehoon/mama-core';
+import {
+  canonicalizeContextScopes,
+  isChannelGranted,
+  type ChannelGrant,
+} from '@jungjaehoon/mama-core/context-compile';
+
+import type { AdmissionLane, PrincipalContext } from './principal.js';
+
+export interface MemberEffectiveScopeInput {
+  readonly principal: PrincipalContext;
+  readonly current: {
+    readonly connector: string;
+    readonly lane: AdmissionLane;
+    readonly channelId: string;
+  };
+  readonly configuredGrant: ChannelGrant;
+  readonly principalGrants: readonly PrincipalScopeGrantRecord[];
+  readonly narrowing?: {
+    readonly sourceGrant?: ChannelGrant;
+    readonly memoryScopes?: readonly MemoryScopeRef[];
+  };
+}
+
+export interface MemberEffectiveScope {
+  readonly channelGrant: Readonly<ChannelGrant>;
+  readonly memoryScopes: readonly Readonly<MemoryScopeRef>[];
+  readonly fingerprint: string;
+}
+
+const MAX_SCOPE_COMPONENT_LENGTH = 512;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCanonicalComponent(value: unknown, lowercase = false): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  if (
+    value.length === 0 ||
+    value.length > MAX_SCOPE_COMPONENT_LENGTH ||
+    value !== value.trim() ||
+    value === '*' ||
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127;
+    })
+  ) {
+    return false;
+  }
+  return !lowercase || value === value.toLowerCase();
+}
+
+function assertActivePublicMember(input: MemberEffectiveScopeInput): string {
+  const { principal, current } = input;
+  if (
+    principal.class !== 'member' ||
+    principal.lane !== 'public' ||
+    current.lane !== 'public' ||
+    current.lane !== principal.lane ||
+    !isCanonicalComponent(principal.principalId) ||
+    !isCanonicalComponent(current.connector, true) ||
+    !isCanonicalComponent(current.channelId)
+  ) {
+    throw new Error('Member effective scope requires an active public member and canonical facts');
+  }
+  return principal.principalId;
+}
+
+function addChannel(
+  channelsByConnector: Map<string, Set<string>>,
+  connector: string,
+  channel: string
+) {
+  const channels = channelsByConnector.get(connector) ?? new Set<string>();
+  channels.add(channel);
+  channelsByConnector.set(connector, channels);
+}
+
+function canonicalChannelGrant(channelsByConnector: Map<string, Set<string>>): ChannelGrant {
+  const grant: ChannelGrant = {};
+  for (const connector of [...channelsByConnector.keys()].sort()) {
+    const channels = [...(channelsByConnector.get(connector) ?? [])].sort();
+    if (channels.length > 0) {
+      grant[connector] = Object.freeze(channels);
+    }
+  }
+  return Object.freeze(grant);
+}
+
+function validGrantScope(value: unknown): PrincipalScopeGrantRecord['scope'] | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    value.kind === 'source' &&
+    isCanonicalComponent(value.connector, true) &&
+    isCanonicalComponent(value.channelId)
+  ) {
+    return { kind: 'source', connector: value.connector, channelId: value.channelId };
+  }
+  if (
+    value.kind === 'memory' &&
+    (value.scopeKind === 'project' ||
+      value.scopeKind === 'channel' ||
+      value.scopeKind === 'global') &&
+    isCanonicalComponent(value.scopeId)
+  ) {
+    return { kind: 'memory', scopeKind: value.scopeKind, scopeId: value.scopeId };
+  }
+  return null;
+}
+
+function validGrantRecords(
+  records: readonly PrincipalScopeGrantRecord[],
+  principalId: string
+): Array<PrincipalScopeGrantRecord['scope']> {
+  if (!Array.isArray(records)) {
+    return [];
+  }
+  const scopes: Array<PrincipalScopeGrantRecord['scope']> = [];
+  for (const candidate of records as readonly unknown[]) {
+    if (!isRecord(candidate) || candidate.targetPrincipalId !== principalId) {
+      continue;
+    }
+    const scope = validGrantScope(candidate.scope);
+    if (scope !== null) {
+      scopes.push(scope);
+    }
+  }
+  return scopes;
+}
+
+function canonicalMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[] {
+  return canonicalizeContextScopes(scopes).scopes;
+}
+
+function narrowChannels(
+  effective: ChannelGrant,
+  narrowing: ChannelGrant | undefined
+): ChannelGrant {
+  if (narrowing === undefined) {
+    return effective;
+  }
+  const narrowed = new Map<string, Set<string>>();
+  if (!isRecord(narrowing)) {
+    return canonicalChannelGrant(narrowed);
+  }
+  for (const [connector, channels] of Object.entries(effective)) {
+    for (const channel of channels) {
+      if (isChannelGranted(connector, channel, narrowing)) {
+        addChannel(narrowed, connector, channel);
+      }
+    }
+  }
+  return canonicalChannelGrant(narrowed);
+}
+
+function narrowMemoryScopes(
+  effective: readonly MemoryScopeRef[],
+  narrowing: readonly MemoryScopeRef[] | undefined
+): MemoryScopeRef[] {
+  if (narrowing === undefined) {
+    return [...effective];
+  }
+  const validNarrowing = Array.isArray(narrowing)
+    ? narrowing.filter(
+        (scope): scope is MemoryScopeRef =>
+          isRecord(scope) &&
+          (scope.kind === 'project' ||
+            scope.kind === 'channel' ||
+            scope.kind === 'user' ||
+            scope.kind === 'global') &&
+          isCanonicalComponent(scope.id)
+      )
+    : [];
+  const requestedKeys = new Set(
+    canonicalMemoryScopes(validNarrowing).map((scope) => `${scope.kind}\0${scope.id}`)
+  );
+  return effective.filter((scope) => requestedKeys.has(`${scope.kind}\0${scope.id}`));
+}
+
+function freezeMemoryScopes(
+  scopes: readonly MemoryScopeRef[]
+): readonly Readonly<MemoryScopeRef>[] {
+  return Object.freeze(scopes.map((scope) => Object.freeze({ ...scope })));
+}
+
+export function resolveMemberEffectiveScope(
+  input: MemberEffectiveScopeInput
+): MemberEffectiveScope {
+  const principalId = assertActivePublicMember(input);
+  const grantScopes = validGrantRecords(input.principalGrants, principalId);
+
+  const channelsByConnector = new Map<string, Set<string>>();
+  addChannel(channelsByConnector, input.current.connector, input.current.channelId);
+  if (isRecord(input.configuredGrant)) {
+    for (const scope of grantScopes) {
+      if (
+        scope.kind === 'source' &&
+        isChannelGranted(scope.connector, scope.channelId, input.configuredGrant)
+      ) {
+        addChannel(channelsByConnector, scope.connector, scope.channelId);
+      }
+    }
+  }
+  const channelGrant = narrowChannels(
+    canonicalChannelGrant(channelsByConnector),
+    input.narrowing?.sourceGrant
+  );
+
+  const grantedMemoryScopes: MemoryScopeRef[] = [{ kind: 'user', id: principalId }];
+  for (const scope of grantScopes) {
+    if (scope.kind === 'memory') {
+      grantedMemoryScopes.push({ kind: scope.scopeKind, id: scope.scopeId });
+    }
+  }
+  const memoryScopes = freezeMemoryScopes(
+    narrowMemoryScopes(canonicalMemoryScopes(grantedMemoryScopes), input.narrowing?.memoryScopes)
+  );
+
+  const fingerprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        version: 1,
+        principalId,
+        channelGrant,
+        memoryScopes,
+      }),
+      'utf8'
+    )
+    .digest('hex');
+
+  return Object.freeze({
+    channelGrant,
+    memoryScopes,
+    fingerprint,
+  });
+}
