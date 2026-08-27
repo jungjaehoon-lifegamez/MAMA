@@ -8,6 +8,36 @@ export interface PrincipalRow {
   status: 'active' | 'suspended' | 'offboarded';
 }
 
+export const SHARED_MEMORY_SCOPE_KINDS = ['project', 'channel', 'global'] as const;
+
+export type SharedMemoryScopeKind = (typeof SHARED_MEMORY_SCOPE_KINDS)[number];
+
+export type PrincipalScopeGrantRef =
+  | {
+      kind: 'source';
+      connector: string;
+      channelId: string;
+    }
+  | {
+      kind: 'memory';
+      scopeKind: SharedMemoryScopeKind;
+      scopeId: string;
+    };
+
+export interface PrincipalScopeGrantRecord {
+  targetPrincipalId: string;
+  scope: PrincipalScopeGrantRef;
+  grantedByPrincipalId: string;
+  createdAt: number;
+}
+
+export interface PrincipalScopeGrantMutationInput {
+  targetPrincipalId: string;
+  ownerPrincipalId: string;
+  scope: PrincipalScopeGrantRef;
+  now: number;
+}
+
 export interface PrincipalRepository {
   resolveByExternal(connector: string, namespace: string, externalId: string): PrincipalRow | null;
   registerMember(input: {
@@ -33,6 +63,9 @@ export interface PrincipalRepository {
     now: number;
   }): 'created' | 'exists' | 'conflict';
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+  grantScope(input: PrincipalScopeGrantMutationInput): 'created' | 'exists';
+  revokeScope(input: PrincipalScopeGrantMutationInput): 'revoked' | 'absent';
+  listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
 
 export type PrincipalRegistrationErrorCode = 'identity_bound_to_owner' | 'member_not_active';
@@ -43,6 +76,21 @@ export class PrincipalRegistrationError extends Error {
   constructor(code: PrincipalRegistrationErrorCode, message: string) {
     super(message);
     this.name = 'PrincipalRegistrationError';
+    this.code = code;
+  }
+}
+
+export type PrincipalScopeGrantErrorCode =
+  | 'target_not_active_member'
+  | 'grantor_not_active_owner'
+  | 'invalid_scope';
+
+export class PrincipalScopeGrantError extends Error {
+  readonly code: PrincipalScopeGrantErrorCode;
+
+  constructor(code: PrincipalScopeGrantErrorCode, message: string) {
+    super(message);
+    this.name = 'PrincipalScopeGrantError';
     this.code = code;
   }
 }
@@ -64,6 +112,108 @@ interface MemberDatabaseRow {
   principal_id: string;
   display_name: string | null;
   status: PrincipalStatus;
+}
+
+interface PrincipalScopeGrantDatabaseRow {
+  principal_id: string;
+  grant_kind: 'source' | 'memory';
+  scope_kind: string;
+  scope_id: string;
+  granted_by_principal_id: string;
+  created_at: number;
+}
+
+const MAX_SCOPE_COMPONENT_LENGTH = 512;
+
+function containsControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint < 32 || codePoint === 127;
+  });
+}
+
+function canonicalizeScopeComponent(value: unknown, label: string, lowercase = false): string {
+  if (typeof value !== 'string') {
+    throw new PrincipalScopeGrantError('invalid_scope', `${label} must be a string`);
+  }
+  const trimmed = value.trim();
+  const canonical = lowercase ? trimmed.toLowerCase() : trimmed;
+  if (
+    canonical.length === 0 ||
+    canonical.length > MAX_SCOPE_COMPONENT_LENGTH ||
+    canonical === '*' ||
+    containsControlCharacter(canonical)
+  ) {
+    throw new PrincipalScopeGrantError('invalid_scope', `${label} is not a canonical scope value`);
+  }
+  return canonical;
+}
+
+function canonicalizeGrantScope(scope: PrincipalScopeGrantRef): PrincipalScopeGrantRef {
+  if (typeof scope !== 'object' || scope === null) {
+    throw new PrincipalScopeGrantError('invalid_scope', 'Grant scope must be an object');
+  }
+  const candidate = scope as unknown as Record<string, unknown>;
+  if (candidate.kind === 'source') {
+    return {
+      kind: 'source',
+      connector: canonicalizeScopeComponent(candidate.connector, 'Source connector', true),
+      channelId: canonicalizeScopeComponent(candidate.channelId, 'Source channel ID'),
+    };
+  }
+  if (candidate.kind === 'memory') {
+    if (
+      typeof candidate.scopeKind !== 'string' ||
+      !SHARED_MEMORY_SCOPE_KINDS.includes(candidate.scopeKind as SharedMemoryScopeKind)
+    ) {
+      throw new PrincipalScopeGrantError(
+        'invalid_scope',
+        'Memory grant kind must be project, channel, or global'
+      );
+    }
+    return {
+      kind: 'memory',
+      scopeKind: candidate.scopeKind as SharedMemoryScopeKind,
+      scopeId: canonicalizeScopeComponent(candidate.scopeId, 'Memory scope ID'),
+    };
+  }
+  throw new PrincipalScopeGrantError('invalid_scope', 'Grant kind must be source or memory');
+}
+
+function scopeColumns(scope: PrincipalScopeGrantRef): {
+  grantKind: 'source' | 'memory';
+  scopeKind: string;
+  scopeId: string;
+} {
+  if (scope.kind === 'source') {
+    return {
+      grantKind: 'source',
+      scopeKind: scope.connector,
+      scopeId: scope.channelId,
+    };
+  }
+  return {
+    grantKind: 'memory',
+    scopeKind: scope.scopeKind,
+    scopeId: scope.scopeId,
+  };
+}
+
+function mapPrincipalScopeGrant(row: PrincipalScopeGrantDatabaseRow): PrincipalScopeGrantRecord {
+  const scope: PrincipalScopeGrantRef =
+    row.grant_kind === 'source'
+      ? { kind: 'source', connector: row.scope_kind, channelId: row.scope_id }
+      : {
+          kind: 'memory',
+          scopeKind: row.scope_kind as SharedMemoryScopeKind,
+          scopeId: row.scope_id,
+        };
+  return {
+    targetPrincipalId: row.principal_id,
+    scope,
+    grantedByPrincipalId: row.granted_by_principal_id,
+    createdAt: row.created_at,
+  };
 }
 
 function mintPrincipalId(
@@ -119,6 +269,69 @@ export function createPrincipalRepository(
      WHERE kind = 'member'
      ORDER BY created_at ASC, principal_id ASC`
   );
+  const selectActiveMemberStatement = adapter.prepare(
+    `SELECT 1
+     FROM principals
+     WHERE principal_id = ? AND kind = 'member' AND status = 'active'`
+  );
+  const selectActiveGrantorStatement = adapter.prepare(
+    `SELECT 1
+     FROM principals
+     WHERE principal_id = ? AND kind = 'owner' AND status = 'active'`
+  );
+  const selectActiveGrantStatement = adapter.prepare(
+    `SELECT 1
+     FROM principal_scope_grants
+     WHERE principal_id = ? AND grant_kind = ? AND scope_kind = ? AND scope_id = ?
+       AND revoked_at IS NULL`
+  );
+  const insertGrantStatement = adapter.prepare(
+    `INSERT INTO principal_scope_grants (
+       principal_id, grant_kind, scope_kind, scope_id,
+       granted_by_principal_id, created_at, revoked_at
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL)`
+  );
+  const revokeGrantStatement = adapter.prepare(
+    `UPDATE principal_scope_grants
+     SET revoked_at = ?
+     WHERE principal_id = ? AND grant_kind = ? AND scope_kind = ? AND scope_id = ?
+       AND revoked_at IS NULL`
+  );
+  const listActiveGrantsStatement = adapter.prepare(
+    `SELECT
+       grants.principal_id,
+       grants.grant_kind,
+       grants.scope_kind,
+       grants.scope_id,
+       grants.granted_by_principal_id,
+       grants.created_at
+     FROM principal_scope_grants AS grants
+     JOIN principals AS target ON target.principal_id = grants.principal_id
+     WHERE grants.principal_id = ?
+       AND grants.revoked_at IS NULL
+       AND target.kind = 'member'
+       AND target.status = 'active'
+     ORDER BY grants.created_at ASC, grants.grant_kind ASC,
+       grants.scope_kind ASC, grants.scope_id ASC`
+  );
+
+  function assertGrantMutationPrincipals(
+    targetPrincipalId: string,
+    ownerPrincipalId: string
+  ): void {
+    if (!selectActiveMemberStatement.get(targetPrincipalId)) {
+      throw new PrincipalScopeGrantError(
+        'target_not_active_member',
+        'Grant target must be an active member principal'
+      );
+    }
+    if (!selectActiveGrantorStatement.get(ownerPrincipalId)) {
+      throw new PrincipalScopeGrantError(
+        'grantor_not_active_owner',
+        'Grant mutation requires an active owner principal'
+      );
+    }
+  }
 
   function resolveByExternal(
     connector: string,
@@ -240,6 +453,48 @@ export function createPrincipalRepository(
     });
   }
 
+  function grantScope(input: PrincipalScopeGrantMutationInput): 'created' | 'exists' {
+    const canonicalScope = canonicalizeGrantScope(input.scope);
+    const { grantKind, scopeKind, scopeId } = scopeColumns(canonicalScope);
+    return adapter.transaction(() => {
+      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
+      if (selectActiveGrantStatement.get(input.targetPrincipalId, grantKind, scopeKind, scopeId)) {
+        return 'exists';
+      }
+      insertGrantStatement.run(
+        input.targetPrincipalId,
+        grantKind,
+        scopeKind,
+        scopeId,
+        input.ownerPrincipalId,
+        input.now
+      );
+      return 'created';
+    });
+  }
+
+  function revokeScope(input: PrincipalScopeGrantMutationInput): 'revoked' | 'absent' {
+    const canonicalScope = canonicalizeGrantScope(input.scope);
+    const { grantKind, scopeKind, scopeId } = scopeColumns(canonicalScope);
+    return adapter.transaction(() => {
+      assertGrantMutationPrincipals(input.targetPrincipalId, input.ownerPrincipalId);
+      const result = revokeGrantStatement.run(
+        input.now,
+        input.targetPrincipalId,
+        grantKind,
+        scopeKind,
+        scopeId
+      );
+      return result.changes === 0 ? 'absent' : 'revoked';
+    });
+  }
+
+  function listActiveGrants(principalId: string): PrincipalScopeGrantRecord[] {
+    return (listActiveGrantsStatement.all(principalId) as PrincipalScopeGrantDatabaseRow[]).map(
+      mapPrincipalScopeGrant
+    );
+  }
+
   return {
     resolveByExternal,
     registerMember,
@@ -252,5 +507,8 @@ export function createPrincipalRepository(
     },
     ensureOwner,
     listMembers,
+    grantScope,
+    revokeScope,
+    listActiveGrants,
   };
 }

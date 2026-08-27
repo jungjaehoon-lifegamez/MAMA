@@ -13,7 +13,7 @@ import {
 } from '../../src/identity/principal-repository.js';
 import { applyMigrationsThrough } from '../../src/test-utils.js';
 
-describe('TG-01/TG-04 principal repository over migration 064', () => {
+describe('TG-01/TG-04 principal repository over current migration 065', () => {
   let adapter: DBManagerAdapter;
   let tempDir: string;
 
@@ -22,7 +22,7 @@ describe('TG-01/TG-04 principal repository over migration 064', () => {
     const dbPath = join(tempDir, 'core.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 64);
+    applyMigrationsThrough(migrationDb, 65);
     migrationDb.close();
 
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as DBManagerAdapter;
