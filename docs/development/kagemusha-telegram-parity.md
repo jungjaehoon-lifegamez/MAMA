@@ -268,8 +268,9 @@ session key stable when only member principalId changes`. This is an internal P2
 before routing`; `principal.test.ts` case `TG-04 attaches an active owner registry ID only to an
 already verified owner`; and the owner success plus denial cases in
   `p2a-member-registry-e2e.test.ts`.
-- **Status:** CODE GREEN for the owner scope-control surface. The complete Telegram/Slack/Discord
-  human-member E2E and live canary remain Task 5 gates.
+- **Status:** PACKAGED as the v0.39.3 release candidate. The complete Telegram/Slack/Discord
+  human-member E2E is GREEN; install/restart validation and the live canary remain operating gates
+  before Phase 2b is called shipped.
 
 ### P2b human-member connector completion: 2026-08-27
 
@@ -303,8 +304,9 @@ already verified owner`; and the owner success plus denial cases in
 - **Evidence:** `p2b-member-connectors-e2e.test.ts`,
   `member-scope-ingress-benchmark.test.ts`, and the Task 1-4 grant/resolver/session/result/write
   suites named in the Phase 2b implementation plan.
-- **Status:** CODE GREEN; no real connector traffic was sent. Release, install/restart, and a real
-  human-member messenger canary remain separate gates.
+- **Status:** PACKAGED as the v0.39.3 release candidate; no real connector traffic was sent by the
+  test suite. Install/restart validation and a real human-member messenger canary remain separate
+  operating gates before Phase 2b is called shipped.
 
 ### Backend-scoped model runtime closure: 2026-08-15
 

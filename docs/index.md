@@ -165,9 +165,12 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.39.2 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
+**Status:** MAMA OS v0.39.3 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
 backends with backend-owned durable context, role-scoped Code-Act projection, bounded recovery,
 and explicit non-replayable mutation outcomes. MAMA itself owns connector-event work as
 stateless fresh runs per batch on durable per-channel lane keys; configured private connectors
-remain installation-local and are never promoted into generic catalogs or prompts.
+remain installation-local and are never promoted into generic catalogs or prompts. Verified human
+members are the Phase 2b release candidate: one host-computed read scope per turn, limited to their
+private memory and explicit owner grants across Telegram, Slack, and Discord. Installation, restart
+validation, and a real human-member canary remain before that candidate is called shipped.
 **Last Updated:** 2026-08-27
