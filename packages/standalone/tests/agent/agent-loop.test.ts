@@ -16,6 +16,7 @@ import {
 } from '../../src/agent/agent-loop.js';
 import { HostToolTerminalError, ModelRunnerError } from '../../src/agent/model-runner.js';
 import type { HostToolBridge, PromptOptions } from '../../src/agent/model-runner.js';
+import { PromptSizeMonitor } from '../../src/agent/prompt-size-monitor.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import {
   AgentError,
@@ -939,6 +940,17 @@ describe('AgentLoop', () => {
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
         expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
         expect(effectivePrompt).not.toContain('**drive_download**');
+        expect(
+          effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
+        ).toHaveLength(1);
+        expect(
+          effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->/g) ?? []
+        ).toHaveLength(1);
+        expect(
+          new PromptSizeMonitor().check([
+            { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
+          ]).withinBudget
+        ).toBe(true);
         expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
           expectedDefinitions
         );

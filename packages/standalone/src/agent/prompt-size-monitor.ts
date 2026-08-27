@@ -38,6 +38,8 @@ export interface PromptLayer {
    * 6 = Keyword Instructions (ephemeral)
    */
   priority: number;
+  /** Host-authored opening marker paired atomically with protectedSuffix. */
+  protectedPrefix?: string;
   /** Host-authored closing marker that must survive partial truncation. */
   protectedSuffix?: string;
 }
@@ -185,9 +187,19 @@ export class PromptSizeMonitor {
             : '';
         const protectedTail = `${truncationMarker}${protectedSuffix}`;
         const markerTokens = countTokens(protectedTail);
+        const protectedPrefix =
+          layer.protectedPrefix && layer.content.startsWith(layer.protectedPrefix)
+            ? layer.protectedPrefix
+            : '';
+        const hasProtectedPair = protectedPrefix.length > 0 && protectedSuffix.length > 0;
+        const availableLayerTokens = Math.max(0, maxTokens - (currentTokens - tokens));
+        const minimumProtectedContent = `${protectedPrefix}${protectedTail}`;
 
-        if (markerTokens >= excess) {
-          // Marker alone costs more than excess — full removal is better
+        if (
+          markerTokens >= excess ||
+          (hasProtectedPair && countTokens(minimumProtectedContent) > availableLayerTokens)
+        ) {
+          // The truncation marker or atomic host marker pair cannot fit safely.
           currentTokens -= tokens;
           resultLayers[index] = { ...layer, content: '' };
           truncatedLayers.push(layer.name);
@@ -195,7 +207,11 @@ export class PromptSizeMonitor {
           const charsPerToken = tokens > 0 ? layer.content.length / tokens : 4;
           const charsToRemove = Math.ceil(excess * charsPerToken);
           const safeKeep = Math.max(0, layer.content.length - charsToRemove - protectedTail.length);
-          const newContent = layer.content.slice(0, safeKeep) + protectedTail;
+          let newContent =
+            layer.content.slice(0, Math.max(safeKeep, protectedPrefix.length)) + protectedTail;
+          if (hasProtectedPair && countTokens(newContent) > availableLayerTokens) {
+            newContent = minimumProtectedContent;
+          }
           const newTokens = countTokens(newContent);
           resultLayers[index] = {
             ...layer,

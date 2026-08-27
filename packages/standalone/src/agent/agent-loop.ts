@@ -873,6 +873,7 @@ export class AgentLoop {
           name: 'codeAct',
           content: codeActPrompt,
           priority: 2,
+          protectedPrefix: GENERATED_CODE_ACT_START,
           protectedSuffix: GENERATED_CODE_ACT_END,
         });
       } else if (!this.useCodeAct && backend !== 'codex') {
@@ -885,6 +886,7 @@ export class AgentLoop {
             name: 'gatewayTools',
             content: wrapGeneratedPromptSection('gatewayTools', gatewayToolsPrompt),
             priority: 2,
+            protectedPrefix: GENERATED_GATEWAY_TOOLS_START,
             protectedSuffix: GENERATED_GATEWAY_TOOLS_END,
           });
         }
@@ -1610,6 +1612,9 @@ export class AgentLoop {
                   name: 'gatewayTools',
                   content: gatewayToolsPrompt,
                   priority: 2,
+                  protectedPrefix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
+                    ? GENERATED_CODE_ACT_START
+                    : GENERATED_GATEWAY_TOOLS_START,
                   protectedSuffix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
                     ? GENERATED_CODE_ACT_END
                     : GENERATED_GATEWAY_TOOLS_END,
