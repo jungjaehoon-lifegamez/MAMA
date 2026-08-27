@@ -36,6 +36,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 function isCanonicalComponent(value: unknown, lowercase = false): value is string {
   if (typeof value !== 'string') {
     return false;
@@ -82,7 +86,7 @@ function addChannel(
 }
 
 function canonicalChannelGrant(channelsByConnector: Map<string, Set<string>>): ChannelGrant {
-  const grant: ChannelGrant = {};
+  const grant = Object.create(null) as ChannelGrant;
   for (const connector of [...channelsByConnector.keys()].sort()) {
     const channels = [...(channelsByConnector.get(connector) ?? [])].sort();
     if (channels.length > 0) {
@@ -97,6 +101,9 @@ function validGrantScope(value: unknown): PrincipalScopeGrantRecord['scope'] | n
     return null;
   }
   if (
+    hasOwn(value, 'kind') &&
+    hasOwn(value, 'connector') &&
+    hasOwn(value, 'channelId') &&
     value.kind === 'source' &&
     isCanonicalComponent(value.connector, true) &&
     isCanonicalComponent(value.channelId)
@@ -104,6 +111,9 @@ function validGrantScope(value: unknown): PrincipalScopeGrantRecord['scope'] | n
     return { kind: 'source', connector: value.connector, channelId: value.channelId };
   }
   if (
+    hasOwn(value, 'kind') &&
+    hasOwn(value, 'scopeKind') &&
+    hasOwn(value, 'scopeId') &&
     value.kind === 'memory' &&
     (value.scopeKind === 'project' ||
       value.scopeKind === 'channel' ||
@@ -124,7 +134,17 @@ function validGrantRecords(
   }
   const scopes: Array<PrincipalScopeGrantRecord['scope']> = [];
   for (const candidate of records as readonly unknown[]) {
-    if (!isRecord(candidate) || candidate.targetPrincipalId !== principalId) {
+    if (
+      !isRecord(candidate) ||
+      !hasOwn(candidate, 'targetPrincipalId') ||
+      !hasOwn(candidate, 'scope') ||
+      !hasOwn(candidate, 'grantedByPrincipalId') ||
+      !hasOwn(candidate, 'createdAt') ||
+      candidate.targetPrincipalId !== principalId ||
+      !isCanonicalComponent(candidate.grantedByPrincipalId) ||
+      typeof candidate.createdAt !== 'number' ||
+      !Number.isSafeInteger(candidate.createdAt)
+    ) {
       continue;
     }
     const scope = validGrantScope(candidate.scope);

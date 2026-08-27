@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PrincipalScopeGrantRecord, PrincipalScopeGrantRef } from '@jungjaehoon/mama-core';
-import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
+import { isChannelGranted, type ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import {
   resolveMemberEffectiveScope,
   type MemberEffectiveScopeInput,
@@ -42,6 +42,17 @@ function baseInput(overrides: Partial<MemberEffectiveScopeInput> = {}): MemberEf
     principalGrants: [],
     ...overrides,
   };
+}
+
+function oneConnectorGrant(connector: string, channelId: string): ChannelGrant {
+  const configured = Object.create(null) as ChannelGrant;
+  Object.defineProperty(configured, connector, {
+    configurable: true,
+    enumerable: true,
+    value: [channelId],
+    writable: true,
+  });
+  return configured;
 }
 
 describe('Phase 2b member effective-scope resolver', () => {
@@ -110,6 +121,80 @@ describe('Phase 2b member effective-scope resolver', () => {
     );
 
     expect(result.channelGrant).toEqual({ telegram: ['dm-7'] });
+    expect(result.memoryScopes).toEqual([{ kind: 'user', id: PRINCIPAL_ID }]);
+  });
+
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'keeps the %s connector visible in authority and fingerprint canonicalization',
+    (connector) => {
+      const baseline = resolveMemberEffectiveScope(baseInput());
+      const result = resolveMemberEffectiveScope(
+        baseInput({
+          configuredGrant: oneConnectorGrant(connector, 'shared'),
+          principalGrants: [grant({ kind: 'source', connector, channelId: 'shared' })],
+        })
+      );
+
+      expect(Object.getPrototypeOf(result.channelGrant)).toBeNull();
+      expect(Object.keys(result.channelGrant)).toContain(connector);
+      expect(isChannelGranted(connector, 'shared', result.channelGrant)).toBe(true);
+      expect(result.fingerprint).not.toBe(baseline.fingerprint);
+    }
+  );
+
+  it('rejects source records with missing or malformed grant metadata', () => {
+    const malformedSourceRecords = [
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'source', connector: 'slack', channelId: 'shared' },
+        createdAt: 100,
+      },
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'source', connector: 'slack', channelId: 'shared' },
+        grantedByPrincipalId: 'principal_owner',
+        createdAt: Number.NaN,
+      },
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'source', connector: 'slack', channelId: 'shared' },
+        grantedByPrincipalId: '*',
+        createdAt: 100,
+      },
+    ] as unknown as readonly PrincipalScopeGrantRecord[];
+
+    const result = resolveMemberEffectiveScope(
+      baseInput({ principalGrants: malformedSourceRecords })
+    );
+
+    expect(result.channelGrant).toEqual({ telegram: ['dm-7'] });
+  });
+
+  it('rejects memory records with missing or malformed grant metadata', () => {
+    const malformedMemoryRecords = [
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'memory', scopeKind: 'project', scopeId: 'mama' },
+        grantedByPrincipalId: 'principal_owner',
+      },
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'memory', scopeKind: 'project', scopeId: 'mama' },
+        grantedByPrincipalId: 7,
+        createdAt: 100,
+      },
+      {
+        targetPrincipalId: PRINCIPAL_ID,
+        scope: { kind: 'memory', scopeKind: 'project', scopeId: 'mama' },
+        grantedByPrincipalId: 'principal_owner',
+        createdAt: Number.POSITIVE_INFINITY,
+      },
+    ] as unknown as readonly PrincipalScopeGrantRecord[];
+
+    const result = resolveMemberEffectiveScope(
+      baseInput({ principalGrants: malformedMemoryRecords })
+    );
+
     expect(result.memoryScopes).toEqual([{ kind: 'user', id: PRINCIPAL_ID }]);
   });
 
