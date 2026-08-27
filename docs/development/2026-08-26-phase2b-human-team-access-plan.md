@@ -1,6 +1,6 @@
 # v1 Phase 2b: Human-Team Access Foundation
 
-**Status:** Merged in PR #240 and packaged for v0.39.3; not shipped until install, restart validation, and a real human-member canary pass
+**Status:** Merged in PR #240 and packaged with required Core 2.2.1 for v0.39.4; not shipped until install, restart validation, and a real human-member canary pass
 **Date:** 2026-08-26
 **Updated:** 2026-08-27
 **Depends on:** completed v0.39.2 runtime-overhead release and monitor cleanup; shipped Phase 1 sender boundary; shipped Phase 2a principal registry
