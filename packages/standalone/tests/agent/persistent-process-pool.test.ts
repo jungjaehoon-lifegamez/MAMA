@@ -266,6 +266,44 @@ describe('PersistentProcessPool idle cleanup', () => {
     expect(pool.getActiveCount()).toBe(0);
   });
 
+  it('tracks policy per live route and replaces only the revoked member route', async () => {
+    const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
+    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
+    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
+
+    expect(pool.getSessionPolicyStatus('member-route', 'granted-policy')).toBe('missing');
+    const staleMember = await pool.getProcess('member-route', {
+      policyFingerprint: 'granted-policy',
+    });
+    const unrelated = await pool.getProcess('owner-route', {
+      policyFingerprint: 'owner-policy',
+    });
+    const staleMemberStop = vi.spyOn(staleMember, 'stop').mockImplementation(() => {});
+    const unrelatedStop = vi.spyOn(unrelated, 'stop').mockImplementation(() => {});
+
+    expect(pool.getSessionPolicyStatus('member-route', 'granted-policy')).toBe('compatible');
+    expect(pool.getSessionPolicyStatus('member-route', 'revoked-policy')).toBe('mismatch');
+
+    pool.stopProcess('member-route');
+
+    expect(staleMemberStop).toHaveBeenCalledOnce();
+    expect(unrelatedStop).not.toHaveBeenCalled();
+    expect(pool.getSessionPolicyStatus('member-route', 'revoked-policy')).toBe('missing');
+    expect(pool.getSessionPolicyStatus('owner-route', 'owner-policy')).toBe('compatible');
+
+    const replacement = await pool.getProcess('replacement-member-route', {
+      policyFingerprint: 'revoked-policy',
+    });
+    expect(pool.getSessionPolicyStatus('replacement-member-route', 'revoked-policy')).toBe(
+      'compatible'
+    );
+    expect(
+      await pool.getProcess('replacement-member-route', { policyFingerprint: 'revoked-policy' })
+    ).toBe(replacement);
+
+    pool.stopAll();
+  });
+
   it('TG-03/TG-06 stops an errored generation even after its pool listener removed the entry', async () => {
     const pool = new PersistentProcessPool({ cleanupIntervalMs: 0 });
     vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);

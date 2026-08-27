@@ -1252,7 +1252,9 @@ This protects your credentials from being exposed in chat logs.`;
           logger.info('CONTINUE turn: skipping context injection');
         } else {
           if (isPublicLane) {
-            systemPrompt = this.buildPublicLaneSystemPrompt(session, publicLaneBaseInstructions);
+            systemPrompt = memberEffectiveScope
+              ? publicLaneBaseInstructions
+              : this.buildPublicLaneSystemPrompt(session, publicLaneBaseInstructions);
           } else {
             // New persistent owner/host session: retain the existing full prompt build.
             const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
@@ -1399,10 +1401,12 @@ This protects your credentials from being exposed in chat logs.`;
           // citation this ledger exists to refuse.
           ...(causeFromOwnerMessage(sourceTurnId, sourceMessageRef) ?? {}),
         };
-        if ((this.config.backend === 'codex' || this.config.backend === 'cline') && shouldResume) {
+        if (shouldResume) {
           options.freshSessionSystemPrompt = async () => {
             if (isPublicLane) {
-              return this.buildPublicLaneSystemPrompt(session, publicLaneBaseInstructions);
+              return memberEffectiveScope
+                ? publicLaneBaseInstructions
+                : this.buildPublicLaneSystemPrompt(session, publicLaneBaseInstructions);
             }
             const freshContext = this.config.implicitLegacyContextSearch
               ? await this.contextInjector.getRelevantContext(message.text)

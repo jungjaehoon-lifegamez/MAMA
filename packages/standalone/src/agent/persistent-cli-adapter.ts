@@ -24,6 +24,7 @@ import {
   type IModelRunner,
   type PromptOptions,
   type RunnerMetrics,
+  type SessionPolicyStatus,
 } from './model-runner.js';
 import { runContextRegistry, type RunContextRegistry } from './code-act/run-context-registry.js';
 import {
@@ -52,6 +53,7 @@ export class PersistentCLIAdapter implements IModelRunner {
   private processPool: PersistentProcessPool;
   private channelKey: string;
   private currentProcess: PersistentClaudeProcess | null = null;
+  private currentProcessChannelKey: string | null = null;
   private pendingToolResults: Map<string, { result: string; isError: boolean }> = new Map();
   private lastToolUseBlocks: ToolUseBlock[] = [];
   private contextRegistry: RunContextRegistry = runContextRegistry;
@@ -110,11 +112,13 @@ export class PersistentCLIAdapter implements IModelRunner {
       // Coalesce to the adapter default so an absent per-call value never nulls
       // out the pool's construction-time requestTimeout (chat runs keep it).
       requestTimeout: options?.requestTimeout ?? this.options.requestTimeout,
+      policyFingerprint: options?.sessionPolicyFingerprint,
       env: { MAMA_HOOK_FEATURES: 'rules,agents' },
     });
     // Keep the legacy accessor pointing at the most recent process, but NEVER
     // dereference this.currentProcess inside prompt() - concurrent calls race it.
     this.currentProcess = proc;
+    this.currentProcessChannelKey = channelKey;
 
     // Pending tool results belong to the legacy single-channel path; only flush
     // them when this call routes to that same channel - flushing them into an
@@ -281,11 +285,16 @@ export class PersistentCLIAdapter implements IModelRunner {
   /**
    * Create a new session (creates new process)
    */
-  resetSession(): void {
-    this.processPool.stopProcess(this.channelKey);
-    this.currentProcess = null;
-    this.pendingToolResults.clear();
-    this.lastToolUseBlocks = [];
+  resetSession(sessionId: string = this.channelKey): void {
+    this.processPool.stopProcess(sessionId);
+    if (this.currentProcessChannelKey === sessionId) {
+      this.currentProcess = null;
+      this.currentProcessChannelKey = null;
+      this.lastToolUseBlocks = [];
+    }
+    if (sessionId === this.channelKey) {
+      this.pendingToolResults.clear();
+    }
   }
 
   /**
@@ -302,6 +311,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     this.channelKey = sessionId;
     // Don't stop the old process - it might be reused
     this.currentProcess = null;
+    this.currentProcessChannelKey = null;
     this.pendingToolResults.clear();
     this.lastToolUseBlocks = [];
   }
@@ -325,6 +335,11 @@ export class PersistentCLIAdapter implements IModelRunner {
    */
   getOptions(): ClaudeCLIWrapperOptions {
     return { ...this.options };
+  }
+
+  getSessionPolicyStatus(options: PromptOptions): SessionPolicyStatus {
+    const channelKey = options.sessionId ?? options.sessionKey ?? this.channelKey;
+    return this.processPool.getSessionPolicyStatus(channelKey, options.sessionPolicyFingerprint);
   }
 
   // ─── IModelRunner implementation ─────────────────────────────────────────
@@ -363,6 +378,7 @@ export class PersistentCLIAdapter implements IModelRunner {
   stopAll(): void {
     this.processPool.stopAll();
     this.currentProcess = null;
+    this.currentProcessChannelKey = null;
     this.pendingToolResults.clear();
     this.lastToolUseBlocks = [];
   }

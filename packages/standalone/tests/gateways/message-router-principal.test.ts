@@ -278,8 +278,8 @@ describe('MessageRouter principal admission gate', () => {
     expect(runOptions[3]?.sessionPolicyFingerprint).toBe(runOptions[2]?.sessionPolicyFingerprint);
     expect(runOptions[2]?.memberEffectiveScope).toBe(changedScope);
     const rebuiltMemberPrompt = await runOptions[2]?.freshSessionSystemPrompt?.();
-    expect(rebuiltMemberPrompt).toContain('member A visible turn');
-    expect(rebuiltMemberPrompt).toContain('member B turn');
+    expect(rebuiltMemberPrompt).not.toContain('member A visible turn');
+    expect(rebuiltMemberPrompt).not.toContain('member B turn');
     expect(rebuiltMemberPrompt).not.toContain('owner private turn');
   });
 

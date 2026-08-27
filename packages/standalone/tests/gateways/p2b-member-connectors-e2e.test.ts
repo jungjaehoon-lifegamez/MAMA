@@ -209,6 +209,7 @@ type Connector = 'telegram' | 'slack' | 'discord';
 const SHARED_CONNECTOR = 'board';
 const SHARED_CHANNEL = 'member-visible';
 const SIBLING_CHANNEL = 'owner-hidden';
+const PRE_REVOKE_ASSISTANT_MARKER = 'P2B_PRE_REVOKE_ASSISTANT_MARKER';
 
 interface BridgeOperation {
   tool: 'context_compile' | 'mama_recall';
@@ -477,7 +478,12 @@ describe('Phase 2b Task 5b connector member E2E', () => {
         await beforeExecute?.(options!);
         const result = await executor.execute(operation.tool, operation.input, executionContext!);
         observations.push({ options: options!, result });
-        return { response: JSON.stringify(result) };
+        const serializedResult = JSON.stringify(result);
+        return {
+          response: serializedResult.includes('P2B_VISIBLE_')
+            ? `${PRE_REVOKE_ASSISTANT_MARKER}\n${serializedResult}`
+            : serializedResult,
+        };
       },
     };
     const sessionDb = new StandaloneDatabase(':memory:');
@@ -639,6 +645,9 @@ describe('Phase 2b Task 5b connector member E2E', () => {
         expect(revoked.options.sessionPolicyFingerprint).not.toBe(
           granted.options.sessionPolicyFingerprint
         );
+        const replacementPrompt = await revoked.options.freshSessionSystemPrompt?.();
+        expect(replacementPrompt).toBeDefined();
+        expect(replacementPrompt).not.toContain(PRE_REVOKE_ASSISTANT_MARKER);
         expect(revoked.result).toMatchObject({ success: false, code: 'connector_out_of_scope' });
         expect(JSON.stringify(revoked.result)).not.toContain(`P2B_VISIBLE_${scenario.connector}`);
         expect(harness.grantReadCount()).toBe(2);

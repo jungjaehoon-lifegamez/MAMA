@@ -1346,6 +1346,7 @@ export class AgentLoop {
     const isCodex = this.backend === 'codex';
     const isCline = this.backend === 'cline';
     const isDurableRuntime = isCodex || isCline;
+    const tracksSessionPolicy = isDurableRuntime || this.backend === 'claude';
     const clineRole = options?.agentContext?.role;
     const clineAllowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeAllowedTools
@@ -1871,7 +1872,7 @@ export class AgentLoop {
         };
         try {
           const durablePolicyStatus =
-            isDurableRuntime && turn === 1 && shouldResume
+            tracksSessionPolicy && turn === 1 && shouldResume
               ? this.agent.getSessionPolicyStatus?.({
                   model: options?.model,
                   resumeSession: true,
@@ -1896,6 +1897,12 @@ export class AgentLoop {
               `[AgentLoop] ${this.backend} durable session ${durablePolicyStatus}; ` +
                 'opening the full policy before model request'
             );
+            if (this.backend === 'claude' && durablePolicyStatus === 'mismatch') {
+              if (!this.agent.resetSession) {
+                throw new Error('Claude model runner cannot retire a stale policy session');
+              }
+              await this.agent.resetSession(resolvedCliSessionId ?? undefined);
+            }
             const newSessionId = this.sessionPool.resetSession(channelKey);
             options?.onCliSessionReset?.(newSessionId);
             resolvedCliSessionId = newSessionId;

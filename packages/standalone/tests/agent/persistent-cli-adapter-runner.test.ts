@@ -5,11 +5,19 @@
  * Does NOT test prompt() (covered by existing integration tests).
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+import {
+  PersistentClaudeProcess,
+  PersistentProcessPool,
+} from '../../src/agent/persistent-cli-process.js';
 import type { IModelRunner, RunnerMetrics } from '../../src/agent/model-runner.js';
 
 describe('PersistentCLIAdapter as IModelRunner', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should implement IModelRunner interface', () => {
     const adapter = new PersistentCLIAdapter();
     // Structural check: IModelRunner requires these members
@@ -68,5 +76,39 @@ describe('PersistentCLIAdapter as IModelRunner', () => {
       expect(adapter.getProcessState()).toBe('no_process');
       expect(adapter.getActiveProcessCount()).toBe(0);
     });
+  });
+
+  it('reports a mismatch and stops the exact Claude route before replacement', async () => {
+    vi.spyOn(PersistentClaudeProcess.prototype, 'start').mockResolvedValue(undefined);
+    vi.spyOn(PersistentClaudeProcess.prototype, 'isAlive').mockReturnValue(true);
+    const adapter = new PersistentCLIAdapter({ sessionId: 'legacy-route' });
+    const pool = (
+      adapter as unknown as {
+        processPool: PersistentProcessPool;
+      }
+    ).processPool;
+    const staleProcess = await pool.getProcess('member-route', {
+      policyFingerprint: 'granted-policy',
+    });
+    await pool.getProcess('owner-route', { policyFingerprint: 'owner-policy' });
+    const staleStop = vi.spyOn(staleProcess, 'stop').mockImplementation(() => {});
+
+    expect(
+      adapter.getSessionPolicyStatus({
+        sessionId: 'member-route',
+        sessionPolicyFingerprint: 'revoked-policy',
+      })
+    ).toBe('mismatch');
+    adapter.resetSession('member-route');
+
+    expect(staleStop).toHaveBeenCalledOnce();
+    expect(adapter.getActiveProcessCount()).toBe(1);
+    expect(
+      adapter.getSessionPolicyStatus({
+        sessionId: 'owner-route',
+        sessionPolicyFingerprint: 'owner-policy',
+      })
+    ).toBe('compatible');
+    adapter.stop();
   });
 });
