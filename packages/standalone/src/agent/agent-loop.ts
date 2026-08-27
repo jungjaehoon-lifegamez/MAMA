@@ -610,6 +610,7 @@ export function buildAgentToolExecutionContext(
     channelId: options.channelId,
     envelope: options.envelope,
     executionSurface: 'model_tool',
+    channelGrantSnapshot: options.memberEffectiveScope?.channelGrant,
   };
   if (options.sourceTurnId !== undefined) {
     context.sourceTurnId = options.sourceTurnId;

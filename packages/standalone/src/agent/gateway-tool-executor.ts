@@ -230,7 +230,7 @@ let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
 type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
 
 type GatewayExecutionContext = GatewayToolExecutionContext;
-type ChannelGrantSnapshot = Record<string, readonly string[]>;
+type ChannelGrantSnapshot = Readonly<Record<string, readonly string[]>>;
 type GatewayContextSnapshot = {
   agentId: string;
   source: string;
@@ -753,6 +753,7 @@ export class GatewayToolExecutor {
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
+      channelGrantSnapshot: executionContext?.channelGrantSnapshot,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
     };
   }
@@ -1361,10 +1362,13 @@ export class GatewayToolExecutor {
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
-    const channelGrantSnapshot =
-      baseCtx.envelope && MIRROR_READABLE_TOOLS.has(toolName)
-        ? snapshotChannelGrant(this.channelGrantProvider)
-        : undefined;
+    const channelGrantSnapshot = baseCtx.envelope
+      ? MIRROR_READABLE_TOOLS.has(toolName)
+        ? (baseCtx.channelGrantSnapshot ?? snapshotChannelGrant(this.channelGrantProvider))
+        : toolName === 'code_act'
+          ? baseCtx.channelGrantSnapshot
+          : undefined
+      : undefined;
     const ctx = { ...baseCtx, gatewayCallId, channelGrantSnapshot };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
     const computedScopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);

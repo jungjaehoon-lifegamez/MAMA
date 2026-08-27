@@ -212,6 +212,8 @@ export type GatewayToolExecutionContext = {
   /** Parent gateway tool when execution is nested (for example inside code_act). */
   parentToolName?: string;
   backgroundTasks?: BackgroundTaskRegistry;
+  /** Host-derived channel authority detached at ingress; read tools reuse it without re-querying. */
+  channelGrantSnapshot?: Readonly<Record<string, readonly string[]>>;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
 };
