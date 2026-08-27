@@ -231,7 +231,7 @@ describe('Gateway principal resolution', () => {
     });
 
     it.each(['slack', 'discord'] as const)(
-      'keeps the exact Phase-1 divert lane for an active %s member',
+      'admits an active %s member to the public lane',
       (connector) => {
         const external = resolveConnectorPrincipal({
           connector,
@@ -249,8 +249,8 @@ describe('Gateway principal resolution', () => {
 
         expect(member.class).toBe('member');
         expect(member.principalId).toBe(`${connector}-member-principal`);
-        expect(member.lane).toBe(external.lane);
-        expect(member.lane).toBe('divert');
+        expect(external.lane).toBe('divert');
+        expect(member.lane).toBe('public');
         expect(Object.isFrozen(member)).toBe(true);
       }
     );

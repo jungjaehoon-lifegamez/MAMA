@@ -38,6 +38,8 @@ export interface PromptLayer {
    * 6 = Keyword Instructions (ephemeral)
    */
   priority: number;
+  /** Host-authored closing marker that must survive partial truncation. */
+  protectedSuffix?: string;
 }
 
 /**
@@ -177,7 +179,12 @@ export class PromptSizeMonitor {
       } else {
         // Partial truncation: estimate chars to remove based on layer's token density
         const truncationMarker = `\n\n[... ${layer.name} truncated: ~${excess} tokens removed ...]`;
-        const markerTokens = countTokens(truncationMarker);
+        const protectedSuffix =
+          layer.protectedSuffix && layer.content.endsWith(layer.protectedSuffix)
+            ? `\n${layer.protectedSuffix}`
+            : '';
+        const protectedTail = `${truncationMarker}${protectedSuffix}`;
+        const markerTokens = countTokens(protectedTail);
 
         if (markerTokens >= excess) {
           // Marker alone costs more than excess — full removal is better
@@ -187,11 +194,8 @@ export class PromptSizeMonitor {
         } else {
           const charsPerToken = tokens > 0 ? layer.content.length / tokens : 4;
           const charsToRemove = Math.ceil(excess * charsPerToken);
-          const safeKeep = Math.max(
-            0,
-            layer.content.length - charsToRemove - truncationMarker.length
-          );
-          const newContent = layer.content.slice(0, safeKeep) + truncationMarker;
+          const safeKeep = Math.max(0, layer.content.length - charsToRemove - protectedTail.length);
+          const newContent = layer.content.slice(0, safeKeep) + protectedTail;
           const newTokens = countTokens(newContent);
           resultLayers[index] = {
             ...layer,

@@ -161,6 +161,30 @@ describe('PromptSizeMonitor', () => {
       expect(monitorResult.truncatedLayers).toContain('big-rule');
     });
 
+    it('preserves a host-authored closing marker during partial truncation', () => {
+      const endMarker = '<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->';
+      const generatedCatalog = [
+        '<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->',
+        'x'.repeat(8000),
+        endMarker,
+      ].join('\n');
+      const layers: PromptLayer[] = [
+        { name: 'core', content: 'c'.repeat(3000), priority: 1 },
+        {
+          name: 'gatewayTools',
+          content: generatedCatalog,
+          priority: 2,
+          protectedSuffix: endMarker,
+        },
+      ];
+
+      const { layers: result } = monitor.enforce(layers, 3000);
+      const gatewayTools = result.find((layer) => layer.name === 'gatewayTools');
+
+      expect(gatewayTools?.content).toContain('gatewayTools truncated');
+      expect(gatewayTools?.content.endsWith(endMarker)).toBe(true);
+    });
+
     it('should return correct truncatedLayers list', () => {
       // 5000+3000+3000+3000+5000 = 19000 chars → 7600 tokens (> 6250 truncate)
       const layers: PromptLayer[] = [

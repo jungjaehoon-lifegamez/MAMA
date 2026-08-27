@@ -223,6 +223,11 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       scope_mismatch: 0,
       execution_status: 'completed',
     });
+    expect(JSON.parse(row.details ?? '{}')).toMatchObject({
+      channel_id: 'abc',
+      tool: 'mama_save',
+    });
+    expect(JSON.parse(row.details ?? '{}')).not.toHaveProperty('channel_ref');
     expect(metricsStore.record).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'envelope_scope_mismatch' })
     );
@@ -269,6 +274,11 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(mamaApi.save).not.toHaveBeenCalled();
     const [row] = readGatewayToolRows(db);
     expect(row.scope_mismatch).toBe(1);
+    expect(JSON.parse(row.details ?? '{}')).toMatchObject({
+      channel_ref: auditScope('channel', 'abc').id,
+      tool: 'mama_save',
+    });
+    expect(JSON.parse(row.details ?? '{}')).not.toHaveProperty('channel_id');
     expect(parseScopes(row.requested_scopes)).toEqual([auditScope('global', 'system')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       auditScope('channel', 'telegram:abc'),

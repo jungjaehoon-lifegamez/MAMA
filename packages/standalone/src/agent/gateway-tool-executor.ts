@@ -2183,7 +2183,9 @@ export class GatewayToolExecutor {
         scopeMismatch: scopeAudit.mismatch,
         details: {
           source: ctx?.source ?? 'unknown',
-          channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown'),
+          ...(scopeAudit.mismatch
+            ? { channel_ref: digestAuditIdentifier(ctx?.channelId ?? 'unknown') }
+            : { channel_id: ctx?.channelId ?? 'unknown' }),
           tool: toolName,
           gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),

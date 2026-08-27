@@ -869,7 +869,12 @@ export class AgentLoop {
           'codeAct',
           getCodeActInstructions(backend, policy.names) + '\n```typescript\n' + typeDefs + '\n```'
         );
-        promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
+        promptLayers.push({
+          name: 'codeAct',
+          content: codeActPrompt,
+          priority: 2,
+          protectedSuffix: GENERATED_CODE_ACT_END,
+        });
       } else if (!this.useCodeAct && backend !== 'codex') {
         const gatewayToolsPrompt = getRunGatewayToolsPrompt(
           options.agentContext,
@@ -880,6 +885,7 @@ export class AgentLoop {
             name: 'gatewayTools',
             content: wrapGeneratedPromptSection('gatewayTools', gatewayToolsPrompt),
             priority: 2,
+            protectedSuffix: GENERATED_GATEWAY_TOOLS_END,
           });
         }
       }
@@ -1599,7 +1605,16 @@ export class AgentLoop {
               ]
             : []),
           ...(gatewayToolsPrompt
-            ? [{ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 } as PromptLayer]
+            ? [
+                {
+                  name: 'gatewayTools',
+                  content: gatewayToolsPrompt,
+                  priority: 2,
+                  protectedSuffix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
+                    ? GENERATED_CODE_ACT_END
+                    : GENERATED_GATEWAY_TOOLS_END,
+                } as PromptLayer,
+              ]
             : []),
         ];
         const checkResult = monitor.check(runLayers);

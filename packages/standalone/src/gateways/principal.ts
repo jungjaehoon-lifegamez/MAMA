@@ -49,6 +49,7 @@ export function overlayMemberPrincipal(
   return freezePrincipal({
     ...base,
     class: 'member',
+    lane: 'public',
     principalId: row.principalId,
   });
 }

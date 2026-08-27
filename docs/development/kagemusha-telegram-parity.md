@@ -271,6 +271,41 @@ already verified owner`; and the owner success plus denial cases in
 - **Status:** CODE GREEN for the owner scope-control surface. The complete Telegram/Slack/Discord
   human-member E2E and live canary remain Task 5 gates.
 
+### P2b human-member connector completion: 2026-08-27
+
+- **TG-04 connector admission:** one shared scenario table drives the real Grammy, Slack Socket
+  Mode/Web API, and Discord SDK callbacks with only those external boundaries mocked. Active
+  migration-065 members enter the existing public lane on all three connectors; suspended and
+  offboarded rows return to each connector's existing external/public-or-divert behavior. The same
+  upstream user ID resolves to three distinct principals because connector namespace remains part
+  of durable identity.
+- **TG-03/TG-04 authority and visibility:** the callback continues through the real principal
+  repository/resolver overlay, runtime member-scope resolver, MessageRouter envelope and member
+  policy, GatewayToolExecutor, context compile, and temporary SQLite connector-event index. One
+  owner source grant admits only the exact configured channel, excludes its sibling, and another
+  member's private scope is denied before recall. Task 4's real executor coverage remains the
+  authority for member write and delivery denial instead of duplicating that harness.
+- **TG-05 revoke/session behavior:** every member turn reads grants exactly once. Revoke changes
+  the next session-policy fingerprint and blocks the source before context compilation; a later
+  unchanged turn keeps the same fingerprint. Removing the connector from configured authority has
+  the same next-turn effect. A revoke committed after an operation captured its detached snapshot
+  does not change that in-flight result, while the following turn reads fresh authority and denies.
+- **Benchmark:** `member-scope-ingress-benchmark.test.ts` measures 2,000 warmed pure-resolver and
+  real SQLite repository-plus-resolver operations, prints median/p95 values without asserting an
+  exact machine-specific time, enforces a 10 ms added-latency p95 budget, and pins one
+  `listActiveGrants` query per member operation with zero for owner/external ingress.
+- **TDD and verification:** the first connector admission run passed Telegram and failed
+  Slack/Discord before routing; the minimal active-member public-lane correction made all three
+  GREEN. The final Task 2-5b focused gate passed 17 files and 348 tests, including Task 4's real
+  write/delivery denial and result filtering. Task 1's core repository/migration gate passed three
+  files and 31 tests. Root typecheck passed three tasks, root build passed two tasks, and
+  changed-file ESLint, Prettier, and `git diff --check` passed.
+- **Evidence:** `p2b-member-connectors-e2e.test.ts`,
+  `member-scope-ingress-benchmark.test.ts`, and the Task 1-4 grant/resolver/session/result/write
+  suites named in the Phase 2b implementation plan.
+- **Status:** CODE GREEN; no real connector traffic was sent. Release, install/restart, and a real
+  human-member messenger canary remain separate gates.
+
 ### Backend-scoped model runtime closure: 2026-08-15
 
 - **TG-05:** a same-backend per-role model override now reaches the real Codex app-server session

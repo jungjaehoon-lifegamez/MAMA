@@ -360,7 +360,7 @@ describe('Story TG-01/TG-04: Telegram ingress principal admission', () => {
     await gateway.stop();
   });
 
-  it('keeps an owner_user_ids sender authoritative and skips the registry lookup', async () => {
+  it('keeps an owner_user_ids sender authoritative after the registry lookup', async () => {
     const routed: NormalizedMessage[] = [];
     const turnProcessor: TurnProcessor = {
       processTurn: vi.fn((message) => {
@@ -382,7 +382,7 @@ describe('Story TG-01/TG-04: Telegram ingress principal admission', () => {
 
     await deliver(makeMessage({ chatId: 7006, userId: 7006, messageId: 7, text: 'owner request' }));
 
-    expect(principalResolver).not.toHaveBeenCalled();
+    expect(principalResolver).toHaveBeenCalledWith('telegram', 'global', '7006');
     expect(routed[0]?.principal).toMatchObject({
       class: 'owner',
       lane: 'owner',

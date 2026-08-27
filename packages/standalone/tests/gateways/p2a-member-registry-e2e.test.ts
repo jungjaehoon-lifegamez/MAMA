@@ -126,7 +126,7 @@ describe('P2a principal registry completion matrix', () => {
   });
 
   describe('TG-04 Acceptance Criteria: role-bound registry and owner tools', () => {
-    it('preserves external lane access and connector identity isolation', () => {
+    it('admits active members through one public lane while preserving connector identity isolation', () => {
       const externalId = '12345';
       const scenarios = [
         {
@@ -145,7 +145,7 @@ describe('P2a principal registry completion matrix', () => {
             ownerUserId: 'p2a-owner',
             isDirectMessage: false,
           }),
-          expectedRole: 'external_data',
+          expectedRole: 'public_lane',
         },
         {
           connector: 'discord',
@@ -157,7 +157,7 @@ describe('P2a principal registry completion matrix', () => {
             ownerUserId: 'p2a-owner',
             isDirectMessage: false,
           }),
-          expectedRole: 'external_data',
+          expectedRole: 'public_lane',
         },
       ] as const;
       const roleManager = new RoleManager();
@@ -185,10 +185,12 @@ describe('P2a principal registry completion matrix', () => {
 
         expect(member).toMatchObject({
           class: 'member',
-          lane: scenario.external.lane,
+          lane: 'public',
           principalId,
         });
-        expect(memberRole).toEqual(externalRole);
+        if (scenario.external.lane === 'divert') {
+          expect(memberRole).not.toEqual(externalRole);
+        }
         expect(memberRole.roleName).toBe(scenario.expectedRole);
         expect(memberRole.roleName).not.toBe('chat_bot');
         expect(memberRole.roleName).not.toBe('owner_console');
