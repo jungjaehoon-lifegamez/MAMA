@@ -206,6 +206,16 @@ otherwise pull an out-of-scope source back into a granted result.
 
 ## Implementation sequence
 
+### TDD execution order
+
+The numbered sections describe dependency ownership, but strict implementation order is
+`Task 1 repository RED/GREEN → Task 2 resolver RED/GREEN → Task 0 full matrix RED → Tasks 3–4
+GREEN → Task 5 E2E`. Before Tasks 1–2 there is no real grant/revoke or effective-scope input seam,
+so forcing the full Task 0 matrix first would produce missing-method/import failures instead of
+observable authorization failures. Tasks 1 and 2 must each start with focused failing tests; the
+full matrix then uses those real inputs and remains RED for the still-missing ingress, session, and
+shared enforcement wiring.
+
 ### Task 0: RED acceptance matrix
 
 Extend the P2a E2E matrix before production code:
