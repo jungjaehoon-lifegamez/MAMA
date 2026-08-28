@@ -21,7 +21,7 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add gateway integration**  | `gateways/*.ts`               | Discord, Slack, Telegram handlers                 |
 | **Modify multi-agent swarm** | `multi-agent/orchestrator.ts` | 5-stage routing, tier-based access, delegation    |
 | **Add skill**                | `skills/*.ts`                 | Pluggable capabilities (image translation, docs)  |
-| **Modify onboarding wizard** | `onboarding/*.ts`             | 9-phase autonomous setup (ritual-based)           |
+| **Modify onboarding**        | `onboarding/*.ts`             | CLI contract and live readiness state             |
 | **Add cron job handler**     | `scheduler/*.ts`              | Heartbeat, token keep-alive, job locking          |
 | **Modify web UI**            | `../public/viewer/`           | MAMA OS dashboard (outside src/)                  |
 | **Add MCP tool executor**    | `agent/mcp-executor.ts`       | Tool execution via Claude CLI --mcp-config        |
@@ -31,7 +31,6 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add API endpoint**         | `api/*.ts`                    | Heartbeat, cron, error handlers                   |
 | **Modify memory logger**     | `memory/memory-logger.ts`     | Decision/checkpoint logging                       |
 | **Add runner**               | `runners/*.ts`                | CLI runner for single-prompt execution            |
-| **Modify setup wizard**      | `setup/*.ts`                  | WebSocket, server, tools, prompts                 |
 | **Add utility**              | `utils/*.ts`                  | Log sanitizer, Slack validators, rate limiters    |
 
 ---
@@ -210,24 +209,15 @@ User message → Orchestrator → 5-Stage Routing
                 └── DELEGATE::developer::Fix the auth bug
 ```
 
-**Key difference from oh-my-opencode:** Built for **chat platforms** (Discord, Slack, Telegram) with multiple bot accounts collaborating in real-time channels, not local CLI environment.
+**Key difference from oh-my-opencode:** MAMA is one messenger-native work agent. Internal workers
+may collaborate behind that single front, but users do not select named bots or a worker roster.
 
-### **Onboarding Wizard (Ritual-Based)**
+### **Self-Teaching Onboarding**
 
-```text
-9-Phase Autonomous Setup:
-1. The Awakening ✨
-2. Getting to Know You 💬
-3. Personality Quest 🎮
-4. The Naming Ceremony 🏷️
-5. Checkpoint ✅
-6. Security Talk 🔒
-7. The Connections 🔌
-8. The Demo 🎪
-9. Grand Finale 🎉
-```
-
-Each phase uses Claude CLI to guide users through setup with natural conversation.
+- `mama --help` explains the static onboarding contract.
+- `mama status` observes live readiness and prints exact next actions.
+- `mama setup` is a compatibility alias for `mama status`.
+- Onboarding completes when the first report has confirmed delivery evidence.
 
 ### **UltraWork Mode (Ralph Loop 3-Phase)**
 

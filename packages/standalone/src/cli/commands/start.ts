@@ -66,17 +66,19 @@ import { initValidationTables } from '../../validation/store.js';
 import { ValidationSessionService } from '../../validation/session-service.js';
 
 import {
-  API_PORT,
   EMBEDDING_PORT,
-  openBrowser,
-  isOnboardingComplete,
-  shouldAutoOpenBrowser,
   resolveCodexCommandForStartup,
   hasCodexBackendConfigured,
   resolveClineCommandForStartup,
   hasClineBackendConfigured,
   startEmbeddingServerIfAvailable,
 } from '../runtime/utilities.js';
+import {
+  assessOnboarding,
+  renderContractStatus,
+  type OnboardingState,
+} from '../../onboarding/agent-contract.js';
+import { collectAssessDeps } from '../../onboarding/assess-live.js';
 import { startDaemon } from '../runtime/daemon.js';
 import { initMetrics } from '../runtime/metrics-init.js';
 import { initMamaCore } from '../runtime/mama-core-init.js';
@@ -1120,23 +1122,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     console.log('MAMA is running in foreground.');
     console.log('Press Ctrl+C to stop.\n');
 
-    // Auto-open browser (after a delay for server to start)
-    const needsOnboarding = !isOnboardingComplete();
-    const targetUrl = needsOnboarding
-      ? `http://localhost:${API_PORT}/setup`
-      : `http://localhost:${API_PORT}/viewer`;
-    if (shouldAutoOpenBrowser()) {
-      setTimeout(() => {
-        if (needsOnboarding) {
-          console.log('🎭 First-time setup - Opening onboarding wizard...\n');
-        } else {
-          console.log('🌐 Opening MAMA OS...\n');
-        }
-        openBrowser(targetUrl);
-      }, 3000); // Wait for embedding server
-    }
-
     await writePid(process.pid);
+    await printStartOnboardingStatus();
     await runAgentLoop(config);
   } else {
     // Run as daemon
@@ -1149,24 +1136,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       console.log(`PID: ${daemonPid}\n`);
       console.log('Check status: mama status');
       console.log('Stop: mama stop\n');
-
-      // Auto-open browser after server is ready
-      const needsOnboarding = !isOnboardingComplete();
-      const targetUrl = needsOnboarding
-        ? `http://localhost:${API_PORT}/setup`
-        : `http://localhost:${API_PORT}/viewer`;
-
-      // Wait for server to be ready
-      if (shouldAutoOpenBrowser()) {
-        setTimeout(() => {
-          if (needsOnboarding) {
-            console.log('🎭 First-time setup - Opening onboarding wizard...\n');
-          } else {
-            console.log('🌐 Opening MAMA OS...\n');
-          }
-          openBrowser(targetUrl);
-        }, 2000); // Wait 2 seconds for embedding server to start
-      }
+      await printStartOnboardingStatus();
     } catch (error) {
       console.log('❌');
       console.error(
@@ -1174,6 +1144,22 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       );
       process.exit(1);
     }
+  }
+}
+
+export function buildStartOnboardingOutput(state: OnboardingState): string | null {
+  return state.complete ? null : renderContractStatus(state);
+}
+
+async function printStartOnboardingStatus(): Promise<void> {
+  try {
+    const output = buildStartOnboardingOutput(assessOnboarding(await collectAssessDeps()));
+    if (output) {
+      process.stdout.write(`${output}\n\n`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stdout.write(`Onboarding: unavailable\n  ${message}\n\n`);
   }
 }
 

@@ -5,9 +5,8 @@
  * All logic and function signatures are unchanged.
  */
 
-import { exec } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import type { Server as HttpServer } from 'node:http';
 import http from 'node:http';
@@ -16,7 +15,7 @@ import { loadConfig } from '../config/config-manager.js';
 import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
 
 // Port configuration — single source of truth
-/** Public-facing API server port (REST API, Viewer UI, Setup Wizard) */
+/** Public-facing API server port (REST API + Viewer UI) */
 export const API_PORT = 3847;
 /** Internal embedding server port (model inference, chat WebSocket/session API, graph) */
 export const EMBEDDING_PORT = 3849;
@@ -347,38 +346,12 @@ export async function startEmbeddingServerIfAvailable(
   }
 }
 
-/**
- * Open URL in default browser (cross-platform)
- */
-export function openBrowser(url: string): void {
-  const os = platform();
-  let command: string;
-
-  switch (os) {
-    case 'darwin':
-      command = `open "${url}"`;
-      break;
-    case 'win32':
-      command = `start "" "${url}"`;
-      break;
-    default:
-      command = `xdg-open "${url}"`;
-  }
-
-  exec(command, (error) => {
-    if (error) {
-      console.warn(`[Browser] Failed to open: ${error.message}`);
-      console.log(`\n🌐 Open MAMA OS manually: ${url}\n`);
-    }
-  });
-}
-
-/**
- * Check if onboarding is complete (persona files exist)
- */
-export function isOnboardingComplete(): boolean {
+/** Runtime readiness is independent from the first-report onboarding milestone. */
+export function isRuntimeReady(): boolean {
   const mamaHome = join(homedir(), '.mama');
-  return existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
+  return ['config.yaml', 'SOUL.md', 'IDENTITY.md', 'USER.md'].every((name) =>
+    existsSync(join(mamaHome, name))
+  );
 }
 
 /**
@@ -417,10 +390,6 @@ export function syncBuiltinSkills(): void {
     // Non-blocking: skills are optional, but surface failures for observability
     console.warn('[syncBuiltinSkills] Skill sync failed (non-fatal):', err);
   }
-}
-
-export function shouldAutoOpenBrowser(): boolean {
-  return process.env.MAMA_NO_AUTO_OPEN_BROWSER !== '1';
 }
 
 export function isExecutable(target: string): boolean {

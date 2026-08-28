@@ -314,11 +314,9 @@ The v1 team product remains incomplete until plans and E2E evidence cover:
 
 ## Compatibility surfaces awaiting migration
 
-Some shipped prompts and configuration files still describe the former user-facing agent-team
-experiment. They are compatibility surfaces, not product authority:
+The self-teaching onboarding round removed the former awakening prompt and its named-agent setup
+promises. Remaining compatibility surfaces are not product authority:
 
-- `packages/standalone/src/onboarding/complete-autonomous-prompt.ts` still offers named
-  Conductor/Developer/Reviewer/Architect/PM personas and retired orchestration choices;
 - `packages/standalone/src/agent/os-agent-capabilities.md` still carries older capability language;
 - legacy multi-agent configuration remains available for existing installations even though it is
   not the v1 interaction model.

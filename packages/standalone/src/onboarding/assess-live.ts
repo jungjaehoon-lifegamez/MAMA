@@ -12,6 +12,7 @@ import { getConfigPath, getMAMAHome, loadConfig } from '../cli/config/config-man
 import { isDaemonRunning } from '../cli/utils/pid-manager.js';
 import { loadConnectorConfig } from '../connectors/config-loader.js';
 import type { AssessDeps } from './agent-contract.js';
+import { DEFAULT_PERSONA_MARKER } from './bootstrap-template.js';
 
 interface CompletionMarker {
   completed_at?: string;
@@ -112,6 +113,12 @@ export async function migrateLegacyInstall(mamaHome: string): Promise<boolean> {
   const hasPersonas =
     existsSync(join(mamaHome, 'SOUL.md')) && existsSync(join(mamaHome, 'USER.md'));
   if (!hasPersonas || !existsSync(getConfigPath())) {
+    return false;
+  }
+  const generatedDefaults = ['SOUL.md', 'USER.md'].some((name) =>
+    readFileSync(join(mamaHome, name), 'utf8').includes(DEFAULT_PERSONA_MARKER)
+  );
+  if (generatedDefaults) {
     return false;
   }
 

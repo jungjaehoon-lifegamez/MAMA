@@ -1188,7 +1188,6 @@ Read SKILL.md content for a workspace skill.
 | --------- | --------------------------------------- |
 | `/viewer` | The Viewer: Operator, Knowledge, System |
 | `/graph`  | Graph data API                          |
-| `/setup`  | Setup wizard                            |
 | `/`       | Redirects to `/viewer`                  |
 
 ### Route Aliases

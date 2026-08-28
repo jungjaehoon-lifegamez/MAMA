@@ -121,7 +121,8 @@ export function renderContractIntro(): string {
     'arrives - not when installation finishes.',
     '',
     'New install? Run: mama status - it shows exactly what is missing and the',
-    'next command for each item. Machine-readable: mama status --json',
+    'next command for each item, including facts that require a human step.',
+    'Machine-readable: mama status --json',
   ].join('\n');
 }
 
