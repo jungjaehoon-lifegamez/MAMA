@@ -79,8 +79,9 @@ program
 program
   .command('status')
   .description('Check MAMA agent status')
-  .action(async () => {
-    await statusCommand();
+  .option('--json', 'Machine-readable status with onboarding contract')
+  .action(async (options: { json?: boolean }) => {
+    await statusCommand(options);
   });
 
 program
