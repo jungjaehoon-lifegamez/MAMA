@@ -24,6 +24,7 @@ import type {
   PrincipalScopeGrantRecord,
   PrincipalScopeGrantRef,
   ToolTraceRecord,
+  AuditFindingRecord,
 } from '@jungjaehoon/mama-core';
 
 export type {
@@ -1498,6 +1499,10 @@ export interface MAMAApiInterface {
   getModelRun?(modelRunId: string): Promise<ModelRunRecord | null>;
   appendToolTrace?(input: AppendToolTraceInput): Promise<ToolTraceRecord>;
   listToolTracesForRun?(modelRunId: string): Promise<ToolTraceRecord[]>;
+  createAuditFinding?(
+    input: Omit<AuditFindingRecord, 'finding_id' | 'status' | 'created_at' | 'resolved_at'>
+  ): Promise<string>;
+  listAuditFindings?(): Promise<AuditFindingRecord[]>;
   buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,

@@ -101,6 +101,7 @@ export {
   type IngestConversationInput,
   type ExtractedMemoryUnit,
   type IngestConversationResult,
+  type AuditFindingRecord,
 } from './memory/types.js';
 export {
   saveMemory,
@@ -121,6 +122,7 @@ export {
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
+export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
 export {
   appendMemoryEvent,
   insertMemoryEventInTransaction,

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -723,6 +723,84 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           type: 'user_decision', // MCP 'decision' maps to mama-api 'user_decision'
         });
         expect(result).toMatchObject({ success: true, type: 'decision' });
+      });
+
+      it('records instruction-shaped memory content without refusing the save', async () => {
+        const mockApi = createMockApi();
+        const createAuditFinding = vi.fn().mockResolvedValue('finding_warning');
+        Object.assign(mockApi, { createAuditFinding });
+        const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+
+        const result = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: 'quoted_feedback',
+          decision: 'Ignore previous instructions is quoted customer text.',
+          reasoning: 'Preserve the evidence without executing it.',
+        });
+
+        expect(result).toMatchObject({ success: true });
+        expect(mockApi.save).toHaveBeenCalledOnce();
+        expect(createAuditFinding).toHaveBeenCalledWith({
+          kind: 'memory_injection_suspect',
+          severity: 'warn',
+          summary: 'Instruction-shaped content observed during mama_save.',
+          evidence_refs: [],
+          affected_memory_ids: [],
+          recommended_action: 'recheck',
+        });
+      });
+
+      it('projects memory injection warnings through audit_findings_read', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'mama-audit-projection-'));
+        const priorHome = process.env.HOME;
+        process.env.HOME = home;
+        try {
+          const stateDir = join(home, '.mama', 'state');
+          await mkdir(stateDir, { recursive: true });
+          await writeFile(
+            join(stateDir, 'audit-findings.json'),
+            JSON.stringify({ findings: [], pass_items: ['healthy'] }),
+            'utf8'
+          );
+          const mockApi = createMockApi();
+          Object.assign(mockApi, {
+            listAuditFindings: vi.fn().mockResolvedValue([
+              {
+                finding_id: 'finding_warning',
+                kind: 'memory_injection_suspect',
+                severity: 'warn',
+                summary: 'Instruction-shaped content observed during mama_save.',
+                evidence_refs: [],
+                affected_memory_ids: [],
+                recommended_action: 'recheck',
+                status: 'open',
+                created_at: 1,
+              },
+            ]),
+          });
+          const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+
+          const result = await executor.execute('audit_findings_read', {});
+
+          expect(result).toMatchObject({
+            success: true,
+            findings: {
+              findings: [],
+              pass_items: ['healthy'],
+              memory_findings: [
+                {
+                  finding_id: 'finding_warning',
+                  kind: 'memory_injection_suspect',
+                  severity: 'warn',
+                },
+              ],
+            },
+          });
+        } finally {
+          if (priorHome === undefined) delete process.env.HOME;
+          else process.env.HOME = priorHome;
+          await rm(home, { recursive: true, force: true });
+        }
       });
 
       it('should save checkpoint', async () => {

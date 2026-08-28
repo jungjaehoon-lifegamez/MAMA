@@ -55,7 +55,7 @@ import {
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
-import { listOpenAuditFindings } from './memory/finding-store.js';
+import { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
 import { listMemoryEventsForMemory, listRecentMemoryEvents } from './memory/event-store.js';
 import type { TrustedMemoryWriteOptions } from './memory/provenance.js';
 import {
@@ -4096,6 +4096,7 @@ const mama = {
   upsertChannelSummary,
   getChannelSummary,
   listAuditFindings: listOpenAuditFindings,
+  createAuditFinding,
   getMemoryProvenance,
   listMemoriesByEnvelopeHash,
   listMemoriesByGatewayCallId,
@@ -4162,6 +4163,7 @@ export {
   upsertChannelSummary,
   getChannelSummary,
   listOpenAuditFindings,
+  createAuditFinding,
   getMemoryProvenance,
   listMemoriesByEnvelopeHash,
   listMemoriesByGatewayCallId,

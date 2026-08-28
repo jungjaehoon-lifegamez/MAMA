@@ -1409,6 +1409,34 @@ export class GatewayToolExecutor {
     }
   }
 
+  private async recordMemoryWriteWarnings(
+    api: MAMAApiInterface,
+    toolName: 'mama_save' | 'mama_update',
+    warnings: readonly string[]
+  ): Promise<void> {
+    if (warnings.length === 0) return;
+
+    securityLogger.warn(`[memory] ${toolName} observed instruction-shaped content`, {
+      warnings,
+    });
+    if (!api.createAuditFinding) {
+      securityLogger.warn('[memory] audit finding writer is unavailable');
+      return;
+    }
+    try {
+      await api.createAuditFinding({
+        kind: 'memory_injection_suspect',
+        severity: 'warn',
+        summary: `Instruction-shaped content observed during ${toolName}.`,
+        evidence_refs: [],
+        affected_memory_ids: [],
+        recommended_action: 'recheck',
+      });
+    } catch (error) {
+      securityLogger.warn('[memory] failed to persist injection warning', error);
+    }
+  }
+
   /**
    * Execute a gateway tool with permission checks
    *
@@ -2560,6 +2588,7 @@ export class GatewayToolExecutor {
             };
           }
           const api = await getApi();
+          await this.recordMemoryWriteWarnings(api, 'mama_save', saveSecretScan.warnings);
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
           let hasContextPacketId: boolean;
@@ -2646,7 +2675,9 @@ export class GatewayToolExecutor {
               error: `Refusing to update: content matches secret pattern(s): ${updateSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
             };
           }
-          return await handleUpdate(await getApi(), input as UpdateInput);
+          const api = await getApi();
+          await this.recordMemoryWriteWarnings(api, 'mama_update', updateSecretScan.warnings);
+          return await handleUpdate(api, input as UpdateInput);
         }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
@@ -3025,14 +3056,25 @@ export class GatewayToolExecutor {
           );
           try {
             const raw = readFileSync(auditStatePath, 'utf8');
-            return { success: true, findings: JSON.parse(raw) };
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            const api = await getApi();
+            const memoryFindings = api.listAuditFindings ? await api.listAuditFindings() : [];
+            return {
+              success: true,
+              findings: { ...parsed, memory_findings: memoryFindings },
+            };
           } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
             if (code === 'ENOENT') {
+              const api = await getApi();
+              const memoryFindings = api.listAuditFindings ? await api.listAuditFindings() : [];
               return {
                 success: true,
-                findings: null,
-                message: 'No audit findings recorded yet (first audit has not run).',
+                findings: { memory_findings: memoryFindings },
+                message:
+                  memoryFindings.length === 0
+                    ? 'No audit findings recorded yet (first audit has not run).'
+                    : 'Memory findings are available; the first system audit has not run.',
               };
             }
             return {
