@@ -6,7 +6,7 @@
  *
  * Responsibilities:
  *   1. Sets up closure-scoped reasoning state (reasoningLog, turnCount, autoRecallUsed)
- *   2. Checks persona completion and logs onboarding status
+ *   2. Checks runtime inputs without treating them as onboarding completion
  *   3. Determines OS Agent mode and loads capabilities
  *   4. Resolves Code-Act config from os-agent, with a legacy persona fallback
  *   5. Creates the main AgentLoop with all options
@@ -15,7 +15,6 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { MAMAConfig } from '../config/types.js';
@@ -34,7 +33,7 @@ import type { MetricsStore } from '../../observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
 import { getLatestVersion, upsertMetrics } from '../../db/agent-store.js';
-import { syncBuiltinSkills } from './utilities.js';
+import { isRuntimeReady, syncBuiltinSkills } from './utilities.js';
 import { assertEffortSupportedByBackend } from '../../agent/backend-model-policy.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -121,23 +120,16 @@ export function initMainAgentLoop(
   // later model call. The per-run throw downstream stays as the backstop.
   assertEffortSupportedByBackend(runtimeBackend, config.agent.effort);
 
-  const mamaHome = join(homedir(), '.mama');
-
   // Sync built-in skills on every start (non-destructive — skips existing files)
   syncBuiltinSkills();
-
-  const personaComplete =
-    existsSync(join(mamaHome, 'USER.md')) && existsSync(join(mamaHome, 'SOUL.md'));
 
   const systemPrompt = '';
   let osCapabilities = '';
 
-  if (!personaComplete) {
-    // Onboarding is handled exclusively by the Setup Wizard (/setup).
-    // OS agent runs in normal mode — no onboarding prompt injection.
-    console.log('⚙️  Onboarding incomplete (use /setup wizard to complete)');
+  if (!isRuntimeReady()) {
+    console.log('⚠️  Runtime inputs incomplete. Run: mama status');
   } else {
-    console.log('✓ Persona loaded (chat mode)');
+    console.log('✓ Runtime inputs ready');
   }
 
   // OS Agent mode (Viewer context only)

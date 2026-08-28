@@ -130,7 +130,9 @@ mama init
 ~/.mama/
 ├── config.yaml              # Main configuration file
 ├── CLAUDE.md                # Workspace documentation for Claude
-├── BOOTSTRAP.md             # Onboarding prompt template
+├── SOUL.md                  # Shipped operating principles
+├── IDENTITY.md              # One-front MAMA identity
+├── USER.md                  # Scoped owner-learning policy
 ├── skills/                  # Custom skills directory
 ├── workspace/               # Working directory for Claude
 │   ├── scripts/             # Shell scripts and automation
@@ -172,42 +174,27 @@ Claude Code 인증 확인... ✓
 데이터 디렉토리 생성 중... ✓
 로그 디렉토리 생성 중... ✓
 CLAUDE.md 생성 중... ✓
-BOOTSTRAP.md 생성 중... ✓
+기본 런타임 페르소나 생성 중... ✓
 
 다음 단계:
-  mama setup    대화형 설정 마법사 (처음 실행)
-  mama start    에이전트 시작
-  mama status   상태 확인
+  mama status   온보딩 상태와 다음 행동 확인
+  mama start    status가 요청할 때 에이전트 시작
 ```
 
-### Step 2: Run Setup Wizard (Optional but Recommended)
+### Step 2: Follow the Self-Teaching Status Contract
 
 ```bash
-mama setup
+mama status
 ```
 
-The interactive wizard uses the backend selected in `config.yaml`.
-It does not switch `agent.backend` or `agent.model`; change providers with `mama init --force
---backend ...` after authenticating the target CLI. Setup mutations use a localhost host-action
-boundary protected by an exact Origin check and a one-time page nonce.
+`mama --help` explains the product and points new installs here. `mama status` observes the real
+configuration, Telegram trust anchor, daemon, sources, and first confirmed report. It prints every
+missing action and separates commands the agent can run from facts that require a human step.
 
-**What the setup wizard does:**
+`mama setup` remains as a compatibility alias for `mama status`. It does not start a browser or a
+separate server. The journey ends when the first evidenced report arrives, not when files are
+created.
 
-1. **Checks the configured backend login** - Uses Claude auth status, Codex auth files, or the persisted Cline Hub credential as appropriate.
-2. **Starts setup server** - Launches web interface on port 3848
-3. **Opens browser** - Guides you through 10-phase onboarding
-4. **Configures integrations** - Helps set up Discord/Slack/Telegram bots
-5. **Runs legacy identity steps** - Optional compatibility flow; not required for one-front MAMA operation
-
-> **Legacy wizard note:** the current wizard still contains historical personality, naming, and
-> agent-team copy. Those steps do not define the v1 product and are not needed to run one MAMA
-> front. The canonical direction is documented in
-> [One-Front Team Work Agent](../development/2026-08-26-one-front-team-work-agent-design.md).
-
-**Skip setup wizard if:**
-
-- You want to configure manually via `config.yaml`
-- You're setting up in a headless environment
 - You don't need gateway integrations
 
 ### External Access Note
@@ -666,15 +653,12 @@ is alive:
 
 ---
 
-## Onboarding Wizard Status
+## Self-Teaching Onboarding Status
 
-`mama setup` is an optional compatibility path. Its important operational outputs are gateway
-configuration, security disclosure, and a restart-safe config. Historical personality and named
-agent-team steps may still appear in the current runtime; do not treat them as required concepts or
-model human-team authorization with them.
-
-For a minimal setup, use `mama init`, configure one gateway, start the daemon, and delegate work to
-the single MAMA identity. See [Gateway Configuration](gateway-config.md).
+Use `mama status --json` when an installation agent is driving setup and `mama status` when a human
+is reading it directly. Both forms come from one contract. Configure one gateway, establish its
+owner trust anchor, add at least one work source, start the daemon, and request the first report.
+See [Gateway Configuration](gateway-config.md).
 
 ---
 
@@ -687,10 +671,9 @@ After initialization, your workspace looks like this:
 ├── config.yaml              # Main configuration
 ├── mama.pid                 # Process ID (when running)
 ├── CLAUDE.md                # Workspace documentation
-├── BOOTSTRAP.md             # Onboarding prompt
-├── IDENTITY.md              # Optional legacy identity metadata
-├── USER.md                  # User preferences (created during onboarding)
-├── SOUL.md                  # Optional legacy behavior metadata
+├── IDENTITY.md              # One-front MAMA identity
+├── USER.md                  # Scoped owner-learning policy
+├── SOUL.md                  # Operating principles
 │
 ├── skills/                  # Custom skills
 │   ├── image-translate/     # Image translation skill

@@ -196,28 +196,19 @@ mama init --backend cline    # Select authenticated Cline Hub backend
 
 ### `mama setup`
 
-Interactive setup wizard powered by the configured Claude, Codex, or Cline backend.
+Compatibility alias for the self-teaching onboarding status.
 
 **Usage:**
 
 ```bash
-mama setup [options]
-```
-
-**Options:**
-
-- `-p, --port <port>` - Port number for MAMA OS (default: 3848)
-- `--no-browser` - Don't automatically open browser
-
-**Examples:**
-
-```bash
-mama setup                # Start wizard on default port
-mama setup --port 8080    # Use custom port
-mama setup --no-browser   # Don't open browser
+mama setup
 ```
 
 **What it does:**
+
+- Prints the same observed onboarding contract as `mama status`
+- Lists missing agent actions and human-required actions
+- Never starts a browser, setup server, or separate onboarding session
 
 - Checks the backend selected in `config.yaml` (Claude, Codex, or Cline)
 - Launches the 10-phase onboarding wizard on a nonce-protected localhost connection

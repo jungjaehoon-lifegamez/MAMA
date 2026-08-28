@@ -9,6 +9,7 @@ import {
 } from '../../src/onboarding/assess-live.js';
 import { saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG, type MAMAConfig } from '../../src/cli/config/types.js';
+import { DEFAULT_SOUL, DEFAULT_USER } from '../../src/onboarding/bootstrap-template.js';
 
 let home: string;
 let mamaHome: string;
@@ -158,6 +159,17 @@ describe('Story ONB-2: live onboarding assessment', () => {
       expect(existsSync(join(mamaHome, 'setup-complete.json'))).toBe(true);
       expect(existsSync(join(mamaHome, 'state', 'first-report.json'))).toBe(true);
       expect((await collectAssessDeps()).firstReportAt).not.toBeNull();
+    });
+
+    it('does not mistake newly generated default personas for a completed legacy install', async () => {
+      mkdirSync(mamaHome, { recursive: true });
+      writeFileSync(join(mamaHome, 'SOUL.md'), DEFAULT_SOUL);
+      writeFileSync(join(mamaHome, 'USER.md'), DEFAULT_USER);
+      await writeConfig({ telegram: { enabled: true, token: 't', allowed_chats: ['1'] } });
+
+      expect(await migrateLegacyInstall(mamaHome)).toBe(false);
+      expect(existsSync(join(mamaHome, 'setup-complete.json'))).toBe(false);
+      expect(existsSync(join(mamaHome, 'state', 'first-report.json'))).toBe(false);
     });
 
     it('does not re-read legacy eligibility after both migration markers exist', async () => {

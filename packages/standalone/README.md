@@ -202,14 +202,14 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
 
 ## CLI
 
-| Command                                      | Description              |
-| -------------------------------------------- | ------------------------ |
-| `mama init`                                  | Initialize workspace     |
-| `mama setup`                                 | Interactive setup wizard |
-| `mama start`                                 | Start daemon             |
-| `mama stop`                                  | Stop daemon              |
-| `mama status`                                | Check status             |
-| `mama connector <add\|remove\|list\|status>` | Manage connectors        |
+| Command                                      | Description                          |
+| -------------------------------------------- | ------------------------------------ |
+| `mama init`                                  | Initialize workspace                 |
+| `mama setup`                                 | Print onboarding contract and status |
+| `mama start`                                 | Start daemon                         |
+| `mama stop`                                  | Stop daemon                          |
+| `mama status`                                | Show status and exact next actions   |
+| `mama connector <add\|remove\|list\|status>` | Manage connectors                    |
 
 ## Configuration
 

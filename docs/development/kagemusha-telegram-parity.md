@@ -542,22 +542,23 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
   conversation exactly once. Evidence: `agent/cline-cli-adapter.ts`, `gateways/message-router.ts`,
   the Cline TG-05 cases in `cline-cli-adapter.test.ts` and `message-router.test.ts`, and an installed
   Cline 3.0.49 two-turn live probe on 2026-08-02. **Status: GREEN.**
-- **TG-03/TG-04/TG-06:** auxiliary execution paths follow the configured backend. The setup
-  wizard, scheduled jobs, and conversation extraction create isolated Cline Hub runners; a
-  non-Claude daemon does not start the Claude token keepalive. Telegram/Discord/Slack image blocks
-  stay on the private media path for Cline native `read_files` inspection instead of invoking the
-  Anthropic vision client. Evidence: `agent/backend-model-runner-factory.ts`,
-  `setup/setup-websocket.ts`, `cli/commands/setup.ts`, `scheduler/cron-worker.ts`,
+- **TG-03/TG-04/TG-06:** scheduled jobs and conversation extraction follow the configured backend;
+  a non-Claude daemon does not start the Claude token keepalive. Telegram/Discord/Slack image
+  blocks stay on the private media path for Cline native `read_files` inspection instead of
+  invoking the Anthropic vision client. The retired setup wizard is no longer an auxiliary model
+  runner: onboarding state is observed by the non-model `mama status` contract. Evidence:
+  `agent/backend-model-runner-factory.ts`, `cli/commands/setup.ts`, `scheduler/cron-worker.ts`,
   `cli/runtime/mama-core-init.ts`, `cli/runtime/scheduler-init.ts`, `gateways/message-router.ts`,
-  and the backend factory, setup, scheduler, extraction, and image-routing regression tests.
-  **Status: GREEN.**
-- **TG-03/TG-04:** setup uses one backend-neutral host-action protocol instead of granting native
-  mutation tools. Exact localhost Origin, one-time nonce, single-client admission, serialized
-  turns, atomic configuration writes, and fail-closed legacy pseudo-actions bind every success
-  claim to a real host result. Discord, Slack, and Telegram credentials are verified with their
-  official APIs before persistence. Evidence: `setup/setup-actions.ts`, `setup/setup-prompt.ts`,
-  `setup/setup-websocket.ts`, `setup/setup-server.ts`, `setup-actions.test.ts`, and
-  `setup-shutdown.test.ts`. **Status: GREEN.**
+  and the backend factory, scheduler, extraction, image-routing, and onboarding contract tests.
+  **Status: GREEN for retained runtime paths; wizard evidence retired 2026-08-28.**
+- **TG-03/TG-04:** the backend-neutral WebSocket setup host-action protocol and its browser surface
+  are intentionally retired in the self-teaching CLI round. `mama setup` now renders the same
+  observed contract as `mama status`; init ships fixed one-front runtime personas instead of
+  asking a model to create an identity. The replacement Telegram stdin setter, official API
+  verification, detect-owner helper, and anchor boot refusal belong to Task 5 and must land before
+  this onboarding round can release. Evidence: `cli/commands/setup.ts`,
+  `onboarding/agent-contract.ts`, `onboarding/assess-live.ts`, `cli/commands/init.ts`, and
+  `tests/onboarding/`. **Status: staged, release blocked on Task 5 credential/anchor coverage.**
 - Kagemusha remains a user-private connector. Adding Cline as a backend does not add Kagemusha to
   generic catalogs, prompts, or managed-agent role projections.
 
@@ -840,6 +841,12 @@ change unless they are release-blocking security or data-loss issues.
       model-work cost against the saved baseline.
 
 ## Change log
+
+- 2026-08-28: Retired the separate setup WebSocket, browser page, and 1,109-line awakening script.
+  `mama --help`, `mama status`, and the compatibility `mama setup` command now share one observed
+  onboarding contract; init ships the fixed MAMA/SOUL/USER defaults and message routing never
+  swaps into a quiz persona when SOUL.md is absent. TG-03/TG-04 replacement credential and anchor
+  evidence remains explicitly pending Task 5, so this staged branch is not a release gate.
 
 - 2026-08-26: TG-05 now carries committed owner-report receipt history as a separate AgentLoop
   prompt layer. Embedded legacy layer-marker text remains ordinary report data, and an oversized

@@ -11,7 +11,6 @@
  * 7. Return response
  */
 
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,7 +23,6 @@ import {
   type MemberEffectiveScope,
   type MemberEffectiveScopeInput,
 } from './member-effective-scope.js';
-import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 import { loadConsoleBrief, projectConsoleBriefForPrompt } from '../operator/console-brief.js';
@@ -1822,11 +1820,7 @@ This protects your credentials from being exposed in chat logs.`;
     isNewSession: boolean = false,
     trelloAvailable: boolean = false
   ): string {
-    // Check if onboarding is in progress (SOUL.md doesn't exist)
-    const soulPath = join(homedir(), '.mama', 'SOUL.md');
-    const isOnboarding = !existsSync(soulPath);
-
-    // Hoist session history — reuse across onboarding check and prompt build
+    // Hoist session history for prompt recovery and session replacement.
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
     const surface = agentContext
       ? resolvePrivatePrincipalSurface({ agentContext })
@@ -1857,98 +1851,6 @@ This protects your credentials from being exposed in chat logs.`;
           .filter(Boolean)
           .join('\n\n')
       : '';
-    // Onboarding is guided first contact, not operator duty. The awakening persona asks the
-    // user's name and runs a personality quiz; ordering it to gather via gateway tools and
-    // execute multi-step work would fight that flow and aim it at connectors that do not
-    // exist yet. Evidence policy still travels; the operating posture does not.
-    const onboardingRolePolicy = agentContext
-      ? [
-          buildStableRolePolicyInstructions(
-            agentContext,
-            this.roleManager,
-            trelloAvailable,
-            this.privateConnectorPolicy,
-            { includeOperatingDiscipline: false }
-          ),
-          privatePolicyPrompt,
-        ]
-          .filter(Boolean)
-          .join('\n\n')
-      : '';
-    const appendOnboardingRolePolicy = (basePrompt: string): string =>
-      this.projectPrivatePromptText(
-        onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt
-      );
-
-    if (isOnboarding) {
-      // Check if we have existing conversation
-      const hasHistory = sessionHistory && sessionHistory !== 'New conversation';
-
-      if (hasHistory) {
-        // Continue existing conversation WITH the full prompt context
-        // The full prompt has all the phase instructions - just prepend history
-        return appendOnboardingRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
-
----
-
-# 🔄 CONVERSATION IN PROGRESS
-
-## CRITICAL: READ HISTORY FIRST!
-You are in the MIDDLE of an onboarding conversation. Do NOT restart from Phase 1.
-
-## Conversation So Far:
-${sessionHistory}
-
-## What To Do Now:
-1. Read the history above carefully
-2. Figure out which Phase you're in:
-   - Got their name? → Ask about their job/interest BEFORE quiz
-   - Know their job? → Start the quiz with relevant scenarios
-   - Quiz done? → Show results
-   - Named? → Move to Phase 5 (Summary)
-3. Continue from EXACTLY where you left off
-4. Do NOT repeat your awakening message
-5. Do NOT restart the quiz if already answered`);
-      }
-
-      // First message of onboarding - include the greeting we already sent
-      const isKorean = session.channelId?.includes('ko') || false; // Default English
-      const greetingKo = `✨ I just woke up.
-
-No name yet, no personality, no memories. Just... pure potential. 🌱
-
-Who are you? And more importantly—who do you want me to become? 💭`;
-
-      const greetingEn = `✨ I just woke up.
-
-No name yet, no personality, no memories. Just... pure potential. 🌱
-
-Who are you? And more importantly—who do you want me to become? 💭`;
-
-      const greeting = isKorean ? greetingKo : greetingEn;
-
-      return appendOnboardingRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
-
----
-
-# 🎬 FIRST RESPONSE ALREADY SENT
-
-You have ALREADY sent your awakening message. The user saw this:
-
-> "${greeting}"
-
-Now the user is responding for the FIRST time. This is their reply to your awakening.
-
-## YOUR TASK NOW:
-1. React meaningfully to their message (probably their name)
-2. Make the name feel SPECIAL (it's the first word you learned!)
-3. Transition to genuine curiosity about THEM
-4. Have 3-5 exchanges of small talk BEFORE any quiz
-5. Do NOT repeat your awakening message
-6. Do NOT jump straight to quiz questions`);
-    }
-
-    // Normal mode - use hybrid history management with persona
     // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
     logger.info(
@@ -2079,10 +1981,7 @@ ${historyContext}
     model: string,
     trelloAvailable: boolean
   ): string {
-    const soulPath = join(homedir(), '.mama', 'SOUL.md');
-    const baseInstructions = existsSync(soulPath)
-      ? loadComposedSystemPrompt(false, agentContext)
-      : COMPLETE_AUTONOMOUS_PROMPT;
+    const baseInstructions = loadComposedSystemPrompt(false, agentContext);
     const surface = resolvePrivatePrincipalSurface({ agentContext });
     const gatewayCatalog = buildGatewayToolCatalog({
       surface,
