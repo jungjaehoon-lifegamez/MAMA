@@ -1,108 +1,158 @@
 /**
  * Live observation for the onboarding contract.
  *
- * This module only OBSERVES - config file, marker files, the pid file, the
- * connectors registry. Judgment and wording live in agent-contract.ts. The
- * completion marker is a cache of an observed state, never an authority:
- * status recomputes from observation every time and the marker exists so a
- * completed install can say so without re-deriving history.
+ * This module observes the current installation. Judgment and wording remain
+ * in agent-contract.ts. Completion markers cache observed history; they never
+ * gate runtime behavior.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import yaml from 'js-yaml';
-import { getMAMAHome } from '../cli/config/config-manager.js';
+import { getConfigPath, getMAMAHome, loadConfig } from '../cli/config/config-manager.js';
 import { isDaemonRunning } from '../cli/utils/pid-manager.js';
+import { loadConnectorConfig } from '../connectors/config-loader.js';
 import type { AssessDeps } from './agent-contract.js';
 
-interface RawConfigShape {
-  telegram?: { token?: string; allowed_chats?: string[] };
-  owner?: { name?: string; language?: string; timezone?: string };
+interface CompletionMarker {
+  completed_at?: string;
 }
 
-interface RawConnectorsShape {
-  connectors?: Record<string, { enabled?: boolean } | undefined>;
+interface FirstReportMarker {
+  at?: string;
 }
 
-function readYamlConfig(home: string): RawConfigShape | null {
-  const p = join(home, 'config.yaml');
-  if (!existsSync(p)) return null;
+function parseJsonFile<T>(path: string): T {
   try {
-    return (yaml.load(readFileSync(p, 'utf-8')) as RawConfigShape) ?? null;
-  } catch {
-    // A corrupt config is observed as absent; init/start fail loudly on it at
-    // the real boundary - status must not crash while reporting.
+    return JSON.parse(readFileSync(path, 'utf8')) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse onboarding state file ${path}: ${message}`);
+  }
+}
+
+function parseJsonObjectFile(path: string): Record<string, unknown> {
+  const value = parseJsonFile<unknown>(path);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Invalid onboarding state file ${path}: expected a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function countEnabledConnectors(mamaHome: string): number {
+  const path = join(mamaHome, 'connectors.json');
+  const result = loadConnectorConfig(path);
+  if (!result.ok) {
+    throw new Error(
+      `Failed to load onboarding connector state ${result.error.path}: ${result.error.message}`
+    );
+  }
+  return result.enabledNames.length;
+}
+
+function readFirstReportAt(mamaHome: string): string | null {
+  const path = join(mamaHome, 'state', 'first-report.json');
+  if (!existsSync(path)) {
     return null;
   }
-}
-
-function countEnabledConnectors(home: string): number {
-  const p = join(home, 'connectors.json');
-  if (!existsSync(p)) return 0;
-  try {
-    const raw = JSON.parse(readFileSync(p, 'utf-8')) as RawConnectorsShape;
-    const entries = raw.connectors ?? (raw as Record<string, { enabled?: boolean }>);
-    return Object.values(entries).filter(
-      (c) => c && typeof c === 'object' && c.enabled === true
-    ).length;
-  } catch {
-    return 0;
+  const raw = parseJsonObjectFile(path) as FirstReportMarker;
+  if (typeof raw.at !== 'string' || raw.at.length === 0) {
+    throw new Error(`Invalid onboarding state file ${path}: expected a non-empty string "at"`);
   }
+  return raw.at;
 }
 
-function readFirstReportAt(home: string): string | null {
-  const p = join(home, 'state', 'first-report.json');
-  if (!existsSync(p)) return null;
-  try {
-    const raw = JSON.parse(readFileSync(p, 'utf-8')) as { at?: string };
-    return typeof raw.at === 'string' ? raw.at : null;
-  } catch {
-    return null;
+export async function collectAssessDeps(): Promise<AssessDeps> {
+  const mamaHome = getMAMAHome();
+  const configPath = getConfigPath();
+  let config: Awaited<ReturnType<typeof loadConfig>> | null = null;
+
+  if (existsSync(configPath)) {
+    try {
+      config = await loadConfig();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to load onboarding config ${configPath}: ${message}`);
+    }
   }
-}
 
-export async function collectAssessDeps(mamaHome?: string): Promise<AssessDeps> {
-  const home = mamaHome ?? getMAMAHome();
-  const config = readYamlConfig(home);
-  const running = mamaHome === undefined ? await isDaemonRunning() : null;
+  const running = await isDaemonRunning();
   return {
-    mamaHome: home,
-    configExists: config !== null || existsSync(join(home, 'config.yaml')),
-    daemonRunning: running !== null && running !== undefined && Boolean(running),
-    telegramToken: Boolean(config?.telegram?.token?.trim()),
-    allowedChats: Array.isArray(config?.telegram?.allowed_chats)
-      ? config.telegram.allowed_chats.length > 0
-      : false,
-    ownerFacts: Boolean(config?.owner?.name?.trim()),
-    enabledConnectors: countEnabledConnectors(home),
-    firstReportAt: readFirstReportAt(home),
+    configLoadable: config !== null,
+    daemonRunning: Boolean(running),
+    telegramConfigured:
+      config?.telegram?.enabled === true && Boolean(config.telegram.token?.trim()),
+    allowedChats:
+      Array.isArray(config?.telegram?.allowed_chats) && config.telegram.allowed_chats.length > 0,
+    enabledConnectors: countEnabledConnectors(mamaHome),
+    firstReportAt: readFirstReportAt(mamaHome),
   };
 }
 
 /** Idempotent: the first completed_at is preserved forever. */
 export async function writeCompletionMarker(mamaHome: string): Promise<void> {
-  const p = join(mamaHome, 'setup-complete.json');
-  if (existsSync(p)) return;
+  const path = join(mamaHome, 'setup-complete.json');
+  if (existsSync(path)) {
+    return;
+  }
   mkdirSync(mamaHome, { recursive: true });
-  writeFileSync(p, JSON.stringify({ completed_at: new Date().toISOString() }, null, 2));
+  writeFileSync(path, JSON.stringify({ completed_at: new Date().toISOString() }, null, 2));
 }
 
 /**
- * A legacy install (persona files present + telegram configured) predates the
- * marker; backfill it so status never tells a working install to onboard.
+ * Backfill observed completion evidence for an existing working installation.
+ * The markers describe history only; assessment still recomputes live state.
  */
-export function migrateLegacyInstall(mamaHome: string): boolean {
-  const markerPath = join(mamaHome, 'setup-complete.json');
-  if (existsSync(markerPath)) return false;
+export async function migrateLegacyInstall(mamaHome: string): Promise<boolean> {
+  const completionPath = join(mamaHome, 'setup-complete.json');
+  const reportPath = join(mamaHome, 'state', 'first-report.json');
+  if (existsSync(completionPath) && existsSync(reportPath)) {
+    return false;
+  }
+
   const hasPersonas =
     existsSync(join(mamaHome, 'SOUL.md')) && existsSync(join(mamaHome, 'USER.md'));
-  if (!hasPersonas) return false;
-  const config = readYamlConfig(mamaHome);
+  if (!hasPersonas || !existsSync(getConfigPath())) {
+    return false;
+  }
+
+  let config: Awaited<ReturnType<typeof loadConfig>>;
+  try {
+    config = await loadConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to load onboarding config ${getConfigPath()}: ${message}`);
+  }
   const telegramConfigured =
-    Boolean(config?.telegram?.token?.trim()) &&
-    Array.isArray(config?.telegram?.allowed_chats) &&
-    (config?.telegram?.allowed_chats?.length ?? 0) > 0;
-  if (!telegramConfigured) return false;
-  writeFileSync(markerPath, JSON.stringify({ completed_at: new Date().toISOString() }, null, 2));
-  return true;
+    config.telegram?.enabled === true &&
+    Boolean(config.telegram.token?.trim()) &&
+    Array.isArray(config.telegram.allowed_chats) &&
+    config.telegram.allowed_chats.length > 0;
+  if (!telegramConfigured) {
+    return false;
+  }
+
+  let completedAt = new Date().toISOString();
+  let changed = false;
+
+  if (existsSync(completionPath)) {
+    const marker = parseJsonObjectFile(completionPath) as CompletionMarker;
+    if (typeof marker.completed_at !== 'string' || marker.completed_at.length === 0) {
+      throw new Error(
+        `Invalid onboarding state file ${completionPath}: expected a non-empty string "completed_at"`
+      );
+    }
+    completedAt = marker.completed_at;
+  } else {
+    mkdirSync(mamaHome, { recursive: true });
+    writeFileSync(completionPath, JSON.stringify({ completed_at: completedAt }, null, 2));
+    changed = true;
+  }
+
+  if (!existsSync(reportPath)) {
+    mkdirSync(join(mamaHome, 'state'), { recursive: true });
+    writeFileSync(reportPath, JSON.stringify({ at: completedAt }, null, 2));
+    changed = true;
+  }
+
+  return changed;
 }

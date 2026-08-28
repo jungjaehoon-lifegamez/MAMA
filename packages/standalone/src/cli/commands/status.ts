@@ -31,43 +31,46 @@ export function formatVersionStatus(cliVersion: string, runtimeVersion: string |
 export async function statusCommand(options: { json?: boolean } = {}): Promise<void> {
   // Onboarding contract: observe, migrate legacy markers, and either surface
   // the missing items (with per-item next actions) or record completion.
-  const { collectAssessDeps, writeCompletionMarker, migrateLegacyInstall } = await import(
-    '../../onboarding/assess-live.js'
-  );
-  const { assessOnboarding, renderContractStatus } = await import(
-    '../../onboarding/agent-contract.js'
-  );
+  const { collectAssessDeps, writeCompletionMarker, migrateLegacyInstall } =
+    await import('../../onboarding/assess-live.js');
+  const { assessOnboarding, renderContractStatus } =
+    await import('../../onboarding/agent-contract.js');
   const { getMAMAHome } = await import('../config/config-manager.js');
   const mamaHome = getMAMAHome();
-  migrateLegacyInstall(mamaHome);
-  const deps = await collectAssessDeps();
-  const onboarding = assessOnboarding(deps);
+  let onboarding: ReturnType<typeof assessOnboarding> | null = null;
+  let onboardingError: string | undefined;
+  try {
+    await migrateLegacyInstall(mamaHome);
+    onboarding = assessOnboarding(await collectAssessDeps());
+  } catch (error) {
+    onboardingError = error instanceof Error ? error.message : String(error);
+  }
   if (options.json) {
     const runningForJson = await isDaemonRunning();
-    console.log(
+    process.stdout.write(
       JSON.stringify(
         {
           onboarding,
+          ...(onboardingError ? { onboardingError } : {}),
           daemon: runningForJson
             ? { running: true, pid: runningForJson.pid, startedAt: runningForJson.startedAt }
             : { running: false },
         },
         null,
         2
-      )
+      ) + '\n'
     );
     return;
   }
-  if (onboarding.complete) {
+  if (onboardingError) {
+    process.stdout.write(`Onboarding: unavailable\n  ${onboardingError}\n\n`);
+  } else if (onboarding?.complete) {
     await writeCompletionMarker(mamaHome);
   }
 
   console.log('\n📊 MAMA Standalone Status\n');
-  if (!onboarding.complete) {
-    console.log(renderContractStatus(onboarding));
-    console.log('');
-  } else {
-    console.log('Onboarding: complete');
+  if (onboarding) {
+    process.stdout.write(`${renderContractStatus(onboarding)}\n\n`);
   }
 
   // Check if running

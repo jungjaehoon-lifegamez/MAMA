@@ -719,8 +719,6 @@ export interface MAMAConfig {
   logging: LoggingConfig;
   /** Role-based permission settings (optional) */
   roles?: RolesConfig;
-  /** Owner facts the operator personalizes reports with (onboarding contract item) */
-  owner?: { name?: string; language?: string; timezone?: string };
   /** @deprecated Always uses Claude CLI now (ToS compliance) */
   use_claude_cli?: boolean;
   /** Discord gateway settings (optional) */

@@ -17,7 +17,7 @@ export type OnboardingItemId =
   | 'config'
   | 'gateway'
   | 'trust_anchor'
-  | 'owner_facts'
+  | 'daemon'
   | 'sources'
   | 'first_report';
 
@@ -34,12 +34,10 @@ export interface OnboardingState {
 }
 
 export interface AssessDeps {
-  mamaHome: string;
-  configExists: boolean;
+  configLoadable: boolean;
   daemonRunning: boolean;
-  telegramToken: boolean;
+  telegramConfigured: boolean;
   allowedChats: boolean;
-  ownerFacts: boolean;
   enabledConnectors: number;
   firstReportAt: string | null;
 }
@@ -49,7 +47,7 @@ export const ONBOARDING_ITEMS: readonly OnboardingItemId[] = [
   'config',
   'gateway',
   'trust_anchor',
-  'owner_facts',
+  'daemon',
   'sources',
   'first_report',
 ] as const;
@@ -66,21 +64,22 @@ function guidanceFor(id: OnboardingItemId, deps: AssessDeps): string {
     case 'config':
       return 'Run: mama init (checks backend auth and writes ~/.mama/config.yaml)';
     case 'gateway': {
-      const line = 'Run: mama gateway telegram set-token <bot-token> (create one via @BotFather)';
+      const line =
+        'Run: mama gateway telegram --token-stdin (create the bot token with @BotFather first)';
       return deps.daemonRunning ? `${STOP_DAEMON_FIRST}\n${line}` : line;
     }
     case 'trust_anchor': {
-      const line = deps.telegramToken
+      const line = deps.telegramConfigured
         ? 'Human step: send any message to the bot, then run: mama gateway telegram detect-owner'
-        : 'Set the gateway token first (see the gateway item), then: mama gateway telegram detect-owner';
+        : 'Human step: configure the gateway first, send any message to the bot, then run: mama gateway telegram detect-owner';
       return deps.daemonRunning ? `${STOP_DAEMON_FIRST}\n${line}` : line;
     }
-    case 'owner_facts':
-      return 'Run: mama owner --name <name> --language <lang> --timezone <tz>';
+    case 'daemon':
+      return 'Start the daemon: mama start';
     case 'sources':
       return 'Run: mama connector add <name> (mama connector list shows what exists)';
     case 'first_report':
-      return 'Run: mama start, then: mama report now - the journey ends when the first report arrives';
+      return 'Run: mama report now - the journey ends when the first report arrives';
   }
 }
 
@@ -88,15 +87,15 @@ function isDone(id: OnboardingItemId, deps: AssessDeps): boolean {
   switch (id) {
     case 'config':
       // mama init already gates backend availability + auth fail-loud, so an
-      // existing config implies auth passed at init time; later auth rot fails
+      // loadable config implies auth passed at init time; later auth rot fails
       // loudly at start/run - the real boundary (review decision #3).
-      return deps.configExists;
+      return deps.configLoadable;
     case 'gateway':
-      return deps.telegramToken;
+      return deps.telegramConfigured;
     case 'trust_anchor':
       return deps.allowedChats;
-    case 'owner_facts':
-      return deps.ownerFacts;
+    case 'daemon':
+      return deps.daemonRunning;
     case 'sources':
       return deps.enabledConnectors >= 1;
     case 'first_report':
@@ -131,19 +130,30 @@ export function renderContractStatus(state: OnboardingState): string {
   if (state.complete) {
     return 'Onboarding: complete';
   }
-  const lines: string[] = ['Onboarding: incomplete', ''];
-  for (const item of state.items) {
-    const mark = item.done ? '[x]' : '[ ]';
-    lines.push(`${mark} ${item.id}`);
-    if (!item.done) {
-      for (const g of item.guidance.split('\n')) {
-        lines.push(`      ${g}`);
+  const missing = state.items.filter((item) => !item.done);
+  const agentActions = missing.filter((item) => item.id !== 'trust_anchor');
+  const humanActions = missing.filter((item) => item.id === 'trust_anchor');
+  const lines: string[] = ['Onboarding: incomplete'];
+
+  const appendActions = (heading: string, items: OnboardingItemState[]): void => {
+    if (items.length === 0) {
+      return;
+    }
+    lines.push('', heading);
+    for (const item of items) {
+      lines.push(`[ ] ${item.id}`);
+      for (const guidance of item.guidance.split('\n')) {
+        lines.push(`      ${guidance}`);
       }
     }
-  }
-  const next = state.items.find((i) => !i.done);
-  if (next) {
-    lines.push('', `Next: ${next.guidance.split('\n').pop() ?? ''}`);
+  };
+
+  appendActions('Agent can do now:', agentActions);
+  appendActions('Human required:', humanActions);
+
+  const nextAgentAction = agentActions[0];
+  if (nextAgentAction) {
+    lines.push('', `Next: ${nextAgentAction.guidance.split('\n').pop() ?? ''}`);
   }
   return lines.join('\n');
 }
