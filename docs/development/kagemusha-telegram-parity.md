@@ -554,11 +554,14 @@ Corrective verification is in `telegram.test.ts`, `telegram-message-ledger.test.
 - **TG-03/TG-04:** the backend-neutral WebSocket setup host-action protocol and its browser surface
   are intentionally retired in the self-teaching CLI round. `mama setup` now renders the same
   observed contract as `mama status`; init ships fixed one-front runtime personas instead of
-  asking a model to create an identity. The replacement Telegram stdin setter, official API
-  verification, detect-owner helper, and anchor boot refusal belong to Task 5 and must land before
-  this onboarding round can release. Evidence: `cli/commands/setup.ts`,
-  `onboarding/agent-contract.ts`, `onboarding/assess-live.ts`, `cli/commands/init.ts`, and
-  `tests/onboarding/`. **Status: staged, release blocked on Task 5 credential/anchor coverage.**
+  asking a model to create an identity. The replacement Telegram setter reads its token from
+  stdin, validates it through `getMe`, and enables the gateway without echoing the credential.
+  `detect-owner` lists current private-message candidates and writes only an explicitly confirmed
+  chat; a Telegram 409 becomes an actionable stop-and-retry error. Gateway startup refuses a
+  missing allowlist before constructing or authenticating the bot. Evidence:
+  `cli/commands/gateway.ts`, `gateways/telegram.ts`, `onboarding/agent-contract.ts`,
+  `onboarding/assess-live.ts`, `tests/cli/gateway-command.test.ts`, and
+  `tests/gateways/telegram.test.ts`. **Status: CODE GREEN; release/live evidence pending.**
 - Kagemusha remains a user-private connector. Adding Cline as a backend does not add Kagemusha to
   generic catalogs, prompts, or managed-agent role projections.
 
@@ -841,6 +844,13 @@ change unless they are release-blocking security or data-loss issues.
       model-work cost against the saved baseline.
 
 ## Change log
+
+- 2026-08-28: Added the TG-03/TG-04 self-teaching Telegram credential and owner-anchor path.
+  Tokens stay off argv and output, official API validation precedes persistence, owner discovery
+  is explicit and 409-aware, and an empty `allowed_chats` now fails before Telegram authentication
+  or polling. The onboarding source item also requires one bounded authenticated connector rather
+  than trusting an enabled flag; no content poll is added to status or daemon hot paths. Live
+  delivery evidence remains pending.
 
 - 2026-08-28: Retired the separate setup WebSocket, browser page, and 1,109-line awakening script.
   `mama --help`, `mama status`, and the compatibility `mama setup` command now share one observed
