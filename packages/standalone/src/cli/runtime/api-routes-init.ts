@@ -294,6 +294,8 @@ export interface RegisterApiRoutesParams {
   ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
   /** TG-05/TG-06: owner-report context store for the operator recovery surface. */
   reportContextStore?: import('../../gateways/telegram-report-context-store.js').TelegramReportContextStore;
+  /** Late-bound on-demand report admission through the existing trigger loop. */
+  requestFullReport?: () => { accepted: boolean; reason?: 'busy' | 'unavailable' };
 }
 
 export interface ApiRoutesHandle {
@@ -373,6 +375,19 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   // Manual refresh endpoint (kept for compatibility)
   apiServer.app.post('/api/report/refresh', requireAuth, (_req, res) => {
     res.json({ ok: true, message: 'Viewer now renders data directly from Intelligence API' });
+  });
+
+  apiServer.app.post('/api/operator/report', requireAuth, (_req, res) => {
+    const outcome = params.requestFullReport?.() ?? {
+      accepted: false,
+      reason: 'unavailable' as const,
+    };
+    if (outcome.accepted) {
+      res.status(202).json({ ok: true, status: 'accepted' });
+      return;
+    }
+    const status = outcome.reason === 'busy' ? 409 : 503;
+    res.status(status).json({ ok: false, reason: outcome.reason ?? 'unavailable' });
   });
 
   // -- TG-05/TG-06 owner-report delivery recovery (design Decision 3) --

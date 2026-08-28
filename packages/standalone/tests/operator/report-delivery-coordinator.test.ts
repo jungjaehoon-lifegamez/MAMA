@@ -6,6 +6,9 @@
  * (design Decision 1-2, docs/development/telegram-outbound-context-inbox-design.md).
  */
 
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TelegramReportContextStore } from '../../src/gateways/telegram-report-context-store.js';
@@ -78,22 +81,26 @@ describe('ReportDeliveryCoordinator', () => {
   let store: TelegramReportContextStore;
   let control: FakeControl;
   let coordinator: ReportDeliveryCoordinator;
+  let mamaHome: string;
 
   beforeEach(() => {
     db = new Database(':memory:');
     store = new TelegramReportContextStore(db);
     control = new FakeControl(db);
+    mamaHome = mkdtempSync(join(tmpdir(), 'mama-first-report-'));
     coordinator = new ReportDeliveryCoordinator({
       store,
       control,
       ownerTarget: { source: 'telegram', channelId: OWNER_CHAT },
       executorId: 'executor-1',
       nowIso: () => NOW,
+      mamaHome,
     });
   });
 
   afterEach(() => {
     db.close();
+    rmSync(mamaHome, { recursive: true, force: true });
   });
 
   it('reserves context, pins, sends, marks delivered, then releases the pin', async () => {
@@ -107,6 +114,40 @@ describe('ReportDeliveryCoordinator', () => {
       .prepare('SELECT state FROM telegram_report_context_events WHERE delivery_id = ?')
       .get('d-1') as { state: string };
     expect(row.state).toBe('delivered');
+    expect(JSON.parse(readFileSync(join(mamaHome, 'state', 'first-report.json'), 'utf8'))).toEqual({
+      at: NOW,
+      channel: 'telegram',
+    });
+  });
+
+  it('preserves the first confirmed delivery timestamp across later reports', async () => {
+    await coordinator.deliverPrepared(delivery());
+    const markerPath = join(mamaHome, 'state', 'first-report.json');
+    const first = readFileSync(markerPath, 'utf8');
+
+    const later = new ReportDeliveryCoordinator({
+      store,
+      control,
+      ownerTarget: { source: 'telegram', channelId: OWNER_CHAT },
+      executorId: 'executor-1',
+      nowIso: () => '2026-08-06T13:00:00.000Z',
+      mamaHome,
+    });
+    await later.deliverPrepared(delivery({ deliveryId: 'd-2', text: 'later report' }));
+
+    expect(readFileSync(markerPath, 'utf8')).toBe(first);
+  });
+
+  it('records delivery evidence on an already-delivered replay without sending again', async () => {
+    await coordinator.deliverPrepared(delivery());
+    const markerPath = join(mamaHome, 'state', 'first-report.json');
+    unlinkSync(markerPath);
+    control.calls = [];
+
+    await coordinator.deliverPrepared(delivery());
+
+    expect(control.calls).toEqual(['releasePin:d-1']);
+    expect(existsSync(markerPath)).toBe(true);
   });
 
   it('rejects a target that differs from the configured owner target before reservation', async () => {

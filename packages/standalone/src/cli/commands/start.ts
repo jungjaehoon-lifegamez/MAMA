@@ -1749,6 +1749,9 @@ export async function runAgentLoop(
   // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
   // wake), which remains safe while the trigger loop is still booting or explicitly disabled.
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
+  const triggerLoopFullReport: {
+    current: (() => { accepted: boolean; reason?: 'busy' | 'unavailable' }) | null;
+  } = { current: null };
   // Operator DB + native task ledger (M8): wired UNCONDITIONALLY -- the task
   // tools are standard gateway tools and must work even when the trigger loop
   // is off (review finding on #142). Single handle, closed once at shutdown.
@@ -2348,6 +2351,7 @@ export async function runAgentLoop(
       };
       // M2.4: point the connector sink's forwarder at this loop now that it exists.
       triggerLoopNudge.current = () => triggerLoop.nudge();
+      triggerLoopFullReport.current = () => triggerLoop.startFullReport();
       // S1-T3: owner-intent forwarder - report_request routes to the SAME
       // report machinery (fresh session, delta anchor, consume semantics).
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
@@ -2448,6 +2452,7 @@ export async function runAgentLoop(
 
         stopOwnerEventRuntime = async () => {
           triggerLoopNudge.current = null;
+          triggerLoopFullReport.current = null;
           clearInterval(ownerEventTimer);
           // Let an in-flight effect reach its durable ACK before the shared
           // operator DB closes.
@@ -2513,6 +2518,8 @@ export async function runAgentLoop(
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
     ownerEventBoardRefreshLedger,
+    requestFullReport: () =>
+      triggerLoopFullReport.current?.() ?? { accepted: false, reason: 'unavailable' },
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
   gateways.push({ stop: async () => apiRoutesHandle.stop() });

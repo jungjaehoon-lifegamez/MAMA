@@ -845,6 +845,13 @@ change unless they are release-blocking security or data-loss issues.
 
 ## Change log
 
+- 2026-08-28: Added the TG-06 `mama report now` completion boundary without a second report
+  pipeline. The authenticated localhost route calls the existing trigger-loop admission seam; the
+  CLI waits for delivery evidence and treats the 120-second bound as still generating, not failure.
+  `first-report.json` is created only after a confirmed Telegram delivery or an already-delivered
+  replay, and the first timestamp is preserved. Focused API, CLI, and coordinator tests cover the
+  accepted request, timeout semantics, first confirmation, later reports, and crash recovery.
+
 - 2026-08-28: Added the TG-03/TG-04 self-teaching Telegram credential and owner-anchor path.
   Tokens stay off argv and output, official API validation precedes persistence, owner discovery
   is explicit and 409-aware, and an empty `allowed_chats` now fails before Telegram authentication
