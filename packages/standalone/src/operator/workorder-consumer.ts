@@ -93,6 +93,8 @@ export interface WorkOrderConsumerEvent {
    *  Restores the tokens_used telemetry the legacy persona path had
    *  (executeValidatedRun) and the Stage-2 cutover lost. */
   tokensUsed?: number;
+  /** SHA-256 prefix of the exact procedural brief used by this run. */
+  briefHash?: string;
 }
 
 export interface WorkOrderConsumerDeps {
@@ -194,6 +196,7 @@ export class WorkOrderConsumer {
   private readonly deps: WorkOrderConsumerDeps;
   private readonly hooks = new Map<WorkOrderKind, WorkOrderHook>();
   private readonly lastAlarmAt = new Map<string, number>();
+  private readonly briefHashes = new Map<number, string>();
   private readonly unresolvedTemporalEffects = new Map<
     number,
     { workOrder: WorkOrderRecord; reason: string; allowRetry: boolean; tokensUsed?: number }
@@ -393,6 +396,7 @@ export class WorkOrderConsumer {
       });
       response = runResult.response;
       tokensUsed = runResult.tokensUsed;
+      this.briefHashes.set(wo.id, runResult.briefHash);
     } catch (err) {
       if (this.stopping) {
         this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);
@@ -893,10 +897,21 @@ export class WorkOrderConsumer {
   }
 
   private emitEvent(event: WorkOrderConsumerEvent): void {
+    const briefHash =
+      event.type === 'complete' ? this.briefHashes.get(event.workOrderId) : undefined;
+    const enriched = briefHash === undefined ? event : { ...event, briefHash };
     try {
-      this.deps.onEvent?.(event);
+      this.deps.onEvent?.(enriched);
     } catch {
       /* telemetry only */
+    }
+    if (
+      event.type === 'complete' ||
+      event.type === 'failed' ||
+      event.type === 'superseded' ||
+      event.type === 'stale-claim'
+    ) {
+      this.briefHashes.delete(event.workOrderId);
     }
   }
 

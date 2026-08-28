@@ -154,7 +154,10 @@ import {
 } from '../../operator/temporal-runtime.js';
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
-import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
+import {
+  DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS,
+  type WorkOrderConsumerEvent,
+} from '../../operator/workorder-consumer.js';
 import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
 import type { EnvelopeAuthority } from '../../envelope/authority.js';
 
@@ -168,6 +171,12 @@ const { DebugLogger } = debugLogger as unknown as {
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
+
+export function workOrderActivityDetails(
+  event: WorkOrderConsumerEvent
+): Record<string, unknown> | undefined {
+  return event.briefHash ? { brief_hash: event.briefHash } : undefined;
+}
 const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
@@ -2010,6 +2019,7 @@ export async function runAgentLoop(
             // tokens_used via executeValidatedRun; the Stage-2 cutover
             // (2026-07-21) silently zeroed it, blinding all cost measurement.
             tokens_used: event.tokensUsed,
+            details: workOrderActivityDetails(event),
             execution_status: 'completed',
             trigger_reason: 'workorder-consumer',
           });
