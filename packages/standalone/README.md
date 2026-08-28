@@ -251,7 +251,7 @@ Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI proce
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test       # 6,409 passing tests across all packages
+pnpm test       # 6,416 passing tests across all packages
 ```
 
 ## Links

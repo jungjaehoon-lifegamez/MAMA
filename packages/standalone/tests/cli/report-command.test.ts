@@ -79,6 +79,38 @@ describe('Story ONB-6: mama report now reaches confirmed delivery', () => {
     expect(output.join('\n')).toContain('first report delivery confirmed');
   });
 
+  it('surfaces a rejected report request without waiting for delivery', async () => {
+    await expect(
+      reportNowCommand({
+        mamaHome,
+        daemonRunning: async () => true,
+        fetchImpl: vi.fn(
+          async () =>
+            new Response(JSON.stringify({ reason: 'busy' }), {
+              status: 409,
+              headers: { 'content-type': 'application/json' },
+            })
+        ) as unknown as typeof fetch,
+        writeOut: () => {},
+      })
+    ).rejects.toThrow('Report request was not accepted: busy');
+  });
+
+  it('fails loudly when the delivery marker is malformed', async () => {
+    mkdirSync(join(mamaHome, 'state'), { recursive: true });
+    writeFileSync(join(mamaHome, 'state', 'first-report.json'), '{broken');
+
+    await expect(
+      reportNowCommand({
+        mamaHome,
+        daemonRunning: async () => true,
+        fetchImpl: vi.fn(async () => acceptedResponse()) as unknown as typeof fetch,
+        writeOut: () => {},
+        maxWaitMs: 0,
+      })
+    ).rejects.toThrow('Invalid first-report marker');
+  });
+
   it('returns success with a still-generating message after the bounded wait', async () => {
     const output: string[] = [];
 

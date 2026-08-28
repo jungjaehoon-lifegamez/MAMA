@@ -183,6 +183,29 @@ it('accepts one authenticated on-demand owner report through the existing trigge
   }
 });
 
+it.each([
+  { reason: 'busy' as const, status: 409 },
+  { reason: 'unavailable' as const, status: 503 },
+])('reports $reason admission as HTTP $status', async ({ reason, status }) => {
+  const db = new Database(':memory:');
+  initAgentTables(db);
+  createBoardInputTables(db);
+  const runtime = await registerReconcileRuntime({
+    db,
+    connectorConfigLoadResult: enabledConnectorConfig,
+    requestFullReport: () => ({ accepted: false, reason }),
+  });
+
+  try {
+    const response = await request(runtime.apiServer.app).post('/api/operator/report');
+    expect(response.status).toBe(status);
+    expect(response.body).toEqual({ ok: false, reason });
+  } finally {
+    runtime.routeHandle.stop();
+    db.close();
+  }
+});
+
 async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed' | 'none') {
   const db = new Database(':memory:');
   initAgentTables(db);

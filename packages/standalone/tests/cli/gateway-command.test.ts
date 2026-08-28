@@ -71,6 +71,32 @@ describe('Story ONB-5: Telegram gateway setup is explicit and anchor-safe', () =
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it('refuses empty token stdin before making a request', async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(
+      gatewayTelegramSet({
+        tokenStdin: true,
+        readToken: async () => '  ',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+    ).rejects.toThrow('Telegram token stdin was empty');
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('does not enable Telegram when token validation fails', async () => {
+    await expect(
+      gatewayTelegramSet({
+        tokenStdin: true,
+        readToken: async () => 'invalid-token',
+        fetchImpl: fetchStub({ ok: false }, 401),
+      })
+    ).rejects.toThrow('Telegram token validation failed');
+
+    expect((await loadConfig()).telegram?.enabled).toBe(false);
+  });
+
   it('lists unique private chat candidates without changing the allowlist', async () => {
     const output: string[] = [];
     const config = await loadConfig();
@@ -108,6 +134,22 @@ describe('Story ONB-5: Telegram gateway setup is explicit and anchor-safe', () =
     await gatewayTelegramDetectOwner({ confirm: '111', fetchImpl, writeOut: () => {} });
 
     expect((await loadConfig()).telegram?.allowed_chats).toEqual(['111']);
+  });
+
+  it('does not replace the owner anchor with an unknown confirmation', async () => {
+    const config = await loadConfig();
+    config.telegram = { enabled: true, token: 'test-token', allowed_chats: ['999'] };
+    await saveConfig(config);
+
+    await expect(
+      gatewayTelegramDetectOwner({
+        confirm: '111',
+        fetchImpl: fetchStub({ ok: true, result: [] }),
+        writeOut: () => {},
+      })
+    ).rejects.toThrow('Confirmed chat was not found');
+
+    expect((await loadConfig()).telegram?.allowed_chats).toEqual(['999']);
   });
 
   it('translates Telegram 409 into the recovery instruction without a preflight daemon guard', async () => {
