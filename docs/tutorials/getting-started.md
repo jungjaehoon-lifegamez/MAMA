@@ -16,9 +16,13 @@ MAMA comes in three flavors. Pick the one that matches your use case:
 
 ```bash
 npm install -g @jungjaehoon/mama-os
-mama init
-mama start
+mama --help
+mama status
 ```
+
+The CLI reports the exact next action from observed state. Installation is complete only after the
+first confirmed report is delivered. Agents should use `mama status --json`; humans can use the
+same contract through `mama status`.
 
 **What you get:**
 

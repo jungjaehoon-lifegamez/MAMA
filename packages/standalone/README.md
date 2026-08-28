@@ -49,8 +49,9 @@ Codex app-server, or Cline's official Hub runtime.
 Some third-party agent frameworks (OpenClaw, etc.) use unofficial API access, token extraction, or header spoofing — approaches that violate provider policies and risk account suspension. MAMA OS doesn't do any of that. If you have Claude Code, Codex CLI, or Cline CLI installed and authenticated, MAMA OS uses that backend's supported local runtime path. No token extraction or header spoofing is required.
 
 ```bash
-# Already have Claude Code installed?
-mama start   # That's it. MAMA uses your existing CLI authentication.
+# Already authenticated Claude, Codex, or Cline?
+mama --help
+mama status   # follow the reported next action until complete
 ```
 
 ## How It's Secured
@@ -81,13 +82,16 @@ See the full [Security Guide](../../docs/guides/security.md) for Cloudflare Zero
 claude auth login   # or: codex login
 cline auth cline    # for the hosted Cline backend
 
-# 2. Install and start
-npx @jungjaehoon/mama-os init --backend cline  # or claude / codex / auto
-mama start
-
-# 3. Open the operator board
-open http://localhost:3847/viewer
+# 2. Install and follow the self-teaching contract
+npm install -g @jungjaehoon/mama-os
+mama --help
+mama status
 ```
+
+Use `mama status --json` when another agent is performing setup. It reports ordered missing actions
+for initialization, Telegram owner anchoring, an authenticated work-source connector, daemon
+startup, and the first confirmed report. `mama gateway telegram --token-stdin` accepts the bot
+token without echoing it; `mama connector add <name>` handles non-Telegram work sources.
 
 **Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude, Codex, or Cline), 500MB disk space.
 
@@ -209,6 +213,9 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
 | `mama start`                                 | Start daemon                         |
 | `mama stop`                                  | Stop daemon                          |
 | `mama status`                                | Show status and exact next actions   |
+| `mama gateway telegram --token-stdin`        | Validate and save a Telegram token   |
+| `mama gateway telegram detect-owner`         | Discover and confirm the owner chat  |
+| `mama report now`                            | Request and confirm the first report |
 | `mama connector <add\|remove\|list\|status>` | Manage connectors                    |
 
 ## Configuration
@@ -244,7 +251,7 @@ Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI proce
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test       # 3000+ tests across all packages
+pnpm test       # 6,407 passing tests across all packages
 ```
 
 ## Links
@@ -257,4 +264,4 @@ MIT
 
 ---
 
-**Last Updated:** 2026-04-30
+**Last Updated:** 2026-08-28

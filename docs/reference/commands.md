@@ -160,6 +160,10 @@ Configure MAMA settings.
 
 The `mama` CLI is used to manage MAMA Standalone, an autonomous agent that runs continuously with Discord, Slack, and Telegram bot support.
 
+Run `mama --help` first on a new install. The help output points to `mama status`, which observes
+the machine and prints the ordered next actions. Installation agents should use
+`mama status --json` and stop only when it reports `complete: true`.
+
 ### `mama init`
 
 Initialize MAMA workspace with default configuration.
@@ -269,8 +273,11 @@ Check MAMA agent status.
 **Usage:**
 
 ```bash
-mama status
+mama status [--json]
 ```
+
+`--json` returns the machine-readable onboarding contract, including `complete`, the ordered
+`missing` actions, and separate agent/human guidance.
 
 **Output:**
 
@@ -283,6 +290,36 @@ MAMA Agent Status:
   Memory: 45 decisions, 3 checkpoints
   MAMA OS: http://localhost:3847
 ```
+
+---
+
+### `mama gateway telegram`
+
+Validate a Telegram bot token without placing it on the command line, then establish one private
+chat as the owner trust anchor.
+
+```bash
+printf '%s\n' "$TELEGRAM_BOT_TOKEN" | mama gateway telegram --token-stdin
+mama gateway telegram detect-owner
+mama gateway telegram detect-owner --confirm <chat-id>
+```
+
+Send the bot a private message before `detect-owner`. If another poller is active, stop the daemon
+and retry. MAMA will not start an enabled Telegram gateway until `allowed_chats` has been confirmed.
+
+---
+
+### `mama report now`
+
+Request the existing full-report pipeline and wait up to two minutes for confirmed Telegram
+delivery evidence.
+
+```bash
+mama report now
+```
+
+The daemon must be running. A report still generating after two minutes is not marked failed;
+`mama status` remains the source of truth for completion.
 
 ---
 
