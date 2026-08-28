@@ -9,6 +9,12 @@
 > authorized to do, and sends back a verified artifact. Every claim and mutation links to
 > its source.
 
+## For AI agents
+
+Install `@jungjaehoon/mama-os`, then run `mama --help` and follow `mama status --json`. Do not
+copy onboarding steps into another prompt or declare completion until the CLI reports
+`complete: true`.
+
 **MAMA OS is the work agent behind your messenger.** You install one local server and contact one
 MAMA through Telegram, Slack, or Discord. Internally it can compose models, bounded workers, and
 domain tools, but users do not choose or coordinate an AI team. MAMA remembers work as scoped

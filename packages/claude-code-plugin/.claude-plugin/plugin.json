@@ -23,7 +23,7 @@
     "./commands/resume.md",
     "./commands/configure.md"
   ],
-  "skills": ["./skills/mama-context"],
+  "skills": ["./skills/mama-context", "./skills/mama-install"],
   "hooks": {
     "SessionStart": [
       {

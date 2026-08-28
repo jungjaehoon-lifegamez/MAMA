@@ -136,9 +136,8 @@ async function main() {
       console.log('   source: legacy ~/.claude/.credentials.json fallback\n');
     }
     console.log('다음 단계:');
-    console.log('  1. mama setup    # 대화형 설정 마법사');
-    console.log('  2. mama start    # 서버 시작');
-    console.log('  3. mama status   # 상태 확인\n');
+    console.log('  1. mama --help   # 설치 계약 확인');
+    console.log('  2. mama status   # 현재 상태와 다음 행동 확인\n');
   } else {
     console.log('⚠️  Claude Code 인증 없음\n');
     if (!authStatus.cliInstalled) {
@@ -150,7 +149,7 @@ async function main() {
       console.log('  claude auth login\n');
     }
     console.log('로그인 후 다시 시도하세요:\n');
-    console.log('  mama setup\n');
+    console.log('  mama --help\n');
   }
 
   console.log('문서: https://github.com/jungjaehoon-lifegamez/MAMA\n');
