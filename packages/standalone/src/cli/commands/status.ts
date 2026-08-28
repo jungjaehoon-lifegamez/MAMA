@@ -28,8 +28,47 @@ export function formatVersionStatus(cliVersion: string, runtimeVersion: string |
 /**
  * Execute status command
  */
-export async function statusCommand(): Promise<void> {
+export async function statusCommand(options: { json?: boolean } = {}): Promise<void> {
+  // Onboarding contract: observe, migrate legacy markers, and either surface
+  // the missing items (with per-item next actions) or record completion.
+  const { collectAssessDeps, writeCompletionMarker, migrateLegacyInstall } = await import(
+    '../../onboarding/assess-live.js'
+  );
+  const { assessOnboarding, renderContractStatus } = await import(
+    '../../onboarding/agent-contract.js'
+  );
+  const { getMAMAHome } = await import('../config/config-manager.js');
+  const mamaHome = getMAMAHome();
+  migrateLegacyInstall(mamaHome);
+  const deps = await collectAssessDeps();
+  const onboarding = assessOnboarding(deps);
+  if (options.json) {
+    const runningForJson = await isDaemonRunning();
+    console.log(
+      JSON.stringify(
+        {
+          onboarding,
+          daemon: runningForJson
+            ? { running: true, pid: runningForJson.pid, startedAt: runningForJson.startedAt }
+            : { running: false },
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+  if (onboarding.complete) {
+    await writeCompletionMarker(mamaHome);
+  }
+
   console.log('\n📊 MAMA Standalone Status\n');
+  if (!onboarding.complete) {
+    console.log(renderContractStatus(onboarding));
+    console.log('');
+  } else {
+    console.log('Onboarding: complete');
+  }
 
   // Check if running
   const runningInfo = await isDaemonRunning();
