@@ -17,6 +17,7 @@ import { runCommand } from './commands/run.js';
 import { createConnectorCommand } from './commands/connector.js';
 import { initConfig } from './config/config-manager.js';
 import { resolvePackageVersion } from '../package-version.js';
+import { renderContractIntro } from '../onboarding/agent-contract.js';
 
 const VERSION = resolvePackageVersion();
 
@@ -26,6 +27,8 @@ program
   .name('mama')
   .description('MAMA Standalone - Always-on AI Assistant')
   .version(VERSION, '-v, --version', 'Print version information');
+
+program.addHelpText('after', `\n${renderContractIntro()}\n`);
 
 program
   .command('init')
@@ -51,14 +54,9 @@ program
 
 program
   .command('setup')
-  .description('Interactive setup wizard (guided by the configured backend)')
-  .option('-p, --port <port>', 'Port number', '3848')
-  .option('--no-browser', 'Disable automatic browser opening')
-  .action(async (options) => {
-    await setupCommand({
-      port: parseInt(options.port, 10),
-      noBrowser: !options.browser,
-    });
+  .description('Print onboarding contract and current state')
+  .action(async () => {
+    await setupCommand();
   });
 
 program

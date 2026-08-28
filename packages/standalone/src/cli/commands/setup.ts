@@ -4,14 +4,13 @@
  * Interactive setup wizard with Claude assistance
  */
 
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
-import { expandPath, initConfig } from '../config/config-manager.js';
+import { expandPath } from '../config/config-manager.js';
 import type { MAMAConfig } from '../config/types.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
-import { startSetupServer } from '../../setup/setup-server.js';
+import { statusCommand } from './status.js';
 
 /**
  * Options for setup command
@@ -92,101 +91,8 @@ export async function checkSetupBackend(
 /**
  * Execute setup command
  */
-export async function setupCommand(options: SetupOptions = {}): Promise<void> {
-  console.log('\n🚀 MAMA Standalone Setup Wizard\n');
-
-  const config = await initConfig();
-
-  // 1. Check the configured backend only
-  console.log(`Step 1: Checking ${config.agent.backend} backend authentication`);
-  process.stdout.write(`  Checking ${config.agent.backend} backend... `);
-
-  const backendStatus = await checkSetupBackend(config);
-  if (!backendStatus.ok) {
-    console.log('❌\n');
-    console.error(`⚠️  ${backendStatus.error}\n`);
-    process.exit(1);
-  }
-
-  console.log('✓');
-  if (backendStatus.detail) {
-    console.log(`  Backend: ${backendStatus.detail}`);
-  }
-
-  // 2. Start setup server
-  console.log('\nStep 2: Starting setup server');
-  const port = options.port || 3848;
-
-  let server;
-  try {
-    process.stdout.write(`  Starting server on port ${port}... `);
-    server = await startSetupServer(port);
-    console.log('✓');
-  } catch (error) {
-    console.log('❌\n');
-    console.error(
-      `   Failed to start server: ${error instanceof Error ? error.message : String(error)}\n`
-    );
-    process.exit(1);
-  }
-
-  // 3. Open browser
-  const setupUrl = `http://localhost:${port}/setup`;
-
-  if (!options.noBrowser) {
-    console.log('\nStep 3: Opening browser');
-    process.stdout.write(`  Opening ${setupUrl}... `);
-
-    try {
-      await openBrowser(setupUrl);
-      console.log('✓');
-    } catch {
-      console.log('⚠️');
-      console.log(`   Could not open automatically. Please open manually:`);
-      console.log(`   ${setupUrl}`);
-    }
-  }
-
-  // 4. Instructions
-  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('✨ Setup Wizard has started!');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  console.log(`Complete the setup by chatting with MAMA in your browser:`);
-  console.log(`👉 ${setupUrl}\n`);
-  console.log(`When setup is complete, return to this terminal and press Ctrl+C to exit.\n`);
-
-  // 5. Wait for Ctrl+C
-  await waitForExit(server);
-}
-
-/**
- * Open browser
- */
-async function openBrowser(url: string): Promise<void> {
-  const platform = process.platform;
-  let command: string;
-
-  if (platform === 'darwin') {
-    command = 'open';
-  } else if (platform === 'win32') {
-    command = 'start';
-  } else {
-    // Linux
-    command = 'xdg-open';
-  }
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, [url], {
-      detached: true,
-      stdio: 'ignore',
-    });
-
-    child.on('error', reject);
-    child.unref();
-
-    // Give it a moment to launch
-    setTimeout(resolve, 500);
-  });
+export async function setupCommand(_options: SetupOptions = {}): Promise<void> {
+  await statusCommand({ json: false });
 }
 
 /**
