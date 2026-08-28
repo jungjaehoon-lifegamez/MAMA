@@ -11,9 +11,9 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.39.4  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.39.5  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
-| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.2.1   |
+| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.2.2   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
 
 ---
@@ -61,9 +61,9 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.39.4          |
+| `packages/standalone/package.json`                       | `version` | 0.39.5          |
 | `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
-| `packages/mama-core/package.json`                        | `version` | 2.2.1           |
+| `packages/mama-core/package.json`                        | `version` | 2.2.2           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
 | `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.11.0          |
 
@@ -161,8 +161,8 @@ inline version bump on protected `main`.
 ### Step 6: Verify npm Artifacts
 
 ```bash
-MAMA_OS_RELEASE=0.39.4
-MAMA_CORE_RELEASE=2.2.1
+MAMA_OS_RELEASE=0.39.5
+MAMA_CORE_RELEASE=2.2.2
 npm info @jungjaehoon/mama-os@"$MAMA_OS_RELEASE" version
 npm info @jungjaehoon/mama-core@"$MAMA_CORE_RELEASE" version
 npm info @jungjaehoon/mama-os@"$MAMA_OS_RELEASE" dependencies.@jungjaehoon/mama-core
@@ -170,7 +170,7 @@ npm info @jungjaehoon/mama-server version
 ```
 
 When Core changed, the OS → Core dependency command must contain the exact compatible range
-prepared by the workflow, for example `^2.2.1` for MAMA OS 0.39.4.
+prepared by the workflow, for example `^2.2.2` for MAMA OS 0.39.5.
 
 For a MAMA OS release, install the exact published version, restart the local daemon, and verify
 both the process and HTTP health before enabling a new opt-in runtime:

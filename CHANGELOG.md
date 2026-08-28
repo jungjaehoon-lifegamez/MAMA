@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.39.5] / mama-core [2.2.2] - 2026-08-28
+
+### Added
+
+- **First-run setup now teaches itself through the CLI and an install-agent contract.** Bare
+  `mama`, `mama --help`, and `mama status` guide the next missing action without opening a browser
+  wizard. Operators can configure Telegram without exposing the token in argv, confirm a detected
+  owner as the trust anchor, authenticate a non-messenger work source, and request the first report.
+- **Confirmed first value and delegated work now carry durable evidence.** A successful report
+  delivery records a recoverable first-report marker, while workorders stamp bounded brief hashes
+  so later execution can identify the exact instructions it received.
+
+### Changed
+
+- **Source readiness means authenticated access, not an enabled flag.** Status performs one bounded
+  `authenticate()` probe per enabled source connector and never polls for data. Telegram remains the
+  messenger and owner trust anchor; source setup is a separate onboarding requirement.
+- **Prompt-injection observability stays bounded and advisory.** Invisible Unicode and suspicious
+  instruction patterns are coalesced into digest-only audit evidence without adding another model
+  gate or changing the current execution policy.
+
+### Fixed
+
+- **Concurrent truth projection cannot reactivate a superseded decision.** MAMA Core 2.2.2 commits
+  the new projection and the old decision status atomically, preserving one current truth under
+  competing direct saves.
+- **Member project grants do not imply global memory access.** The effective-scope contract keeps
+  project and global grants distinct while preserving the existing explicit grant/revoke model.
+
 ## mama-os [0.39.4] / mama-core [2.2.1] - 2026-08-27
 
 ### Fixed
