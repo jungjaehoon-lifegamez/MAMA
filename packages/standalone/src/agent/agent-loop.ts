@@ -396,23 +396,6 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
 
-  // Load ONBOARDING.md only during initial setup (before SOUL.md is created)
-  const soulPath = join(mamaHome, 'SOUL.md');
-  if (!existsSync(soulPath)) {
-    const onboardingPath = join(mamaHome, 'ONBOARDING.md');
-    if (existsSync(onboardingPath)) {
-      const onboardingContent = readFileSync(onboardingPath, 'utf-8');
-      layers.push(onboardingContent);
-      if (verbose) {
-        logger.debug('Loaded ONBOARDING.md (initial setup)');
-      }
-    }
-  } else {
-    if (verbose) {
-      logger.debug('Skipped ONBOARDING.md (SOUL.md exists, setup complete)');
-    }
-  }
-
   const result = layers.join('\n\n---\n\n');
   // Debug: log each layer's size to find what's consuming context
   logger.debug(
@@ -787,14 +770,6 @@ export class AgentLoop {
         loadInstalledSkills(),
         options.agentContext ?? null
       );
-      // Only load ONBOARDING.md during initial setup (before SOUL.md exists)
-      const onboardingContent = !existsSync(join(mamaHome, 'SOUL.md'))
-        ? (() => {
-            const op = join(mamaHome, 'ONBOARDING.md');
-            return existsSync(op) ? readFileSync(op, 'utf-8') : '';
-          })()
-        : '';
-
       promptLayers = [
         { name: 'claudeMd', content: claudeMd, priority: 1 },
         ...(personaParts.length > 0
@@ -820,9 +795,6 @@ export class AgentLoop {
                 priority: 3,
               } as PromptLayer,
             ]
-          : []),
-        ...(onboardingContent
-          ? [{ name: 'onboarding', content: onboardingContent, priority: 4 } as PromptLayer]
           : []),
       ];
     }

@@ -177,8 +177,8 @@ Each view has its own hash route, e.g. `/viewer#operator/tasks?task=42`.
 
 ## Gateway Integrations
 
-Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure via `mama setup` or edit
-`~/.mama/config.yaml` directly.
+Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure one gateway in
+`~/.mama/config.yaml`, then use `mama status` to verify its owner trust anchor.
 
 ## Architecture
 
@@ -202,14 +202,14 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
 
 ## CLI
 
-| Command                                      | Description              |
-| -------------------------------------------- | ------------------------ |
-| `mama init`                                  | Initialize workspace     |
-| `mama setup`                                 | Interactive setup wizard |
-| `mama start`                                 | Start daemon             |
-| `mama stop`                                  | Stop daemon              |
-| `mama status`                                | Check status             |
-| `mama connector <add\|remove\|list\|status>` | Manage connectors        |
+| Command                                      | Description                          |
+| -------------------------------------------- | ------------------------------------ |
+| `mama init`                                  | Initialize workspace                 |
+| `mama setup`                                 | Print onboarding contract and status |
+| `mama start`                                 | Start daemon                         |
+| `mama stop`                                  | Stop daemon                          |
+| `mama status`                                | Show status and exact next actions   |
+| `mama connector <add\|remove\|list\|status>` | Manage connectors                    |
 
 ## Configuration
 

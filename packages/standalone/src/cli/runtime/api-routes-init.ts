@@ -1941,12 +1941,8 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   });
   console.log('✓ Workspace Skills API available at /api/workspace/skills');
 
-  // ── Setup page + static assets ────────────────────────────────────────
+  // ── Viewer static assets ──────────────────────────────────────────────
   const publicDir = path.join(__dirname, '..', '..', '..', 'public');
-  apiServer.app.get('/setup', (_req, res) => {
-    res.sendFile(path.join(publicDir, 'setup.html'));
-  });
-
   apiServer.app.use(
     express.static(publicDir, {
       setHeaders: (res, _filePath) => {
@@ -1957,7 +1953,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     })
   );
   console.log('✓ Viewer UI available at /viewer');
-  console.log('✓ Setup wizard available at /setup');
   return {
     boardReconcileEnabled,
     requestBoardRepair,

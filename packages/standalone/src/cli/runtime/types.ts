@@ -155,7 +155,7 @@ export interface MAMARuntime {
 
   // ── API ───────────────────────────────────────────────────────────────────
 
-  /** HTTP API server (REST + Viewer UI + Setup Wizard) */
+  /** HTTP API server (REST + Viewer UI) */
   apiServer: ApiServer | null;
 
   /**

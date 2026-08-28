@@ -3,12 +3,11 @@
  *
  * Extracted from cli/commands/start.ts (Task 12 Part A).
  * Waits for port availability, starts the API server, sets up
- * the WebSocket upgrade handler (setup-ws local + /ws proxy to
- * embedding port), and enforces auth on non-localhost connections.
+ * the /ws proxy to the embedding port, and enforces auth on
+ * non-localhost connections.
  */
 
 import http from 'node:http';
-import { WebSocketServer } from 'ws';
 
 import type { ApiServer } from '../../api/index.js';
 import {
@@ -18,7 +17,6 @@ import {
   getSecurityLogContext,
 } from '../../api/auth-middleware.js';
 import { recordSecurityEvent } from '../../security/security-monitor.js';
-import { createSetupWebSocketHandler } from '../../setup/setup-websocket.js';
 import { API_PORT, EMBEDDING_PORT, waitForPortAvailable } from './utilities.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -65,14 +63,9 @@ export async function startServer(params: StartServerParams): Promise<void> {
   console.log(`API server started: http://localhost:${apiServer.port}`);
 
   if (apiServer.server) {
-    // Setup WebSocket - use noServer mode to avoid conflict
-    const setupWss = new WebSocketServer({ noServer: true });
-    createSetupWebSocketHandler(setupWss);
-    console.log('✓ Setup WebSocket handler ready for /setup-ws');
-
     // Handle ALL WebSocket upgrades manually
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    apiServer.server.on('upgrade', (request: any, socket: any, head: any) => {
+    apiServer.server.on('upgrade', (request: any, socket: any, _head: any) => {
       let url: URL;
       try {
         url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
@@ -138,13 +131,7 @@ export async function startServer(params: StartServerParams): Promise<void> {
         return;
       }
 
-      if (url.pathname === '/setup-ws') {
-        // Handle setup WebSocket locally
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setupWss.handleUpgrade(request, socket, head, (ws: any) => {
-          setupWss.emit('connection', ws, request);
-        });
-      } else if (url.pathname === '/ws') {
+      if (url.pathname === '/ws') {
         // Proxy chat WebSocket to embedding server
         const options = {
           hostname: '127.0.0.1',
@@ -180,9 +167,7 @@ export async function startServer(params: StartServerParams): Promise<void> {
         socket.destroy();
       }
     });
-    console.log(
-      `✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT}, /setup-ws local)`
-    );
+    startLogger.info(`✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT})`);
   }
 
   gateways.push(apiServer);

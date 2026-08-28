@@ -1208,7 +1208,7 @@ describe('MessageRouter', () => {
       }
     );
 
-    it('keeps the owner operating discipline out of the onboarding conversation', async () => {
+    it('TG-04 uses the normal owner prompt even when a legacy SOUL file is absent', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-owner-onboarding';
       getRoleManager().setTelegramTrust([ownerChannelId]);
@@ -1225,9 +1225,6 @@ describe('MessageRouter', () => {
         { backend: 'codex' }
       );
 
-      // Onboarding is gated on SOUL.md being absent. Re-onboarding an existing install
-      // hits this state WITH telegram already allowlisted, so owner_console + onboarding
-      // is a normal path, not a corner case.
       rmSync(testSoulPath, { force: true });
       try {
         await processFixtureMessage(customRouter, {
@@ -1238,12 +1235,9 @@ describe('MessageRouter', () => {
           metadata: { chatType: 'private' },
         });
 
-        expect(systemPrompt).toContain('waking up for the first time');
-        // The operator posture contradicts the awakening persona: it orders the agent to
-        // gather via gateway tools and execute multi-step work, while onboarding must ask
-        // the user's name and run a quiz against connectors that do not exist yet.
-        expect(systemPrompt).not.toContain('Owner console operating discipline');
-        expect(systemPrompt).not.toContain('Gather before answering');
+        expect(systemPrompt).not.toContain('waking up for the first time');
+        expect(systemPrompt).toContain('Owner console operating discipline');
+        expect(systemPrompt).toContain('Gather before answering');
       } finally {
         writeFileSync(testSoulPath, '# Synthetic test persona\n', { mode: 0o600 });
         resetRoleManager();
