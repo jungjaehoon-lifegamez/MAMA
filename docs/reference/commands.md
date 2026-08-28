@@ -210,12 +210,6 @@ mama setup
 - Lists missing agent actions and human-required actions
 - Never starts a browser, setup server, or separate onboarding session
 
-- Checks the backend selected in `config.yaml` (Claude, Codex, or Cline)
-- Launches the 10-phase onboarding wizard on a nonce-protected localhost connection
-- Configures gateway integrations (Discord, Slack, Telegram)
-- Sets up personality and preferences
-- Opens MAMA OS web interface for interactive setup
-
 ---
 
 ### `mama start`

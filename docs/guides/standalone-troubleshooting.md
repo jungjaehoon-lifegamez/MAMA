@@ -351,11 +351,13 @@ sudo chown -R $USER:$USER ~/.mama/
 - MAMA OS viewer won't start
 - `mama start` fails
 
-**Note:** MAMA OS uses three ports:
+**Note:** MAMA OS uses two active ports:
 
 - **3847** - API server (viewer, graph API, sessions)
-- **3848** - Setup wizard (`mama setup`)
 - **3849** - Embedding server
+
+Port **3848** belonged to the retired setup wizard. Current onboarding uses `mama --help` and
+`mama status` and does not start a listener on that port.
 
 **Diagnosis:**
 

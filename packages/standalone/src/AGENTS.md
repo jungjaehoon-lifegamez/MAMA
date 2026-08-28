@@ -21,7 +21,7 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add gateway integration**  | `gateways/*.ts`               | Discord, Slack, Telegram handlers                 |
 | **Modify multi-agent swarm** | `multi-agent/orchestrator.ts` | 5-stage routing, tier-based access, delegation    |
 | **Add skill**                | `skills/*.ts`                 | Pluggable capabilities (image translation, docs)  |
-| **Modify onboarding wizard** | `onboarding/*.ts`             | 9-phase autonomous setup (ritual-based)           |
+| **Modify onboarding**        | `onboarding/*.ts`             | CLI contract and live readiness state             |
 | **Add cron job handler**     | `scheduler/*.ts`              | Heartbeat, token keep-alive, job locking          |
 | **Modify web UI**            | `../public/viewer/`           | MAMA OS dashboard (outside src/)                  |
 | **Add MCP tool executor**    | `agent/mcp-executor.ts`       | Tool execution via Claude CLI --mcp-config        |
@@ -31,7 +31,6 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add API endpoint**         | `api/*.ts`                    | Heartbeat, cron, error handlers                   |
 | **Modify memory logger**     | `memory/memory-logger.ts`     | Decision/checkpoint logging                       |
 | **Add runner**               | `runners/*.ts`                | CLI runner for single-prompt execution            |
-| **Modify setup wizard**      | `setup/*.ts`                  | WebSocket, server, tools, prompts                 |
 | **Add utility**              | `utils/*.ts`                  | Log sanitizer, Slack validators, rate limiters    |
 
 ---
