@@ -15,6 +15,8 @@ import { stopCommand } from './commands/stop.js';
 import { statusCommand } from './commands/status.js';
 import { runCommand } from './commands/run.js';
 import { createConnectorCommand } from './commands/connector.js';
+import { createGatewayCommand } from './commands/gateway.js';
+import { createReportCommand } from './commands/report.js';
 import { initConfig } from './config/config-manager.js';
 import { resolvePackageVersion } from '../package-version.js';
 import { renderContractIntro } from '../onboarding/agent-contract.js';
@@ -92,6 +94,8 @@ program
   });
 
 program.addCommand(createConnectorCommand());
+program.addCommand(createGatewayCommand());
+program.addCommand(createReportCommand());
 
 // Hidden daemon command (used internally for background process)
 program

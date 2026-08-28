@@ -3,11 +3,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-6359%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-6421%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Send MAMA a message and the real files. It remembers the Case, does the work it is
 > authorized to do, and sends back a verified artifact. Every claim and mutation links to
 > its source.
+
+## For AI agents
+
+Install `@jungjaehoon/mama-os`, then run `mama --help` and follow `mama status --json`. Do not
+copy onboarding steps into another prompt or declare completion until the CLI reports
+`complete: true`.
 
 **MAMA OS is the work agent behind your messenger.** You install one local server and contact one
 MAMA through Telegram, Slack, or Discord. Internally it can compose models, bounded workers, and
@@ -117,10 +123,16 @@ More detail: [Architecture](docs/explanation/architecture.md) ·
 **The server** — the full product. Install once; it keeps running until you stop it:
 
 ```bash
-claude auth login            # or: codex login — your existing CLI auth is reused
-npx @jungjaehoon/mama-os init
-mama start                   # daemon at localhost:3847
+claude auth login                   # or: codex login
+npm install -g @jungjaehoon/mama-os
+mama --help                         # the CLI teaches the next action
+mama status                         # repeat until onboarding is complete
 ```
+
+For an installation agent, use `mama status --json` and follow its ordered `missing` actions.
+Completion means MAMA has delivered the first confirmed report, not merely created configuration
+files. Telegram setup uses `mama gateway telegram --token-stdin`; other work sources use
+`mama connector add <name>` and `mama connector status`.
 
 Operator board at `http://localhost:3847/viewer`: live report slots, the trigger
 library, and a task board fed from your channels. Chat surfaces: Discord,
@@ -215,10 +227,10 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 6,359 passing tests across five packages
+pnpm test     # 6,421 passing tests across five packages
 ```
 
-Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-27_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-28_
 
 ## License
 

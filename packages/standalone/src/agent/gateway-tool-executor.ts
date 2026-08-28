@@ -224,6 +224,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const MAX_PROJECTED_MEMORY_FINDINGS = 20;
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 type TrustedProvenanceRuntime = {
   createTrustedProvenanceCapability: () => TrustedMemoryWriteOptions['capability'];
@@ -1154,6 +1155,9 @@ export class GatewayToolExecutor {
         getModelRun: mama.getModelRun?.bind(mama),
         appendToolTrace: mama.appendToolTrace?.bind(mama),
         listToolTracesForRun: mama.listToolTracesForRun?.bind(mama),
+        createAuditFinding: mama.createAuditFinding?.bind(mama),
+        listOpenAuditFindings: (mama.listOpenAuditFindings ?? mama.listAuditFindings)?.bind(mama),
+        listAuditFindings: mama.listAuditFindings?.bind(mama),
         buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
@@ -1406,6 +1410,73 @@ export class GatewayToolExecutor {
       });
     } catch (logErr) {
       securityLogger.warn('[envelope] audit log failed (non-fatal)', logErr);
+    }
+  }
+
+  private async recordMemoryWriteWarnings(
+    api: MAMAApiInterface,
+    toolName: 'mama_save' | 'mama_update',
+    warnings: readonly string[]
+  ): Promise<void> {
+    if (warnings.length === 0) {
+      return;
+    }
+
+    securityLogger.warn(`[memory] ${toolName} observed instruction-shaped content`, {
+      warnings,
+    });
+    if (!api.createAuditFinding) {
+      securityLogger.warn('[memory] audit finding writer is unavailable');
+      return;
+    }
+    const summary = `Instruction-shaped content observed during ${toolName}.`;
+    const listOpenFindings = api.listOpenAuditFindings ?? api.listAuditFindings;
+    if (listOpenFindings) {
+      try {
+        const existing = await listOpenFindings.call(api);
+        if (
+          existing.some(
+            (finding) => finding.kind === 'memory_injection_suspect' && finding.summary === summary
+          )
+        ) {
+          return;
+        }
+      } catch (error) {
+        securityLogger.warn('[memory] failed to inspect open injection warnings', error);
+      }
+    }
+    try {
+      await api.createAuditFinding({
+        kind: 'memory_injection_suspect',
+        severity: 'warn',
+        summary,
+        evidence_refs: [],
+        affected_memory_ids: [],
+        recommended_action: 'recheck',
+      });
+    } catch (error) {
+      securityLogger.warn('[memory] failed to persist injection warning', error);
+    }
+  }
+
+  private async readOpenMemoryFindings(api: MAMAApiInterface): Promise<{
+    findings: unknown[];
+    warning?: string;
+  }> {
+    const listOpenFindings = api.listOpenAuditFindings ?? api.listAuditFindings;
+    if (!listOpenFindings) {
+      return { findings: [] };
+    }
+    try {
+      return {
+        findings: (await listOpenFindings.call(api)).slice(0, MAX_PROJECTED_MEMORY_FINDINGS),
+      };
+    } catch (error) {
+      securityLogger.warn('[memory] failed to project open audit findings', error);
+      return {
+        findings: [],
+        warning: 'Memory audit findings are temporarily unavailable.',
+      };
     }
   }
 
@@ -2560,6 +2631,7 @@ export class GatewayToolExecutor {
             };
           }
           const api = await getApi();
+          await this.recordMemoryWriteWarnings(api, 'mama_save', saveSecretScan.warnings);
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
           let hasContextPacketId: boolean;
@@ -2646,7 +2718,9 @@ export class GatewayToolExecutor {
               error: `Refusing to update: content matches secret pattern(s): ${updateSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
             };
           }
-          return await handleUpdate(await getApi(), input as UpdateInput);
+          const api = await getApi();
+          await this.recordMemoryWriteWarnings(api, 'mama_update', updateSecretScan.warnings);
+          return await handleUpdate(api, input as UpdateInput);
         }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
@@ -3023,24 +3097,46 @@ export class GatewayToolExecutor {
             'state',
             'audit-findings.json'
           );
+          let parsed: Record<string, unknown> | null = null;
           try {
-            const raw = readFileSync(auditStatePath, 'utf8');
-            return { success: true, findings: JSON.parse(raw) };
+            parsed = JSON.parse(readFileSync(auditStatePath, 'utf8')) as Record<string, unknown>;
           } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
+            if (code !== 'ENOENT') {
               return {
-                success: true,
-                findings: null,
-                message: 'No audit findings recorded yet (first audit has not run).',
+                success: false,
+                code: 'audit_state_unreadable',
+                error: `Failed to read audit findings: ${error instanceof Error ? error.message : String(error)}`,
               };
             }
-            return {
-              success: false,
-              code: 'audit_state_unreadable',
-              error: `Failed to read audit findings: ${error instanceof Error ? error.message : String(error)}`,
+          }
+          let memoryProjection: { findings: unknown[]; warning?: string };
+          try {
+            memoryProjection = await this.readOpenMemoryFindings(await getApi());
+          } catch (error) {
+            securityLogger.warn('[memory] failed to initialize audit finding projection', error);
+            memoryProjection = {
+              findings: [],
+              warning: 'Memory audit findings are temporarily unavailable.',
             };
           }
+          const partial = memoryProjection.warning !== undefined;
+          return {
+            success: true,
+            ...(partial ? { partial: true, warning: memoryProjection.warning } : {}),
+            findings: {
+              ...(parsed ?? {}),
+              memory_findings: memoryProjection.findings,
+            },
+            ...(parsed === null
+              ? {
+                  message:
+                    memoryProjection.findings.length === 0
+                      ? 'No audit findings recorded yet (first audit has not run).'
+                      : 'Memory findings are available; the first system audit has not run.',
+                }
+              : {}),
+          };
         }
         case 'wiki_publish': {
           const pagesInput = (

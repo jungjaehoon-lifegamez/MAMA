@@ -6,6 +6,7 @@
  * enforced by the caller contract in worker-run.ts).
  */
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -76,8 +77,14 @@ describe('Story OPS-0: workerRun primitive', () => {
         input: 'Refresh the pipeline slot.',
       });
 
-      // No usage from the runner -> response only, no fabricated tokensUsed.
-      expect(result).toEqual({ response: 'board updated' });
+      // No usage from the runner -> no fabricated tokensUsed; the exact brief is still stamped.
+      expect(result).toEqual({
+        response: 'board updated',
+        briefHash: createHash('sha256')
+          .update('You update the owner board slots.')
+          .digest('hex')
+          .slice(0, 16),
+      });
       expect(runner.calls).toHaveLength(1);
       const { content, options } = runner.calls[0];
       expect(content).toContain('You update the owner board slots.');
@@ -100,7 +107,11 @@ describe('Story OPS-0: workerRun primitive', () => {
         brief: 'brief',
         input: 'input',
       });
-      expect(result).toEqual({ response: 'done', tokensUsed: 43_000 });
+      expect(result).toEqual({
+        response: 'done',
+        tokensUsed: 43_000,
+        briefHash: createHash('sha256').update('brief').digest('hex').slice(0, 16),
+      });
     });
 
     it('drops non-finite usage instead of fabricating a number', async () => {
@@ -111,7 +122,18 @@ describe('Story OPS-0: workerRun primitive', () => {
         })),
       };
       const result = await workerRun(runner, { kind: 'board', brief: 'b', input: 'i' });
-      expect(result).toEqual({ response: 'done' });
+      expect(result).toEqual({
+        response: 'done',
+        briefHash: createHash('sha256').update('b').digest('hex').slice(0, 16),
+      });
+    });
+
+    it('changes the stamp when the brief content changes', async () => {
+      const runner = makeRunner('done');
+      const first = await workerRun(runner, { kind: 'board', brief: 'brief A', input: 'input' });
+      const second = await workerRun(runner, { kind: 'board', brief: 'brief B', input: 'input' });
+
+      expect(first.briefHash).not.toBe(second.briefHash);
     });
 
     it('maps kinds onto the operator global-lane prefix', () => {

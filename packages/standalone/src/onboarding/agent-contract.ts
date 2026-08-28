@@ -39,6 +39,7 @@ export interface AssessDeps {
   telegramConfigured: boolean;
   allowedChats: boolean;
   enabledConnectors: number;
+  readyConnectors: number;
   firstReportAt: string | null;
 }
 
@@ -77,7 +78,9 @@ function guidanceFor(id: OnboardingItemId, deps: AssessDeps): string {
     case 'daemon':
       return 'Start the daemon: mama start';
     case 'sources':
-      return 'Run: mama connector add <name> (mama connector list shows what exists)';
+      return deps.enabledConnectors === 0
+        ? 'Run: mama connector add <name> (mama connector list shows what exists)'
+        : 'Run: mama connector status (fix authentication until at least one source connects)';
     case 'first_report':
       return 'Run: mama report now - the journey ends when the first report arrives';
   }
@@ -97,7 +100,7 @@ function isDone(id: OnboardingItemId, deps: AssessDeps): boolean {
     case 'daemon':
       return deps.daemonRunning;
     case 'sources':
-      return deps.enabledConnectors >= 1;
+      return deps.readyConnectors >= 1;
     case 'first_report':
       return deps.firstReportAt !== null;
   }

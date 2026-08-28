@@ -10,7 +10,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigPath, getMAMAHome, loadConfig } from '../cli/config/config-manager.js';
 import { isDaemonRunning } from '../cli/utils/pid-manager.js';
+import { loadConnector } from '../connectors/index.js';
 import { loadConnectorConfig } from '../connectors/config-loader.js';
+import type { ConnectorConfig } from '../connectors/framework/types.js';
 import type { AssessDeps } from './agent-contract.js';
 import { DEFAULT_PERSONA_MARKER } from './bootstrap-template.js';
 
@@ -20,6 +22,11 @@ interface CompletionMarker {
 
 interface FirstReportMarker {
   at?: string;
+}
+
+export interface CollectAssessOptions {
+  connectorProbe?: (name: string, config: ConnectorConfig, signal: AbortSignal) => Promise<boolean>;
+  connectorProbeTimeoutMs?: number;
 }
 
 function parseJsonFile<T>(path: string): T {
@@ -39,7 +46,10 @@ function parseJsonObjectFile(path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function countEnabledConnectors(mamaHome: string): number {
+function loadOnboardingConnectors(mamaHome: string): {
+  config: Record<string, ConnectorConfig>;
+  enabledNames: readonly string[];
+} {
   const path = join(mamaHome, 'connectors.json');
   const result = loadConnectorConfig(path);
   if (!result.ok) {
@@ -47,7 +57,82 @@ function countEnabledConnectors(mamaHome: string): number {
       `Failed to load onboarding connector state ${result.error.path}: ${result.error.message}`
     );
   }
-  return result.enabledNames.length;
+  return { config: result.config, enabledNames: result.enabledNames };
+}
+
+async function defaultConnectorProbe(
+  name: string,
+  config: ConnectorConfig,
+  signal: AbortSignal
+): Promise<boolean> {
+  const connector = await loadConnector(name, config);
+  let disposed = false;
+  const dispose = async (): Promise<void> => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    await connector.dispose();
+  };
+  const disposeOnAbort = (): void => {
+    void dispose();
+  };
+  signal.addEventListener('abort', disposeOnAbort, { once: true });
+  try {
+    if (signal.aborted) {
+      return false;
+    }
+    await connector.init();
+    if (signal.aborted) {
+      return false;
+    }
+    return await connector.authenticate();
+  } finally {
+    signal.removeEventListener('abort', disposeOnAbort);
+    await dispose();
+  }
+}
+
+async function probeWithTimeout(
+  probe: (signal: AbortSignal) => Promise<boolean>,
+  timeoutMs: number
+): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      resolve(false);
+    }, timeoutMs);
+    void probe(controller.signal).then(
+      (ready) => {
+        clearTimeout(timer);
+        resolve(ready);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      }
+    );
+  });
+}
+
+async function countReadyConnectors(
+  config: Record<string, ConnectorConfig>,
+  enabledNames: readonly string[],
+  options: CollectAssessOptions
+): Promise<number> {
+  const probe = options.connectorProbe ?? defaultConnectorProbe;
+  const timeoutMs = options.connectorProbeTimeoutMs ?? 3_000;
+  const results = await Promise.all(
+    enabledNames.map(async (name) => {
+      const connectorConfig = config[name];
+      if (!connectorConfig) {
+        return false;
+      }
+      return await probeWithTimeout((signal) => probe(name, connectorConfig, signal), timeoutMs);
+    })
+  );
+  return results.filter(Boolean).length;
 }
 
 function readFirstReportAt(mamaHome: string): string | null {
@@ -62,7 +147,7 @@ function readFirstReportAt(mamaHome: string): string | null {
   return raw.at;
 }
 
-export async function collectAssessDeps(): Promise<AssessDeps> {
+export async function collectAssessDeps(options: CollectAssessOptions = {}): Promise<AssessDeps> {
   const mamaHome = getMAMAHome();
   const configPath = getConfigPath();
   let config: Awaited<ReturnType<typeof loadConfig>> | null = null;
@@ -77,6 +162,7 @@ export async function collectAssessDeps(): Promise<AssessDeps> {
   }
 
   const running = await isDaemonRunning();
+  const connectors = loadOnboardingConnectors(mamaHome);
   return {
     configLoadable: config !== null,
     daemonRunning: Boolean(running),
@@ -84,7 +170,12 @@ export async function collectAssessDeps(): Promise<AssessDeps> {
       config?.telegram?.enabled === true && Boolean(config.telegram.token?.trim()),
     allowedChats:
       Array.isArray(config?.telegram?.allowed_chats) && config.telegram.allowed_chats.length > 0,
-    enabledConnectors: countEnabledConnectors(mamaHome),
+    enabledConnectors: connectors.enabledNames.length,
+    readyConnectors: await countReadyConnectors(
+      connectors.config,
+      connectors.enabledNames,
+      options
+    ),
     firstReportAt: readFirstReportAt(mamaHome),
   };
 }

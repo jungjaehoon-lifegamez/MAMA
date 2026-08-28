@@ -73,6 +73,8 @@ vi.mock('../../src/gateways/tool-status-tracker.js', () => ({
   })),
 }));
 
+import { Bot } from 'grammy';
+
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 import { getMemberCandidateStore } from '../../src/gateways/member-candidate-store.js';
@@ -134,6 +136,7 @@ describe('TelegramGateway basics', () => {
     gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
     });
   });
 
@@ -186,6 +189,7 @@ describe('TelegramGateway basics', () => {
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
       config: {
+        allowedChats: ['7777'],
         ownerUserIds: ['owner-user-1', 'owner-user-2'],
       },
     });
@@ -296,6 +300,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -330,6 +335,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -358,6 +364,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -376,6 +383,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: join(
         await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-text-')),
         'ledger.json'
@@ -407,6 +415,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: join(
         await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-variants-')),
         'ledger.json'
@@ -439,6 +448,7 @@ describe('TelegramGateway - message splitting', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
       messageLedgerPath: join(
         await makeMediaRoot(join(tmpdir(), 'mama-telegram-receipt-pending-')),
         'ledger.json'
@@ -461,6 +471,7 @@ describe('TelegramGateway - bot info stored after start()', () => {
     gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
     });
   });
 
@@ -492,6 +503,7 @@ describe('TelegramGateway - sticker send fallback', () => {
     gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
     });
     await gateway.start();
   });
@@ -624,17 +636,18 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     });
   });
 
-  describe('AC #3: start() without allowlist logs a SECURITY WARNING', () => {
-    it('warns loudly when allowedChats is empty', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  describe('AC #3: start() refuses an unanchored allowlist before Telegram authentication', () => {
+    it('fails before constructing or initializing the bot when allowedChats is empty', async () => {
+      vi.mocked(Bot).mockClear();
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
         turnProcessor: mockMessageRouter,
       });
-      await gateway.start();
-      expect(warnSpy.mock.calls.flat().join('\n')).toContain('SECURITY WARNING');
-      warnSpy.mockRestore();
-      await gateway.stop();
+
+      await expect(gateway.start()).rejects.toThrow(
+        'telegram gateway disabled: allowed_chats is not set. Run: mama status'
+      );
+      expect(Bot).not.toHaveBeenCalled();
     });
   });
 
@@ -955,7 +968,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('fails closed for media when no inbound allowlist is configured', async () => {
+  it('fails closed before media handling when no inbound allowlist is configured', async () => {
     const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
@@ -964,17 +977,13 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-open-media-')),
       fetchImpl,
     });
-    await gateway.start();
-
-    await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 7777, 119),
-      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
-    });
+    await expect(gateway.start()).rejects.toThrow(
+      'telegram gateway disabled: allowed_chats is not set. Run: mama status'
+    );
 
     expect(mockApi.getFile).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
-    await gateway.stop();
   });
 
   it('diverts repeated media before download or send when no owner can be resolved', async () => {
@@ -982,18 +991,20 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
-      config: {},
+      config: { allowedChats: ['-7777'] },
       mediaRoot: await makeMediaRoot(join(tmpdir(), 'mama-telegram-open-media-warn-')),
       fetchImpl,
     });
     await gateway.start();
 
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 7777, 121),
+      ...makeBaseMessage(-7777, 7777, 121),
+      chat: { id: -7777, type: 'group' as const },
       photo: [{ file_id: 'photo-1', file_unique_id: 'photo-u-1', width: 10, height: 10 }],
     });
     await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 7777, 122),
+      ...makeBaseMessage(-7777, 7777, 122),
+      chat: { id: -7777, type: 'group' as const },
       photo: [{ file_id: 'photo-2', file_unique_id: 'photo-u-2', width: 10, height: 10 }],
     });
 
@@ -1625,6 +1636,7 @@ describe('TelegramGateway report delivery control (TG-05/TG-06)', () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
       turnProcessor: mockMessageRouter,
+      config: { allowedChats: [OWNER_CHAT] },
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();

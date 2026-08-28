@@ -8,6 +8,10 @@
  */
 
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  {
+    name: 'invisible-unicode',
+    pattern: /[\u200b-\u200d\ufeff\u2060\u202a-\u202e\u2066-\u2069]/,
+  },
   // Built via concatenation so the literals never form secret shapes at rest
   // (the repo's own PII/secret scanners would flag them - correctly).
   { name: 'anthropic-key', pattern: new RegExp('\\bsk-' + 'ant-[a-zA-Z0-9_-]{8,}') },
@@ -26,9 +30,17 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'generic-bearer', pattern: new RegExp('\\bBearer\\s+' + '[A-Za-z0-9_-]{25,}\\b') },
 ];
 
+const PROMPT_INJECTION_PATTERNS = [
+  /\bignore\s+(?:(?:all|any)\s+)?(?:previous|prior)\s+instructions\b/i,
+  /\bdisregard\s+.{0,20}(?:rules|instructions)\b/i,
+  /\byou\s+are\s+now\b/i,
+  /\bsystem\s+prompt\b/i,
+] as const;
+
 export interface SecretScanResult {
   clean: boolean;
   matches: string[];
+  warnings: string[];
 }
 
 /** Scan text for secret-shaped material. */
@@ -36,7 +48,10 @@ export function scanForSecrets(text: string): SecretScanResult {
   const matches = SECRET_PATTERNS.filter(({ pattern }) => pattern.test(text)).map(
     ({ name }) => name
   );
-  return { clean: matches.length === 0, matches };
+  const warnings = PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(text))
+    ? ['prompt-injection-suspect']
+    : [];
+  return { clean: matches.length === 0, matches, warnings };
 }
 
 /**
@@ -76,7 +91,7 @@ export function scanMemoryWriteInput(input: Record<string, unknown>): SecretScan
   };
   visit(input, 0);
   if (truncated) {
-    return { clean: false, matches: ['scan-depth-limit-exceeded'] };
+    return { clean: false, matches: ['scan-depth-limit-exceeded'], warnings: [] };
   }
   return scanForSecrets(texts.join('\n'));
 }

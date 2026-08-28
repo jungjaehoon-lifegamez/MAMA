@@ -154,7 +154,10 @@ import {
 } from '../../operator/temporal-runtime.js';
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
-import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
+import {
+  DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS,
+  type WorkOrderConsumerEvent,
+} from '../../operator/workorder-consumer.js';
 import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
 import type { EnvelopeAuthority } from '../../envelope/authority.js';
 
@@ -168,6 +171,12 @@ const { DebugLogger } = debugLogger as unknown as {
 const codeActLogger = new DebugLogger('CodeAct');
 const temporalLogger = new DebugLogger('TemporalReconcile');
 const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
+
+export function workOrderActivityDetails(
+  event: WorkOrderConsumerEvent
+): Record<string, unknown> | undefined {
+  return event.briefHash ? { brief_hash: event.briefHash } : undefined;
+}
 const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
@@ -1749,6 +1758,9 @@ export async function runAgentLoop(
   // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
   // wake), which remains safe while the trigger loop is still booting or explicitly disabled.
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
+  const triggerLoopFullReport: {
+    current: (() => { accepted: boolean; reason?: 'busy' | 'unavailable' }) | null;
+  } = { current: null };
   // Operator DB + native task ledger (M8): wired UNCONDITIONALLY -- the task
   // tools are standard gateway tools and must work even when the trigger loop
   // is off (review finding on #142). Single handle, closed once at shutdown.
@@ -2007,6 +2019,7 @@ export async function runAgentLoop(
             // tokens_used via executeValidatedRun; the Stage-2 cutover
             // (2026-07-21) silently zeroed it, blinding all cost measurement.
             tokens_used: event.tokensUsed,
+            details: workOrderActivityDetails(event),
             execution_status: 'completed',
             trigger_reason: 'workorder-consumer',
           });
@@ -2348,6 +2361,7 @@ export async function runAgentLoop(
       };
       // M2.4: point the connector sink's forwarder at this loop now that it exists.
       triggerLoopNudge.current = () => triggerLoop.nudge();
+      triggerLoopFullReport.current = () => triggerLoop.startFullReport();
       // S1-T3: owner-intent forwarder - report_request routes to the SAME
       // report machinery (fresh session, delta anchor, consume semantics).
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
@@ -2448,6 +2462,7 @@ export async function runAgentLoop(
 
         stopOwnerEventRuntime = async () => {
           triggerLoopNudge.current = null;
+          triggerLoopFullReport.current = null;
           clearInterval(ownerEventTimer);
           // Let an in-flight effect reach its durable ACK before the shared
           // operator DB closes.
@@ -2513,6 +2528,8 @@ export async function runAgentLoop(
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
     ownerEventBoardRefreshLedger,
+    requestFullReport: () =>
+      triggerLoopFullReport.current?.() ?? { accepted: false, reason: 'unavailable' },
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
   gateways.push({ stop: async () => apiRoutesHandle.stop() });

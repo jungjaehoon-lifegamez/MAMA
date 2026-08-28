@@ -342,14 +342,17 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
       changedFields: expect.arrayContaining(['status']),
     });
     expect(ledger.inspectTemporalAttempt(attemptId).workOrder.status).toBe('done');
-    expect(events).toContainEqual({
-      type: 'complete',
-      workKind: 'temporal',
-      workOrderId: attemptId,
-      // Temporal completions route through arbitrateTemporalAttempt, which must
-      // not drop the run's usage the way the pre-review code did.
-      tokensUsed: 31_500,
-    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'complete',
+        workKind: 'temporal',
+        workOrderId: attemptId,
+        briefHash: expect.stringMatching(/^[a-f0-9]{16}$/),
+        // Temporal completions route through arbitrateTemporalAttempt, which must
+        // not drop the run's usage the way the pre-review code did.
+        tokensUsed: 31_500,
+      })
+    );
     expect(evidenceReads).toEqual([
       {
         taskId: task.id,

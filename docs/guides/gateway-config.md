@@ -427,28 +427,32 @@ MAMA: [replies in thread, preserving context]
    - Enter username (must end in "bot", e.g., "mama_assistant_bot")
 4. Copy the **bot token** (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
-**Step 2: Get Your Chat ID**
+**Step 2: Configure the Token Without Echoing It**
 
-1. Search for **@userinfobot** in Telegram
-2. Start chat and send any message
-3. Copy your **chat ID** (numeric, e.g., `987654321`)
+```bash
+printf '%s\n' "$TELEGRAM_BOT_TOKEN" | mama gateway telegram --token-stdin
+```
 
-**Step 3: Start Your Bot**
+**Step 3: Confirm the Owner Chat**
 
 1. Search for your bot username (e.g., `@mama_assistant_bot`)
 2. Click **Start** or send `/start`
+3. Run `mama gateway telegram detect-owner`
+4. Confirm exactly one candidate with
+   `mama gateway telegram detect-owner --confirm <chat-id>`
 
 ### Configuration Options
 
-| Option          | Type     | Required | Description                                           |
-| --------------- | -------- | -------- | ----------------------------------------------------- |
-| `enabled`       | boolean  | Yes      | Enable Telegram gateway                               |
-| `token`         | string   | Yes      | Bot token from @BotFather                             |
-| `allowed_chats` | string[] | No       | Trusted chat IDs; required for media and owner access |
+| Option          | Type     | Required | Description                                             |
+| --------------- | -------- | -------- | ------------------------------------------------------- |
+| `enabled`       | boolean  | Yes      | Enable Telegram gateway                                 |
+| `token`         | string   | Yes      | Bot token from @BotFather                               |
+| `allowed_chats` | string[] | Yes      | Trusted chat IDs; startup refuses an empty owner anchor |
 
 ### Security: Allowed Chats
 
-**IMPORTANT:** Without `allowed_chats`, anyone who finds your bot can use it.
+**IMPORTANT:** An enabled Telegram gateway does not start until `allowed_chats` contains a confirmed
+owner chat. Run `mama status` for the exact recovery command.
 
 ```yaml
 gateways:
@@ -462,8 +466,8 @@ gateways:
 
 **How it works:**
 
-- If `allowed_chats` is empty or not set: the bot accepts text from anyone and startup emits a loud
-  SECURITY WARNING. Media is rejected and the owner console is disabled in this state.
+- If `allowed_chats` is empty or not set: startup refuses the Telegram gateway before it polls or
+  authenticates.
 - If `allowed_chats` has IDs: Bot only responds to those chat IDs
 - Unauthorized chats are dropped with a rate-capped warning in the daemon log
 - Allowlisted chats can send captions, photos, image documents, and regular documents. Downloads
@@ -508,15 +512,8 @@ gateways:
 > artifacts and write memory. If teammates should chat without owner powers,
 > run a separate bot for them instead of widening this list.
 
-**Public text-only bot (anyone can use):**
-
-```yaml
-gateways:
-  telegram:
-    enabled: true
-    token: '123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
-    # No allowed_chats = text is open to everyone; media and owner tools are disabled
-```
+Public Telegram ingress is not an onboarding mode. Add human members through the principal/grant
+flow instead of removing the owner trust anchor.
 
 ### Usage Examples
 

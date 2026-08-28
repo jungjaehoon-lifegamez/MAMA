@@ -111,7 +111,11 @@ describe('Principal registry startup wiring', () => {
       bot_token: 'slack-bot-token-synthetic',
       app_token: 'slack-app-token-synthetic',
     },
-    telegram: { enabled: true, token: 'telegram-token-synthetic' },
+    telegram: {
+      enabled: true,
+      token: 'telegram-token-synthetic',
+      allowed_chats: ['telegram-owner-synthetic'],
+    },
   } as unknown as MAMAConfig;
   const toolExecutor = {
     setSlackGateway: vi.fn(),

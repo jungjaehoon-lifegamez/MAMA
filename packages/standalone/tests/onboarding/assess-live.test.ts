@@ -54,6 +54,7 @@ describe('Story ONB-2: live onboarding assessment', () => {
       expect(deps.telegramConfigured).toBe(false);
       expect(deps.allowedChats).toBe(false);
       expect(deps.enabledConnectors).toBe(0);
+      expect(deps.readyConnectors).toBe(0);
       expect(deps.firstReportAt).toBeNull();
     });
 
@@ -93,7 +94,68 @@ describe('Story ONB-2: live onboarding assessment', () => {
         JSON.stringify({ slack: connectorConfig(true), gmail: connectorConfig(false) })
       );
 
-      expect((await collectAssessDeps()).enabledConnectors).toBe(1);
+      const deps = await collectAssessDeps({
+        connectorProbe: async (name) => name === 'slack',
+      });
+      expect(deps.enabledConnectors).toBe(1);
+      expect(deps.readyConnectors).toBe(1);
+    });
+
+    it('keeps enabled but unauthenticated connectors incomplete', async () => {
+      mkdirSync(mamaHome, { recursive: true });
+      writeFileSync(
+        join(mamaHome, 'connectors.json'),
+        JSON.stringify({ slack: connectorConfig(true), gmail: connectorConfig(true) })
+      );
+
+      const probed: string[] = [];
+      const deps = await collectAssessDeps({
+        connectorProbe: async (name) => {
+          probed.push(name);
+          return false;
+        },
+      });
+
+      expect(probed.sort()).toEqual(['gmail', 'slack']);
+      expect(deps.enabledConnectors).toBe(2);
+      expect(deps.readyConnectors).toBe(0);
+    });
+
+    it('bounds connector authentication checks without polling content', async () => {
+      mkdirSync(mamaHome, { recursive: true });
+      writeFileSync(
+        join(mamaHome, 'connectors.json'),
+        JSON.stringify({ slack: connectorConfig(true) })
+      );
+
+      const deps = await collectAssessDeps({
+        connectorProbe: async () => await new Promise<boolean>(() => {}),
+        connectorProbeTimeoutMs: 5,
+      });
+
+      expect(deps.enabledConnectors).toBe(1);
+      expect(deps.readyConnectors).toBe(0);
+    });
+
+    it('aborts a timed-out connector probe', async () => {
+      mkdirSync(mamaHome, { recursive: true });
+      writeFileSync(
+        join(mamaHome, 'connectors.json'),
+        JSON.stringify({ slack: connectorConfig(true) })
+      );
+      let observedSignal: AbortSignal | undefined;
+
+      const deps = await collectAssessDeps({
+        connectorProbe: async (_name, _config, signal) => {
+          observedSignal = signal;
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+          return false;
+        },
+        connectorProbeTimeoutMs: 5,
+      });
+
+      expect(deps.readyConnectors).toBe(0);
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it('throws an explicit connectors path when connectors.json is malformed', async () => {

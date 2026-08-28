@@ -107,6 +107,7 @@ async function registerReconcileRuntime(input: {
   eventBus?: AgentEventBus;
   rawConnectorScope?: readonly string[];
   getAdapter?: () => { prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] } };
+  requestFullReport?: () => { accepted: boolean; reason?: 'busy' | 'unavailable' };
 }): Promise<{
   apiServer: ReturnType<typeof createApiServer>;
   boardRefreshGate: BoardRefreshGate | null;
@@ -154,10 +155,56 @@ async function registerReconcileRuntime(input: {
       ? { ownerEventBoardRefreshLedger: input.ownerEventBoardRefreshLedger }
       : {}),
     getAdapter: input.getAdapter ?? (() => input.db),
+    requestFullReport: input.requestFullReport,
   });
 
   return { apiServer, boardRefreshGate, eventBus, ledger, routeHandle };
 }
+
+it('accepts one authenticated on-demand owner report through the existing trigger-loop seam', async () => {
+  const db = new Database(':memory:');
+  initAgentTables(db);
+  createBoardInputTables(db);
+  const requestFullReport = vi.fn(() => ({ accepted: true }));
+  const runtime = await registerReconcileRuntime({
+    db,
+    connectorConfigLoadResult: enabledConnectorConfig,
+    requestFullReport,
+  });
+
+  try {
+    const response = await request(runtime.apiServer.app).post('/api/operator/report');
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ ok: true, status: 'accepted' });
+    expect(requestFullReport).toHaveBeenCalledOnce();
+  } finally {
+    runtime.routeHandle.stop();
+    db.close();
+  }
+});
+
+it.each([
+  { reason: 'busy' as const, status: 409 },
+  { reason: 'unavailable' as const, status: 503 },
+])('reports $reason admission as HTTP $status', async ({ reason, status }) => {
+  const db = new Database(':memory:');
+  initAgentTables(db);
+  createBoardInputTables(db);
+  const runtime = await registerReconcileRuntime({
+    db,
+    connectorConfigLoadResult: enabledConnectorConfig,
+    requestFullReport: () => ({ accepted: false, reason }),
+  });
+
+  try {
+    const response = await request(runtime.apiServer.app).post('/api/operator/report');
+    expect(response.status).toBe(status);
+    expect(response.body).toEqual({ ok: false, reason });
+  } finally {
+    runtime.routeHandle.stop();
+    db.close();
+  }
+});
 
 async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed' | 'none') {
   const db = new Database(':memory:');

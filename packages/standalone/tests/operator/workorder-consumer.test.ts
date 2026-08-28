@@ -3,6 +3,7 @@
  * completion hooks. Real in-memory TaskLedger; fake runner/alarm sinks.
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentError } from '../../src/agent/types.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
@@ -311,6 +312,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workKind: 'board',
         workOrderId: wo.id,
         tokensUsed: 43_200,
+        briefHash: createHash('sha256')
+          .update('You are a test worker. Do the work.')
+          .digest('hex')
+          .slice(0, 16),
       });
     });
 
@@ -327,6 +332,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       const complete = ctx.events.find((e) => e.type === 'complete' && e.workOrderId === wo.id);
       expect(complete).toBeDefined();
       expect(complete).not.toHaveProperty('tokensUsed');
+      expect(complete?.briefHash).toMatch(/^[a-f0-9]{16}$/);
     });
   });
 
@@ -653,6 +659,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         type: 'complete',
         workKind: 'board',
         workOrderId: wo.id,
+        briefHash: createHash('sha256')
+          .update('You are a test worker. Do the work.')
+          .digest('hex')
+          .slice(0, 16),
       });
     });
 

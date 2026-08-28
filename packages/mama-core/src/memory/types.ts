@@ -277,8 +277,13 @@ export type PublicIngestConversationInput = IngestConversationInput;
 
 export interface AuditFindingRecord {
   finding_id: string;
-  kind: 'wrong_direction' | 'memory_conflict' | 'stale_memory' | 'unsupported_claim';
-  severity: 'low' | 'medium' | 'high';
+  kind:
+    | 'wrong_direction'
+    | 'memory_conflict'
+    | 'stale_memory'
+    | 'unsupported_claim'
+    | 'memory_injection_suspect';
+  severity: 'low' | 'medium' | 'high' | 'warn';
   summary: string;
   evidence_refs: string[];
   affected_memory_ids: string[];
