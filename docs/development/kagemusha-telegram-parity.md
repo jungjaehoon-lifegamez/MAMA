@@ -850,14 +850,16 @@ change unless they are release-blocking security or data-loss issues.
   CLI waits for delivery evidence and treats the 120-second bound as still generating, not failure.
   `first-report.json` is created only after a confirmed Telegram delivery or an already-delivered
   replay, and the first timestamp is preserved. Focused API, CLI, and coordinator tests cover the
-  accepted request, timeout semantics, first confirmation, later reports, and crash recovery.
+  accepted request, timeout semantics, first confirmation, later reports, and crash recovery. If
+  the immutable first-report marker already exists, a later request is still admitted but the CLI
+  explicitly does not claim that old evidence confirms the new delivery.
 
 - 2026-08-28: Added the TG-03/TG-04 self-teaching Telegram credential and owner-anchor path.
   Tokens stay off argv and output, official API validation precedes persistence, owner discovery
   is explicit and 409-aware, and an empty `allowed_chats` now fails before Telegram authentication
   or polling. The onboarding source item also requires one bounded authenticated connector rather
-  than trusting an enabled flag; no content poll is added to status or daemon hot paths. Live
-  delivery evidence remains pending.
+  than trusting an enabled flag; timed-out probes are aborted and disposed, and no content poll is
+  added to status or daemon hot paths. Live delivery evidence remains pending.
 
 - 2026-08-28: Retired the separate setup WebSocket, browser page, and 1,109-line awakening script.
   `mama --help`, `mama status`, and the compatibility `mama setup` command now share one observed

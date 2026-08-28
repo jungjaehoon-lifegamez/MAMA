@@ -830,8 +830,11 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             },
           });
         } finally {
-          if (priorHome === undefined) delete process.env.HOME;
-          else process.env.HOME = priorHome;
+          if (priorHome === undefined) {
+            delete process.env.HOME;
+          } else {
+            process.env.HOME = priorHome;
+          }
           await rm(home, { recursive: true, force: true });
         }
       });
@@ -872,8 +875,50 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
           expect(result.findings.memory_findings).toHaveLength(20);
         } finally {
-          if (priorHome === undefined) delete process.env.HOME;
-          else process.env.HOME = priorHome;
+          if (priorHome === undefined) {
+            delete process.env.HOME;
+          } else {
+            process.env.HOME = priorHome;
+          }
+          await rm(home, { recursive: true, force: true });
+        }
+      });
+
+      it('preserves system audit findings when memory projection fails', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'mama-audit-partial-'));
+        const priorHome = process.env.HOME;
+        process.env.HOME = home;
+        try {
+          const stateDir = join(home, '.mama', 'state');
+          await mkdir(stateDir, { recursive: true });
+          await writeFile(
+            join(stateDir, 'audit-findings.json'),
+            JSON.stringify({ findings: [{ id: 'system-warning' }] }),
+            'utf8'
+          );
+          const mockApi = createMockApi();
+          Object.assign(mockApi, {
+            listOpenAuditFindings: vi.fn().mockRejectedValue(new Error('memory db unavailable')),
+          });
+          const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+
+          const result = await executor.execute('audit_findings_read', {});
+
+          expect(result).toMatchObject({
+            success: true,
+            partial: true,
+            findings: {
+              findings: [{ id: 'system-warning' }],
+              memory_findings: [],
+            },
+            warning: 'Memory audit findings are temporarily unavailable.',
+          });
+        } finally {
+          if (priorHome === undefined) {
+            delete process.env.HOME;
+          } else {
+            process.env.HOME = priorHome;
+          }
           await rm(home, { recursive: true, force: true });
         }
       });

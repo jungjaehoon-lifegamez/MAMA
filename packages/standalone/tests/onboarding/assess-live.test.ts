@@ -137,6 +137,27 @@ describe('Story ONB-2: live onboarding assessment', () => {
       expect(deps.readyConnectors).toBe(0);
     });
 
+    it('aborts a timed-out connector probe', async () => {
+      mkdirSync(mamaHome, { recursive: true });
+      writeFileSync(
+        join(mamaHome, 'connectors.json'),
+        JSON.stringify({ slack: connectorConfig(true) })
+      );
+      let observedSignal: AbortSignal | undefined;
+
+      const deps = await collectAssessDeps({
+        connectorProbe: async (_name, _config, signal) => {
+          observedSignal = signal;
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
+          return false;
+        },
+        connectorProbeTimeoutMs: 5,
+      });
+
+      expect(deps.readyConnectors).toBe(0);
+      expect(observedSignal?.aborted).toBe(true);
+    });
+
     it('throws an explicit connectors path when connectors.json is malformed', async () => {
       mkdirSync(mamaHome, { recursive: true });
       const connectorsPath = join(mamaHome, 'connectors.json');

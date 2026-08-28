@@ -79,6 +79,46 @@ describe('Story ONB-6: mama report now reaches confirmed delivery', () => {
     expect(output.join('\n')).toContain('first report delivery confirmed');
   });
 
+  it('does not mistake an existing first-report marker for current-request delivery', async () => {
+    const output: string[] = [];
+    mkdirSync(join(mamaHome, 'state'), { recursive: true });
+    writeFileSync(
+      join(mamaHome, 'state', 'first-report.json'),
+      JSON.stringify({ at: '2026-08-27T00:00:00.000Z', channel: 'telegram' })
+    );
+    const fetchImpl = vi.fn(async () => acceptedResponse()) as unknown as typeof fetch;
+
+    await reportNowCommand({
+      mamaHome,
+      daemonRunning: async () => true,
+      fetchImpl,
+      writeOut: (line) => output.push(line),
+      maxWaitMs: 0,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(output.join('\n')).toContain('first report was already confirmed');
+    expect(output.join('\n')).toContain('current request delivery is not individually tracked');
+    expect(output.join('\n')).not.toContain('first report delivery confirmed at');
+  });
+
+  it('rejects malformed successful response bodies', async () => {
+    await expect(
+      reportNowCommand({
+        mamaHome,
+        daemonRunning: async () => true,
+        fetchImpl: vi.fn(
+          async () =>
+            new Response('{broken', {
+              status: 202,
+              headers: { 'content-type': 'application/json' },
+            })
+        ) as unknown as typeof fetch,
+        writeOut: () => {},
+      })
+    ).rejects.toThrow('Report request returned invalid JSON');
+  });
+
   it('surfaces a rejected report request without waiting for delivery', async () => {
     await expect(
       reportNowCommand({

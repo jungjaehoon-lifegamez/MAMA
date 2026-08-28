@@ -8,6 +8,7 @@ import { API_PORT } from '../runtime/utilities.js';
 import { isDaemonRunning } from '../utils/pid-manager.js';
 
 type WriteLine = (line: string) => void;
+const writeStdout: WriteLine = (line) => process.stdout.write(`${line}\n`);
 
 export interface ReportNowOptions {
   mamaHome?: string;
@@ -50,6 +51,8 @@ export async function reportNowCommand(options: ReportNowOptions = {}): Promise<
   }
 
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const markerPath = join(options.mamaHome ?? getMAMAHome(), 'state', 'first-report.json');
+  const existingFirstReportAt = readConfirmedAt(markerPath);
   const headers = new Headers({ 'content-type': 'application/json' });
   const authToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (authToken) {
@@ -60,15 +63,30 @@ export async function reportNowCommand(options: ReportNowOptions = {}): Promise<
     headers,
     body: '{}',
   });
-  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: Record<string, unknown>;
+  try {
+    body = (await response.json()) as Record<string, unknown>;
+  } catch {
+    if (response.ok) {
+      throw new Error('Report request returned invalid JSON');
+    }
+    body = {};
+  }
   if (!response.ok) {
     const reason = typeof body.reason === 'string' ? body.reason : `HTTP ${response.status}`;
     throw new Error(`Report request was not accepted: ${reason}`);
   }
+  if (body.ok !== true || body.status !== 'accepted') {
+    throw new Error('Report request returned an invalid acceptance response');
+  }
 
-  const writeOut = options.writeOut ?? console.log;
+  const writeOut = options.writeOut ?? writeStdout;
   writeOut('✓ Report request accepted. Waiting for confirmed delivery...');
-  const markerPath = join(options.mamaHome ?? getMAMAHome(), 'state', 'first-report.json');
+  if (existingFirstReportAt) {
+    writeOut(`✓ first report was already confirmed at ${existingFirstReportAt}`);
+    writeOut('current request delivery is not individually tracked; check Telegram for arrival.');
+    return;
+  }
   const maxWaitMs = options.maxWaitMs ?? 120_000;
   const pollIntervalMs = options.pollIntervalMs ?? 500;
   const deadline = Date.now() + maxWaitMs;

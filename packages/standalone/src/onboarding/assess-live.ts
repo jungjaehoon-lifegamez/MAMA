@@ -25,7 +25,7 @@ interface FirstReportMarker {
 }
 
 export interface CollectAssessOptions {
-  connectorProbe?: (name: string, config: ConnectorConfig) => Promise<boolean>;
+  connectorProbe?: (name: string, config: ConnectorConfig, signal: AbortSignal) => Promise<boolean>;
   connectorProbeTimeoutMs?: number;
 }
 
@@ -60,23 +60,50 @@ function loadOnboardingConnectors(mamaHome: string): {
   return { config: result.config, enabledNames: result.enabledNames };
 }
 
-async function defaultConnectorProbe(name: string, config: ConnectorConfig): Promise<boolean> {
+async function defaultConnectorProbe(
+  name: string,
+  config: ConnectorConfig,
+  signal: AbortSignal
+): Promise<boolean> {
   const connector = await loadConnector(name, config);
+  let disposed = false;
+  const dispose = async (): Promise<void> => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    await connector.dispose();
+  };
+  const disposeOnAbort = (): void => {
+    void dispose();
+  };
+  signal.addEventListener('abort', disposeOnAbort, { once: true });
   try {
+    if (signal.aborted) {
+      return false;
+    }
     await connector.init();
+    if (signal.aborted) {
+      return false;
+    }
     return await connector.authenticate();
   } finally {
-    await connector.dispose();
+    signal.removeEventListener('abort', disposeOnAbort);
+    await dispose();
   }
 }
 
 async function probeWithTimeout(
-  probe: () => Promise<boolean>,
+  probe: (signal: AbortSignal) => Promise<boolean>,
   timeoutMs: number
 ): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    void probe().then(
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      resolve(false);
+    }, timeoutMs);
+    void probe(controller.signal).then(
       (ready) => {
         clearTimeout(timer);
         resolve(ready);
@@ -102,7 +129,7 @@ async function countReadyConnectors(
       if (!connectorConfig) {
         return false;
       }
-      return await probeWithTimeout(() => probe(name, connectorConfig), timeoutMs);
+      return await probeWithTimeout((signal) => probe(name, connectorConfig, signal), timeoutMs);
     })
   );
   return results.filter(Boolean).length;

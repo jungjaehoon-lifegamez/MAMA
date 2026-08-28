@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { loadConfig, saveConfig } from '../config/config-manager.js';
 
 type WriteLine = (line: string) => void;
+const writeStdout: WriteLine = (line) => process.stdout.write(`${line}\n`);
 
 export interface GatewayTelegramSetOptions {
   tokenStdin: boolean;
@@ -99,9 +100,10 @@ export async function gatewayTelegramSet(options: GatewayTelegramSetOptions): Pr
     token,
   };
   await saveConfig(config);
-  (options.writeOut ?? console.log)('✓ Telegram token validated and enabled.');
-  (options.writeOut ?? console.log)('Next: send the bot a private message, then run:');
-  (options.writeOut ?? console.log)('  mama gateway telegram detect-owner');
+  const writeOut = options.writeOut ?? writeStdout;
+  writeOut('✓ Telegram token validated and enabled.');
+  writeOut('Next: send the bot a private message, then run:');
+  writeOut('  mama gateway telegram detect-owner');
 }
 
 export async function gatewayTelegramDetectOwner(
@@ -139,12 +141,13 @@ export async function gatewayTelegramDetectOwner(
       allowed_chats: [confirmed.id],
     };
     await saveConfig(config);
-    (options.writeOut ?? console.log)(`✓ Telegram owner chat confirmed: ${confirmed.id}`);
-    (options.writeOut ?? console.log)('Run: mama status');
+    const writeOut = options.writeOut ?? writeStdout;
+    writeOut(`✓ Telegram owner chat confirmed: ${confirmed.id}`);
+    writeOut('Run: mama status');
     return;
   }
 
-  const writeOut = options.writeOut ?? console.log;
+  const writeOut = options.writeOut ?? writeStdout;
   if (candidates.length === 0) {
     writeOut('No private Telegram chat candidates found.');
     writeOut('Send the bot a private message, then run this command again.');

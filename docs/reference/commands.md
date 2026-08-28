@@ -320,6 +320,8 @@ mama report now
 
 The daemon must be running. A report still generating after two minutes is not marked failed;
 `mama status` remains the source of truth for completion.
+After the first report has already been confirmed, the command still requests a report but does
+not claim that the immutable first-report marker proves delivery of this later request.
 
 ---
 

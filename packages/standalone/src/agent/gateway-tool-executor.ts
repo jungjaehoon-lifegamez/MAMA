@@ -1155,6 +1155,9 @@ export class GatewayToolExecutor {
         getModelRun: mama.getModelRun?.bind(mama),
         appendToolTrace: mama.appendToolTrace?.bind(mama),
         listToolTracesForRun: mama.listToolTracesForRun?.bind(mama),
+        createAuditFinding: mama.createAuditFinding?.bind(mama),
+        listOpenAuditFindings: (mama.listOpenAuditFindings ?? mama.listAuditFindings)?.bind(mama),
+        listAuditFindings: mama.listAuditFindings?.bind(mama),
         buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
@@ -1415,7 +1418,9 @@ export class GatewayToolExecutor {
     toolName: 'mama_save' | 'mama_update',
     warnings: readonly string[]
   ): Promise<void> {
-    if (warnings.length === 0) return;
+    if (warnings.length === 0) {
+      return;
+    }
 
     securityLogger.warn(`[memory] ${toolName} observed instruction-shaped content`, {
       warnings,
@@ -1425,13 +1430,13 @@ export class GatewayToolExecutor {
       return;
     }
     const summary = `Instruction-shaped content observed during ${toolName}.`;
-    if (api.listAuditFindings) {
+    const listOpenFindings = api.listOpenAuditFindings ?? api.listAuditFindings;
+    if (listOpenFindings) {
       try {
-        const existing = await api.listAuditFindings();
+        const existing = await listOpenFindings.call(api);
         if (
           existing.some(
-            (finding) =>
-              finding.kind === 'memory_injection_suspect' && finding.summary === summary
+            (finding) => finding.kind === 'memory_injection_suspect' && finding.summary === summary
           )
         ) {
           return;
@@ -1451,6 +1456,27 @@ export class GatewayToolExecutor {
       });
     } catch (error) {
       securityLogger.warn('[memory] failed to persist injection warning', error);
+    }
+  }
+
+  private async readOpenMemoryFindings(api: MAMAApiInterface): Promise<{
+    findings: unknown[];
+    warning?: string;
+  }> {
+    const listOpenFindings = api.listOpenAuditFindings ?? api.listAuditFindings;
+    if (!listOpenFindings) {
+      return { findings: [] };
+    }
+    try {
+      return {
+        findings: (await listOpenFindings.call(api)).slice(0, MAX_PROJECTED_MEMORY_FINDINGS),
+      };
+    } catch (error) {
+      securityLogger.warn('[memory] failed to project open audit findings', error);
+      return {
+        findings: [],
+        warning: 'Memory audit findings are temporarily unavailable.',
+      };
     }
   }
 
@@ -3071,39 +3097,46 @@ export class GatewayToolExecutor {
             'state',
             'audit-findings.json'
           );
+          let parsed: Record<string, unknown> | null = null;
           try {
-            const raw = readFileSync(auditStatePath, 'utf8');
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            const api = await getApi();
-            const memoryFindings = api.listAuditFindings
-              ? (await api.listAuditFindings()).slice(0, MAX_PROJECTED_MEMORY_FINDINGS)
-              : [];
-            return {
-              success: true,
-              findings: { ...parsed, memory_findings: memoryFindings },
-            };
+            parsed = JSON.parse(readFileSync(auditStatePath, 'utf8')) as Record<string, unknown>;
           } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
-              const api = await getApi();
-              const memoryFindings = api.listAuditFindings
-                ? (await api.listAuditFindings()).slice(0, MAX_PROJECTED_MEMORY_FINDINGS)
-                : [];
+            if (code !== 'ENOENT') {
               return {
-                success: true,
-                findings: { memory_findings: memoryFindings },
-                message:
-                  memoryFindings.length === 0
-                    ? 'No audit findings recorded yet (first audit has not run).'
-                    : 'Memory findings are available; the first system audit has not run.',
+                success: false,
+                code: 'audit_state_unreadable',
+                error: `Failed to read audit findings: ${error instanceof Error ? error.message : String(error)}`,
               };
             }
-            return {
-              success: false,
-              code: 'audit_state_unreadable',
-              error: `Failed to read audit findings: ${error instanceof Error ? error.message : String(error)}`,
+          }
+          let memoryProjection: { findings: unknown[]; warning?: string };
+          try {
+            memoryProjection = await this.readOpenMemoryFindings(await getApi());
+          } catch (error) {
+            securityLogger.warn('[memory] failed to initialize audit finding projection', error);
+            memoryProjection = {
+              findings: [],
+              warning: 'Memory audit findings are temporarily unavailable.',
             };
           }
+          const partial = memoryProjection.warning !== undefined;
+          return {
+            success: true,
+            ...(partial ? { partial: true, warning: memoryProjection.warning } : {}),
+            findings: {
+              ...(parsed ?? {}),
+              memory_findings: memoryProjection.findings,
+            },
+            ...(parsed === null
+              ? {
+                  message:
+                    memoryProjection.findings.length === 0
+                      ? 'No audit findings recorded yet (first audit has not run).'
+                      : 'Memory findings are available; the first system audit has not run.',
+                }
+              : {}),
+          };
         }
         case 'wiki_publish': {
           const pagesInput = (

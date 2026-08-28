@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter } from '../../src/db-manager.js';
 import { saveMemory } from '../../src/memory/api.js';
+import { projectMemoryTruth, queryRelevantTruth } from '../../src/memory/truth-store.js';
 
 const TEST_DB = path.join(os.tmpdir(), `test-truth-projection-sync-${randomUUID()}.db`);
 const PROJECT_SCOPE = { kind: 'project' as const, id: 'repo:truth-projection-sync' };
@@ -62,5 +63,29 @@ describe('Task 12: direct save keeps memory_truth evolution in sync', () => {
         .prepare('SELECT truth_status, superseded_by FROM memory_truth WHERE memory_id = ?')
         .get(first.id)
     ).toEqual({ truth_status: 'superseded', superseded_by: replacement.id });
+
+    // Deterministically model the overlap where the first save's delayed projection
+    // resumes after the replacement already superseded it.
+    await projectMemoryTruth({
+      memory_id: first.id,
+      topic: 'truth_projection_sync',
+      truth_status: 'active',
+      effective_summary: 'Use the first operating rule',
+      effective_details: 'Initial decision',
+      trust_score: 0.5,
+      scope_refs: [PROJECT_SCOPE],
+      supporting_event_ids: [],
+    });
+
+    expect(
+      getAdapter()
+        .prepare('SELECT truth_status, superseded_by FROM memory_truth WHERE memory_id = ?')
+        .get(first.id)
+    ).toEqual({ truth_status: 'superseded', superseded_by: replacement.id });
+    const visible = await queryRelevantTruth({
+      query: 'first operating rule',
+      scopes: [PROJECT_SCOPE],
+    });
+    expect(visible.map((row) => row.memory_id)).not.toContain(first.id);
   });
 });

@@ -4096,6 +4096,7 @@ const mama = {
   upsertChannelSummary,
   getChannelSummary,
   listAuditFindings: listOpenAuditFindings,
+  listOpenAuditFindings,
   createAuditFinding,
   getMemoryProvenance,
   listMemoriesByEnvelopeHash,

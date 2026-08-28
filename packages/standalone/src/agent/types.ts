@@ -1502,6 +1502,8 @@ export interface MAMAApiInterface {
   createAuditFinding?(
     input: Omit<AuditFindingRecord, 'finding_id' | 'status' | 'created_at' | 'resolved_at'>
   ): Promise<string>;
+  listOpenAuditFindings?(): Promise<AuditFindingRecord[]>;
+  /** @deprecated Compatibility alias. Use listOpenAuditFindings for explicit semantics. */
   listAuditFindings?(): Promise<AuditFindingRecord[]>;
   buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
