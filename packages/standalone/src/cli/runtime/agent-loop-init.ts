@@ -127,9 +127,9 @@ export function initMainAgentLoop(
   let osCapabilities = '';
 
   if (!isRuntimeReady()) {
-    console.log('⚠️  Runtime inputs incomplete. Run: mama status');
+    initLogger.info('⚠️  Runtime inputs incomplete. Run: mama status');
   } else {
-    console.log('✓ Runtime inputs ready');
+    initLogger.info('✓ Runtime inputs ready');
   }
 
   // OS Agent mode (Viewer context only)

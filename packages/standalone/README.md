@@ -177,8 +177,8 @@ Each view has its own hash route, e.g. `/viewer#operator/tasks?task=42`.
 
 ## Gateway Integrations
 
-Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure via `mama setup` or edit
-`~/.mama/config.yaml` directly.
+Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure one gateway in
+`~/.mama/config.yaml`, then use `mama status` to verify its owner trust anchor.
 
 ## Architecture
 

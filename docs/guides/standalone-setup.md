@@ -174,7 +174,10 @@ Claude Code 인증 확인... ✓
 데이터 디렉토리 생성 중... ✓
 로그 디렉토리 생성 중... ✓
 CLAUDE.md 생성 중... ✓
-기본 런타임 페르소나 생성 중... ✓
+Creating default runtime personas...
+  SOUL.md ✓
+  IDENTITY.md ✓
+  USER.md ✓
 
 다음 단계:
   mama status   온보딩 상태와 다음 행동 확인
@@ -195,7 +198,7 @@ missing action and separates commands the agent can run from facts that require 
 separate server. The journey ends when the first evidenced report arrives, not when files are
 created.
 
-- You don't need gateway integrations
+Configure one gateway and establish its owner trust anchor before requesting the first report.
 
 ### External Access Note
 
@@ -692,9 +695,9 @@ After initialization, your workspace looks like this:
 
 - **config.yaml** - All settings, tokens, gateway configuration
 - **CLAUDE.md** - Tells Claude where to work (workspace boundaries)
-- **IDENTITY.md** - Optional legacy identity metadata; not a human-team grant
+- **IDENTITY.md** - Shipped one-front MAMA identity; not a human-team grant
 - **USER.md** - Your preferences and context
-- **SOUL.md** - Optional legacy behavior guidelines; not a product-facing worker roster
+- **SOUL.md** - Shipped operating principles; not a product-facing worker roster
 
 ---
 

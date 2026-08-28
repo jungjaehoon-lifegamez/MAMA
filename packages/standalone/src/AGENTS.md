@@ -209,24 +209,15 @@ User message → Orchestrator → 5-Stage Routing
                 └── DELEGATE::developer::Fix the auth bug
 ```
 
-**Key difference from oh-my-opencode:** Built for **chat platforms** (Discord, Slack, Telegram) with multiple bot accounts collaborating in real-time channels, not local CLI environment.
+**Key difference from oh-my-opencode:** MAMA is one messenger-native work agent. Internal workers
+may collaborate behind that single front, but users do not select named bots or a worker roster.
 
-### **Onboarding Wizard (Ritual-Based)**
+### **Self-Teaching Onboarding**
 
-```text
-9-Phase Autonomous Setup:
-1. The Awakening ✨
-2. Getting to Know You 💬
-3. Personality Quest 🎮
-4. The Naming Ceremony 🏷️
-5. Checkpoint ✅
-6. Security Talk 🔒
-7. The Connections 🔌
-8. The Demo 🎪
-9. Grand Finale 🎉
-```
-
-Each phase uses Claude CLI to guide users through setup with natural conversation.
+- `mama --help` explains the static onboarding contract.
+- `mama status` observes live readiness and prints exact next actions.
+- `mama setup` is a compatibility alias for `mama status`.
+- Onboarding completes when the first report has confirmed delivery evidence.
 
 ### **UltraWork Mode (Ralph Loop 3-Phase)**
 

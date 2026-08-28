@@ -167,7 +167,7 @@ export async function startServer(params: StartServerParams): Promise<void> {
         socket.destroy();
       }
     });
-    console.log(`✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT})`);
+    startLogger.info(`✓ WebSocket upgrade handler registered (/ws → ${EMBEDDING_PORT})`);
   }
 
   gateways.push(apiServer);
