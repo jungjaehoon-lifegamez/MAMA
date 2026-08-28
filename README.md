@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-6407%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-6409%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Send MAMA a message and the real files. It remembers the Case, does the work it is
 > authorized to do, and sends back a verified artifact. Every claim and mutation links to
@@ -227,7 +227,7 @@ Each "Next" item comes from a measurement, or from a competitor doing it better:
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 6,407 passing tests across five packages
+pnpm test     # 6,409 passing tests across five packages
 ```
 
 Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-08-28_

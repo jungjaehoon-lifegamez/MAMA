@@ -224,6 +224,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const MAX_PROJECTED_MEMORY_FINDINGS = 20;
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 type TrustedProvenanceRuntime = {
   createTrustedProvenanceCapability: () => TrustedMemoryWriteOptions['capability'];
@@ -1423,11 +1424,27 @@ export class GatewayToolExecutor {
       securityLogger.warn('[memory] audit finding writer is unavailable');
       return;
     }
+    const summary = `Instruction-shaped content observed during ${toolName}.`;
+    if (api.listAuditFindings) {
+      try {
+        const existing = await api.listAuditFindings();
+        if (
+          existing.some(
+            (finding) =>
+              finding.kind === 'memory_injection_suspect' && finding.summary === summary
+          )
+        ) {
+          return;
+        }
+      } catch (error) {
+        securityLogger.warn('[memory] failed to inspect open injection warnings', error);
+      }
+    }
     try {
       await api.createAuditFinding({
         kind: 'memory_injection_suspect',
         severity: 'warn',
-        summary: `Instruction-shaped content observed during ${toolName}.`,
+        summary,
         evidence_refs: [],
         affected_memory_ids: [],
         recommended_action: 'recheck',
@@ -3058,7 +3075,9 @@ export class GatewayToolExecutor {
             const raw = readFileSync(auditStatePath, 'utf8');
             const parsed = JSON.parse(raw) as Record<string, unknown>;
             const api = await getApi();
-            const memoryFindings = api.listAuditFindings ? await api.listAuditFindings() : [];
+            const memoryFindings = api.listAuditFindings
+              ? (await api.listAuditFindings()).slice(0, MAX_PROJECTED_MEMORY_FINDINGS)
+              : [];
             return {
               success: true,
               findings: { ...parsed, memory_findings: memoryFindings },
@@ -3067,7 +3086,9 @@ export class GatewayToolExecutor {
             const code = (error as NodeJS.ErrnoException).code;
             if (code === 'ENOENT') {
               const api = await getApi();
-              const memoryFindings = api.listAuditFindings ? await api.listAuditFindings() : [];
+              const memoryFindings = api.listAuditFindings
+                ? (await api.listAuditFindings()).slice(0, MAX_PROJECTED_MEMORY_FINDINGS)
+                : [];
               return {
                 success: true,
                 findings: { memory_findings: memoryFindings },
