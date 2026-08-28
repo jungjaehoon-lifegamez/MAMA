@@ -20,6 +20,7 @@
  * runs never block owner replies.
  */
 
+import { createHash } from 'node:crypto';
 import type { AgentLoopOptions, ContentBlock } from '../agent/types.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
@@ -55,6 +56,8 @@ export interface WorkerRunner {
 
 export interface WorkerRunOutput {
   response: string;
+  /** SHA-256 prefix of the exact source brief before runtime projection. */
+  briefHash: string;
   /** input+output tokens of the run; undefined when the runner reported no usage
    *  (never a fabricated 0 - absence must stay distinguishable from "free"). */
   tokensUsed?: number;
@@ -243,5 +246,6 @@ export async function workerRun(
     usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
       ? usage.input_tokens + usage.output_tokens
       : undefined;
-  return tokensUsed === undefined ? { response } : { response, tokensUsed };
+  const briefHash = createHash('sha256').update(brief).digest('hex').slice(0, 16);
+  return tokensUsed === undefined ? { response, briefHash } : { response, tokensUsed, briefHash };
 }

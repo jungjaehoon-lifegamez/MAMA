@@ -11,6 +11,7 @@ const base: AssessDeps = {
   telegramConfigured: true,
   allowedChats: true,
   enabledConnectors: 1,
+  readyConnectors: 1,
   firstReportAt: '2026-08-28T00:00:00Z',
 };
 
@@ -43,6 +44,20 @@ describe('Story ONB-1: self-teaching onboarding contract', () => {
       expect(state.missing).toContain('trust_anchor');
     });
 
+    it('does not complete when a source is enabled but none authenticate', () => {
+      const state = assessOnboarding({
+        ...base,
+        enabledConnectors: 1,
+        readyConnectors: 0,
+      });
+
+      expect(state.complete).toBe(false);
+      expect(state.missing).toContain('sources');
+      expect(state.items.find((item) => item.id === 'sources')?.guidance).toContain(
+        'mama connector status'
+      );
+    });
+
     it('missing preserves journey order: config first, first_report last', () => {
       const state = assessOnboarding({
         ...base,
@@ -63,6 +78,7 @@ describe('Story ONB-1: self-teaching onboarding contract', () => {
         allowedChats: false,
         daemonRunning: false,
         enabledConnectors: 0,
+        readyConnectors: 0,
         firstReportAt: null,
       });
 
@@ -99,6 +115,7 @@ describe('Story ONB-1: self-teaching onboarding contract', () => {
         ...base,
         allowedChats: false,
         enabledConnectors: 0,
+        readyConnectors: 0,
         firstReportAt: null,
       });
       const text = renderContractStatus(state);

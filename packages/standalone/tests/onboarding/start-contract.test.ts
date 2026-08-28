@@ -17,6 +17,7 @@ describe('Story ONB-3: start renders the same onboarding contract', () => {
         telegramConfigured: true,
         allowedChats: true,
         enabledConnectors: 1,
+        readyConnectors: 1,
         firstReportAt: null,
       });
       const complete = assessOnboarding({
@@ -25,6 +26,7 @@ describe('Story ONB-3: start renders the same onboarding contract', () => {
         telegramConfigured: true,
         allowedChats: true,
         enabledConnectors: 1,
+        readyConnectors: 1,
         firstReportAt: '2026-08-28T00:00:00Z',
       });
 

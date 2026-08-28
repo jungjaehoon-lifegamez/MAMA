@@ -13,6 +13,10 @@ import type {
   ReportContextTarget,
   TelegramReportContextStore,
 } from '../gateways/telegram-report-context-store.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 import {
   pendingReportDeliveryPayloadIdentity,
   type PendingReportDelivery,
@@ -69,11 +73,17 @@ export interface ReportDeliveryCoordinatorOptions {
   executorId: string;
   nowIso?: () => string;
   attemptLeaseMs?: number;
+  mamaHome?: string;
 }
 
 /** Design Decision 3: 1m, 5m, 30m, 2h, then 12h capped. */
 const RETRY_BACKOFF_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000] as const;
 const DEFAULT_ATTEMPT_LEASE_MS = 5 * 60_000;
+const deliveryLogger = new DebugLogger('ReportDeliveryCoordinator');
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && error.code === code;
+}
 
 function addMs(iso: string, ms: number): string {
   return new Date(new Date(iso).getTime() + ms).toISOString();
@@ -116,6 +126,7 @@ export class ReportDeliveryCoordinator implements ReportDeliveryPort {
       // Crash between delivered-commit and unpin converges here: success
       // without another send, and an idempotent pin release.
       await this.opts.control.releasePin(report.deliveryId);
+      this.recordFirstReport(report);
       return { status: 'delivered' };
     }
     if (reserved.state === 'cancelled') {
@@ -168,6 +179,7 @@ export class ReportDeliveryCoordinator implements ReportDeliveryPort {
     if (outcome.kind === 'confirmed') {
       this.opts.store.markDelivered(report.deliveryId, this.nowIso());
       await this.opts.control.releasePin(report.deliveryId);
+      this.recordFirstReport(report);
       return { status: 'delivered' };
     }
 
@@ -185,6 +197,25 @@ export class ReportDeliveryCoordinator implements ReportDeliveryPort {
     const nextAttemptAt = addMs(this.nowIso(), backoff);
     this.opts.store.scheduleRetry(report.deliveryId, this.opts.executorId, nextAttemptAt);
     return { status: 'retry_scheduled', nextAttemptAt };
+  }
+
+  private recordFirstReport(report: PendingReportDelivery): void {
+    const stateDir = join(this.opts.mamaHome ?? join(homedir(), '.mama'), 'state');
+    const markerPath = join(stateDir, 'first-report.json');
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        markerPath,
+        `${JSON.stringify({ at: this.nowIso(), channel: report.target.source }, null, 2)}\n`,
+        { encoding: 'utf8', flag: 'wx', mode: 0o600 }
+      );
+    } catch (error) {
+      if (!hasErrorCode(error, 'EEXIST')) {
+        deliveryLogger.warn(
+          `first-report marker write failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
   }
 
   private verifyBinding(report: PendingReportDelivery): void {

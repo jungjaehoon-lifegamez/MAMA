@@ -154,7 +154,7 @@ export interface TelegramGatewayConfig {
   enabled: boolean;
   /** Telegram bot token from @BotFather */
   token: string;
-  /** Allowed chat IDs (empty = allow all) */
+  /** Allowed chat IDs (required before Telegram authentication or polling) */
   allowedChats?: string[];
   /** Owner Telegram user IDs. Unset means owner resolution fails closed. */
   ownerUserIds?: string[];
@@ -264,6 +264,9 @@ export class TelegramGateway extends BaseGateway {
       console.log('Telegram gateway already connected');
       return;
     }
+    if (!this.config.allowedChats?.some((chatId) => chatId.trim().length > 0)) {
+      throw new Error('telegram gateway disabled: allowed_chats is not set. Run: mama status');
+    }
 
     try {
       this.bot = new Bot(this.token);
@@ -299,17 +302,9 @@ export class TelegramGateway extends BaseGateway {
 
       await this.recoverPendingInboundDeliveries();
 
-      if (this.config.allowedChats && this.config.allowedChats.length > 0) {
-        console.log(
-          `[Telegram] Inbound allowlist active: ${this.config.allowedChats.length} chat(s)`
-        );
-      } else {
-        console.warn(
-          '[Telegram] SECURITY WARNING: telegram.allowed_chats is not set - this bot accepts ' +
-            'messages from ANY Telegram user who finds it. Set telegram.allowed_chats in ' +
-            '~/.mama/config.yaml to restrict inbound access.'
-        );
-      }
+      console.log(
+        `[Telegram] Inbound allowlist active: ${this.config.allowedChats.length} chat(s)`
+      );
 
       this.connected = true;
       this.lastError = null;

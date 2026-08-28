@@ -14,6 +14,7 @@ export default defineConfig({
         singleFork: true,
       },
     },
+    threads: false,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

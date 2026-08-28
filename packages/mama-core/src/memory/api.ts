@@ -902,6 +902,11 @@ async function saveMemoryInternal(
               `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
             )
             .run(id, now, edge.to_id);
+          adapter
+            .prepare(
+              `UPDATE memory_truth SET truth_status = 'superseded', superseded_by = ?, updated_at = ? WHERE memory_id = ?`
+            )
+            .run(id, now, edge.to_id);
         }
 
         adapter

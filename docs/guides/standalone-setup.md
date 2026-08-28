@@ -200,6 +200,24 @@ created.
 
 Configure one gateway and establish its owner trust anchor before requesting the first report.
 
+For Telegram, keep the token off the command line and let the CLI discover the private owner chat:
+
+```bash
+printf '%s\n' "$TELEGRAM_BOT_TOKEN" | mama gateway telegram --token-stdin
+mama gateway telegram detect-owner
+mama gateway telegram detect-owner --confirm <chat-id>
+```
+
+Telegram is the delivery gateway. A work-source connector is a separate onboarding requirement:
+
+```bash
+mama connector add <name>
+mama connector status
+```
+
+The source step becomes complete only when at least one enabled connector passes its real
+authentication probe. Enabling a connector in JSON without valid credentials is not sufficient.
+
 ### External Access Note
 
 If you plan to expose MAMA OS behind Cloudflare Zero Trust, start it with:
@@ -661,6 +679,7 @@ is alive:
 Use `mama status --json` when an installation agent is driving setup and `mama status` when a human
 is reading it directly. Both forms come from one contract. Configure one gateway, establish its
 owner trust anchor, add at least one work source, start the daemon, and request the first report.
+Use `mama report now`; completion is recorded only after confirmed Telegram delivery.
 See [Gateway Configuration](gateway-config.md).
 
 ---

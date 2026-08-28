@@ -58,18 +58,26 @@ export async function projectMemoryTruth(row: MemoryTruthRow): Promise<void> {
           memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
           scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM memory_truth WHERE memory_id = ?), ?), ?)
+        VALUES (
+          ?, ?,
+          COALESCE((SELECT status FROM decisions WHERE id = ?), ?),
+          ?, ?, ?, ?, ?,
+          COALESCE((SELECT superseded_by FROM decisions WHERE id = ?), ?),
+          ?, COALESCE((SELECT created_at FROM memory_truth WHERE memory_id = ?), ?), ?
+        )
       `
     )
     .run(
       row.memory_id,
       row.topic,
+      row.memory_id,
       row.truth_status,
       row.effective_summary,
       row.effective_details,
       row.trust_score,
       JSON.stringify(row.scope_refs),
       JSON.stringify(row.supporting_event_ids),
+      row.memory_id,
       row.superseded_by ?? null,
       row.contradicted_by ? JSON.stringify(row.contradicted_by) : null,
       row.memory_id,

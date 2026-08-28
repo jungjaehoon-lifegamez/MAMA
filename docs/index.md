@@ -69,7 +69,7 @@ _Step-by-step instructions for specific tasks_
 
 _Technical specifications and API documentation_
 
-- [Commands Reference](reference/commands.md) - `/mama-*` commands
+- [Commands Reference](reference/commands.md) - Plugin commands and the self-teaching `mama` CLI
 - [MCP Tool API](reference/api.md) - MCP tool interfaces
 - [Hooks Reference](reference/hooks.md) - Hook configuration
 - [Configuration Options](reference/configuration-options.md) - All config settings
@@ -151,7 +151,7 @@ _Contributing, testing, and development guidelines_
 
 ### 📖 I Need API/Command Reference
 
-- [Commands Reference](reference/commands.md) - All `/mama-*` commands
+- [Commands Reference](reference/commands.md) - Plugin commands and all `mama` CLI setup actions
 - [MCP Tool API](reference/api.md) - Tool interfaces
 - [Configuration Options](reference/configuration-options.md) - All settings
 
@@ -173,4 +173,4 @@ remain installation-local and are never promoted into generic catalogs or prompt
 members are the Phase 2b release candidate: one host-computed read scope per turn, limited to their
 private memory and explicit owner grants across Telegram, Slack, and Discord. Installation, restart
 validation, and a real human-member canary remain before that candidate is called shipped.
-**Last Updated:** 2026-08-27
+**Last Updated:** 2026-08-28
