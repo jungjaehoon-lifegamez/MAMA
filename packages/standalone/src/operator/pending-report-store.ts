@@ -450,14 +450,7 @@ function migrateLegacyExcerpt(value: string): {
   text: string;
   observedAt: null;
 } {
-  const separator = value.indexOf(': ');
-  return separator > 0
-    ? {
-        authorLabel: value.slice(0, separator),
-        text: value.slice(separator + 2),
-        observedAt: null,
-      }
-    : { authorLabel: 'unknown', text: value, observedAt: null };
+  return { authorLabel: 'unknown', text: value, observedAt: null };
 }
 
 function migrateSituationSnapshotV1(value: unknown): SituationReporterSnapshotV2 | null {

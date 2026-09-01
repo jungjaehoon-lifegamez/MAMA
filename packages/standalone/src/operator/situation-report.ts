@@ -201,36 +201,17 @@ export interface SituationReporterOptions {
 const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
 
 function legacyExcerpt(value: string): SituationReportExcerpt {
-  const separator = value.indexOf(': ');
-  return separator > 0
-    ? {
-        authorLabel: value.slice(0, separator).slice(0, MAX_EXCERPT_CHARS),
-        text: value.slice(separator + 2).slice(0, MAX_EXCERPT_CHARS),
-        observedAt: null,
-      }
-    : { authorLabel: 'unknown', text: value.slice(0, MAX_EXCERPT_CHARS), observedAt: null };
+  return {
+    authorLabel: 'unknown',
+    text: value.slice(0, MAX_EXCERPT_CHARS),
+    observedAt: null,
+  };
 }
 
 function renderExcerpt(excerpt: SituationReportExcerpt): string {
   return excerpt.authorLabel === 'unknown'
     ? excerpt.text
     : `${excerpt.authorLabel}: ${excerpt.text}`;
-}
-
-function trustedAuthorLabel(value: string): string {
-  const label = value.trim();
-  if (
-    label.length < 2 ||
-    label.length > 80 ||
-    /^\d+$/.test(label) ||
-    /^[a-z]{0,16}[-_:#]?\d+$/i.test(label) ||
-    /^[a-f0-9]{8}-[a-f0-9-]{27,}$/i.test(label) ||
-    /^[A-Za-z0-9_-]{24,}$/.test(label) ||
-    !/\p{L}/u.test(label)
-  ) {
-    return 'unknown';
-  }
-  return label;
 }
 
 function trustedChannelLabel(value: string): string {
@@ -268,15 +249,13 @@ export class SituationReporter {
       w.count += 1;
       const body = e.content.trim();
       if (body) {
-        // Carry only a structurally safe display label into the excerpt. The
-        // source field is opaque by contract, so numeric/token-like values stay
-        // unknown instead of becoming model-visible sender identities.
-        const author = trustedAuthorLabel(e.userId ?? '');
+        // userId is opaque by contract. Until ingress supplies a separately
+        // trusted display label, every new excerpt keeps its author unknown.
         const observedAt = Number.isFinite(e.createdAt)
           ? new Date(e.createdAt).toISOString()
           : null;
         w.excerpts.push({
-          authorLabel: author.slice(0, MAX_EXCERPT_CHARS),
+          authorLabel: 'unknown',
           text: body.slice(0, MAX_EXCERPT_CHARS),
           observedAt,
         });
