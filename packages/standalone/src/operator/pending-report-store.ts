@@ -96,6 +96,22 @@ const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
+const SAFE_SNAPSHOT_CHANNEL_LABELS = new Set([
+  'calendar',
+  'chatwork',
+  'claude-code',
+  'discord',
+  'drive',
+  'gmail',
+  'imessage',
+  'kagemusha',
+  'notion',
+  'obsidian',
+  'sheets',
+  'slack',
+  'telegram',
+  'trello',
+]);
 
 interface PendingReportRequestIdentityInput {
   mode: 'full';
@@ -451,15 +467,16 @@ function migrateSituationSnapshotV1(value: unknown): SituationReporterSnapshotV2
   const snapshot = fields as unknown as SituationReporterSnapshotV1;
   return {
     version: 2,
-    channels: snapshot.channels.map((channel) => ({
-      channelId: channel.channelId,
-      label:
-        channel.channelId.indexOf(':') > 0
-          ? channel.channelId.slice(0, channel.channelId.indexOf(':'))
-          : 'unknown',
-      count: channel.count,
-      excerpts: channel.excerpts.map(migrateLegacyExcerpt),
-    })),
+    channels: snapshot.channels.map((channel) => {
+      const separator = channel.channelId.indexOf(':');
+      const candidate = separator > 0 ? channel.channelId.slice(0, separator) : '';
+      return {
+        channelId: channel.channelId,
+        label: SAFE_SNAPSHOT_CHANNEL_LABELS.has(candidate) ? candidate : 'unknown',
+        count: channel.count,
+        excerpts: channel.excerpts.map(migrateLegacyExcerpt),
+      };
+    }),
     windowTotal: snapshot.windowTotal,
     fires: snapshot.fires.map((fire) => ({ ...fire, topics: [...fire.topics] })),
     authored: snapshot.authored,

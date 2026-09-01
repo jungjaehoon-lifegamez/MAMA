@@ -18,7 +18,7 @@ function ev(id: number, channelId: string, content: string): OperatorChannelEven
     id,
     channel: 'slack',
     channelId,
-    userId: 'u1',
+    userId: 'Test User',
     role: 'user',
     content,
     createdAt: id * 100,
@@ -34,7 +34,7 @@ function fire(
 }
 
 function ownerReportContext(overrides: Partial<OwnerReportContextV1> = {}): OwnerReportContextV1 {
-  return {
+  const packet: OwnerReportContextV1 = {
     schemaVersion: 'mama.owner-report-context/v1',
     observedAt: '2026-09-02T03:04:05.000Z',
     windowEvidence: {
@@ -116,6 +116,24 @@ function ownerReportContext(overrides: Partial<OwnerReportContextV1> = {}): Owne
     caveats: ['trello_snapshot_incomplete'],
     ...overrides,
   };
+  const canonicalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (typeof value !== 'object' || value === null) return value;
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, canonicalize(record[key])])
+    );
+  };
+  let previous = -1;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const bytes = Buffer.byteLength(JSON.stringify(canonicalize(packet)));
+    packet.packet.bytes = bytes;
+    if (bytes === previous) return packet;
+    previous = bytes;
+  }
+  throw new Error('Test owner report context byte count did not converge');
 }
 
 describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
@@ -143,6 +161,25 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
         },
       ],
     });
+  });
+
+  it('does not serialize a numeric Telegram sender id as an author label', () => {
+    const opaqueSenderId = '9988776655';
+    const reporter = new SituationReporter();
+    reporter.recordWindow([
+      {
+        ...ev(1, 'telegram:owner', 'numeric sender body'),
+        channel: 'telegram',
+        userId: opaqueSenderId,
+      },
+    ]);
+
+    expect(reporter.snapshot().channels[0].excerpts[0].authorLabel).toBe('unknown');
+    expect(
+      JSON.stringify(
+        reporter.windowEvidence('2026-09-01T03:04:05.000Z', '2026-09-02T03:04:05.000Z')
+      )
+    ).not.toContain(opaqueSenderId);
   });
 
   it('builds bounded report window evidence from the version-2 snapshot', () => {
@@ -453,7 +490,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(prompt).toContain('slack:b: 1 msg');
     // Live complaint 2026-07-27: excerpts without authors made every quoted
     // line "(sender unclear)" in owner reports. The author rides the excerpt.
-    expect(prompt).toContain('u1: deploy is failing again');
+    expect(prompt).toContain('Test User: deploy is failing again');
   });
 
   it('window excerpts are bounded: only the last K per channel, each truncated', async () => {
