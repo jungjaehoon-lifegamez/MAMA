@@ -11,6 +11,7 @@ import {
 } from '../../src/operator/situation-report.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
 import type { ArtifactProvenance } from '../../src/operator/report-carry.js';
+import type { OwnerReportContextV1 } from '../../src/operator/report-context.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -32,7 +33,193 @@ function fire(
   return { triggerId, kind, channelId, recalled };
 }
 
+function ownerReportContext(overrides: Partial<OwnerReportContextV1> = {}): OwnerReportContextV1 {
+  return {
+    schemaVersion: 'mama.owner-report-context/v1',
+    observedAt: '2026-09-02T03:04:05.000Z',
+    windowEvidence: {
+      start: '2026-09-01T03:04:05.000Z',
+      end: '2026-09-02T03:04:05.000Z',
+      channelCount: 1,
+      messageCount: 1,
+      channels: [
+        {
+          label: 'slack',
+          count: 1,
+          excerpts: [
+            {
+              authorLabel: 'owner',
+              text: 'Packet-only evidence marker',
+              observedAt: '2026-09-02T03:00:00.000Z',
+            },
+          ],
+        },
+      ],
+      triggerActivity: [{ kind: 'temporal', count: 1, topics: ['release'] }],
+    },
+    sources: {
+      claims: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+      tasks: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+      trello: {
+        state: 'partial',
+        observedAt: '2026-09-02T03:03:00.000Z',
+        reason: 'trello_snapshot_incomplete',
+      },
+      changes: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+    },
+    packet: { bytes: 0, truncated: false },
+    taskCoverage: { total: 1, returned: 1, truncated: false },
+    currentClaims: [],
+    tasks: [
+      {
+        id: 1,
+        revision: 2,
+        title: 'Review release',
+        status: 'review',
+        latestEvent: 'Submitted for review',
+        updatedAt: '2026-09-02T03:00:00.000Z',
+        sourceLabel: 'trello',
+      },
+    ],
+    trello: {
+      observedAt: '2026-09-02T03:03:00.000Z',
+      complete: false,
+      truncated: false,
+      boards: [{ board: 'Delivery', status: 'failed', rosterDegraded: false }],
+      columns: [],
+    },
+    correlations: {
+      coverage: {
+        total: 1,
+        matched: 0,
+        unmatched: 0,
+        ambiguous: 0,
+        historical_only: 1,
+        not_applicable: 0,
+      },
+      rows: [
+        {
+          taskId: 1,
+          outcome: 'historical_only',
+          reason: 'live_snapshot_incomplete',
+          live: null,
+        },
+      ],
+    },
+    changes: {
+      since: '2026-09-01T03:04:05.000Z',
+      total: 0,
+      returned: 0,
+      coverage: { attributed: 0, unattributed: 0 },
+      rows: [],
+    },
+    caveats: ['trello_snapshot_incomplete'],
+    ...overrides,
+  };
+}
+
 describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
+  it('TG-05 snapshots author, text, and the actual event timestamp as version 2', () => {
+    const reporter = new SituationReporter();
+    reporter.recordWindow([
+      {
+        ...ev(1, 'slack:private-channel-id', 'timestamped message'),
+        userId: 'Owner Label',
+        createdAt: Date.parse('2026-09-02T02:03:04.000Z'),
+      },
+    ]);
+
+    expect(reporter.snapshot()).toMatchObject({
+      version: 2,
+      channels: [
+        {
+          excerpts: [
+            {
+              authorLabel: 'Owner Label',
+              text: 'timestamped message',
+              observedAt: '2026-09-02T02:03:04.000Z',
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('builds bounded report window evidence from the version-2 snapshot', () => {
+    const reporter = new SituationReporter();
+    reporter.recordWindow([
+      {
+        ...ev(1, 'slack:private-channel-id', 'bounded message'),
+        userId: 'Owner Label',
+        createdAt: Date.parse('2026-09-02T02:03:04.000Z'),
+      },
+    ]);
+    reporter.recordFire(
+      fire('internal-trigger-id', 'temporal', 'slack:private-channel-id', [
+        { topic: 'release', content: 'internal recalled body' },
+      ])
+    );
+
+    expect(reporter.windowEvidence('2026-09-01T03:04:05.000Z', '2026-09-02T03:04:05.000Z')).toEqual(
+      {
+        start: '2026-09-01T03:04:05.000Z',
+        end: '2026-09-02T03:04:05.000Z',
+        channelCount: 1,
+        messageCount: 1,
+        channels: [
+          {
+            label: 'slack',
+            count: 1,
+            excerpts: [
+              {
+                authorLabel: 'Owner Label',
+                text: 'bounded message',
+                observedAt: '2026-09-02T02:03:04.000Z',
+              },
+            ],
+          },
+        ],
+        triggerActivity: [{ kind: 'temporal', count: 1, topics: ['release'] }],
+      }
+    );
+  });
+
+  it('uses only one canonical packet as full-report evidence and ignores legacy gather overlays', () => {
+    const reporter = new SituationReporter({
+      selfGatherLines: ['LEGACY_GATHER_MARKER'],
+      boardPublishLines: ['LEGACY_BOARD_MARKER'],
+    });
+    reporter.recordWindow([ev(1, 'legacy-window-channel', 'LEGACY_WINDOW_MARKER')]);
+    reporter.recordFire(
+      fire('internal-trigger-id', 'legacy-fire', 'legacy-window-channel', [
+        { topic: 'legacy-memory', content: 'LEGACY_MEMORY_MARKER' },
+      ])
+    );
+
+    const prompt = reporter.buildPrompt('full', ownerReportContext());
+
+    expect(prompt.match(/"schemaVersion":"mama.owner-report-context\/v1"/g)).toHaveLength(1);
+    expect(prompt).toContain('Packet-only evidence marker');
+    expect(prompt).not.toContain('LEGACY_GATHER_MARKER');
+    expect(prompt).not.toContain('LEGACY_BOARD_MARKER');
+    expect(prompt).not.toContain('LEGACY_WINDOW_MARKER');
+    expect(prompt).not.toContain('LEGACY_MEMORY_MARKER');
+    expect(prompt).not.toContain('Fire activity:');
+    expect(prompt).not.toContain('Memory your triggers surfaced');
+  });
+
+  it('requires the model to name incomplete categories without exposing packet or tool metadata', () => {
+    const prompt = new SituationReporter().buildPrompt('full', ownerReportContext());
+
+    expect(prompt).toContain('state which source categories are incomplete');
+    expect(prompt).toContain('Never reproduce the packet JSON');
+    expect(prompt).toContain('Never emit internal IDs');
+    expect(prompt).toContain('tool syntax');
+    expect(prompt).toContain('lifecycle metadata');
+    expect(prompt).not.toContain('USED_TRIGGERS:');
+    expect(prompt).not.toContain('```tool_call');
+  });
+
   it('round-trips its pending aggregate for daemon restart recovery', () => {
     const original = new SituationReporter();
     original.recordWindow([ev(1, 'owner', 'pending owner update')]);

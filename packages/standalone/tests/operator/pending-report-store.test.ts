@@ -140,6 +140,102 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 describe('FilePendingReportStore', () => {
+  it('TG-06 maps a legacy v1 window to v2 without inventing excerpt timestamps', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const legacy = {
+      version: 1,
+      channels: [
+        {
+          channelId: 'private-channel-opaque-id',
+          count: 1,
+          excerpts: ['Owner Label: legacy body'],
+        },
+      ],
+      windowTotal: 1,
+      fires: [],
+      authored: 0,
+      recalled: [],
+      eventKeys: ['legacy-event-key'],
+    };
+    await writeFile(path, JSON.stringify({ version: 1, digest: legacy, full: legacy }));
+
+    const loaded = new FilePendingReportStore(path).load();
+
+    expect(loaded?.digest).toMatchObject({
+      version: 2,
+      channels: [
+        {
+          label: 'unknown',
+          excerpts: [
+            {
+              authorLabel: 'Owner Label',
+              text: 'legacy body',
+              observedAt: null,
+            },
+          ],
+        },
+      ],
+    });
+    const reporter = new SituationReporter();
+    reporter.restore(loaded!.digest);
+    expect(
+      reporter.windowEvidence('2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z')
+    ).toMatchObject({
+      channels: [{ excerpts: [{ observedAt: null }] }],
+    });
+  });
+
+  it('refuses a new save containing legacy v1 snapshots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const legacy = {
+      version: 1 as const,
+      channels: [],
+      windowTotal: 0,
+      fires: [],
+      authored: 0,
+      recalled: [],
+      eventKeys: [],
+    };
+
+    expect(() =>
+      new FilePendingReportStore(path).save({
+        version: 1,
+        digest: legacy,
+        full: legacy,
+      })
+    ).toThrow('invalid pending operator report state');
+  });
+
+  it('TG-06 round-trips exact version-2 window evidence across restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const reporter = new SituationReporter();
+    reporter.recordWindow([
+      {
+        id: 1,
+        channel: 'slack',
+        channelId: 'slack:private-channel-id',
+        userId: 'Owner Label',
+        role: 'user',
+        content: 'restart-stable body',
+        createdAt: Date.parse('2026-09-02T02:03:04.000Z'),
+      },
+    ]);
+    const snapshot = reporter.snapshot();
+    const before = JSON.stringify(snapshot);
+
+    new FilePendingReportStore(path).save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+    });
+
+    const loaded = new FilePendingReportStore(path).load();
+    expect(JSON.stringify(loaded?.full)).toBe(before);
+  });
+
   it('persists both report windows atomically for restart recovery', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
