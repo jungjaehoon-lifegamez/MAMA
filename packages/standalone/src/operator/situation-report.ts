@@ -25,6 +25,11 @@ import {
   type ArtifactProvenance,
   type ReportCarryTarget,
 } from './report-carry.js';
+import {
+  serializeOwnerReportContext,
+  type OwnerReportContextV1,
+  type ReportWindowEvidence,
+} from './report-context.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
@@ -81,8 +86,9 @@ const MAX_FIRES_IN_SNAPSHOT = 100;
 const MAX_SEEN_EVENT_KEYS = 10_000;
 
 interface ChannelWindow {
+  label: string;
   count: number;
-  excerpts: string[]; // last-K, each already sliced to MAX_EXCERPT_CHARS
+  excerpts: SituationReportExcerpt[];
 }
 
 interface FireAgg {
@@ -93,7 +99,13 @@ interface FireAgg {
   topics: Set<string>;
 }
 
-export interface SituationReporterSnapshot {
+export interface SituationReportExcerpt {
+  authorLabel: string;
+  text: string;
+  observedAt: string | null;
+}
+
+export interface SituationReporterSnapshotV1 {
   version: 1;
   channels: Array<{ channelId: string; count: number; excerpts: string[] }>;
   windowTotal: number;
@@ -108,6 +120,29 @@ export interface SituationReporterSnapshot {
   recalled: Array<{ topic: string; content: string }>;
   eventKeys?: string[];
 }
+
+export interface SituationReporterSnapshotV2 {
+  version: 2;
+  channels: Array<{
+    channelId: string;
+    label: string;
+    count: number;
+    excerpts: SituationReportExcerpt[];
+  }>;
+  windowTotal: number;
+  fires: Array<{
+    triggerId: string;
+    kind: string;
+    channelId: string;
+    count: number;
+    topics: string[];
+  }>;
+  authored: number;
+  recalled: Array<{ topic: string; content: string }>;
+  eventKeys?: string[];
+}
+
+export type SituationReporterSnapshot = SituationReporterSnapshotV1 | SituationReporterSnapshotV2;
 
 export interface SituationReporterOptions {
   /** Model provider controls only the tool-call syntax; report workflow/content stays shared. */
@@ -149,6 +184,23 @@ export interface SituationReporterOptions {
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
 const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
 
+function legacyExcerpt(value: string): SituationReportExcerpt {
+  const separator = value.indexOf(': ');
+  return separator > 0
+    ? {
+        authorLabel: value.slice(0, separator).slice(0, MAX_EXCERPT_CHARS),
+        text: value.slice(separator + 2).slice(0, MAX_EXCERPT_CHARS),
+        observedAt: null,
+      }
+    : { authorLabel: 'unknown', text: value.slice(0, MAX_EXCERPT_CHARS), observedAt: null };
+}
+
+function renderExcerpt(excerpt: SituationReportExcerpt): string {
+  return excerpt.authorLabel === 'unknown'
+    ? excerpt.text
+    : `${excerpt.authorLabel}: ${excerpt.text}`;
+}
+
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
   private windowTotal = 0;
@@ -172,7 +224,11 @@ export class SituationReporter {
         const oldest = this.eventKeys.values().next().value;
         if (oldest) this.eventKeys.delete(oldest);
       }
-      const w = this.windowByChannel.get(e.channelId) ?? { count: 0, excerpts: [] };
+      const w = this.windowByChannel.get(e.channelId) ?? {
+        label: e.channel,
+        count: 0,
+        excerpts: [],
+      };
       w.count += 1;
       const body = e.content.trim();
       if (body) {
@@ -182,8 +238,15 @@ export class SituationReporter {
         // (live complaint 2026-07-27). userId carries the resolved display
         // name for connector-indexed events.
         const author = (e.userId ?? '').trim();
-        const text = author && author !== 'unknown' ? `${author}: ${body}` : body;
-        w.excerpts.push(text.slice(0, MAX_EXCERPT_CHARS));
+        const observedAt = Number.isFinite(e.createdAt)
+          ? new Date(e.createdAt).toISOString()
+          : null;
+        w.excerpts.push({
+          authorLabel:
+            author && author !== 'unknown' ? author.slice(0, MAX_EXCERPT_CHARS) : 'unknown',
+          text: body.slice(0, MAX_EXCERPT_CHARS),
+          observedAt,
+        });
         if (w.excerpts.length > MAX_EXCERPTS_PER_CHANNEL) {
           w.excerpts.shift();
         }
@@ -236,16 +299,58 @@ export class SituationReporter {
     return this.windowTotal > 0 || this.fireAgg.size > 0 || this.authored > 0;
   }
 
-  snapshot(): SituationReporterSnapshot {
+  /** Host-authored bounded evidence for OwnerReportContextV1; raw channel and trigger IDs stay out. */
+  windowEvidence(start: string, end: string): ReportWindowEvidence {
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error('Invalid situation report evidence window');
+    }
+    const snapshot = this.snapshot();
+    const triggerByKind = new Map<string, { count: number; topics: Set<string> }>();
+    for (const fire of snapshot.fires) {
+      const aggregate = triggerByKind.get(fire.kind) ?? { count: 0, topics: new Set<string>() };
+      aggregate.count += fire.count;
+      for (const topic of fire.topics) aggregate.topics.add(topic);
+      triggerByKind.set(fire.kind, aggregate);
+    }
     return {
-      version: 1,
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString(),
+      channelCount: snapshot.channels.length,
+      messageCount: snapshot.windowTotal,
+      channels: snapshot.channels
+        .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+        .map((channel) => ({
+          label: channel.label.slice(0, 160),
+          count: channel.count,
+          excerpts: channel.excerpts.map((excerpt) => ({ ...excerpt })),
+        })),
+      triggerActivity: [...triggerByKind.entries()]
+        .sort((left, right) => right[1].count - left[1].count || left[0].localeCompare(right[0]))
+        .map(([kind, aggregate]) => ({
+          kind: kind.slice(0, 160),
+          count: aggregate.count,
+          topics: [...aggregate.topics].sort().map((topic) => topic.slice(0, 512)),
+        })),
+    };
+  }
+
+  snapshot(): SituationReporterSnapshotV2 {
+    return {
+      version: 2,
       channels: [...this.windowByChannel.entries()]
         .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
         .slice(0, MAX_CHANNELS_IN_SNAPSHOT)
         .map(([channelId, window]) => ({
           channelId: channelId.slice(0, 512),
+          label: window.label.slice(0, 160),
           count: window.count,
-          excerpts: window.excerpts.map((excerpt) => excerpt.slice(0, MAX_EXCERPT_CHARS)),
+          excerpts: window.excerpts.map((excerpt) => ({
+            authorLabel: excerpt.authorLabel.slice(0, MAX_EXCERPT_CHARS),
+            text: excerpt.text.slice(0, MAX_EXCERPT_CHARS),
+            observedAt: excerpt.observedAt,
+          })),
         })),
       windowTotal: this.windowTotal,
       fires: [...this.fireAgg.values()]
@@ -273,15 +378,33 @@ export class SituationReporter {
   }
 
   restore(snapshot: SituationReporterSnapshot): void {
-    if (snapshot.version !== 1) {
+    if (snapshot.version !== 1 && snapshot.version !== 2) {
       throw new Error('Unsupported situation reporter snapshot version');
     }
     this.reset();
-    for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
-      this.windowByChannel.set(channel.channelId, {
-        count: Math.max(0, channel.count),
-        excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL),
-      });
+    if (snapshot.version === 2) {
+      for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+        this.windowByChannel.set(channel.channelId, {
+          label: channel.label,
+          count: Math.max(0, channel.count),
+          excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL).map((excerpt) => ({
+            authorLabel: excerpt.authorLabel.slice(0, MAX_EXCERPT_CHARS),
+            text: excerpt.text.slice(0, MAX_EXCERPT_CHARS),
+            observedAt: excerpt.observedAt,
+          })),
+        });
+      }
+    } else {
+      for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+        this.windowByChannel.set(channel.channelId, {
+          label:
+            channel.channelId.indexOf(':') > 0
+              ? channel.channelId.slice(0, channel.channelId.indexOf(':'))
+              : 'unknown',
+          count: Math.max(0, channel.count),
+          excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL).map(legacyExcerpt),
+        });
+      }
     }
     this.windowTotal = Math.max(0, snapshot.windowTotal);
     for (const fire of snapshot.fires.slice(0, MAX_FIRES_IN_SNAPSHOT)) {
@@ -456,13 +579,36 @@ export class SituationReporter {
     this.eventKeys.clear();
   }
 
-  /** Public for testability. Aggregate window + fire activity + recalled memory -> agent prompt. */
-  buildPrompt(mode: ReportMode): string {
+  buildPrompt(mode: 'full', context: OwnerReportContextV1): string;
+  buildPrompt(mode: 'digest'): string;
+  /**
+   * Temporary Task-2 compatibility for callers that Task 3 will wire to the compiler.
+   * This is a compile-time transition seam, not a fallback after packet compilation fails.
+   */
+  buildPrompt(mode: 'full'): string;
+  buildPrompt(mode: ReportMode): string;
+  /** Public for testability. Explicit full reports consume one packet; digests retain M2 framing. */
+  buildPrompt(mode: ReportMode, context?: OwnerReportContextV1): string {
+    if (mode === 'full' && context !== undefined) {
+      const serialized = serializeOwnerReportContext(context);
+      return [
+        OPERATOR_FULL_REPORT_TAG,
+        'You are the operator agent. Write the scheduled full situation report for the owner.',
+        'Use the single canonical evidence packet below as the only factual report input.',
+        'Explain what changed, what is open, what needs judgment, and state which source categories are incomplete.',
+        'Do not infer task completion from an incomplete source or an absent Trello card.',
+        'Never reproduce the packet JSON. Never emit internal IDs, tool syntax, or lifecycle metadata.',
+        'Use plain language without markdown tables and answer in the owner language visible in the packet.',
+        'Use these sections when non-empty: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
+        '',
+        wrapUntrustedContent('owner-report-context', serialized),
+      ].join('\n');
+    }
     const channels = [...this.windowByChannel.entries()].sort((a, b) => b[1].count - a[1].count);
     const shown = channels.slice(0, MAX_CHANNELS_IN_PROMPT);
     const windowLines = shown.map(
       ([channelId, w]) =>
-        `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.join(' | ') || '(none)'}`
+        `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.map(renderExcerpt).join(' | ') || '(none)'}`
     );
     if (channels.length > shown.length) {
       const restCount = channels.slice(shown.length).reduce((n, [, w]) => n + w.count, 0);
