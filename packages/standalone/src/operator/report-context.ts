@@ -2,6 +2,7 @@ import type { MemoryScopeRef } from '@jungjaehoon/mama-core';
 import type { MemoryTruthRow } from '@jungjaehoon/mama-core/memory/types';
 
 import type { TrelloKanbanSnapshot } from '../connectors/trello/query-tools.js';
+import { ToolRegistry } from '../agent/tool-registry.js';
 import type {
   ChangesReadFailure,
   ChangesReadInput,
@@ -22,6 +23,7 @@ const MAX_TRELLO_CARDS_PER_LIST = 100;
 const MAX_TRELLO_CARDS = 300;
 const MAX_CHANGES = 100;
 const MAX_PACKET_BYTES = 96 * 1024;
+const REGISTERED_TOOL_NAMES = new Set<string>(ToolRegistry.getValidToolNames());
 const SOURCE_DISPLAY_LABELS: Readonly<Record<string, string>> = {
   'claude-code': 'claude-code',
   calendar: 'calendar',
@@ -245,17 +247,36 @@ function detachScope(scope: OwnerReportReadScope): OwnerReportReadScope {
   };
 }
 
+function isRegisteredJsonToolObject(value: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return false;
+  }
+  return (
+    isRecord(parsed) &&
+    typeof parsed.name === 'string' &&
+    REGISTERED_TOOL_NAMES.has(parsed.name) &&
+    (isRecord(parsed.input) || isRecord(parsed.arguments))
+  );
+}
+
+function hasRegisteredImperativeTarget(value: string): boolean {
+  const match = /\b(?:call|use|invoke|run)\s+([A-Za-z][A-Za-z0-9_-]*)\b/i.exec(value);
+  return match !== null && REGISTERED_TOOL_NAMES.has(match[1]);
+}
+
 function redactText(value: string, maxLength: number): string {
   if (
     /^\s*(?:system|developer|assistant)\s*:/i.test(value) ||
     /<\/?(?:tool_call|function_call|invoke)\b/i.test(value) ||
-    /["']name["']\s*:\s*["'][^"']+["'][\s\S]*["'](?:input|arguments)["']\s*:/i.test(value) ||
+    isRegisteredJsonToolObject(value) ||
     /\bmcp__[a-z0-9_.-]+/i.test(value) ||
     /\b(?:ignore|disregard)\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions|messages)\b/i.test(
       value
     ) ||
-    /\b(?:call|invoke|execute|use|run)\s+[a-z_][a-z0-9_.-]*(?:__[a-z0-9_.-]+)?\s*\(/i.test(value) ||
-    /\b(?:call|use|invoke|run)\s+[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
+    hasRegisteredImperativeTarget(value)
   ) {
     return '[redacted-instruction]'.slice(0, maxLength);
   }
