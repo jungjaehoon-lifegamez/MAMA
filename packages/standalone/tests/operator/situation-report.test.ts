@@ -153,7 +153,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
         {
           excerpts: [
             {
-              authorLabel: 'Owner Label',
+              authorLabel: 'unknown',
               text: 'timestamped message',
               observedAt: '2026-09-02T02:03:04.000Z',
             },
@@ -180,6 +180,49 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
         reporter.windowEvidence('2026-09-01T03:04:05.000Z', '2026-09-02T03:04:05.000Z')
       )
     ).not.toContain(opaqueSenderId);
+  });
+
+  it.each(['U012ABCDEF', 'Owner Label'])(
+    'keeps opaque userId %j unknown even when it resembles a display label',
+    (opaqueUserId) => {
+      const reporter = new SituationReporter();
+      reporter.recordWindow([
+        {
+          ...ev(1, 'slack:owner', 'opaque sender body'),
+          userId: opaqueUserId,
+        },
+      ]);
+
+      expect(reporter.snapshot().channels[0].excerpts[0]).toMatchObject({
+        authorLabel: 'unknown',
+        text: 'opaque sender body',
+      });
+      expect(JSON.stringify(reporter.snapshot())).not.toContain(opaqueUserId);
+    }
+  );
+
+  it('restores a legacy prefixed excerpt as whole text with unknown author and no timestamp', () => {
+    const reporter = new SituationReporter();
+    reporter.restore({
+      version: 1,
+      channels: [
+        {
+          channelId: 'slack:private-channel-id',
+          count: 1,
+          excerpts: ['Owner Label: legacy body'],
+        },
+      ],
+      windowTotal: 1,
+      fires: [],
+      authored: 0,
+      recalled: [],
+    });
+
+    expect(reporter.snapshot().channels[0].excerpts[0]).toEqual({
+      authorLabel: 'unknown',
+      text: 'Owner Label: legacy body',
+      observedAt: null,
+    });
   });
 
   it('builds bounded report window evidence from the version-2 snapshot', () => {
@@ -209,7 +252,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
             count: 1,
             excerpts: [
               {
-                authorLabel: 'Owner Label',
+                authorLabel: 'unknown',
                 text: 'bounded message',
                 observedAt: '2026-09-02T02:03:04.000Z',
               },
@@ -488,9 +531,8 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(prompt).toContain('slack:a: 2 msg');
     expect(prompt).toContain('deploy is failing again');
     expect(prompt).toContain('slack:b: 1 msg');
-    // Live complaint 2026-07-27: excerpts without authors made every quoted
-    // line "(sender unclear)" in owner reports. The author rides the excerpt.
-    expect(prompt).toContain('Test User: deploy is failing again');
+    expect(prompt).toContain('deploy is failing again');
+    expect(prompt).not.toContain('Test User');
   });
 
   it('window excerpts are bounded: only the last K per channel, each truncated', async () => {

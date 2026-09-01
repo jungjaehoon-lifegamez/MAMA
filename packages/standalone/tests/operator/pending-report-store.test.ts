@@ -169,8 +169,8 @@ describe('FilePendingReportStore', () => {
           label: 'unknown',
           excerpts: [
             {
-              authorLabel: 'Owner Label',
-              text: 'legacy body',
+              authorLabel: 'unknown',
+              text: 'Owner Label: legacy body',
               observedAt: null,
             },
           ],

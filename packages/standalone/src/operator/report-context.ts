@@ -249,12 +249,13 @@ function redactText(value: string, maxLength: number): string {
   if (
     /^\s*(?:system|developer|assistant)\s*:/i.test(value) ||
     /<\/?(?:tool_call|function_call|invoke)\b/i.test(value) ||
-    /["']name["']\s*:\s*["'][^"']+["'][\s\S]*["']input["']\s*:/i.test(value) ||
+    /["']name["']\s*:\s*["'][^"']+["'][\s\S]*["'](?:input|arguments)["']\s*:/i.test(value) ||
     /\bmcp__[a-z0-9_.-]+/i.test(value) ||
     /\b(?:ignore|disregard)\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions|messages)\b/i.test(
       value
     ) ||
-    /\b(?:call|invoke|execute|use|run)\s+[a-z_][a-z0-9_.-]*(?:__[a-z0-9_.-]+)?\s*\(/i.test(value)
+    /\b(?:call|invoke|execute|use|run)\s+[a-z_][a-z0-9_.-]*(?:__[a-z0-9_.-]+)?\s*\(/i.test(value) ||
+    /\b(?:call|use|invoke|run)\s+[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
   ) {
     return '[redacted-instruction]'.slice(0, maxLength);
   }
