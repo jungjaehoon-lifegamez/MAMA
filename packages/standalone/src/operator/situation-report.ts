@@ -84,6 +84,22 @@ const MAX_CHANNELS_IN_SNAPSHOT = MAX_CHANNELS_IN_PROMPT * 4;
 const MAX_RECALLED = 20;
 const MAX_FIRES_IN_SNAPSHOT = 100;
 const MAX_SEEN_EVENT_KEYS = 10_000;
+const SAFE_CHANNEL_LABELS = new Set([
+  'calendar',
+  'chatwork',
+  'claude-code',
+  'discord',
+  'drive',
+  'gmail',
+  'imessage',
+  'kagemusha',
+  'notion',
+  'obsidian',
+  'sheets',
+  'slack',
+  'telegram',
+  'trello',
+]);
 
 interface ChannelWindow {
   label: string;
@@ -201,6 +217,26 @@ function renderExcerpt(excerpt: SituationReportExcerpt): string {
     : `${excerpt.authorLabel}: ${excerpt.text}`;
 }
 
+function trustedAuthorLabel(value: string): string {
+  const label = value.trim();
+  if (
+    label.length < 2 ||
+    label.length > 80 ||
+    /^\d+$/.test(label) ||
+    /^[a-z]{0,16}[-_:#]?\d+$/i.test(label) ||
+    /^[a-f0-9]{8}-[a-f0-9-]{27,}$/i.test(label) ||
+    /^[A-Za-z0-9_-]{24,}$/.test(label) ||
+    !/\p{L}/u.test(label)
+  ) {
+    return 'unknown';
+  }
+  return label;
+}
+
+function trustedChannelLabel(value: string): string {
+  return SAFE_CHANNEL_LABELS.has(value) ? value : 'unknown';
+}
+
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
   private windowTotal = 0;
@@ -225,25 +261,22 @@ export class SituationReporter {
         if (oldest) this.eventKeys.delete(oldest);
       }
       const w = this.windowByChannel.get(e.channelId) ?? {
-        label: e.channel,
+        label: trustedChannelLabel(e.channel),
         count: 0,
         excerpts: [],
       };
       w.count += 1;
       const body = e.content.trim();
       if (body) {
-        // Carry the author INTO the excerpt: the report prompt's attribution
-        // discipline can only quote senders it can see, and windows without
-        // authors produced owner-facing reports full of "(sender unclear)"
-        // (live complaint 2026-07-27). userId carries the resolved display
-        // name for connector-indexed events.
-        const author = (e.userId ?? '').trim();
+        // Carry only a structurally safe display label into the excerpt. The
+        // source field is opaque by contract, so numeric/token-like values stay
+        // unknown instead of becoming model-visible sender identities.
+        const author = trustedAuthorLabel(e.userId ?? '');
         const observedAt = Number.isFinite(e.createdAt)
           ? new Date(e.createdAt).toISOString()
           : null;
         w.excerpts.push({
-          authorLabel:
-            author && author !== 'unknown' ? author.slice(0, MAX_EXCERPT_CHARS) : 'unknown',
+          authorLabel: author.slice(0, MAX_EXCERPT_CHARS),
           text: body.slice(0, MAX_EXCERPT_CHARS),
           observedAt,
         });
@@ -396,11 +429,10 @@ export class SituationReporter {
       }
     } else {
       for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+        const separator = channel.channelId.indexOf(':');
+        const candidate = separator > 0 ? channel.channelId.slice(0, separator) : '';
         this.windowByChannel.set(channel.channelId, {
-          label:
-            channel.channelId.indexOf(':') > 0
-              ? channel.channelId.slice(0, channel.channelId.indexOf(':'))
-              : 'unknown',
+          label: trustedChannelLabel(candidate),
           count: Math.max(0, channel.count),
           excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL).map(legacyExcerpt),
         });

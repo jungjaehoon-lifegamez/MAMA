@@ -22,6 +22,22 @@ const MAX_TRELLO_CARDS_PER_LIST = 100;
 const MAX_TRELLO_CARDS = 300;
 const MAX_CHANGES = 100;
 const MAX_PACKET_BYTES = 96 * 1024;
+const SOURCE_DISPLAY_LABELS: Readonly<Record<string, string>> = {
+  'claude-code': 'claude-code',
+  calendar: 'calendar',
+  chatwork: 'chatwork',
+  discord: 'discord',
+  drive: 'drive',
+  gmail: 'gmail',
+  imessage: 'imessage',
+  kagemusha: 'kagemusha',
+  notion: 'notion',
+  obsidian: 'obsidian',
+  sheets: 'sheets',
+  slack: 'slack',
+  telegram: 'telegram',
+  trello: 'trello',
+};
 
 export interface OwnerReportReadScope {
   projectRefs: Array<{ kind: 'project'; id: string }>;
@@ -128,6 +144,7 @@ export interface OwnerReportContextDeps {
   listTaskPage(input: { includeTerminal: false; limit: number; cursor?: string }): ListTasksPage;
   readClaims(scope: OwnerReportReadScope): Promise<MemoryTruthRow[]>;
   readTrello(scope: OwnerReportReadScope): Promise<TrelloKanbanSnapshot>;
+  buildProvenanceLookup(): Promise<CorrelationInput['lookupProvenance']>;
   correlate(input: CorrelationInput): CorrelationResult;
   readChanges(
     scope: OwnerReportReadScope,
@@ -229,6 +246,18 @@ function detachScope(scope: OwnerReportReadScope): OwnerReportReadScope {
 }
 
 function redactText(value: string, maxLength: number): string {
+  if (
+    /^\s*(?:system|developer|assistant)\s*:/i.test(value) ||
+    /<\/?(?:tool_call|function_call|invoke)\b/i.test(value) ||
+    /["']name["']\s*:\s*["'][^"']+["'][\s\S]*["']input["']\s*:/i.test(value) ||
+    /\bmcp__[a-z0-9_.-]+/i.test(value) ||
+    /\b(?:ignore|disregard)\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions|messages)\b/i.test(
+      value
+    ) ||
+    /\b(?:call|invoke|execute|use|run)\s+[a-z_][a-z0-9_.-]*(?:__[a-z0-9_.-]+)?\s*\(/i.test(value)
+  ) {
+    return '[redacted-instruction]'.slice(0, maxLength);
+  }
   return value
     .replace(/```\s*(?:tool_call|json\s*tool_call)[\s\S]*?```/gi, '[redacted-instruction]')
     .replace(/```\s*(?:tool_call|json\s*tool_call)\b/gi, '[redacted-instruction]')
@@ -269,12 +298,17 @@ function sanitizeWindow(window: ReportWindowEvidence): ReportWindowEvidence {
   };
 }
 
-function sourceLabel(sourceChannel: string | null): string | null {
+function sourceLabel(
+  sourceChannel: string | null,
+  authorizedConnectors: readonly string[]
+): string | null {
   if (!sourceChannel) return null;
   const separator = sourceChannel.indexOf(':');
   if (separator <= 0) return null;
   const connector = sourceChannel.slice(0, separator);
-  return connector.trim() ? redactText(connector.trim(), 64) : null;
+  return authorizedConnectors.includes(connector)
+    ? (SOURCE_DISPLAY_LABELS[connector] ?? null)
+    : null;
 }
 
 function emptyCorrelation(): CorrelationReport {
@@ -331,6 +365,19 @@ function markSourcePartial(
   };
 }
 
+function recomputeCorrelationCoverage(report: CorrelationReport): void {
+  const coverage: CorrelationReport['coverage'] = {
+    total: report.rows.length,
+    matched: 0,
+    unmatched: 0,
+    ambiguous: 0,
+    historical_only: 0,
+    not_applicable: 0,
+  };
+  for (const row of report.rows) coverage[row.outcome] += 1;
+  report.coverage = coverage;
+}
+
 function enforcePacketLimit(packet: OwnerReportContextV1): void {
   let serialized = setPacketBytes(packet);
   if (Buffer.byteLength(serialized) <= MAX_PACKET_BYTES) return;
@@ -376,6 +423,13 @@ function enforcePacketLimit(packet: OwnerReportContextV1): void {
       packet.correlations.rows = packet.correlations.rows.filter((row) =>
         packet.tasks.some((task) => task.id === row.taskId)
       );
+      recomputeCorrelationCoverage(packet.correlations);
+      return true;
+    },
+    () => {
+      if (packet.correlations.rows.length === 0) return false;
+      packet.correlations.rows.pop();
+      recomputeCorrelationCoverage(packet.correlations);
       return true;
     },
     () => {
@@ -387,6 +441,42 @@ function enforcePacketLimit(packet: OwnerReportContextV1): void {
         }
       }
       return false;
+    },
+    () => {
+      for (let index = packet.windowEvidence.triggerActivity.length - 1; index >= 0; index -= 1) {
+        const activity = packet.windowEvidence.triggerActivity[index];
+        if (activity.topics.length > 0) {
+          activity.topics.pop();
+          return true;
+        }
+      }
+      return false;
+    },
+    () => {
+      if (packet.windowEvidence.triggerActivity.length === 0) return false;
+      packet.windowEvidence.triggerActivity.pop();
+      return true;
+    },
+    () => {
+      if (packet.trello.columns.length === 0) return false;
+      packet.trello.columns.pop();
+      packet.trello.truncated = true;
+      packet.trello.complete = false;
+      markSourcePartial(packet, 'trello', 'packet_size_limit_reached');
+      return true;
+    },
+    () => {
+      if (packet.trello.boards.length === 0) return false;
+      packet.trello.boards.pop();
+      packet.trello.truncated = true;
+      packet.trello.complete = false;
+      markSourcePartial(packet, 'trello', 'packet_size_limit_reached');
+      return true;
+    },
+    () => {
+      if (packet.windowEvidence.channels.length === 0) return false;
+      packet.windowEvidence.channels.pop();
+      return true;
     },
   ];
   while (Buffer.byteLength(serialized) > MAX_PACKET_BYTES) {
@@ -404,45 +494,355 @@ function enforcePacketLimit(packet: OwnerReportContextV1): void {
   }
 }
 
-function isOwnerReportContext(value: unknown): value is OwnerReportContextV1 {
-  if (!isRecord(value)) return false;
-  const exactKeys = [
-    'schemaVersion',
-    'observedAt',
-    'windowEvidence',
-    'sources',
-    'packet',
-    'taskCoverage',
-    'currentClaims',
-    'tasks',
-    'trello',
-    'correlations',
-    'changes',
-    'caveats',
-  ];
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+function isBoundedString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length <= maxLength;
+}
+
+function isIsoString(value: unknown): value is string {
+  return isBoundedString(value, 64) && isFiniteDate(value);
+}
+
+function isSourceState(value: unknown): value is SourceState {
+  if (
+    !isRecord(value) ||
+    (value.state !== 'complete' && value.state !== 'partial' && value.state !== 'unavailable')
+  ) {
+    return false;
+  }
+  if (value.state === 'complete') {
+    return hasExactKeys(value, ['state', 'observedAt']) && isIsoString(value.observedAt);
+  }
   return (
-    Object.keys(value).length === exactKeys.length &&
-    Object.keys(value).every((key) => exactKeys.includes(key)) &&
-    value.schemaVersion === 'mama.owner-report-context/v1' &&
-    typeof value.observedAt === 'string' &&
-    isFiniteDate(value.observedAt) &&
-    isRecord(value.packet) &&
-    isSafeCount(value.packet.bytes) &&
-    typeof value.packet.truncated === 'boolean' &&
-    Array.isArray(value.currentClaims) &&
-    Array.isArray(value.tasks) &&
-    isRecord(value.trello) &&
-    isRecord(value.correlations) &&
-    isRecord(value.changes) &&
-    Array.isArray(value.caveats)
+    hasExactKeys(value, ['state', 'observedAt', 'reason']) &&
+    (value.state === 'partial'
+      ? value.observedAt === null || isIsoString(value.observedAt)
+      : value.observedAt === null) &&
+    isBoundedString(value.reason, 160) &&
+    value.reason.length > 0
   );
+}
+
+function isReportWindowEvidence(value: unknown): value is ReportWindowEvidence {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'start',
+      'end',
+      'channelCount',
+      'messageCount',
+      'channels',
+      'triggerActivity',
+    ]) ||
+    !isIsoString(value.start) ||
+    !isIsoString(value.end) ||
+    !isSafeCount(value.channelCount) ||
+    !isSafeCount(value.messageCount) ||
+    !Array.isArray(value.channels) ||
+    value.channels.length > 48 ||
+    !Array.isArray(value.triggerActivity) ||
+    value.triggerActivity.length > 100
+  ) {
+    return false;
+  }
+  const channelsValid = value.channels.every((channel: unknown) => {
+    if (
+      !isRecord(channel) ||
+      !hasExactKeys(channel, ['label', 'count', 'excerpts']) ||
+      !isBoundedString(channel.label, 512) ||
+      !isSafeCount(channel.count) ||
+      !Array.isArray(channel.excerpts) ||
+      channel.excerpts.length > 5
+    ) {
+      return false;
+    }
+    return channel.excerpts.every(
+      (excerpt: unknown) =>
+        isRecord(excerpt) &&
+        hasExactKeys(excerpt, ['authorLabel', 'text', 'observedAt']) &&
+        isBoundedString(excerpt.authorLabel, 160) &&
+        isBoundedString(excerpt.text, 160) &&
+        (excerpt.observedAt === null || isIsoString(excerpt.observedAt))
+    );
+  });
+  return (
+    channelsValid &&
+    value.triggerActivity.every(
+      (activity: unknown) =>
+        isRecord(activity) &&
+        hasExactKeys(activity, ['kind', 'count', 'topics']) &&
+        isBoundedString(activity.kind, 160) &&
+        isSafeCount(activity.count) &&
+        Array.isArray(activity.topics) &&
+        activity.topics.every((topic: unknown) => isBoundedString(topic, 256))
+    )
+  );
+}
+
+function isCurrentClaim(value: unknown): value is CurrentClaimSummary {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['id', 'topic', 'summary', 'status', 'confidence']) &&
+    isBoundedString(value.id, 512) &&
+    isBoundedString(value.topic, 512) &&
+    isBoundedString(value.summary, 4_000) &&
+    isBoundedString(value.status, 64) &&
+    typeof value.confidence === 'number' &&
+    Number.isFinite(value.confidence)
+  );
+}
+
+function isOwnerTask(value: unknown): value is OwnerTaskSummary {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'id',
+      'revision',
+      'title',
+      'status',
+      'latestEvent',
+      'updatedAt',
+      'sourceLabel',
+    ]) &&
+    isSafeCount(value.id) &&
+    isSafeCount(value.revision) &&
+    isBoundedString(value.title, 1_000) &&
+    isBoundedString(value.status, 64) &&
+    (value.latestEvent === null || isBoundedString(value.latestEvent, 1_000)) &&
+    isIsoString(value.updatedAt) &&
+    (value.sourceLabel === null ||
+      (isBoundedString(value.sourceLabel, 64) &&
+        SOURCE_DISPLAY_LABELS[value.sourceLabel] !== undefined))
+  );
+}
+
+function isTrelloReport(value: unknown): value is TrelloReportSnapshot {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['observedAt', 'complete', 'truncated', 'boards', 'columns']) ||
+    !isIsoString(value.observedAt) ||
+    typeof value.complete !== 'boolean' ||
+    typeof value.truncated !== 'boolean' ||
+    !Array.isArray(value.boards) ||
+    !Array.isArray(value.columns)
+  ) {
+    return false;
+  }
+  const boardsValid = value.boards.every(
+    (board: unknown) =>
+      isRecord(board) &&
+      hasExactKeys(board, ['board', 'status', 'rosterDegraded']) &&
+      isBoundedString(board.board, 256) &&
+      (board.status === 'ok' || board.status === 'failed') &&
+      typeof board.rosterDegraded === 'boolean'
+  );
+  let cardTotal = 0;
+  const columnsValid = value.columns.every((column: unknown) => {
+    if (
+      !isRecord(column) ||
+      !hasExactKeys(column, ['board', 'list', 'count', 'returned', 'cards']) ||
+      !isBoundedString(column.board, 256) ||
+      !isBoundedString(column.list, 256) ||
+      !isSafeCount(column.count) ||
+      !isSafeCount(column.returned) ||
+      !Array.isArray(column.cards) ||
+      column.cards.length > MAX_TRELLO_CARDS_PER_LIST ||
+      column.returned !== column.cards.length ||
+      column.count < column.returned
+    ) {
+      return false;
+    }
+    cardTotal += column.cards.length;
+    return column.cards.every(
+      (card: unknown) =>
+        isRecord(card) &&
+        hasExactKeys(card, ['name', 'labels', 'assignees', 'due', 'lastActivity']) &&
+        isBoundedString(card.name, 512) &&
+        Array.isArray(card.labels) &&
+        card.labels.length <= 20 &&
+        card.labels.every((label: unknown) => isBoundedString(label, 128)) &&
+        Array.isArray(card.assignees) &&
+        card.assignees.length <= 20 &&
+        card.assignees.every((assignee: unknown) => isBoundedString(assignee, 128)) &&
+        (card.due === null || isBoundedString(card.due, 64)) &&
+        isBoundedString(card.lastActivity, 64)
+    );
+  });
+  return boardsValid && columnsValid && cardTotal <= MAX_TRELLO_CARDS;
+}
+
+const CORRELATION_OUTCOMES = new Set<CorrelationOutcome>([
+  'matched',
+  'unmatched',
+  'ambiguous',
+  'historical_only',
+  'not_applicable',
+]);
+const CORRELATION_REASONS = new Set<CorrelationReason>([
+  'no_source',
+  'other_connector',
+  'no_provenance',
+  'provenance_not_indexed',
+  'provenance_connector_mismatch',
+  'external_ref_unresolvable',
+  'provenance_conflict',
+  'multiple_rows_one_item',
+  'absent_from_live_snapshot',
+  'live_snapshot_incomplete',
+  'live_item',
+]);
+
+function isCorrelationReport(value: unknown): value is CorrelationReport {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['coverage', 'rows']) ||
+    !isRecord(value.coverage) ||
+    !hasExactKeys(value.coverage, [
+      'total',
+      'matched',
+      'unmatched',
+      'ambiguous',
+      'historical_only',
+      'not_applicable',
+    ]) ||
+    !Array.isArray(value.rows) ||
+    value.rows.length > MAX_TASKS
+  ) {
+    return false;
+  }
+  const counts: Record<CorrelationOutcome, number> = {
+    matched: 0,
+    unmatched: 0,
+    ambiguous: 0,
+    historical_only: 0,
+    not_applicable: 0,
+  };
+  const coverage = value.coverage;
+  const rowsValid = value.rows.every((row: unknown) => {
+    if (
+      !isRecord(row) ||
+      !hasExactKeys(row, ['taskId', 'outcome', 'reason', 'live']) ||
+      !isSafeCount(row.taskId) ||
+      typeof row.outcome !== 'string' ||
+      !CORRELATION_OUTCOMES.has(row.outcome as CorrelationOutcome) ||
+      typeof row.reason !== 'string' ||
+      !CORRELATION_REASONS.has(row.reason as CorrelationReason) ||
+      !(
+        row.live === null ||
+        (isRecord(row.live) &&
+          hasExactKeys(row.live, ['board', 'list']) &&
+          isBoundedString(row.live.board, 256) &&
+          isBoundedString(row.live.list, 256))
+      )
+    ) {
+      return false;
+    }
+    counts[row.outcome as CorrelationOutcome] += 1;
+    return true;
+  });
+  return (
+    rowsValid &&
+    isSafeCount(coverage.total) &&
+    coverage.total === value.rows.length &&
+    [...CORRELATION_OUTCOMES].every(
+      (outcome) => isSafeCount(coverage[outcome]) && coverage[outcome] === counts[outcome]
+    )
+  );
+}
+
+function isChangesReport(value: unknown): value is ChangesReport {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['since', 'total', 'returned', 'coverage', 'rows']) &&
+    isIsoString(value.since) &&
+    isSafeCount(value.total) &&
+    isSafeCount(value.returned) &&
+    isRecord(value.coverage) &&
+    hasExactKeys(value.coverage, ['attributed', 'unattributed']) &&
+    isSafeCount(value.coverage.attributed) &&
+    isSafeCount(value.coverage.unattributed) &&
+    Array.isArray(value.rows) &&
+    value.rows.length <= MAX_CHANGES &&
+    value.returned === value.rows.length &&
+    value.total >= value.returned &&
+    value.rows.every(
+      (row: unknown) =>
+        isRecord(row) &&
+        hasExactKeys(row, ['kind', 'targetType', 'causeState', 'causeKind', 'at']) &&
+        isBoundedString(row.kind, 160) &&
+        isBoundedString(row.targetType, 160) &&
+        (row.causeState === 'attributed' || row.causeState === 'unattributed') &&
+        isBoundedString(row.causeKind, 160) &&
+        isIsoString(row.at)
+    )
+  );
+}
+
+function isOwnerReportContext(value: unknown): value is OwnerReportContextV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'observedAt',
+      'windowEvidence',
+      'sources',
+      'packet',
+      'taskCoverage',
+      'currentClaims',
+      'tasks',
+      'trello',
+      'correlations',
+      'changes',
+      'caveats',
+    ]) ||
+    value.schemaVersion !== 'mama.owner-report-context/v1' ||
+    !isIsoString(value.observedAt) ||
+    !isReportWindowEvidence(value.windowEvidence) ||
+    !isRecord(value.sources) ||
+    !hasExactKeys(value.sources, ['claims', 'tasks', 'trello', 'changes']) ||
+    !Object.values(value.sources).every(isSourceState) ||
+    !isRecord(value.packet) ||
+    !hasExactKeys(value.packet, ['bytes', 'truncated']) ||
+    !isSafeCount(value.packet.bytes) ||
+    typeof value.packet.truncated !== 'boolean' ||
+    !isRecord(value.taskCoverage) ||
+    !hasExactKeys(value.taskCoverage, ['total', 'returned', 'truncated']) ||
+    !isSafeCount(value.taskCoverage.total) ||
+    !isSafeCount(value.taskCoverage.returned) ||
+    value.taskCoverage.total < value.taskCoverage.returned ||
+    typeof value.taskCoverage.truncated !== 'boolean' ||
+    !Array.isArray(value.currentClaims) ||
+    value.currentClaims.length > MAX_CLAIMS ||
+    !value.currentClaims.every(isCurrentClaim) ||
+    !Array.isArray(value.tasks) ||
+    value.tasks.length > MAX_TASKS ||
+    !value.tasks.every(isOwnerTask) ||
+    !isTrelloReport(value.trello) ||
+    !isCorrelationReport(value.correlations) ||
+    !isChangesReport(value.changes) ||
+    !Array.isArray(value.caveats) ||
+    !value.caveats.every((caveat: unknown) => isBoundedString(caveat, 160))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function serializeOwnerReportContext(packet: OwnerReportContextV1): string {
   if (!isOwnerReportContext(packet)) {
     throw new Error('Invalid owner report context packet');
   }
-  return canonicalJson(packet);
+  const detached = JSON.parse(JSON.stringify(packet)) as OwnerReportContextV1;
+  const serialized = canonicalJson(detached);
+  const bytes = Buffer.byteLength(serialized);
+  if (bytes > MAX_PACKET_BYTES || detached.packet.bytes !== bytes) {
+    throw new Error('Invalid owner report context packet');
+  }
+  return serialized;
 }
 
 export async function compileOwnerReportContext(
@@ -605,6 +1005,7 @@ export async function compileOwnerReportContext(
 
   let correlation = emptyCorrelation();
   try {
+    const lookupProvenance = rawTrello === null ? () => null : await deps.buildProvenanceLookup();
     const rawResult = deps.correlate({
       connector: 'trello',
       rows: taskRows.map((row) => ({
@@ -612,7 +1013,7 @@ export async function compileOwnerReportContext(
         sourceChannel: row.sourceChannel,
         sourceEventId: row.sourceEventId,
       })),
-      lookupProvenance: () => null,
+      lookupProvenance,
       liveItems: (rawTrello?.columns ?? []).flatMap((column) =>
         column.cards.map((card) => ({
           itemId: card.cardId,
@@ -719,14 +1120,18 @@ export async function compileOwnerReportContext(
       status: redactText(row.status, 64),
       latestEvent: row.latestEvent === null ? null : redactText(row.latestEvent, 1_000),
       updatedAt: new Date(row.updatedAt).toISOString(),
-      sourceLabel: sourceLabel(row.sourceChannel),
+      sourceLabel: sourceLabel(row.sourceChannel, readScope.rawConnectors),
     })),
     trello,
     correlations: correlation,
     changes,
     caveats: [...new Set(caveats)].sort(),
   };
-  enforcePacketLimit(packet);
-  setPacketBytes(packet);
-  return packet;
+  const detached = JSON.parse(JSON.stringify(packet)) as OwnerReportContextV1;
+  enforcePacketLimit(detached);
+  setPacketBytes(detached);
+  if (!isOwnerReportContext(detached)) {
+    throw new Error('Owner report context failed canonical schema validation');
+  }
+  return detached;
 }

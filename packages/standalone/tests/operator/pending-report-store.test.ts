@@ -147,7 +147,7 @@ describe('FilePendingReportStore', () => {
       version: 1,
       channels: [
         {
-          channelId: 'private-channel-opaque-id',
+          channelId: 'custom-private:opaque-channel-id',
           count: 1,
           excerpts: ['Owner Label: legacy body'],
         },
