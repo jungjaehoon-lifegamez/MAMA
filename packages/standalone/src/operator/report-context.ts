@@ -263,8 +263,8 @@ function isRegisteredJsonToolObject(value: string): boolean {
 }
 
 function hasRegisteredImperativeTarget(value: string): boolean {
-  const match = /\b(?:call|use|invoke|run)\s+([A-Za-z][A-Za-z0-9_-]*)\b/i.exec(value);
-  return match !== null && REGISTERED_TOOL_NAMES.has(match[1]);
+  const matches = value.matchAll(/\b(?:call|use|invoke|run)\s+([A-Za-z][A-Za-z0-9_-]*)\b/gi);
+  return [...matches].some((match) => REGISTERED_TOOL_NAMES.has(match[1]));
 }
 
 function redactText(value: string, maxLength: number): string {
