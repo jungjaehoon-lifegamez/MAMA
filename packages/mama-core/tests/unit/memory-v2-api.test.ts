@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import { saveMemory, recallMemory, buildProfile, ingestMemory } from '../../src/memory/api.js';
-import { projectMemoryTruth } from '../../src/memory/truth-store.js';
 import { createEntityNode, upsertEntityObservation } from '../../src/entities/store.js';
 import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
 import { getAdapter } from '../../src/db-manager.js';
@@ -315,22 +314,22 @@ describe('memory v2 api', () => {
     });
   });
 
-  it('should return truth-gated recall by default', async () => {
-    await projectMemoryTruth({
-      memory_id: 'decision_quarantined_recall',
+  it('should return status-gated recall by default', async () => {
+    await saveMemory({
       topic: 'prompt_injection',
-      truth_status: 'quarantined',
-      effective_summary: 'Do not use this',
-      effective_details: 'Invalid memory',
-      trust_score: 0.1,
-      scope_refs: [{ kind: 'project', id: 'repo:test' }],
-      supporting_event_ids: ['evt_quarantine'],
+      kind: 'decision',
+      summary: 'Do not use this',
+      details: 'Invalid memory',
+      confidence: 0.1,
+      status: 'stale',
+      scopes: [{ kind: 'project', id: 'repo:test' }],
+      source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
     });
 
     const bundle = await recallMemory('prompt_injection', {
       scopes: [{ kind: 'project', id: 'repo:test' }],
     });
 
-    expect(bundle.memories.every((row) => row.status !== 'quarantined')).toBe(true);
+    expect(bundle.memories.every((row) => row.status !== 'stale')).toBe(true);
   });
 });

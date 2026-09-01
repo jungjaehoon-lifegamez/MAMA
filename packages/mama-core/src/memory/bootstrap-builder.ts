@@ -3,7 +3,7 @@ import { listOpenAuditFindings } from './finding-store.js';
 import { classifyProfileEntries } from './profile-builder.js';
 import { queryRelevantTruth } from './truth-store.js';
 import { getChannelSummary } from './channel-summary-store.js';
-import type { MemoryAgentBootstrap, MemoryScopeRef } from './types.js';
+import type { MemoryAgentBootstrap, MemoryScopeRef, MemoryStatus } from './types.js';
 
 interface BuildMemoryAgentBootstrapParams {
   scopes: MemoryScopeRef[];
@@ -19,7 +19,7 @@ export async function buildMemoryAgentBootstrap(
     queryRelevantTruth({
       query: '',
       scopes: params.scopes,
-      includeHistory: true,
+      includeHistory: false,
     }),
     listOpenAuditFindings(),
     listRecentMemoryEvents(10),
@@ -40,11 +40,11 @@ export async function buildMemoryAgentBootstrap(
       summary: row.effective_summary,
       details: row.effective_details,
       confidence: row.trust_score,
-      status: row.truth_status === 'quarantined' ? 'stale' : row.truth_status,
+      status: row.truth_status as MemoryStatus,
       scopes: row.scope_refs,
       source: {
         package: 'mama-core',
-        source_type: 'truth_projection',
+        source_type: 'decisions_current',
       },
       created_at: 0,
       updated_at: 0,

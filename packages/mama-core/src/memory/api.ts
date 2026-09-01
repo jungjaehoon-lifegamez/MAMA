@@ -18,7 +18,6 @@ import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
-import { projectMemoryTruth } from './truth-store.js';
 import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
@@ -37,7 +36,6 @@ import type {
   MemoryScopeKind,
   MemoryScopeRef,
   MemoryStatus,
-  MemoryTruthRow,
   ProfileSnapshot,
   PublicIngestMemoryInput,
   PublicSaveMemoryInput,
@@ -902,11 +900,6 @@ async function saveMemoryInternal(
               `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
             )
             .run(id, now, edge.to_id);
-          adapter
-            .prepare(
-              `UPDATE memory_truth SET truth_status = 'superseded', superseded_by = ?, updated_at = ? WHERE memory_id = ?`
-            )
-            .run(id, now, edge.to_id);
         }
 
         adapter
@@ -946,25 +939,6 @@ async function saveMemoryInternal(
     }
   }
 
-  if (options?.projectTruth !== false) {
-    // Project to memory_truth table (best-effort; failure should not break save)
-    try {
-      await projectMemoryTruth({
-        memory_id: id,
-        topic: input.topic,
-        truth_status: targetStatus as MemoryTruthRow['truth_status'],
-        effective_summary: input.summary,
-        effective_details: input.details,
-        trust_score: input.confidence ?? 0.5,
-        scope_refs: input.scopes,
-        supporting_event_ids: [],
-        superseded_by: undefined,
-      });
-    } catch {
-      // Truth projection is best-effort; do not fail the save
-    }
-  }
-
   return {
     success: true,
     id,
@@ -998,7 +972,7 @@ export async function promoteMemoryStatus(input: {
   const row = adapter
     .prepare(
       `
-        SELECT id, topic, decision, reasoning, confidence, kind, summary, supersedes
+        SELECT id, topic, decision, confidence, kind, summary, supersedes
         FROM decisions
         WHERE id = ?
       `
@@ -1008,7 +982,6 @@ export async function promoteMemoryStatus(input: {
         id: string;
         topic: string;
         decision: string;
-        reasoning: string | null;
         confidence: number | null;
         kind: string | null;
         summary: string | null;
@@ -1022,7 +995,6 @@ export async function promoteMemoryStatus(input: {
 
   const topic = String(row.topic);
   const summary = String(row.summary ?? row.decision ?? '');
-  const details = String(row.reasoning ?? row.decision ?? '');
   const kind = ((row.kind ?? 'fact') as MemoryKind) || 'fact';
   const scopes = batchLoadScopes(adapter, [memoryId]).get(memoryId) ?? [];
   let evolution: ReturnType<typeof resolveMemoryEvolution> = { edges: [] };
@@ -1140,40 +1112,11 @@ export async function promoteMemoryStatus(input: {
       throw new Error(`Cannot promote missing memory ${memoryId}`);
     }
 
-    adapter
-      .prepare(
-        `
-          INSERT OR REPLACE INTO memory_truth (
-            memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
-            scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT supporting_event_ids FROM memory_truth WHERE memory_id = ?), '[]'), NULL, NULL, COALESCE((SELECT created_at FROM memory_truth WHERE memory_id = ?), ?), ?)
-        `
-      )
-      .run(
-        memoryId,
-        topic,
-        targetStatus,
-        summary,
-        details,
-        row.confidence ?? 0.5,
-        JSON.stringify(scopes),
-        memoryId,
-        memoryId,
-        now,
-        now
-      );
-
     for (const edge of evolution.edges) {
       if (edge.type === 'supersedes') {
         adapter
           .prepare(
             `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
-          )
-          .run(memoryId, now, edge.to_id);
-        adapter
-          .prepare(
-            `UPDATE memory_truth SET truth_status = 'superseded', superseded_by = ?, updated_at = ? WHERE memory_id = ?`
           )
           .run(memoryId, now, edge.to_id);
       }
