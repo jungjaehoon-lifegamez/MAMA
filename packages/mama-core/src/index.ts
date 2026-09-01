@@ -122,6 +122,7 @@ export {
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
+export { queryRelevantTruth } from './memory/truth-store.js';
 export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
 export {
   appendMemoryEvent,
