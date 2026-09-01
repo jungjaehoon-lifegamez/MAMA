@@ -68,7 +68,7 @@ export async function queryRelevantTruth(params: {
             AND (${scopeMatch})
         )
       `
-      : '';
+      : 'AND 1 = 0';
   const currentFilter = params.includeHistory === true ? '' : "AND d.status = 'active'";
   const scopeParams = params.scopes.flatMap((scope) => [scope.kind, scope.id]);
   const rows = adapter

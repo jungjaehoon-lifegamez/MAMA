@@ -134,4 +134,24 @@ describe('Task 1: decisions.status is the only current memory authority', () => 
     expect(history.map((row) => row.memory_id)).toEqual([active.id, superseded.id]);
     expect(history.map((row) => row.truth_status)).toEqual(['active', 'superseded']);
   });
+
+  it('fails closed when no scopes are authorized', async () => {
+    await saveMemory({
+      topic: 'empty_scope_authority',
+      kind: 'decision',
+      summary: 'This active decision requires its project scope',
+      details: 'An unscoped caller must not receive it.',
+      confidence: 0.9,
+      scopes: [PROJECT_SCOPE],
+      source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+    });
+
+    const current = await queryRelevantTruth({
+      query: '',
+      scopes: [],
+      includeHistory: false,
+    });
+
+    expect(current).toEqual([]);
+  });
 });
