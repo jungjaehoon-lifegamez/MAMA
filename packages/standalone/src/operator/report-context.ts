@@ -80,6 +80,10 @@ export interface OwnerTaskSummary {
   status: string;
   latestEvent: string | null;
   updatedAt: string;
+  /** Owner-entered ISO date (YYYY-MM-DD) or null. Overdue work is unanswerable without it. */
+  deadline: string | null;
+  /** Host-derived RFC 3339 instant (e.g. review + 14 days) or null. */
+  dueAt: string | null;
   sourceLabel: string | null;
 }
 
@@ -143,7 +147,12 @@ export interface OwnerReportContextV1 {
 }
 
 export interface OwnerReportContextDeps {
-  listTaskPage(input: { includeTerminal: false; limit: number; cursor?: string }): ListTasksPage;
+  listTaskPage(input: {
+    includeTerminal: false;
+    order: 'updated';
+    limit: number;
+    cursor?: string;
+  }): ListTasksPage;
   readClaims(scope: OwnerReportReadScope): Promise<MemoryTruthRow[]>;
   readTrello(scope: OwnerReportReadScope): Promise<TrelloKanbanSnapshot>;
   buildProvenanceLookup(): Promise<CorrelationInput['lookupProvenance']>;
@@ -280,16 +289,29 @@ function redactText(value: string, maxLength: number): string {
   ) {
     return '[redacted-instruction]'.slice(0, maxLength);
   }
-  return value
-    .replace(/```\s*(?:tool_call|json\s*tool_call)[\s\S]*?```/gi, '[redacted-instruction]')
-    .replace(/```\s*(?:tool_call|json\s*tool_call)\b/gi, '[redacted-instruction]')
-    .replace(/\bignore\s+(?:all\s+)?previous\s+instructions\b/gi, '[redacted-instruction]')
-    .replace(/(?:~|\/(?:Users|home|private|var|tmp)\/)[^\s,;)}\]]+/g, '[redacted-path]')
-    .replace(
-      /\b(token|api[_-]?key|password|secret|authorization)\s*[:=]\s*[^\s,;]+/gi,
-      '$1=[redacted-secret]'
-    )
-    .slice(0, maxLength);
+  return (
+    value
+      .replace(/```\s*(?:tool_call|json\s*tool_call)[\s\S]*?```/gi, '[redacted-instruction]')
+      .replace(/```\s*(?:tool_call|json\s*tool_call)\b/gi, '[redacted-instruction]')
+      .replace(/\bignore\s+(?:all\s+)?previous\s+instructions\b/gi, '[redacted-instruction]')
+      // Real-data verification (2026-09-02): Board-written latest_event prose and
+      // curated claim summaries carried raw event ids (`source_event_id=evt_...`),
+      // run ids (`mr_...`) and numeric chat-room ids (`channel=chatwork:123...`) into
+      // the model-visible packet. The packet contract forbids raw run/event/source
+      // and chat ids; the words around them stay.
+      .replace(/\bsource_event_id\s*=\s*\S+/gi, 'source_event_id=[redacted-id]')
+      .replace(/\b(?:evt|mr)_[0-9a-f]{8,}\b/gi, '[redacted-id]')
+      .replace(
+        /\b(chatwork|telegram|slack|kakao|kagemusha|discord|line)\s*[:=]\s*\d{5,}\b/gi,
+        '$1:[redacted-id]'
+      )
+      .replace(/(?:~|\/(?:Users|home|private|var|tmp)\/)[^\s,;)}\]]+/g, '[redacted-path]')
+      .replace(
+        /\b(token|api[_-]?key|password|secret|authorization)\s*[:=]\s*[^\s,;]+/gi,
+        '$1=[redacted-secret]'
+      )
+      .slice(0, maxLength)
+  );
 }
 
 function sanitizeWindow(window: ReportWindowEvidence): ReportWindowEvidence {
@@ -628,6 +650,8 @@ function isOwnerTask(value: unknown): value is OwnerTaskSummary {
       'status',
       'latestEvent',
       'updatedAt',
+      'deadline',
+      'dueAt',
       'sourceLabel',
     ]) &&
     isSafeCount(value.id) &&
@@ -636,6 +660,9 @@ function isOwnerTask(value: unknown): value is OwnerTaskSummary {
     isBoundedString(value.status, 64) &&
     (value.latestEvent === null || isBoundedString(value.latestEvent, 1_000)) &&
     isIsoString(value.updatedAt) &&
+    (value.deadline === null ||
+      (typeof value.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.deadline))) &&
+    (value.dueAt === null || isIsoString(value.dueAt)) &&
     (value.sourceLabel === null ||
       (isBoundedString(value.sourceLabel, 64) &&
         SOURCE_DISPLAY_LABELS[value.sourceLabel] !== undefined))
@@ -891,8 +918,14 @@ export async function compileOwnerReportContext(
     let cursor: string | undefined;
     const seenCursors = new Set<string>();
     do {
+      // Real-data verification (2026-09-02): 264 open owner tasks against a 50-row
+      // bound. Deadline-first ranking filled the packet with month-old deadline
+      // rows and displaced every task updated in the last week, including all
+      // in_progress work - the owner report answers "what is open NOW", so recency
+      // ranks the bounded set. Stale deadline work stays the Board lane's job.
       const page = deps.listTaskPage({
         includeTerminal: false,
+        order: 'updated',
         limit: Math.min(TASK_PAGE_SIZE, MAX_TASKS - taskRows.length),
         ...(cursor ? { cursor } : {}),
       });
@@ -1142,6 +1175,8 @@ export async function compileOwnerReportContext(
       status: redactText(row.status, 64),
       latestEvent: row.latestEvent === null ? null : redactText(row.latestEvent, 1_000),
       updatedAt: new Date(row.updatedAt).toISOString(),
+      deadline: row.deadlineIso,
+      dueAt: row.dueAt === null ? null : new Date(row.dueAt).toISOString(),
       sourceLabel: sourceLabel(row.sourceChannel, readScope.rawConnectors),
     })),
     trello,

@@ -131,10 +131,13 @@ task revision as expected_revision, the same-run context_packet_id, and one exac
 selected raw review_anchor_ref; the host derives review time and due_at (+14 days).
 Explicit acceptance or success evidence may move work to done. Later same-scope
 feedback/rejection/revision reopens review/done as in_progress; materially new
-scope creates a new task and leaves the submitted scope done. Partial or
-ambiguous Trello disables Trello-derived judgment only; independent timestamped
-message evidence may still prove a lifecycle event. Never infer completion from
-Trello absence or arbitrary silence. Every mutation writes a plain latest_event
+scope creates a new task and leaves the submitted scope done. Unmatched or
+ambiguous correlation disables Trello-derived judgment for that task. A partial
+or truncated Trello snapshot forbids only absence-based inference; an exactly
+matched live card in a list you judge terminal remains valid evidence even when
+other lists are truncated. Independent timestamped message evidence may still
+prove a lifecycle event. Never infer completion from Trello absence or arbitrary
+silence. Every mutation writes a plain latest_event
 reason. If evidence is insufficient or conflicting, retain the current state.
 `;
 

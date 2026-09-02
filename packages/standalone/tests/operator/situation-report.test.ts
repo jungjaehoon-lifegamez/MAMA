@@ -75,6 +75,8 @@ function ownerReportContext(overrides: Partial<OwnerReportContextV1> = {}): Owne
         status: 'review',
         latestEvent: 'Submitted for review',
         updatedAt: '2026-09-02T03:00:00.000Z',
+        deadline: null,
+        dueAt: null,
         sourceLabel: 'trello',
       },
     ],

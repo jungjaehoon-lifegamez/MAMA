@@ -612,10 +612,10 @@ export class SituationReporter {
         'For every task affected by missing, partial, ambiguous, or conflicting evidence, state the unchanged current status from the packet and its next bounded check or retry; independent evidence may explain it but never makes fact-finding an owner task.',
         'If access or credentials truly block further authorized evidence collection, request only that specific owner intervention.',
         'Every owner request must name the evidence checked, exact residual uncertainty, recommendation, options including no change when valid, and the impact of each choice.',
-        'Do not infer task completion from an incomplete source or an absent Trello card.',
+        'Do not infer task completion from absence in an incomplete source or from an absent Trello card; an exactly correlated live card remains valid evidence even when other lists are truncated.',
         'Never reproduce the packet JSON. Never emit internal IDs, tool syntax, or lifecycle metadata.',
         'Use plain language without markdown tables and answer in the owner language visible in the packet.',
-        'Use these sections when non-empty: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
+        'Use these sections when non-empty, with the section titles written in the owner language: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
         '',
         wrapUntrustedContent('owner-report-context', serialized),
       ].join('\n');

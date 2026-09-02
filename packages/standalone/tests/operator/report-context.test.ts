@@ -288,6 +288,8 @@ describe('compileOwnerReportContext', () => {
           status: 'in_progress',
           latestEvent: 'Task 1 was updated',
           updatedAt: '2026-09-02T03:04:04.999Z',
+          deadline: null,
+          dueAt: null,
           sourceLabel: 'trello',
         },
       ],
@@ -315,6 +317,8 @@ describe('compileOwnerReportContext', () => {
       'status',
       'latestEvent',
       'updatedAt',
+      'deadline',
+      'dueAt',
       'sourceLabel',
     ]);
     expect(Object.keys(packet.trello.boards[0])).toEqual(['board', 'status', 'rosterDegraded']);
@@ -383,6 +387,53 @@ describe('compileOwnerReportContext', () => {
     expect(packet.taskCoverage).toEqual({ total: 63, returned: 50, truncated: true });
     expect(packet.sources.tasks).toMatchObject({ state: 'partial', reason: 'task_limit_reached' });
     expect(packet.caveats).toContain('task_set_truncated');
+  });
+
+  it('ranks the bounded active task set by recency so current work is never displaced by stale deadlines', async () => {
+    // Real data (2026-09-02): 264 open tasks, deadline-first ranking put zero tasks
+    // updated in the last week and zero in_progress rows into the 50-row packet.
+    const inputs: Array<Parameters<OwnerReportContextDeps['listTaskPage']>[0]> = [];
+    await compile({
+      listTaskPage: (input) => {
+        inputs.push(input);
+        return { tasks: [task(1)], total: 1, returned: 1, nextCursor: null };
+      },
+    });
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ includeTerminal: false, order: 'updated' });
+  });
+
+  it('scrubs raw event, run, and chat-room identifiers from model-visible task and claim text', async () => {
+    const packet = await compile({
+      listTaskPage: () => ({
+        tasks: [
+          task(1, {
+            latestEvent:
+              'Card moved to delivered. source_event_id=evt_0123456789abcdef (run mr_00112233445566778899aabbccddeeff)',
+          }),
+        ],
+        total: 1,
+        returned: 1,
+        nextCursor: null,
+      }),
+      readClaims: async () => [
+        {
+          ...claim(),
+          effective_summary:
+            '[scopes: channel=chatwork:123456789; project=trello:Board] Invoice scope agreed with the client.',
+        },
+      ],
+    });
+
+    expect(packet.tasks[0].latestEvent).toBe(
+      'Card moved to delivered. source_event_id=[redacted-id] (run [redacted-id])'
+    );
+    expect(packet.currentClaims[0].summary).toBe(
+      '[scopes: channel=chatwork:[redacted-id]; project=trello:Board] Invoice scope agreed with the client.'
+    );
+    const serialized = serializeOwnerReportContext(packet);
+    expect(serialized).not.toMatch(/evt_[0-9a-f]{8,}|mr_[0-9a-f]{16,}|chatwork:\d{5,}/);
   });
 
   it('reports failed claims as unavailable while preserving independently readable sources', async () => {
