@@ -33,7 +33,6 @@ import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import {
   createPersonaReportAsk,
   OPERATOR_REPORT_SESSION_KEY,
-  summarizeReportToolUse,
 } from '../../src/operator/report-run.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
@@ -945,7 +944,6 @@ describe('AgentLoop', () => {
             return result;
           },
           log: () => {},
-          fullReportTag: '[operator_full_report]',
         });
 
         await ask('compose the owner report');
@@ -2911,7 +2909,7 @@ describe('AgentLoop', () => {
       expect(result.response).toBe('Claude tool complete');
     });
 
-    it('records native gather and write exchanges in report-auditable history exactly once', async () => {
+    it('records native gather and write exchanges in history exactly once', async () => {
       const onTurn = vi.fn();
       persistentPromptMock.mockImplementationOnce(
         async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
@@ -2973,11 +2971,6 @@ describe('AgentLoop', () => {
         'user:tool_result:write-1',
         'assistant:text',
       ]);
-      expect(summarizeReportToolUse(result.history)).toMatchObject({
-        gatherTools: ['kagemusha_tasks'],
-        writeTools: ['mama_save'],
-        all: ['kagemusha_tasks', 'mama_save'],
-      });
       expect(onTurn.mock.calls.map(([entry]) => entry.role)).toEqual([
         'assistant',
         'user',

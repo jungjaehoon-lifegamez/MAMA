@@ -142,6 +142,15 @@ function candidateForTask(
   timeZone: string
 ): TemporalCandidate | null {
   if (task.status === 'done' || task.status === 'cancelled') return null;
+  if (
+    task.status === 'review' &&
+    (task.reviewStartedAt === null ||
+      !Number.isSafeInteger(task.reviewStartedAt) ||
+      typeof task.reviewAnchorEventId !== 'string' ||
+      task.reviewAnchorEventId.trim().length === 0)
+  ) {
+    return null;
+  }
   const occurrenceKey = occurrenceKeyForTask(task);
   if (!occurrenceKey || task.temporalReconciledOccurrenceKey === occurrenceKey) return null;
 

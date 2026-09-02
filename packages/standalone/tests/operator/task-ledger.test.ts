@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { promotionKey } from '../../src/operator/workorder-publishers.js';
 
 describe('TaskLedger', () => {
@@ -170,6 +171,42 @@ describe('TaskLedger', () => {
     expect(review.reviewStartedAt).toBe(submittedAt);
     expect(review.reviewAnchorEventId).toBe('event-index-1');
     expect(review.dueAt).toBe(submittedAt + 14 * 24 * 60 * 60 * 1000);
+
+    const reopened = ledger.update(review.id, {
+      status: 'in_progress',
+      latest_event: 'revision feedback reopened the submitted scope',
+    });
+    expect(reopened).toMatchObject({
+      status: 'in_progress',
+      reviewStartedAt: null,
+      reviewAnchorEventId: null,
+      dueAt: null,
+      deadlineIso: null,
+      deadlineOffsetMinutes: null,
+    });
+  });
+
+  it('TG-05/TG-06 refuses temporal ownership for a legacy review row without verified anchors', () => {
+    const legacy = ledger.create({
+      title: 'legacy review without submission proof',
+      status: 'review',
+      due_at: '2026-09-01T00:00:00Z',
+      source_channel: 'slack:C001',
+      source_event_id: 'legacy-event',
+    });
+    const occurrenceKey = occurrenceKeyForTask(legacy)!;
+
+    expect(() =>
+      ledger.enqueueTemporalGeneration({
+        generationKey: temporalGenerationKey(legacy.id, occurrenceKey, legacy.dueAt!),
+        taskId: legacy.id,
+        temporalEpoch: legacy.temporalEpoch,
+        occurrenceKey,
+        checkAt: legacy.dueAt!,
+        sourceChannel: legacy.sourceChannel,
+        sourceEventId: legacy.sourceEventId,
+      })
+    ).toThrow(/verified review anchor/i);
   });
 
   it('deadline can be cleared with null', () => {

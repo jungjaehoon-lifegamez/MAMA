@@ -1758,12 +1758,19 @@ export class TaskLedger implements TaskSource {
     const revisionAttempt = origin.requiresExpectedRevision
       ? this.getWorkOrderById(origin.workOrderAttemptId ?? -1)
       : null;
+    const hasLifecyclePatch =
+      Object.prototype.hasOwnProperty.call(patch, 'status') ||
+      Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
+      Object.prototype.hasOwnProperty.call(patch, 'latest_event');
+    const isBoardWorkorderLifecycleJudgment =
+      revisionAttempt?.workKind === 'board' && hasLifecyclePatch;
+    if (isBoardWorkorderLifecycleJudgment && revisionAttempt.status !== 'in_progress') {
+      throw new Error(
+        `task_update: board workorder ${revisionAttempt.id} is no longer active (${revisionAttempt.status})`
+      );
+    }
     const isWorkorderLifecycleJudgment =
-      revisionAttempt?.workKind === 'board' &&
-      revisionAttempt.status === 'in_progress' &&
-      (Object.prototype.hasOwnProperty.call(patch, 'status') ||
-        Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
-        Object.prototype.hasOwnProperty.call(patch, 'latest_event'));
+      isBoardWorkorderLifecycleJudgment && revisionAttempt.status === 'in_progress';
     if (isWorkorderLifecycleJudgment) {
       if (!Number.isSafeInteger(patch.expected_revision) || patch.expected_revision! < 0) {
         throw new Error('task_update: lifecycle workorder requires expected_revision');
@@ -1824,6 +1831,21 @@ export class TaskLedger implements TaskSource {
     if (patch.assignee !== undefined) next.assignee = patch.assignee;
     if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
     if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+
+    const leavingVerifiedReview =
+      existing.status === 'review' &&
+      patch.status !== undefined &&
+      patch.status !== 'review' &&
+      existing.review_started_at !== null &&
+      typeof existing.review_anchor_event_id === 'string' &&
+      existing.review_anchor_event_id.trim().length > 0;
+    if (leavingVerifiedReview) {
+      next.review_started_at = null;
+      next.review_anchor_event_id = null;
+      next.due_at = null;
+      next.deadline = null;
+      next.deadline_offset_minutes = null;
+    }
 
     const reviewAttempt = origin.requiresExpectedRevision
       ? this.getWorkOrderById(origin.workOrderAttemptId ?? -1)
@@ -2255,6 +2277,17 @@ export class TaskLedger implements TaskSource {
         }
         if (task.status === 'done' || task.status === 'cancelled') {
           throw new Error(`temporal generation: task ${input.taskId} is closed`);
+        }
+        if (
+          task.status === 'review' &&
+          (task.reviewStartedAt === null ||
+            !Number.isSafeInteger(task.reviewStartedAt) ||
+            typeof task.reviewAnchorEventId !== 'string' ||
+            task.reviewAnchorEventId.trim().length === 0)
+        ) {
+          throw new Error(
+            `temporal generation: review task ${input.taskId} has no verified review anchor`
+          );
         }
         const currentOccurrence = occurrenceKeyForTask(task);
         if (
@@ -3235,6 +3268,15 @@ export class TaskLedger implements TaskSource {
     }
     if (task.status === 'done' || task.status === 'cancelled') {
       throw new Error(`temporal context: owner task ${taskId} is closed`);
+    }
+    if (
+      task.status === 'review' &&
+      (task.reviewStartedAt === null ||
+        !Number.isSafeInteger(task.reviewStartedAt) ||
+        typeof task.reviewAnchorEventId !== 'string' ||
+        task.reviewAnchorEventId.trim().length === 0)
+    ) {
+      throw new Error(`temporal context: review task ${taskId} has no verified review anchor`);
     }
     if (
       task.temporalEpoch !== temporalEpoch ||

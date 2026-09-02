@@ -556,6 +556,148 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
   });
 
+  it('TG-05/TG-06 accepts the review anchor plus later same-channel evidence in the verified review window', async () => {
+    const reviewDb = new Database(':memory:');
+    try {
+      const submittedAt = now - 14 * 24 * 60 * 60 * 1000;
+      const reviewLedger = new TaskLedger(reviewDb, {
+        now: () => now,
+        timeZone: 'Asia/Seoul',
+      });
+      initAgentTables(reviewDb);
+      const created = reviewLedger.create({
+        title: 'submitted review work',
+        source_channel: 'trello:synthetic-board',
+        source_event_id: 'original-card',
+      });
+      const review = reviewLedger.update(
+        created.id,
+        { status: 'review', latest_event: 'submitted for review' },
+        {
+          verifiedReviewEvidence: {
+            contextPacketId: 'ctxp_submission',
+            contextPacketSha256: 'a'.repeat(64),
+            eventIndexId: 'event-index-review-anchor',
+            sourceTimestampMs: submittedAt,
+            sourceChannel: 'trello:synthetic-board',
+          },
+        }
+      );
+      const occurrenceKey = occurrenceKeyForTask(review)!;
+      const generationKey = temporalGenerationKey(review.id, occurrenceKey, now);
+      reviewLedger.enqueueTemporalGeneration({
+        generationKey,
+        taskId: review.id,
+        temporalEpoch: review.temporalEpoch,
+        occurrenceKey,
+        checkAt: now,
+        sourceChannel: review.sourceChannel,
+        sourceEventId: review.reviewAnchorEventId,
+      });
+      const reviewContext = reviewLedger.loadTemporalWorkContext(
+        reviewLedger.claimNextWorkOrder()!.id
+      );
+      const packetId = 'ctxp_review_window';
+      let packetRange = { start_ms: submittedAt, end_ms: now };
+      let packetSourceRefs: Array<Record<string, unknown>> = [
+        {
+          kind: 'raw',
+          connector: 'trello',
+          raw_id: 'event-index-review-anchor',
+          source_id: 'original-card',
+          channel_id: 'synthetic-board',
+        },
+        {
+          kind: 'raw',
+          connector: 'trello',
+          raw_id: 'event-index-later-feedback',
+          source_id: 'later-feedback',
+          channel_id: 'synthetic-board',
+        },
+      ];
+      const reviewExecutor = new GatewayToolExecutor({
+        temporalContextPacketLookup: async () => ({
+          packet_id: packetId,
+          task: boundPacketTask(reviewContext),
+          packet_json: JSON.stringify({
+            packet_id: packetId,
+            range: packetRange,
+          }),
+          source_refs: packetSourceRefs,
+          created_at: now,
+        }),
+      } as never);
+      reviewExecutor.setTaskLedger(reviewLedger);
+      reviewExecutor.setMamaApi({
+        listDecisions: async () => [],
+        appendToolTrace: async () => ({}) as never,
+      } as unknown as MAMAApiSetInput);
+
+      const reconcile = () =>
+        reviewExecutor.execute(
+          'task_temporal_reconcile',
+          {
+            context_packet_id: packetId,
+            expected_revision: reviewContext.revision,
+            outcome: 'resolved',
+            status: 'done',
+            reason: 'Review-window evidence supports closure',
+          } as never,
+          {
+            ...executionContext,
+            temporalWorkContext: reviewContext,
+            envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+            modelRunId: 'mr_review_window',
+          }
+        );
+
+      packetSourceRefs = [packetSourceRefs[1]!];
+      await expect(reconcile()).rejects.toThrow(
+        /^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/
+      );
+      packetSourceRefs = [
+        {
+          kind: 'raw',
+          connector: 'trello',
+          raw_id: 'event-index-review-anchor',
+          source_id: 'original-card',
+          channel_id: 'wrong-board',
+        },
+      ];
+      await expect(reconcile()).rejects.toThrow(
+        /^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/
+      );
+      packetSourceRefs = [
+        {
+          kind: 'raw',
+          connector: 'trello',
+          raw_id: 'event-index-review-anchor',
+          source_id: 'original-card',
+          channel_id: 'synthetic-board',
+        },
+      ];
+      packetRange = { start_ms: submittedAt - 1, end_ms: now };
+      await expect(reconcile()).rejects.toThrow(
+        /^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/
+      );
+
+      packetRange = { start_ms: submittedAt, end_ms: now };
+      packetSourceRefs.push({
+        kind: 'raw',
+        connector: 'trello',
+        raw_id: 'event-index-later-feedback',
+        source_id: 'later-feedback',
+        channel_id: 'synthetic-board',
+      });
+      const result = await reconcile();
+
+      expect(result).toMatchObject({ success: true });
+      expect(reviewLedger.getById(review.id)).toMatchObject({ status: 'done' });
+    } finally {
+      reviewDb.close();
+    }
+  });
+
   it('workorder_request inherits the HOST batch, never tool input (S2 Task 4)', async () => {
     const handler = vi.fn(() => ({ accepted: true }));
     executor.setWorkOrderRequestHandler(handler);
