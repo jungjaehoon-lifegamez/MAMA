@@ -30,13 +30,6 @@ import {
   type ReportWindowEvidence,
 } from './report-context.js';
 
-/**
- * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
- * report from a digest for tool-use auditing (report-run.ts). The bracketed tag keeps framing
- * source-neutral while remaining machine-readable.
- */
-export const OPERATOR_FULL_REPORT_TAG = '[operator_full_report]';
-
 export interface FireActivity {
   triggerId: string;
   kind: string;
@@ -611,7 +604,6 @@ export class SituationReporter {
     if (mode === 'full' && context !== undefined) {
       const serialized = serializeOwnerReportContext(context);
       return [
-        OPERATOR_FULL_REPORT_TAG,
         'You are the operator agent. Write the scheduled full situation report for the owner.',
         'Use the single canonical evidence packet below as the only factual report input.',
         'Explain what changed, what is open, what needs judgment, and state which source categories are incomplete.',

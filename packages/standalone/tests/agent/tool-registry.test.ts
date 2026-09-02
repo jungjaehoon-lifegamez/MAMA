@@ -233,6 +233,14 @@ describe('ToolRegistry', () => {
         },
       });
     });
+
+    it('advertises the duplicate-source revision guard on task_create', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['task_create'],
+      });
+
+      expect(definition.description).toContain('expected_revision?');
+    });
   });
 
   describe('getByCategory()', () => {

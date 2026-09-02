@@ -3571,6 +3571,7 @@ export class GatewayToolExecutor {
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
                 workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+                requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
                 causeEventIds: this.getExecutionState().causeEventIds,
                 causeKind:
                   this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
@@ -5125,6 +5126,7 @@ export class GatewayToolExecutor {
 
     try {
       const temporalContext = ctx.temporalWorkContext;
+      let reviewWindow: { startMs: number; endMs: number } | undefined;
       let effectiveInput = temporalContext
         ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
         : input;
@@ -5182,11 +5184,15 @@ export class GatewayToolExecutor {
           boundTask.reviewStartedAt !== null &&
           Number.isSafeInteger(boundTask.reviewStartedAt)
         ) {
+          reviewWindow = {
+            startMs: boundTask.reviewStartedAt,
+            endMs: temporalContext.checkAt,
+          };
           effectiveInput = {
             ...effectiveInput,
             range: {
-              start_ms: boundTask.reviewStartedAt,
-              end_ms: temporalContext.checkAt,
+              start_ms: reviewWindow.startMs,
+              end_ms: reviewWindow.endMs,
             },
           };
         }
@@ -5206,7 +5212,11 @@ export class GatewayToolExecutor {
       });
       if (
         temporalContext &&
-        !temporalPacketRawSourcesWithinBoundSource(temporalContext, result.packet.source_refs)
+        !temporalPacketRawSourcesWithinBoundSource(
+          temporalContext,
+          result.packet.source_refs,
+          reviewWindow
+        )
       ) {
         throw new Error('context_compile packet exceeds the active temporal task source');
       }

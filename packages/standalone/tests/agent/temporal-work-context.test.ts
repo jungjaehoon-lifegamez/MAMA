@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getAdapter } from '../../../mama-core/src/db-manager.js';
+import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
+import { createContextCompileService } from '../../src/agent/context-compile-service.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { RunContextRegistry } from '../../src/agent/code-act/run-context-registry.js';
 import type { GatewayToolExecutionContext, MAMAApiSetInput } from '../../src/agent/types.js';
@@ -697,6 +700,182 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       reviewDb.close();
     }
   });
+
+  it.each([
+    {
+      name: 'accepts the anchor plus later same-channel feedback',
+      anchor: 'present',
+      expectedSuccess: true,
+    },
+    { name: 'rejects a missing anchor', anchor: 'missing', expectedSuccess: false },
+    { name: 'rejects a wrong-channel anchor', anchor: 'wrong_channel', expectedSuccess: false },
+    { name: 'rejects an out-of-range anchor', anchor: 'out_of_range', expectedSuccess: false },
+  ] as const)(
+    'TG-03/TG-04 real executor context_compile $name',
+    async ({ anchor, expectedSuccess }) => {
+      const reviewDb = new Database(':memory:');
+      const memoryDbPath = await initTestDB('temporal-review-context-compile');
+      try {
+        const submittedAt = now - 14 * 24 * 60 * 60 * 1000;
+        const feedbackAt = submittedAt + 60_000;
+        const reviewLedger = new TaskLedger(reviewDb, {
+          now: () => now,
+          timeZone: 'Asia/Seoul',
+        });
+        initAgentTables(reviewDb);
+        const created = reviewLedger.create({
+          title: 'submitted review work',
+          source_channel: 'trello:synthetic-board',
+          source_event_id: 'original-card',
+        });
+        const review = reviewLedger.update(
+          created.id,
+          { status: 'review', latest_event: 'submitted for review' },
+          {
+            verifiedReviewEvidence: {
+              contextPacketId: 'ctxp_submission',
+              contextPacketSha256: 'a'.repeat(64),
+              eventIndexId: 'event-index-review-anchor',
+              sourceTimestampMs: submittedAt,
+              sourceChannel: 'trello:synthetic-board',
+            },
+          }
+        );
+        const occurrenceKey = occurrenceKeyForTask(review)!;
+        const generationKey = temporalGenerationKey(review.id, occurrenceKey, now);
+        reviewLedger.enqueueTemporalGeneration({
+          generationKey,
+          taskId: review.id,
+          temporalEpoch: review.temporalEpoch,
+          occurrenceKey,
+          checkAt: now,
+          sourceChannel: review.sourceChannel,
+          sourceEventId: review.reviewAnchorEventId,
+        });
+        const reviewContext = reviewLedger.loadTemporalWorkContext(
+          reviewLedger.claimNextWorkOrder()!.id
+        );
+
+        const adapter = getAdapter();
+        const insertEvent = adapter.prepare(`
+        INSERT INTO connector_event_index (
+          event_index_id, source_connector, source_type, source_id, channel, title, content,
+          event_datetime, source_timestamp_ms, content_hash, indexed_at, updated_at,
+          tenant_id, project_id, memory_scope_kind, memory_scope_id
+        ) VALUES (?, 'trello', 'message', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'default',
+                  '/workspace/project-a', 'project', '/workspace/project-a')
+      `);
+        const indexedAt = '2026-07-01T00:00:00.000Z';
+        if (anchor !== 'missing') {
+          const anchorAt = anchor === 'out_of_range' ? submittedAt - 1 : submittedAt;
+          insertEvent.run(
+            'event-index-review-anchor',
+            'original-card',
+            anchor === 'wrong_channel' ? 'wrong-board' : 'synthetic-board',
+            'Submission',
+            'Submitted for review',
+            anchorAt,
+            anchorAt,
+            Buffer.alloc(32),
+            indexedAt,
+            indexedAt
+          );
+        }
+        insertEvent.run(
+          'event-index-later-feedback',
+          'later-feedback',
+          'synthetic-board',
+          'Feedback',
+          'Please revise the final paragraph',
+          feedbackAt,
+          feedbackAt,
+          Buffer.alloc(32),
+          indexedAt,
+          indexedAt
+        );
+
+        let compileSequence = 0;
+        const reviewExecutor = new GatewayToolExecutor({
+          contextCompileService: createContextCompileService({
+            memoryAdapter: adapter,
+            now: () => now,
+            childModelRunId: () => `mr_review_compile_${++compileSequence}`,
+            packetId: () => `ctxp_review_compile_${compileSequence}`,
+          }),
+        });
+        reviewExecutor.setTaskLedger(reviewLedger);
+        reviewExecutor.setMamaApi({
+          listDecisions: async () => [],
+          appendToolTrace: async () => ({}) as never,
+        } as unknown as MAMAApiSetInput);
+        const trustedExecution: GatewayToolExecutionContext = {
+          ...executionContext,
+          temporalWorkContext: reviewContext,
+          envelope: makeSignedEnvelope({
+            agent_id: 'workorder-temporal',
+            instance_id: 'review-real-compile',
+            scope: {
+              project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+              raw_connectors: ['trello'],
+              memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+              allowed_destinations: [],
+            },
+          }),
+          channelGrantSnapshot: { trello: ['synthetic-board', 'wrong-board'] },
+          agentContext: {
+            ...executionContext.agentContext!,
+            role: {
+              ...executionContext.agentContext!.role,
+              allowedTools: [
+                ...executionContext.agentContext!.role.allowedTools,
+                'context_compile',
+              ],
+            },
+            capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+          },
+        };
+
+        const compile = () =>
+          reviewExecutor.execute(
+            'context_compile',
+            { task: 'Judge the review lifecycle from bounded source evidence', limit: 10 } as never,
+            trustedExecution
+          ) as Promise<{
+            success: boolean;
+            code?: string;
+            packet?: {
+              range: { start_ms: number; end_ms: number };
+              source_refs: Array<Record<string, unknown>>;
+            };
+          }>;
+
+        const compiled = await compile();
+        expect(compiled.success, JSON.stringify(compiled)).toBe(expectedSuccess);
+        if (expectedSuccess) {
+          expect(compiled.packet?.range).toEqual({ start_ms: submittedAt, end_ms: now });
+          expect(compiled.packet?.source_refs).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                kind: 'raw',
+                raw_id: 'event-index-review-anchor',
+                channel_id: 'synthetic-board',
+              }),
+              expect.objectContaining({
+                kind: 'raw',
+                raw_id: 'event-index-later-feedback',
+                channel_id: 'synthetic-board',
+              }),
+            ])
+          );
+        } else {
+          expect(compiled).toMatchObject({ code: 'context_compile_failed' });
+        }
+      } finally {
+        reviewDb.close();
+        await cleanupTestDB(memoryDbPath);
+      }
+    }
+  );
 
   it('workorder_request inherits the HOST batch, never tool input (S2 Task 4)', async () => {
     const handler = vi.fn(() => ({ accepted: true }));

@@ -313,6 +313,8 @@ export interface CreateTaskInput {
   source_event_id?: string;
   latest_event?: string;
   confirmed?: boolean;
+  /** Required only when a Board workorder uses a duplicate source key as an update. */
+  expected_revision?: number;
 }
 
 export interface UpdateTaskInput {
@@ -1578,6 +1580,9 @@ export class TaskLedger implements TaskSource {
             ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
             ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
             ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
+            ...(input.expected_revision !== undefined
+              ? { expected_revision: input.expected_revision }
+              : {}),
           },
           // A duplicate delivery of the same event. The HOST batch still wins
           // (review: the agent-supplied source_event_id was overriding it here,
