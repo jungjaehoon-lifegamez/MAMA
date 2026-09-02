@@ -44,6 +44,10 @@ export interface PendingReportRequest {
   acceptedAtIso: string;
   target: ReportCarryTarget;
   payloadIdentity: string;
+  /** Canonical redacted OwnerReportContextV1 JSON persisted before model admission. */
+  contextJson?: string;
+  /** SHA-256 of the exact UTF-8 bytes in contextJson. */
+  contextSha256?: string;
 }
 
 export interface PendingReportState {
@@ -92,6 +96,7 @@ export interface PendingReportStore {
 }
 
 const MAX_PENDING_REPORT_BYTES = 8 * 1024 * 1024;
+const MAX_PENDING_CONTEXT_BYTES = 96 * 1024;
 const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
@@ -119,6 +124,7 @@ interface PendingReportRequestIdentityInput {
   occurrence: PendingReportOccurrence;
   acceptedAtIso: string;
   target: ReportCarryTarget;
+  contextSha256?: string;
 }
 
 interface PendingReportDeliveryIdentityInput {
@@ -147,18 +153,25 @@ function occurrenceIdentity(occurrence: PendingReportOccurrence): string {
 export function pendingReportRequestPayloadIdentity(
   request: PendingReportRequestIdentityInput
 ): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
+  const identity = request.contextSha256
+    ? [
+        'pending-report-request-v2',
+        request.mode,
+        request.deliveryId,
+        request.acceptedAtIso,
+        occurrenceIdentity(request.occurrence),
+        reportTargetIdentity(request.target),
+        request.contextSha256,
+      ]
+    : [
         'pending-report-request-v1',
         request.mode,
         request.deliveryId,
         request.acceptedAtIso,
         occurrenceIdentity(request.occurrence),
         reportTargetIdentity(request.target),
-      ])
-    )
-    .digest('hex');
+      ];
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 }
 
 export function pendingReportDeliveryPayloadIdentity(
@@ -247,10 +260,40 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
       record.mode === 'full' &&
       isNonEmptyBoundedString(record.deliveryId, 512) &&
       isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
-      isOnDemandFullOccurrence(record.occurrence) &&
+      Number.isFinite(Date.parse(record.acceptedAtIso)) &&
+      isFullOccurrence(record.occurrence) &&
       isReportTarget(record.target) &&
       isSha256Identity(record.payloadIdentity)
     )
+  ) {
+    return false;
+  }
+  const hasContextJson = record.contextJson !== undefined;
+  const hasContextSha256 = record.contextSha256 !== undefined;
+  if (hasContextJson !== hasContextSha256) {
+    return false;
+  }
+  if (
+    hasContextJson &&
+    (!isNonEmptyBoundedString(record.contextJson, MAX_PENDING_CONTEXT_BYTES) ||
+      Buffer.byteLength(record.contextJson) > MAX_PENDING_CONTEXT_BYTES ||
+      !isSha256Identity(record.contextSha256) ||
+      createHash('sha256').update(record.contextJson).digest('hex') !== record.contextSha256)
+  ) {
+    return false;
+  }
+  const expectedKeys = [
+    'mode',
+    'deliveryId',
+    'occurrence',
+    'acceptedAtIso',
+    'target',
+    'payloadIdentity',
+    ...(hasContextJson ? ['contextJson', 'contextSha256'] : []),
+  ];
+  if (
+    Object.keys(record).length !== expectedKeys.length ||
+    !Object.keys(record).every((key) => expectedKeys.includes(key))
   ) {
     return false;
   }
@@ -262,6 +305,7 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
       acceptedAtIso: record.acceptedAtIso,
       occurrence: record.occurrence,
       target: record.target,
+      ...(typeof record.contextSha256 === 'string' ? { contextSha256: record.contextSha256 } : {}),
     })
   );
 }

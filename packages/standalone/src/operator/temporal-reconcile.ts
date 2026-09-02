@@ -156,7 +156,10 @@ function candidateForTask(
       occurrenceKey,
       checkAt,
       sourceChannel: task.sourceChannel,
-      sourceEventId: task.sourceEventId,
+      sourceEventId:
+        task.status === 'review' && task.reviewAnchorEventId
+          ? task.reviewAnchorEventId
+          : task.sourceEventId,
       priority: 'high',
     };
   }
@@ -176,7 +179,10 @@ function candidateForTask(
     occurrenceKey,
     checkAt,
     sourceChannel: task.sourceChannel,
-    sourceEventId: task.sourceEventId,
+    sourceEventId:
+      task.status === 'review' && task.reviewAnchorEventId
+        ? task.reviewAnchorEventId
+        : task.sourceEventId,
     priority: isDeferred ? 'high' : 'normal',
   };
 }

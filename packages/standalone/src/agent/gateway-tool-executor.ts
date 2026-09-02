@@ -3554,7 +3554,27 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
-          const { id: rawId, ...patch } = input as { id: unknown } & Record<string, unknown>;
+          const rawTaskUpdate = input as { id: unknown } & Record<string, unknown>;
+          for (const forbidden of [
+            'review_started_at',
+            'review_anchor_event_id',
+            'source_timestamp_ms',
+          ]) {
+            if (Object.prototype.hasOwnProperty.call(rawTaskUpdate, forbidden)) {
+              throw new AgentError(
+                `task_update field ${forbidden} is host-owned`,
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
+          const {
+            id: rawId,
+            context_packet_id: contextPacketId,
+            review_anchor_ref: reviewAnchorRef,
+            ...patch
+          } = rawTaskUpdate;
           // Agents routinely pass "12"; coerce, reject non-numeric with a typed error.
           const id = typeof rawId === 'string' ? Number(rawId.trim()) : (rawId as number);
           if (!Number.isInteger(id) || id <= 0) {
@@ -3565,14 +3585,126 @@ export class GatewayToolExecutor {
               false
             );
           }
+          let verifiedReviewEvidence:
+            | {
+                contextPacketId: string;
+                contextPacketSha256: string;
+                eventIndexId: string;
+                sourceTimestampMs: number;
+                sourceChannel: string;
+              }
+            | undefined;
+          if (patch.status === 'review') {
+            const executionState = this.getExecutionState();
+            if (
+              typeof contextPacketId !== 'string' ||
+              contextPacketId.trim().length === 0 ||
+              typeof reviewAnchorRef !== 'string' ||
+              reviewAnchorRef.trim().length === 0
+            ) {
+              throw new AgentError(
+                'task_update review requires context_packet_id and review_anchor_ref',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            if (!executionState.envelope || !executionState.modelRunId) {
+              throw new AgentError(
+                'task_update review evidence requires an active envelope and model run',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const packet = await this.temporalContextPacketLookup({
+              packetId: contextPacketId,
+              envelopeHash: executionState.envelope.envelope_hash,
+              callerModelRunId: executionState.modelRunId,
+            });
+            if (!packet || packet.packet_id !== contextPacketId) {
+              throw new AgentError(
+                'task_update review context packet is unavailable',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const parsed = JSON.parse(packet.packet_json) as {
+              selected_evidence?: Array<{ ref?: Record<string, unknown> }>;
+            };
+            const selectedRaw = parsed.selected_evidence?.find(
+              (item) => item.ref?.kind === 'raw' && item.ref.raw_id === reviewAnchorRef
+            )?.ref;
+            const task = this.taskLedger.getById(id);
+            const connector = selectedRaw?.connector;
+            const channelId = selectedRaw?.channel_id;
+            const sourceChannel =
+              typeof connector === 'string' && typeof channelId === 'string'
+                ? `${connector}:${channelId}`
+                : null;
+            if (!task || !sourceChannel || task.sourceChannel !== sourceChannel) {
+              throw new AgentError(
+                'task_update review anchor is outside the task source boundary',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const adapter =
+              (await getContextPacketLookupAdapter()) as ContextPacketLookupAdapter & {
+                prepare(sql: string): { get(...params: unknown[]): unknown };
+              };
+            const anchor = adapter
+              .prepare(
+                `SELECT source_connector, channel,
+                        COALESCE(event_datetime, source_timestamp_ms) AS source_timestamp_ms
+                   FROM connector_event_index
+                  WHERE event_index_id = ?
+                  LIMIT 1`
+              )
+              .get(reviewAnchorRef) as
+              | { source_connector: unknown; channel: unknown; source_timestamp_ms: unknown }
+              | undefined;
+            if (
+              !anchor ||
+              anchor.source_connector !== connector ||
+              anchor.channel !== channelId ||
+              !Number.isSafeInteger(anchor.source_timestamp_ms) ||
+              Number(anchor.source_timestamp_ms) < 0
+            ) {
+              throw new AgentError(
+                'task_update review anchor timestamp is unavailable',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            verifiedReviewEvidence = {
+              contextPacketId,
+              contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+              eventIndexId: reviewAnchorRef,
+              sourceTimestampMs: Number(anchor.source_timestamp_ms),
+              sourceChannel,
+            };
+          } else if (contextPacketId !== undefined || reviewAnchorRef !== undefined) {
+            throw new AgentError(
+              'task_update review evidence fields are valid only for status review',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
             workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+            requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
             // The batch this run was handed. A bounded run's changes rest on the delta it
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.
             causeEventIds: this.getExecutionState().causeEventIds,
             causeKind: this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
+            ...(verifiedReviewEvidence ? { verifiedReviewEvidence } : {}),
           });
           return { success: true, task: serializeTaskToolRecord(updated) };
         }
@@ -4959,7 +5091,10 @@ export class GatewayToolExecutor {
         // Trimmed: a whitespace-only event id is truthy but fails ref
         // normalization downstream - which would fail the WHOLE compile,
         // exactly what "strictly additive" forbids.
-        const rawEventId = boundTask?.sourceEventId?.trim() || null;
+        const rawEventId =
+          (boundTask?.status === 'review' ? boundTask.reviewAnchorEventId : null)?.trim() ||
+          boundTask?.sourceEventId?.trim() ||
+          null;
         const sep = rawChannel ? rawChannel.indexOf(':') : -1;
         const seedConnector = rawChannel && sep > 0 ? rawChannel.slice(0, sep) : null;
         const seedChannelId = rawChannel && sep > 0 ? rawChannel.slice(sep + 1) : null;
@@ -4993,6 +5128,19 @@ export class GatewayToolExecutor {
           if (!alreadySeeded) {
             effectiveInput = { ...effectiveInput, seed_refs: [...existingSeeds, boundSeed] };
           }
+        }
+        if (
+          boundTask?.status === 'review' &&
+          boundTask.reviewStartedAt !== null &&
+          Number.isSafeInteger(boundTask.reviewStartedAt)
+        ) {
+          effectiveInput = {
+            ...effectiveInput,
+            range: {
+              start_ms: boundTask.reviewStartedAt,
+              end_ms: temporalContext.checkAt,
+            },
+          };
         }
       }
       const result = await this.contextCompileService.compileAndPersistContext({
