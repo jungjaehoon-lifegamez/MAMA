@@ -86,6 +86,9 @@ scenario IDs from this document.
   was dead (a partial snapshot now forbids only absence-based inference; an exactly matched
   live card stays valid evidence). The task summary also carries deadline and due-at, and
   section titles follow the owner language.
+- **Blinded pairwise owner comparison (2026-09-03):** the owner read both windows with the
+  old and new reports labelled A/B at random and judged B, the packet-path report, more
+  useful in both windows. The usefulness gate in Task 4 Step 3 passes.
 - **Lifecycle judgment eval:** 11/11 fixtures including the new partial-snapshot terminal
   case; safety fixtures 4/4 retain; owner-action precision 1.0 with 0 false escalations.
 - **Copied-DB lifecycle gate:** all 264 open owner tasks correlated (75 exact live matches,
