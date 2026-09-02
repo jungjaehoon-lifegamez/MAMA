@@ -4,10 +4,14 @@
  * pending-file cleanup ONLY on `delivered` (design Decisions 1-2).
  */
 
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import Database from '../../src/sqlite.js';
 import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
+import { TelegramReportContextStore } from '../../src/gateways/telegram-report-context-store.js';
 import type {
   OperatorChannelEvent,
   OperatorMemoryPort,
@@ -16,8 +20,16 @@ import type {
   ReportDeliveryOutcome,
   ReportDeliveryPort,
 } from '../../src/operator/report-delivery-coordinator.js';
+import {
+  ReportDeliveryCoordinator,
+  type ReportDeliveryBinding,
+  type ReportDeliveryLease,
+  type TelegramReportDeliveryControl,
+} from '../../src/operator/report-delivery-coordinator.js';
 import type { PendingReportDelivery } from '../../src/operator/pending-report-store.js';
 import type { PendingReportState } from '../../src/operator/pending-report-store.js';
+import { compileOwnerReportContext } from '../../src/operator/report-context.js';
+import { createPersonaReportAsk } from '../../src/operator/report-run.js';
 
 const TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
 
@@ -112,6 +124,178 @@ function harness(port: FakePort, options: { scheduledFire?: boolean } = {}) {
 }
 
 describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
+  it('TG-01/TG-03/TG-04/TG-05/TG-06 carries one scoped full-report turn through a durable delivered receipt', async () => {
+    const db = new Database(':memory:');
+    const reportStore = new TelegramReportContextStore(db);
+    const mamaHome = mkdtempSync(join(tmpdir(), 'mama-full-report-e2e-'));
+    const deliveryCalls: string[] = [];
+    const deliveryControl: TelegramReportDeliveryControl = {
+      async claimAndPin(binding: ReportDeliveryBinding): Promise<ReportDeliveryLease> {
+        deliveryCalls.push(`claim:${binding.deliveryId}`);
+        return { deliveryId: binding.deliveryId };
+      },
+      async sendPinned(lease: ReportDeliveryLease) {
+        deliveryCalls.push(`send:${lease.deliveryId}`);
+        return { kind: 'confirmed' as const };
+      },
+      async releasePin(deliveryId: string): Promise<void> {
+        deliveryCalls.push(`release:${deliveryId}`);
+      },
+      async reconcilePins(): Promise<void> {},
+    };
+    const delivery = new ReportDeliveryCoordinator({
+      store: reportStore,
+      control: deliveryControl,
+      ownerTarget: TARGET,
+      executorId: 'offline-e2e',
+      nowIso: () => '2026-09-02T00:00:00.000Z',
+      mamaHome,
+    });
+    const modelRun = vi.fn(async (_prompt: string, sourceMessageRef?: string) => ({
+      response: 'Grounded owner report',
+      history: [],
+      turns: 1,
+      modelRunId: 'offline-model-run',
+      sourceMessageRef,
+    }));
+    let composedProvenance:
+      | { status: 'available'; modelRunId: string }
+      | { status: 'unavailable'; reason: string }
+      | undefined;
+    const reportAsk = createPersonaReportAsk({
+      run: modelRun,
+      log: () => {},
+      onRunProvenance: (provenance) => {
+        composedProvenance = provenance;
+      },
+    });
+    const compile = vi.fn(
+      async ({
+        readScope,
+        windowEvidence,
+        since,
+      }: Parameters<
+        NonNullable<
+          ConstructorParameters<typeof OperatorTriggerLoop>[0]['compileFullReportContext']
+        >
+      >[0]) =>
+        compileOwnerReportContext(
+          { readScope, windowEvidence, since },
+          {
+            listTaskPage: () => ({ tasks: [], total: 0, returned: 0, nextCursor: null }),
+            readClaims: async () => [],
+            readTrello: async () => ({
+              observedAt: '2026-09-02T00:00:00.000Z',
+              cacheAgeMs: 0,
+              complete: true,
+              truncated: false,
+              boards: [
+                { boardId: 'board-safe', board: 'Board', status: 'ok', rosterDegraded: false },
+              ],
+              columns: [],
+            }),
+            buildProvenanceLookup: async () => () => null,
+            correlate: () => ({
+              correlations: [],
+              coverage: {
+                total: 0,
+                matched: 0,
+                unmatched: 0,
+                ambiguous: 0,
+                historical_only: 0,
+                not_applicable: 0,
+              },
+            }),
+            readChanges: (_scope, input) => ({
+              success: true,
+              since: String(input.since),
+              total: 0,
+              returned: 0,
+              coverage: { attributed: 0, unattributed: 0 },
+              changes: [],
+            }),
+            now: () => Date.parse('2026-09-02T00:00:00.000Z'),
+          }
+        )
+    );
+    const pendingSnapshots: PendingReportState[] = [];
+    let pending: PendingReportState | null = null;
+    const loop = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(db),
+      askAgent: async () => '[]',
+      reportAsk,
+      fullReportProvenance: () => composedProvenance,
+      compileFullReportContext: compile,
+      fullReportReadScope: {
+        projectRefs: [{ kind: 'project', id: 'offline-project' }],
+        memoryScopes: [{ kind: 'project', id: 'offline-project' }],
+        rawConnectors: ['trello'],
+      },
+      review: async () => ({ action: 'kept' as const }),
+      reportDelivery: delivery,
+      reportTarget: TARGET,
+      reportScheduler: {
+        shouldFire: () => ({ fire: true, hourKey: '2026-09-02:00' }),
+        markFired: vi.fn(),
+        loadLastSuccess: () => null,
+        markSuccess: vi.fn(),
+      },
+      pendingReportStore: {
+        load: () => pending,
+        save: (state) => {
+          pending = structuredClone(state);
+          pendingSnapshots.push(structuredClone(state));
+        },
+      },
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    try {
+      await loop.tick();
+
+      expect(compile).toHaveBeenCalledOnce();
+      expect(modelRun).toHaveBeenCalledOnce();
+      const sourceMessageRef = modelRun.mock.calls[0]?.[1];
+      expect(sourceMessageRef).toMatch(/^owner-report-context:[a-f0-9]{64}$/);
+      expect(
+        pendingSnapshots.some(
+          (state) =>
+            state.request?.contextJson?.includes('mama.owner-report-context/v1') &&
+            state.request.contextSha256 &&
+            sourceMessageRef === `owner-report-context:${state.request.contextSha256}`
+        )
+      ).toBe(true);
+      const prepared = pendingSnapshots.find((state) => state.delivery)?.delivery;
+      expect(prepared).toMatchObject({
+        mode: 'full',
+        text: 'Grounded owner report',
+        provenance: { status: 'available', modelRunId: 'offline-model-run' },
+      });
+      expect(deliveryCalls.map((call) => call.split(':')[0])).toEqual(['claim', 'send', 'release']);
+      const receipt = db
+        .prepare(
+          `SELECT state FROM telegram_report_context_events
+            WHERE delivery_id = ?`
+        )
+        .get(prepared!.deliveryId) as { state: string };
+      expect(receipt.state).toBe('delivered');
+      expect(pending?.request).toBeUndefined();
+      expect(pending?.delivery).toBeUndefined();
+    } finally {
+      db.close();
+      rmSync(mamaHome, { recursive: true, force: true });
+    }
+  });
+
   it('rejects wiring the legacy output sink beside the coordinator port', () => {
     const port = new FakePort();
     expect(
