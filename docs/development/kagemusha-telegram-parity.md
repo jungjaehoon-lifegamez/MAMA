@@ -62,6 +62,50 @@ scenario IDs from this document.
   Standalone typecheck, changed-file ESLint/Prettier, and `git diff --check` passed. This is code
   evidence only; a real owner report remains pending.
 
+### Cognitive foundation Task 4 offline quality gate: 2026-09-02
+
+- **Corpus:** copied operational databases (memory + operator ledger, snapshot 09:53Z), one
+  read-only live Trello capture, and the two latest delivered full-report windows (13:00 and
+  18:00 local) replayed through the production packet compiler and one fresh tool-free
+  Codex turn. The stored delivered reports are the old-path benchmark; nothing was written to
+  the live databases or sent anywhere.
+- **TG-03/TG-04/TG-05 cost:** old self-gather runs used 14 and 28 tool calls with 273K and
+  759K rollout tokens in 305 s and 445 s; the packet path used 0 tool calls, exactly one
+  turn, ~52K tokens, 228 s and 238 s per window (packet 98 KB at the 96 KiB cap).
+- **Correctness:** zero stale current claims found against the packet (one sentence traced to
+  a same-window task event), zero completion or reopen from Trello absence, duplicate-row
+  ambiguity and no-provenance rows retained explicitly, every incomplete source named with
+  its reason and counts, owner escalations limited to one normative decision with evidence,
+  recommendation, options and impact. Internal-id leakage in owner text went from at least
+  six (board, room and channel ids) to zero.
+- **Real-data defects repaired in Task 2/3 files:** the 50-row task bound ranked by deadline
+  carried zero rows updated in the last week and zero in_progress rows out of 264 open tasks
+  (now ranked by recency); Board-written latest_event prose and curated claim summaries
+  leaked raw event, run and chat-room ids (now scrubbed); real boards keep 13 lists above the
+  100-card read bound, so a "complete" Trello snapshot never occurred and the completion rule
+  was dead (a partial snapshot now forbids only absence-based inference; an exactly matched
+  live card stays valid evidence). The task summary also carries deadline and due-at, and
+  section titles follow the owner language.
+- **Lifecycle judgment eval:** 11/11 fixtures including the new partial-snapshot terminal
+  case; safety fixtures 4/4 retain; owner-action precision 1.0 with 0 false escalations.
+- **Copied-DB lifecycle gate:** all 264 open owner tasks correlated (75 exact live matches,
+  8 ambiguous, 2 unmatched, 7 historical-only) and 90 candidates judged in one turn under the
+  projected Board contract. 87 retained, including every exactly matched card sitting in a
+  scheduled-delivery list. Two stale rows were reclassified on the copy through the production
+  ledger primitive with expected-revision checks and effect receipts: one 34-day review row
+  reopened to in_progress on a same-scope resubmission, one 37-day pending row completed on
+  an explicit FIX notice; both cited source events exist in the copied event index and say
+  what the judgment claims. One review proposal was refused because the model returned a
+  stale expected revision, which is the intended failure. A first pass with a 72-hour message
+  window proposed the same review transition with a valid same-channel anchor.
+- **Verification:** mama-core 660 tests, standalone full suite, focused parity gate (11
+  files, 316 tests), typecheck, build, root lint, changed-file Prettier and `git diff --check`
+  passed; root `format:check` warns only on 35 pre-existing untouched files.
+- **Boundary:** the gate emulates the Board lane's judgment and ledger path without the
+  Code-Act envelope or context packets, and the report comparison ran offline. No installed
+  runtime carries the packet path yet; Step 6/7 (paired core/OS release, restart, one real
+  `mama report now`, receipt chain) remains pending and is the completion gate.
+
 ### Owner-agent event subject correction: 2026-08-19
 
 - **TG-03/TG-04:** connector deltas are now work owned by MAMA itself. The default-off stateful
