@@ -2056,7 +2056,6 @@ export async function runAgentLoop(
         reason: 'no_run_handle',
       };
       const { createPersonaReportAsk } = await import('../../operator/report-run.js');
-      const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { FilePendingReportStore } = await import('../../operator/pending-report-store.js');
 
       const triggerRegistry = new TriggerRegistry(operatorDb);
@@ -2144,7 +2143,7 @@ export async function runAgentLoop(
         // Full reports run in one fresh, tool-free persona turn. Current state is compiled and
         // persisted by the host before this call; digest composition remains on the same persona.
         reportAsk: createPersonaReportAsk({
-          run: async (prompt, _envelope, sourceMessageRef) => {
+          run: async (prompt, sourceMessageRef) => {
             const reportAgentPolicy = buildOperatorReportAgentPolicy(
               config.agent.model,
               runtimeBackend,
@@ -2185,7 +2184,6 @@ export async function runAgentLoop(
             };
           },
           log: (line: string) => console.log(line),
-          fullReportTag: OPERATOR_FULL_REPORT_TAG,
           onRunProvenance: (provenance) => {
             lastReportProvenance = provenance;
           },

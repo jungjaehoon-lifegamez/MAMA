@@ -173,7 +173,8 @@ function temporalIdentifierRef(value: string): string {
 
 function temporalPacketRawSourcesWithinBoundSource(
   context: TemporalWorkContext,
-  sourceRefs: readonly unknown[]
+  sourceRefs: readonly unknown[],
+  reviewWindow?: { startMs: number; endMs: number }
 ): boolean {
   const rawRefs = sourceRefs.filter(
     (value): value is Record<string, unknown> =>
@@ -185,13 +186,16 @@ function temporalPacketRawSourcesWithinBoundSource(
   if (!context.sourceChannel) {
     return rawRefs.length === 0;
   }
-  return rawRefs.every((ref) => {
-    const eventMatches =
-      !context.sourceEventId ||
+  const anchorMatches = (ref: Record<string, unknown>): boolean =>
+    Boolean(
+      context.sourceEventId &&
       [ref.raw_id, ref.source_id].some(
         (value) =>
           typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
-      );
+      )
+    );
+  const allWithinBoundChannel = rawRefs.every((ref) => {
+    const eventMatches = reviewWindow !== undefined || !context.sourceEventId || anchorMatches(ref);
     const channelMatches =
       !context.sourceChannel ||
       (typeof ref.connector === 'string' &&
@@ -199,11 +203,16 @@ function temporalPacketRawSourcesWithinBoundSource(
         temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel);
     return eventMatches && channelMatches;
   });
+  return (
+    allWithinBoundChannel &&
+    (reviewWindow === undefined || rawRefs.some((ref) => anchorMatches(ref)))
+  );
 }
 
 function temporalPacketReferencesBoundSource(
   context: TemporalWorkContext,
-  sourceRefs: readonly unknown[]
+  sourceRefs: readonly unknown[],
+  reviewWindow?: { startMs: number; endMs: number }
 ): boolean {
   const hasRawReference = sourceRefs.some(
     (value) =>
@@ -213,9 +222,28 @@ function temporalPacketReferencesBoundSource(
       (value as Record<string, unknown>).kind === 'raw'
   );
   if (context.sourceEventId || context.sourceChannel) {
-    return hasRawReference && temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+    return (
+      hasRawReference &&
+      temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow)
+    );
   }
-  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow);
+}
+
+function temporalPacketHasExactReviewWindow(
+  packetJson: string,
+  reviewWindow: { startMs: number; endMs: number }
+): boolean {
+  try {
+    const parsed = JSON.parse(packetJson) as { range?: unknown };
+    if (!parsed.range || typeof parsed.range !== 'object' || Array.isArray(parsed.range)) {
+      return false;
+    }
+    const range = parsed.range as Record<string, unknown>;
+    return range.start_ms === reviewWindow.startMs && range.end_ms === reviewWindow.endMs;
+  } catch {
+    return false;
+  }
 }
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -3753,6 +3781,26 @@ export class GatewayToolExecutor {
             );
           }
           const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
+          const boundTask = this.taskLedger.getById(context.taskId);
+          const reviewWindow =
+            boundTask?.status === 'review' &&
+            boundTask.reviewStartedAt !== null &&
+            Number.isSafeInteger(boundTask.reviewStartedAt) &&
+            typeof boundTask.reviewAnchorEventId === 'string' &&
+            boundTask.reviewAnchorEventId.trim().length > 0
+              ? { startMs: boundTask.reviewStartedAt, endMs: context.checkAt }
+              : undefined;
+          if (
+            boundTask?.status === 'review' &&
+            (!reviewWindow || !temporalPacketHasExactReviewWindow(packet.packet_json, reviewWindow))
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile review packet is outside the verified review window',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           // (a) freshness: a RECEIPT, not a gate (S2 disposition - measured
           // ZERO live rejections; staleness is evidence quality, not
           // authorization). Recorded on the receipt, loud when stale.
@@ -3785,8 +3833,8 @@ export class GatewayToolExecutor {
             (effectInput.outcome === 'deferred'
               ? Array.isArray(packet.source_refs) &&
                 packet.source_refs.length > 0 &&
-                !temporalPacketReferencesBoundSource(context, packet.source_refs)
-              : !temporalPacketReferencesBoundSource(context, packet.source_refs))
+                !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow)
+              : !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow))
           ) {
             throw new AgentError(
               'task_temporal_reconcile context packet is not bound to the active task source',
@@ -4825,8 +4873,8 @@ export class GatewayToolExecutor {
     let usedUntrustedExternalEvidence = false;
     // Names of host tools that actually EXECUTED inside the sandbox (post-call hook fire,
     // result !== undefined - host-bridge.ts:1049; the pre-call fire at :1037 is skipped).
-    // Ride in the result message so downstream audits (report-run summarizeReportToolUse)
-    // can classify nested gather/write without code_act becoming an opaque blob.
+    // Ride in the result message so receipt and terminal audits can classify nested effects
+    // without code_act becoming an opaque blob.
     const hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = [];
     const hostToolsInvoked: string[] = [];
     const successfulHostToolNames = new Set<string>();
