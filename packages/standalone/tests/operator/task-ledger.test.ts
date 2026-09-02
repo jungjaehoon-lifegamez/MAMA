@@ -187,12 +187,20 @@ describe('TaskLedger', () => {
   });
 
   it('TG-05/TG-06 refuses temporal ownership for a legacy review row without verified anchors', () => {
-    const legacy = ledger.create({
+    // A legacy row predates the verified-review migration; the current API refuses to
+    // create one, so the fixture writes the pre-migration shape directly.
+    const seeded = ledger.create({
       title: 'legacy review without submission proof',
-      status: 'review',
       due_at: '2026-09-01T00:00:00Z',
       source_channel: 'slack:C001',
       source_event_id: 'legacy-event',
+    });
+    db.prepare(`UPDATE operator_tasks SET status = 'review' WHERE id = ?`).run(seeded.id);
+    const legacy = ledger.getById(seeded.id)!;
+    expect(legacy).toMatchObject({
+      status: 'review',
+      reviewStartedAt: null,
+      reviewAnchorEventId: null,
     });
     const occurrenceKey = occurrenceKeyForTask(legacy)!;
 
@@ -235,12 +243,19 @@ describe('TaskLedger', () => {
   });
 
   it('filters: status, channel, search', () => {
-    ledger.create({ title: 'alpha work', status: 'review', source_channel: 'slack:C1' });
+    ledger.create({ title: 'alpha work', status: 'in_progress', source_channel: 'slack:C1' });
     ledger.create({ title: 'beta work', assignee: 'worker-b' });
-    expect(ledger.list({ status: 'review' })).toHaveLength(1);
+    expect(ledger.list({ status: 'in_progress' })).toHaveLength(1);
     expect(ledger.list({ channel: 'slack:C1' })).toHaveLength(1);
     expect(ledger.list({ search: 'worker-b' })).toHaveLength(1);
     expect(ledger.list({ search: 'alpha' })[0]?.title).toBe('alpha work');
+  });
+
+  it('TG-06 rejects direct creation in review: the anchor only comes from a verified task_update', () => {
+    expect(() => ledger.create({ title: 'submitted work', status: 'review' })).toThrow(
+      /'review' requires verified submission evidence/
+    );
+    expect(ledger.list({ status: 'review' })).toHaveLength(0);
   });
 
   it('getTasks() satisfies TaskSource with canonical ordering', () => {

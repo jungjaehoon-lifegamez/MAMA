@@ -711,7 +711,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         ['missing', undefined],
         ['stale', 0],
       ] as const)(
-        'requires the exact read revision for an active Board duplicate-source task_create (%s)',
+        'TG-06 requires the exact read revision for an active Board duplicate-source task_create (%s)',
         async (_label, expectedRevision) => {
           const seeded = seedBindingCandidateAttempt();
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
@@ -747,7 +747,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         }
       );
 
-      it('blocks a terminal Board attempt from mutating a duplicate source through task_create', async () => {
+      it('TG-06 blocks a terminal Board attempt from mutating a duplicate source through task_create', async () => {
         const seeded = seedBindingCandidateAttempt();
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
         executor.setTaskLedger(seeded.ledger);

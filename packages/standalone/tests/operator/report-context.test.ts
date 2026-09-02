@@ -83,6 +83,8 @@ function task(id: number, overrides: Partial<TaskRecord> = {}): TaskRecord {
     nextTemporalCheckAt: null,
     lastTemporalAttemptId: null,
     temporalState: 'unscheduled',
+    reviewStartedAt: null,
+    reviewAnchorEventId: null,
     ...overrides,
   };
 }

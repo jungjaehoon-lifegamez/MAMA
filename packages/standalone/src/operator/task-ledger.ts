@@ -1538,6 +1538,15 @@ export class TaskLedger implements TaskSource {
     if (input.status === 'failed') {
       throw new Error(`task_create: 'failed' is a system-only status`);
     }
+    if (input.status === 'review') {
+      // review carries a host-verified submission anchor (review_started_at,
+      // review_anchor_event_id) that only the task_update path can supply. A row
+      // created directly in review would sit in the unanchored state reserved for
+      // legacy rows and could never enter the Temporal review lifecycle.
+      throw new Error(
+        `task_create: 'review' requires verified submission evidence; create the task, then task_update it to review`
+      );
+    }
     // Namespace reservation (review m3): the occurrence keys are deterministic
     // (epoch slots, readable from OSS source) - an agent-created owner row on
     // a 'workorder:' (channel,event) pair would collide with the system
@@ -2667,6 +2676,8 @@ export class TaskLedger implements TaskSource {
         last_temporal_checked_at: now,
         next_temporal_check_at: null,
         last_temporal_attempt_id: context.attemptId,
+        review_started_at: existing.review_started_at,
+        review_anchor_event_id: existing.review_anchor_event_id,
       };
       const auditParts = [`reason=${input.reason.trim()}`];
       if (input.outcome === 'final_no_update') {
@@ -2678,6 +2689,21 @@ export class TaskLedger implements TaskSource {
 
       if (input.outcome === 'resolved') {
         if (input.status !== undefined) next.status = input.status;
+        if (existing.status === 'review' && next.status !== 'review') {
+          // Leaving verified review through the Temporal path: the submission
+          // anchor and its derived 14-day due time do not survive the exit, exactly
+          // as the task_update path clears them. A later reopen re-verifies.
+          next.review_started_at = null;
+          next.review_anchor_event_id = null;
+          if (
+            existing.review_started_at !== null &&
+            !Object.prototype.hasOwnProperty.call(input, 'due_at')
+          ) {
+            next.due_at = null;
+            next.deadline = null;
+            next.deadline_offset_minutes = null;
+          }
+        }
         if (Object.prototype.hasOwnProperty.call(input, 'due_at')) {
           if (input.due_at === null) {
             next.due_at = null;
@@ -2715,6 +2741,8 @@ export class TaskLedger implements TaskSource {
         'last_temporal_checked_at',
         'next_temporal_check_at',
         'last_temporal_attempt_id',
+        'review_started_at',
+        'review_anchor_event_id',
       ] as const;
       const changedFields = persistedColumns.filter((column) => next[column] !== existing[column]);
       const afterRevision = existing.revision + 1;

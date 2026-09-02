@@ -175,13 +175,13 @@ describe('Operator tasks API', () => {
   it('combines status, source_channel, and limit filters', async () => {
     ledger.create({
       title: 'matching one',
-      status: 'review',
+      status: 'in_progress',
       source_channel: 'synthetic:channel-a',
       deadline: '2026-07-15',
     });
     ledger.create({
       title: 'matching two',
-      status: 'review',
+      status: 'in_progress',
       source_channel: 'synthetic:channel-a',
       deadline: '2026-07-16',
     });
@@ -192,12 +192,12 @@ describe('Operator tasks API', () => {
     });
     ledger.create({
       title: 'wrong channel',
-      status: 'review',
+      status: 'in_progress',
       source_channel: 'synthetic:channel-b',
     });
 
     const response = await request(app).get(
-      '/api/operator/tasks?status=review&source_channel=synthetic%3Achannel-a&limit=1'
+      '/api/operator/tasks?status=in_progress&source_channel=synthetic%3Achannel-a&limit=1'
     );
 
     expect(response.status).toBe(200);
@@ -209,7 +209,7 @@ describe('Operator tasks API', () => {
   it('serializes only the documented wire fields', async () => {
     const created = ledger.create({
       title: 'Review release candidate',
-      status: 'review',
+      status: 'in_progress',
       priority: 'high',
       assignee: 'worker-a',
       deadline: '2026-07-15',
@@ -224,7 +224,7 @@ describe('Operator tasks API', () => {
     expect(response.body.tasks[0]).toEqual({
       id: created.id,
       title: 'Review release candidate',
-      status: 'review',
+      status: 'in_progress',
       priority: 'high',
       assignee: 'worker-a',
       due_date: '2026-07-15',
@@ -345,7 +345,11 @@ describe('Operator tasks API', () => {
   });
 
   it('approves with confirmed only and preserves status and priority', async () => {
-    const created = ledger.create({ title: 'Approve task', status: 'review', priority: 'low' });
+    const created = ledger.create({
+      title: 'Approve task',
+      status: 'in_progress',
+      priority: 'low',
+    });
 
     const response = await request(app)
       .patch(`/api/operator/tasks/${created.id}`)
@@ -354,7 +358,7 @@ describe('Operator tasks API', () => {
     expect(response.status).toBe(200);
     expect(response.body.task).toMatchObject({
       confirmed: true,
-      status: 'review',
+      status: 'in_progress',
       priority: 'low',
     });
   });
