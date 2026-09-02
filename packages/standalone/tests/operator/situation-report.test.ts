@@ -5,10 +5,7 @@
  * Agent injected (vi.fn) - no real CLI. Synthetic data only.
  */
 import { describe, it, expect, vi } from 'vitest';
-import {
-  SituationReporter,
-  OPERATOR_FULL_REPORT_TAG,
-} from '../../src/operator/situation-report.js';
+import { SituationReporter } from '../../src/operator/situation-report.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
 import type { ArtifactProvenance } from '../../src/operator/report-carry.js';
 import type { OwnerReportContextV1 } from '../../src/operator/report-context.js';
@@ -722,29 +719,18 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(evidence.channels[0]?.count).toBe(20);
   });
 
-  it('full self-gather teaches the tool_call protocol and forbids native gathering (M3 GAP1)', () => {
+  it('the packet-only full prompt excludes tool protocol and legacy gathering', () => {
     const r = new SituationReporter({
       selfGatherLines: ['kagemusha_tasks({status:"needs_review"}) for the board'],
     });
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full', ownerReportContext());
-    expect(full).toContain(OPERATOR_FULL_REPORT_TAG); // machine frame tag present
     expect(full).not.toContain('```tool_call');
     expect(full).not.toContain('kagemusha_tasks');
     expect(full).toContain('single canonical evidence packet');
-    // digest stays protocol-free and tag-free
+    // digest stays protocol-free.
     const digest = r.buildPrompt('digest');
     expect(digest).not.toContain('```tool_call');
-    expect(digest).not.toContain(OPERATOR_FULL_REPORT_TAG);
-  });
-
-  it('full without self-gather stays plain (tag present, no protocol/gather block)', () => {
-    const r = new SituationReporter(); // no selfGatherLines
-    r.recordWindow([ev(1, 'slack:a', 'hi')]);
-    const full = r.buildPrompt('full', ownerReportContext());
-    expect(full).toContain(OPERATOR_FULL_REPORT_TAG);
-    expect(full).not.toContain('```tool_call');
-    expect(full).not.toContain('primary source');
   });
 
   it('full self-gather invites an agent-judged mama_save write (M3 GAP2)', () => {

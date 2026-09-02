@@ -95,7 +95,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     });
 
     const output = await ask.full({
-      prompt: '[operator_full_report]\npacket prompt',
+      prompt: 'packet prompt',
       context: ownerReportContext(),
       contextSha256: 'a'.repeat(64),
     });
@@ -103,7 +103,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     expect(output).toBe('grounded report');
     expect(calls).toEqual([
       {
-        prompt: '[operator_full_report]\npacket prompt',
+        prompt: 'packet prompt',
         sourceMessageRef: `owner-report-context:${'a'.repeat(64)}`,
       },
     ]);
@@ -117,7 +117,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
 
     await expect(
       ask.full({
-        prompt: '[operator_full_report]\npacket prompt',
+        prompt: 'packet prompt',
         context: ownerReportContext(),
         contextSha256: 'b'.repeat(64),
       })
@@ -136,7 +136,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
 
     await expect(
       ask.full({
-        prompt: '[operator_full_report]\npacket prompt',
+        prompt: 'packet prompt',
         context: ownerReportContext(),
         contextSha256: 'c'.repeat(64),
       })
@@ -151,7 +151,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     });
 
     await ask.full({
-      prompt: '[operator_full_report]\npacket prompt',
+      prompt: 'packet prompt',
       context: ownerReportContext(),
       contextSha256: 'd'.repeat(64),
     });
@@ -208,25 +208,15 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     ]);
   });
 
-  const TAG = '[operator_full_report]';
-
-  it('does not infer full-report quality from tool history on the ordinary ask path', async () => {
+  it('does not infer ordinary report quality from tool history', async () => {
     const logs: string[] = [];
     const run = async () => ({
       response: 'the report',
       history: [...exchange('kagemusha_tasks'), ...exchange('mama_save')],
     });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    const out = await ask(`${TAG}\nwrite the report`);
+    const out = await ask('write the report');
     expect(out).toBe('the report');
-    expect(logs).toEqual([]);
-  });
-
-  it('does not emit the retired no-gather warning from prompt tags', async () => {
-    const logs: string[] = [];
-    const run = async () => ({ response: 'report', history: [...exchange('Bash')] });
-    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    await ask(`${TAG}\nwrite`);
     expect(logs).toEqual([]);
   });
 
@@ -234,7 +224,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     const logs: string[] = [];
     const run = async () => ({ response: '   ', history: [...exchange('Bash')] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    await expect(ask(`${TAG}\nwrite`)).rejects.toThrow(/empty report response/);
+    await expect(ask('write ordinary report')).rejects.toThrow(/empty report response/);
     expect(logs).toEqual([]);
   });
 
@@ -253,16 +243,16 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       ],
     });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    const out = await ask(`${TAG}\nwrite`);
+    const out = await ask('write digest');
     expect(out).toBe('1) key situation: quiet day');
     expect(logs.join('\n')).toMatch(/recovered from an earlier assistant turn/);
   });
 
-  it('a digest prompt (no tag) does not warn about missing gather tools', async () => {
+  it('a digest prompt does not warn about missing gather tools', async () => {
     const logs: string[] = [];
     const run = async () => ({ response: 'digest', history: [] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    await ask('short digest, no tag');
+    await ask('short digest');
     expect(logs.join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 });

@@ -41,20 +41,26 @@ scenario IDs from this document.
   submission anchor, every raw ref must remain in the task's connector/channel, and the canonical
   packet range must equal `review_started_at..checkAt`. Later same-channel feedback is now allowed
   inside that compiler-enforced range instead of being incorrectly required to equal the anchor.
-  Missing anchors, wrong channels, and widened ranges fail closed.
+  The Gateway executor now passes that verified window to its post-compile source check; a real
+  adapter-backed compile covers the anchor plus later feedback. Missing anchors, wrong channels,
+  and out-of-range anchors fail closed through the same executor path.
 - **TG-06 lifecycle authority:** a completed or failed Board workorder can no longer mutate
   lifecycle fields on an unrelated owner task through a retained attempt context. Active Board
-  judgments still require the revision actually read. Leaving a verified review clears its
-  derived clock and anchor state, while legacy review rows without both verified anchor fields
-  cannot acquire or load Temporal ownership.
+  judgments still require the revision actually read, including a duplicate-source `task_create`
+  that resolves to an UPSERT. The optional duplicate revision is projected through the canonical
+  registry and Code-Act HostBridge; genuinely new creates do not require it. Leaving a verified
+  review clears its derived clock and anchor state, while legacy review rows without both verified
+  anchor fields cannot acquire or load Temporal ownership.
 - **TG-03/TG-04/TG-05 report overhead:** the packet-only full-report path retains one fresh model
   turn and its bounded packet audit. The retired report gather/write-history classifier, marker
   dependency, and their tests were removed; digest-only earlier-text recovery remains separate.
-- **Evidence:** `temporal-work-context.test.ts`, `task-ledger.test.ts`,
+- **Evidence:** `temporal-work-context.test.ts`, `gateway-tool-executor.test.ts`,
+  `tool-registry.test.ts`, `host-bridge.test.ts`, `task-ledger.test.ts`,
   `temporal-reconcile.test.ts`, `external-lifecycle-executor.test.ts`, `report-run.test.ts`,
-  `persistent-cli-process-stream.test.ts`, and `agent-loop.test.ts`. The Task 3 focused gate passed
-  13 files and 423 tests; standalone typecheck, changed-file ESLint/Prettier, and
-  `git diff --check` passed. This is code evidence only; a real owner report remains pending.
+  `persistent-cli-process-stream.test.ts`, and `agent-loop.test.ts`. The corrected Task 3 focused
+  gate passed 17 files and 618 tests; the changed-surface gate passed six files and 197 tests.
+  Standalone typecheck, changed-file ESLint/Prettier, and `git diff --check` passed. This is code
+  evidence only; a real owner report remains pending.
 
 ### Owner-agent event subject correction: 2026-08-19
 

@@ -490,10 +490,10 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
-    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
+    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
 });
 register({
   name: 'task_update',
