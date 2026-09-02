@@ -19,9 +19,9 @@
  */
 import type { AskAgent } from './trigger-author.js';
 import type { ArtifactProvenance } from './report-carry.js';
+import type { OwnerReportContextV1 } from './report-context.js';
 
-/** Dedicated persona session lane for operator reports; isolates the multi-turn gather loop from
- *  chat. runWithContent honors options.sessionKey (agent-loop.ts:879). */
+/** Dedicated persona session lane for fresh packet-only report composition. */
 export const OPERATOR_REPORT_SESSION_KEY = 'operator:report';
 
 /**
@@ -220,27 +220,18 @@ function uniq(names: string[]): string[] {
 }
 
 /**
- * Build the operator-log lines for one report.
- * isFullReport gates the no-fallback gather WARNING (only the FULL report is instructed to gather;
- * the digest is intentionally tool-free, so absence of gather tools there is normal).
+ * Legacy structural tool-history summary retained for non-report diagnostics. Packet-only report
+ * quality is audited by formatReportContextAudit and never inferred from tool use.
  */
 export function formatReportToolAudit(audit: ReportToolAudit, isFullReport: boolean): string[] {
   const lines: string[] = [];
   if (audit.writeTools.length > 0) {
     lines.push(`[trigger-loop] full report: agent wrote via ${uniq(audit.writeTools).join(', ')}`);
   }
-  if (isFullReport) {
-    if (audit.gatherTools.length === 0) {
-      lines.push(
-        '[trigger-loop] full report WARNING: agent executed NO gateway gather tools ' +
-          '(none called, or every call errored/denied) - task-board substance NOT verified; ' +
-          'the report may reflect native-tool, denied, or window-only gathering'
-      );
-    } else {
-      lines.push(
-        `[trigger-loop] full report: agent gathered via ${uniq(audit.gatherTools).join(', ')}`
-      );
-    }
+  if (isFullReport && audit.gatherTools.length > 0) {
+    lines.push(
+      `[trigger-loop] full report: agent gathered via ${uniq(audit.gatherTools).join(', ')}`
+    );
   }
   return lines;
 }
@@ -248,6 +239,8 @@ export function formatReportToolAudit(audit: ReportToolAudit, isFullReport: bool
 export interface PersonaReportRunResult {
   response: string;
   history: ReadonlyArray<ReportHistoryMessage>;
+  /** Model iterations consumed by this run. Full reports require exactly one. */
+  turns?: number;
   /** The run that produced this text. Absent when the backend records no run. */
   modelRunId?: string | null;
   /** Set by the agent loop when a run existed but its handle could not be committed. */
@@ -256,7 +249,15 @@ export interface PersonaReportRunResult {
 /** E = the envelope type; generic keeps this module free of agent/envelope imports while start.ts
  *  gets full inference (no casts): E is inferred from the injected issuer's return type. */
 export interface PersonaReportRunner<E = unknown> {
-  (prompt: string, envelope?: E): Promise<PersonaReportRunResult>;
+  (prompt: string, envelope?: E, sourceMessageRef?: string): Promise<PersonaReportRunResult>;
+}
+export interface FullReportRunInput {
+  prompt: string;
+  context: OwnerReportContextV1;
+  contextSha256: string;
+}
+export interface PersonaReportAsk extends AskAgent {
+  full(input: FullReportRunInput): Promise<string>;
 }
 export interface PersonaReportAskDeps<E = unknown> {
   run: PersonaReportRunner<E>;
@@ -290,10 +291,35 @@ export interface PersonaReportAskDeps<E = unknown> {
  * executed none; observability line for every write), and enforce the empty-report guard
  * (M2 semantics).
  */
-export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E>): AskAgent {
-  return async (prompt: string): Promise<string> => {
+export function formatReportContextAudit(
+  context: OwnerReportContextV1,
+  contextSha256: string
+): string {
+  const sourceStates = Object.entries(context.sources)
+    .map(([name, source]) => `${name}=${source.state}`)
+    .join(',');
+  return (
+    `[trigger-loop] full report context schema=${context.schemaVersion} sha256=${contextSha256} ` +
+    `sources=${sourceStates} messages=${context.windowEvidence.messageCount} ` +
+    `tasks=${context.taskCoverage.returned}/${context.taskCoverage.total} ` +
+    `correlations=${context.correlations.coverage.total} ` +
+    `changes=${context.changes.returned}/${context.changes.total} ` +
+    `trello_complete=${context.trello.complete} trello_truncated=${context.trello.truncated} ` +
+    `packet_bytes=${context.packet.bytes} packet_truncated=${context.packet.truncated} ` +
+    `caveats=${context.caveats.length}`
+  );
+}
+
+export function createPersonaReportAsk<E = unknown>(
+  deps: PersonaReportAskDeps<E>
+): PersonaReportAsk {
+  const execute = async (prompt: string, fullInput?: FullReportRunInput): Promise<string> => {
     const envelope = deps.issueEnvelope ? await deps.issueEnvelope() : undefined;
-    const result = await deps.run(prompt, envelope);
+    const result = await deps.run(
+      prompt,
+      envelope,
+      fullInput ? `owner-report-context:${fullInput.contextSha256}` : undefined
+    );
     const { response, history } = result;
     deps.onRunProvenance?.(
       result.modelRunId
@@ -304,12 +330,14 @@ export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E
               result.modelRunProvenance === 'commit_failed' ? 'commit_failed' : 'no_run_handle',
           }
     );
-    const isFull = prompt.includes(deps.fullReportTag);
-    for (const line of formatReportToolAudit(summarizeReportToolUse(history), isFull)) {
-      deps.log(line);
+    if (fullInput) {
+      if (result.turns !== 1) {
+        throw new Error('Full owner report must complete in exactly one model turn');
+      }
+      deps.log(formatReportContextAudit(fullInput.context, fullInput.contextSha256));
     }
     let reportText = (response ?? '').trim();
-    if (reportText === '') {
+    if (reportText === '' && !fullInput) {
       // Text-gateway multi-turn runs return only the LAST assistant segment
       // (agent-loop extractTextResponse), and after a closing tool round that
       // segment is often empty - the composed report body lives in an EARLIER
@@ -327,6 +355,9 @@ export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E
     }
     return reportText;
   };
+  const ask = (async (prompt: string): Promise<string> => execute(prompt)) as PersonaReportAsk;
+  ask.full = async (input: FullReportRunInput): Promise<string> => execute(input.prompt, input);
+  return ask;
 }
 
 /** Last non-empty assistant TEXT across the run history (structural walk; text

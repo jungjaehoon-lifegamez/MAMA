@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -953,6 +954,61 @@ describe('FilePendingReportStore', () => {
       deliveryId: 'operator-report:on_demand_full:request-1',
       occurrence: { kind: 'on_demand_full' },
     });
+  });
+
+  it('TG-05/TG-06 round-trips byte-identical full-report context and SHA before model admission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    const contextJson = '{"canonical":"owner-report-context","version":1}';
+    const contextSha256 = createHash('sha256').update(contextJson).digest('hex');
+    const store = new FilePendingReportStore(path);
+
+    store.save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: bindRequest({
+        mode: 'full',
+        deliveryId: 'operator-report:scheduled:2026-09-02:09',
+        occurrence: {
+          kind: 'scheduled_full',
+          hourKey: '2026-09-02:09',
+          firedAtIso: '2026-09-02T00:00:00.000Z',
+        },
+        acceptedAtIso: '2026-09-02T00:00:00.000Z',
+        contextJson,
+        contextSha256,
+      }),
+    });
+
+    expect(store.load()?.request).toMatchObject({ contextJson, contextSha256 });
+    expect(store.load()?.request?.contextJson).toBe(contextJson);
+  });
+
+  it('TG-06 refuses a pending packet whose stored SHA does not match its exact bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+
+    expect(() =>
+      new FilePendingReportStore(path).save({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        request: bindRequest({
+          mode: 'full',
+          deliveryId: 'operator-report:on_demand_full:request-sha-mismatch',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-09-02T00:00:00.000Z',
+          },
+          acceptedAtIso: '2026-09-02T00:00:00.000Z',
+          contextJson: '{"canonical":"owner-report-context"}',
+          contextSha256: '0'.repeat(64),
+        }),
+      })
+    ).toThrow('invalid pending operator report state');
   });
 
   it('quarantines malformed nested report state instead of disabling the trigger loop', async () => {

@@ -341,7 +341,7 @@ export async function getTrelloKanban(
   return {
     observedAt: new Date(snapshot.at).toISOString(),
     cacheAgeMs: Math.max(0, Date.now() - snapshot.at),
-    complete: boards.every((board) => board.status === 'ok') && !truncated,
+    complete: boards.length > 0 && boards.every((board) => board.status === 'ok') && !truncated,
     truncated,
     boards,
     columns,

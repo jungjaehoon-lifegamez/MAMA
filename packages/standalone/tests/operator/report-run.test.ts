@@ -2,6 +2,7 @@
  * Unit tests for the M3 report tool-use audit (pure). Synthetic history only; no CLI/LLM.
  */
 import { describe, it, expect } from 'vitest';
+import type { OwnerReportContextV1 } from '../../src/operator/report-context.js';
 import {
   summarizeReportToolUse,
   stripMcpPrefix,
@@ -64,7 +65,7 @@ describe('report tool-use audit (M3-T1)', () => {
     expect(a.gatherTools).toEqual([]); // emissions happened, executions did not
     expect(a.writeTools).toEqual([]);
     expect(a.all).toEqual(['kagemusha_tasks', 'mama_recall', 'mama_save']); // honest inventory
-    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   it('SUCCESSFUL result whose nested payload mentions "success":false is NOT excluded (PR #119)', () => {
@@ -81,7 +82,7 @@ describe('report tool-use audit (M3-T1)', () => {
 
   it('full report with NO gather tool -> loud warning (no-fallback)', () => {
     const lines = formatReportToolAudit({ gatherTools: [], writeTools: [], all: [] }, true);
-    expect(lines.join('\n')).toMatch(/NO gateway gather tools/);
+    expect(lines.join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   it('full report with gather tools -> positive gather line, no warning', () => {
@@ -114,7 +115,147 @@ describe('report tool-use audit (M3-T1)', () => {
 
 import { createPersonaReportAsk } from '../../src/operator/report-run.js';
 
+function ownerReportContext(): OwnerReportContextV1 {
+  return {
+    schemaVersion: 'mama.owner-report-context/v1',
+    observedAt: '2026-09-02T03:04:05.000Z',
+    windowEvidence: {
+      start: '2026-09-01T03:04:05.000Z',
+      end: '2026-09-02T03:04:05.000Z',
+      channelCount: 1,
+      messageCount: 2,
+      channels: [],
+      triggerActivity: [],
+    },
+    sources: {
+      claims: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+      tasks: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+      trello: {
+        state: 'partial',
+        observedAt: '2026-09-02T03:04:00.000Z',
+        reason: 'trello_snapshot_incomplete',
+      },
+      changes: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
+    },
+    packet: { bytes: 2048, truncated: false },
+    taskCoverage: { total: 3, returned: 2, truncated: true },
+    currentClaims: [],
+    tasks: [],
+    trello: {
+      observedAt: '2026-09-02T03:04:00.000Z',
+      complete: false,
+      truncated: false,
+      boards: [],
+      columns: [],
+    },
+    correlations: {
+      coverage: {
+        total: 2,
+        matched: 1,
+        unmatched: 0,
+        ambiguous: 0,
+        historical_only: 1,
+        not_applicable: 0,
+      },
+      rows: [],
+    },
+    changes: {
+      since: '2026-09-01T03:04:05.000Z',
+      total: 4,
+      returned: 4,
+      coverage: { attributed: 3, unattributed: 1 },
+      rows: [],
+    },
+    caveats: ['trello_snapshot_incomplete'],
+  };
+}
+
 describe('createPersonaReportAsk (M3-T4)', () => {
+  it('TG-05 binds the packet SHA to one fresh full-report model turn', async () => {
+    const calls: Array<{ prompt: string; sourceMessageRef?: string }> = [];
+    const ask = createPersonaReportAsk({
+      run: async (prompt, _envelope, sourceMessageRef) => {
+        calls.push({ prompt, sourceMessageRef });
+        return { response: 'grounded report', history: [], turns: 1, modelRunId: 'mr_packet' };
+      },
+      log: () => {},
+      fullReportTag: '[operator_full_report]',
+    });
+
+    const output = await ask.full({
+      prompt: '[operator_full_report]\npacket prompt',
+      context: ownerReportContext(),
+      contextSha256: 'a'.repeat(64),
+    });
+
+    expect(output).toBe('grounded report');
+    expect(calls).toEqual([
+      {
+        prompt: '[operator_full_report]\npacket prompt',
+        sourceMessageRef: `owner-report-context:${'a'.repeat(64)}`,
+      },
+    ]);
+  });
+
+  it('TG-05 refuses a full report that required more than one model turn', async () => {
+    const ask = createPersonaReportAsk({
+      run: async () => ({ response: 'late report', history: [], turns: 2 }),
+      log: () => {},
+      fullReportTag: '[operator_full_report]',
+    });
+
+    await expect(
+      ask.full({
+        prompt: '[operator_full_report]\npacket prompt',
+        context: ownerReportContext(),
+        contextSha256: 'b'.repeat(64),
+      })
+    ).rejects.toThrow('exactly one model turn');
+  });
+
+  it('TG-06 does not recover an empty full response from an earlier assistant turn', async () => {
+    const ask = createPersonaReportAsk({
+      run: async () => ({
+        response: '',
+        turns: 1,
+        history: [{ role: 'assistant', content: [{ type: 'text', text: 'stale earlier report' }] }],
+      }),
+      log: () => {},
+      fullReportTag: '[operator_full_report]',
+    });
+
+    await expect(
+      ask.full({
+        prompt: '[operator_full_report]\npacket prompt',
+        context: ownerReportContext(),
+        contextSha256: 'c'.repeat(64),
+      })
+    ).rejects.toThrow('empty report response');
+  });
+
+  it('TG-03/TG-04 audits only packet schema, source states, counts, coverage, and completeness', async () => {
+    const logs: string[] = [];
+    const ask = createPersonaReportAsk({
+      run: async () => ({ response: 'report', history: [], turns: 1 }),
+      log: (line) => logs.push(line),
+      fullReportTag: '[operator_full_report]',
+    });
+
+    await ask.full({
+      prompt: '[operator_full_report]\npacket prompt',
+      context: ownerReportContext(),
+      contextSha256: 'd'.repeat(64),
+    });
+
+    expect(logs).toEqual([expect.stringContaining('schema=mama.owner-report-context/v1')]);
+    expect(logs[0]).toContain('trello=partial');
+    expect(logs[0]).toContain('messages=2');
+    expect(logs[0]).toContain('tasks=2/3');
+    expect(logs[0]).toContain('correlations=2');
+    expect(logs[0]).toContain('changes=4/4');
+    expect(logs[0]).not.toContain('trello_snapshot_incomplete');
+    expect(logs.join('\n')).not.toContain('gateway gather tools');
+  });
   // The boundary used to return prose and drop everything else, so a delivered report
   // could not be traced to the run that wrote it - the same defect the gateway turn seam
   // had, one layer in.
@@ -163,7 +304,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
 
   const TAG = '[operator_full_report]';
 
-  it('audits + logs gathered and written EXECUTIONS, then returns the response', async () => {
+  it('does not infer full-report quality from tool history on the ordinary ask path', async () => {
     const logs: string[] = [];
     const run = async () => ({
       response: 'the report',
@@ -172,24 +313,23 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
     const out = await ask(`${TAG}\nwrite the report`);
     expect(out).toBe('the report');
-    expect(logs.join('\n')).toMatch(/gathered via kagemusha_tasks/);
-    expect(logs.join('\n')).toMatch(/wrote via mama_save/);
+    expect(logs).toEqual([]);
   });
 
-  it('full report with no gateway gather EXECUTION warns loudly (no-fallback)', async () => {
+  it('does not emit the retired no-gather warning from prompt tags', async () => {
     const logs: string[] = [];
     const run = async () => ({ response: 'report', history: [...exchange('Bash')] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
     await ask(`${TAG}\nwrite`);
-    expect(logs.join('\n')).toMatch(/NO gateway gather tools/);
+    expect(logs).toEqual([]);
   });
 
-  it('empty response throws (no-fallback) but the audit is logged BEFORE the throw', async () => {
+  it('empty ordinary response still fails without a gather audit fallback', async () => {
     const logs: string[] = [];
     const run = async () => ({ response: '   ', history: [...exchange('Bash')] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
     await expect(ask(`${TAG}\nwrite`)).rejects.toThrow(/empty report response/);
-    expect(logs.join('\n')).toMatch(/NO gateway gather tools/);
+    expect(logs).toEqual([]);
   });
 
   it('empty FINAL segment recovers the report body from an earlier assistant turn', async () => {
@@ -368,7 +508,7 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
     );
     expect(a.gatherTools).toEqual([]);
     expect(a.writeTools).toEqual([]);
-    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   it('rejects the old unversioned GatewayToolResult message contract', () => {
@@ -383,7 +523,7 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
     });
     const a = summarizeReportToolUse(history);
     expect(a.gatherTools).toEqual([]);
-    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   // And the same, wrapped: a run that touched external evidence gets untrusted-content
@@ -414,7 +554,7 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
   it('a result with neither shape still yields nothing (no invented evidence)', () => {
     const a = summarizeReportToolUse(exchange('mcp__code-act__code_act', { body: 'done.' }));
     expect(a.gatherTools).toEqual([]);
-    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   it('strips the prefix for a directly-called gateway tool too', () => {
@@ -429,7 +569,7 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
     const a = summarizeReportToolUse([...codeActExchange(['mama_save', 'report_publish'])]);
     expect(a.gatherTools).toEqual([]);
     expect(a.writeTools).toEqual(['mama_save', 'report_publish']);
-    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 
   it('an errored code_act does NOT count its nested tools (executed-only semantics)', () => {

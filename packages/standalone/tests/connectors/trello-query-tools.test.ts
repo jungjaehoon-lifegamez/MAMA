@@ -177,6 +177,15 @@ describe('searchTrelloCards', () => {
 });
 
 describe('getTrelloKanban + snapshot cache', () => {
+  it('treats a zero-board configuration as unavailable rather than complete-empty truth', async () => {
+    writeConfig({ channels: {} });
+    const snapshot = await getTrelloKanban({}, { configPath, fetchFn: vi.fn() as never });
+
+    expect(snapshot.boards).toEqual([]);
+    expect(snapshot.columns).toEqual([]);
+    expect(snapshot.complete).toBe(false);
+  });
+
   const boardLists = [
     {
       id: 'l1',

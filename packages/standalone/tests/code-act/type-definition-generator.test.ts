@@ -86,6 +86,13 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toMatch(/declare function mama_save[\s\S]*context_packet_id\?: string/);
     });
 
+    it('TG-04 projects the revision and verified-review evidence ABI on task_update', () => {
+      const dts = TypeDefinitionGenerator.generate(policy(2, ['task_update']));
+      expect(dts).toMatch(/declare function task_update[\s\S]*expected_revision\?: number/);
+      expect(dts).toMatch(/declare function task_update[\s\S]*context_packet_id\?: string/);
+      expect(dts).toMatch(/declare function task_update[\s\S]*review_anchor_ref\?: string/);
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/path: string/);

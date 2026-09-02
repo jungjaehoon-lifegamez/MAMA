@@ -225,6 +225,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_tasks',
           'mama_search',
           'report_publish',
+          'task_external_correlation',
           'task_external_bind',
           'task_lifecycle_reconcile',
           'task_create',
@@ -387,7 +388,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
     });
 
-    it('gives the operator report lane a Code-Act role so it can execute gather tools', () => {
+    it('TG-03/TG-04/TG-05 gives packet-only reports no Code-Act or gateway tools', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const context = policy.agentContext;
       const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
@@ -397,36 +398,16 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         platform: 'cli',
         roleName: 'operator-report',
         backend: 'codex',
-        // The report may mama_save, matching the write tier its envelope already carries.
-        tier: 2,
+        tier: 1,
         role: { blockedTools: [], model: 'gpt-5.4' },
       });
-      // The regression this guards: without a role, roleAllowsOuterCodeAct() returns
-      // false, the generic gateway catalog is stripped, and the report agent runs with
-      // ZERO tool definitions - every full report then logs "executed NO gateway gather
-      // tools" while still being sent.
       expect(
         ToolRegistry.getHostToolDefinitions({
           allowedTools: context.role.allowedTools,
           blockedTools: context.role.blockedTools,
         }).some((tool) => tool.name === CODE_ACT_MARKER)
-      ).toBe(true);
-      expect(projected.names).toEqual([
-        'changes_read',
-        'kagemusha_entities',
-        'kagemusha_messages',
-        'kagemusha_overview',
-        'kagemusha_tasks',
-        'mama_provenance',
-        'mama_recall',
-        'mama_save',
-        'mama_search',
-        'report_publish',
-        'schedule_upcoming',
-        'task_external_correlation',
-        'task_list',
-        'trello_kanban',
-      ]);
+      ).toBe(false);
+      expect(projected.names).toEqual([]);
       // Prompt/permission coherence: advertise exactly what the executor will run.
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
@@ -440,32 +421,14 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       }
     });
 
-    it('covers every gather tool the report audit counts as substance', () => {
+    it('removes the retired report gather surface entirely', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const projected = projectCodeActToolPolicy({
         tier: policy.agentContext.tier,
         role: policy.agentContext.role,
       });
-      // The report must be able to execute every tool its gather instructions name.
-      for (const gather of [
-        'kagemusha_overview',
-        'kagemusha_entities',
-        'kagemusha_tasks',
-        'kagemusha_messages',
-        'mama_provenance',
-        'mama_recall',
-        'mama_search',
-        'task_list',
-        'trello_kanban',
-        'task_external_correlation',
-        'schedule_upcoming',
-      ]) {
-        expect(projected.names).toContain(gather);
-      }
-      // Deliberately absent: envelope scope is connector-level, so granting the board
-      // connector for the whole-board read would otherwise also permit raw card bodies
-      // to be compiled into this tier-2 lane, which can write durable memory.
-      expect(projected.names).not.toContain('context_compile');
+      expect(projected.names).toEqual([]);
+      expect(policy.gatewayToolsPrompt).toBe('');
     });
 
     it.each([
@@ -500,14 +463,14 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       }
     );
 
-    it('TG-06 projects the report private bundle in both enabled and disabled directions', () => {
+    it('TG-03/TG-04 keeps report composition tool-free in both private connector directions', () => {
       const enabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const disabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', privatePolicy(false));
 
-      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_tasks');
-      expect(enabled.gatewayToolsPrompt).toContain('kagemusha_tasks');
-      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
-      expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
+      expect(enabled.agentContext.role.allowedTools).toEqual([]);
+      expect(enabled.gatewayToolsPrompt).toBe('');
+      expect(disabled.agentContext.role.allowedTools).toEqual([]);
+      expect(disabled.gatewayToolsPrompt).toBe('');
     });
 
     it('wires one temporal runtime from projected and registered transport tools', () => {

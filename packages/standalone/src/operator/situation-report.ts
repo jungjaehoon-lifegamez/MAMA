@@ -18,7 +18,6 @@
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
 import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
-import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import {
   isArtifactProvenance,
@@ -161,28 +160,6 @@ export interface SituationReporterSnapshotV2 {
 export type SituationReporterSnapshot = SituationReporterSnapshotV1 | SituationReporterSnapshotV2;
 
 export interface SituationReporterOptions {
-  /** Model provider controls only the tool-call syntax; report workflow/content stays shared. */
-  backend?: BackendType;
-  /**
-   * M2.3: tool-call instructions injected into the FULL report framing so the agent
-   * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
-   * lesson from the reference owner console: report prompts instruct the agent to call tools
-   * instead of relying on a low-quality deterministic report builder. The lines
-   * are injected from the runtime wiring (which knows the daemon's toolset); this
-   * module stays generic. Digest mode never uses them (frequent + must stay light).
-   *
-   * A zero-arg provider is resolved at fire time (buildPrompt runs per report),
-   * so runtime wiring can inject freshly anchored gather lines (e.g. a delta
-   * `since=<last successful report>`) without rebuilding the reporter.
-   */
-  selfGatherLines?: string[] | (() => string[]);
-  /**
-   * Dual-output mechanism: lines instructing the FULL report run to also
-   * publish the operator board slots (report_publish) before writing the text
-   * report. Injected from runtime wiring (board-slot-instructions.ts); digest mode
-   * never publishes the board.
-   */
-  boardPublishLines?: string[];
   /**
    * G2 success signal: called with the trigger ids the agent says it actually
    * drew on for the sent report (parsed from the stripped USED_TRIGGERS
@@ -441,13 +418,18 @@ export class SituationReporter {
   async prepareReport(
     askAgent: AskAgent,
     mode: ReportMode,
-    deliveryId?: string
+    deliveryId?: string,
+    context?: OwnerReportContextV1
   ): Promise<PreparedSituationReport | null> {
     // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
     if (mode !== 'full' && !this.hasActivity()) return null;
 
-    const raw = (await askAgent(this.buildPrompt(mode))).trim();
+    const raw = (
+      await askAgent(
+        mode === 'full' ? this.buildPrompt('full', context!) : this.buildPrompt('digest')
+      )
+    ).trim();
     if (raw === '' || /^NOTHING\b/i.test(raw)) {
       if (mode === 'full') {
         throw new Error('Full owner report returned no content');
@@ -568,12 +550,41 @@ export class SituationReporter {
     this.reset();
   }
 
+  /**
+   * Detached, model-safe evidence for one full-report occurrence. Channel and author identities
+   * were already reduced to trusted display labels when the window was recorded; raw ids and
+   * recalled memory never cross this boundary.
+   */
+  buildWindowEvidence(start: string, end: string): ReportWindowEvidence {
+    return {
+      start,
+      end,
+      channelCount: this.windowByChannel.size,
+      messageCount: this.windowTotal,
+      channels: [...this.windowByChannel.values()]
+        .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+        .map((channel) => ({
+          label: channel.label,
+          count: channel.count,
+          excerpts: channel.excerpts.map((excerpt) => ({ ...excerpt })),
+        })),
+      triggerActivity: [...this.fireAgg.values()]
+        .sort((left, right) => right.count - left.count || left.kind.localeCompare(right.kind))
+        .map((fire) => ({
+          kind: fire.kind,
+          count: fire.count,
+          topics: [...fire.topics].sort(),
+        })),
+    };
+  }
+
   async report(
     askAgent: AskAgent,
     output: Pick<OutputSink, 'send'>,
-    mode: ReportMode
+    mode: ReportMode,
+    context?: OwnerReportContextV1
   ): Promise<boolean> {
-    const prepared = await this.prepareReport(askAgent, mode);
+    const prepared = await this.prepareReport(askAgent, mode, undefined, context);
     if (!prepared) {
       return false;
     }
@@ -592,14 +603,11 @@ export class SituationReporter {
 
   buildPrompt(mode: 'full', context: OwnerReportContextV1): string;
   buildPrompt(mode: 'digest'): string;
-  /**
-   * Temporary Task-2 compatibility for callers that Task 3 will wire to the compiler.
-   * This is a compile-time transition seam, not a fallback after packet compilation fails.
-   */
-  buildPrompt(mode: 'full'): string;
-  buildPrompt(mode: ReportMode): string;
   /** Public for testability. Explicit full reports consume one packet; digests retain M2 framing. */
   buildPrompt(mode: ReportMode, context?: OwnerReportContextV1): string {
+    if (mode === 'full' && context === undefined) {
+      throw new Error('Owner report context is required for a full report');
+    }
     if (mode === 'full' && context !== undefined) {
       const serialized = serializeOwnerReportContext(context);
       return [
@@ -636,103 +644,13 @@ export class SituationReporter {
       ([topic, content]) => `- ${topic}: ${content}`
     );
 
-    // Resolve the gather lines only for the FULL report - the digest framing never renders
-    // them, so a zero-arg PROVIDER must not be invoked (it may do real gather work) just to
-    // build a digest prompt. The guard below stays anchored on the RESOLVED array: a zero-arg
-    // provider's `.length` is its arity (0), so guarding on the raw opts value would compile
-    // cleanly and silently drop the ENTIRE gather block on every production report.
-    const gatherLines =
-      mode === 'full'
-        ? typeof this.opts.selfGatherLines === 'function'
-          ? this.opts.selfGatherLines()
-          : (this.opts.selfGatherLines ?? [])
-        : [];
-    const gatherInstructions =
-      this.opts.backend === 'codex'
-        ? [
-            'Before writing, ACTIVELY gather current context with your injected native host tools directly.',
-            'Call each tool through the native model tool interface and wait for its result before',
-            'the next call; never emit Markdown or JavaScript substitutes for tool calls.',
-            'Gather with these injected native host tools:',
-            ...gatherLines.map((line) => `- ${line}`),
-            'These tool names are already injected for this run. Do not search for them, and do',
-            'not fall back to Bash or curl against any API.',
-            'Use ONLY these injected host tools to gather. Do NOT read log files, databases, or',
-            'the filesystem with Bash, Read, or other unrelated tools - those are not the task',
-            'board and will make the report wrong. Your tool findings are the primary source;',
-            'the window summary below is only a hint.',
-            '',
-            'After gathering, if the window contains a durable decision or lesson worth keeping,',
-            'persist exactly ONE by calling the injected native mama_save host tool (type',
-            '"decision", with topic, decision, reasoning). Only save when it is genuinely',
-            'durable; skip the save otherwise. This is your judgement, not a requirement.',
-          ]
-        : this.opts.backend === 'cline'
-          ? [
-              'Before writing, ACTIVELY gather current context with the injected',
-              'mcp__code-act__code_act Hub tool. Write JavaScript that calls only the',
-              'injected TypeScript-declared gateway functions and wait for each result.',
-              'Never emit fenced tool_call JSON or claim a tool ran in prose.',
-              'Gather with these injected gateway functions:',
-              ...gatherLines.map((line) => `- ${line}`),
-              'Do not fall back to native shell, file, MCP settings, or web tools.',
-              'Your tool findings are the primary source; the window summary below is only a hint.',
-              '',
-              'After gathering, if the window contains a durable decision or lesson worth',
-              'keeping, persist exactly ONE with mama_save (type "decision", with topic,',
-              'decision, reasoning). Only save when genuinely durable; skip otherwise.',
-            ]
-          : [
-              'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
-              'Emit each call as a fenced tool_call JSON block and wait for the result before',
-              'the next call. The block format is exactly:',
-              '```tool_call',
-              '{"name": "task_list", "input": {"status": "in_progress"}}',
-              '```',
-              'Gather with these gateway tool calls:',
-              ...gatherLines.map((line) => `- ${line}`),
-              'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
-              'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
-              'blocks in your reply text - do not search for them, and do not fall back to',
-              'Bash or curl against any API.',
-              'Use ONLY these gateway tool_call blocks to gather. Do NOT read log files,',
-              'databases, or the filesystem with Bash, Read, or other native tools - those are',
-              'not the task board and will make the report wrong. Your gateway tool findings',
-              'are the primary source; the window summary below is only a hint.',
-              '',
-              'After gathering, if the window contains a durable decision or lesson worth',
-              'keeping, persist exactly ONE with a gateway tool_call to mama_save (type',
-              '"decision", with topic, decision, reasoning). Only save when it is genuinely',
-              'durable; skip the save otherwise. This is your judgement, not a requirement.',
-            ];
-
-    // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
-    // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
-    // and keeps NOTHING only for pure noise.
-    const framing =
-      mode === 'full'
-        ? [
-            OPERATOR_FULL_REPORT_TAG,
-            'You are the operator agent. Write your scheduled FULLER situation report for your owner',
-            'covering the whole window below (multiple channels, since the last full report). Group',
-            "what recurred, what is new, and what needs the owner's attention. Plain language, no",
-            'markdown tables. This scheduled report must ALWAYS arrive: if the window was quiet,',
-            'say so in one or two lines instead of skipping.',
-            "Structure the report with these sections (render the headings in the owner's language;",
-            'omit a section only when it is truly empty):',
-            '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
-            ...(gatherLines.length > 0 ? ['', ...gatherInstructions] : []),
-            ...(this.opts.boardPublishLines && this.opts.boardPublishLines.length > 0
-              ? ['', ...this.opts.boardPublishLines]
-              : []),
-          ]
-        : [
-            'You are the operator agent. Write a SHORT proactive digest for your owner about the',
-            'situation below - what happened, what recurred, and what the owner may want to look at.',
-            '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
-            'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
-            '(duplicates, bot chatter) with nothing the owner could act on.',
-          ];
+    const framing = [
+      'You are the operator agent. Write a SHORT proactive digest for your owner about the',
+      'situation below - what happened, what recurred, and what the owner may want to look at.',
+      '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
+      'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
+      '(duplicates, bot chatter) with nothing the owner could act on.',
+    ];
 
     return [
       ...framing,

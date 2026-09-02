@@ -875,11 +875,11 @@ describe('AgentLoop', () => {
     });
 
     it.each([
-      ['enabled', true, 1],
-      ['disabled', false, 0],
+      ['enabled', true],
+      ['disabled', false],
     ] as const)(
-      'TG-06 report-to-AgentLoop gives a Claude non-Code-Act run the %s private catalog exactly once',
-      async (_label, enabled, expectedDefinitions) => {
+      'TG-03/TG-04/TG-05 packet-only report gives a Claude run zero generated tools when private connectors are %s',
+      async (_label, enabled) => {
         const userOwnedGatewayExample = [
           '# User-authored CLAUDE instructions',
           '',
@@ -951,22 +951,20 @@ describe('AgentLoop', () => {
         await ask('compose the owner report');
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
-        expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
+        expect(effectivePrompt).not.toContain('**changes_read**');
         expect(effectivePrompt).not.toContain('**drive_download**');
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->/g) ?? []
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(
           new PromptSizeMonitor().check([
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
-          expectedDefinitions
-        );
+        expect(effectivePrompt).not.toContain('**kagemusha_tasks**');
       }
     );
 

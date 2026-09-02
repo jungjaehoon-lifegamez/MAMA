@@ -97,6 +97,81 @@ describe('TaskLedger', () => {
     expect(() => ledger.update(9999, { status: 'done' })).toThrow(/no task/);
   });
 
+  it('TG-06 requires and checks expected_revision for workorder lifecycle judgments', () => {
+    const task = ledger.create({
+      title: 'submitted work',
+      source_channel: 'slack:C001',
+      source_event_id: 'submission-1',
+    });
+    const workorder = ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:revision-guard',
+      input: { mode: 'full', force: true },
+    });
+    ledger.claimNextWorkOrder();
+    const origin = { workOrderAttemptId: workorder.id, requiresExpectedRevision: true };
+
+    expect(() =>
+      ledger.update(task.id, { status: 'done', latest_event: 'accepted' }, origin)
+    ).toThrow(/expected_revision/);
+    expect(() =>
+      ledger.update(
+        task.id,
+        { status: 'done', latest_event: 'accepted', expected_revision: task.revision + 1 },
+        origin
+      )
+    ).toThrow(/expected revision/);
+
+    const done = ledger.update(
+      task.id,
+      { status: 'done', latest_event: 'accepted', expected_revision: task.revision },
+      origin
+    );
+    expect(done.status).toBe('done');
+  });
+
+  it('TG-05/TG-06 derives review timing only from host-verified submission evidence', () => {
+    const submittedAt = Date.parse('2026-09-01T00:00:00.000Z');
+    const task = ledger.create({
+      title: 'submitted work',
+      source_channel: 'slack:C001',
+      source_event_id: 'submission-1',
+    });
+    const patch = {
+      status: 'review' as const,
+      latest_event: 'result submitted; acceptance pending',
+      expected_revision: task.revision,
+    };
+    const workorder = ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:review-evidence',
+      input: { mode: 'full', force: true },
+    });
+    ledger.claimNextWorkOrder();
+    expect(() =>
+      ledger.update(task.id, patch, {
+        workOrderAttemptId: workorder.id,
+        requiresExpectedRevision: true,
+      })
+    ).toThrow(/host-verified submission evidence/);
+
+    const review = ledger.update(task.id, patch, {
+      workOrderAttemptId: workorder.id,
+      requiresExpectedRevision: true,
+      verifiedReviewEvidence: {
+        contextPacketId: 'packet-1',
+        contextPacketSha256: 'a'.repeat(64),
+        eventIndexId: 'event-index-1',
+        sourceTimestampMs: submittedAt,
+        sourceChannel: 'slack:C001',
+      },
+    });
+
+    expect(review.reviewStartedAt).toBe(submittedAt);
+    expect(review.reviewAnchorEventId).toBe('event-index-1');
+    expect(review.dueAt).toBe(submittedAt + 14 * 24 * 60 * 60 * 1000);
+  });
+
   it('deadline can be cleared with null', () => {
     const t = ledger.create({ title: 'x', deadline: '2026-08-01' });
     const cleared = ledger.update(t.id, { deadline: null });
