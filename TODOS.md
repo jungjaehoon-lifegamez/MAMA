@@ -2,6 +2,22 @@
 
 ## Deferred until cognitive foundation repair is proven
 
+### Fail the full-report request, not the tick, when the packet runtime is missing
+
+**What:** In `operator-trigger-loop.ts`, `preparePendingRequest` throws when `reportAsk.full`,
+`compileFullReportContext`, or `fullReportReadScope` is absent, and the persisted pending request
+makes every later tick rethrow before the delta drain. Log the missing dependency, cancel the
+persisted request with a receipt, and return `false` so drain, commit, author, review, and the
+digest leg keep running.
+
+**Why:** Reachable only when an assembly wires a report sink without the packet runtime, which
+production wiring and the lane-wiring/E2E tests pin against. Changing tick failure semantics was
+out of scope for the foundation repair PR; review finding on #247.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Cognitive foundation repair released
+
 ### Resume the real Phase 2b human-member canary
 
 **What:** Resume the paused real two-human canary and prove registration, explicit grants,
