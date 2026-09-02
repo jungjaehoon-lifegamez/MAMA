@@ -264,10 +264,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
   });
 
   it('uses only one canonical packet as full-report evidence and ignores legacy gather overlays', () => {
-    const reporter = new SituationReporter({
-      selfGatherLines: ['LEGACY_GATHER_MARKER'],
-      boardPublishLines: ['LEGACY_BOARD_MARKER'],
-    });
+    const reporter = new SituationReporter();
     reporter.recordWindow([ev(1, 'legacy-window-channel', 'LEGACY_WINDOW_MARKER')]);
     reporter.recordFire(
       fire('internal-trigger-id', 'legacy-fire', 'legacy-window-channel', [
@@ -611,9 +608,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
   });
 
   it('full mode injects self-gather tool instructions when configured (M2.3)', () => {
-    const r = new SituationReporter({
-      selfGatherLines: ['call overview() first', 'then read the busiest channels'],
-    });
+    const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full', ownerReportContext());
     expect(full).not.toContain('call overview() first');
@@ -628,18 +623,9 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
 
   it('uses provider-specific tool instructions without duplicating the report workflow', () => {
     const gather = ['kagemusha_tasks({}) for the open board'];
-    const claude = new SituationReporter({
-      backend: 'claude',
-      selfGatherLines: gather,
-    }).buildPrompt('full', ownerReportContext());
-    const codex = new SituationReporter({ backend: 'codex', selfGatherLines: gather }).buildPrompt(
-      'full',
-      ownerReportContext()
-    );
-    const cline = new SituationReporter({ backend: 'cline', selfGatherLines: gather }).buildPrompt(
-      'full',
-      ownerReportContext()
-    );
+    const claude = new SituationReporter().buildPrompt('full', ownerReportContext());
+    const codex = new SituationReporter().buildPrompt('full', ownerReportContext());
+    const cline = new SituationReporter().buildPrompt('full', ownerReportContext());
 
     expect(claude).not.toContain('```tool_call');
     expect(claude).toContain('single canonical evidence packet');
@@ -654,9 +640,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
   });
 
   it('full mode injects board publish lines when configured; digest never does', () => {
-    const r = new SituationReporter({
-      boardPublishLines: ['BOARD: call report_publish with all four slots'],
-    });
+    const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     expect(r.buildPrompt('full', ownerReportContext())).not.toContain('report_publish');
     expect(r.buildPrompt('digest')).not.toContain('report_publish');
@@ -722,9 +706,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
   });
 
   it('the packet-only full prompt excludes tool protocol and legacy gathering', () => {
-    const r = new SituationReporter({
-      selfGatherLines: ['kagemusha_tasks({status:"needs_review"}) for the board'],
-    });
+    const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full', ownerReportContext());
     expect(full).not.toContain('```tool_call');
@@ -736,7 +718,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
   });
 
   it('full self-gather invites an agent-judged mama_save write (M3 GAP2)', () => {
-    const r = new SituationReporter({ selfGatherLines: ['kagemusha_overview() for counts'] });
+    const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full', ownerReportContext());
     expect(full).not.toContain('mama_save');

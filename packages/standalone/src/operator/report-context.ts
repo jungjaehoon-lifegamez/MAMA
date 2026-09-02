@@ -314,6 +314,19 @@ function redactText(value: string, maxLength: number): string {
   );
 }
 
+/**
+ * Upstream instants (Trello card timestamps, effect-ledger times) are copied into the
+ * model-visible packet. Normalising them here means connector text can never ride
+ * along in a timestamp field and an unparseable value cannot fail packet validation
+ * after composition.
+ */
+function toIsoInstant(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const ms = typeof value === 'number' ? value : Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
 function sanitizeWindow(window: ReportWindowEvidence): ReportWindowEvidence {
   return {
     start: new Date(window.start).toISOString(),
@@ -1033,8 +1046,8 @@ export async function compileOwnerReportContext(
         .slice(0, 20)
         .map((assignee) => redactText(assignee, 128))
         .sort(),
-      due: card.due,
-      lastActivity: card.lastActivity,
+      due: toIsoInstant(card.due),
+      lastActivity: toIsoInstant(card.lastActivity) ?? observedAt,
     }));
     remainingCards -= cards.length;
     if (cards.length < column.cards.length || cards.length < column.returned) {
@@ -1113,13 +1126,16 @@ export async function compileOwnerReportContext(
       changesState = { state: 'unavailable', observedAt: null, reason: 'changes_read_failed' };
       caveats.push('changes_unavailable');
     } else {
-      const rows = rawChanges.changes.slice(0, MAX_CHANGES).map((change) => ({
+      const normalizedRows = rawChanges.changes.slice(0, MAX_CHANGES).map((change) => ({
         kind: redactText(change.kind, 160),
         targetType: redactText(change.target_type, 160),
         causeState: change.cause_state as 'attributed' | 'unattributed',
         causeKind: redactText(change.cause_kind, 160),
-        at: change.at,
+        at: toIsoInstant(change.at),
       }));
+      const rows = normalizedRows.flatMap((row) =>
+        row.at === null ? [] : [{ ...row, at: row.at }]
+      );
       changes = {
         since: rawChanges.since,
         total: rawChanges.total,
@@ -1127,7 +1143,12 @@ export async function compileOwnerReportContext(
         coverage: { ...rawChanges.coverage },
         rows,
       };
-      if (rawChanges.total > rows.length || rawChanges.returned > rows.length) {
+      if (rows.length < normalizedRows.length) {
+        // A change whose time cannot be read is not silently redated; the source is
+        // marked partial so the report says the ledger was not fully readable.
+        changesState = { state: 'partial', observedAt, reason: 'changes_row_time_invalid' };
+        caveats.push('changes_rows_dropped');
+      } else if (rawChanges.total > rows.length || rawChanges.returned > rows.length) {
         changesState = { state: 'partial', observedAt, reason: 'changes_limit_reached' };
         caveats.push('changes_truncated');
       }

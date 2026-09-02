@@ -434,6 +434,7 @@ describe.skipIf(!RUN)('task lifecycle semantic judgment eval', () => {
       actual: byId.get(fixtureId)?.judgment ?? null,
       reason: byId.get(fixtureId)?.reason ?? null,
     }));
+    // eslint-disable-next-line no-console
     console.log(`LIFECYCLE EVAL MISMATCHES: ${JSON.stringify(mismatches)}`);
     expect(correct.length / FIXTURES.length).toBeGreaterThanOrEqual(0.9);
     for (const result of results) {

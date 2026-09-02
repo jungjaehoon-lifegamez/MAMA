@@ -548,27 +548,15 @@ export class SituationReporter {
    * were already reduced to trusted display labels when the window was recorded; raw ids and
    * recalled memory never cross this boundary.
    */
+  /**
+   * Full-report window for the packet compiler. Goes through the bounded
+   * snapshot (48 channels, 100 fires aggregated by kind, validated instants):
+   * `recordWindow` never caps `windowByChannel`, so an unbounded copy of it could
+   * exceed the compiler's `channels.length <= 48` input contract on a busy day
+   * and fail the scheduled report at compile time.
+   */
   buildWindowEvidence(start: string, end: string): ReportWindowEvidence {
-    return {
-      start,
-      end,
-      channelCount: this.windowByChannel.size,
-      messageCount: this.windowTotal,
-      channels: [...this.windowByChannel.values()]
-        .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
-        .map((channel) => ({
-          label: channel.label,
-          count: channel.count,
-          excerpts: channel.excerpts.map((excerpt) => ({ ...excerpt })),
-        })),
-      triggerActivity: [...this.fireAgg.values()]
-        .sort((left, right) => right.count - left.count || left.kind.localeCompare(right.kind))
-        .map((fire) => ({
-          kind: fire.kind,
-          count: fire.count,
-          topics: [...fire.topics].sort(),
-        })),
-    };
+    return this.windowEvidence(start, end);
   }
 
   async report(
