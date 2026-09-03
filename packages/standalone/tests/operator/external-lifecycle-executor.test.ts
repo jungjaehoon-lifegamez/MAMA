@@ -69,7 +69,11 @@ describe('Story EL4: terminal board attempts retain lifecycle guard context (TG-
       const unrelated = seeded.ledger.create({ title: 'unrelated native task' });
       await expect(
         executor.execute('task_update', { id: unrelated.id, status: 'done' }, context)
-      ).resolves.toMatchObject({ success: true, task: { status: 'done' } });
+      ).rejects.toThrow(/board workorder.*no longer active/i);
+      expect(seeded.ledger.getById(unrelated.id)).toMatchObject({
+        status: 'pending',
+        revision: 1,
+      });
     }
   );
 

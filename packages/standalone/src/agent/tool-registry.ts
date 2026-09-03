@@ -490,18 +490,37 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
-    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
+    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
 });
 register({
   name: 'task_update',
   description:
-    'Update a work item on YOUR task board by id - correcting stale fields (assignee, status, deadline) from evidence is your job, never the owner burden. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.',
+    'Update a work item on YOUR task board by id. Board workorder lifecycle judgments carry the revision read by the model. A review transition also carries the same-run packet and one exact selected raw submission anchor; the host verifies its source/timestamp and computes review timing. System workorder rows are host-managed and cannot be updated here.',
   category: 'os_monitoring',
   params:
-    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?',
+    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, expected_revision?, context_packet_id?, review_anchor_ref?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: ['integer', 'string'] },
+      title: { type: 'string' },
+      status: { type: 'string' },
+      priority: { type: 'string' },
+      assignee: { type: ['string', 'null'] },
+      deadline: { type: ['string', 'null'] },
+      due_at: { type: ['string', 'null'] },
+      latest_event: { type: 'string' },
+      confirmed: { type: 'boolean' },
+      expected_revision: { type: 'integer', minimum: 0 },
+      context_packet_id: { type: 'string' },
+      review_anchor_ref: { type: 'string' },
+    },
+    required: ['id'],
+    additionalProperties: false,
+  },
 });
 register({
   name: 'task_temporal_reconcile',

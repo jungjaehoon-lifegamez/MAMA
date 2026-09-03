@@ -676,6 +676,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'source_channel', type: 'string', required: false },
       { name: 'source_event_id', type: 'string', required: false },
       { name: 'latest_event', type: 'string', required: false },
+      { name: 'expected_revision', type: 'number', required: false },
     ],
     returnType:
       '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
@@ -722,6 +723,9 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
       { name: 'latest_event', type: 'string', required: false },
       { name: 'confirmed', type: 'boolean', required: false },
+      { name: 'expected_revision', type: 'number', required: false },
+      { name: 'context_packet_id', type: 'string', required: false },
+      { name: 'review_anchor_ref', type: 'string', required: false },
     ],
     returnType:
       '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',

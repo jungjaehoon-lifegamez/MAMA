@@ -173,7 +173,8 @@ function temporalIdentifierRef(value: string): string {
 
 function temporalPacketRawSourcesWithinBoundSource(
   context: TemporalWorkContext,
-  sourceRefs: readonly unknown[]
+  sourceRefs: readonly unknown[],
+  reviewWindow?: { startMs: number; endMs: number }
 ): boolean {
   const rawRefs = sourceRefs.filter(
     (value): value is Record<string, unknown> =>
@@ -185,13 +186,16 @@ function temporalPacketRawSourcesWithinBoundSource(
   if (!context.sourceChannel) {
     return rawRefs.length === 0;
   }
-  return rawRefs.every((ref) => {
-    const eventMatches =
-      !context.sourceEventId ||
+  const anchorMatches = (ref: Record<string, unknown>): boolean =>
+    Boolean(
+      context.sourceEventId &&
       [ref.raw_id, ref.source_id].some(
         (value) =>
           typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
-      );
+      )
+    );
+  const allWithinBoundChannel = rawRefs.every((ref) => {
+    const eventMatches = reviewWindow !== undefined || !context.sourceEventId || anchorMatches(ref);
     const channelMatches =
       !context.sourceChannel ||
       (typeof ref.connector === 'string' &&
@@ -199,11 +203,16 @@ function temporalPacketRawSourcesWithinBoundSource(
         temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel);
     return eventMatches && channelMatches;
   });
+  return (
+    allWithinBoundChannel &&
+    (reviewWindow === undefined || rawRefs.some((ref) => anchorMatches(ref)))
+  );
 }
 
 function temporalPacketReferencesBoundSource(
   context: TemporalWorkContext,
-  sourceRefs: readonly unknown[]
+  sourceRefs: readonly unknown[],
+  reviewWindow?: { startMs: number; endMs: number }
 ): boolean {
   const hasRawReference = sourceRefs.some(
     (value) =>
@@ -213,9 +222,28 @@ function temporalPacketReferencesBoundSource(
       (value as Record<string, unknown>).kind === 'raw'
   );
   if (context.sourceEventId || context.sourceChannel) {
-    return hasRawReference && temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+    return (
+      hasRawReference &&
+      temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow)
+    );
   }
-  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow);
+}
+
+function temporalPacketHasExactReviewWindow(
+  packetJson: string,
+  reviewWindow: { startMs: number; endMs: number }
+): boolean {
+  try {
+    const parsed = JSON.parse(packetJson) as { range?: unknown };
+    if (!parsed.range || typeof parsed.range !== 'object' || Array.isArray(parsed.range)) {
+      return false;
+    }
+    const range = parsed.range as Record<string, unknown>;
+    return range.start_ms === reviewWindow.startMs && range.end_ms === reviewWindow.endMs;
+  } catch {
+    return false;
+  }
 }
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -3543,6 +3571,7 @@ export class GatewayToolExecutor {
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
                 workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+                requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
                 causeEventIds: this.getExecutionState().causeEventIds,
                 causeKind:
                   this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
@@ -3554,7 +3583,27 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
-          const { id: rawId, ...patch } = input as { id: unknown } & Record<string, unknown>;
+          const rawTaskUpdate = input as { id: unknown } & Record<string, unknown>;
+          for (const forbidden of [
+            'review_started_at',
+            'review_anchor_event_id',
+            'source_timestamp_ms',
+          ]) {
+            if (Object.prototype.hasOwnProperty.call(rawTaskUpdate, forbidden)) {
+              throw new AgentError(
+                `task_update field ${forbidden} is host-owned`,
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
+          const {
+            id: rawId,
+            context_packet_id: contextPacketId,
+            review_anchor_ref: reviewAnchorRef,
+            ...patch
+          } = rawTaskUpdate;
           // Agents routinely pass "12"; coerce, reject non-numeric with a typed error.
           const id = typeof rawId === 'string' ? Number(rawId.trim()) : (rawId as number);
           if (!Number.isInteger(id) || id <= 0) {
@@ -3565,14 +3614,126 @@ export class GatewayToolExecutor {
               false
             );
           }
+          let verifiedReviewEvidence:
+            | {
+                contextPacketId: string;
+                contextPacketSha256: string;
+                eventIndexId: string;
+                sourceTimestampMs: number;
+                sourceChannel: string;
+              }
+            | undefined;
+          if (patch.status === 'review') {
+            const executionState = this.getExecutionState();
+            if (
+              typeof contextPacketId !== 'string' ||
+              contextPacketId.trim().length === 0 ||
+              typeof reviewAnchorRef !== 'string' ||
+              reviewAnchorRef.trim().length === 0
+            ) {
+              throw new AgentError(
+                'task_update review requires context_packet_id and review_anchor_ref',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            if (!executionState.envelope || !executionState.modelRunId) {
+              throw new AgentError(
+                'task_update review evidence requires an active envelope and model run',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const packet = await this.temporalContextPacketLookup({
+              packetId: contextPacketId,
+              envelopeHash: executionState.envelope.envelope_hash,
+              callerModelRunId: executionState.modelRunId,
+            });
+            if (!packet || packet.packet_id !== contextPacketId) {
+              throw new AgentError(
+                'task_update review context packet is unavailable',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const parsed = JSON.parse(packet.packet_json) as {
+              selected_evidence?: Array<{ ref?: Record<string, unknown> }>;
+            };
+            const selectedRaw = parsed.selected_evidence?.find(
+              (item) => item.ref?.kind === 'raw' && item.ref.raw_id === reviewAnchorRef
+            )?.ref;
+            const task = this.taskLedger.getById(id);
+            const connector = selectedRaw?.connector;
+            const channelId = selectedRaw?.channel_id;
+            const sourceChannel =
+              typeof connector === 'string' && typeof channelId === 'string'
+                ? `${connector}:${channelId}`
+                : null;
+            if (!task || !sourceChannel || task.sourceChannel !== sourceChannel) {
+              throw new AgentError(
+                'task_update review anchor is outside the task source boundary',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const adapter =
+              (await getContextPacketLookupAdapter()) as ContextPacketLookupAdapter & {
+                prepare(sql: string): { get(...params: unknown[]): unknown };
+              };
+            const anchor = adapter
+              .prepare(
+                `SELECT source_connector, channel,
+                        COALESCE(event_datetime, source_timestamp_ms) AS source_timestamp_ms
+                   FROM connector_event_index
+                  WHERE event_index_id = ?
+                  LIMIT 1`
+              )
+              .get(reviewAnchorRef) as
+              | { source_connector: unknown; channel: unknown; source_timestamp_ms: unknown }
+              | undefined;
+            if (
+              !anchor ||
+              anchor.source_connector !== connector ||
+              anchor.channel !== channelId ||
+              !Number.isSafeInteger(anchor.source_timestamp_ms) ||
+              Number(anchor.source_timestamp_ms) < 0
+            ) {
+              throw new AgentError(
+                'task_update review anchor timestamp is unavailable',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            verifiedReviewEvidence = {
+              contextPacketId,
+              contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+              eventIndexId: reviewAnchorRef,
+              sourceTimestampMs: Number(anchor.source_timestamp_ms),
+              sourceChannel,
+            };
+          } else if (contextPacketId !== undefined || reviewAnchorRef !== undefined) {
+            throw new AgentError(
+              'task_update review evidence fields are valid only for status review',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
             workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+            requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
             // The batch this run was handed. A bounded run's changes rest on the delta it
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.
             causeEventIds: this.getExecutionState().causeEventIds,
             causeKind: this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
+            ...(verifiedReviewEvidence ? { verifiedReviewEvidence } : {}),
           });
           return { success: true, task: serializeTaskToolRecord(updated) };
         }
@@ -3621,6 +3782,26 @@ export class GatewayToolExecutor {
             );
           }
           const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
+          const boundTask = this.taskLedger.getById(context.taskId);
+          const reviewWindow =
+            boundTask?.status === 'review' &&
+            boundTask.reviewStartedAt !== null &&
+            Number.isSafeInteger(boundTask.reviewStartedAt) &&
+            typeof boundTask.reviewAnchorEventId === 'string' &&
+            boundTask.reviewAnchorEventId.trim().length > 0
+              ? { startMs: boundTask.reviewStartedAt, endMs: context.checkAt }
+              : undefined;
+          if (
+            boundTask?.status === 'review' &&
+            (!reviewWindow || !temporalPacketHasExactReviewWindow(packet.packet_json, reviewWindow))
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile review packet is outside the verified review window',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           // (a) freshness: a RECEIPT, not a gate (S2 disposition - measured
           // ZERO live rejections; staleness is evidence quality, not
           // authorization). Recorded on the receipt, loud when stale.
@@ -3653,8 +3834,8 @@ export class GatewayToolExecutor {
             (effectInput.outcome === 'deferred'
               ? Array.isArray(packet.source_refs) &&
                 packet.source_refs.length > 0 &&
-                !temporalPacketReferencesBoundSource(context, packet.source_refs)
-              : !temporalPacketReferencesBoundSource(context, packet.source_refs))
+                !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow)
+              : !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow))
           ) {
             throw new AgentError(
               'task_temporal_reconcile context packet is not bound to the active task source',
@@ -4693,8 +4874,8 @@ export class GatewayToolExecutor {
     let usedUntrustedExternalEvidence = false;
     // Names of host tools that actually EXECUTED inside the sandbox (post-call hook fire,
     // result !== undefined - host-bridge.ts:1049; the pre-call fire at :1037 is skipped).
-    // Ride in the result message so downstream audits (report-run summarizeReportToolUse)
-    // can classify nested gather/write without code_act becoming an opaque blob.
+    // Ride in the result message so receipt and terminal audits can classify nested effects
+    // without code_act becoming an opaque blob.
     const hostToolExecutions: Array<{ name: string; success: boolean; code?: string }> = [];
     const hostToolsInvoked: string[] = [];
     const successfulHostToolNames = new Set<string>();
@@ -4945,6 +5126,7 @@ export class GatewayToolExecutor {
 
     try {
       const temporalContext = ctx.temporalWorkContext;
+      let reviewWindow: { startMs: number; endMs: number } | undefined;
       let effectiveInput = temporalContext
         ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
         : input;
@@ -4959,7 +5141,10 @@ export class GatewayToolExecutor {
         // Trimmed: a whitespace-only event id is truthy but fails ref
         // normalization downstream - which would fail the WHOLE compile,
         // exactly what "strictly additive" forbids.
-        const rawEventId = boundTask?.sourceEventId?.trim() || null;
+        const rawEventId =
+          (boundTask?.status === 'review' ? boundTask.reviewAnchorEventId : null)?.trim() ||
+          boundTask?.sourceEventId?.trim() ||
+          null;
         const sep = rawChannel ? rawChannel.indexOf(':') : -1;
         const seedConnector = rawChannel && sep > 0 ? rawChannel.slice(0, sep) : null;
         const seedChannelId = rawChannel && sep > 0 ? rawChannel.slice(sep + 1) : null;
@@ -4994,6 +5179,23 @@ export class GatewayToolExecutor {
             effectiveInput = { ...effectiveInput, seed_refs: [...existingSeeds, boundSeed] };
           }
         }
+        if (
+          boundTask?.status === 'review' &&
+          boundTask.reviewStartedAt !== null &&
+          Number.isSafeInteger(boundTask.reviewStartedAt)
+        ) {
+          reviewWindow = {
+            startMs: boundTask.reviewStartedAt,
+            endMs: temporalContext.checkAt,
+          };
+          effectiveInput = {
+            ...effectiveInput,
+            range: {
+              start_ms: reviewWindow.startMs,
+              end_ms: reviewWindow.endMs,
+            },
+          };
+        }
       }
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
@@ -5010,7 +5212,11 @@ export class GatewayToolExecutor {
       });
       if (
         temporalContext &&
-        !temporalPacketRawSourcesWithinBoundSource(temporalContext, result.packet.source_refs)
+        !temporalPacketRawSourcesWithinBoundSource(
+          temporalContext,
+          result.packet.source_refs,
+          reviewWindow
+        )
       ) {
         throw new Error('context_compile packet exceeds the active temporal task source');
       }

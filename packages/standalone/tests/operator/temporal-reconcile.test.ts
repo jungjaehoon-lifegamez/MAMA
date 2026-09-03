@@ -144,6 +144,49 @@ describe('Story A2 Task 5: pure temporal candidate selection', () => {
     expect(selected).toEqual([]);
   });
 
+  it('TG-05/TG-06 never schedules legacy review clocks without both verified anchor fields', () => {
+    const legacyReview = task({
+      id: 1,
+      status: 'review',
+      dueAt: now,
+      deadlineIso: '2026-07-21',
+      reviewStartedAt: null,
+      reviewAnchorEventId: null,
+    });
+    const missingAnchor = task({
+      id: 2,
+      status: 'review',
+      dueAt: now,
+      deadlineIso: '2026-07-21',
+      reviewStartedAt: now - 14 * 24 * 60 * 60 * 1000,
+      reviewAnchorEventId: null,
+    });
+    const missingStart = task({
+      id: 3,
+      status: 'review',
+      dueAt: now,
+      deadlineIso: '2026-07-21',
+      reviewStartedAt: null,
+      reviewAnchorEventId: 'event-index-anchor',
+    });
+    const verified = task({
+      id: 4,
+      status: 'review',
+      dueAt: now,
+      deadlineIso: '2026-07-21',
+      reviewStartedAt: now - 14 * 24 * 60 * 60 * 1000,
+      reviewAnchorEventId: 'event-index-anchor',
+    });
+
+    const selected = selectTemporalCandidates(
+      [legacyReview, missingAnchor, missingStart, verified],
+      new Set(),
+      { now, timeZone: 'UTC', exactLimit: 4 }
+    );
+
+    expect(selected.map((candidate) => candidate.taskId)).toEqual([verified.id]);
+  });
+
   it('orders exact/deferred first with cap four, then one oldest date activation', () => {
     const tasks = [6, 2, 5, 1, 4, 3].map((id) =>
       task({ id, dueAt: now - (10 - id), deadlineIso: '2026-07-21' })

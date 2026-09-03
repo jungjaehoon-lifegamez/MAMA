@@ -21,102 +21,13 @@ import { describe, it, expect } from 'vitest';
 import {
   OPERATOR_REPORT_TOOL_POLICY,
   WORKORDER_TOOL_POLICIES,
-  buildFullReportGatherLines,
 } from '../../src/cli/commands/start.js';
-import { GATHER_TOOLS, WRITE_TOOLS } from '../../src/operator/report-run.js';
-
-/**
- * Tool names an instruction line actually names, as `tool(` or `tool({`.
- *
- * No whitespace before the paren, deliberately. These lines are prose with calls embedded
- * in them, and prose has parentheses too - `awaiting review (status values must be...)`
- * reads as a call to `review` the moment a space is allowed.
- */
-function toolsNamedIn(lines: readonly string[]): Set<string> {
-  const found = new Set<string>();
-  for (const line of lines) {
-    for (const match of line.matchAll(/\b([a-z][a-z0-9_]{2,})\(/g)) {
-      found.add(match[1]);
-    }
-  }
-  return found;
-}
 
 const REPORT_GRANT = new Set<string>(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
 
 describe('report lane: instructions against the grant', () => {
-  const instructed = toolsNamedIn(
-    buildFullReportGatherLines({ lastSuccessIso: '2026-07-28T00:00:00Z' })
-  );
-
-  // An instruction naming a tool the lane cannot call is a lie told to the agent every run.
-  it('never instructs a tool the lane was not granted', () => {
-    const ungranted = [...instructed].filter((t) => !REPORT_GRANT.has(t));
-    expect(ungranted).toEqual([]);
-  });
-
-  // The direction that matters. The classification set is deliberately WIDER than the grant -
-  // it is an observability net, so a tool that should never appear is still recorded honestly
-  // if it ever does. But a granted tool missing from it is counted as nothing: the run gathers
-  // through it and `gatherTools` stays empty, which fires the full-report WARNING claiming the
-  // task board was never verified. That was true of four granted reads.
-  it('classifies every tool the lane is allowed to call', () => {
-    const unclassified = [...REPORT_GRANT].filter(
-      (t) => !GATHER_TOOLS.has(t) && !WRITE_TOOLS.has(t)
-    );
-    expect(unclassified).toEqual([]);
-  });
-
-  // The guard that would have caught `changes_read`. A grant with no instruction is prompt
-  // budget spent on a tool that will not be used - not fatal, but it must be a decision
-  // rather than a drift, so the set is pinned here.
-  it('pins the granted-but-never-instructed set', () => {
-    const silent = [...REPORT_GRANT].filter((t) => !instructed.has(t)).sort();
-    expect(silent).toEqual([
-      // Read on demand while writing, not part of the gather sequence.
-      'mama_provenance',
-      'mama_save',
-      'mama_search',
-      'report_publish',
-      'task_external_correlation',
-      'trello_kanban',
-    ]);
-  });
-
-  // Product premise (S1 spec): MAMA presupposes no Kagemusha. An instruction
-  // line reaching for kagemusha_* would rebuild the dependency this pin ended.
-  it('never instructs a kagemusha tool', () => {
-    for (const lines of [
-      buildFullReportGatherLines({ lastSuccessIso: '2026-07-28T00:00:00Z' }),
-      buildFullReportGatherLines({ lastSuccessIso: null }),
-    ]) {
-      expect(lines.join('\n')).not.toContain('kagemusha_');
-    }
-  });
-
-  it('bounds native-board gathering instead of asking the report to page the ledger', () => {
-    const lines = buildFullReportGatherLines({
-      lastSuccessIso: '2026-07-28T00:00:00Z',
-    }).join('\n');
-
-    expect(lines).toContain('include_terminal: false');
-    expect(lines).toContain('limit: 12');
-    expect(lines).toContain('limit: 5');
-    expect(lines).toContain('do not follow nextCursor');
-    expect(lines).toContain('deduplicate by task id');
-  });
-
-  it('instructs the delta tool with the last successful report as its window', () => {
-    const [withAnchor] = buildFullReportGatherLines({
-      lastSuccessIso: '2026-07-28T00:00:00Z',
-    }).filter((l) => l.startsWith('changes_read('));
-    expect(withAnchor).toContain('2026-07-28T00:00:00Z');
-
-    const [withoutAnchor] = buildFullReportGatherLines({ lastSuccessIso: null }).filter((l) =>
-      l.startsWith('changes_read(')
-    );
-    // No anchor still bounds the window; an unbounded delta is not a delta.
-    expect(withoutAnchor).toContain('since');
+  it('TG-03/TG-04/TG-05 grants no rediscovery or mutation tools to packet-only reports', () => {
+    expect([...REPORT_GRANT]).toEqual([]);
   });
 });
 

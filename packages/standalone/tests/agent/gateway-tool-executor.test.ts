@@ -686,7 +686,13 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         const result = await executor.execute(
           'task_create',
-          { title: 'duplicate delivery', status: 'done', latest_event: 'confirmed', ...source },
+          {
+            title: 'duplicate delivery',
+            status: 'done',
+            latest_event: 'confirmed',
+            expected_revision: unrelated.revision,
+            ...source,
+          },
           {
             executionSurface: 'model_tool',
             workorderAttemptId: seeded.attempt.id,
@@ -697,6 +703,81 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(result).toMatchObject({
           success: true,
           task: { id: unrelated.id, status: 'done', latestEvent: 'confirmed' },
+        });
+        seeded.db.close();
+      });
+
+      it.each([
+        ['missing', undefined],
+        ['stale', 0],
+      ] as const)(
+        'TG-06 requires the exact read revision for an active Board duplicate-source task_create (%s)',
+        async (_label, expectedRevision) => {
+          const seeded = seedBindingCandidateAttempt();
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setTaskLedger(seeded.ledger);
+          const source = {
+            source_channel: 'telegram:owner',
+            source_event_id: `owner-message-revision-${String(expectedRevision)}`,
+          };
+          const unrelated = seeded.ledger.create({ title: 'unrelated', ...source });
+
+          await expect(
+            executor.execute(
+              'task_create',
+              {
+                title: 'duplicate delivery',
+                status: 'done',
+                latest_event: 'confirmed',
+                ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }),
+                ...source,
+              },
+              {
+                executionSurface: 'model_tool',
+                workorderAttemptId: seeded.attempt.id,
+                causeEventIds: [seeded.candidate.eventId],
+              }
+            )
+          ).rejects.toThrow(/expected_revision|expected revision/i);
+          expect(seeded.ledger.getById(unrelated.id)).toMatchObject({
+            status: 'pending',
+            revision: unrelated.revision,
+          });
+          seeded.db.close();
+        }
+      );
+
+      it('TG-06 blocks a terminal Board attempt from mutating a duplicate source through task_create', async () => {
+        const seeded = seedBindingCandidateAttempt();
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setTaskLedger(seeded.ledger);
+        const source = {
+          source_channel: 'telegram:owner',
+          source_event_id: 'owner-message-terminal-attempt',
+        };
+        const unrelated = seeded.ledger.create({ title: 'unrelated', ...source });
+        seeded.ledger.completeWorkOrder(seeded.attempt.id);
+
+        await expect(
+          executor.execute(
+            'task_create',
+            {
+              title: 'duplicate delivery',
+              status: 'done',
+              latest_event: 'confirmed',
+              expected_revision: unrelated.revision,
+              ...source,
+            },
+            {
+              executionSurface: 'model_tool',
+              workorderAttemptId: seeded.attempt.id,
+              causeEventIds: [seeded.candidate.eventId],
+            }
+          )
+        ).rejects.toThrow(/board workorder .*no longer active/i);
+        expect(seeded.ledger.getById(unrelated.id)).toMatchObject({
+          status: 'pending',
+          revision: unrelated.revision,
         });
         seeded.db.close();
       });

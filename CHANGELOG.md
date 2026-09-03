@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.40.0] / mama-core [2.2.3] - 2026-09-03
+
+### Changed
+
+- **Owner full reports are composed from one host-authored evidence packet in one model turn.**
+  The scheduled and on-demand full report no longer sends the model to rediscover state through
+  `task_list`, `changes_read`, `mama_recall`, and Trello reads. The host compiles current claims,
+  the revisioned task ledger, one live Trello snapshot with exact task-to-card correlation, the
+  effect ledger, and the bounded message window into `OwnerReportContextV1`, binds its canonical
+  bytes and SHA-256 to the pending request before model admission, and delivers through the
+  existing receipt chain. Offline replay of two delivered windows: 0 gather calls instead of
+  14-28, about 52K tokens instead of 273K-759K, zero internal ids in owner text, and every
+  incomplete source named with its reason. The owner judged the packet report more useful in a
+  blinded pairwise comparison of both windows.
+- **`decisions.status` is the only current memory authority.** Bootstrap and recall read current
+  claims from `decisions` plus scope bindings; `memory_truth` stays as an inert compatibility
+  table with no runtime reader or writer, so a superseded decision can no longer surface as
+  current through a stale projection (MAMA Core 2.2.3).
+- **Task lifecycle judgment is semantic and evidence-bound.** Verified submission moves work to
+  `review` with a host-derived 14-day due time anchored to the exact source event; explicit
+  acceptance or an exactly correlated live Trello card in a terminal list may complete; later
+  same-scope feedback reopens. A partial or truncated Trello snapshot forbids only absence-based
+  inference. Board lifecycle updates carry the revision the model read and fail on a newer row.
+- **The report packet ranks the bounded task set by recency and carries deadlines.** With 264
+  open tasks against a 50-row bound, deadline-first ranking had displaced every task updated in
+  the last week; recency ranking keeps current work visible and the disclosed total honest.
+
+### Fixed
+
+- **Raw event, run, and chat-room identifiers no longer reach the model-visible packet** from
+  Board-written `latest_event` prose or curated claim summaries.
+- **Report composition cannot silently fall back to the retired self-gather path.** A missing or
+  non-canonical packet fails the report before delivery instead of producing a window-only text.
+- **Codex app-server timeout tests give process spawn a real budget**, so the suite no longer
+  fails on a loaded host before the behavior under test runs.
+
 ## mama-os [0.39.5] / mama-core [2.2.2] - 2026-08-28
 
 ### Added

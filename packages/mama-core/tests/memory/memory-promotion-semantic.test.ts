@@ -64,7 +64,6 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
       },
       {
         capability: createTrustedProvenanceCapability(),
-        projectTruth: false,
         provenance: {
           actor: 'user',
           agent_id: 'operator:manual-admin',

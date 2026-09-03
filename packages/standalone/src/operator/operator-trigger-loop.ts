@@ -44,6 +44,17 @@ import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
 import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 import type { OwnerEventActivation } from './owner-event-inbox.js';
+import {
+  serializeOwnerReportContext,
+  type OwnerReportContextV1,
+  type OwnerReportReadScope,
+  type ReportWindowEvidence,
+} from './report-context.js';
+import type { FullReportRunInput } from './report-run.js';
+
+export function assertReportContextUsable(context: OwnerReportContextV1): void {
+  serializeOwnerReportContext(context);
+}
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -89,7 +100,7 @@ export interface TriggerLoopDeps {
    * generation inputs, and reports deserve the persona path while JSON tasks stay on the
    * isolated CLI. Absent -> reports use askAgent (explicit config choice, not a failure fallback).
    */
-  reportAsk?: AskAgent;
+  reportAsk?: AskAgent & { full?: (input: FullReportRunInput) => Promise<string> };
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /**
@@ -108,12 +119,15 @@ export interface TriggerLoopDeps {
   reportTarget?: ReportCarryTarget;
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
-  /**
-   * M2.3: tool-call instructions for the FULL report so the agent self-gathers context.
-   * A provider form receives the last successful report's anchor so the heavy gather
-   * can scope its delta (`since=<lastSuccessIso>`); it is resolved AT FIRE TIME.
-   */
-  fullReportSelfGather?: string[] | ((ctx: { lastSuccessIso: string | null }) => string[]);
+  /** Host-owned one-shot compiler. Required for full reports; never exposed to the model. */
+  compileFullReportContext?: (input: {
+    occurrence: PendingReportOccurrence;
+    readScope: OwnerReportReadScope;
+    windowEvidence: ReportWindowEvidence;
+    since: string;
+  }) => Promise<OwnerReportContextV1>;
+  /** Detached authority used for every read in one compiled report packet. */
+  fullReportReadScope?: OwnerReportReadScope;
   /**
    * Durable MAMA owner-agent event feed. Matched trigger contracts travel with
    * the source batch before the connector cursor advances.
@@ -126,8 +140,6 @@ export interface TriggerLoopDeps {
       activations: OwnerEventActivation[];
     }): number | null;
   };
-  /** Kagemusha dual output: FULL report also publishes the operator board slots. */
-  fullReportBoardLines?: string[];
   /** Captures the provenance of the run that has just composed a FULL report. */
   fullReportProvenance?: () => ArtifactProvenance;
   /** Persists the exact successful FULL delivery for the later owner-turn carry. */
@@ -194,18 +206,6 @@ export class OperatorTriggerLoop {
     };
     this.digest = new SituationReporter({ recordTriggerUse });
     this.fullReporter = new SituationReporter({
-      backend: deps.backend,
-      // Wrap a provider into a zero-arg closure resolved AT FIRE TIME (buildPrompt
-      // calls it): the delta anchor is the last SUCCESSFUL full report, so a run
-      // that failed never widens the next window (defer, never drop).
-      selfGatherLines:
-        typeof deps.fullReportSelfGather === 'function'
-          ? () =>
-              (deps.fullReportSelfGather as (ctx: { lastSuccessIso: string | null }) => string[])({
-                lastSuccessIso: deps.reportScheduler?.loadLastSuccess() ?? null,
-              })
-          : (deps.fullReportSelfGather ?? []),
-      boardPublishLines: deps.fullReportBoardLines,
       recordTriggerUse,
       fullReportProvenance: deps.fullReportProvenance,
       persistLastFullReport: deps.persistLastFullReport,
@@ -440,7 +440,22 @@ export class OperatorTriggerLoop {
     }
     const target = this.requireOutputTarget();
     const deliveryId = this.deliveryIdFor(occurrence);
-    const prepared = await this.reporterFor(mode).prepareReport(askAgent, mode, deliveryId);
+    if (mode === 'full') {
+      const request = {
+        mode: 'full' as const,
+        deliveryId,
+        occurrence,
+        acceptedAtIso: occurrence.firedAtIso ?? new Date().toISOString(),
+        target,
+      };
+      this.pendingRequest = {
+        ...request,
+        payloadIdentity: pendingReportRequestPayloadIdentity(request),
+      };
+      if (!this.persistPendingReports()) return false;
+      return this.preparePendingRequest();
+    }
+    const prepared = await this.digest.prepareReport(askAgent, mode, deliveryId);
     if (!prepared) {
       this.persistPendingReports();
       return false;
@@ -471,11 +486,47 @@ export class OperatorTriggerLoop {
       throw new Error('A pending owner report delivery must be recovered before its request');
     }
     this.assertPendingRequestBinding(request);
-    const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
+    const reportAsk = this.deps.reportAsk;
+    const compile = this.deps.compileFullReportContext;
+    const readScope = this.deps.fullReportReadScope;
+    if (!reportAsk?.full || !compile || !readScope) {
+      throw new Error('Full owner report packet runtime is unavailable');
+    }
+    if (!request.contextJson || !request.contextSha256) {
+      const since =
+        this.deps.reportScheduler?.loadLastSuccess() ??
+        new Date(Date.parse(request.acceptedAtIso) - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const context = await compile({
+        occurrence: request.occurrence,
+        readScope,
+        windowEvidence: this.fullReporter.buildWindowEvidence(since, request.acceptedAtIso),
+        since,
+      });
+      assertReportContextUsable(context);
+      const contextJson = serializeOwnerReportContext(context);
+      const contextSha256 = createHash('sha256').update(contextJson).digest('hex');
+      this.pendingRequest = {
+        ...request,
+        contextJson,
+        contextSha256,
+        payloadIdentity: pendingReportRequestPayloadIdentity({ ...request, contextSha256 }),
+      };
+      if (!this.persistPendingReports()) return false;
+    }
+    const boundRequest = this.pendingRequest;
+    if (!boundRequest?.contextJson || !boundRequest.contextSha256) {
+      throw new Error('Full owner report context was not persisted');
+    }
+    const context = JSON.parse(boundRequest.contextJson) as OwnerReportContextV1;
+    assertReportContextUsable(context);
+    if (serializeOwnerReportContext(context) !== boundRequest.contextJson) {
+      throw new Error('Pending owner report context is not canonical');
+    }
     const prepared = await this.fullReporter.prepareReport(
-      reportAsk,
+      (prompt) => reportAsk.full!({ prompt, context, contextSha256: boundRequest.contextSha256! }),
       request.mode,
-      request.deliveryId
+      request.deliveryId,
+      context
     );
     if (!prepared) {
       this.pendingRequest = undefined;

@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import { applyOperatorTaskExternalLifecycleMigration } from '../db/migrations/operator-task-external-lifecycle.js';
+import { applyOperatorTaskReviewLifecycleMigration } from '../db/migrations/operator-task-review-lifecycle.js';
 import {
   changeCoverage,
   ensureEffectLedger,
@@ -158,6 +159,8 @@ export interface TaskRecord extends OperatorTask {
   nextTemporalCheckAt: number | null;
   lastTemporalAttemptId: number | null;
   temporalState: TemporalState;
+  reviewStartedAt: number | null;
+  reviewAnchorEventId: string | null;
 }
 
 export interface TaskLedgerOptions {
@@ -182,6 +185,8 @@ export interface ChangeOrigin {
    * mutation rules for direct and nested gateway execution alike.
    */
   workOrderAttemptId?: number;
+  /** Direct task_update ABI guard; internal receipted lifecycle primitives validate separately. */
+  requiresExpectedRevision?: boolean;
   /**
    * WHY an id-less change happened (S2 closed set). Ignored when
    * causeEventIds carry - ids always mean 'event'. Callers state it;
@@ -198,6 +203,14 @@ export interface ChangeOrigin {
    * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
    */
   causeEventIds?: readonly string[];
+  /** Host-verified raw submission/delivery evidence. Never populated from model timestamps. */
+  verifiedReviewEvidence?: {
+    contextPacketId: string;
+    contextPacketSha256: string;
+    eventIndexId: string;
+    sourceTimestampMs: number;
+    sourceChannel: string;
+  };
 }
 
 export interface ExternalTaskBinding {
@@ -300,6 +313,8 @@ export interface CreateTaskInput {
   source_event_id?: string;
   latest_event?: string;
   confirmed?: boolean;
+  /** Required only when a Board workorder uses a duplicate source key as an update. */
+  expected_revision?: number;
 }
 
 export interface UpdateTaskInput {
@@ -312,6 +327,7 @@ export interface UpdateTaskInput {
   latest_event?: string;
   confirmed?: boolean;
   title?: string;
+  expected_revision?: number;
 }
 
 export interface ListTasksFilter {
@@ -404,6 +420,8 @@ interface TaskRow {
   last_temporal_checked_at: number | null;
   next_temporal_check_at: number | null;
   last_temporal_attempt_id: number | null;
+  review_started_at: number | null;
+  review_anchor_event_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -469,6 +487,8 @@ function rowToRecord(row: TaskRow, now: number, timeZone: string): TaskRecord {
       now,
       timeZone
     ),
+    reviewStartedAt: row.review_started_at,
+    reviewAnchorEventId: row.review_anchor_event_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -547,6 +567,8 @@ export class TaskLedger implements TaskSource {
         last_temporal_checked_at INTEGER,
         next_temporal_check_at INTEGER,
         last_temporal_attempt_id INTEGER,
+        review_started_at INTEGER,
+        review_anchor_event_id TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL`;
 
@@ -622,6 +644,7 @@ export class TaskLedger implements TaskSource {
 
       applyOperatorTaskTemporalMigration(this.db);
       applyOperatorTaskExternalLifecycleMigration(this.db);
+      applyOperatorTaskReviewLifecycleMigration(this.db);
 
       // Old-predicate unique index (no terminal exclusion) -> swap in place.
       const idxRow = this.db
@@ -1515,6 +1538,15 @@ export class TaskLedger implements TaskSource {
     if (input.status === 'failed') {
       throw new Error(`task_create: 'failed' is a system-only status`);
     }
+    if (input.status === 'review') {
+      // review carries a host-verified submission anchor (review_started_at,
+      // review_anchor_event_id) that only the task_update path can supply. A row
+      // created directly in review would sit in the unanchored state reserved for
+      // legacy rows and could never enter the Temporal review lifecycle.
+      throw new Error(
+        `task_create: 'review' requires verified submission evidence; create the task, then task_update it to review`
+      );
+    }
     // Namespace reservation (review m3): the occurrence keys are deterministic
     // (epoch slots, readable from OSS source) - an agent-created owner row on
     // a 'workorder:' (channel,event) pair would collide with the system
@@ -1557,6 +1589,9 @@ export class TaskLedger implements TaskSource {
             ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
             ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
             ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
+            ...(input.expected_revision !== undefined
+              ? { expected_revision: input.expected_revision }
+              : {}),
           },
           // A duplicate delivery of the same event. The HOST batch still wins
           // (review: the agent-supplied source_event_id was overriding it here,
@@ -1734,6 +1769,35 @@ export class TaskLedger implements TaskSource {
     if (existing.kind === 'system') {
       throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
     }
+    const revisionAttempt = origin.requiresExpectedRevision
+      ? this.getWorkOrderById(origin.workOrderAttemptId ?? -1)
+      : null;
+    const hasLifecyclePatch =
+      Object.prototype.hasOwnProperty.call(patch, 'status') ||
+      Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
+      Object.prototype.hasOwnProperty.call(patch, 'latest_event');
+    const isBoardWorkorderLifecycleJudgment =
+      revisionAttempt?.workKind === 'board' && hasLifecyclePatch;
+    if (isBoardWorkorderLifecycleJudgment && revisionAttempt.status !== 'in_progress') {
+      throw new Error(
+        `task_update: board workorder ${revisionAttempt.id} is no longer active (${revisionAttempt.status})`
+      );
+    }
+    const isWorkorderLifecycleJudgment =
+      isBoardWorkorderLifecycleJudgment && revisionAttempt.status === 'in_progress';
+    if (isWorkorderLifecycleJudgment) {
+      if (!Number.isSafeInteger(patch.expected_revision) || patch.expected_revision! < 0) {
+        throw new Error('task_update: lifecycle workorder requires expected_revision');
+      }
+      if (patch.expected_revision !== existing.revision) {
+        throw new Error(
+          `task_update: expected revision ${patch.expected_revision}, current ${existing.revision}`
+        );
+      }
+      if (typeof patch.latest_event !== 'string' || patch.latest_event.trim().length === 0) {
+        throw new Error('task_update: lifecycle workorder requires a plain latest_event reason');
+      }
+    }
     return this.transitionOwnerTaskRowInTransaction(id, existing, patch, origin);
   }
 
@@ -1772,6 +1836,8 @@ export class TaskLedger implements TaskSource {
       last_temporal_checked_at: existing.last_temporal_checked_at,
       next_temporal_check_at: existing.next_temporal_check_at,
       last_temporal_attempt_id: existing.last_temporal_attempt_id,
+      review_started_at: existing.review_started_at,
+      review_anchor_event_id: existing.review_anchor_event_id,
     };
     if (patch.title !== undefined) next.title = patch.title.trim();
     if (patch.status !== undefined) next.status = patch.status;
@@ -1779,6 +1845,54 @@ export class TaskLedger implements TaskSource {
     if (patch.assignee !== undefined) next.assignee = patch.assignee;
     if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
     if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+
+    const leavingVerifiedReview =
+      existing.status === 'review' &&
+      patch.status !== undefined &&
+      patch.status !== 'review' &&
+      existing.review_started_at !== null &&
+      typeof existing.review_anchor_event_id === 'string' &&
+      existing.review_anchor_event_id.trim().length > 0;
+    if (leavingVerifiedReview) {
+      next.review_started_at = null;
+      next.review_anchor_event_id = null;
+      next.due_at = null;
+      next.deadline = null;
+      next.deadline_offset_minutes = null;
+    }
+
+    const reviewAttempt = origin.requiresExpectedRevision
+      ? this.getWorkOrderById(origin.workOrderAttemptId ?? -1)
+      : null;
+    if (
+      patch.status === 'review' &&
+      ((reviewAttempt?.workKind === 'board' && reviewAttempt.status === 'in_progress') ||
+        origin.verifiedReviewEvidence !== undefined)
+    ) {
+      if (
+        Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
+        Object.prototype.hasOwnProperty.call(patch, 'deadline')
+      ) {
+        throw new Error(
+          'task_update: review due_at and deadline are computed from verified evidence'
+        );
+      }
+      const evidence = origin.verifiedReviewEvidence;
+      if (!evidence) {
+        throw new Error('task_update: review requires host-verified submission evidence');
+      }
+      if (existing.source_channel !== evidence.sourceChannel) {
+        throw new Error('task_update: review evidence is outside the task source boundary');
+      }
+      if (!Number.isSafeInteger(evidence.sourceTimestampMs) || evidence.sourceTimestampMs < 0) {
+        throw new Error('task_update: review evidence timestamp is invalid');
+      }
+      next.review_started_at = evidence.sourceTimestampMs;
+      next.review_anchor_event_id = evidence.eventIndexId;
+      next.due_at = evidence.sourceTimestampMs + 14 * 24 * 60 * 60 * 1000;
+      next.deadline = new Date(next.due_at as number).toISOString().slice(0, 10);
+      next.deadline_offset_minutes = 0;
+    }
 
     const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
     const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
@@ -1832,6 +1946,8 @@ export class TaskLedger implements TaskSource {
       'last_temporal_checked_at',
       'next_temporal_check_at',
       'last_temporal_attempt_id',
+      'review_started_at',
+      'review_anchor_event_id',
     ] as const;
     const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
     if (changedColumns.length === 0) {
@@ -2176,6 +2292,17 @@ export class TaskLedger implements TaskSource {
         if (task.status === 'done' || task.status === 'cancelled') {
           throw new Error(`temporal generation: task ${input.taskId} is closed`);
         }
+        if (
+          task.status === 'review' &&
+          (task.reviewStartedAt === null ||
+            !Number.isSafeInteger(task.reviewStartedAt) ||
+            typeof task.reviewAnchorEventId !== 'string' ||
+            task.reviewAnchorEventId.trim().length === 0)
+        ) {
+          throw new Error(
+            `temporal generation: review task ${input.taskId} has no verified review anchor`
+          );
+        }
         const currentOccurrence = occurrenceKeyForTask(task);
         if (
           task.temporalEpoch !== input.temporalEpoch ||
@@ -2185,7 +2312,11 @@ export class TaskLedger implements TaskSource {
         }
         if (
           this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannelRef ||
-          this.temporalSourceIdentifierRef(task.sourceEventId) !== sourceEventIdRef
+          this.temporalSourceIdentifierRef(
+            task.status === 'review' && task.reviewAnchorEventId
+              ? task.reviewAnchorEventId
+              : task.sourceEventId
+          ) !== sourceEventIdRef
         ) {
           throw new Error(`temporal generation: source identifiers do not match owner task`);
         }
@@ -2545,6 +2676,8 @@ export class TaskLedger implements TaskSource {
         last_temporal_checked_at: now,
         next_temporal_check_at: null,
         last_temporal_attempt_id: context.attemptId,
+        review_started_at: existing.review_started_at,
+        review_anchor_event_id: existing.review_anchor_event_id,
       };
       const auditParts = [`reason=${input.reason.trim()}`];
       if (input.outcome === 'final_no_update') {
@@ -2556,6 +2689,21 @@ export class TaskLedger implements TaskSource {
 
       if (input.outcome === 'resolved') {
         if (input.status !== undefined) next.status = input.status;
+        if (existing.status === 'review' && next.status !== 'review') {
+          // Leaving verified review through the Temporal path: the submission
+          // anchor and its derived 14-day due time do not survive the exit, exactly
+          // as the task_update path clears them. A later reopen re-verifies.
+          next.review_started_at = null;
+          next.review_anchor_event_id = null;
+          if (
+            existing.review_started_at !== null &&
+            !Object.prototype.hasOwnProperty.call(input, 'due_at')
+          ) {
+            next.due_at = null;
+            next.deadline = null;
+            next.deadline_offset_minutes = null;
+          }
+        }
         if (Object.prototype.hasOwnProperty.call(input, 'due_at')) {
           if (input.due_at === null) {
             next.due_at = null;
@@ -2593,6 +2741,8 @@ export class TaskLedger implements TaskSource {
         'last_temporal_checked_at',
         'next_temporal_check_at',
         'last_temporal_attempt_id',
+        'review_started_at',
+        'review_anchor_event_id',
       ] as const;
       const changedFields = persistedColumns.filter((column) => next[column] !== existing[column]);
       const afterRevision = existing.revision + 1;
@@ -3153,10 +3303,23 @@ export class TaskLedger implements TaskSource {
       throw new Error(`temporal context: owner task ${taskId} is closed`);
     }
     if (
+      task.status === 'review' &&
+      (task.reviewStartedAt === null ||
+        !Number.isSafeInteger(task.reviewStartedAt) ||
+        typeof task.reviewAnchorEventId !== 'string' ||
+        task.reviewAnchorEventId.trim().length === 0)
+    ) {
+      throw new Error(`temporal context: review task ${taskId} has no verified review anchor`);
+    }
+    if (
       task.temporalEpoch !== temporalEpoch ||
       occurrenceKeyForTask(task) !== occurrenceKey ||
       this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannel ||
-      this.temporalSourceIdentifierRef(task.sourceEventId) !== sourceEventId ||
+      this.temporalSourceIdentifierRef(
+        task.status === 'review' && task.reviewAnchorEventId
+          ? task.reviewAnchorEventId
+          : task.sourceEventId
+      ) !== sourceEventId ||
       generation.taskId !== taskId ||
       generation.temporalEpoch !== temporalEpoch ||
       generation.occurrenceKey !== occurrenceKey ||

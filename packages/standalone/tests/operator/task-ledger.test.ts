@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { promotionKey } from '../../src/operator/workorder-publishers.js';
 
 describe('TaskLedger', () => {
@@ -97,6 +98,125 @@ describe('TaskLedger', () => {
     expect(() => ledger.update(9999, { status: 'done' })).toThrow(/no task/);
   });
 
+  it('TG-06 requires and checks expected_revision for workorder lifecycle judgments', () => {
+    const task = ledger.create({
+      title: 'submitted work',
+      source_channel: 'slack:C001',
+      source_event_id: 'submission-1',
+    });
+    const workorder = ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:revision-guard',
+      input: { mode: 'full', force: true },
+    });
+    ledger.claimNextWorkOrder();
+    const origin = { workOrderAttemptId: workorder.id, requiresExpectedRevision: true };
+
+    expect(() =>
+      ledger.update(task.id, { status: 'done', latest_event: 'accepted' }, origin)
+    ).toThrow(/expected_revision/);
+    expect(() =>
+      ledger.update(
+        task.id,
+        { status: 'done', latest_event: 'accepted', expected_revision: task.revision + 1 },
+        origin
+      )
+    ).toThrow(/expected revision/);
+
+    const done = ledger.update(
+      task.id,
+      { status: 'done', latest_event: 'accepted', expected_revision: task.revision },
+      origin
+    );
+    expect(done.status).toBe('done');
+  });
+
+  it('TG-05/TG-06 derives review timing only from host-verified submission evidence', () => {
+    const submittedAt = Date.parse('2026-09-01T00:00:00.000Z');
+    const task = ledger.create({
+      title: 'submitted work',
+      source_channel: 'slack:C001',
+      source_event_id: 'submission-1',
+    });
+    const patch = {
+      status: 'review' as const,
+      latest_event: 'result submitted; acceptance pending',
+      expected_revision: task.revision,
+    };
+    const workorder = ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:review-evidence',
+      input: { mode: 'full', force: true },
+    });
+    ledger.claimNextWorkOrder();
+    expect(() =>
+      ledger.update(task.id, patch, {
+        workOrderAttemptId: workorder.id,
+        requiresExpectedRevision: true,
+      })
+    ).toThrow(/host-verified submission evidence/);
+
+    const review = ledger.update(task.id, patch, {
+      workOrderAttemptId: workorder.id,
+      requiresExpectedRevision: true,
+      verifiedReviewEvidence: {
+        contextPacketId: 'packet-1',
+        contextPacketSha256: 'a'.repeat(64),
+        eventIndexId: 'event-index-1',
+        sourceTimestampMs: submittedAt,
+        sourceChannel: 'slack:C001',
+      },
+    });
+
+    expect(review.reviewStartedAt).toBe(submittedAt);
+    expect(review.reviewAnchorEventId).toBe('event-index-1');
+    expect(review.dueAt).toBe(submittedAt + 14 * 24 * 60 * 60 * 1000);
+
+    const reopened = ledger.update(review.id, {
+      status: 'in_progress',
+      latest_event: 'revision feedback reopened the submitted scope',
+    });
+    expect(reopened).toMatchObject({
+      status: 'in_progress',
+      reviewStartedAt: null,
+      reviewAnchorEventId: null,
+      dueAt: null,
+      deadlineIso: null,
+      deadlineOffsetMinutes: null,
+    });
+  });
+
+  it('TG-05/TG-06 refuses temporal ownership for a legacy review row without verified anchors', () => {
+    // A legacy row predates the verified-review migration; the current API refuses to
+    // create one, so the fixture writes the pre-migration shape directly.
+    const seeded = ledger.create({
+      title: 'legacy review without submission proof',
+      due_at: '2026-09-01T00:00:00Z',
+      source_channel: 'slack:C001',
+      source_event_id: 'legacy-event',
+    });
+    db.prepare(`UPDATE operator_tasks SET status = 'review' WHERE id = ?`).run(seeded.id);
+    const legacy = ledger.getById(seeded.id)!;
+    expect(legacy).toMatchObject({
+      status: 'review',
+      reviewStartedAt: null,
+      reviewAnchorEventId: null,
+    });
+    const occurrenceKey = occurrenceKeyForTask(legacy)!;
+
+    expect(() =>
+      ledger.enqueueTemporalGeneration({
+        generationKey: temporalGenerationKey(legacy.id, occurrenceKey, legacy.dueAt!),
+        taskId: legacy.id,
+        temporalEpoch: legacy.temporalEpoch,
+        occurrenceKey,
+        checkAt: legacy.dueAt!,
+        sourceChannel: legacy.sourceChannel,
+        sourceEventId: legacy.sourceEventId,
+      })
+    ).toThrow(/verified review anchor/i);
+  });
+
   it('deadline can be cleared with null', () => {
     const t = ledger.create({ title: 'x', deadline: '2026-08-01' });
     const cleared = ledger.update(t.id, { deadline: null });
@@ -123,12 +243,19 @@ describe('TaskLedger', () => {
   });
 
   it('filters: status, channel, search', () => {
-    ledger.create({ title: 'alpha work', status: 'review', source_channel: 'slack:C1' });
+    ledger.create({ title: 'alpha work', status: 'in_progress', source_channel: 'slack:C1' });
     ledger.create({ title: 'beta work', assignee: 'worker-b' });
-    expect(ledger.list({ status: 'review' })).toHaveLength(1);
+    expect(ledger.list({ status: 'in_progress' })).toHaveLength(1);
     expect(ledger.list({ channel: 'slack:C1' })).toHaveLength(1);
     expect(ledger.list({ search: 'worker-b' })).toHaveLength(1);
     expect(ledger.list({ search: 'alpha' })[0]?.title).toBe('alpha work');
+  });
+
+  it('TG-06 rejects direct creation in review: the anchor only comes from a verified task_update', () => {
+    expect(() => ledger.create({ title: 'submitted work', status: 'review' })).toThrow(
+      /'review' requires verified submission evidence/
+    );
+    expect(ledger.list({ status: 'review' })).toHaveLength(0);
   });
 
   it('getTasks() satisfies TaskSource with canonical ordering', () => {

@@ -243,7 +243,7 @@ rl.on('line', line => {
     }
     if (mode === 'turn-start-late-once' && !fs.existsSync(${JSON.stringify(join(root, 'late-turn-start'))})) {
       fs.writeFileSync(${JSON.stringify(join(root, 'late-turn-start'))},'1');
-      setTimeout(()=>send({jsonrpc:'2.0',id:message.id,result:{turn:fullTurn(id)}}),300);
+      setTimeout(()=>send({jsonrpc:'2.0',id:message.id,result:{turn:fullTurn(id)}}),900);
       return;
     }
     const requestBase = 700 + turn * 10;
@@ -359,7 +359,11 @@ process.on('SIGTERM', () => { if (mode !== 'ignore-term') process.exit(0); });
       cwd: root,
       sandbox: 'workspace-write',
       command,
-      requestTimeout: 500,
+      // Spawn-covering default: the first prompt lazily launches the fake Node
+      // app-server and bounds its initialize handshake with this value. 500ms
+      // timed out `initialize` on a loaded host (load ~4 on 10 cores). Timeout-path
+      // tests pass their own explicit budgets.
+      requestTimeout: 2_000,
       codexHome,
       isolatedHome,
       registryRoot,
@@ -381,7 +385,9 @@ function objectResult(entry: Record<string, unknown>): Record<string, unknown> |
 }
 
 async function waitForFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // 2s: the flag is written by the freshly spawned fake app-server, so this bound
+  // covers process start on a loaded host, not just the handshake it observes.
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     if (existsSync(path)) {
       return;
     }
@@ -1160,8 +1166,10 @@ describe('Story: Codex app-server process', () => {
     async (mode) => {
       const item = fixture(mode);
       // The assertion covers eventual cleanup, not sub-process launch speed. Keep enough budget for
-      // a loaded CI runner to start the fixture before exercising its intentional timeout mode.
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+      // a loaded CI runner to start the fixture before exercising its intentional timeout mode,
+      // but below the 2s cleanup wait: after the turn times out, the child is reaped by the
+      // reconciliation timer at max(budget, grace), so a 2s budget would race the waitFor.
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 1_000 });
       let settlements = 0;
       await runner.prompt('hi').then(
         () => {
@@ -1641,7 +1649,9 @@ describe('Story: Codex app-server process', () => {
     const timedOut = expect(
       runtime.prompt('slow', undefined, {
         sessionKey: 'slow',
-        requestTimeout: 250,
+        // Also bounds the lazy spawn + initialize; 250ms timed out `initialize` on a
+        // loaded host. The fixture never answers this turn, so the timeout path is kept.
+        requestTimeout: 1_000,
       })
     ).rejects.toThrow('timed out');
     await waitForFile(join(item.root, 'timed-out'));
@@ -1660,8 +1670,13 @@ describe('Story: Codex app-server process', () => {
     const item = fixture('turn-start-late-once');
     const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 1_000 });
 
+    // 600ms budget: it also bounds the lazy spawn + initialize of the fake app-server
+    // (150ms timed out `initialize` on a loaded host). The fixture acknowledges the
+    // first turn/start at 900ms, after this deadline and before the 1,200ms
+    // reconciliation timer (deadline + max(budget, grace)), so the late ack still
+    // lands inside the reconciliation window exactly as the 150/300 pairing did.
     await expect(
-      runtime.prompt('first', undefined, { sessionKey: 'same', requestTimeout: 150 })
+      runtime.prompt('first', undefined, { sessionKey: 'same', requestTimeout: 600 })
     ).rejects.toThrow('timed out');
     await expect(
       runtime.prompt('retry', undefined, { sessionKey: 'same', requestTimeout: 1_000 })
@@ -2071,7 +2086,12 @@ describe('Story: Codex app-server process', () => {
     'continues the persisted thread after %s before starting the next turn',
     async (mode) => {
       const item = fixture(mode);
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 200 });
+      // The first prompt lazily spawns the fake Node app-server, and the same
+      // requestTimeout bounds its initialize handshake (start -> request('initialize',
+      // ..., requestTimeout)). 200ms is below cold-spawn latency on a loaded machine
+      // and failed with "initialize timed out after 200ms"; 500ms is the value the
+      // rest of this file uses for spawn-covering timeouts.
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
       if (mode === 'exit-after-turn') {
         await runner.prompt('first');
         await new Promise((resolve) => setTimeout(resolve, 30));

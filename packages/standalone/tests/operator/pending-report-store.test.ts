@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -140,6 +141,102 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 describe('FilePendingReportStore', () => {
+  it('TG-06 maps a legacy v1 window to v2 without inventing excerpt timestamps', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const legacy = {
+      version: 1,
+      channels: [
+        {
+          channelId: 'custom-private:opaque-channel-id',
+          count: 1,
+          excerpts: ['Owner Label: legacy body'],
+        },
+      ],
+      windowTotal: 1,
+      fires: [],
+      authored: 0,
+      recalled: [],
+      eventKeys: ['legacy-event-key'],
+    };
+    await writeFile(path, JSON.stringify({ version: 1, digest: legacy, full: legacy }));
+
+    const loaded = new FilePendingReportStore(path).load();
+
+    expect(loaded?.digest).toMatchObject({
+      version: 2,
+      channels: [
+        {
+          label: 'unknown',
+          excerpts: [
+            {
+              authorLabel: 'unknown',
+              text: 'Owner Label: legacy body',
+              observedAt: null,
+            },
+          ],
+        },
+      ],
+    });
+    const reporter = new SituationReporter();
+    reporter.restore(loaded!.digest);
+    expect(
+      reporter.windowEvidence('2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z')
+    ).toMatchObject({
+      channels: [{ excerpts: [{ observedAt: null }] }],
+    });
+  });
+
+  it('refuses a new save containing legacy v1 snapshots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const legacy = {
+      version: 1 as const,
+      channels: [],
+      windowTotal: 0,
+      fires: [],
+      authored: 0,
+      recalled: [],
+      eventKeys: [],
+    };
+
+    expect(() =>
+      new FilePendingReportStore(path).save({
+        version: 1,
+        digest: legacy,
+        full: legacy,
+      })
+    ).toThrow('invalid pending operator report state');
+  });
+
+  it('TG-06 round-trips exact version-2 window evidence across restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const reporter = new SituationReporter();
+    reporter.recordWindow([
+      {
+        id: 1,
+        channel: 'slack',
+        channelId: 'slack:private-channel-id',
+        userId: 'Owner Label',
+        role: 'user',
+        content: 'restart-stable body',
+        createdAt: Date.parse('2026-09-02T02:03:04.000Z'),
+      },
+    ]);
+    const snapshot = reporter.snapshot();
+    const before = JSON.stringify(snapshot);
+
+    new FilePendingReportStore(path).save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+    });
+
+    const loaded = new FilePendingReportStore(path).load();
+    expect(JSON.stringify(loaded?.full)).toBe(before);
+  });
+
   it('persists both report windows atomically for restart recovery', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
     const path = join(root, 'pending.json');
@@ -857,6 +954,61 @@ describe('FilePendingReportStore', () => {
       deliveryId: 'operator-report:on_demand_full:request-1',
       occurrence: { kind: 'on_demand_full' },
     });
+  });
+
+  it('TG-05/TG-06 round-trips byte-identical full-report context and SHA before model admission', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+    const contextJson = '{"canonical":"owner-report-context","version":1}';
+    const contextSha256 = createHash('sha256').update(contextJson).digest('hex');
+    const store = new FilePendingReportStore(path);
+
+    store.save({
+      version: 1,
+      digest: snapshot,
+      full: snapshot,
+      request: bindRequest({
+        mode: 'full',
+        deliveryId: 'operator-report:scheduled:2026-09-02:09',
+        occurrence: {
+          kind: 'scheduled_full',
+          hourKey: '2026-09-02:09',
+          firedAtIso: '2026-09-02T00:00:00.000Z',
+        },
+        acceptedAtIso: '2026-09-02T00:00:00.000Z',
+        contextJson,
+        contextSha256,
+      }),
+    });
+
+    expect(store.load()?.request).toMatchObject({ contextJson, contextSha256 });
+    expect(store.load()?.request?.contextJson).toBe(contextJson);
+  });
+
+  it('TG-06 refuses a pending packet whose stored SHA does not match its exact bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mama-report-buffer-'));
+    const path = join(root, 'pending.json');
+    const snapshot = new SituationReporter().snapshot();
+
+    expect(() =>
+      new FilePendingReportStore(path).save({
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        request: bindRequest({
+          mode: 'full',
+          deliveryId: 'operator-report:on_demand_full:request-sha-mismatch',
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-09-02T00:00:00.000Z',
+          },
+          acceptedAtIso: '2026-09-02T00:00:00.000Z',
+          contextJson: '{"canonical":"owner-report-context"}',
+          contextSha256: '0'.repeat(64),
+        }),
+      })
+    ).toThrow('invalid pending operator report state');
   });
 
   it('quarantines malformed nested report state instead of disabling the trigger loop', async () => {
