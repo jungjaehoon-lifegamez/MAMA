@@ -65,6 +65,73 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     };
   }
 
+  it.each(['done', 'in_progress'] as const)(
+    'TG-05/TG-06 clears the verified review anchor and its derived due time when a temporal effect resolves review to %s',
+    (status) => {
+      const submittedAt = now - 14 * 24 * 60 * 60 * 1000;
+      const created = ledger.create({
+        title: 'submitted review work',
+        source_channel: 'trello:synthetic-board',
+        source_event_id: 'synthetic-card',
+      });
+      const review = ledger.update(
+        created.id,
+        { status: 'review', latest_event: 'submitted for review' },
+        {
+          verifiedReviewEvidence: {
+            contextPacketId: 'ctxp_submission',
+            contextPacketSha256: 'b'.repeat(64),
+            eventIndexId: 'event-index-review-anchor',
+            sourceTimestampMs: submittedAt,
+            sourceChannel: 'trello:synthetic-board',
+          },
+        }
+      );
+      expect(review).toMatchObject({
+        status: 'review',
+        reviewStartedAt: submittedAt,
+        reviewAnchorEventId: 'event-index-review-anchor',
+        dueAt: submittedAt + 14 * 24 * 60 * 60 * 1000,
+      });
+      const occurrenceKey = occurrenceKeyForTask(review)!;
+      const generationKey = `task:${review.id}:${occurrenceKey}:check:${review.dueAt}`;
+      ledger.enqueueTemporalGeneration({
+        generationKey,
+        taskId: review.id,
+        temporalEpoch: review.temporalEpoch,
+        occurrenceKey,
+        checkAt: review.dueAt!,
+        sourceChannel: review.sourceChannel,
+        // A review generation is keyed by the verified submission anchor, not the
+        // task's creating event.
+        sourceEventId: review.reviewAnchorEventId,
+        priority: 'high',
+      });
+      const claimed = ledger.claimNextWorkOrder()!;
+      const context = ledger.loadTemporalWorkContext(claimed.id);
+
+      const receipt = applyEffect(context, {
+        expected_revision: context.revision,
+        outcome: 'resolved',
+        status,
+        reason:
+          status === 'done' ? 'no later feedback in the window' : 'same-scope revision requested',
+      });
+
+      expect(receipt.changedFields).toEqual(
+        expect.arrayContaining(['status', 'review_started_at', 'review_anchor_event_id', 'due_at'])
+      );
+      expect(ledger.getById(review.id)).toMatchObject({
+        status,
+        reviewStartedAt: null,
+        reviewAnchorEventId: null,
+        dueAt: null,
+        deadlineIso: null,
+        revision: review.revision + 1,
+      });
+    }
+  );
+
   it('resolves with an actual status change and atomically finalizes every record', () => {
     const { context, generationKey, taskId } = setup();
     const receipt = applyEffect(

@@ -18,7 +18,11 @@ import {
   type ReportCarryTarget,
 } from './report-carry.js';
 import { withFileCoordinationTransaction } from './file-coordination.js';
-import type { PreparedSituationReport, SituationReporterSnapshot } from './situation-report.js';
+import type {
+  PreparedSituationReport,
+  SituationReporterSnapshotV1,
+  SituationReporterSnapshotV2,
+} from './situation-report.js';
 
 export interface PendingReportOccurrence {
   kind: 'digest' | 'scheduled_full' | 'on_demand_full';
@@ -40,12 +44,16 @@ export interface PendingReportRequest {
   acceptedAtIso: string;
   target: ReportCarryTarget;
   payloadIdentity: string;
+  /** Canonical redacted OwnerReportContextV1 JSON persisted before model admission. */
+  contextJson?: string;
+  /** SHA-256 of the exact UTF-8 bytes in contextJson. */
+  contextSha256?: string;
 }
 
 export interface PendingReportState {
   version: 1;
-  digest: SituationReporterSnapshot;
-  full: SituationReporterSnapshot;
+  digest: SituationReporterSnapshotV2;
+  full: SituationReporterSnapshotV2;
   delivery?: PendingReportDelivery;
   request?: PendingReportRequest;
 }
@@ -88,10 +96,27 @@ export interface PendingReportStore {
 }
 
 const MAX_PENDING_REPORT_BYTES = 8 * 1024 * 1024;
+const MAX_PENDING_CONTEXT_BYTES = 96 * 1024;
 const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;
 const MAX_EVENT_KEYS = 10_000;
+const SAFE_SNAPSHOT_CHANNEL_LABELS = new Set([
+  'calendar',
+  'chatwork',
+  'claude-code',
+  'discord',
+  'drive',
+  'gmail',
+  'imessage',
+  'kagemusha',
+  'notion',
+  'obsidian',
+  'sheets',
+  'slack',
+  'telegram',
+  'trello',
+]);
 
 interface PendingReportRequestIdentityInput {
   mode: 'full';
@@ -99,6 +124,7 @@ interface PendingReportRequestIdentityInput {
   occurrence: PendingReportOccurrence;
   acceptedAtIso: string;
   target: ReportCarryTarget;
+  contextSha256?: string;
 }
 
 interface PendingReportDeliveryIdentityInput {
@@ -127,18 +153,25 @@ function occurrenceIdentity(occurrence: PendingReportOccurrence): string {
 export function pendingReportRequestPayloadIdentity(
   request: PendingReportRequestIdentityInput
 ): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
+  const identity = request.contextSha256
+    ? [
+        'pending-report-request-v2',
+        request.mode,
+        request.deliveryId,
+        request.acceptedAtIso,
+        occurrenceIdentity(request.occurrence),
+        reportTargetIdentity(request.target),
+        request.contextSha256,
+      ]
+    : [
         'pending-report-request-v1',
         request.mode,
         request.deliveryId,
         request.acceptedAtIso,
         occurrenceIdentity(request.occurrence),
         reportTargetIdentity(request.target),
-      ])
-    )
-    .digest('hex');
+      ];
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 }
 
 export function pendingReportDeliveryPayloadIdentity(
@@ -179,7 +212,7 @@ function isPendingReportState(value: unknown): value is PendingReportState {
     const snapshot = record[key];
     if (!snapshot || typeof snapshot !== 'object') return false;
     const fields = snapshot as Record<string, unknown>;
-    if (!isSituationSnapshot(fields)) {
+    if (!isSituationSnapshotV2(fields)) {
       return false;
     }
   }
@@ -192,6 +225,33 @@ function isPendingReportState(value: unknown): value is PendingReportState {
   );
 }
 
+function normalizePendingReportState(value: unknown): PendingReportState | null {
+  if (isPendingReportState(value)) return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.version !== 1) return null;
+  const digest = migrateSituationSnapshotV1(record.digest);
+  const full = migrateSituationSnapshotV1(record.full);
+  if (!digest || !full || (record.delivery !== undefined && record.request !== undefined)) {
+    return null;
+  }
+  if (
+    (record.delivery !== undefined && !isPendingDelivery(record.delivery)) ||
+    (record.request !== undefined && !isPendingRequest(record.request))
+  ) {
+    return null;
+  }
+  return {
+    version: 1,
+    digest,
+    full,
+    ...(record.delivery !== undefined
+      ? { delivery: record.delivery as PendingReportDelivery }
+      : {}),
+    ...(record.request !== undefined ? { request: record.request as PendingReportRequest } : {}),
+  };
+}
+
 function isPendingRequest(value: unknown): value is PendingReportRequest {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
@@ -200,10 +260,40 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
       record.mode === 'full' &&
       isNonEmptyBoundedString(record.deliveryId, 512) &&
       isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
-      isOnDemandFullOccurrence(record.occurrence) &&
+      Number.isFinite(Date.parse(record.acceptedAtIso)) &&
+      isFullOccurrence(record.occurrence) &&
       isReportTarget(record.target) &&
       isSha256Identity(record.payloadIdentity)
     )
+  ) {
+    return false;
+  }
+  const hasContextJson = record.contextJson !== undefined;
+  const hasContextSha256 = record.contextSha256 !== undefined;
+  if (hasContextJson !== hasContextSha256) {
+    return false;
+  }
+  if (
+    hasContextJson &&
+    (!isNonEmptyBoundedString(record.contextJson, MAX_PENDING_CONTEXT_BYTES) ||
+      Buffer.byteLength(record.contextJson) > MAX_PENDING_CONTEXT_BYTES ||
+      !isSha256Identity(record.contextSha256) ||
+      createHash('sha256').update(record.contextJson).digest('hex') !== record.contextSha256)
+  ) {
+    return false;
+  }
+  const expectedKeys = [
+    'mode',
+    'deliveryId',
+    'occurrence',
+    'acceptedAtIso',
+    'target',
+    'payloadIdentity',
+    ...(hasContextJson ? ['contextJson', 'contextSha256'] : []),
+  ];
+  if (
+    Object.keys(record).length !== expectedKeys.length ||
+    !Object.keys(record).every((key) => expectedKeys.includes(key))
   ) {
     return false;
   }
@@ -215,6 +305,7 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
       acceptedAtIso: record.acceptedAtIso,
       occurrence: record.occurrence,
       target: record.target,
+      ...(typeof record.contextSha256 === 'string' ? { contextSha256: record.contextSha256 } : {}),
     })
   );
 }
@@ -327,9 +418,9 @@ function isOnDemandFullOccurrence(value: unknown): value is PendingReportOccurre
   );
 }
 
-function isSituationSnapshot(fields: Record<string, unknown>): boolean {
+function hasSituationSnapshotBase(fields: Record<string, unknown>, version: 1 | 2): boolean {
   if (
-    fields.version !== 1 ||
+    fields.version !== version ||
     !isSafeCount(fields.windowTotal) ||
     !isSafeCount(fields.authored) ||
     !Array.isArray(fields.channels) ||
@@ -346,22 +437,89 @@ function isSituationSnapshot(fields: Record<string, unknown>): boolean {
     return false;
   }
   return (
-    fields.channels.every(isChannelSnapshot) &&
+    fields.channels.every(version === 2 ? isChannelSnapshotV2 : isChannelSnapshotV1) &&
     fields.fires.every(isFireSnapshot) &&
     fields.recalled.every(isRecalledSnapshot)
   );
 }
 
-function isChannelSnapshot(value: unknown): boolean {
+function isSituationSnapshotV2(fields: Record<string, unknown>): boolean {
+  return hasSituationSnapshotBase(fields, 2);
+}
+
+function isSituationSnapshotV1(fields: Record<string, unknown>): boolean {
+  return hasSituationSnapshotBase(fields, 1);
+}
+
+function isChannelSnapshotBase(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
     isBoundedString(record.channelId, 512) &&
     isSafeCount(record.count) &&
     Array.isArray(record.excerpts) &&
-    record.excerpts.length <= 5 &&
-    record.excerpts.every((item) => isBoundedString(item, 160))
+    record.excerpts.length <= 5
   );
+}
+
+function isChannelSnapshotV1(value: unknown): boolean {
+  return (
+    isChannelSnapshotBase(value) &&
+    (value.excerpts as unknown[]).every((item: unknown) => isBoundedString(item, 160))
+  );
+}
+
+function isChannelSnapshotV2(value: unknown): boolean {
+  return (
+    isChannelSnapshotBase(value) &&
+    isBoundedString(value.label, 160) &&
+    (value.excerpts as unknown[]).every(isSituationExcerpt)
+  );
+}
+
+function isSituationExcerpt(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    isBoundedString(record.authorLabel, 160) &&
+    isBoundedString(record.text, 160) &&
+    (record.observedAt === null ||
+      (isNonEmptyBoundedString(record.observedAt, 64) &&
+        Number.isFinite(Date.parse(record.observedAt))))
+  );
+}
+
+function migrateLegacyExcerpt(value: string): {
+  authorLabel: string;
+  text: string;
+  observedAt: null;
+} {
+  return { authorLabel: 'unknown', text: value, observedAt: null };
+}
+
+function migrateSituationSnapshotV1(value: unknown): SituationReporterSnapshotV2 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const fields = value as Record<string, unknown>;
+  if (!isSituationSnapshotV1(fields)) return null;
+  const snapshot = fields as unknown as SituationReporterSnapshotV1;
+  return {
+    version: 2,
+    channels: snapshot.channels.map((channel) => {
+      const separator = channel.channelId.indexOf(':');
+      const candidate = separator > 0 ? channel.channelId.slice(0, separator) : '';
+      return {
+        channelId: channel.channelId,
+        label: SAFE_SNAPSHOT_CHANNEL_LABELS.has(candidate) ? candidate : 'unknown',
+        count: channel.count,
+        excerpts: channel.excerpts.map(migrateLegacyExcerpt),
+      };
+    }),
+    windowTotal: snapshot.windowTotal,
+    fires: snapshot.fires.map((fire) => ({ ...fire, topics: [...fire.topics] })),
+    authored: snapshot.authored,
+    recalled: snapshot.recalled.map((item) => ({ ...item })),
+    ...(snapshot.eventKeys ? { eventKeys: [...snapshot.eventKeys] } : {}),
+  };
 }
 
 function isFireSnapshot(value: unknown): boolean {
@@ -555,7 +713,8 @@ export class FilePendingReportStore implements PendingReportStore {
         throw new Error('Pending operator report state exceeds its size limit');
       }
       const parsed: unknown = JSON.parse(raw);
-      if (!isPendingReportState(parsed)) {
+      const normalized = normalizePendingReportState(parsed);
+      if (!normalized) {
         throw new Error(
           size > MAX_PENDING_REPORT_BYTES
             ? 'Pending operator report state exceeds its size limit'
@@ -565,7 +724,7 @@ export class FilePendingReportStore implements PendingReportStore {
       return {
         status: 'ready',
         revision: revisionFor(raw),
-        state: parsed,
+        state: normalized,
       };
     } catch (error) {
       const quarantinePath = `${this.path}.corrupt-${Date.now()}-${process.pid}-${randomUUID()}`;

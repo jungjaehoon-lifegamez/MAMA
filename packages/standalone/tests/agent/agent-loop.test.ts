@@ -33,7 +33,6 @@ import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import {
   createPersonaReportAsk,
   OPERATOR_REPORT_SESSION_KEY,
-  summarizeReportToolUse,
 } from '../../src/operator/report-run.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
@@ -875,11 +874,11 @@ describe('AgentLoop', () => {
     });
 
     it.each([
-      ['enabled', true, 1],
-      ['disabled', false, 0],
+      ['enabled', true],
+      ['disabled', false],
     ] as const)(
-      'TG-06 report-to-AgentLoop gives a Claude non-Code-Act run the %s private catalog exactly once',
-      async (_label, enabled, expectedDefinitions) => {
+      'TG-03/TG-04/TG-05 packet-only report gives a Claude run zero generated tools when private connectors are %s',
+      async (_label, enabled) => {
         const userOwnedGatewayExample = [
           '# User-authored CLAUDE instructions',
           '',
@@ -945,28 +944,25 @@ describe('AgentLoop', () => {
             return result;
           },
           log: () => {},
-          fullReportTag: '[operator_full_report]',
         });
 
         await ask('compose the owner report');
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
-        expect(effectivePrompt.match(/\*\*changes_read\*\*/g) ?? []).toHaveLength(1);
+        expect(effectivePrompt).not.toContain('**changes_read**');
         expect(effectivePrompt).not.toContain('**drive_download**');
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->/g) ?? []
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(
           new PromptSizeMonitor().check([
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(effectivePrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
-          expectedDefinitions
-        );
+        expect(effectivePrompt).not.toContain('**kagemusha_tasks**');
       }
     );
 
@@ -2913,7 +2909,7 @@ describe('AgentLoop', () => {
       expect(result.response).toBe('Claude tool complete');
     });
 
-    it('records native gather and write exchanges in report-auditable history exactly once', async () => {
+    it('records native gather and write exchanges in history exactly once', async () => {
       const onTurn = vi.fn();
       persistentPromptMock.mockImplementationOnce(
         async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
@@ -2975,11 +2971,6 @@ describe('AgentLoop', () => {
         'user:tool_result:write-1',
         'assistant:text',
       ]);
-      expect(summarizeReportToolUse(result.history)).toMatchObject({
-        gatherTools: ['kagemusha_tasks'],
-        writeTools: ['mama_save'],
-        all: ['kagemusha_tasks', 'mama_save'],
-      });
       expect(onTurn.mock.calls.map(([entry]) => entry.role)).toEqual([
         'assistant',
         'user',

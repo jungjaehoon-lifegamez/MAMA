@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.39.5",
+  "version": "0.40.0",
   "description": "MAMA OS - The local work agent behind your messenger.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

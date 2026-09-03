@@ -35,6 +35,80 @@ scenario IDs from this document.
 | TG-05 | A continued model session does not receive the full system/context prompt again. When the backend session changes or is lost, only bounded recent context is restored.                              | `agent/agent-loop.ts:357-398`: `retainsContext`, session-change detection, bounded previous-turn restoration                                                                                                                                                            | `agent/codex-app-server-process.ts`, `agent/cline-cli-adapter.ts`, `gateways/message-router.ts`, `gateways/session-store.ts`, `agent/agent-loop.ts`, `connectors/private-connector-policy.ts`, `connectors/private-prompt-overlay.ts`                                               | Same-policy continuation sends only the new user message. Codex threads and Cline Hub sessions both retain live model context. A private-policy fingerprint change rejects the stale durable session, rebuilds the full current policy exactly once, then resumes minimally; a missing Cline Hub session takes the same bounded rebuild path. Kagemusha remains a configured user-private connector: fresh, disabled, generic, and legacy-unbound surfaces do not receive its catalog, and unknown-tool errors do not enumerate it. Disabled prompt projection removes actual private directives and calls, including safely matched nested Markdown wrappers, while preserving historical prose and the user-owned brief bytes. Delivered owner reports become durable SQLite context events (telegram-report-context-store); a verified owner turn consumes a bounded deterministic Projection V1 snapshot exactly once, and the final turn, its receipt, and the consumption marks commit in ONE transaction (SessionStore.finalizeTurnWithReportReceipt). An actual backend replacement restores committed projections from receipts (provisional turns never restore); successful resume does not replay them. Exact receipt history travels as its own prompt layer instead of being reparsed from concatenated untrusted text. If the total prompt exceeds budget, history is removed whole before the Code-Act catalog. No nested Codex CLI is used. | `agent-loop.test.ts`, `codex-app-server-process.test.ts`, and `cline-cli-adapter.test.ts`: durable continuation, policy replacement, missing-session rebuild, then minimal continuation. `message-router.test.ts`: current-policy rebuild and one-shot target-scoped carry. `message-router-report-inbox.test.ts`, `session-store-report-receipt.test.ts`, `owner-report-inbox.test.ts`, `report-projection-v1.test.ts`: snapshot-once consumption, atomic turn/receipt finalize, structured replacement history vs resume, embedded marker safety, whole-layer budget removal, and bounded deterministic projection vectors. `private-connector-policy.test.ts`, `tool-ad-coherence.test.ts`, `gateway-tool-executor.test.ts`: fail-closed private discovery/execution. `private-prompt-projection.test.ts`: shared console/workorder invocation and historical-prose matrix.                                                                    | CODE GREEN (v0.39.0 cutover; next release canary pending) |
 | TG-06 | Full-report requests and scheduled reports use the same owner tool capabilities and are visibly delivered. A failure cannot be reported as success or leave a durable response stranded.            | Owner-only full-report routing in `runtime/monitoring-runtime.ts:289-310`; report tool workflow in `runtime/report-prompts.ts`; Telegram send path in `channels/telegram/telegram-channel.ts:395-400`                                                                   | `operator/operator-trigger-loop.ts`, `operator/situation-report.ts`, `operator/pending-report-store.ts`, `operator/report-carry.ts`, `operator/task-ledger.ts`, `operator/workorder-consumer.ts`, `cli/commands/start.ts`, `cli/runtime/api-routes-init.ts`, `gateways/telegram.ts` | MAMA persists the exact report text, provenance, occurrence, delivery ID, Telegram target, and payload identity before sending. Startup replays the same prepared artifact rather than regenerating it; target/payload conflict is quarantined or rejected, and scheduler success advances only after delivery. Digest, scheduled full, and on-demand full deliver through ONE ReportDeliveryPort coordinator: durable SQLite reservation before any Telegram send, a pinned confirmed-send ledger proof that cannot expire while the row is nonterminal, CAS attempt leases so exactly one executor ever sends, typed retry/rejection/cancellation outcomes, and scheduler success plus trigger credit only on `delivered`. The legacy V2 carry file migrates one-time into the store (exact prefix bytes preserved). Connector deltas enter the durable MAMA owner-event journal with immutable trigger procedures. The same owner agent chooses actions; the host ACKs only completed durable effects, accepted workorders, or exact no-update receipts. Prose-only and failed effects retry. Scheduled/on-demand report delivery remains independently receipted.                                                                                                                                                                                                                                                                                        | `operator-trigger-loop.test.ts`, `pending-report-store.test.ts`, `situation-report.test.ts`, `report-carry.test.ts`, and `message-router.test.ts`: exact prepared report, target/payload/provenance binding, restart, and one-shot carry. `telegram.test.ts`: delivery-ID target/text binding plus rejection/ambiguity, ledger pinning, and the report delivery control port. `report-delivery-coordinator.test.ts`, `telegram-report-context-store*.test.ts`, `operator-trigger-loop-report-delivery.test.ts`: reservation/lease/terminal protocol, V2 migration, capacity backpressure, delivered-only credit. `report-delivery-wiring.test.ts`: structural sole-executor and production-assembly pins. `owner-event-inbox.test.ts`, `owner-event-loop.test.ts`, `owner-event-outcome.test.ts`, `owner-event-policy.test.ts`, and `owner-event-prompt.test.ts`: durable intake, same-agent policy, private scope, terminal receipts, and retry. | CODE GREEN (v0.39.0 cutover; live canary pending)         |
 
+### Cognitive foundation Task 3 review correction: 2026-09-02
+
+- **TG-05/TG-06 review-window authority:** a review Temporal packet must contain the verified
+  submission anchor, every raw ref must remain in the task's connector/channel, and the canonical
+  packet range must equal `review_started_at..checkAt`. Later same-channel feedback is now allowed
+  inside that compiler-enforced range instead of being incorrectly required to equal the anchor.
+  The Gateway executor now passes that verified window to its post-compile source check; a real
+  adapter-backed compile covers the anchor plus later feedback. Missing anchors, wrong channels,
+  and out-of-range anchors fail closed through the same executor path.
+- **TG-06 lifecycle authority:** a completed or failed Board workorder can no longer mutate
+  lifecycle fields on an unrelated owner task through a retained attempt context. Active Board
+  judgments still require the revision actually read, including a duplicate-source `task_create`
+  that resolves to an UPSERT. The optional duplicate revision is projected through the canonical
+  registry and Code-Act HostBridge; genuinely new creates do not require it. Leaving a verified
+  review clears its derived clock and anchor state, while legacy review rows without both verified
+  anchor fields cannot acquire or load Temporal ownership.
+- **TG-03/TG-04/TG-05 report overhead:** the packet-only full-report path retains one fresh model
+  turn and its bounded packet audit. The retired report gather/write-history classifier, marker
+  dependency, and their tests were removed; digest-only earlier-text recovery remains separate.
+- **Evidence:** `temporal-work-context.test.ts`, `gateway-tool-executor.test.ts`,
+  `tool-registry.test.ts`, `host-bridge.test.ts`, `task-ledger.test.ts`,
+  `temporal-reconcile.test.ts`, `external-lifecycle-executor.test.ts`, `report-run.test.ts`,
+  `persistent-cli-process-stream.test.ts`, and `agent-loop.test.ts`. The corrected Task 3 focused
+  gate passed 17 files and 618 tests; the changed-surface gate passed six files and 197 tests.
+  Standalone typecheck, changed-file ESLint/Prettier, and `git diff --check` passed. This is code
+  evidence only; a real owner report remains pending.
+
+### Cognitive foundation Task 4 offline quality gate: 2026-09-02
+
+- **Corpus:** copied operational databases (memory + operator ledger, snapshot 09:53Z), one
+  read-only live Trello capture, and the two latest delivered full-report windows (13:00 and
+  18:00 local) replayed through the production packet compiler and one fresh tool-free
+  Codex turn. The stored delivered reports are the old-path benchmark; nothing was written to
+  the live databases or sent anywhere.
+- **TG-03/TG-04/TG-05 cost:** old self-gather runs used 14 and 28 tool calls with 273K and
+  759K rollout tokens in 305 s and 445 s; the packet path used 0 tool calls, exactly one
+  turn, ~52K tokens, 228 s and 238 s per window (packet 98 KB at the 96 KiB cap).
+- **Correctness:** zero stale current claims found against the packet (one sentence traced to
+  a same-window task event), zero completion or reopen from Trello absence, duplicate-row
+  ambiguity and no-provenance rows retained explicitly, every incomplete source named with
+  its reason and counts, owner escalations limited to one normative decision with evidence,
+  recommendation, options and impact. Internal-id leakage in owner text went from at least
+  six (board, room and channel ids) to zero.
+- **Real-data defects repaired in Task 2/3 files:** the 50-row task bound ranked by deadline
+  carried zero rows updated in the last week and zero in_progress rows out of 264 open tasks
+  (now ranked by recency); Board-written latest_event prose and curated claim summaries
+  leaked raw event, run and chat-room ids (now scrubbed); real boards keep 13 lists above the
+  100-card read bound, so a "complete" Trello snapshot never occurred and the completion rule
+  was dead (a partial snapshot now forbids only absence-based inference; an exactly matched
+  live card stays valid evidence). The task summary also carries deadline and due-at, and
+  section titles follow the owner language.
+- **Blinded pairwise owner comparison (2026-09-03):** the owner read both windows with the
+  old and new reports labelled A/B at random and judged B, the packet-path report, more
+  useful in both windows. The usefulness gate in Task 4 Step 3 passes.
+- **Lifecycle judgment eval:** 11/11 fixtures including the new partial-snapshot terminal
+  case; safety fixtures 4/4 retain; owner-action precision 1.0 with 0 false escalations.
+- **Copied-DB lifecycle gate:** all 264 open owner tasks correlated (75 exact live matches,
+  8 ambiguous, 2 unmatched, 7 historical-only) and 90 candidates judged in one turn under the
+  projected Board contract. 87 retained, including every exactly matched card sitting in a
+  scheduled-delivery list. Two stale rows were reclassified on the copy through the production
+  ledger primitive with expected-revision checks and effect receipts: one 34-day review row
+  reopened to in_progress on a same-scope resubmission, one 37-day pending row completed on
+  an explicit FIX notice; both cited source events exist in the copied event index and say
+  what the judgment claims. One review proposal was refused because the model returned a
+  stale expected revision, which is the intended failure. A first pass with a 72-hour message
+  window proposed the same review transition with a valid same-channel anchor.
+- **Verification:** mama-core 660 tests, standalone full suite, focused parity gate (11
+  files, 316 tests), typecheck, build, root lint, changed-file Prettier and `git diff --check`
+  passed; root `format:check` warns only on 35 pre-existing untouched files.
+- **Boundary:** the gate emulates the Board lane's judgment and ledger path without the
+  Code-Act envelope or context packets, and the report comparison ran offline. No installed
+  runtime carries the packet path yet; Step 6/7 (paired core/OS release, restart, one real
+  `mama report now`, receipt chain) remains pending and is the completion gate.
+
 ### Owner-agent event subject correction: 2026-08-19
 
 - **TG-03/TG-04:** connector deltas are now work owned by MAMA itself. The default-off stateful

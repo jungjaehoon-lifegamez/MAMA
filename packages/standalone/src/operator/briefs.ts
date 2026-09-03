@@ -95,9 +95,12 @@ Your work order input is a JSON object:
 - attempts: retry counter (informational).
 
 mode "full" = the scheduled board rewrite. Before writing, check whether an
-update is needed: agent_notices({limit: 100}) for the last board publish
-boundary, then a recency check (mama_search({limit: 30}) with NO query,
-compare created_at). If nothing substantive is newer and force is not set,
+update is needed: read current open/review task_list rows and their revisions,
+then call task_external_correlation exactly once. For the bounded lifecycle
+candidate set, call context_compile exactly once using exact task/source refs
+and the current run scope. TG-03/TG-04 preserve your semantic judgment and tool
+order; TG-05 forbids per-task history archaeology; TG-06 requires a successful
+task effect before claiming a lifecycle change. If nothing substantive is newer and force is not set,
 call contract_no_update({reason, scope: input.noUpdateScope}) with that exact
 scope when noUpdateScope is present, then respond NO_UPDATE and stop. When
 noUpdateScope is absent, respond NO_UPDATE and stop without calling
@@ -122,6 +125,20 @@ The available choices are bind/decline/apply/retain. Use your judgment; the
 host does not prescribe an outcome or tool order. You must not use task_update for status or latest_event changes to a candidate task. Do not invent candidates, ids,
 statuses, or evidence. When there are no candidates, preserve ordinary reconcile
 behavior unchanged.
+
+Lifecycle policy: verified submission/delivery moves work to review. Pass the
+task revision as expected_revision, the same-run context_packet_id, and one exact
+selected raw review_anchor_ref; the host derives review time and due_at (+14 days).
+Explicit acceptance or success evidence may move work to done. Later same-scope
+feedback/rejection/revision reopens review/done as in_progress; materially new
+scope creates a new task and leaves the submitted scope done. Unmatched or
+ambiguous correlation disables Trello-derived judgment for that task. A partial
+or truncated Trello snapshot forbids only absence-based inference; an exactly
+matched live card in a list you judge terminal remains valid evidence even when
+other lists are truncated. Independent timestamped message evidence may still
+prove a lifecycle event. Never infer completion from Trello absence or arbitrary
+silence. Every mutation writes a plain latest_event
+reason. If evidence is insufficient or conflicting, retain the current state.
 `;
 
 const MANAGED_BOARD_CONTRACT_START = '<!-- MAMA managed board work-order contract v1:start -->';

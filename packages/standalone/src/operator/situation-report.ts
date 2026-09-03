@@ -18,20 +18,17 @@
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
 import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
-import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import {
   isArtifactProvenance,
   type ArtifactProvenance,
   type ReportCarryTarget,
 } from './report-carry.js';
-
-/**
- * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
- * report from a digest for tool-use auditing (report-run.ts). The bracketed tag keeps framing
- * source-neutral while remaining machine-readable.
- */
-export const OPERATOR_FULL_REPORT_TAG = '[operator_full_report]';
+import {
+  serializeOwnerReportContext,
+  type OwnerReportContextV1,
+  type ReportWindowEvidence,
+} from './report-context.js';
 
 export interface FireActivity {
   triggerId: string;
@@ -79,10 +76,27 @@ const MAX_CHANNELS_IN_SNAPSHOT = MAX_CHANNELS_IN_PROMPT * 4;
 const MAX_RECALLED = 20;
 const MAX_FIRES_IN_SNAPSHOT = 100;
 const MAX_SEEN_EVENT_KEYS = 10_000;
+const SAFE_CHANNEL_LABELS = new Set([
+  'calendar',
+  'chatwork',
+  'claude-code',
+  'discord',
+  'drive',
+  'gmail',
+  'imessage',
+  'kagemusha',
+  'notion',
+  'obsidian',
+  'sheets',
+  'slack',
+  'telegram',
+  'trello',
+]);
 
 interface ChannelWindow {
+  label: string;
   count: number;
-  excerpts: string[]; // last-K, each already sliced to MAX_EXCERPT_CHARS
+  excerpts: SituationReportExcerpt[];
 }
 
 interface FireAgg {
@@ -93,7 +107,13 @@ interface FireAgg {
   topics: Set<string>;
 }
 
-export interface SituationReporterSnapshot {
+export interface SituationReportExcerpt {
+  authorLabel: string;
+  text: string;
+  observedAt: string | null;
+}
+
+export interface SituationReporterSnapshotV1 {
   version: 1;
   channels: Array<{ channelId: string; count: number; excerpts: string[] }>;
   windowTotal: number;
@@ -109,29 +129,30 @@ export interface SituationReporterSnapshot {
   eventKeys?: string[];
 }
 
+export interface SituationReporterSnapshotV2 {
+  version: 2;
+  channels: Array<{
+    channelId: string;
+    label: string;
+    count: number;
+    excerpts: SituationReportExcerpt[];
+  }>;
+  windowTotal: number;
+  fires: Array<{
+    triggerId: string;
+    kind: string;
+    channelId: string;
+    count: number;
+    topics: string[];
+  }>;
+  authored: number;
+  recalled: Array<{ topic: string; content: string }>;
+  eventKeys?: string[];
+}
+
+export type SituationReporterSnapshot = SituationReporterSnapshotV1 | SituationReporterSnapshotV2;
+
 export interface SituationReporterOptions {
-  /** Model provider controls only the tool-call syntax; report workflow/content stays shared. */
-  backend?: BackendType;
-  /**
-   * M2.3: tool-call instructions injected into the FULL report framing so the agent
-   * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
-   * lesson from the reference owner console: report prompts instruct the agent to call tools
-   * instead of relying on a low-quality deterministic report builder. The lines
-   * are injected from the runtime wiring (which knows the daemon's toolset); this
-   * module stays generic. Digest mode never uses them (frequent + must stay light).
-   *
-   * A zero-arg provider is resolved at fire time (buildPrompt runs per report),
-   * so runtime wiring can inject freshly anchored gather lines (e.g. a delta
-   * `since=<last successful report>`) without rebuilding the reporter.
-   */
-  selfGatherLines?: string[] | (() => string[]);
-  /**
-   * Dual-output mechanism: lines instructing the FULL report run to also
-   * publish the operator board slots (report_publish) before writing the text
-   * report. Injected from runtime wiring (board-slot-instructions.ts); digest mode
-   * never publishes the board.
-   */
-  boardPublishLines?: string[];
   /**
    * G2 success signal: called with the trigger ids the agent says it actually
    * drew on for the sent report (parsed from the stripped USED_TRIGGERS
@@ -148,6 +169,24 @@ export interface SituationReporterOptions {
 
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
 const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
+
+function legacyExcerpt(value: string): SituationReportExcerpt {
+  return {
+    authorLabel: 'unknown',
+    text: value.slice(0, MAX_EXCERPT_CHARS),
+    observedAt: null,
+  };
+}
+
+function renderExcerpt(excerpt: SituationReportExcerpt): string {
+  return excerpt.authorLabel === 'unknown'
+    ? excerpt.text
+    : `${excerpt.authorLabel}: ${excerpt.text}`;
+}
+
+function trustedChannelLabel(value: string): string {
+  return SAFE_CHANNEL_LABELS.has(value) ? value : 'unknown';
+}
 
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
@@ -172,18 +211,24 @@ export class SituationReporter {
         const oldest = this.eventKeys.values().next().value;
         if (oldest) this.eventKeys.delete(oldest);
       }
-      const w = this.windowByChannel.get(e.channelId) ?? { count: 0, excerpts: [] };
+      const w = this.windowByChannel.get(e.channelId) ?? {
+        label: trustedChannelLabel(e.channel),
+        count: 0,
+        excerpts: [],
+      };
       w.count += 1;
       const body = e.content.trim();
       if (body) {
-        // Carry the author INTO the excerpt: the report prompt's attribution
-        // discipline can only quote senders it can see, and windows without
-        // authors produced owner-facing reports full of "(sender unclear)"
-        // (live complaint 2026-07-27). userId carries the resolved display
-        // name for connector-indexed events.
-        const author = (e.userId ?? '').trim();
-        const text = author && author !== 'unknown' ? `${author}: ${body}` : body;
-        w.excerpts.push(text.slice(0, MAX_EXCERPT_CHARS));
+        // userId is opaque by contract. Until ingress supplies a separately
+        // trusted display label, every new excerpt keeps its author unknown.
+        const observedAt = Number.isFinite(e.createdAt)
+          ? new Date(e.createdAt).toISOString()
+          : null;
+        w.excerpts.push({
+          authorLabel: 'unknown',
+          text: body.slice(0, MAX_EXCERPT_CHARS),
+          observedAt,
+        });
         if (w.excerpts.length > MAX_EXCERPTS_PER_CHANNEL) {
           w.excerpts.shift();
         }
@@ -236,16 +281,58 @@ export class SituationReporter {
     return this.windowTotal > 0 || this.fireAgg.size > 0 || this.authored > 0;
   }
 
-  snapshot(): SituationReporterSnapshot {
+  /** Host-authored bounded evidence for OwnerReportContextV1; raw channel and trigger IDs stay out. */
+  windowEvidence(start: string, end: string): ReportWindowEvidence {
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error('Invalid situation report evidence window');
+    }
+    const snapshot = this.snapshot();
+    const triggerByKind = new Map<string, { count: number; topics: Set<string> }>();
+    for (const fire of snapshot.fires) {
+      const aggregate = triggerByKind.get(fire.kind) ?? { count: 0, topics: new Set<string>() };
+      aggregate.count += fire.count;
+      for (const topic of fire.topics) aggregate.topics.add(topic);
+      triggerByKind.set(fire.kind, aggregate);
+    }
     return {
-      version: 1,
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString(),
+      channelCount: snapshot.channels.length,
+      messageCount: snapshot.windowTotal,
+      channels: snapshot.channels
+        .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+        .map((channel) => ({
+          label: channel.label.slice(0, 160),
+          count: channel.count,
+          excerpts: channel.excerpts.map((excerpt) => ({ ...excerpt })),
+        })),
+      triggerActivity: [...triggerByKind.entries()]
+        .sort((left, right) => right[1].count - left[1].count || left[0].localeCompare(right[0]))
+        .map(([kind, aggregate]) => ({
+          kind: kind.slice(0, 160),
+          count: aggregate.count,
+          topics: [...aggregate.topics].sort().map((topic) => topic.slice(0, 512)),
+        })),
+    };
+  }
+
+  snapshot(): SituationReporterSnapshotV2 {
+    return {
+      version: 2,
       channels: [...this.windowByChannel.entries()]
         .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
         .slice(0, MAX_CHANNELS_IN_SNAPSHOT)
         .map(([channelId, window]) => ({
           channelId: channelId.slice(0, 512),
+          label: window.label.slice(0, 160),
           count: window.count,
-          excerpts: window.excerpts.map((excerpt) => excerpt.slice(0, MAX_EXCERPT_CHARS)),
+          excerpts: window.excerpts.map((excerpt) => ({
+            authorLabel: excerpt.authorLabel.slice(0, MAX_EXCERPT_CHARS),
+            text: excerpt.text.slice(0, MAX_EXCERPT_CHARS),
+            observedAt: excerpt.observedAt,
+          })),
         })),
       windowTotal: this.windowTotal,
       fires: [...this.fireAgg.values()]
@@ -273,15 +360,32 @@ export class SituationReporter {
   }
 
   restore(snapshot: SituationReporterSnapshot): void {
-    if (snapshot.version !== 1) {
+    if (snapshot.version !== 1 && snapshot.version !== 2) {
       throw new Error('Unsupported situation reporter snapshot version');
     }
     this.reset();
-    for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
-      this.windowByChannel.set(channel.channelId, {
-        count: Math.max(0, channel.count),
-        excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL),
-      });
+    if (snapshot.version === 2) {
+      for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+        this.windowByChannel.set(channel.channelId, {
+          label: channel.label,
+          count: Math.max(0, channel.count),
+          excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL).map((excerpt) => ({
+            authorLabel: excerpt.authorLabel.slice(0, MAX_EXCERPT_CHARS),
+            text: excerpt.text.slice(0, MAX_EXCERPT_CHARS),
+            observedAt: excerpt.observedAt,
+          })),
+        });
+      }
+    } else {
+      for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+        const separator = channel.channelId.indexOf(':');
+        const candidate = separator > 0 ? channel.channelId.slice(0, separator) : '';
+        this.windowByChannel.set(channel.channelId, {
+          label: trustedChannelLabel(candidate),
+          count: Math.max(0, channel.count),
+          excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL).map(legacyExcerpt),
+        });
+      }
     }
     this.windowTotal = Math.max(0, snapshot.windowTotal);
     for (const fire of snapshot.fires.slice(0, MAX_FIRES_IN_SNAPSHOT)) {
@@ -307,13 +411,18 @@ export class SituationReporter {
   async prepareReport(
     askAgent: AskAgent,
     mode: ReportMode,
-    deliveryId?: string
+    deliveryId?: string,
+    context?: OwnerReportContextV1
   ): Promise<PreparedSituationReport | null> {
     // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
     if (mode !== 'full' && !this.hasActivity()) return null;
 
-    const raw = (await askAgent(this.buildPrompt(mode))).trim();
+    const raw = (
+      await askAgent(
+        mode === 'full' ? this.buildPrompt('full', context!) : this.buildPrompt('digest')
+      )
+    ).trim();
     if (raw === '' || /^NOTHING\b/i.test(raw)) {
       if (mode === 'full') {
         throw new Error('Full owner report returned no content');
@@ -434,12 +543,29 @@ export class SituationReporter {
     this.reset();
   }
 
+  /**
+   * Detached, model-safe evidence for one full-report occurrence. Channel and author identities
+   * were already reduced to trusted display labels when the window was recorded; raw ids and
+   * recalled memory never cross this boundary.
+   */
+  /**
+   * Full-report window for the packet compiler. Goes through the bounded
+   * snapshot (48 channels, 100 fires aggregated by kind, validated instants):
+   * `recordWindow` never caps `windowByChannel`, so an unbounded copy of it could
+   * exceed the compiler's `channels.length <= 48` input contract on a busy day
+   * and fail the scheduled report at compile time.
+   */
+  buildWindowEvidence(start: string, end: string): ReportWindowEvidence {
+    return this.windowEvidence(start, end);
+  }
+
   async report(
     askAgent: AskAgent,
     output: Pick<OutputSink, 'send'>,
-    mode: ReportMode
+    mode: ReportMode,
+    context?: OwnerReportContextV1
   ): Promise<boolean> {
-    const prepared = await this.prepareReport(askAgent, mode);
+    const prepared = await this.prepareReport(askAgent, mode, undefined, context);
     if (!prepared) {
       return false;
     }
@@ -456,13 +582,37 @@ export class SituationReporter {
     this.eventKeys.clear();
   }
 
-  /** Public for testability. Aggregate window + fire activity + recalled memory -> agent prompt. */
-  buildPrompt(mode: ReportMode): string {
+  buildPrompt(mode: 'full', context: OwnerReportContextV1): string;
+  buildPrompt(mode: 'digest'): string;
+  /** Public for testability. Explicit full reports consume one packet; digests retain M2 framing. */
+  buildPrompt(mode: ReportMode, context?: OwnerReportContextV1): string {
+    if (mode === 'full' && context === undefined) {
+      throw new Error('Owner report context is required for a full report');
+    }
+    if (mode === 'full' && context !== undefined) {
+      const serialized = serializeOwnerReportContext(context);
+      return [
+        'You are the operator agent. Write the scheduled full situation report for the owner.',
+        'Use the single canonical evidence packet below as the only factual report input.',
+        'Explain what changed, what is open, what needs judgment, and state which source categories are incomplete.',
+        'Exhaust and cross-check all available packet evidence before asking the owner; never ask the owner to verify a mapping or fact the packet resolves.',
+        'Ask the owner only for a genuinely normative approval, priority, taste, or permission decision that MAMA cannot make.',
+        'For every task affected by missing, partial, ambiguous, or conflicting evidence, state the unchanged current status from the packet and its next bounded check or retry; independent evidence may explain it but never makes fact-finding an owner task.',
+        'If access or credentials truly block further authorized evidence collection, request only that specific owner intervention.',
+        'Every owner request must name the evidence checked, exact residual uncertainty, recommendation, options including no change when valid, and the impact of each choice.',
+        'Do not infer task completion from absence in an incomplete source or from an absent Trello card; an exactly correlated live card remains valid evidence even when other lists are truncated.',
+        'Never reproduce the packet JSON. Never emit internal IDs, tool syntax, or lifecycle metadata.',
+        'Use plain language without markdown tables and answer in the owner language visible in the packet.',
+        'Use these sections when non-empty, with the section titles written in the owner language: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
+        '',
+        wrapUntrustedContent('owner-report-context', serialized),
+      ].join('\n');
+    }
     const channels = [...this.windowByChannel.entries()].sort((a, b) => b[1].count - a[1].count);
     const shown = channels.slice(0, MAX_CHANNELS_IN_PROMPT);
     const windowLines = shown.map(
       ([channelId, w]) =>
-        `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.join(' | ') || '(none)'}`
+        `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.map(renderExcerpt).join(' | ') || '(none)'}`
     );
     if (channels.length > shown.length) {
       const restCount = channels.slice(shown.length).reduce((n, [, w]) => n + w.count, 0);
@@ -479,103 +629,13 @@ export class SituationReporter {
       ([topic, content]) => `- ${topic}: ${content}`
     );
 
-    // Resolve the gather lines only for the FULL report - the digest framing never renders
-    // them, so a zero-arg PROVIDER must not be invoked (it may do real gather work) just to
-    // build a digest prompt. The guard below stays anchored on the RESOLVED array: a zero-arg
-    // provider's `.length` is its arity (0), so guarding on the raw opts value would compile
-    // cleanly and silently drop the ENTIRE gather block on every production report.
-    const gatherLines =
-      mode === 'full'
-        ? typeof this.opts.selfGatherLines === 'function'
-          ? this.opts.selfGatherLines()
-          : (this.opts.selfGatherLines ?? [])
-        : [];
-    const gatherInstructions =
-      this.opts.backend === 'codex'
-        ? [
-            'Before writing, ACTIVELY gather current context with your injected native host tools directly.',
-            'Call each tool through the native model tool interface and wait for its result before',
-            'the next call; never emit Markdown or JavaScript substitutes for tool calls.',
-            'Gather with these injected native host tools:',
-            ...gatherLines.map((line) => `- ${line}`),
-            'These tool names are already injected for this run. Do not search for them, and do',
-            'not fall back to Bash or curl against any API.',
-            'Use ONLY these injected host tools to gather. Do NOT read log files, databases, or',
-            'the filesystem with Bash, Read, or other unrelated tools - those are not the task',
-            'board and will make the report wrong. Your tool findings are the primary source;',
-            'the window summary below is only a hint.',
-            '',
-            'After gathering, if the window contains a durable decision or lesson worth keeping,',
-            'persist exactly ONE by calling the injected native mama_save host tool (type',
-            '"decision", with topic, decision, reasoning). Only save when it is genuinely',
-            'durable; skip the save otherwise. This is your judgement, not a requirement.',
-          ]
-        : this.opts.backend === 'cline'
-          ? [
-              'Before writing, ACTIVELY gather current context with the injected',
-              'mcp__code-act__code_act Hub tool. Write JavaScript that calls only the',
-              'injected TypeScript-declared gateway functions and wait for each result.',
-              'Never emit fenced tool_call JSON or claim a tool ran in prose.',
-              'Gather with these injected gateway functions:',
-              ...gatherLines.map((line) => `- ${line}`),
-              'Do not fall back to native shell, file, MCP settings, or web tools.',
-              'Your tool findings are the primary source; the window summary below is only a hint.',
-              '',
-              'After gathering, if the window contains a durable decision or lesson worth',
-              'keeping, persist exactly ONE with mama_save (type "decision", with topic,',
-              'decision, reasoning). Only save when genuinely durable; skip otherwise.',
-            ]
-          : [
-              'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
-              'Emit each call as a fenced tool_call JSON block and wait for the result before',
-              'the next call. The block format is exactly:',
-              '```tool_call',
-              '{"name": "task_list", "input": {"status": "in_progress"}}',
-              '```',
-              'Gather with these gateway tool calls:',
-              ...gatherLines.map((line) => `- ${line}`),
-              'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
-              'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
-              'blocks in your reply text - do not search for them, and do not fall back to',
-              'Bash or curl against any API.',
-              'Use ONLY these gateway tool_call blocks to gather. Do NOT read log files,',
-              'databases, or the filesystem with Bash, Read, or other native tools - those are',
-              'not the task board and will make the report wrong. Your gateway tool findings',
-              'are the primary source; the window summary below is only a hint.',
-              '',
-              'After gathering, if the window contains a durable decision or lesson worth',
-              'keeping, persist exactly ONE with a gateway tool_call to mama_save (type',
-              '"decision", with topic, decision, reasoning). Only save when it is genuinely',
-              'durable; skip the save otherwise. This is your judgement, not a requirement.',
-            ];
-
-    // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
-    // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
-    // and keeps NOTHING only for pure noise.
-    const framing =
-      mode === 'full'
-        ? [
-            OPERATOR_FULL_REPORT_TAG,
-            'You are the operator agent. Write your scheduled FULLER situation report for your owner',
-            'covering the whole window below (multiple channels, since the last full report). Group',
-            "what recurred, what is new, and what needs the owner's attention. Plain language, no",
-            'markdown tables. This scheduled report must ALWAYS arrive: if the window was quiet,',
-            'say so in one or two lines instead of skipping.',
-            "Structure the report with these sections (render the headings in the owner's language;",
-            'omit a section only when it is truly empty):',
-            '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
-            ...(gatherLines.length > 0 ? ['', ...gatherInstructions] : []),
-            ...(this.opts.boardPublishLines && this.opts.boardPublishLines.length > 0
-              ? ['', ...this.opts.boardPublishLines]
-              : []),
-          ]
-        : [
-            'You are the operator agent. Write a SHORT proactive digest for your owner about the',
-            'situation below - what happened, what recurred, and what the owner may want to look at.',
-            '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
-            'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
-            '(duplicates, bot chatter) with nothing the owner could act on.',
-          ];
+    const framing = [
+      'You are the operator agent. Write a SHORT proactive digest for your owner about the',
+      'situation below - what happened, what recurred, and what the owner may want to look at.',
+      '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
+      'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
+      '(duplicates, bot chatter) with nothing the owner could act on.',
+    ];
 
     return [
       ...framing,

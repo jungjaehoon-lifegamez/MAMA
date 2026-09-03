@@ -1,5 +1,95 @@
 # TODOS
 
+## Deferred until cognitive foundation repair is proven
+
+### Fail the full-report request, not the tick, when the packet runtime is missing
+
+**What:** In `operator-trigger-loop.ts`, `preparePendingRequest` throws when `reportAsk.full`,
+`compileFullReportContext`, or `fullReportReadScope` is absent, and the persisted pending request
+makes every later tick rethrow before the delta drain. Log the missing dependency, cancel the
+persisted request with a receipt, and return `false` so drain, commit, author, review, and the
+digest leg keep running.
+
+**Why:** Reachable only when an assembly wires a report sink without the packet runtime, which
+production wiring and the lane-wiring/E2E tests pin against. Changing tick failure semantics was
+out of scope for the foundation repair PR; review finding on #247.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Cognitive foundation repair released
+
+### Resume the real Phase 2b human-member canary
+
+**What:** Resume the paused real two-human canary and prove registration, explicit grants,
+member-private isolation, revoke, session-policy replacement, and delivery receipts.
+
+**Why:** The member code is packaged, but adding more team behavior has little value while owner
+reports and task judgment remain unreliable.
+
+**Context:** This is an operating proof, not a request for synthetic traffic or more member
+features. Reuse the existing schema-65 grant implementation and the active read-only canary rules.
+Do not count pre-cutover rows or manufacture principals, grants, messages, or reports.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** Cognitive foundation repair released and one real owner report passes its quality,
+cost, and delivery gates
+
+### Resume the Case and artifact roadmap
+
+**What:** Return to the Case-scoped work unit and one concrete Drive artifact revision/approval/
+delivery flow after the current foundation is trustworthy.
+
+**Why:** Case and artifact lineage are the intended product direction, but implementing them on top
+of stale reports would preserve the same poor judgment under more schema and UI.
+
+**Context:** Start with one real owner Case and one artifact domain. Do not generalize an
+`ArtifactAdapter` until a materially different second domain proves the shared fields.
+
+**Effort:** L
+**Priority:** P2
+**Depends on:** Cognitive foundation repair real-report gate; stale task cleanup verified
+
+### Benchmark provider-native continuity against MAMA continuity
+
+**What:** Replay the same longitudinal work under fresh search, MAMA-owned context, and
+provider-native stored state.
+
+**Why:** MAMA should retain only local authority, correction, lineage, and receipt work that
+produces measurable value beyond provider session memory.
+
+**Context:** Compare repeated facts, evidence visibility, authorization, latency, tokens, cost, and
+recovery. Run after the Case/artifact path exists or after a material provider capability change,
+not on a calendar.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** One real longitudinal Case and a stable cognitive foundation
+
+### Generalize lifecycle authority beyond proven sources
+
+**What:** Introduce a connector lifecycle-authority registry only when a third real source needs
+the same task-binding and revision-receipt contract.
+
+**Why:** Generalizing before Trello and Kagemusha behavior is proven would expand a safety-critical
+interface without evidence that the abstraction is shared.
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** Stable Trello/Kagemusha lifecycle evidence and a concrete third connector
+
+### Evaluate webhook-based Trello lifecycle ingestion
+
+**What:** Design a signed, local-first webhook option only if polling misses the measured
+submission-to-projection SLO.
+
+**Why:** Webhooks can reduce latency but add a public callback, authentication, replay, tunnel, and
+secret boundary to a local-first product.
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** Measured polling latency failure and separate callback/security approval
+
 ## Deferred from security-utility round (2026-07-17)
 
 ### Surface memory provenance at recall time

@@ -758,6 +758,11 @@ describe('HostBridge', () => {
         returnType: '{ findings: unknown; message?: string }',
         category: 'os',
       });
+      expect(registry.get('task_create')?.params).toContainEqual({
+        name: 'expected_revision',
+        type: 'number',
+        required: false,
+      });
       expect(registry.get('report_request')).toMatchObject({
         params: [],
         returnType: '{ message: string }',

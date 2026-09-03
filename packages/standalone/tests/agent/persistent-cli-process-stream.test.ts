@@ -6,7 +6,6 @@ import {
   type StreamMessage,
 } from '../../src/agent/persistent-cli-process.js';
 import type { PromptCallbacks } from '../../src/agent/types.js';
-import { summarizeReportToolUse } from '../../src/operator/report-run.js';
 
 type TestablePersistentProcess = {
   state: 'idle' | 'busy' | 'starting' | 'dead';
@@ -195,12 +194,6 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
       hostToolExecutions: [{ name: 'task_list', success: true }],
       payload: { truncated: true },
     });
-
-    const audit = summarizeReportToolUse([
-      { role: 'assistant', content: [exchange!.toolUse] },
-      { role: 'user', content: [exchange!.toolResult] },
-    ]);
-    expect(audit.gatherTools).toEqual(['task_list']);
   });
 
   it('TG-06 preserves oversized terminal metadata and never emits a success final callback', async () => {

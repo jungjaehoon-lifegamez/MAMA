@@ -118,6 +118,11 @@ import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
+import { compileOwnerReportContext } from '../../operator/report-context.js';
+import { readChanges } from '../../operator/changes-projection.js';
+import { correlateTasksWithExternalItems } from '../../operator/external-correlation.js';
+import { buildProvenanceLookup } from '../../operator/provenance-lookup.js';
+import { getTrelloKanban } from '../../connectors/trello/query-tools.js';
 import {
   ensureConsoleBrief,
   loadConsoleBrief,
@@ -482,25 +487,6 @@ function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[]
  * directories the suite covers at a third. An instruction list that cannot be read by a
  * test is one nobody can check against the grant it depends on.
  */
-export function buildFullReportGatherLines({
-  lastSuccessIso,
-}: {
-  lastSuccessIso: string | null;
-}): string[] {
-  // Product premise (S1): MAMA presupposes no Kagemusha. The report gathers
-  // the NATIVE board; message evidence is the SituationReporter's accumulated
-  // window, never a re-fetch through a personal system.
-  return [
-    'task_list({ include_terminal: false, order: "deadline_priority", limit: 12 }) for the ranked active native-board projection; use total as coverage and do not follow nextCursor for this bounded report, plus task_list({ status: "review", limit: 5 }) for items awaiting owner review; deduplicate by task id before rendering because review rows may appear in both bounded projections',
-    'mama_recall(query) for memory relevant to what you find',
-    'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
-    lastSuccessIso
-      ? `changes_read({ since: "${lastSuccessIso}" }) for what THIS system durably changed since the last report -- lead with it, and say what each change rested on`
-      : 'changes_read({ since: "7d" }) for what THIS system durably changed in the window -- lead with it, and say what each change rested on',
-    'On changes_read: cause_state "unattributed" means the system cannot explain that change, NOT that nothing happened -- report the coverage counts as they are rather than rounding them up. It is ONE PAGE: if returned is less than total, say so instead of describing the page as the whole. It covers work items only today, so the absence of report or memory changes there is not evidence they did not happen.',
-  ];
-}
-
 /**
  * The batch a work order carries, as the run's cause.
  *
@@ -619,6 +605,7 @@ export const WORKORDER_TOOL_POLICIES = {
       'mama_search',
       'report_publish',
       'task_create',
+      'task_external_correlation',
       'task_external_bind',
       'task_lifecycle_reconcile',
       'task_list',
@@ -649,46 +636,14 @@ export const WORKORDER_TOOL_POLICIES = {
 } as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
 
 /**
- * Gateway tools the scheduled operator report must be able to EXECUTE.
- *
- * The report lane is a short-lived operator job like the Stage-2 workers, so its permissions
- * are built in rather than derived from optional persona config. Membership is dictated by
- * what the report is actually instructed to call: report-run.ts GATHER_TOOLS (the audit that
- * decides whether a full report has task-board substance), the fullReportSelfGather lines,
- * the board_publish lines, and the single mama_save the report may make.
- *
- * Its envelope grants no destinations, so no send tool belongs here, and no task-mutation
- * tool either: the report observes, the board workorder maintains.
- *
- * trello_kanban is the ONE whole-board live read. Without it the report could only restate the
- * native ledger, which is a derived store the board workorder is forbidden to sync from Trello -
- * so a card that moved days ago still reported as "no completion signal" (live 2026-07-28).
- * Reading it is scoped by the envelope now that direct connector readers are mapped in
- * envelope/tool-connector-scope.ts; without that mapping this entry alone would have granted
- * unscoped access.
+ * Packet-only reports receive no gateway tools. The host compiles current bounded authorities
+ * before model admission; the model spends one turn judging and narrating that packet.
  */
 export const OPERATOR_REPORT_TOOL_POLICY = {
   roleName: 'operator-report',
-  allowedTools: [
-    // context_compile is deliberately ABSENT. Envelope scope is connector-level, so
-    // granting the board connector for trello_kanban would otherwise also permit
-    // context_compile({connectors:['trello']}) - raw card bodies pulled into a tier-2
-    // lane that can write durable memory. The report needs the whole-board read, not
-    // raw compilation, and its gather instructions never ask for it.
-    // What the report is FOR: what moved since last time. Until now the only way to
-    // answer that was to re-read current state and infer the delta, which is how a
-    // report ends up restating the board instead of naming the change.
-    'changes_read',
-    'mama_provenance',
-    'mama_recall',
-    'mama_save',
-    'mama_search',
-    'report_publish',
-    'schedule_upcoming',
-    'task_external_correlation',
-    'task_list',
-    'trello_kanban',
-  ],
+  // TG-03/TG-04/TG-05: the model judges one host-compiled packet. It does not rediscover
+  // current state or mutate another projection during report composition.
+  allowedTools: [],
 } as const satisfies WorkOrderToolPolicy;
 
 export interface WorkOrderAgentPolicy {
@@ -733,13 +688,7 @@ function buildProjectedLanePrompt(
 }
 
 /**
- * Build the Code-Act role the operator report lane runs under.
- *
- * Without an agentContext.role, roleAllowsOuterCodeAct() returns false (agent-loop.ts), the
- * Code-Act branch of prepareSystemPrompt strips the generic gateway catalog, and NOTHING
- * replaces it - the report agent then runs with zero tool definitions and every full report
- * logs "executed NO gateway gather tools" while still being delivered. Mirrors
- * buildWorkOrderAgentPolicy so both operator job families get their permissions the same way.
+ * Build the deliberately tool-free role for one packet-only report turn.
  */
 export function buildOperatorReportAgentPolicy(
   model: string,
@@ -747,15 +696,15 @@ export function buildOperatorReportAgentPolicy(
   privateConnectorPolicy: PrivateConnectorPolicy
 ): WorkOrderAgentPolicy {
   const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
-  const surface = 'operator-report';
-  const projectedRole = buildProjectedLaneRole(
-    surface,
-    OPERATOR_REPORT_TOOL_POLICY.allowedTools,
-    requiredPrivatePolicy
-  );
-  const blockedTools = [...(projectedRole.blockedTools ?? [])];
-  const innerTools = uniqueToolList(projectedRole.allowedTools);
-  const allowedTools = uniqueToolList(['code_act', ...innerTools]);
+  const blockedTools: string[] = [];
+  const allowedTools: string[] = [];
+  const projectedRole: RoleConfig = {
+    allowedTools,
+    blockedTools,
+    allowedPaths: [],
+    systemControl: false,
+    sensitiveAccess: false,
+  };
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
@@ -768,14 +717,12 @@ export function buildOperatorReportAgentPolicy(
     },
     capabilities: allowedTools,
     limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
-    // Write tier: the report may persist one durable decision via mama_save, matching the
-    // tier its envelope already carries.
-    tier: 2,
+    tier: 1,
     backend,
   };
   return {
     agentContext,
-    gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, surface, requiredPrivatePolicy),
+    gatewayToolsPrompt: '',
     briefProjectionPolicy: requiredPrivatePolicy,
   };
 }
@@ -2109,8 +2056,6 @@ export async function runAgentLoop(
         reason: 'no_run_handle',
       };
       const { createPersonaReportAsk } = await import('../../operator/report-run.js');
-      const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
-      const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
       const { FilePendingReportStore } = await import('../../operator/pending-report-store.js');
 
       const triggerRegistry = new TriggerRegistry(operatorDb);
@@ -2195,64 +2140,10 @@ export async function runAgentLoop(
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
         // JSON tasks (authoring/review) use a provider-specific, tool-free runtime.
-        // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
-        // loop is isolated from chat and continuous across cadences (runWithContent honors
-        // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
-        // 'model_tool' executions are envelope-gated (gateway-tool-executor.ts:252-256) and
-        // issuance defaults to 'enabled' (envelope-bootstrap.ts:28-30), so each report carries a
-        // per-run scoped envelope (mirrors the code-act issuance at start.ts:1834-1865); without it
-        // every call is denied with code 'envelope_missing'. Then audit the gateway tools the agent
-        // actually EXECUTED: a full report that executed NO gateway gather tool is logged loudly
-        // (no-fallback), and every write (mama_save) is logged (observability).
+        // Full reports run in one fresh, tool-free persona turn. Current state is compiled and
+        // persisted by the host before this call; digest composition remains on the same persona.
         reportAsk: createPersonaReportAsk({
-          issueEnvelope:
-            envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
-              ? async () => {
-                  const projectId = resolveReactiveProjectRoot(config, process.env);
-                  // A report run is multi-turn (each turn may take up to agent_ms).
-                  // The TTL must cover the RUN, not one request - otherwise every
-                  // long gather structurally outlives its envelope and all
-                  // end-of-run writes die '[expired]' (9 observed pre-fix).
-                  const wallSeconds = Math.min(
-                    Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
-                    1800
-                  );
-                  return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
-                    agent_id: 'operator-report',
-                    instance_id: randomUUID(),
-                    // 'operator' is not a member of EnvelopeSource (envelope/types.ts is a closed
-                    // union); 'watch' is the daemon-internal source used by the mirrored code-act
-                    // issuance (start.ts:1834-1865). This field is issuing-source metadata only -
-                    // enforcement authorizes on scope.memory_scopes (which cover the operator:report
-                    // run below), never on envelope.source (gateway-tool-executor.ts:1421,1511,1590).
-                    source: 'watch',
-                    channel_id: 'report',
-                    trigger_context: { user_text: '<operator scheduled report>' },
-                    scope: {
-                      // Reads: enabled raw connectors (kagemusha_* gathers plus the live board
-                      // cross-check) + memory scopes covering mama_recall/mama_save.
-                      // allowed_destinations stays [] - NO send surface. That bounds SENDS only;
-                      // read authority is bounded per tool by envelope/tool-connector-scope.ts
-                      // against the connectors granted here.
-                      project_refs: [{ kind: 'project' as const, id: projectId }],
-                      raw_connectors: [
-                        ...privateConnectorPolicy.projectRawConnectors(
-                          'operator-report',
-                          codeActRawConnectors
-                        ),
-                      ],
-                      memory_scopes: uniqueMemoryScopes(
-                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
-                      ),
-                      allowed_destinations: [],
-                    },
-                    tier: 2, // write tier: the report may mama_save (matches code-act write tier)
-                    budget: { wall_seconds: wallSeconds },
-                    expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
-                  });
-                }
-              : undefined,
-          run: async (prompt, envelope) => {
+          run: async (prompt, sourceMessageRef) => {
             const reportAgentPolicy = buildOperatorReportAgentPolicy(
               config.agent.model,
               runtimeBackend,
@@ -2276,12 +2167,13 @@ export async function runAgentLoop(
                 // (measured 146s -> 521s growth over 3 days). Continuity comes from
                 // the storage layer (self-gather + mama_recall + report store).
                 freshSession: true,
-                ...(envelope ? { envelope } : {}),
+                ...(sourceMessageRef ? { sourceMessageRef } : {}),
               }
             );
             return {
               response: result.response,
               history: result.history,
+              turns: result.turns,
               // Dropped here until now: the loop already resolves a run handle, and
               // discarding it meant a delivered report could not be traced to the run
               // that wrote it.
@@ -2292,7 +2184,6 @@ export async function runAgentLoop(
             };
           },
           log: (line: string) => console.log(line),
-          fullReportTag: OPERATOR_FULL_REPORT_TAG,
           onRunProvenance: (provenance) => {
             lastReportProvenance = provenance;
           },
@@ -2302,13 +2193,40 @@ export async function runAgentLoop(
         reportDelivery,
         reportTarget,
         reportScheduler,
-        // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
-        // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
-        // reports "quiet" whenever polling is between batches).
-        fullReportSelfGather: buildFullReportGatherLines,
-        // Kagemusha dual output: the same scheduled run updates the /viewer operator board
-        // slots via report_publish, then writes the plain-text owner report.
-        fullReportBoardLines: buildBoardPublishLines(),
+        fullReportReadScope: (() => {
+          const projectId = resolveReactiveProjectRoot(config, process.env);
+          return {
+            projectRefs: [{ kind: 'project' as const, id: projectId }],
+            memoryScopes: uniqueMemoryScopes(
+              deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
+            ),
+            rawConnectors: [
+              ...privateConnectorPolicy.projectRawConnectors(
+                'operator-report',
+                codeActRawConnectors
+              ),
+            ],
+          };
+        })(),
+        compileFullReportContext: async ({ readScope, windowEvidence, since }) =>
+          compileOwnerReportContext(
+            { readScope, windowEvidence, since },
+            {
+              listTaskPage: (input) => taskLedger.listPage(input),
+              readClaims: (scope) =>
+                mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
+              readTrello: async (scope) => {
+                if (!scope.rawConnectors.includes('trello')) {
+                  throw new Error('Trello is outside the owner-report read scope');
+                }
+                return getTrelloKanban({ maxCardsPerList: 100 });
+              },
+              buildProvenanceLookup,
+              correlate: correlateTasksWithExternalItems,
+              readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
+              now: Date.now,
+            }
+          ),
         // TG-06: composition supplies provenance immediately to the prepared
         // delivery; this callback receives that durable artifact only after send success.
         fullReportProvenance: () => lastReportProvenance,
