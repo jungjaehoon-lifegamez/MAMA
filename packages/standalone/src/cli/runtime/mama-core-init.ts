@@ -279,6 +279,11 @@ export async function initMamaCore(
     listDecisions: listDecisionsForContext,
     save: mamaApi.save,
     recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
+    queryRelevantTruth: (params) =>
+      mamaCore.queryRelevantTruth({
+        query: params.query,
+        scopes: params.scopes as import('@jungjaehoon/mama-core/memory/types').MemoryScopeRef[],
+      }),
     ingestMemory: mamaApi.ingestMemory as MamaApiClient['ingestMemory'],
     buildMemoryBootstrap: mamaApi.buildMemoryBootstrap as MamaApiClient['buildMemoryBootstrap'],
     getChannelSummary: mamaApi.getChannelSummary as MamaApiClient['getChannelSummary'],

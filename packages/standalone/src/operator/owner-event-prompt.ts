@@ -12,6 +12,8 @@ export interface OwnerEventPromptInput {
   ownerTelegramChatId?: string | null;
   /** Serialized OwnerReportContextV1 for this channel, compiled by the host. */
   packet?: string | null;
+  /** Rendered <policy>/<lessons> block from learning-context.ts; owner-authored, trusted region. */
+  learning?: string | null;
 }
 
 function activationLines(batch: OwnerEventBatch): string[] {
@@ -52,6 +54,7 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     '## Current owner operating brief',
     input.ownerBrief.trim() || '(empty)',
     '',
+    ...(input.learning?.trim() ? ['## Owner policy and lessons', input.learning.trim(), ''] : []),
     '## Matched installed skill',
     input.skillContent?.trim() || '(none)',
     '',

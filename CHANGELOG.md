@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+One MAMA, Phase 2 (learning loop), in progress.
+
+### Added
+
+- **Owner policy and lessons reach every turn.** `policy:` memory rows (rules in force for the
+  turn's project or channel) render unconditionally, `lesson:` rows (corrections bound to the
+  turn's channel) render ranked and bounded, into a `<policy>`/`<lessons>` block appended after
+  the operating brief on event, scheduled and owner chat turns. Rendered values are
+  markup-escaped and lines are budgeted before assembly, so stored text can neither forge nor
+  truncate a block. Reads go through one capped reader (newest 200 rows) and each turn logs a
+  `[learning] turn=... policyIds=[...] lessonIds=[...]` audit line.
+
 ## mama-os [0.41.0] - 2026-09-04
 
 One MAMA, Phase 1 (Tasks 1-3). The owner-event turn - the run that judges every connector

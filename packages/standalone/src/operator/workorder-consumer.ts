@@ -111,6 +111,11 @@ export interface WorkOrderConsumerDeps {
    * judgment only. Absent in tests that do not exercise the board path.
    */
   publishPipelineSlot?: () => void;
+  /**
+   * Owner policy and lessons for this turn (learning-context.ts), appended after the brief.
+   * Optional: a missing reader means no block, never a failed order.
+   */
+  buildLearningBlock?: (wo: WorkOrderRecord) => Promise<string>;
   /** Passive owner surface (AgentNoticeQueue via MessageRouter accessor). */
   noticeOwner: (summary: string) => void;
   opsAlarm: OpsAlarmSink;
@@ -360,9 +365,16 @@ export class WorkOrderConsumer {
     let brief: string | null;
     try {
       const ownerBrief = this.deps.loadOwnerBrief();
+      const learning = this.deps.buildLearningBlock
+        ? (await this.deps.buildLearningBlock(wo)).trim()
+        : '';
       brief =
         ownerBrief && ownerBrief.trim()
-          ? [ownerBrief.trim(), buildTurnKindSection(wo.workKind)].join('\n\n')
+          ? [
+              ownerBrief.trim(),
+              ...(learning ? [`## Owner policy and lessons\n${learning}`] : []),
+              buildTurnKindSection(wo.workKind),
+            ].join('\n\n')
           : ownerBrief;
     } catch (err) {
       // I/O errors (permissions etc.) must fail THIS order, not abort the
