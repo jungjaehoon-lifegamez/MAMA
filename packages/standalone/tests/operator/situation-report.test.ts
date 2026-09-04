@@ -113,6 +113,7 @@ function ownerReportContext(overrides: Partial<OwnerReportContextV1> = {}): Owne
       rows: [],
     },
     caveats: ['trello_snapshot_incomplete'],
+    operationalIssues: [],
     ...overrides,
   };
   const canonicalize = (value: unknown): unknown => {

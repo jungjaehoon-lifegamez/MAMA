@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (Phase 3)
+
+One MAMA, Phase 3 (capabilities and self-diagnosis), in progress.
+
+### Added
+
+- **`file_export`: the agent can make a file the owner receives.** `file_export({format: csv|md,
+name, columns?, rows?, content?})` writes under the private workspace exports folder only,
+  never overwrites, escapes csv and neutralises formula-leading cells, and returns the path,
+  bytes and sha256; the executor records a `file_export` effect with the run's cause, and the
+  path passes the outbound guard so `telegram_send(file_path)` delivers it. The effect ledger's
+  closed kind and target sets are widened by an in-place table rebuild that preserves rows,
+  ids, triggers and indices.
+- **Failures are first-class evidence.** Gateway tool failures (raw text captured before the
+  model-facing sanitizer), envelope scope mismatches, dead owner-event batches and ledger
+  stagnation (deltas arriving for 24h with no owner task created) are recorded in
+  `awareness_operational_issues` (migration 066; an installed table gains `occurrences` at
+  boot), aggregated by surface and signature, with the error text secret-scanned and stored
+  redacted or bounded. Every report and channel packet carries the open issues, highest
+  severity first, so the agent sees what is broken before it judges.
 ## mama-os [0.42.0] - 2026-09-04
 
 One MAMA, Phase 2 (learning loop). Conversation now changes operations: what the owner

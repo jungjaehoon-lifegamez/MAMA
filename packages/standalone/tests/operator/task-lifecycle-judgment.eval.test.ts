@@ -321,6 +321,7 @@ function ownerActionPacket(): OwnerReportContextV1 {
       'one board could not be authenticated',
       'ambiguous relation item has no independent lifecycle proof',
     ],
+    operationalIssues: [],
   });
 }
 

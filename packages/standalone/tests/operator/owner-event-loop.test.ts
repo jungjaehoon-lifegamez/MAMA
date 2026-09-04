@@ -522,4 +522,27 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       )
     ).toBe(true);
   });
+  it('ONE-MAMA-P3 Task 2 AC #12: a dead batch records one inbox issue with the reason and the channel', async () => {
+    inbox.enqueue(batch());
+    const issues: Array<{ channelKey: string; reason: string }> = [];
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: { run: async () => ({ response: 'prose only', history: [] }) },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      recordIssue: (input) => issues.push(input),
+      log: () => {},
+    });
+    // exhaust retries until dead
+    for (let i = 0; i < 12 && inbox.depth().dead === 0; i += 1) {
+      await loop.tick();
+      now += 24 * 60 * 60 * 1000;
+    }
+    expect(inbox.depth().dead).toBe(1);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ channelKey: 'chatwork:C1' });
+    expect(issues[0].reason).toContain('no durable action');
+  });
 });

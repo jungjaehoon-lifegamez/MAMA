@@ -76,6 +76,7 @@ function ownerReportContext(): OwnerReportContextV1 {
       rows: [],
     },
     caveats: ['trello_snapshot_incomplete'],
+    operationalIssues: [],
   };
 }
 

@@ -27,6 +27,7 @@ import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { isLearningTopic } from '../operator/learning-context.js';
 import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
+import type { RecordIssueInput } from '../observability/operational-issues.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
@@ -759,6 +760,8 @@ export class GatewayToolExecutor {
     | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
     | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
+  /** Host-injected: failures become operational issues (observability/operational-issues.ts). */
+  private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
   private wikiPublisher: WikiPagePublisher | null = null;
@@ -1009,6 +1012,24 @@ export class GatewayToolExecutor {
       );
     }
     return result;
+  }
+
+  /** Where a tool failure or a scope mismatch is recorded as an operational issue. */
+  setOperationalIssueSink(fn: (input: RecordIssueInput) => void): void {
+    this.operationalIssueSink = fn;
+  }
+
+  private recordIssue(input: RecordIssueInput): void {
+    if (!this.operationalIssueSink) {
+      return;
+    }
+    try {
+      this.operationalIssueSink(input);
+    } catch (error) {
+      console.error(
+        `[operational-issue] record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   setReportPublisher(
@@ -1602,6 +1623,22 @@ export class GatewayToolExecutor {
           this.requireActiveTemporalAuthority(toolName);
         });
       }
+      const rawFailure = rawResult as { success?: unknown; code?: unknown; error?: unknown };
+      if (rawFailure.success === false) {
+        // Captured BEFORE sanitizeGatewayFailureResult: the raw text only exists here, and
+        // what the model receives is unchanged by this record.
+        this.recordIssue({
+          surface: 'gateway',
+          signature: `${toolName}:${typeof rawFailure.code === 'string' ? rawFailure.code : 'failed'}`,
+          severity: 'warn',
+          error:
+            typeof rawFailure.error === 'string'
+              ? rawFailure.error
+              : String(rawFailure.code ?? 'failed'),
+          sourceRef: activeCtx.channelId ?? undefined,
+          ownerAgent: activeCtx.agentContext?.roleName,
+        });
+      }
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
         toolName === 'context_compile' ||
@@ -1621,6 +1658,14 @@ export class GatewayToolExecutor {
         activeCtx.signal?.throwIfAborted();
       }
     } catch (error) {
+      this.recordIssue({
+        surface: 'gateway',
+        signature: `${toolName}:threw`,
+        severity: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        sourceRef: activeCtx.channelId ?? undefined,
+        ownerAgent: activeCtx.agentContext?.roleName,
+      });
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
         toolName === 'context_compile' ||
@@ -2343,6 +2388,14 @@ export class GatewayToolExecutor {
     ctx: ActiveGatewayExecutionContext | undefined,
     toolName: string
   ): void {
+    this.recordIssue({
+      surface: 'envelope',
+      signature: `scope_mismatch:${toolName}`,
+      severity: 'warn',
+      error: `requested memory scopes outside the envelope (${ctx?.source ?? 'unknown'})`,
+      sourceRef: ctx?.channelId ?? undefined,
+      ownerAgent: ctx?.agentContext?.roleName,
+    });
     try {
       this.metricsStore?.record({
         name: 'envelope_scope_mismatch',

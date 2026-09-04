@@ -39,6 +39,7 @@ Call tools via JSON block:
 - **create_fb_overlay**(imagePath, annotations, outputPath?) — Create a Korean text overlay image from OCR bounding boxes
 - **translate_conti**(imagePath, ocrResults?, translations?, outputPath?) — Run the two-step OCR and translated-overlay workflow for a storyboard image
 - **drive_translate_conti**(drivePath) — Return optional guidance for composing the Drive image translation tools
+- **file_export**(format (csv|md), name, columns?, rows?, content?) — Write a deliverable file (csv or md) into the private MAMA workspace exports folder and get back its path, size and sha256. csv takes columns? + rows (array of objects); md takes content. Never overwrites. Send the returned path with telegram_send(file_path) or drive_upload(localPath).
 
 ## OS Management (viewer-only)
 
