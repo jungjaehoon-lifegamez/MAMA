@@ -24,6 +24,7 @@ import {
   serializeContextRefForProvenance,
 } from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { unlinkSync } from 'node:fs';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { isLearningTopic } from '../operator/learning-context.js';
 import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
@@ -769,6 +770,7 @@ export class GatewayToolExecutor {
   private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
   /** Host-injected: issue lifecycle + owner notice for the self-check turn's tools. */
   private repairControls: {
+    issueExists: (issueId: string) => boolean;
     setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
     notifyOwner: (line: string) => Promise<void>;
     repairRoot: () => string;
@@ -1027,6 +1029,7 @@ export class GatewayToolExecutor {
 
   /** Issue lifecycle and the one-line owner notice used by repair_request / issue_close. */
   setRepairControls(controls: {
+    issueExists: (issueId: string) => boolean;
     setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
     notifyOwner: (line: string) => Promise<void>;
     repairRoot: () => string;
@@ -1646,11 +1649,12 @@ export class GatewayToolExecutor {
       const rawFailure = rawResult as { success?: unknown; code?: unknown; error?: unknown };
       if (rawFailure.success === false) {
         // Captured BEFORE sanitizeGatewayFailureResult: the raw text only exists here, and
-        // what the model receives is unchanged by this record.
+        // what the model receives is unchanged by this record. A code-carrying refusal is a
+        // designed boundary (info); an uncoded failure is a defect candidate (warn).
         this.recordIssue({
           surface: 'gateway',
           signature: `${toolName}:${typeof rawFailure.code === 'string' ? rawFailure.code : 'failed'}`,
-          severity: 'warn',
+          severity: typeof rawFailure.code === 'string' ? 'info' : 'warn',
           error:
             typeof rawFailure.error === 'string'
               ? rawFailure.error
@@ -2654,6 +2658,19 @@ export class GatewayToolExecutor {
               error: 'repair_request needs the issue store, the task ledger and the owner notice.',
             };
           }
+          const requestedIssue = (input as { issue_id?: unknown }).issue_id;
+          if (
+            typeof requestedIssue !== 'string' ||
+            !this.repairControls.issueExists(requestedIssue)
+          ) {
+            // A model-authored id must name an issue the host recorded; nothing is written otherwise.
+            return {
+              success: false,
+              code: 'issue_not_found',
+              error:
+                "repair_request: issue_id must name an open operational issue from this turn's input.",
+            };
+          }
           let bundle: RepairBundleResult;
           try {
             bundle = writeRepairBundle(
@@ -2756,13 +2773,19 @@ export class GatewayToolExecutor {
               resolveExportRoot()
             );
             const state = this.getExecutionState();
-            this.taskLedger.recordFileExport({
-              sha256: result.sha256,
-              runId: state.modelRunId ?? null,
-              causeEventIds: state.causeEventIds,
-              channelId: state.channelId ?? null,
-              payload: { format: exportInput.format, bytes: result.bytes },
-            });
+            try {
+              this.taskLedger.recordFileExport({
+                sha256: result.sha256,
+                runId: state.modelRunId ?? null,
+                causeEventIds: state.causeEventIds,
+                channelId: state.channelId ?? null,
+                payload: { format: exportInput.format, bytes: result.bytes },
+              });
+            } catch (receiptError) {
+              // No unrecorded durable change: a file without its receipt is removed again.
+              unlinkSync(result.path);
+              throw receiptError;
+            }
             return {
               success: true,
               path: result.path,

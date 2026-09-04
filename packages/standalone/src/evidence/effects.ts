@@ -371,7 +371,11 @@ function widenClosedSets(adapter: EffectAdapter): void {
     }
     run('COMMIT');
   } catch (error) {
-    run('ROLLBACK');
+    try {
+      run('ROLLBACK');
+    } catch {
+      // BEGIN itself may have failed (busy lock, nested transaction): keep the original error.
+    }
     throw error;
   }
 }

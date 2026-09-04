@@ -51,6 +51,8 @@ export interface WorkerRunner {
   ): Promise<{
     response: string;
     totalUsage?: { input_tokens: number; output_tokens: number };
+    /** Host-side stop on the per-run token budget (agent-loop.ts). */
+    stoppedBy?: 'budget';
   }>;
 }
 
@@ -58,6 +60,8 @@ export interface WorkerRunOutput {
   response: string;
   /** SHA-256 prefix of the exact source brief before runtime projection. */
   briefHash: string;
+  /** Carried through unchanged so the consumer can treat a budget stop as a retry. */
+  stoppedBy?: 'budget';
   /** input+output tokens of the run; undefined when the runner reported no usage
    *  (never a fabricated 0 - absence must stay distinguishable from "free"). */
   tokensUsed?: number;
@@ -248,5 +252,8 @@ export async function workerRun(
       ? usage.input_tokens + usage.output_tokens
       : undefined;
   const briefHash = createHash('sha256').update(brief).digest('hex').slice(0, 16);
-  return tokensUsed === undefined ? { response, briefHash } : { response, tokensUsed, briefHash };
+  const stopped = result.stoppedBy === 'budget' ? { stoppedBy: 'budget' as const } : {};
+  return tokensUsed === undefined
+    ? { response, briefHash, ...stopped }
+    : { response, tokensUsed, briefHash, ...stopped };
 }

@@ -195,22 +195,36 @@ function rowToIssue(row: Record<string, unknown>): OperationalIssue {
   };
 }
 
-/** Open issues: error before warn before info, then most recent, capped. Closed rows excluded. */
-export function listOpenOperationalIssues(db: IssueAdapter, limit = 20): OperationalIssue[] {
+/**
+ * Open issues: error before warn before info, then most recent, capped - ordered in SQL so an
+ * old error is never hidden behind newer info rows. `minSeverity` lets packets and the
+ * self-check turn skip designed refusals (info) while the table keeps counting them.
+ */
+export function listOpenOperationalIssues(
+  db: IssueAdapter,
+  limit = 20,
+  minSeverity: IssueSeverity = 'info'
+): OperationalIssue[] {
+  const maxRank = SEVERITY_RANK[minSeverity] ?? 2;
   const rows = db
     .prepare(
-      `SELECT * FROM awareness_operational_issues WHERE status <> 'closed'
-        ORDER BY last_seen_at DESC LIMIT ?`
+      `SELECT * FROM awareness_operational_issues
+        WHERE status <> 'closed'
+          AND (CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END) <= ?
+        ORDER BY (CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END) ASC,
+                 last_seen_at DESC
+        LIMIT ?`
     )
-    .all(Math.min(Math.max(limit, 1), 200) * 3) as Array<Record<string, unknown>>;
-  return rows
-    .map(rowToIssue)
-    .sort(
-      (a, b) =>
-        (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3) ||
-        b.lastSeenAt - a.lastSeenAt
-    )
-    .slice(0, limit);
+    .all(maxRank, Math.min(Math.max(limit, 1), 200)) as Array<Record<string, unknown>>;
+  return rows.map(rowToIssue);
+}
+
+/** One issue by id, or null; the repair path checks existence before writing a bundle. */
+export function getOperationalIssue(db: IssueAdapter, issueId: string): OperationalIssue | null {
+  const rows = db
+    .prepare(`SELECT * FROM awareness_operational_issues WHERE issue_id = ?`)
+    .all(issueId) as Array<Record<string, unknown>>;
+  return rows.length > 0 ? rowToIssue(rows[0]) : null;
 }
 
 export function setOperationalIssueStatus(

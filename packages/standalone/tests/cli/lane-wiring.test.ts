@@ -147,6 +147,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
       'code_act',
       'context_compile',
       'contract_no_update',
+      'file_export',
       'kagemusha_entities',
       'kagemusha_messages',
       'kagemusha_overview',
@@ -175,6 +176,20 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
     expect(grant('memory-curation')).toEqual([...common, 'mama_save', 'mama_update'].sort());
     expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());
     expect(grant('self-check')).toEqual([...common, 'issue_close', 'repair_request'].sort());
+  });
+
+  // A registered tool nobody grants is the delegate failure mode: pin that the owner default
+  // grant and the Code-Act bridge both carry every Phase 3 tool.
+  it('AC #9 (ONE-MAMA-P3) file_export, repair_request and issue_close are grantable and injectable', async () => {
+    const { HostBridge } = await import('../../src/agent/code-act/host-bridge.js');
+    const bridge = new Set(HostBridge.getToolRegistry().map((t) => t.name));
+    for (const tool of ['file_export', 'repair_request', 'issue_close']) {
+      expect(bridge.has(tool), `${tool} missing from the Code-Act bridge`).toBe(true);
+    }
+    expect(ownerRole.allowedTools).toContain('file_export');
+    expect(turn('self-check').agentContext.role.allowedTools).toEqual(
+      expect.arrayContaining(['repair_request', 'issue_close'])
+    );
   });
 
   it('AC #8 gives each turn the tools its section instructs it to use', () => {
