@@ -341,6 +341,13 @@ register({
   params: 'fileId, fileName?',
 });
 register({
+  name: 'file_export',
+  description:
+    'Write a deliverable file (csv or md) into the private MAMA workspace exports folder and get back its path, size and sha256. csv takes columns? + rows (array of objects); md takes content. Never overwrites. Send the returned path with telegram_send(file_path) or drive_upload(localPath).',
+  category: 'utility',
+  params: 'format (csv|md), name, columns?, rows?, content?',
+});
+register({
   name: 'drive_upload',
   description: 'Upload a private MAMA workspace file to Google Drive',
   category: 'business_data',

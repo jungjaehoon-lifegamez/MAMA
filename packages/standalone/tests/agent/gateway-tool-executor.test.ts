@@ -2,6 +2,7 @@
  * Unit tests for GatewayToolExecutor
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -10,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
 import Database from '../../src/sqlite.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { getMemberCandidateStore } from '../../src/gateways/member-candidate-store.js';
@@ -2982,6 +2984,58 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           reasoning: 'y',
         } as never);
         expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
+    describe('ONE-MAMA-P3 Task 1: file_export', () => {
+      it('AC #10 a successful export writes exactly one attributed effect row and returns a path inside the root', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'mama-export-exec-'));
+        const previous = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        const db = new Database(':memory:');
+        try {
+          const ledger = new TaskLedger(db);
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: resolvePrivateConnectorPolicy({
+              ok: true,
+              config: {},
+              enabledNames: [],
+            }),
+          });
+          executor.setTaskLedger(ledger);
+          const result = (await executor.execute(
+            'file_export',
+            { format: 'csv', name: 'tasks', rows: [{ id: 1, title: 'a' }] } as never,
+            {
+              executionSurface: 'model_tool',
+              source: 'owner-event',
+              channelId: 'trello:b',
+              causeEventIds: ['evt-x'],
+            } as never
+          )) as { success: boolean; path?: string; sha256?: string };
+          expect(result.success).toBe(true);
+          expect(result.path?.startsWith(join(workspace, 'exports'))).toBe(true);
+          const effects = ledger.listChanges({ targetType: 'file' });
+          expect(effects).toHaveLength(1);
+          expect(effects[0]).toMatchObject({
+            kind: 'file_export',
+            targetId: result.sha256,
+            causeState: 'attributed',
+            sourceEventIds: ['evt-x'],
+          });
+
+          const failed = await executor.execute(
+            'file_export',
+            { format: 'md', name: 'x' } as never,
+            {} as never
+          );
+          expect(failed).toMatchObject({ success: false, code: 'file_export_failed' });
+          expect(ledger.listChanges({ targetType: 'file' })).toHaveLength(1);
+        } finally {
+          db.close();
+          if (previous === undefined) delete process.env.MAMA_WORKSPACE;
+          else process.env.MAMA_WORKSPACE = previous;
+          rmSync(workspace, { recursive: true, force: true });
+        }
       });
     });
 

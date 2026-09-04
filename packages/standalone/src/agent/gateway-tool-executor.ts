@@ -26,6 +26,7 @@ import {
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { isLearningTopic } from '../operator/learning-context.js';
+import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
@@ -2570,6 +2571,49 @@ export class GatewayToolExecutor {
               )
             ),
           };
+        case 'file_export': {
+          const exportInput = input as Partial<ExportFileInput>;
+          if (!this.taskLedger) {
+            return {
+              success: false,
+              code: 'ledger_unavailable',
+              error: 'file_export needs the task ledger to record its receipt.',
+            };
+          }
+          try {
+            const result = await exportFile(
+              {
+                format: exportInput.format as ExportFileInput['format'],
+                name: typeof exportInput.name === 'string' ? exportInput.name : 'export',
+                columns: exportInput.columns,
+                rows: exportInput.rows,
+                content: exportInput.content,
+              },
+              resolveExportRoot()
+            );
+            const state = this.getExecutionState();
+            this.taskLedger.recordFileExport({
+              sha256: result.sha256,
+              runId: state.modelRunId ?? null,
+              causeEventIds: state.causeEventIds,
+              channelId: state.channelId ?? null,
+              payload: { format: exportInput.format, bytes: result.bytes },
+            });
+            return {
+              success: true,
+              path: result.path,
+              bytes: result.bytes,
+              sha256: result.sha256,
+              message: `Wrote ${result.bytes} bytes to ${result.path}`,
+            };
+          } catch (error) {
+            return {
+              success: false,
+              code: 'file_export_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
         case 'drive_upload': {
           const uploadInput = input as DriveUploadInput;
           const state = this.getExecutionState();

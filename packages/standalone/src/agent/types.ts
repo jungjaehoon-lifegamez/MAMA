@@ -823,6 +823,7 @@ export type GatewayToolName =
   | 'board_read'
   | 'audit_findings_read'
   | 'console_brief_update'
+  | 'file_export'
   | 'member_candidates'
   | 'member_register'
   | 'member_suspend'
