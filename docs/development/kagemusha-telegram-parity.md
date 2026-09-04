@@ -1007,6 +1007,9 @@ Installed acceptance (to be recorded after cutover):
 PR #256 (squash 9b4cb079), tag v0.45.0, published mama-os 0.45.0 (mama-core unchanged). Three
 defects the owner surfaced on Telegram within the first hour of 0.44.0.
 
+Scenarios: TG-06 (report and board-pipeline capabilities — board rendering, budget on scheduled
+turns), TG-04 (the owner gets the full proven toolset — the chat shell).
+
 - [x] Board line breaks. The pre-fix board publish (19:53Z) carried the briefing,
       action_required and decisions slots as PLAIN TEXT (no `report-card`, no `<div>`), while
       the host-rendered pipeline slot was already an HTML `<table>` — the exact split the owner
