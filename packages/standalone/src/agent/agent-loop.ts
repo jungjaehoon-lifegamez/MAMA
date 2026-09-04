@@ -77,6 +77,7 @@ import type {
   AgentErrorCode,
   ModelRunProvenance,
   BudgetStopInfo,
+  PromptResult,
 } from './types.js';
 import {
   AgentError,
@@ -1956,6 +1957,28 @@ export class AgentLoop {
             errorMessage.startsWith('run budget stop:')
           ) {
             stoppedBy = 'budget';
+            const stoppedUsage = (error as { usage?: PromptResult['usage'] }).usage;
+            if (stoppedUsage) {
+              totalUsage.input_tokens += stoppedUsage.input_tokens;
+              totalUsage.output_tokens += stoppedUsage.output_tokens;
+              budgetTokens +=
+                stoppedUsage.input_tokens +
+                stoppedUsage.output_tokens +
+                (stoppedUsage.cache_creation_input_tokens ?? 0) +
+                (stoppedUsage.cache_read_input_tokens ?? 0);
+              try {
+                this.onTokenUsage?.({
+                  channel_key: channelKey,
+                  agent_id: options?.agentContext?.roleName || this.model,
+                  input_tokens: stoppedUsage.input_tokens,
+                  output_tokens: stoppedUsage.output_tokens,
+                  cache_read_tokens: stoppedUsage.cache_read_input_tokens || 0,
+                  cost_usd: 0,
+                });
+              } catch {
+                // Recording failures must never mask the stop itself.
+              }
+            }
             budgetTokens = Math.max(budgetTokens, this.runTokenBudget);
             try {
               this.onBudgetStop?.({

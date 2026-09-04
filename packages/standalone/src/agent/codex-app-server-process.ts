@@ -1731,6 +1731,9 @@ export class CodexAppServerProcess {
       `run budget stop: ${counted} >= ${budget} counted tokens inside one turn`
     );
     (error as Error & { code?: string }).code = 'RUN_BUDGET_STOP';
+    // The interrupted turn's usage rides on the error: the loop's success path never
+    // runs for it, and the most expensive run of the day must not count as zero.
+    (error as Error & { usage?: unknown }).usage = { ...turn.usage };
     this.timeoutTurn(threadId, error, DEFAULT_TIMEOUT);
   }
 

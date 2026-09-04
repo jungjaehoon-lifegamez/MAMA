@@ -1826,8 +1826,9 @@ export async function runAgentLoop(
       // A terminal work order frees its idempotency slot (the unique index excludes terminal
       // rows), so "one per day" must be checked here: without this, 0.43.0 re-enqueued a
       // self-check every minute after each completion (8 runs in 26 minutes, live).
-      if (taskLedger.findWorkOrderByOccurrence('self-check', selfCheckKey(localDate))) {
-        return;
+      const prior = taskLedger.findWorkOrderByOccurrence('self-check', selfCheckKey(localDate));
+      if (prior && prior.status !== 'failed' && prior.status !== 'cancelled') {
+        return; // failed/cancelled rows are dead and stay retryable (task-ledger.ts)
       }
       taskLedger.enqueueWorkOrder({
         workKind: 'self-check',
