@@ -1962,11 +1962,7 @@ export class AgentLoop {
             if (stoppedUsage) {
               totalUsage.input_tokens += stoppedUsage.input_tokens;
               totalUsage.output_tokens += stoppedUsage.output_tokens;
-              budgetTokens +=
-                stoppedUsage.input_tokens +
-                stoppedUsage.output_tokens +
-                (stoppedUsage.cache_creation_input_tokens ?? 0) +
-                (stoppedUsage.cache_read_input_tokens ?? 0);
+              budgetTokens += this.countBudgetTokens(stoppedUsage);
               try {
                 this.onTokenUsage?.({
                   channel_key: channelKey,
@@ -2206,11 +2202,7 @@ export class AgentLoop {
         // Update usage
         totalUsage.input_tokens += response.usage.input_tokens;
         totalUsage.output_tokens += response.usage.output_tokens;
-        budgetTokens +=
-          response.usage.input_tokens +
-          response.usage.output_tokens +
-          (response.usage.cache_creation_input_tokens ?? 0) +
-          (response.usage.cache_read_input_tokens ?? 0);
+        budgetTokens += this.countBudgetTokens(response.usage);
 
         // Record token usage
         if (this.onTokenUsage) {
@@ -2863,6 +2855,20 @@ export class AgentLoop {
   /**
    * Extract text response from the last assistant message
    */
+  /**
+   * Tokens a turn counts against the run budget. Anthropic reports cache reads and
+   * cache creation OUTSIDE input_tokens; codex (OpenAI usage) reports inputTokens
+   * inclusive of cachedInputTokens. Adding cache reads for codex doubled every count
+   * in 0.44.0 (a 2.8M wiki turn read as 5.5M and was stopped).
+   */
+  private countBudgetTokens(usage: PromptResult['usage']): number {
+    const base = usage.input_tokens + usage.output_tokens;
+    if (this.backend === 'codex') {
+      return base;
+    }
+    return base + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  }
+
   private extractTextResponse(history: Message[]): string {
     // Find the last assistant message
     for (let i = history.length - 1; i >= 0; i--) {
