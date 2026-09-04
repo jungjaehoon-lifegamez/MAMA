@@ -1121,4 +1121,61 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     ).toBeNull();
     expect(classifyTransientModelError('brief-missing')).toBeNull();
   });
+  describe('One MAMA: host-rendered pipeline slot', () => {
+    it('publishes the pipeline before the board turn runs and not for other kinds', async () => {
+      const ctx = makeDeps();
+      const order: string[] = [];
+      ctx.deps.publishPipelineSlot = () => void order.push('pipeline');
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          order.push('model');
+          return { response: 'DONE' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:pipeline:1',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(order).toEqual(['pipeline', 'model']);
+
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:pipeline:1',
+        input: { batchId: 'b', events: ['e'] },
+      });
+      await consumer.tick();
+      expect(order).toEqual(['pipeline', 'model', 'model']);
+    });
+
+    it('fails the board order loudly when the host cannot render the pipeline', async () => {
+      const ctx = makeDeps();
+      let ran = false;
+      ctx.deps.publishPipelineSlot = () => {
+        throw new Error('report store unavailable');
+      };
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          ran = true;
+          return { response: 'DONE' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:pipeline:fail',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(ran).toBe(false);
+      expect(ctx.events).toContainEqual({
+        type: 'failed',
+        workKind: 'board',
+        workOrderId: wo.id,
+        reason: 'pipeline-render-failed: report store unavailable',
+      });
+    });
+  });
 });

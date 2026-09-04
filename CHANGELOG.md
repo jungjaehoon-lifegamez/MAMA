@@ -54,6 +54,13 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   memory and wiki; a recheck turn can only file its receipt). Tests pin, per kind, that no
   unattended turn reaches a send or an upload.
 
+- **The board pipeline slot is rendered by the host.** Before every board turn the host
+  publishes the pipeline from the ledger's own deadline-first page (twelve rows, D-day,
+  assignee, connector name, coverage line; no internal or channel ids) through the same
+  publisher `report_publish` uses, and the turn writes only the three judgment slots. The
+  model no longer re-types a table the system already knows, and a render failure fails the
+  order loudly instead of letting the model fill the slot from memory.
+
 ### Removed
 
 - **Delegation is gone from the tool surface.** `workorder_request` and `workorder_status` are
