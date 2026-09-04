@@ -1014,11 +1014,16 @@ dead in the loop (1503871c, source-pinned).
 - [x] Self-check re-enqueue: before the install the old process created a self-check order every
       two minutes (36 done + 2 failed on 2026-09-04); after the 09:56:26Z boot, zero new orders
       in the next eight minutes, and none through the 10:04Z restart.
-- [x] Run budget: `run_token_budget: 0` removed from `config.yaml`, daemon restarted 10:04:24Z on
-      the 3,000,000 default. The first board run (order 4472) completed, counting 1,520,382
-      tokens in its single codex turn; no budget stop was logged after the boot (the five in
-      the log predate it). The same turn was cut at 400,000 on 0.43.0.
-- [ ] A budget stop that is a real receipt on a run that deserved it (none has occurred yet).
+- [x] Run budget: turned OFF. Removing the `config.yaml` override and restarting on the
+      3,000,000 default stopped a 2.8M wiki turn (logged as 5.5M), a board turn and the owner's
+      own chat turn within fifteen minutes, because codex reports input tokens inclusive of
+      cached tokens and the loop added cache reads again — every codex count was doubled. The
+      count is backend-aware in 0.45.0 and the default is 0. The 4.28M "pathology" that
+      justified the budget was a doubled figure too; no run the budget would legitimately have
+      caught has been observed. With the budget off, wiki order 4476 completed where 4473/4474
+      were stopped.
+- [ ] A budget stop that is a real receipt on a run that deserved it (none has occurred; the
+      feature stays off until one does).
 - Note: the operating brief lives at `~/.mama/briefs/brief-owner-console.md`; the earlier
   `operator/console-brief.md` path in CLAUDE.md was wrong and is corrected.
 
