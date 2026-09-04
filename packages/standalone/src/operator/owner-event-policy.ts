@@ -4,11 +4,11 @@ import type { RoleConfig } from '../cli/config/types.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 
 /**
- * One MAMA (2026-09-04): the event turn holds the owner console grant minus
- * administration. Every entry below carries the reason it is not "minus nothing".
- * Ledger and memory tools (task_create/task_update/mama_save/mama_update) are
- * deliberately NOT here any more - blocking them since v0.37.0 is what left the
- * owner ledger without a single agent-authored task for two weeks.
+ * One MAMA (2026-09-04): the event turn holds the owner console grant minus the
+ * entries below, each with the reason it is not "minus nothing". Ledger and memory
+ * tools (task_create/task_update/mama_save/mama_update) are deliberately NOT here
+ * any more - blocking them since v0.37.0 is what left the owner ledger without a
+ * single agent-authored task for two weeks.
  */
 const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   // administration: owner-authored chat only
@@ -26,6 +26,13 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   // that never completes only burns a turn. Task 4 deletes the tools themselves.
   'workorder_request',
   'workorder_status',
+  // not in the completion set (owner-event-outcome.ts) and not receipted anywhere the
+  // crash-recovery resolver can read: `obsidian` covers reads as well as writes, and
+  // drive_translate_conti uploads outside the owner-event effect ledger, so a retry
+  // would upload again. Granting a durable-looking tool that can never complete the
+  // turn only repeats its side effect until the batch dies.
+  'obsidian',
+  'drive_translate_conti',
 ]);
 
 export function resolveOwnerEventExecution(input: {

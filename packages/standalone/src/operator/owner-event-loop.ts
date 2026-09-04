@@ -152,13 +152,21 @@ export class OwnerEventLoop {
           return 'failed';
         }
 
-        this.deps.inbox.ack(batch.id);
+        // A send-only completion is allowed only behind the [decision] marker; the
+        // host records WHY it completed without a ledger change so it can be counted.
+        const unresolvedReason =
+          outcome.status === 'acted' &&
+          ownerDecisionRequested &&
+          outcome.tools.every((tool) => tool === 'telegram_send')
+            ? 'owner_decision_requested'
+            : null;
+        this.deps.inbox.ack(batch.id, unresolvedReason);
         this.recordTriggerOutcomes(batch, 'succeeded');
         processed += 1;
         this.deps.log(
           `[owner-event] batch ${batch.id} ${outcome.status}${
             outcome.tools.length > 0 ? ` via ${outcome.tools.join(',')}` : ''
-          }`
+          }${unresolvedReason ? ` unresolved_reason=${unresolvedReason}` : ''}`
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);

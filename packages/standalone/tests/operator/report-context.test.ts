@@ -992,6 +992,30 @@ describe('compileOwnerReportContext', () => {
     expect(packet.packet.bytes).toBe(Buffer.byteLength(serializeOwnerReportContext(packet)));
   });
 
+  it('names the channel when the recency bound left it with no rows', async () => {
+    const rows = [task(1, { sourceChannel: 'slack:C1', status: 'pending' })];
+    const packet = await compileChannelPacket(
+      {
+        readScope: SCOPE,
+        channelKey: 'trello:board-private-id',
+        eventIds: ['evt-a'],
+        since: '2026-09-01T03:04:05.000Z',
+      },
+      {
+        ...deps(),
+        listTaskPage: () => ({ tasks: rows, total: 40, returned: 1, nextCursor: null }),
+        correlate: (input) => correlations(input.rows as TaskRecord[]),
+      }
+    );
+    expect(packet.tasks).toEqual([]);
+    expect(
+      packet.caveats.some((line) =>
+        line.startsWith('channel_tasks_outside_recency_bound: no task for trello')
+      )
+    ).toBe(true);
+    expect(packet.caveats.some((line) => line.includes('task_list is allowed'))).toBe(true);
+  });
+
   it('keeps every row when the channel connector is unknown to the label map', async () => {
     const rows = [
       task(1, { status: 'pending' }),

@@ -127,6 +127,11 @@ export class OwnerEventInbox {
     if (!columns.some((column) => column.name === 'retry_after')) {
       this.db.exec(`ALTER TABLE owner_event_inbox ADD COLUMN retry_after INTEGER`);
     }
+    // Host-written reason when a batch was ACKed without a ledger change (the
+    // [decision] escape hatch). Counted, never self-graded by the model.
+    if (!columns.some((column) => column.name === 'unresolved_reason')) {
+      this.db.exec(`ALTER TABLE owner_event_inbox ADD COLUMN unresolved_reason TEXT`);
+    }
     // Prepared once: enqueue runs per channel per drain tick and re-preparing
     // statements per call was measurable on backfill drains.
     this.stmtInsertEvent = this.db.prepare(
@@ -148,7 +153,7 @@ export class OwnerEventInbox {
         WHERE id = ? AND status = 'pending'`
     );
     this.stmtAck = this.db.prepare(
-      `UPDATE owner_event_inbox SET status = 'acked', acked_at = ? WHERE id = ?`
+      `UPDATE owner_event_inbox SET status = 'acked', acked_at = ?, unresolved_reason = ? WHERE id = ?`
     );
     this.stmtRetry = this.db.prepare(
       `UPDATE owner_event_inbox
@@ -272,8 +277,26 @@ export class OwnerEventInbox {
     };
   }
 
-  ack(id: number): void {
-    this.stmtAck.run(this.now(), id);
+  /** ACK a batch; `unresolvedReason` names why it completed without a ledger change. */
+  ack(id: number, unresolvedReason: string | null = null): void {
+    this.stmtAck.run(this.now(), unresolvedReason, id);
+  }
+
+  /** Batches ACKed without a ledger change since `sinceMs`, newest first. */
+  unresolvedAcks(sinceMs = 0, limit = 200): Array<{ id: number; reason: string; ackedAt: number }> {
+    return (
+      this.db
+        .prepare(
+          `SELECT id, unresolved_reason, acked_at FROM owner_event_inbox
+            WHERE status = 'acked' AND unresolved_reason IS NOT NULL AND acked_at >= ?
+            ORDER BY acked_at DESC, id DESC LIMIT ?`
+        )
+        .all(sinceMs, Math.min(Math.max(limit, 1), 1000)) as Array<{
+        id: number;
+        unresolved_reason: string;
+        acked_at: number;
+      }>
+    ).map((row) => ({ id: row.id, reason: row.unresolved_reason, ackedAt: row.acked_at }));
   }
 
   /**
