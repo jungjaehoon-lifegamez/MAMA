@@ -22,6 +22,21 @@ name, columns?, rows?, content?})` writes under the private workspace exports fo
   boot), aggregated by surface and signature, with the error text secret-scanned and stored
   redacted or bounded. Every report and channel packet carries the open issues, highest
   severity first, so the agent sees what is broken before it judges.
+- **The agent asks for its own repair.** A daily `self-check` turn (one per local day,
+  idempotent on the date) receives the open issues and triages each: a code defect becomes
+  `repair_request({issue_id, title, symptom, impact, evidence, reproduction, attempted})`,
+  which writes one markdown bundle under `~/.mama/repairs/` (outside the private workspace,
+  so no send or upload tool can move it; ids and a log window only, never log text; every
+  model-authored field redacted), records a `repair_request` effect, marks the issue
+  `repair_requested` and notifies the owner in one line; a quiet signature is closed with
+  `issue_close({issue_id, reason})`. The turn holds no ledger, memory, board, wiki or send
+  tool; a source-text test pins that the repair path never spawns, signals or restarts.
+- **A run stops on its token budget with a receipt.** `agent.run_token_budget` (default
+  400000, counted as input + output + cache creation + cache reads across a run; distinct from
+  the daily `token_budget`) stops the loop after the turn that crosses it, returns the partial
+  response with `stoppedBy: 'budget'`, and the host records a `run_budget_stop` effect and a
+  `budget` operational issue. An owner-event batch stopped this way stays retryable with a
+  named reason; one completed by a ledger change before the stop still completes.
 ## mama-os [0.42.0] - 2026-09-04
 
 One MAMA, Phase 2 (learning loop). Conversation now changes operations: what the owner

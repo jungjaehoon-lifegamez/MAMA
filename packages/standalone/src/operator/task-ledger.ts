@@ -94,7 +94,13 @@ function scheduledPromotionReservationKeys(idempotencyKey: string): string[] | n
 export const TASK_KINDS = ['owner', 'system'] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
-export const WORKORDER_KINDS = ['board', 'wiki', 'memory-curation', 'temporal'] as const;
+export const WORKORDER_KINDS = [
+  'board',
+  'wiki',
+  'memory-curation',
+  'temporal',
+  'self-check',
+] as const;
 export type WorkOrderKind = (typeof WORKORDER_KINDS)[number];
 export const TEMPORAL_WORKORDER_MAX_ATTEMPTS = 3;
 
@@ -2451,6 +2457,51 @@ export class TaskLedger implements TaskSource {
       .prepare(`SELECT count(*) AS n FROM operator_tasks WHERE kind = 'owner' AND created_at >= ?`)
       .get(sinceMs) as { n?: number } | undefined;
     return Number(row?.n ?? 0);
+  }
+
+  /** Receipt for a run the host stopped on its token budget; target is the run id. */
+  recordBudgetStop(input: {
+    modelRunId: string | null;
+    budgetTokens: number;
+    runTokenBudget: number;
+  }): void {
+    recordUnattributedChange(
+      this.db as never,
+      {
+        runId: input.modelRunId,
+        channelId: null,
+        kind: 'run_budget_stop',
+        targetType: 'run',
+        targetId: input.modelRunId ?? `run:${this.now()}`,
+        payload: { budgetTokens: input.budgetTokens, runTokenBudget: input.runTokenBudget },
+        atMs: this.now(),
+      },
+      'clock'
+    );
+  }
+
+  /** Receipt for a repair request filed by the self-check turn; target is the issue id. */
+  recordRepairRequest(input: {
+    issueId: string;
+    repairId: string;
+    runId: string | null;
+    causeEventIds: readonly string[] | undefined;
+  }): void {
+    const change = {
+      runId: input.runId,
+      channelId: null,
+      kind: 'repair_request' as const,
+      targetType: 'issue' as const,
+      targetId: input.issueId,
+      payload: { repairId: input.repairId },
+      atMs: this.now(),
+    };
+    const causes = (input.causeEventIds ?? []).filter(isUsableCause);
+    if (causes.length > 0) {
+      recordEffect(this.db as never, { ...change, sourceEventIds: causes });
+    } else {
+      recordUnattributedChange(this.db as never, change, 'clock');
+    }
   }
 
   /** Receipt for a deliverable file the owner can receive; target is the content hash. */

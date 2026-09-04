@@ -1911,6 +1911,103 @@ describe('AgentLoop', () => {
       expect(persistentPromptMock).toHaveBeenCalledTimes(3);
     });
 
+    describe('ONE-MAMA-P3 Task 4: per-run token budget', () => {
+      const toolTurn = (input: number, cacheRead = 0) => ({
+        response: '```js\nboard_read()\n```',
+        usage: { input_tokens: input, output_tokens: 1_000, cache_read_input_tokens: cacheRead },
+        session_id: 'claude-session',
+      });
+      const finalTurn = () => ({
+        response: 'done',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'claude-session',
+      });
+
+      it('AC #1 stops after the turn that crosses the budget, with stoppedBy budget and one host receipt', async () => {
+        persistentPromptMock.mockResolvedValueOnce(toolTurn(250_000));
+        persistentPromptMock.mockResolvedValueOnce(toolTurn(250_000));
+        persistentPromptMock.mockResolvedValueOnce(finalTurn());
+        gatewayExecutorExecuteMock.mockResolvedValue({ success: true, message: 'ok' });
+        const stops: Array<{ budgetTokens: number; turns: number }> = [];
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: 'base prompt',
+            useCodeAct: true,
+            runTokenBudget: 400_000,
+            onBudgetStop: (info) =>
+              void stops.push({ budgetTokens: info.budgetTokens, turns: info.turns }),
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const result = await agentLoop.run('long request', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+        });
+        expect(result.stoppedBy).toBe('budget');
+        expect(result.turns).toBe(2);
+        expect(persistentPromptMock).toHaveBeenCalledTimes(2);
+        expect(stops).toEqual([{ budgetTokens: 502_000, turns: 2 }]);
+        expect(result.totalUsage).toEqual({ input_tokens: 500_000, output_tokens: 2_000 });
+      });
+
+      it('AC #2 cache reads count toward the budget', async () => {
+        persistentPromptMock.mockResolvedValueOnce(toolTurn(10_000, 390_000));
+        persistentPromptMock.mockResolvedValueOnce(finalTurn());
+        gatewayExecutorExecuteMock.mockResolvedValue({ success: true, message: 'ok' });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: 'base prompt',
+            useCodeAct: true,
+            runTokenBudget: 400_000,
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const result = await agentLoop.run('cached request', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+        });
+        expect(result.stoppedBy).toBe('budget');
+        expect(result.turns).toBe(1);
+      });
+
+      it('AC #3 no budget (0 or undefined) never stops; an under-budget run has stoppedBy undefined', async () => {
+        for (const runTokenBudget of [0, undefined]) {
+          persistentPromptMock.mockResolvedValueOnce(toolTurn(250_000));
+          persistentPromptMock.mockResolvedValueOnce(toolTurn(250_000));
+          persistentPromptMock.mockResolvedValueOnce(finalTurn());
+          gatewayExecutorExecuteMock.mockResolvedValue({ success: true, message: 'ok' });
+          const agentLoop = new AgentLoop(
+            createMockOAuthManager(),
+            { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true, runTokenBudget },
+            {},
+            { mamaApi: createMockApi() }
+          );
+          const result = await agentLoop.run('long request', {
+            source: 'telegram',
+            channelId: '5551000001',
+            agentContext: withOuterCodeAct(createChatBotContext()),
+          });
+          expect(result.stoppedBy).toBeUndefined();
+          expect(result.turns).toBe(3);
+          expect(result.response).toBe('done');
+          persistentPromptMock.mockReset();
+          persistentPromptMock.mockResolvedValue({
+            response: 'x',
+            usage: { input_tokens: 1, output_tokens: 1 },
+            session_id: 's',
+          });
+        }
+      });
+    });
+
     it('stops the Claude tool loop after an ambiguous Code-Act mutation', async () => {
       persistentPromptMock.mockResolvedValueOnce({
         response: '```js\ntelegram_send("chat-1", "hello")\n```',

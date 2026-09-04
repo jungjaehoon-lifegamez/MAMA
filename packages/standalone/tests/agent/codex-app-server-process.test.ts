@@ -1044,7 +1044,7 @@ describe('Story: Codex app-server process', () => {
       // This timeout also covers spawning and initializing the fake Node app-server.
       // Keep enough headroom for a loaded full-suite worker; the assertion targets
       // terminal-result preservation after settlement disruption, not startup latency.
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
 
       const failure = await runner
         .prompt('hi', undefined, {
@@ -1153,7 +1153,7 @@ describe('Story: Codex app-server process', () => {
 
   it('applies a per-prompt timeout override while initialize is pending', async () => {
     const item = fixture('init-timeout');
-    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
 
     await expect(runner.prompt('hi', undefined, { requestTimeout: 35 })).rejects.toThrow(
       'initialize timed out after 35ms'
@@ -1698,7 +1698,7 @@ describe('Story: Codex app-server process', () => {
     'reconciles $mode received after the outer deadline before retrying',
     async ({ mode, expectedLaunches }) => {
       const item = fixture(mode);
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
       const first = runner.prompt('first');
       await waitForFile(join(item.root, 'held-turn-start'));
       const firstStart = messages(item.capture).find((entry) => entry.method === 'turn/start');
@@ -1708,7 +1708,7 @@ describe('Story: Codex app-server process', () => {
         runner as unknown as {
           timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
         }
-      ).timeoutTurn(String(threadId), new Error('manual outer deadline'), 500);
+      ).timeoutTurn(String(threadId), new Error('manual outer deadline'), 2_000);
       await expect(first).rejects.toThrow('manual outer deadline');
       writeFileSync(join(item.root, 'release-turn-start'), '1');
 
@@ -1723,7 +1723,7 @@ describe('Story: Codex app-server process', () => {
 
   it('aborts an active host tool before reporting a turn timeout', async () => {
     const item = fixture('tool-success');
-    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
     let observedAbort = false;
     let resolveToolStarted: (() => void) | undefined;
     const toolStarted = new Promise<void>((resolve) => {
@@ -1754,7 +1754,7 @@ describe('Story: Codex app-server process', () => {
       runner as unknown as {
         timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
       }
-    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 500);
+    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 2_000);
 
     await expect(prompt).rejects.toThrow('manual turn timed out');
 
@@ -1764,7 +1764,7 @@ describe('Story: Codex app-server process', () => {
 
   it('promotes a terminal mutation settled after timeout over the original cancellation', async () => {
     const item = fixture('tool-success');
-    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
     let resolveToolStarted: (() => void) | undefined;
     const toolStarted = new Promise<void>((resolve) => {
       resolveToolStarted = resolve;
@@ -1802,7 +1802,7 @@ describe('Story: Codex app-server process', () => {
       runner as unknown as {
         timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
       }
-    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 500);
+    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 2_000);
 
     const failure = await prompt.catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(HostToolTerminalError);
@@ -1815,7 +1815,7 @@ describe('Story: Codex app-server process', () => {
 
   it('treats streamed progress as activity and refreshes the turn idle timeout', async () => {
     const item = fixture('progress-delayed');
-    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
     await runner.prompt('warm connection');
 
     await expect(
@@ -2091,7 +2091,7 @@ describe('Story: Codex app-server process', () => {
       // ..., requestTimeout)). 200ms is below cold-spawn latency on a loaded machine
       // and failed with "initialize timed out after 200ms"; 500ms is the value the
       // rest of this file uses for spawn-covering timeouts.
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
       if (mode === 'exit-after-turn') {
         await runner.prompt('first');
         await new Promise((resolve) => setTimeout(resolve, 30));

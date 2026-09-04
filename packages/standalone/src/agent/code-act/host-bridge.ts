@@ -163,6 +163,36 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
+    name: 'repair_request',
+    description:
+      'File a repair request for an open operational issue (bundle + receipt + owner notice)',
+    params: [
+      { name: 'issue_id', type: 'string', required: true },
+      { name: 'title', type: 'string', required: true },
+      { name: 'symptom', type: 'string', required: true },
+      { name: 'impact', type: 'string', required: true },
+      {
+        name: 'evidence',
+        type: '{ run_ids?: string[]; trace_ids?: string[]; log_window?: { file: string; from: string; to: string }; queries?: string[] }',
+        required: false,
+      },
+      { name: 'reproduction', type: 'string', required: true },
+      { name: 'attempted', type: 'string', required: true },
+    ],
+    returnType: '{ repair_id: string; created: boolean; message: string }',
+    category: 'os',
+  },
+  {
+    name: 'issue_close',
+    description: 'Close an operational issue whose signature has not recurred since the fix',
+    params: [
+      { name: 'issue_id', type: 'string', required: true },
+      { name: 'reason', type: 'string', required: true },
+    ],
+    returnType: '{ message: string }',
+    category: 'os',
+  },
+  {
     name: 'console_brief_update',
     description: 'Append one dated lesson to your operating brief (the rest is preserved)',
     params: [{ name: 'lesson', type: 'string', required: true }],
@@ -786,6 +816,8 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'mama_update',
   'report_publish',
   'report_request',
+  'repair_request',
+  'issue_close',
   'wiki_publish',
   // The Obsidian CLI is the tier-2 wiki agent's primary write path; without it
   // the code-act sandbox never injects the function and every run silently

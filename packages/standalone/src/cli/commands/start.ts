@@ -139,8 +139,12 @@ import {
   ensureOperationalIssuesTable,
   listOpenOperationalIssues,
   recordOperationalIssue,
+  setOperationalIssueStatus,
   type RecordIssueInput,
 } from '../../observability/operational-issues.js';
+import { resolveRepairRoot } from '../../operator/repair-request.js';
+import { budgetStopSink } from '../runtime/agent-loop-init.js';
+import { selfCheckKey } from '../../operator/workorder-publishers.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import {
   OwnerEventLoop,
@@ -651,6 +655,7 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
   wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
   'memory-curation': ['agent_notices', 'contract_no_update'],
   temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
+  'self-check': ['agent_notices', 'contract_no_update', 'repair_request', 'issue_close'],
 };
 
 /**
@@ -718,6 +723,18 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'obsidian',
   ]),
   // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
+  // self-check triages the system's own failures; it files repair requests and closes
+  // issues, and touches nothing the owner or another turn owns
+  'self-check': new Set([
+    'report_publish',
+    'wiki_publish',
+    'mama_save',
+    'mama_update',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+    'obsidian',
+  ]),
   temporal: new Set([
     'report_publish',
     'wiki_publish',
@@ -1796,8 +1813,54 @@ export async function runAgentLoop(
       );
     }
   };
+  // One self-check turn per local day (idempotent on the date key), enqueued from the
+  // watchdog interval so it needs no timer of its own.
+  const enqueueDailySelfCheck = (): void => {
+    try {
+      const localDate = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD in local time
+      taskLedger.enqueueWorkOrder({
+        workKind: 'self-check',
+        idempotencyKey: selfCheckKey(localDate),
+        input: { scheduledFor: localDate },
+      });
+    } catch (error) {
+      console.error(
+        `[self-check] enqueue failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+  budgetStopSink.current = (info) => {
+    try {
+      taskLedger.recordBudgetStop(info);
+    } catch (error) {
+      console.error(
+        `[budget] receipt failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    recordIssue({
+      surface: 'budget',
+      signature: `run_budget_stop:${info.agentId ?? 'unknown'}`,
+      severity: 'warn',
+      error: `run ${info.modelRunId ?? '(no run id)'} stopped at ${info.budgetTokens} of ${info.runTokenBudget} tokens after ${info.turns} turns`,
+      sourceRef: info.channelKey,
+      ownerAgent: info.agentId,
+    });
+  };
+  toolExecutor.setRepairControls({
+    setIssueStatus: (issueId, status) =>
+      setOperationalIssueStatus(issueDb as never, issueId, status),
+    notifyOwner: async (line) => {
+      const notify = getLegPageNotifier();
+      if (!notify) {
+        throw new Error('owner notice channel is not configured');
+      }
+      await notify(line);
+    },
+    repairRoot: () => resolveRepairRoot(),
+  });
   const legWatchdog = setInterval(() => {
     probeLedgerStagnation();
+    enqueueDailySelfCheck();
     try {
       const { pages, recoveries } = legCadence.check();
       for (const page of pages) {
@@ -1928,6 +1991,19 @@ export async function runAgentLoop(
         });
         return build(wo.workKind, scope.memory_scopes, wo.workKind);
       },
+      selfCheckInput: () => ({
+        openIssues: listOpenOperationalIssues(issueDb as never, 20).map((issue) => ({
+          issueId: issue.issueId,
+          surface: issue.surface,
+          severity: issue.severity,
+          signature: issue.signature,
+          occurrences: issue.occurrences,
+          firstSeenAt: new Date(issue.firstSeenAt).toISOString(),
+          lastSeenAt: new Date(issue.lastSeenAt).toISOString(),
+          lastError: issue.lastError,
+        })),
+        noUpdateScope: `self-check:${new Date().toLocaleDateString('sv-SE')}`,
+      }),
       publishPipelineSlot: () => {
         const publish = pipelineSlotPublisher.current;
         if (!publish) throw new Error('pipeline slot publisher is not bound yet');

@@ -28,6 +28,11 @@ import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { isLearningTopic } from '../operator/learning-context.js';
 import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
 import type { RecordIssueInput } from '../observability/operational-issues.js';
+import {
+  writeRepairBundle,
+  type RepairBundleResult,
+  type RepairRequestInput,
+} from '../operator/repair-request.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
@@ -762,6 +767,12 @@ export class GatewayToolExecutor {
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
   /** Host-injected: failures become operational issues (observability/operational-issues.ts). */
   private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
+  /** Host-injected: issue lifecycle + owner notice for the self-check turn's tools. */
+  private repairControls: {
+    setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
+    notifyOwner: (line: string) => Promise<void>;
+    repairRoot: () => string;
+  } | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
   private wikiPublisher: WikiPagePublisher | null = null;
@@ -1012,6 +1023,15 @@ export class GatewayToolExecutor {
       );
     }
     return result;
+  }
+
+  /** Issue lifecycle and the one-line owner notice used by repair_request / issue_close. */
+  setRepairControls(controls: {
+    setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
+    notifyOwner: (line: string) => Promise<void>;
+    repairRoot: () => string;
+  }): void {
+    this.repairControls = controls;
   }
 
   /** Where a tool failure or a scope mismatch is recorded as an operational issue. */
@@ -2624,6 +2644,97 @@ export class GatewayToolExecutor {
               )
             ),
           };
+        case 'repair_request': {
+          // Containment: this case writes ONE markdown file under the repairs root and
+          // sends ONE text line. No spawn, no signal, no config write, no restart.
+          if (!this.repairControls || !this.taskLedger) {
+            return {
+              success: false,
+              code: 'repair_unavailable',
+              error: 'repair_request needs the issue store, the task ledger and the owner notice.',
+            };
+          }
+          let bundle: RepairBundleResult;
+          try {
+            bundle = writeRepairBundle(
+              input as RepairRequestInput,
+              this.repairControls.repairRoot()
+            );
+          } catch (error) {
+            return {
+              success: false,
+              code: 'repair_request_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          const issueId = (input as RepairRequestInput).issue_id;
+          if (bundle.created) {
+            const state = this.getExecutionState();
+            this.taskLedger.recordRepairRequest({
+              issueId,
+              repairId: bundle.repairId,
+              runId: state.modelRunId ?? null,
+              causeEventIds: state.causeEventIds,
+            });
+            try {
+              this.repairControls.setIssueStatus(issueId, 'repair_requested');
+            } catch (error) {
+              return {
+                success: false,
+                code: 'repair_request_failed',
+                error: `bundle written but the issue could not be marked: ${error instanceof Error ? error.message : String(error)}`,
+              };
+            }
+            try {
+              await this.repairControls.notifyOwner(
+                `MAMA filed repair request ${bundle.repairId} for issue ${issueId}.`
+              );
+            } catch (error) {
+              // The file is the durable artifact; a failed notice is recorded, not fatal.
+              this.recordIssue({
+                surface: 'delivery',
+                signature: 'repair_notice_failed',
+                severity: 'warn',
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+          return {
+            success: true,
+            repair_id: bundle.repairId,
+            created: bundle.created,
+            message: bundle.created
+              ? `Repair request ${bundle.repairId} filed for ${issueId}.`
+              : `Repair request ${bundle.repairId} already exists for ${issueId}.`,
+          };
+        }
+        case 'issue_close': {
+          if (!this.repairControls) {
+            return {
+              success: false,
+              code: 'repair_unavailable',
+              error: 'issue_close needs the issue store.',
+            };
+          }
+          const { issue_id: closeId, reason } = input as { issue_id?: unknown; reason?: unknown };
+          if (typeof closeId !== 'string' || typeof reason !== 'string' || reason.trim() === '') {
+            return {
+              success: false,
+              code: 'invalid_input',
+              error: 'issue_id and reason are required',
+            };
+          }
+          try {
+            this.repairControls.setIssueStatus(closeId, 'closed');
+          } catch (error) {
+            return {
+              success: false,
+              code: 'issue_close_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          return { success: true, message: `Issue ${closeId} closed: ${reason.slice(0, 200)}` };
+        }
         case 'file_export': {
           const exportInput = input as Partial<ExportFileInput>;
           if (!this.taskLedger) {

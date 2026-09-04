@@ -25,7 +25,7 @@ interface OwnerEventRunner {
       sourceMessageRef: string;
       ownerEventEffects: ReturnType<typeof buildOwnerEventEffectAuthority>;
     }
-  ): Promise<{ response: string; history: OwnerEventHistoryMessage[] }>;
+  ): Promise<{ response: string; history: OwnerEventHistoryMessage[]; stoppedBy?: 'budget' }>;
 }
 
 export interface OwnerEventLoopDeps {
@@ -128,10 +128,16 @@ export class OwnerEventLoop {
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
-        const outcome = classifyOwnerEventOutcome({
+        const classified = classifyOwnerEventOutcome({
           history: result.history,
           noUpdateRecorded: this.deps.getNoUpdateMaxId(scope) > noUpdateBefore,
         });
+        // A budget stop is a host decision, not a model failure: the batch stays
+        // retryable with a named reason unless the run already changed the ledger.
+        const outcome =
+          result.stoppedBy === 'budget' && classified.status !== 'acted'
+            ? { status: 'retry' as const, tools: [], reason: 'run stopped on its token budget' }
+            : classified;
         if (outcome.status === 'retry') {
           const recoveredAfterRun = this.deps.getTerminalReceipt?.(batch) ?? null;
           if (recoveredAfterRun) {

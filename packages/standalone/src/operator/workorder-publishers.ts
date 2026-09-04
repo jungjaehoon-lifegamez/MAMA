@@ -107,6 +107,11 @@ export function promotionManualKey(now: number): string {
   return `promotion:manual:${now}`;
 }
 
+/** One self-check turn per local day: the key is the date, so a second enqueue is a no-op. */
+export function selfCheckKey(localDate: string): string {
+  return `self-check:${localDate}`;
+}
+
 // ── Payload schemas (plan G6) ─────────────────────────────────────────────
 
 export interface BoardPayload {
@@ -169,6 +174,7 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
   ],
   wiki: ['batchId', 'events'],
   'memory-curation': ['scheduledAt'],
+  'self-check': ['scheduledFor'],
   temporal: [
     'generationKey',
     'taskId',
@@ -277,6 +283,13 @@ export function validateWorkOrderPayload(
   } else if (kind === 'memory-curation') {
     if (typeof payload.scheduledAt !== 'string' || payload.scheduledAt === '') {
       throw new Error(`workorder payload (memory-curation): scheduledAt required`);
+    }
+  } else if (kind === 'self-check') {
+    if (
+      typeof payload.scheduledFor !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(payload.scheduledFor)
+    ) {
+      throw new Error(`workorder payload (self-check): scheduledFor must be YYYY-MM-DD`);
     }
   } else {
     const boundedString = (field: 'generationKey' | 'occurrenceKey', max: number): void => {
