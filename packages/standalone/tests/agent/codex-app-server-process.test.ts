@@ -1729,8 +1729,15 @@ describe('Story: Codex app-server process', () => {
       await expect(runner.prompt('long', undefined, { runTokenBudget: 10 })).rejects.toThrow(
         /run budget stop: \d+ >= 10 counted tokens inside one turn/
       );
-      const interrupts = messages(item.capture).filter((m) => m.method === 'turn/interrupt');
-      expect(interrupts.length).toBeGreaterThanOrEqual(1);
+      // The reject precedes the interrupt write; the fake child appends it to the
+      // capture file on its own tick.
+      await vi.waitFor(
+        () => {
+          const interrupts = messages(item.capture).filter((m) => m.method === 'turn/interrupt');
+          expect(interrupts.length).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: 2_000 }
+      );
       // no budget -> the same fixture completes
       const ok = await runner.prompt('long', undefined, {});
       expect(ok.response).toContain('hello');

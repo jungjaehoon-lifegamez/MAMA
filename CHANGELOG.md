@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## mama-os [0.44.0] - 2026-09-04
 
 ### Changed
 
@@ -26,6 +26,11 @@ All notable changes to this project will be documented in this file.
   (the turn is interrupted when it crosses), the wrapper forwards `stoppedBy` so work orders
   are retried, and the default is 3000000 (live measurement: normal board run ~2.0M, the
   pathology 4.28M). Installed mitigation until this ships: `agent.run_token_budget: 0`.
+- **The daily self-check re-enqueued every minute after each completion (0.43.0).** A terminal
+  work order frees its idempotency slot (the unique index excludes terminal rows), so the
+  publisher's minute tick inserted a fresh order as soon as the previous one finished: 8
+  self-check runs in 26 minutes live. The publisher now checks the day's key regardless of
+  status.
 
 ## mama-os [0.43.0] / mama-core [2.3.0] - 2026-09-04
 
