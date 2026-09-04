@@ -51,7 +51,8 @@ export interface CodexAppServerProcessOptions {
 
 export interface CodexAppServerPromptOptions {
   /**
-   * Per-run counted-token budget (input + output + cache reads). A codex turn is a whole
+   * Per-run counted-token budget (input + output; codex reports input INCLUSIVE of cache,
+   * so cache reads are not added again). A codex turn is a whole
    * agentic loop of model calls, so the budget is checked on every usage event INSIDE the
    * turn and the turn is interrupted when it crosses; AgentLoop's per-turn check would only
    * see the total after the turn ended (0.43.0 stopped board runs one turn too late).
