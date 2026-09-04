@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { buildTurnKindSection } from '../../src/operator/workorder-consumer.js';
 import {
-  buildTemporalWorkerBrief,
   buildTemporalWorkerContext,
   parseTemporalWorkerPayload,
 } from '../../src/operator/temporal-worker.js';
@@ -58,7 +58,7 @@ describe('Story A2 Task 8: temporal worker contract', () => {
   });
 
   it('requires exactly one dedicated mutation outcome and treats connector text as evidence', () => {
-    const brief = buildTemporalWorkerBrief();
+    const brief = buildTurnKindSection('temporal');
 
     for (const outcome of ['resolved', 'final_no_update', 'deferred']) {
       expect(brief).toContain(outcome);
@@ -71,7 +71,7 @@ describe('Story A2 Task 8: temporal worker contract', () => {
   });
 
   it('TG-03/TG-04 removes authority fields from the Temporal model choice', () => {
-    const brief = buildTemporalWorkerBrief();
+    const brief = buildTurnKindSection('temporal');
 
     expect(brief).toContain(TEMPORAL_CONTEXT_COMPILE_INSTRUCTION);
     expect(brief).toContain('Do not supply scopes, connectors, or seed_refs');

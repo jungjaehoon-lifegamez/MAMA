@@ -24,7 +24,7 @@ describe('Story A2 Task 14: production temporal daemon composition', () => {
     const consumer = new WorkOrderConsumer({
       ledger,
       runner: { runWithContent: async () => ({ response: 'unused' }) },
-      loadBrief: () => 'unused',
+      loadOwnerBrief: () => 'unused',
       noticeOwner: () => {},
       opsAlarm: { configured: false, send: async () => {} },
       now: () => now,

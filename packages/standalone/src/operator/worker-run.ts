@@ -23,9 +23,9 @@
 import { createHash } from 'node:crypto';
 import type { AgentLoopOptions, ContentBlock } from '../agent/types.js';
 import type { BackendType } from '../agent/model-runner.js';
-import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
+import type { WorkOrderKind } from './task-ledger.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
-import { projectWorkOrderBriefForPrompt } from './briefs.js';
+import { projectConsoleBriefForPrompt } from './console-brief.js';
 import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
 import { UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION } from '../utils/untrusted-content.js';
 
@@ -207,10 +207,11 @@ export async function workerRun(
   const { workOrderBriefProjectionPolicy: rawBriefProjectionPolicy, ...forwardedRunOptions } =
     runOptions ?? {};
   const briefProjectionPolicy = rawBriefProjectionPolicy as PrivateConnectorPolicy | undefined;
-  let projectedBrief =
-    briefProjectionPolicy && WORKORDER_KINDS.includes(kind as WorkOrderKind)
-      ? projectWorkOrderBriefForPrompt(kind as WorkOrderKind, brief, briefProjectionPolicy)
-      : brief;
+  // One brief for every kind: the private-connector projection is the guarantee that
+  // matters here, and it no longer depends on which kind is running.
+  let projectedBrief = briefProjectionPolicy
+    ? projectConsoleBriefForPrompt(brief, briefProjectionPolicy)
+    : brief;
   if (
     typeof forwardedRunOptions.systemPrompt === 'string' &&
     forwardedRunOptions.systemPrompt.includes('# Gateway Tools')

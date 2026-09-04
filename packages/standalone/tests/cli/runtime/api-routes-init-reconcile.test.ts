@@ -263,7 +263,7 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
         return { response: effect === 'none' ? 'DONE in prose only' : 'DONE' };
       },
     },
-    loadBrief: () => 'Synthetic board worker brief',
+    loadOwnerBrief: () => 'Synthetic board worker brief',
     runOptionsFor: (workOrder) => ({ workorderAttemptId: workOrder.id }),
     noticeOwner: () => undefined,
     opsAlarm: { configured: false, send: async () => undefined },

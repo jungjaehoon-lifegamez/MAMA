@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import { projectConsoleBriefForPrompt } from '../../src/operator/console-brief.js';
-import { projectWorkOrderBriefForPrompt } from '../../src/operator/briefs.js';
 
 const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
   ok: true,
@@ -79,42 +78,29 @@ const NON_CALL_CASES = [
   },
 ] as const;
 
+// One brief for every turn (chat, event, scheduled): the console projection is the only
+// projection left, and it must strip private calls the same way for all of them.
 const PROJECTIONS = [
   {
     name: 'TG-05 console',
     project: (raw: string) => projectConsoleBriefForPrompt(raw, disabledPrivatePolicy),
-    appendsManagedBoardContract: false,
-  },
-  {
-    name: 'TG-06 workorder',
-    project: (raw: string) => projectWorkOrderBriefForPrompt('board', raw, disabledPrivatePolicy),
-    appendsManagedBoardContract: true,
   },
 ] as const;
 
-describe.each(PROJECTIONS)(
-  '$name disabled private prompt projection',
-  ({ project, appendsManagedBoardContract }) => {
-    it.each(PRIVATE_CALL_CASES)('strips $name', ({ line }) => {
-      const raw = `# Brief\n${line}\n- Keep unrelated guidance.\n`;
+describe.each(PROJECTIONS)('$name disabled private prompt projection', ({ project }) => {
+  it.each(PRIVATE_CALL_CASES)('strips $name', ({ line }) => {
+    const raw = `# Brief\n${line}\n- Keep unrelated guidance.\n`;
 
-      const projected = project(raw);
+    const projected = project(raw);
 
-      expect(projected).not.toContain(line);
-      expect(projected).toContain('- Keep unrelated guidance.');
-    });
+    expect(projected).not.toContain(line);
+    expect(projected).toContain('- Keep unrelated guidance.');
+  });
 
-    it.each(NON_CALL_CASES)('preserves $name', ({ line }) => {
-      const raw = `# Brief\n${line}\n- Keep unrelated guidance.\n`;
-      const projected = project(raw);
+  it.each(NON_CALL_CASES)('preserves $name', ({ line }) => {
+    const raw = `# Brief\n${line}\n- Keep unrelated guidance.\n`;
+    const projected = project(raw);
 
-      if (appendsManagedBoardContract) {
-        expect(projected.startsWith(raw)).toBe(true);
-        expect(projected).toContain('<!-- MAMA managed board work-order contract v1:start -->');
-        expect(projected).toContain('<!-- MAMA managed board work-order contract v1:end -->');
-      } else {
-        expect(projected).toBe(raw);
-      }
-    });
-  }
-);
+    expect(projected).toBe(raw);
+  });
+});

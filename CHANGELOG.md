@@ -41,6 +41,19 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   read under a principal its envelope does not hold. A packet compile failure is logged and
   the turn proceeds on the delta alone.
 
+- **One agent policy for every scheduled turn.** Board, wiki, curation and recheck turns run
+  as the same `owner_console` principal the chat and event turns use, with one operating brief
+  (the console brief) plus a short host-authored turn-kind section. The four hand-written
+  per-lane personas, their `workorder-*` principals and the per-kind brief files
+  (`~/.mama/briefs/brief-<kind>.md`) are deleted; reading under a principal the envelope did
+  not hold is what made the Board lane fail the envelope scope audit daily. The grant is
+  projected by the host from data, not prose: the owner console grant plus each turn's
+  artifact tools (`report_publish`, `wiki_publish`, `task_temporal_reconcile`), minus
+  administration, minus deliverable, Drive, member and file-read tools on every unattended
+  turn, minus a per-kind block list (a board turn cannot create tasks, notify, upload, or touch
+  memory and wiki; a recheck turn can only file its receipt). Tests pin, per kind, that no
+  unattended turn reaches a send or an upload.
+
 ### Removed
 
 - **Delegation is gone from the tool surface.** `workorder_request` and `workorder_status` are
@@ -57,6 +70,8 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   any line that tells the agent to use `workorder_status` or `workorder_request` by hand.
 - The `owner_event_board_refresh*` tables stay in `~/.mama/operator/triggers.db` as inert data;
   nothing reads or writes them any more.
+- `~/.mama/briefs/brief-*.md` are no longer read. Owner edits that belonged in them go into the
+  console brief (`console_brief_update` from chat, or the file directly).
 
 ## mama-os [0.40.0] / mama-core [2.2.3] - 2026-09-03
 
