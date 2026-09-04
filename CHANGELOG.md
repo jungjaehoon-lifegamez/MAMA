@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## mama-os [0.42.0] - 2026-09-04
 
-One MAMA, Phase 2 (learning loop), in progress.
+One MAMA, Phase 2 (learning loop). Conversation now changes operations: what the owner
+corrects or rules in chat reaches the next event, scheduled and chat turn as injected policy
+and lessons. Workflow contracts (Kagemusha's trigger-to-procedure runtime) are deferred until
+an owner instruction is measured that policy injection could not carry.
 
 ### Added
 
