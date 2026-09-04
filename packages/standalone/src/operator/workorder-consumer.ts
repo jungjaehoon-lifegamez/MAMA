@@ -116,6 +116,8 @@ export interface WorkOrderConsumerDeps {
    * Optional: a missing reader means no block, never a failed order.
    */
   buildLearningBlock?: (wo: WorkOrderRecord) => Promise<string>;
+  /** Extra host-compiled input merged into a self-check turn's work order (open issues). */
+  selfCheckInput?: () => Record<string, unknown>;
   /** Passive owner surface (AgentNoticeQueue via MessageRouter accessor). */
   noticeOwner: (summary: string) => void;
   opsAlarm: OpsAlarmSink;
@@ -142,6 +144,8 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   wiki: 2,
   'memory-curation': 1,
   temporal: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+  // one daily turn; the next day's order is the retry
+  'self-check': 1,
 };
 
 export interface SafeCandidateRetryEvidence {
@@ -426,7 +430,11 @@ export class WorkOrderConsumer {
       const runResult = await workerRun(this.deps.runner, {
         kind: wo.workKind,
         brief,
-        input: JSON.stringify(wo.payload),
+        input: JSON.stringify(
+          wo.workKind === 'self-check' && this.deps.selfCheckInput
+            ? { ...wo.payload, ...this.deps.selfCheckInput() }
+            : wo.payload
+        ),
         runOptions,
       });
       response = runResult.response;
@@ -1084,6 +1092,17 @@ function buildTurnKindBody(kind: WorkOrderKind): string {
         '## Turn: curation',
         'Promote durable, source-backed claims with mama_save; supersede stale ones with mama_update. Secrets are refused by the host.',
         'If nothing qualifies, call contract_no_update with the scope in the input.',
+      ].join('\n');
+    case 'self-check':
+      return [
+        '## Turn: self-check',
+        'The input lists the open operational issues (surface, severity, occurrences, redacted error).',
+        'For each open issue decide exactly one:',
+        '- operating problem you can absorb -> save a lesson: row is not available to you; state the lesson in your final message',
+        '- the owner must decide -> leave it open; the daily report carries every open issue to the owner',
+        '- code defect -> repair_request({issue_id, title, symptom, impact, evidence: {run_ids, trace_ids, log_window: {file, from, to}}, reproduction, attempted}); ids and a log WINDOW only, never log text',
+        'Close an issue with issue_close({issue_id, reason}) only when its signature has not recurred since the last release.',
+        'If every issue is already triaged, call contract_no_update with the scope in the input.',
       ].join('\n');
     case 'temporal':
       return `## Turn: recheck

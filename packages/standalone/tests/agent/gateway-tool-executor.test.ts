@@ -3022,6 +3022,102 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('ONE-MAMA-P3 Task 3: repair_request and issue_close', () => {
+      it('AC #7 files one bundle, one receipt, marks the issue, notifies once; a failed notice becomes a delivery issue', async () => {
+        const base = mkdtempSync(join(tmpdir(), 'mama-repair-exec-'));
+        const db = new Database(':memory:');
+        try {
+          const ledger = new TaskLedger(db);
+          const statuses: Array<[string, string]> = [];
+          const notices: string[] = [];
+          const issues: Array<{ surface: string; signature: string }> = [];
+          let notifyFails = false;
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: resolvePrivateConnectorPolicy({
+              ok: true,
+              config: {},
+              enabledNames: [],
+            }),
+          });
+          executor.setTaskLedger(ledger);
+          executor.setOperationalIssueSink((input) => issues.push(input));
+          executor.setRepairControls({
+            setIssueStatus: (id, status) => void statuses.push([id, status]),
+            notifyOwner: async (line) => {
+              if (notifyFails) throw new Error('telegram down');
+              notices.push(line);
+            },
+            repairRoot: () => join(base, 'repairs'),
+          });
+          const req = {
+            issue_id: 'iss_0123456789abcdef',
+            title: 't',
+            symptom: 's',
+            impact: 'i',
+            reproduction: 'r',
+            attempted: 'a',
+          };
+          const first = (await executor.execute(
+            'repair_request',
+            req as never,
+            {
+              executionSurface: 'model_tool',
+              source: 'operator',
+              channelId: 'worker:self-check',
+            } as never
+          )) as { success: boolean; repair_id: string; created: boolean };
+          expect(first.success).toBe(true);
+          expect(first.created).toBe(true);
+          expect(statuses).toEqual([['iss_0123456789abcdef', 'repair_requested']]);
+          expect(notices).toHaveLength(1);
+          expect(notices[0]).toContain(first.repair_id);
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(1);
+          expect(ledger.listChanges({ targetType: 'issue' })[0]).toMatchObject({
+            kind: 'repair_request',
+            targetId: 'iss_0123456789abcdef',
+          });
+
+          const dup = (await executor.execute('repair_request', req as never, {} as never)) as {
+            created: boolean;
+          };
+          expect(dup.created).toBe(false);
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(1);
+          expect(notices).toHaveLength(1);
+
+          notifyFails = true;
+          const other = (await executor.execute(
+            'repair_request',
+            { ...req, issue_id: 'iss_fedcba9876543210' } as never,
+            {} as never
+          )) as { success: boolean; created: boolean };
+          expect(other.success).toBe(true);
+          expect(other.created).toBe(true);
+          expect(issues).toContainEqual(
+            expect.objectContaining({ surface: 'delivery', signature: 'repair_notice_failed' })
+          );
+
+          const closed = await executor.execute(
+            'issue_close',
+            { issue_id: 'iss_0123456789abcdef', reason: 'quiet since 0.42' } as never,
+            {} as never
+          );
+          expect(closed).toMatchObject({ success: true });
+          expect(statuses.at(-1)).toEqual(['iss_0123456789abcdef', 'closed']);
+          const noReason = await executor.execute(
+            'issue_close',
+            { issue_id: 'iss_0123456789abcdef', reason: ' ' } as never,
+            {} as never
+          );
+          expect(noReason).toMatchObject({ success: false, code: 'invalid_input' });
+        } finally {
+          db.close();
+          rmSync(base, { recursive: true, force: true });
+        }
+      });
+    });
+
     describe('ONE-MAMA-P3 Task 1: file_export', () => {
       it('AC #10 a successful export writes exactly one attributed effect row and returns a path inside the root', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'mama-export-exec-'));

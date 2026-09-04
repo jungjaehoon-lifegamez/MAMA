@@ -823,6 +823,8 @@ export type GatewayToolName =
   | 'board_read'
   | 'audit_findings_read'
   | 'console_brief_update'
+  | 'repair_request'
+  | 'issue_close'
   | 'file_export'
   | 'member_candidates'
   | 'member_register'
@@ -1172,6 +1174,13 @@ export interface AgentLoopOptions {
    * Called after each API response to track token consumption
    */
   onTokenUsage?: (record: TokenUsageRecord) => void;
+  /**
+   * Per-RUN token budget (input + output + cache creation + cache reads). 0/undefined
+   * disables the check. Distinct from MAMAConfig.token_budget, which is a DAILY cap.
+   */
+  runTokenBudget?: number;
+  /** Host callback when a run stops on its budget: record the receipt and the issue. */
+  onBudgetStop?: (info: BudgetStopInfo) => void;
 
   /**
    * CLI tools to structurally disallow via --disallowedTools flag.
@@ -1259,7 +1268,18 @@ export interface TurnInfo {
 /** Why a run produced no resolvable handle, when it did not. */
 export type ModelRunProvenance = 'available' | 'backend_no_run' | 'commit_failed';
 
+export interface BudgetStopInfo {
+  channelKey: string;
+  modelRunId: string | null;
+  agentId?: string;
+  budgetTokens: number;
+  runTokenBudget: number;
+  turns: number;
+}
+
 export interface AgentLoopResult {
+  /** Host-side stop, distinct from the model's stopReason: set when the run budget tripped. */
+  stoppedBy?: 'budget';
   /** Final text response from Claude */
   response: string;
   /** Total number of turns */

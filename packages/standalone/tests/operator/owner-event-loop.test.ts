@@ -545,4 +545,40 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(issues[0]).toMatchObject({ channelKey: 'chatwork:C1' });
     expect(issues[0].reason).toContain('no durable action');
   });
+  it('ONE-MAMA-P3 Task 4 AC #2: a budget-stopped run stays retryable with a named reason and is not dead', async () => {
+    inbox.enqueue(batch());
+    const logs: string[] = [];
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: {
+        run: async () => ({ response: 'partial', history: [], stoppedBy: 'budget' as const }),
+      },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: (line) => logs.push(line),
+    });
+    expect(await loop.tick()).toBe('failed');
+    expect(inbox.depth()).toEqual({ pending: 1, claimed: 0, dead: 0 });
+    expect(logs.at(-1)).toContain('run stopped on its token budget');
+    // a budget stop AFTER a ledger change still completes
+    inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
+    const acted = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: {
+        run: async () => ({
+          response: 'partial',
+          history: deliveredHistory,
+          stoppedBy: 'budget' as const,
+        }),
+      },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await acted.tick()).toBe('processed');
+  });
 });

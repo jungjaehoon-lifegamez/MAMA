@@ -93,7 +93,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
   });
 
   it('AC #7 keeps task mutation out of the recheck, wiki and curation turns and out of reports', () => {
-    for (const kind of ['temporal', 'wiki', 'memory-curation'] as const) {
+    for (const kind of ['temporal', 'wiki', 'memory-curation', 'self-check'] as const) {
       expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_create');
       expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_update');
     }
@@ -174,6 +174,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
     expect(grant('wiki')).toEqual([...common, 'obsidian', 'wiki_publish'].sort());
     expect(grant('memory-curation')).toEqual([...common, 'mama_save', 'mama_update'].sort());
     expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());
+    expect(grant('self-check')).toEqual([...common, 'issue_close', 'repair_request'].sort());
   });
 
   it('AC #8 gives each turn the tools its section instructs it to use', () => {

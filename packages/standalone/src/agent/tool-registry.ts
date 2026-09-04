@@ -133,6 +133,21 @@ register({
   params: 'no params',
 });
 register({
+  name: 'repair_request',
+  description:
+    'File a code-defect repair request for an open operational issue: writes a repair bundle for the developer session, records a receipt, marks the issue repair_requested, and notifies the owner in one line. Evidence carries ids and a log window (path + time range), never log text.',
+  category: 'os_monitoring',
+  params:
+    'issue_id, title, symptom, impact, evidence?{run_ids?,trace_ids?,log_window?{file,from,to},queries?}, reproduction, attempted',
+});
+register({
+  name: 'issue_close',
+  description:
+    'Close an open operational issue whose signature has not recurred since the fix shipped. Requires a reason.',
+  category: 'os_monitoring',
+  params: 'issue_id, reason',
+});
+register({
   name: 'console_brief_update',
   description:
     "Record a lesson in YOUR owner-console operating brief. Call it the moment the owner corrects your working style or a recipe proves wrong - pass ONE concrete lesson; it is appended with today's date and the rest of your brief is preserved. Loudly logged; applies from the next session re-anchor.",
