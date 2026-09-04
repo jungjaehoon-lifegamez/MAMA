@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.41.0] - 2026-09-04
+
+One MAMA, Phase 1 (Tasks 1-3). The owner-event turn - the run that judges every connector
+delta - may now change the owner ledger, and only a ledger change completes it. This is the
+spec's Phase 0 gate: it is installed alone first, and the owner-event lane is observed for
+`task_create`/`task_update` receipts before any lane is collapsed.
+
+### Changed
+
+- **Event turns may change the ledger and memory.** `task_create`, `task_update`, `mama_save`,
+  `mama_update`, `drive_translate_conti`, `obsidian`, and `report_publish` reach the owner-event
+  turn. Blocking them since v0.37.0 is what left the owner ledger without one agent-authored
+  task from 2026-08-19 on while 362 Telegram lines went out. The block set now names only
+  administration (`member_*`), `console_brief_update` (untrusted-content-driven turns must not
+  rewrite the operating brief), `report_request` (a second judgment surface), and the
+  `workorder_*` tools (delegation no longer completes a batch).
+- **Completion is a ledger change, never a notification.** A batch completes on a successful
+  `task_*`, `mama_*`, or `drive_upload` result; a `telegram_send` alone is a retry with the
+  reason `notification without a ledger change`, unless the host saw the final message begin
+  with `[decision]`, the marker for a question only the owner can answer. An accepted
+  `workorder_request` no longer counts as anything. The crash-recovery receipt mirrors the
+  rule: a confirmed Drive upload is a receipt, a confirmed Telegram line is not (the effect
+  ledger's per-batch action keys make the retry safe from a second send), and a persisted
+  Board acceptance is no longer a receipt.
+- **Event turns start from a host-compiled channel packet.** The same `OwnerReportContextV1`
+  the full report uses is compiled per batch under the event turn's own read scope, narrowed
+  to the batch connector plus every `in_progress`/`review` task, and appended after the delta.
+  The envelope and the packet are built from ONE read-scope expression, so the run can never
+  read under a principal its envelope does not hold. A packet compile failure is logged and
+  the turn proceeds on the delta alone.
+
+### Notes for existing installs
+
+- The seeded console brief and the chat persona still mention `workorder_status` /
+  `workorder_request` for status questions; those tools remain callable from chat in this
+  release and are removed in the next Phase 1 release.
+
 ## mama-os [0.40.0] / mama-core [2.2.3] - 2026-09-03
 
 ### Changed
