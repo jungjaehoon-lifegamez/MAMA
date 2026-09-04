@@ -349,8 +349,9 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   `observability/operational-issues.ts`, redacted, aggregated by signature) and rides in every
   packet as `operationalIssues`; a daily `self-check` turn triages them with `repair_request`
   (bundle under `~/.mama/repairs/`, OUTSIDE the workspace so it cannot be sent out) and
-  `issue_close`; `agent.run_token_budget` (default 400000, includes cache tokens) stops a run
-  with a `run_budget_stop` receipt. The agent never edits or restarts its own daemon.
+  `issue_close`; `agent.run_token_budget` (default 0 = off since 0.45.0; codex counts
+  input+output, Anthropic also adds cache) stops a run with a `run_budget_stop` receipt when
+  set. The agent never edits or restarts its own daemon.
 - **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
   callers only, never from inside an active lane run (deadlock seal).
 - **Stage 2 workorder pipeline** (the ONLY system run path since v0.28.0; the
