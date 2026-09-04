@@ -989,8 +989,12 @@ decisions` and completed at 04:20Z. Zero `[envelope] scope mismatch` lines since
 
 Installed acceptance (to be recorded after cutover):
 
-- [ ] Acceptance 1: one connector delta produces a `task_create`/`task_update` with an
-      `evidence_effects` row attributed to the event, and no Telegram line for it.
+- [x] Acceptance 1 (2026-09-04 05:15Z, first real delta after the cutover): owner-event batch
+      508 completed `acted via task_create,telegram_send`; `evidence_effects` carries one
+      `task_create` row `cause_state=attributed`, `cause_kind=event`, two source event ids;
+      the inbox row acked with no `unresolved_reason` (the send rode beside a ledger change,
+      not instead of one). First agent-authored owner task since 2026-08-19. The diagnosis
+      behind Phase 0 holds; the lane collapse stands.
 - [ ] Acceptance 4 (24h): `[owner-event] batch N acted via telegram_send` lines fewer than 10;
       `unresolved_reason` rows counted from `owner_event_inbox`; owner-event lane tokens for the
       day from `model_runs`.
