@@ -1002,6 +1002,34 @@ Installed acceptance (to be recorded after cutover):
 - [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
       lane collapse (already merged behind the same release) is re-argued before Phase 2.
 
+## 0.46.0: 2026-09-04 (constraint removal step 1: the agent sees the whole board)
+
+PR #258 (squash 42e71c57), tag v0.46.0. Design:
+`docs/superpowers/plans/2026-09-04-kagemusha-baseline-constraint-removal.md`, written after
+reading Kagemusha's code the same day (task_list is selectAll; the delta prompt is five
+messages plus "go read channel_history yourself"; persona prohibitions are behavior-discipline
+only; no completion rule). Scenarios: TG-06 (board pipeline capabilities), TG-04 (owner
+toolset).
+
+Removed, not raised: the task_list 50/200 bound and the "must not page" contract in all three
+descriptions; the packet's MAX_TASKS; the pipeline row cap; the board turn's
+"context_compile only" and its judgment-substituting rules; the packet's "do not re-read".
+The Opus review found two ceilings the inventory had missed, both of which silently trimmed
+or dropped whole-board output after the caps were lifted (packet 96 KB, slot 64 KB); raised
+to 512 KB with their named cause. CodeRabbit found three caps that had been raised rather
+than removed; removed.
+
+- [x] Installed 13:29:03Z (22:29 local). The first board run after boot (order 4487, a full
+      turn of ten minutes) called `task_list` ten times and `context_compile` four times in its
+      first minute, made three task updates, and republished all three judgment slots. The
+      briefing opens with "작업판 전체 대조" and its counts match the ledger to the row
+      (367 total, 216 active, 127 done; pending 198 / review 14 / in_progress 4). The
+      host-rendered pipeline slot carries all 216 active rows (38 KB) where 0.45.0 showed
+      twelve. The price of sight: this turn counted ~2.3M tokens against ~0.8M for a
+      50-row turn. Zero budget stops, zero errors since boot.
+- [ ] The owner's Telegram exchange no longer contains "그대로다" or "앵무새" (the design's
+      real acceptance; observed over the following days, not on the first run).
+
 ## 0.45.0: 2026-09-04 (installed, board render verified live)
 
 PR #256 (squash 9b4cb079), tag v0.45.0, published mama-os 0.45.0 (mama-core unchanged). Three
