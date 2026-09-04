@@ -45,6 +45,8 @@ import {
 } from '../memory/audit-task-queue.js';
 import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { buildLearningContext, formatLearningAuditLine } from '../operator/learning-context.js';
+import { cappedLearningReader } from '../operator/learning-read.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import {
@@ -1349,6 +1351,12 @@ This protects your credentials from being exposed in chat logs.`;
           !isPublicLane && enhanced.skillContent
             ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
             : '';
+        // Owner policy and lessons ride the user message for the same reason skills do:
+        // a persistent CLI session cannot change its system prompt after creation.
+        const learningPrefix =
+          !isPublicLane && agentContext.roleName === 'owner_console'
+            ? await this.buildLearningPrefix(message)
+            : '';
         if (!isPublicLane && enhanced.skillContent) {
           logger.info(
             `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
@@ -1533,7 +1541,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
+          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1579,7 +1587,7 @@ This protects your credentials from being exposed in chat logs.`;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
+          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -2348,6 +2356,36 @@ INSTRUCTION:
             `[channel-summary] Failed: ${error instanceof Error ? error.message : String(error)}`
           );
         });
+    }
+  }
+
+  /** <policy>/<lessons> for an owner chat turn, or '' (learning-context.ts). */
+  private async buildLearningPrefix(message: NormalizedMessage): Promise<string> {
+    if (!this.mamaApi.queryRelevantTruth) {
+      return '';
+    }
+    try {
+      const scopes = deriveMemoryScopes({
+        source: message.source,
+        channelId: message.channelId,
+        projectId: this.getRuntimeProjectId(),
+      });
+      const context = await buildLearningContext({
+        scopes,
+        query: message.text.slice(0, 500),
+        readClaims: cappedLearningReader(
+          (params) => this.mamaApi.queryRelevantTruth!(params),
+          (line) => logger.info(line)
+        ),
+      });
+      const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
+      logger.info(formatLearningAuditLine('chat', channelScopeId, context));
+      return context.promptBlock ? `${context.promptBlock}\n\n` : '';
+    } catch (error) {
+      logger.warn(
+        `[learning] chat prefix failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return '';
     }
   }
 

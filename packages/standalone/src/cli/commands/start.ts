@@ -142,6 +142,8 @@ import {
   type OwnerEventTerminalReceipt,
 } from '../../operator/owner-event-loop.js';
 import { PIPELINE_SLOT_ROWS, renderPipelineSlot } from '../../operator/board-pipeline-render.js';
+import { buildLearningContext, formatLearningAuditLine } from '../../operator/learning-context.js';
+import { cappedLearningReader } from '../../operator/learning-read.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
   buildOwnerEventAgentContext,
@@ -1776,6 +1778,9 @@ export async function runAgentLoop(
   const pipelineSlotPublisher: { current: ((slots: Record<string, string>) => unknown) | null } = {
     current: null,
   };
+  const learningBlockRef: {
+    current: ((turn: string, scopes: MemoryScopeRef[], query: string) => Promise<string>) | null;
+  } = { current: null };
   let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
@@ -1845,6 +1850,25 @@ export async function runAgentLoop(
       loadOwnerBrief: () => loadConsoleBrief(),
       // Host-rendered pipeline: the ledger's own deadline_priority page, published through
       // the SAME report publisher report_publish uses (bound after the API routes exist).
+      buildLearningBlock: async (wo) => {
+        const build = learningBlockRef.current;
+        if (!build) {
+          return '';
+        }
+        const projectId = resolveReactiveProjectRoot(config, process.env);
+        const scope = workOrderEnvelopeScope({
+          workKind: wo.workKind,
+          projectId,
+          laneConnectors: codeActRawConnectors,
+          temporalBinding: null,
+          reconcileChannelKey:
+            wo.workKind === 'board' && typeof wo.payload.channelKey === 'string'
+              ? wo.payload.channelKey
+              : null,
+          privateConnectorPolicy,
+        });
+        return build(wo.workKind, scope.memory_scopes, wo.workKind);
+      },
       publishPipelineSlot: () => {
         const publish = pipelineSlotPublisher.current;
         if (!publish) throw new Error('pipeline slot publisher is not bound yet');
@@ -2120,6 +2144,30 @@ export async function runAgentLoop(
         issuance: envelopeBootstrap.metadata.issuance,
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
+      // Owner policy and lessons for a turn: one bounded read path for event, scheduled
+      // and (via MamaApiClient) chat turns. Returns the rendered block or ''.
+      const learningReader = cappedLearningReader(
+        (params) => mamaCore.queryRelevantTruth({ query: params.query, scopes: params.scopes }),
+        (line) => console.log(line)
+      );
+      const buildLearningBlockFor = async (
+        turn: string,
+        scopes: MemoryScopeRef[],
+        query: string
+      ): Promise<string> => {
+        try {
+          const context = await buildLearningContext({ scopes, query, readClaims: learningReader });
+          const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
+          console.log(formatLearningAuditLine(turn, channelScopeId, context));
+          return context.promptBlock;
+        } catch (error) {
+          console.error(
+            `[learning] ${turn} block failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+          return '';
+        }
+      };
+      learningBlockRef.current = buildLearningBlockFor;
       // Scope-independent packet readers, shared by the report leg and the event turn.
       const reportContextDeps: OwnerReportContextDeps = {
         listTaskPage: (input) => taskLedger.listPage(input),
@@ -2351,6 +2399,11 @@ export async function runAgentLoop(
             buildOwnerEventPrompt({
               batch,
               packet,
+              learning: await buildLearningBlockFor(
+                'event',
+                ownerEventReadScope(batch).memoryScopes,
+                batch.lines.join('\n').slice(0, 500)
+              ),
               ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
               skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
               ownerTelegramChatId: reportChatId,
