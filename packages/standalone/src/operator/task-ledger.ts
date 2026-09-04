@@ -3608,7 +3608,7 @@ export class TaskLedger implements TaskSource {
     return result.changes;
   }
 
-  /** Per-kind stats for the workorder_status surface. */
+  /** Per-kind last run and failure counts of the system lanes (operator UI and tests). */
   workOrderStats(): Array<{
     workKind: WorkOrderKind;
     lastRunAt: number | null;

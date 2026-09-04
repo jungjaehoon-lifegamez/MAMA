@@ -75,7 +75,7 @@ resolved per message by trust checks — never by static configuration:
   runtime and flagged as MAJOR by the deterministic code audit.
 - **`allowed_chats` is therefore the owner trust anchor** — every listed chat's
   DM gets owner powers (artifact reads: `board_read`, `audit_findings_read`,
-  `workorder_status`; work issuance: `report_request`, `workorder_request`;
+  work issuance: `report_request`;
   memory writes: `mama_save`, `mama_update`; task creation). List only chats
   you trust with owner-level access. An empty allowlist disables the owner
   console entirely and startup warns loudly that inbound is open.
