@@ -8,8 +8,6 @@
  */
 import type { TaskRecord } from './task-ledger.js';
 
-export const PIPELINE_SLOT_ROWS = 12;
-
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -54,7 +52,7 @@ function statusBadge(row: TaskRecord, nowMs: number): string {
 
 /**
  * `rows` must already be the ledger's deadline_priority page of NON-terminal owner tasks
- * (listPage({ includeTerminal: false, order: 'deadline_priority', limit: PIPELINE_SLOT_ROWS })).
+ * (listPage({ includeTerminal: false, order: 'deadline_priority' })): every active row, no cap.
  * `total` is that page's total so the slot can say how much of the ledger it shows.
  */
 export function renderPipelineSlot(
@@ -62,9 +60,9 @@ export function renderPipelineSlot(
   nowMs: number,
   total: number
 ): string {
-  const shown = rows
-    .filter((row) => row.status !== 'done' && row.status !== 'cancelled' && row.status !== 'failed')
-    .slice(0, PIPELINE_SLOT_ROWS);
+  const shown = rows.filter(
+    (row) => row.status !== 'done' && row.status !== 'cancelled' && row.status !== 'failed'
+  );
   const body = shown
     .map((row) => {
       const unconfirmed = row.autoCreated && !row.confirmed ? ' (unconfirmed)' : '';

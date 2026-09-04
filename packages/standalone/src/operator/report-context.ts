@@ -17,12 +17,18 @@ import type {
 import type { ListTasksPage, TaskRecord } from './task-ledger.js';
 
 const MAX_CLAIMS = 30;
-const MAX_TASKS = 50;
 const TASK_PAGE_SIZE = 20;
 const MAX_TRELLO_CARDS_PER_LIST = 100;
 const MAX_TRELLO_CARDS = 300;
 const MAX_CHANGES = 100;
-const MAX_PACKET_BYTES = 96 * 1024;
+// One prompt's context window is the only remaining bound on packet size (~128K tokens).
+// 96 KB silently trimmed the task list back to a slice after the task cap was lifted, and
+// the removers below emptied the packet's Trello half first (review of #258, 2026-09-04).
+// Today's board: 367 rows ~ 140 KB. The removers stay as a last resort with this cause.
+// Reachability at this ceiling: only the uncapped task list can exceed it; with claims,
+// trello and changes capped, the largest otherwise-valid packet is ~524,225 bytes, so the
+// correlation and window-evidence removers below are last-resort code that does not run.
+const MAX_PACKET_BYTES = 512 * 1024;
 const REGISTERED_TOOL_NAMES = new Set<string>(ToolRegistry.getValidToolNames());
 const SOURCE_DISPLAY_LABELS: Readonly<Record<string, string>> = {
   'claude-code': 'claude-code',
@@ -784,8 +790,7 @@ function isCorrelationReport(value: unknown): value is CorrelationReport {
       'historical_only',
       'not_applicable',
     ]) ||
-    !Array.isArray(value.rows) ||
-    value.rows.length > MAX_TASKS
+    !Array.isArray(value.rows)
   ) {
     return false;
   }
@@ -895,7 +900,6 @@ function isOwnerReportContext(value: unknown): value is OwnerReportContextV1 {
     value.currentClaims.length > MAX_CLAIMS ||
     !value.currentClaims.every(isCurrentClaim) ||
     !Array.isArray(value.tasks) ||
-    value.tasks.length > MAX_TASKS ||
     !value.tasks.every(isOwnerTask) ||
     !isTrelloReport(value.trello) ||
     !isCorrelationReport(value.correlations) ||
@@ -993,19 +997,19 @@ export async function compileOwnerReportContext(
       const page = deps.listTaskPage({
         includeTerminal: false,
         order: 'updated',
-        limit: Math.min(TASK_PAGE_SIZE, MAX_TASKS - taskRows.length),
+        limit: TASK_PAGE_SIZE,
         ...(cursor ? { cursor } : {}),
       });
       if (!isSafeCount(page.total) || !Array.isArray(page.tasks)) {
         throw new Error('invalid task page');
       }
       if (taskRows.length === 0) taskTotal = page.total;
-      taskRows.push(...page.tasks.slice(0, MAX_TASKS - taskRows.length));
+      taskRows.push(...page.tasks);
       const next = page.nextCursor ?? undefined;
       if (next && seenCursors.has(next)) throw new Error('task cursor repeated');
       if (next) seenCursors.add(next);
       cursor = next;
-    } while (cursor && taskRows.length < MAX_TASKS);
+    } while (cursor);
     if (taskTotal > taskRows.length) {
       taskState = { state: 'partial', observedAt, reason: 'task_limit_reached' };
       caveats.push('task_set_truncated');
@@ -1327,7 +1331,7 @@ export async function compileChannelPacket(
       ? [
           ...full.caveats,
           // Bounded to the caveat cap (160 chars) even for the longest label.
-          `channel_tasks_outside_recency_bound: ${(label ?? connector).slice(0, 24)} has no task among the ${full.tasks.length} most recent of ${full.taskCoverage.total}; task_list allowed`,
+          `channel_has_no_matching_task: ${(label ?? connector).slice(0, 24)} has no task among the ${full.tasks.length} board rows; task_list allowed`,
         ]
       : full.caveats;
   const packet: OwnerReportContextV1 = {

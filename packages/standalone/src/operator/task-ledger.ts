@@ -62,6 +62,10 @@ import type {
 import { validateExternalLifecycleDecision } from './external-lifecycle-candidates.js';
 import { DEFAULT_PROMOTION_INTERVAL_MS, validateWorkOrderPayload } from './workorder-publishers.js';
 
+/** listPage() only: a page size large enough to be the whole board, so the limit+1
+ *  next-page probe stays intact when the caller passes no limit. list() has no LIMIT. */
+const WHOLE_BOARD_LIMIT = 100_000;
+
 export const TASK_STATUSES = [
   'pending',
   'in_progress',
@@ -693,15 +697,17 @@ export class TaskLedger implements TaskSource {
   list(filter: ListTasksFilter = {}): TaskRecord[] {
     const { where, params } = this.buildListPredicate(filter);
     const rawLimit = Number(filter.limit);
-    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+    // No LIMIT at all unless the caller asks for one: the whole board is the read, and the
+    // 50/200 bound is what made the board turn judge 216 tasks from 50 (owner, 2026-09-04).
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.floor(rawLimit)) : null;
     const rows = this.db
       .prepare(
         `SELECT * FROM operator_tasks
          ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
          ORDER BY ${TaskLedger.orderSql(filter.order)}
-         LIMIT ?`
+         ${limit === null ? '' : 'LIMIT ?'}`
       )
-      .all(...params, limit) as TaskRow[];
+      .all(...params, ...(limit === null ? [] : [limit])) as TaskRow[];
     return rows.map((row) => this.toRecord(row));
   }
 
@@ -768,7 +774,10 @@ export class TaskLedger implements TaskSource {
     const order = filter.order === 'updated' ? 'updated' : 'deadline_priority';
     const { where, params } = this.buildListPredicate(filter);
     const rawLimit = Number(filter.limit);
-    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+    // No cap and a whole-board default: Kagemusha's task_list is selectAll, and the 50/200
+    // bound is what made the board turn judge 216 tasks from 50 (owner, 2026-09-04). The
+    // large default keeps the limit+1 next-page probe below intact.
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.floor(rawLimit)) : WHOLE_BOARD_LIMIT;
 
     const totalRow = this.db
       .prepare(`SELECT COUNT(*) AS total FROM operator_tasks WHERE ${where.join(' AND ')}`)

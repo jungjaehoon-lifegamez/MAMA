@@ -312,7 +312,7 @@ describe('Story S2-T3: extracted workorder hooks', () => {
             briefing: '<p>b</p>',
             action_required: '<p>a</p>',
             decisions: '<p>d</p>',
-            pipeline: 'x'.repeat(65_537),
+            pipeline: 'x'.repeat(600_000),
           },
         } as never,
         context as never
@@ -328,10 +328,10 @@ describe('Story S2-T3: extracted workorder hooks', () => {
           'report_publish',
           {
             slots: {
-              briefing: 'x'.repeat(65_537),
-              action_required: 'x'.repeat(65_537),
-              decisions: 'x'.repeat(65_537),
-              pipeline: 'x'.repeat(65_537),
+              briefing: 'x'.repeat(600_000),
+              action_required: 'x'.repeat(600_000),
+              decisions: 'x'.repeat(600_000),
+              pipeline: 'x'.repeat(600_000),
             },
           } as never,
           context as never

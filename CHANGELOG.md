@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.46.0] - 2026-09-04
+
+### Removed
+
+- **Sight bounds, step 1 of the Kagemusha-baseline constraint removal**
+  (`docs/superpowers/plans/2026-09-04-kagemusha-baseline-constraint-removal.md`). The owner's
+  verdict on 2026-09-04: no turn ever saw the whole board, so no turn could curate it. Removed:
+  the `task_list` 50-default/200-cap and the "a bounded projection must not page" contract in
+  all three tool descriptions, so `list()` emits no `LIMIT` at all without a caller limit;
+  the report packet's `MAX_TASKS` bound (0.40.0), so it pages until the cursor is null and no
+  validator counts rows; the pipeline slot's row cap (removed, not raised); the board turn's
+  "read Trello only through context_compile"
+  and its judgment-substituting rules (never create from absence, never copy Trello status),
+  replaced by one paragraph: read the whole board, compare against live sources, decide, ask
+  the owner what you cannot decide; and the event packet's "do not re-read what it already
+  shows", replaced by "a starting point, not the board". No completion rule is added; rules
+  grow from owner corrections. Two byte ceilings remain with a named cause (one prompt's
+  context window; the viewer's SSE payload) and were raised from 96 KB / 64 KB to 512 KB:
+  the review of #258 found both silently trimming or dropping the whole-board output.
+
 ## mama-os [0.45.0] - 2026-09-04
 
 ### Fixed
