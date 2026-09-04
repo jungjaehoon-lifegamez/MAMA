@@ -2,6 +2,8 @@
  * Unit tests for GatewayToolExecutor
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { describe, it, expect, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -2982,6 +2984,211 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           reasoning: 'y',
         } as never);
         expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
+      });
+    });
+
+    describe('ONE-MAMA-P3 Task 2: failures become operational issues', () => {
+      it('AC #11 a failing tool records one gateway issue with a stable signature and the model result is unchanged', async () => {
+        const recorded: Array<{
+          surface: string;
+          signature: string;
+          severity: string;
+          error: string;
+        }> = [];
+        const executor = new GatewayToolExecutor({
+          mamaApi: createMockApi(),
+          envelopeIssuanceMode: 'off',
+          privateConnectorPolicy: resolvePrivateConnectorPolicy({
+            ok: true,
+            config: {},
+            enabledNames: [],
+          }),
+        });
+        executor.setOperationalIssueSink((input) => recorded.push(input));
+        // file_export without a ledger is a deterministic, code-carrying failure
+        const result = await executor.execute(
+          'file_export',
+          { format: 'md', name: 'x', content: 'y' } as never,
+          {} as never
+        );
+        expect(result).toMatchObject({ success: false, code: 'ledger_unavailable' });
+        expect(recorded).toEqual([
+          expect.objectContaining({
+            surface: 'gateway',
+            signature: 'file_export:ledger_unavailable',
+            severity: 'info', // a code-carrying refusal is a designed boundary, not a defect
+          }),
+        ]);
+        // a sink that throws never changes the tool result
+        executor.setOperationalIssueSink(() => {
+          throw new Error('sink down');
+        });
+        const again = await executor.execute(
+          'file_export',
+          { format: 'md', name: 'x', content: 'y' } as never,
+          {} as never
+        );
+        expect(again).toEqual(result);
+      });
+    });
+
+    describe('ONE-MAMA-P3 Task 3: repair_request and issue_close', () => {
+      it('AC #7 files one bundle, one receipt, marks the issue, notifies once; a failed notice becomes a delivery issue', async () => {
+        const base = mkdtempSync(join(tmpdir(), 'mama-repair-exec-'));
+        const db = new Database(':memory:');
+        try {
+          const ledger = new TaskLedger(db);
+          const statuses: Array<[string, string]> = [];
+          const notices: string[] = [];
+          const issues: Array<{ surface: string; signature: string }> = [];
+          let notifyFails = false;
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: resolvePrivateConnectorPolicy({
+              ok: true,
+              config: {},
+              enabledNames: [],
+            }),
+          });
+          executor.setTaskLedger(ledger);
+          executor.setOperationalIssueSink((input) => issues.push(input));
+          executor.setRepairControls({
+            issueExists: (id) => id !== 'iss_0000000000000000',
+            setIssueStatus: (id, status) => void statuses.push([id, status]),
+            notifyOwner: async (line) => {
+              if (notifyFails) throw new Error('telegram down');
+              notices.push(line);
+            },
+            repairRoot: () => join(base, 'repairs'),
+          });
+          const req = {
+            issue_id: 'iss_0123456789abcdef',
+            title: 't',
+            symptom: 's',
+            impact: 'i',
+            reproduction: 'r',
+            attempted: 'a',
+          };
+          const first = (await executor.execute(
+            'repair_request',
+            req as never,
+            {
+              executionSurface: 'model_tool',
+              source: 'operator',
+              channelId: 'worker:self-check',
+            } as never
+          )) as { success: boolean; repair_id: string; created: boolean };
+          expect(first.success).toBe(true);
+          expect(first.created).toBe(true);
+          expect(statuses).toEqual([['iss_0123456789abcdef', 'repair_requested']]);
+          expect(notices).toHaveLength(1);
+          expect(notices[0]).toContain(first.repair_id);
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(1);
+          expect(ledger.listChanges({ targetType: 'issue' })[0]).toMatchObject({
+            kind: 'repair_request',
+            targetId: 'iss_0123456789abcdef',
+          });
+
+          const dup = (await executor.execute('repair_request', req as never, {} as never)) as {
+            created: boolean;
+          };
+          expect(dup.created).toBe(false);
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(1);
+          expect(notices).toHaveLength(1);
+
+          notifyFails = true;
+          const other = (await executor.execute(
+            'repair_request',
+            { ...req, issue_id: 'iss_fedcba9876543210' } as never,
+            {} as never
+          )) as { success: boolean; created: boolean };
+          expect(other.success).toBe(true);
+          expect(other.created).toBe(true);
+          expect(issues).toContainEqual(
+            expect.objectContaining({ surface: 'delivery', signature: 'repair_notice_failed' })
+          );
+
+          const unknown = await executor.execute(
+            'repair_request',
+            { ...req, issue_id: 'iss_0000000000000000' } as never,
+            {} as never
+          );
+          expect(unknown).toMatchObject({ success: false, code: 'issue_not_found' });
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(2);
+
+          const closed = await executor.execute(
+            'issue_close',
+            { issue_id: 'iss_0123456789abcdef', reason: 'quiet since 0.42' } as never,
+            {} as never
+          );
+          expect(closed).toMatchObject({ success: true });
+          expect(statuses.at(-1)).toEqual(['iss_0123456789abcdef', 'closed']);
+          const noReason = await executor.execute(
+            'issue_close',
+            { issue_id: 'iss_0123456789abcdef', reason: ' ' } as never,
+            {} as never
+          );
+          expect(noReason).toMatchObject({ success: false, code: 'invalid_input' });
+        } finally {
+          db.close();
+          rmSync(base, { recursive: true, force: true });
+        }
+      });
+    });
+
+    describe('ONE-MAMA-P3 Task 1: file_export', () => {
+      it('AC #10 a successful export writes exactly one attributed effect row and returns a path inside the root', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'mama-export-exec-'));
+        const previous = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        const db = new Database(':memory:');
+        try {
+          const ledger = new TaskLedger(db);
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: resolvePrivateConnectorPolicy({
+              ok: true,
+              config: {},
+              enabledNames: [],
+            }),
+          });
+          executor.setTaskLedger(ledger);
+          const result = (await executor.execute(
+            'file_export',
+            { format: 'csv', name: 'tasks', rows: [{ id: 1, title: 'a' }] } as never,
+            {
+              executionSurface: 'model_tool',
+              source: 'owner-event',
+              channelId: 'trello:b',
+              causeEventIds: ['evt-x'],
+            } as never
+          )) as { success: boolean; path?: string; sha256?: string };
+          expect(result.success).toBe(true);
+          expect(result.path?.startsWith(join(workspace, 'exports'))).toBe(true);
+          const effects = ledger.listChanges({ targetType: 'file' });
+          expect(effects).toHaveLength(1);
+          expect(effects[0]).toMatchObject({
+            kind: 'file_export',
+            targetId: result.sha256,
+            causeState: 'attributed',
+            sourceEventIds: ['evt-x'],
+          });
+
+          const failed = await executor.execute(
+            'file_export',
+            { format: 'md', name: 'x' } as never,
+            {} as never
+          );
+          expect(failed).toMatchObject({ success: false, code: 'file_export_failed' });
+          expect(ledger.listChanges({ targetType: 'file' })).toHaveLength(1);
+        } finally {
+          db.close();
+          if (previous === undefined) delete process.env.MAMA_WORKSPACE;
+          else process.env.MAMA_WORKSPACE = previous;
+          rmSync(workspace, { recursive: true, force: true });
+        }
       });
     });
 

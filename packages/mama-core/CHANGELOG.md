@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-04
+
+- Migration 066: `awareness_operational_issues` (the installed shape plus `occurrences`) so the
+  standalone runtime records its own failures as evidence (One MAMA Phase 3). Version numbers
+  between 1.9.0 and 2.3.0 shipped through the root CHANGELOG.
+
 ## [1.9.0] - 2026-07-18
 
 - `buildDecisionId` exported; Korean/non-ASCII topics now produce stable

@@ -321,3 +321,129 @@ describe('cause_kind - the closed set (S2)', () => {
     old.close();
   });
 });
+
+describe('ONE-MAMA-P3 Task 1 Step 0: widened closed sets', () => {
+  it('AC #1 a file_export/file row inserts; an unknown kind still throws', () => {
+    const id = recordUnattributedChange(
+      adapter as never,
+      {
+        runId: 'mr_x',
+        kind: 'file_export',
+        targetType: 'file',
+        targetId: 'sha256:abc',
+        payload: { name: 'tasks.csv' },
+        atMs: 1,
+      },
+      'owner_message'
+    );
+    expect(id).toBeGreaterThan(0);
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO evidence_effects (cause_state, cause_kind, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('unattributed','clock','[]','not_a_kind','file','x','${'a'.repeat(32)}',1)`
+        )
+        .run()
+    ).toThrow(/CHECK/);
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO evidence_effects (cause_state, cause_kind, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('attributed','event','[]','file_export','file','x','${'a'.repeat(32)}',1)`
+        )
+        .run()
+    ).toThrow(/CHECK|disagree/);
+  });
+
+  it('AC #2 rebuilds a narrow installed ledger in place: rows, ids, created_at, triggers and indices survive', () => {
+    const old = new Database(':memory:');
+    // The 0.40.0 shape: current columns, narrow CHECK sets, triggers and indices present.
+    old.exec(`
+      CREATE TABLE evidence_effects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT, channel_id TEXT,
+        cause_state TEXT NOT NULL CHECK (cause_state IN ('attributed', 'unattributed')),
+        cause_kind TEXT NOT NULL CHECK (cause_kind IN ('event', 'owner_message', 'clock', 'card_transition')),
+        source_event_ids_json TEXT NOT NULL CHECK (json_valid(source_event_ids_json)),
+        effect_kind TEXT NOT NULL CHECK (effect_kind IN ('task_create','task_update')),
+        target_type TEXT NOT NULL CHECK (target_type IN ('task')),
+        target_id TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_evidence_effects_run ON evidence_effects(run_id, created_at DESC);
+      INSERT INTO evidence_effects (id, run_id, cause_state, cause_kind, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+        VALUES (7, 'mr_1', 'attributed', 'event', '["evt_1"]', 'task_update', 'task', 't1', '${'a'.repeat(32)}', 1234),
+               (9, NULL, 'unattributed', 'owner_message', '[]', 'task_create', 'task', 't2', '${'b'.repeat(32)}', 5678);
+    `);
+    const oldAdapter = { prepare: (sql: string) => old.prepare(sql) };
+    ensureEffectLedger(oldAdapter as never);
+
+    const rows = old
+      .prepare(`SELECT id, target_id, created_at, cause_kind FROM evidence_effects ORDER BY id`)
+      .all();
+    expect(rows).toEqual([
+      { id: 7, target_id: 't1', created_at: 1234, cause_kind: 'event' },
+      { id: 9, target_id: 't2', created_at: 5678, cause_kind: 'owner_message' },
+    ]);
+    // widened: a memory_write and a run_budget_stop row insert
+    recordEffect(oldAdapter as never, {
+      runId: 'mr_2',
+      sourceEventIds: ['evt_9'],
+      kind: 'memory_write',
+      targetType: 'memory',
+      targetId: 'mem_1',
+      payload: {},
+      atMs: 2,
+    });
+    recordUnattributedChange(
+      oldAdapter as never,
+      {
+        runId: 'mr_3',
+        kind: 'run_budget_stop',
+        targetType: 'run',
+        targetId: 'mr_3',
+        payload: {},
+        atMs: 3,
+      },
+      'clock'
+    );
+    // invariants intact after the rebuild: attributed with no ids still throws; triggers exist
+    expect(() =>
+      old
+        .prepare(
+          `INSERT INTO evidence_effects (cause_state, cause_kind, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('attributed','event','[]','task_update','task','x','${'a'.repeat(32)}',1)`
+        )
+        .run()
+    ).toThrow();
+    const triggers = old
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='evidence_effects' ORDER BY name`
+      )
+      .all() as Array<{ name: string }>;
+    expect(triggers.map((t) => t.name)).toEqual([
+      'evidence_effects_cause_shape',
+      'evidence_effects_kind_shape',
+    ]);
+    const indexes = old
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='evidence_effects' AND name LIKE 'idx_%' ORDER BY name`
+      )
+      .all() as Array<{ name: string }>;
+    expect(indexes.map((i) => i.name)).toEqual([
+      'idx_evidence_effects_channel',
+      'idx_evidence_effects_coverage',
+      'idx_evidence_effects_run',
+      'idx_evidence_effects_target',
+    ]);
+    // a second boot is a no-op
+    const ddlBefore = old
+      .prepare(`SELECT sql FROM sqlite_master WHERE name='evidence_effects'`)
+      .get();
+    ensureEffectLedger(oldAdapter as never);
+    expect(
+      old.prepare(`SELECT sql FROM sqlite_master WHERE name='evidence_effects'`).get()
+    ).toEqual(ddlBefore);
+    expect(old.prepare(`SELECT count(*) AS n FROM evidence_effects`).get()).toEqual({ n: 4 });
+    old.close();
+  });
+});

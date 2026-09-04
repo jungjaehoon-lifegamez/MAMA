@@ -53,10 +53,11 @@ import { createHash } from 'node:crypto';
 
 /**
  * What kind of durable change happened. Closed on purpose - see the module
- * note. HONESTY (S2 review #5): only the task kinds have live writers today
- * (task-ledger). report_update/report_publish/memory_write/wiki_write are
- * declared surface with zero recorders - coverage claims are therefore
- * scoped to task effects; widening the ledger is named deferred work.
+ * note. HONESTY: live writers today are the task kinds (task-ledger),
+ * memory_write (gateway mama_save/mama_update receipt, v0.41.0), file_export
+ * (operator/file-export.ts), repair_request and run_budget_stop (One MAMA
+ * Phase 3). report_update/report_publish/wiki_write remain declared surface
+ * with zero recorders; coverage claims must say so.
  */
 export type EffectKind =
   | 'task_create'
@@ -64,10 +65,20 @@ export type EffectKind =
   | 'report_update'
   | 'report_publish'
   | 'memory_write'
-  | 'wiki_write';
+  | 'wiki_write'
+  | 'file_export'
+  | 'repair_request'
+  | 'run_budget_stop';
 
 /** What it happened to. */
-export type EffectTarget = 'task' | 'report_slot' | 'memory' | 'wiki_page';
+export type EffectTarget =
+  | 'task'
+  | 'report_slot'
+  | 'memory'
+  | 'wiki_page'
+  | 'file'
+  | 'issue'
+  | 'run';
 
 /** Whether the change could name what caused it. */
 export type CauseState = 'attributed' | 'unattributed';
@@ -127,9 +138,20 @@ const EFFECT_KINDS: readonly EffectKind[] = [
   'report_publish',
   'memory_write',
   'wiki_write',
+  'file_export',
+  'repair_request',
+  'run_budget_stop',
 ];
 
-const EFFECT_TARGETS: readonly EffectTarget[] = ['task', 'report_slot', 'memory', 'wiki_page'];
+const EFFECT_TARGETS: readonly EffectTarget[] = [
+  'task',
+  'report_slot',
+  'memory',
+  'wiki_page',
+  'file',
+  'issue',
+  'run',
+];
 
 /** Long enough for any upstream id, short enough that the column cannot carry content. */
 const MAX_EVENT_ID_LENGTH = 200;
@@ -239,6 +261,7 @@ interface EffectAdapter {
 export function ensureEffectLedger(adapter: EffectAdapter): void {
   adapter.prepare(EVIDENCE_EFFECTS_DDL).run();
   migrateCauseKind(adapter);
+  widenClosedSets(adapter);
   adapter.prepare(EVIDENCE_EFFECTS_CAUSE_TRIGGER).run();
   adapter.prepare(EVIDENCE_EFFECTS_KIND_TRIGGER).run();
   for (const sql of INDEXES) {
@@ -305,6 +328,56 @@ function migrateCauseKind(adapter: EffectAdapter): void {
              WHERE cause_state = 'unattributed' AND run_id IS NULL`
     )
     .run();
+}
+
+/**
+ * Phase 3 migration: the effect_kind / target_type CHECKs are closed sets baked into the
+ * table, and SQLite cannot alter a CHECK in place. When an installed ledger's CHECK is
+ * narrower than the current constants, rebuild the table inside one transaction: copy every
+ * row with identical ids and created_at, keep the cause_state CHECK and both triggers
+ * byte-identical (they are the invariant the ledger rests on), recreate the indices.
+ * Detection reads the stored DDL, so a ledger that already carries the current sets is
+ * untouched on every later boot.
+ */
+function widenClosedSets(adapter: EffectAdapter): void {
+  const row = adapter
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='evidence_effects'`)
+    .all()[0] as { sql?: string } | undefined;
+  const storedDdl = row?.sql ?? '';
+  const missing = [...EFFECT_KINDS, ...EFFECT_TARGETS].filter(
+    (value) => !storedDdl.includes(`'${value}'`)
+  );
+  if (missing.length === 0) {
+    return;
+  }
+  const run = (sql: string) => adapter.prepare(sql).run();
+  run('BEGIN IMMEDIATE');
+  try {
+    run(EVIDENCE_EFFECTS_DDL.replace('evidence_effects (', 'evidence_effects_new ('));
+    run(
+      `INSERT INTO evidence_effects_new
+         (id, run_id, channel_id, cause_state, cause_kind, source_event_ids_json,
+          effect_kind, target_type, target_id, payload_hash, created_at)
+       SELECT id, run_id, channel_id, cause_state, cause_kind, source_event_ids_json,
+              effect_kind, target_type, target_id, payload_hash, created_at
+         FROM evidence_effects`
+    );
+    run('DROP TABLE evidence_effects');
+    run('ALTER TABLE evidence_effects_new RENAME TO evidence_effects');
+    run(EVIDENCE_EFFECTS_CAUSE_TRIGGER);
+    run(EVIDENCE_EFFECTS_KIND_TRIGGER);
+    for (const sql of INDEXES) {
+      run(sql);
+    }
+    run('COMMIT');
+  } catch (error) {
+    try {
+      run('ROLLBACK');
+    } catch {
+      // BEGIN itself may have failed (busy lock, nested transaction): keep the original error.
+    }
+    throw error;
+  }
 }
 
 export class EffectWithoutCauseError extends Error {

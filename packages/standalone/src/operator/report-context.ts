@@ -144,6 +144,17 @@ export interface OwnerReportContextV1 {
   correlations: CorrelationReport;
   changes: ChangesReport;
   caveats: string[];
+  /** The system's own open failures (One MAMA Phase 3); bounded to 20, highest severity first. */
+  operationalIssues: OperationalIssueSummary[];
+}
+
+export interface OperationalIssueSummary {
+  issueId: string;
+  surface: string;
+  severity: 'info' | 'warn' | 'error';
+  summary: string;
+  occurrences: number;
+  firstSeenAt: string;
 }
 
 export interface OwnerReportContextDeps {
@@ -163,6 +174,8 @@ export interface OwnerReportContextDeps {
     nowMs: number
   ): ChangesReadResult | ChangesReadFailure;
   now(): number;
+  /** Open operational issues, already redacted; optional so packet tests need no issue store. */
+  readOperationalIssues?(): OperationalIssueSummary[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -860,6 +873,7 @@ function isOwnerReportContext(value: unknown): value is OwnerReportContextV1 {
       'correlations',
       'changes',
       'caveats',
+      'operationalIssues',
     ]) ||
     value.schemaVersion !== 'mama.owner-report-context/v1' ||
     !isIsoString(value.observedAt) ||
@@ -887,11 +901,30 @@ function isOwnerReportContext(value: unknown): value is OwnerReportContextV1 {
     !isCorrelationReport(value.correlations) ||
     !isChangesReport(value.changes) ||
     !Array.isArray(value.caveats) ||
-    !value.caveats.every((caveat: unknown) => isBoundedString(caveat, 160))
+    !value.caveats.every((caveat: unknown) => isBoundedString(caveat, 160)) ||
+    !Array.isArray(value.operationalIssues) ||
+    value.operationalIssues.length > MAX_OPERATIONAL_ISSUES ||
+    !value.operationalIssues.every(isOperationalIssueSummary)
   ) {
     return false;
   }
   return true;
+}
+
+function isOperationalIssueSummary(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const issue = value as Record<string, unknown>;
+  return (
+    isBoundedString(issue.issueId, 64) &&
+    isBoundedString(issue.surface, 32) &&
+    (issue.severity === 'info' || issue.severity === 'warn' || issue.severity === 'error') &&
+    isBoundedString(issue.summary, 300) &&
+    Number.isSafeInteger(issue.occurrences) &&
+    (issue.occurrences as number) >= 1 &&
+    isBoundedString(issue.firstSeenAt, 40)
+  );
 }
 
 export function serializeOwnerReportContext(packet: OwnerReportContextV1): string {
@@ -905,6 +938,27 @@ export function serializeOwnerReportContext(packet: OwnerReportContextV1): strin
     throw new Error('Invalid owner report context packet');
   }
   return serialized;
+}
+
+export const MAX_OPERATIONAL_ISSUES = 20;
+const SEVERITY_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
+
+/** The system's open failures, redacted upstream, highest severity first, bounded. */
+function readOperationalIssuesBounded(deps: OwnerReportContextDeps): OperationalIssueSummary[] {
+  if (!deps.readOperationalIssues) {
+    return [];
+  }
+  return [...deps.readOperationalIssues()]
+    .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3))
+    .slice(0, MAX_OPERATIONAL_ISSUES)
+    .map((issue) => ({
+      issueId: redactText(issue.issueId, 64),
+      surface: redactText(issue.surface, 32),
+      severity: issue.severity,
+      summary: redactText(issue.summary, 300),
+      occurrences: issue.occurrences,
+      firstSeenAt: issue.firstSeenAt,
+    }));
 }
 
 export async function compileOwnerReportContext(
@@ -1182,6 +1236,7 @@ export async function compileOwnerReportContext(
       returned: taskRows.length,
       truncated: taskTotal > taskRows.length,
     },
+    operationalIssues: readOperationalIssuesBounded(deps),
     currentClaims: claims.map((row) => ({
       id: redactText(row.memory_id, 512),
       topic: redactText(row.topic, 512),

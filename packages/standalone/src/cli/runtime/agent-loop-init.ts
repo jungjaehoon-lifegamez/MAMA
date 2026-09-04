@@ -14,6 +14,12 @@
  *   7. Creates agentLoopClient wrapper with run() and runWithContent() methods
  */
 
+/** Host receipt for budget stops; start.ts binds it once the ledger and issue store exist. */
+export const budgetStopSink: {
+  current: ((info: import('../../agent/types.js').BudgetStopInfo) => void) | null;
+} = {
+  current: null,
+};
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -181,6 +187,8 @@ export function initMainAgentLoop(
       clineDataDir: config.agent.cline_data_dir,
       timeoutMs: config.agent.timeout,
       maxTurns: config.agent.max_turns,
+      runTokenBudget: config.agent.run_token_budget,
+      onBudgetStop: (info) => budgetStopSink.current?.(info),
       // Consumed only by the codex branch, which writes it into the managed
       // CODEX_HOME config; the claude backend takes effort via its own CLI flag.
       codexEffort: config.agent.effort,
