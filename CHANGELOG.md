@@ -24,9 +24,10 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   reason `notification without a ledger change`, unless the host saw the final message begin
   with `[decision]`, the marker for a question only the owner can answer. An accepted
   `workorder_request` no longer counts as anything. The crash-recovery receipt mirrors the
-  rule: a ledger write that named the batch's events as its cause (`evidence_effects`) or a
-  confirmed Drive upload is a receipt, so a task created before a transport error is not
-  created again; a confirmed Telegram line is not (the effect ledger's per-batch action keys
+  rule: a task write that named the batch's events as its cause (`evidence_effects`, bounded to
+  the batch's own lifetime) or a confirmed Drive upload is a receipt, so a task created before
+  a transport error is not created again (memory writes carry no effect row yet and are not
+  covered); a confirmed Telegram line is not (the effect ledger's per-batch action keys
   make the retry safe from a second send); a persisted Board acceptance is no longer a receipt.
   A send-only completion behind `[decision]` is ACKed with a host-written
   `unresolved_reason=owner_decision_requested` on the inbox row, so the escape hatch is counted
@@ -40,11 +41,22 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   read under a principal its envelope does not hold. A packet compile failure is logged and
   the turn proceeds on the delta alone.
 
+### Removed
+
+- **Delegation is gone from the tool surface.** `workorder_request` and `workorder_status` are
+  deleted from the registry, the executor, the Code-Act bridge, the default owner-console
+  grant, the chat persona and the seeded brief, together with the owner-event Board intent
+  ledger they fed (`owner-event-board-refresh`). Since 2026-08-19 this path produced 224 Board
+  full rebuilds and nothing else. The host-owned Board repair gate and its scheduled full and
+  reconcile runs are unchanged; the boot repair now runs through the same delta-gated path as
+  every later one.
+
 ### Notes for existing installs
 
-- The seeded console brief and the chat persona still mention `workorder_status` /
-  `workorder_request` for status questions; those tools remain callable from chat in this
-  release and are removed in the next Phase 1 release.
+- An edited console brief (`~/.mama/operator/console-brief.md`) is never auto-upgraded: remove
+  any line that tells the agent to use `workorder_status` or `workorder_request` by hand.
+- The `owner_event_board_refresh*` tables stay in `~/.mama/operator/triggers.db` as inert data;
+  nothing reads or writes them any more.
 
 ## mama-os [0.40.0] / mama-core [2.2.3] - 2026-09-03
 

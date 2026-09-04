@@ -74,8 +74,9 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(prompt).toContain('task_create');
       expect(prompt).toContain('schedule_upcoming');
       expect(prompt).toContain('mama_save');
-      expect(prompt).toContain('workorder_request');
-      expect(prompt).toContain('workorder_status');
+      // One MAMA: delegation tools are gone from the surface entirely.
+      expect(prompt).not.toContain('workorder_request');
+      expect(prompt).not.toContain('workorder_status');
       expect(prompt).toContain('member_candidates');
       expect(prompt).toContain('member_register');
       expect(prompt).toContain('member_suspend');

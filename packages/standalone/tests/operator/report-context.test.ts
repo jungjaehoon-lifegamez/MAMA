@@ -1010,10 +1010,13 @@ describe('compileOwnerReportContext', () => {
     expect(packet.tasks).toEqual([]);
     expect(
       packet.caveats.some((line) =>
-        line.startsWith('channel_tasks_outside_recency_bound: no task for trello')
+        line.startsWith('channel_tasks_outside_recency_bound: trello has no task')
       )
     ).toBe(true);
-    expect(packet.caveats.some((line) => line.includes('task_list is allowed'))).toBe(true);
+    expect(packet.caveats.some((line) => line.includes('task_list allowed'))).toBe(true);
+    // The packet validator caps every caveat at 160 chars; overflow drops the whole packet.
+    expect(packet.caveats.every((line) => line.length <= 160)).toBe(true);
+    expect(serializeOwnerReportContext(packet)).toContain('channel_tasks_outside_recency_bound');
   });
 
   it('keeps every row when the channel connector is unknown to the label map', async () => {

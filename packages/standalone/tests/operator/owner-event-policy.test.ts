@@ -59,14 +59,15 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
         'member_scope_revoke',
         'console_brief_update',
         'report_request',
-        'workorder_request',
-        'workorder_status',
         'obsidian',
         'drive_translate_conti',
       ]) {
         expect(context.role.allowedTools).not.toContain(administrationOrSecondJudgmentSurface);
         expect(context.role.blockedTools).toContain(administrationOrSecondJudgmentSurface);
       }
+      // Delegation tools no longer exist anywhere on the surface.
+      expect(context.role.allowedTools).not.toContain('workorder_request');
+      expect(context.role.allowedTools).not.toContain('workorder_status');
       expect(
         buildAgentToolExecutionContext({ agentContext: context, actorId: 'mama-owner' })?.agentId
       ).toBe('mama-owner');

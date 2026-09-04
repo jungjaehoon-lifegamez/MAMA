@@ -30,6 +30,7 @@ const claimedBatch: OwnerEventBatch = {
   ],
   status: 'claimed',
   attempts: 0,
+  createdAt: 0,
 };
 
 describe('TG-03/TG-04/TG-06 host-issued owner-event effects', () => {

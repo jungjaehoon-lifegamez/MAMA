@@ -197,10 +197,6 @@ export interface OwnerEventEffectAuthority {
 }
 
 /** Host-derived origin for an owner workorder request; never accepted from model input. */
-export type WorkOrderRequestOrigin =
-  | { kind: 'owner_manual' }
-  | { kind: 'owner_event'; batchId: number; eventIds: readonly string[] };
-
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;
   agentId?: string;
@@ -826,8 +822,6 @@ export type GatewayToolName =
   | 'report_request'
   | 'board_read'
   | 'audit_findings_read'
-  | 'workorder_request'
-  | 'workorder_status'
   | 'console_brief_update'
   | 'member_candidates'
   | 'member_register'
