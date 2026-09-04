@@ -62,6 +62,33 @@ scenario IDs from this document.
   Standalone typecheck, changed-file ESLint/Prettier, and `git diff --check` passed. This is code
   evidence only; a real owner report remains pending.
 
+### Cognitive foundation Task 4 installed evidence: 2026-09-03
+
+- **Cutover:** PR #247 squash-merged as 500a7b45; release run 33712987915 published mama-core
+  2.2.3 then mama-os 0.40.0 (dependency `^2.2.3`) and tagged v0.40.0. Pre-cutover `VACUUM INTO`
+  backups of the memory, sessions and operator databases plus the decision watermark (1,914
+  rows) were taken; the global install moved 0.39.5 -> 0.40.0 and the launchd daemon respawned
+  on the new dist with CLI and runtime both at 0.40.0, the owner-report leg and the scheduled
+  full-report leg enabled, health 98.
+- **TG-03/TG-04/TG-05/TG-06 real scheduled report (13:00 local):** the host compiled one
+  `mama.owner-report-context/v1` packet (sources: changes complete; claims, tasks, trello
+  partial) whose SHA-256 appears in the compile log and again as the model run's
+  `sourceMessageRef`; exactly one committed `operator-report` model run with zero tool traces;
+  one delivered receipt row (attempt 1) in the Telegram report context store; the delivered text
+  carries no event/run/chat ids, tool syntax, Code-Act markers or trailer. Codex rollout usage:
+  41,687 input + 18,044 output tokens (59,731 total) in one turn, against 273K-759K for the
+  self-gather runs of the previous day.
+- **On-demand report (`mama report now`):** a second real report on the same installed runtime: packet SHA `5d3be5b1…` in the compile log and the model run `sourceMessageRef`, one committed `operator-report` run with zero tool traces, delivered receipt seq 476 (attempt 1, `on_demand_full`), pending store cleared afterwards, zero internal ids or tool syntax in the text; rollout usage 42,582 input + 17,878 output tokens (60,460 total) in one turn, 325 s.
+- **Installed lifecycle gate: not demonstrated.** The forced Board workorder (#4380) completed and
+  republished the board, but its single `context_compile` call for the lifecycle candidate set
+  was rejected by the envelope scope audit (`[envelope] scope mismatch`, parent `code_act`) and
+  the run retained every task. The same audit rejection is logged daily since 2026-08-25 (342
+  on that day alone), so it predates this release; it is the S3 "principal follows run" defect
+  in how Code-Act carries host context into scoped reads. Until it is fixed, the Board lane can
+  correlate but cannot read bounded message evidence for candidates, so real stale rows are only
+  reclassified through the offline copied-DB gate. This is recorded as an open blocker, not a
+  pass.
+
 ### Cognitive foundation Task 4 offline quality gate: 2026-09-02
 
 - **Corpus:** copied operational databases (memory + operator ledger, snapshot 09:53Z), one
