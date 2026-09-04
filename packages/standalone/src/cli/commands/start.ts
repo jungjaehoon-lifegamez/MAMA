@@ -96,7 +96,6 @@ import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
   resolvePrivateConnectorPolicy,
-  resolveWorkOrderPrivateSurface,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
@@ -511,12 +510,20 @@ export function workOrderEnvelopeScope(input: {
   allowed_destinations: never[];
 } {
   const isTemporal = input.workKind === 'temporal';
-  const surface = resolveWorkOrderPrivateSurface(input.workKind);
+  // One principal for every turn; what differs per kind is WHICH connectors the run
+  // may read, and that is data: a recheck reads its task's connector or nothing, a
+  // wiki turn reads no PRIVATE connector (personal channels never feed public pages),
+  // the board and curation turns keep the lane's configured connectors.
+  const surface: ConnectorCapabilitySurface = ONE_AGENT_TURN_POLICY.roleName;
   const candidateConnectors = isTemporal
     ? input.temporalBinding
       ? [input.temporalBinding.connector]
       : []
-    : input.laneConnectors;
+    : input.workKind === 'wiki'
+      ? input.laneConnectors.filter(
+          (name) => !input.privateConnectorPolicy.enabledPrivateConnectors.includes(name)
+        )
+      : input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
     // A temporal run reads its task's connector or nothing. Every other lane keeps the
@@ -583,49 +590,111 @@ interface WorkOrderToolPolicy {
   allowedTools: readonly string[];
 }
 
-// Stage-2 workers are short-lived operator jobs, not standing multi-agent
-// personas. Their permissions must therefore be complete on a default install
-// and must not vary with optional legacy agent configuration.
-export const WORKORDER_TOOL_POLICIES = {
-  board: {
-    roleName: 'workorder-board',
-    allowedTools: [
-      'agent_notices',
-      'changes_read',
-      'context_compile',
-      'contract_no_update',
-      'mama_search',
-      'report_publish',
-      'task_create',
-      'task_external_correlation',
-      'task_external_bind',
-      'task_lifecycle_reconcile',
-      'task_list',
-      'task_update',
-      'trello_card',
-      'trello_kanban',
-      'trello_search',
-    ],
-  },
-  wiki: {
-    roleName: 'workorder-wiki',
-    allowedTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
-  },
-  'memory-curation': {
-    roleName: 'workorder-memory-curation',
-    allowedTools: ['agent_notices', 'mama_save', 'mama_search'],
-  },
-  temporal: {
-    roleName: 'workorder-temporal',
-    allowedTools: [
-      'agent_notices',
-      'context_compile',
-      'schedule_upcoming',
-      'task_list',
-      'task_temporal_reconcile',
-    ],
-  },
-} as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
+/**
+ * One MAMA: every scheduled turn runs as the SAME principal the owner console and the
+ * event turn use. `roleName` is not a label - resolvePrivatePrincipalSurface switches on
+ * it and falls through to 'multi-agent-generic' for anything it does not know, which
+ * splits the advertised catalog from the execution envelope.
+ */
+export const ONE_AGENT_TURN_POLICY = { roleName: 'owner_console' } as const;
+
+/** Owner-authored chat only: administration never runs unattended. */
+export const ADMINISTRATION_TOOLS: ReadonlySet<string> = new Set([
+  'member_register',
+  'member_suspend',
+  'member_offboard',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'console_brief_update',
+  'report_request',
+]);
+
+/**
+ * Per-turn-kind artifact tools, projected by the HOST. These exist only for scheduled
+ * turns and are deliberately absent from the chat grant: a chat turn never publishes a
+ * board slot or a wiki page and never files a temporal receipt. They are the tools the
+ * turn-kind section instructs the turn to use, so grant and instruction cannot drift.
+ */
+export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> = {
+  board: [
+    'agent_notices',
+    'contract_no_update',
+    'report_publish',
+    'task_external_correlation',
+    'task_external_bind',
+    'task_lifecycle_reconcile',
+  ],
+  wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
+  'memory-curation': ['agent_notices', 'contract_no_update'],
+  temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
+};
+
+/**
+ * Blocked on EVERY unattended turn. Deliverable, image and Drive tools belong to the
+ * owner conversation, and the tier-2 Code-Act projection refuses them anyway - a tool
+ * that is advertised but never injected is a hallucinated-call generator. Member data and
+ * workspace file reads are owner-conversation material with no use in a scheduled turn.
+ */
+export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
+  // workspace file reads are an owner-conversation tool; no turn section instructs one
+  'Read',
+  'telegram_send',
+  'drive_upload',
+  'drive_list_drives',
+  'drive_browse',
+  'drive_find_folder',
+  'drive_download',
+  'ocr_image',
+  'create_fb_overlay',
+  'translate_conti',
+  'drive_translate_conti',
+  'member_candidates',
+  'member_list',
+  'member_scope_list',
+]);
+
+/**
+ * Per-turn-kind blocked lists, projected by the HOST. One principal and one brief do
+ * not mean one grant for every trigger: an unattended board or wiki turn has no owner
+ * in the loop, so it never holds a send, an upload, or a mutation outside its own
+ * artifact. Each entry names the artifact it protects.
+ */
+export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>> = {
+  // board writes slots and task lifecycle; it does not notify, upload, or touch memory/wiki
+  board: new Set(['telegram_send', 'drive_upload', 'wiki_publish', 'mama_update', 'task_create']),
+  // wiki writes pages; the ledger and the board are not its artifact
+  wiki: new Set([
+    'telegram_send',
+    'drive_upload',
+    'report_publish',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+  ]),
+  // curation writes memory; nothing else
+  'memory-curation': new Set([
+    'telegram_send',
+    'drive_upload',
+    'report_publish',
+    'wiki_publish',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+    'obsidian',
+  ]),
+  // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
+  temporal: new Set([
+    'telegram_send',
+    'drive_upload',
+    'report_publish',
+    'wiki_publish',
+    'mama_save',
+    'mama_update',
+    'task_create',
+    'task_update',
+    'obsidian',
+  ]),
+};
 
 /**
  * Packet-only reports receive no gateway tools. The host compiles current bounded authorities
@@ -719,38 +788,51 @@ export function buildOperatorReportAgentPolicy(
   };
 }
 
-export function buildWorkOrderAgentPolicy(
+export function buildTurnAgentPolicy(
   kind: WorkOrderKind,
   model: string,
   backend: RuntimeBackend,
   privateConnectorPolicy: PrivateConnectorPolicy,
-  rawConnectorScope: readonly string[]
+  rawConnectorScope: readonly string[],
+  ownerRole: RoleConfig = DEFAULT_ROLES.definitions.owner_console
 ): WorkOrderAgentPolicy {
   const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
   if (!rawConnectorScope) {
     throw new Error('rawConnectorScope is required');
   }
-  const policy = WORKORDER_TOOL_POLICIES[kind];
-  if (!policy) {
-    throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
+  const kindBlocked = TURN_KIND_BLOCKED_TOOLS[kind];
+  if (!kindBlocked) {
+    throw new Error(`Missing turn-kind blocked list for '${kind}'`);
   }
-  const surface = resolveWorkOrderPrivateSurface(kind);
+  // Same downgrade the event turn applies: a run with no private binding advertises
+  // no private connector tools and gets the disabled brief projection.
   const scopedSurface: ConnectorCapabilitySurface =
     requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
-      ? surface
+      ? ONE_AGENT_TURN_POLICY.roleName
       : 'multi-agent-generic';
+  const blockedSet = new Set<string>([
+    ...ADMINISTRATION_TOOLS,
+    ...SCHEDULED_TURN_BLOCKED_TOOLS,
+    ...kindBlocked,
+    ...(ownerRole.blockedTools ?? []),
+  ]);
   const projectedRole = buildProjectedLaneRole(
     scopedSurface,
-    policy.allowedTools,
+    uniqueToolList([...ownerRole.allowedTools, ...TURN_KIND_REQUIRED_TOOLS[kind]]).filter(
+      (tool) => !blockedSet.has(tool)
+    ),
     requiredPrivatePolicy
   );
-  const blockedTools = [...(projectedRole.blockedTools ?? [])];
-  const innerTools = uniqueToolList(projectedRole.allowedTools);
+  const blockedTools = [...new Set([...(projectedRole.blockedTools ?? []), ...blockedSet])];
+  // code_act is the transport, re-added at the front below; it is never an inner tool.
+  const innerTools = uniqueToolList(projectedRole.allowedTools).filter(
+    (tool) => !blockedSet.has(tool) && tool !== 'code_act'
+  );
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
-    roleName: policy.roleName,
+    roleName: ONE_AGENT_TURN_POLICY.roleName,
     role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: `operator:worker:${kind}`,
@@ -1021,14 +1103,18 @@ export async function runAgentLoop(
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   const { connectorConfigLoadResult, privateConnectorPolicy } =
     resolveRuntimeConnectorBootstrap(loadConnectorConfig());
+  // ONE owner role for every model turn: chat, event, and scheduled.
+  const ownerRole =
+    config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
   const temporalPolicy =
     temporalStartup.temporalFlag === 'on'
-      ? buildWorkOrderAgentPolicy(
+      ? buildTurnAgentPolicy(
           'temporal',
           config.agent.model,
           runtimeBackend,
           privateConnectorPolicy,
-          []
+          [],
+          ownerRole
         )
       : null;
   const temporalEffectiveTools = temporalPolicy
@@ -1680,10 +1766,8 @@ export async function runAgentLoop(
   });
   {
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
-    const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
-    // Seed missing default briefs (user edits win) BEFORE the consumer exists -
+    // Seed the ONE operating brief (user edits win) BEFORE the consumer exists -
     // a normal install must never hit the brief-missing fail path.
-    ensureBriefs();
     ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
 
@@ -1722,7 +1806,7 @@ export async function runAgentLoop(
     workOrderConsumer = new WorkOrderConsumer({
       ledger: taskLedger,
       runner: workerRunner,
-      loadBrief: (kind) => loadBrief(kind),
+      loadOwnerBrief: () => loadConsoleBrief(),
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
@@ -1751,12 +1835,13 @@ export async function runAgentLoop(
         // spawn-default code-act path, where per-run envelope/capture overrides
         // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
-        const workOrderPolicy = buildWorkOrderAgentPolicy(
+        const workOrderPolicy = buildTurnAgentPolicy(
           wo.workKind,
           config.agent.model,
           runtimeBackend,
           privateConnectorPolicy,
-          workOrderScope.raw_connectors
+          workOrderScope.raw_connectors,
+          ownerRole
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
@@ -2140,8 +2225,6 @@ export async function runAgentLoop(
         // MAMA itself owns connector events. This is the same AgentLoop and
         // owner operating policy as the owner console, on a durable per-channel
         // background session. There is no separate Conductor persona.
-        const ownerRole =
-          config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
         const ownerEventContext = buildOwnerEventAgentContext({
           backend: runtimeBackend,
           model: config.agent.model,
@@ -2313,7 +2396,10 @@ export async function runAgentLoop(
     getAdapter,
     privateConnectorPolicy,
     rawConnectorScope: [
-      ...privateConnectorPolicy.projectRawConnectors('workorder-board', codeActRawConnectors),
+      ...privateConnectorPolicy.projectRawConnectors(
+        ONE_AGENT_TURN_POLICY.roleName,
+        codeActRawConnectors
+      ),
     ],
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,

@@ -16,6 +16,7 @@ import {
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
   classifyTemporalFailure,
+  buildTurnKindSection,
 } from '../../src/operator/workorder-consumer.js';
 
 function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
@@ -37,7 +38,7 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
     runner: {
       runWithContent: async () => ({ response: 'ok done' }),
     },
-    loadBrief: () => 'You are a test worker. Do the work.',
+    loadOwnerBrief: () => 'You are a test worker. Do the work.',
     noticeOwner: (summary) => notices.push(summary),
     opsAlarm: { configured: true, send: async (line) => void activeSends.push(line) },
     onEvent: (event) => events.push(event),
@@ -313,7 +314,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workOrderId: wo.id,
         tokensUsed: 43_200,
         briefHash: createHash('sha256')
-          .update('You are a test worker. Do the work.')
+          .update(
+            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+          )
           .digest('hex')
           .slice(0, 16),
       });
@@ -522,7 +525,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
 
     it('missing brief fails the order loudly (never a silent skip)', async () => {
-      ctx.deps.loadBrief = () => null;
+      ctx.deps.loadOwnerBrief = () => null;
       const consumer = new WorkOrderConsumer(ctx.deps);
       ctx.ledger.enqueueWorkOrder({
         workKind: 'board',
@@ -660,7 +663,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workKind: 'board',
         workOrderId: wo.id,
         briefHash: createHash('sha256')
-          .update('You are a test worker. Do the work.')
+          .update(
+            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+          )
           .digest('hex')
           .slice(0, 16),
       });

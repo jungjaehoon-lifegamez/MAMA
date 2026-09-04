@@ -70,7 +70,7 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
           return run();
         },
       },
-      loadBrief: () => 'Reconcile the temporal task using the trusted tool.',
+      loadOwnerBrief: () => 'Reconcile the temporal task using the trusted tool.',
       runOptionsFor: (workOrder) => {
         context = ledger.loadTemporalWorkContext(workOrder.id);
         return { workorderAttemptId: workOrder.id };

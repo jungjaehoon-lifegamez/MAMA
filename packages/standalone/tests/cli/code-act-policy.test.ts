@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildOperatorReportAgentPolicy,
-  buildWorkOrderAgentPolicy,
+  buildTurnAgentPolicy,
+  TURN_KIND_BLOCKED_TOOLS,
   deriveCodeActToolPolicy,
   resolveCodeActRawConnectors,
   resolveCodeActAgentPolicy,
@@ -186,13 +187,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #5: workorder runners receive an explicit Code-Act role', () => {
     it('TG-01/TG-06 requires private boot authority for every lane policy', () => {
       expectTypeOf<
-        ParameterIsRequired<Parameters<typeof buildWorkOrderAgentPolicy>, 3>
+        ParameterIsRequired<Parameters<typeof buildTurnAgentPolicy>, 3>
       >().toEqualTypeOf<true>();
       expectTypeOf<
         ParameterIsRequired<Parameters<typeof buildOperatorReportAgentPolicy>, 2>
       >().toEqualTypeOf<true>();
 
-      const workOrderWithoutPolicy = buildWorkOrderAgentPolicy as unknown as (
+      const workOrderWithoutPolicy = buildTurnAgentPolicy as unknown as (
         kind: 'temporal',
         model: string,
         backend: 'codex'
@@ -213,7 +214,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     const cases = [
       {
         kind: 'board' as const,
-        roleName: 'workorder-board',
+        roleName: 'owner_console',
         innerTools: [
           'agent_notices',
           'changes_read',
@@ -228,7 +229,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'task_external_correlation',
           'task_external_bind',
           'task_lifecycle_reconcile',
-          'task_create',
+          // task_create left the board turn: ledger creation is the event turn's job;
+          // the board turn correlates and updates lifecycle (TURN_KIND_BLOCKED_TOOLS.board).
           'task_list',
           'task_update',
           'trello_card',
@@ -238,12 +240,12 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       },
       {
         kind: 'wiki' as const,
-        roleName: 'workorder-wiki',
+        roleName: 'owner_console',
         innerTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
       },
       {
         kind: 'memory-curation' as const,
-        roleName: 'workorder-memory-curation',
+        roleName: 'owner_console',
         innerTools: [
           'agent_notices',
           'kagemusha_entities',
@@ -259,7 +261,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(cases)(
       'uses the built-in least-privilege $kind policy without standing agent config',
       ({ kind, roleName, innerTools }) => {
-        const policy = buildWorkOrderAgentPolicy(
+        const policy = buildTurnAgentPolicy(
           kind,
           'gpt-5.4',
           'codex',
@@ -277,8 +279,17 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           tier: 2,
           role: { model: 'gpt-5.4' },
         });
-        expect([...context.role.allowedTools].sort()).toEqual(['code_act', ...innerTools].sort());
-        expect([...projected.names].sort()).toEqual([...innerTools].sort());
+        // One MAMA: the grant is the owner console plus the turn's artifact tools, minus
+        // the host-projected per-kind block list. Every tool the old per-kind list granted
+        // is still reachable; what the turn must NOT hold is pinned by TURN_KIND_BLOCKED_TOOLS.
+        expect(context.role.allowedTools).toEqual(
+          expect.arrayContaining(['code_act', ...innerTools])
+        );
+        expect(projected.names).toEqual(expect.arrayContaining(innerTools));
+        for (const tool of TURN_KIND_BLOCKED_TOOLS[kind]) {
+          expect(context.role.allowedTools).not.toContain(tool);
+          expect(projected.names).not.toContain(tool);
+        }
         if (kind === 'wiki') {
           expect(context.role.blockedTools).toEqual(
             expect.arrayContaining([
@@ -288,8 +299,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
               'kagemusha_messages',
             ])
           );
-        } else {
-          expect(context.role.blockedTools).toEqual([]);
         }
       }
     );
@@ -297,7 +306,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(['codex', 'claude'] as const)(
       'uses one least-privilege temporal catalog for the %s backend',
       (backend) => {
-        const policy = buildWorkOrderAgentPolicy(
+        const policy = buildTurnAgentPolicy(
           'temporal',
           'worker-model',
           backend,
@@ -317,17 +326,19 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         expect(policy.gatewayToolsPrompt).toMatch(
           /task_temporal_reconcile[\s\S]*context_packet_id/
         );
-        expect(projected.names).toEqual([
-          'agent_notices',
-          'context_compile',
-          'kagemusha_entities',
-          'kagemusha_messages',
-          'kagemusha_overview',
-          'kagemusha_tasks',
-          'schedule_upcoming',
-          'task_list',
-          'task_temporal_reconcile',
-        ]);
+        expect(projected.names).toEqual(
+          expect.arrayContaining([
+            'agent_notices',
+            'context_compile',
+            'kagemusha_entities',
+            'kagemusha_messages',
+            'kagemusha_overview',
+            'kagemusha_tasks',
+            'schedule_upcoming',
+            'task_list',
+            'task_temporal_reconcile',
+          ])
+        );
         for (const forbidden of [
           'task_create',
           'task_update',
@@ -351,7 +362,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(['codex', 'claude'] as const)(
       'TG-06 removes private temporal tools for an unbound %s run',
       (backend) => {
-        const policy = buildWorkOrderAgentPolicy(
+        const policy = buildTurnAgentPolicy(
           'temporal',
           'worker-model',
           backend,
@@ -372,7 +383,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     );
 
     it('TG-06 keeps private temporal tools out of a Trello-bound run', () => {
-      const policy = buildWorkOrderAgentPolicy(
+      const policy = buildTurnAgentPolicy(
         'temporal',
         'worker-model',
         'claude',
@@ -432,22 +443,16 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     });
 
     it.each([
-      ['board', 'workorder-board'],
-      ['memory-curation', 'workorder-memory-curation'],
-      ['temporal', 'workorder-temporal'],
+      ['board', 'owner_console'],
+      ['memory-curation', 'owner_console'],
+      ['temporal', 'owner_console'],
     ] as const)(
       'TG-04/TG-06 projects the private bundle onto the enabled %s lane only',
       (kind, roleName) => {
-        const enabled = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy, [
+        const enabled = buildTurnAgentPolicy(kind, 'gpt-5.4', 'codex', enabledPrivatePolicy, [
           'kagemusha',
         ]);
-        const disabled = buildWorkOrderAgentPolicy(
-          kind,
-          'gpt-5.4',
-          'codex',
-          privatePolicy(false),
-          []
-        );
+        const disabled = buildTurnAgentPolicy(kind, 'gpt-5.4', 'codex', privatePolicy(false), []);
 
         expect(enabled.agentContext.roleName).toBe(roleName);
         expect(enabled.agentContext.role.allowedTools).toEqual(

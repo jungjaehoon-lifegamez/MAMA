@@ -19,11 +19,25 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  ADMINISTRATION_TOOLS,
+  ONE_AGENT_TURN_POLICY,
   OPERATOR_REPORT_TOOL_POLICY,
-  WORKORDER_TOOL_POLICIES,
+  TURN_KIND_BLOCKED_TOOLS,
+  buildTurnAgentPolicy,
 } from '../../src/cli/commands/start.js';
+import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import { WORKORDER_KINDS } from '../../src/operator/task-ledger.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 
 const REPORT_GRANT = new Set<string>(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
+const privatePolicy = resolvePrivateConnectorPolicy({
+  ok: true,
+  config: { kagemusha: { enabled: true } },
+  enabledNames: ['kagemusha'],
+});
+const ownerRole = DEFAULT_ROLES.definitions.owner_console;
+const turn = (kind: (typeof WORKORDER_KINDS)[number], scope: readonly string[] = ['trello']) =>
+  buildTurnAgentPolicy(kind, 'gpt-test', 'codex', privatePolicy, scope, ownerRole);
 
 describe('report lane: instructions against the grant', () => {
   it('TG-03/TG-04/TG-05 grants no rediscovery or mutation tools to packet-only reports', () => {
@@ -31,42 +45,78 @@ describe('report lane: instructions against the grant', () => {
   });
 });
 
-describe('workorder lanes: every granted tool is a real tool', () => {
-  it('TG-04/TG-06 keeps private tools out of static lane grants', () => {
+describe('one agent: every scheduled turn is the owner principal with a host-projected grant', () => {
+  it('runs every turn kind as owner_console, never an invented per-kind principal', () => {
+    for (const kind of WORKORDER_KINDS) {
+      expect(turn(kind).agentContext.roleName).toBe(ONE_AGENT_TURN_POLICY.roleName);
+      expect(turn(kind).agentContext.roleName).toBe('owner_console');
+    }
+  });
+
+  // The unprojected source list is the owner console default; private tools reach a turn
+  // only through the projection, and only when the run's raw scope carries the connector.
+  it('keeps private tools out of the unprojected owner grant and out of unbound runs', () => {
     const privateTools = [
       'kagemusha_overview',
       'kagemusha_entities',
       'kagemusha_tasks',
       'kagemusha_messages',
     ];
-    for (const lane of [...Object.values(WORKORDER_TOOL_POLICIES), OPERATOR_REPORT_TOOL_POLICY]) {
-      for (const tool of privateTools) {
-        expect(lane.allowedTools).not.toContain(tool);
+    for (const tool of privateTools) {
+      expect(ownerRole.allowedTools).not.toContain(tool);
+      expect(turn('board', []).agentContext.role.allowedTools).not.toContain(tool);
+    }
+  });
+
+  it('grants only tools the registry recognises as real', async () => {
+    const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
+    const known = new Set(ToolRegistry.getAllTools().map((t) => t.name));
+    for (const kind of WORKORDER_KINDS) {
+      const unknown = turn(kind).agentContext.role.allowedTools.filter((t) => !known.has(t));
+      expect(unknown, `turn '${kind}' grants unknown tools`).toEqual([]);
+    }
+  });
+
+  // No owner is in the loop of a scheduled turn: it never sends, uploads, or administers.
+  it('keeps sends, uploads and administration out of every unattended turn', () => {
+    for (const kind of WORKORDER_KINDS) {
+      const allowed = turn(kind).agentContext.role.allowedTools;
+      for (const tool of ['telegram_send', 'drive_upload', ...ADMINISTRATION_TOOLS]) {
+        expect(allowed, `${kind} must not hold ${tool}`).not.toContain(tool);
+      }
+      for (const tool of TURN_KIND_BLOCKED_TOOLS[kind]) {
+        expect(allowed, `${kind} must not hold ${tool}`).not.toContain(tool);
+        expect(turn(kind).agentContext.role.blockedTools).toContain(tool);
       }
     }
   });
 
-  // A lane granting a name no registry knows is a permission that can never be exercised -
-  // the shape `delegate` had for its entire life.
-  it('grants only tools the report lane also recognises as real', async () => {
-    const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
-    const known = new Set(ToolRegistry.getAllTools().map((t) => t.name));
-    for (const [kind, policy] of Object.entries(WORKORDER_TOOL_POLICIES)) {
-      const unknown = policy.allowedTools.filter((t: string) => !known.has(t));
-      expect(unknown, `workorder lane '${kind}' grants unknown tools`).toEqual([]);
+  it('keeps task mutation out of the recheck, wiki and curation turns and out of reports', () => {
+    for (const kind of ['temporal', 'wiki', 'memory-curation'] as const) {
+      expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_create');
+      expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_update');
     }
-    const unknownReport = OPERATOR_REPORT_TOOL_POLICY.allowedTools.filter(
-      (t: string) => !known.has(t)
-    );
-    expect(unknownReport, 'report lane grants unknown tools').toEqual([]);
+    expect([...REPORT_GRANT]).not.toContain('task_update');
   });
 
-  // A temporal run is bound to one task on one channel; granting it a task-mutation tool
-  // would let it change work items outside the reconcile it was issued for.
-  it('keeps task mutation out of the temporal and report lanes', () => {
-    for (const lane of [WORKORDER_TOOL_POLICIES.temporal, OPERATOR_REPORT_TOOL_POLICY]) {
-      expect(lane.allowedTools).not.toContain('task_create');
-      expect(lane.allowedTools).not.toContain('task_update');
-    }
+  it('gives each turn the tools its section instructs it to use', () => {
+    expect(turn('board').agentContext.role.allowedTools).toEqual(
+      expect.arrayContaining([
+        'code_act',
+        'context_compile',
+        'task_update',
+        'report_publish',
+        'contract_no_update',
+      ])
+    );
+    expect(turn('temporal').agentContext.role.allowedTools).toEqual(
+      expect.arrayContaining(['task_temporal_reconcile', 'context_compile', 'task_list'])
+    );
+    expect(turn('wiki').agentContext.role.allowedTools).toEqual(
+      expect.arrayContaining(['wiki_publish', 'obsidian', 'contract_no_update'])
+    );
+    expect(turn('memory-curation').agentContext.role.allowedTools).toEqual(
+      expect.arrayContaining(['mama_save', 'mama_update', 'contract_no_update'])
+    );
   });
 });
