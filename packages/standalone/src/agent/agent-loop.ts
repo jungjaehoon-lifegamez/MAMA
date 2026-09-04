@@ -1930,6 +1930,7 @@ export class AgentLoop {
             // Per-run request timeout (operator worker runs); undefined leaves
             // the pool's construction-time default untouched (chat).
             requestTimeout: options?.requestTimeoutMs,
+            runTokenBudget: this.runTokenBudget,
             hostToolBridge,
             toolExecutionContext,
             ...(isCline
@@ -2082,6 +2083,7 @@ export class AgentLoop {
                 sessionId: newSessionId,
                 // Carry the per-run timeout onto the reset session too.
                 requestTimeout: options?.requestTimeoutMs,
+                runTokenBudget: this.runTokenBudget,
                 hostToolBridge,
                 toolExecutionContext,
                 ...(isCline
@@ -2427,7 +2429,8 @@ export class AgentLoop {
       }
 
       // Check if we hit max turns
-      if (turn >= this.maxTurns && stopReason === 'tool_use') {
+      // A budget stop on the last allowed turn is a budget stop, not MAX_TURNS.
+      if (turn >= this.maxTurns && stopReason === 'tool_use' && stoppedBy !== 'budget') {
         throw new AgentError(
           `Agent loop exceeded maximum turns (${this.maxTurns})`,
           'MAX_TURNS',

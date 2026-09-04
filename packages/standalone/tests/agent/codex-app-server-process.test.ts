@@ -1742,7 +1742,7 @@ describe('Story: Codex app-server process', () => {
       const ok = await runner.prompt('long', undefined, {});
       expect(ok.response).toContain('hello');
     } finally {
-      await runner.shutdown();
+      await runner.stop();
     }
   });
 
