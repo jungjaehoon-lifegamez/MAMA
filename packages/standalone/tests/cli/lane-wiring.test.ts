@@ -82,7 +82,13 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
   it('AC #4 (TG-06) keeps sends, uploads and administration out of every unattended turn', () => {
     for (const kind of WORKORDER_KINDS) {
       const allowed = turn(kind).agentContext.role.allowedTools;
-      for (const tool of ['telegram_send', 'drive_upload', ...ADMINISTRATION_TOOLS]) {
+      for (const tool of [
+        'telegram_send',
+        'drive_upload',
+        'Bash',
+        'Write',
+        ...ADMINISTRATION_TOOLS,
+      ]) {
         expect(allowed, `${kind} must not hold ${tool}`).not.toContain(tool);
       }
       for (const tool of TURN_KIND_BLOCKED_TOOLS[kind]) {

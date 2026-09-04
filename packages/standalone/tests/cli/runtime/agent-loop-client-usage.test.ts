@@ -26,6 +26,9 @@ describe('agentLoopClient wrapper preserves run usage', () => {
     expect(wrapper.length).toBeGreaterThan(0);
     // The wrapper's return must carry the field workerRun reads; a bare
     // `return { response }` here silently re-blinds the telemetry.
-    expect(wrapper).toMatch(/return \{ response, totalUsage: result\.totalUsage \}/);
+    expect(wrapper).toMatch(/totalUsage: result\.totalUsage,/);
+    // 0.43.0: the wrapper also dropped stoppedBy, so a budget-stopped run
+    // reported as a clean completion (board#4416 live).
+    expect(wrapper).toMatch(/stoppedBy: result\.stoppedBy/);
   });
 });

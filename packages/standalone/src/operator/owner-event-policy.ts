@@ -22,6 +22,10 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   'console_brief_update',
   // fire-and-forget into another model turn = a second judgment surface
   'report_request',
+  // the workspace shell and file writer are owner-conversation tools: an event turn is
+  // driven by untrusted connector text, and a shell would make that text a command
+  'Bash',
+  'Write',
   // not in the completion set (owner-event-outcome.ts) and not receipted anywhere the
   // crash-recovery resolver can read: `obsidian` covers reads as well as writes, and
   // drive_translate_conti uploads outside the owner-event effect ledger, so a retry

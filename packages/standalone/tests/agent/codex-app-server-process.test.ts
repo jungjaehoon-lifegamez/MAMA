@@ -1721,6 +1721,24 @@ describe('Story: Codex app-server process', () => {
     }
   );
 
+  it('ONE-MAMA-P3 Task 4 AC #4: interrupts a codex turn whose counted usage crosses the run budget', async () => {
+    const item = fixture('tool-success');
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
+    try {
+      // The fixture's first total-bearing usage event counts 8 + 6 + 3 = 17 tokens for the turn.
+      await expect(runner.prompt('long', undefined, { runTokenBudget: 10 })).rejects.toThrow(
+        /run budget stop: \d+ >= 10 counted tokens inside one turn/
+      );
+      const interrupts = messages(item.capture).filter((m) => m.method === 'turn/interrupt');
+      expect(interrupts.length).toBeGreaterThanOrEqual(1);
+      // no budget -> the same fixture completes
+      const ok = await runner.prompt('long', undefined, {});
+      expect(ok.response).toContain('hello');
+    } finally {
+      await runner.shutdown();
+    }
+  });
+
   it('aborts an active host tool before reporting a turn timeout', async () => {
     const item = fixture('tool-success');
     const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });

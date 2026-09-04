@@ -16,7 +16,7 @@ import type { PromptLayer } from './prompt-size-monitor.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { ClineCLIAdapter } from './cline-cli-adapter.js';
-import { projectClineNativeTools } from './cline-native-tool-policy.js';
+import { CLINE_NATIVE_GUARD_BYPASS, projectClineNativeTools } from './cline-native-tool-policy.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import {
   HostToolAbortError,
@@ -1331,12 +1331,21 @@ export class AgentLoop {
     const isDurableRuntime = isCodex || isCline;
     const tracksSessionPolicy = isDurableRuntime || this.backend === 'claude';
     const clineRole = options?.agentContext?.role;
+    // The main persona's gateway Bash/Write run through MAMA's executor; Cline's native
+    // shell/editor would bypass it, so they stay disallowed whatever the role grants.
     const clineAllowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeAllowedTools
-      : projectClineNativeTools(clineRole?.allowedTools);
+      : projectClineNativeTools(clineRole?.allowedTools).filter(
+          (tool) => !CLINE_NATIVE_GUARD_BYPASS.includes(tool)
+        );
     const clineDisallowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeDisallowedTools
-      : projectClineNativeTools(clineRole?.blockedTools);
+      : [
+          ...new Set([
+            ...projectClineNativeTools(clineRole?.blockedTools),
+            ...CLINE_NATIVE_GUARD_BYPASS,
+          ]),
+        ];
     const clineDelegationBlocked = clineRole?.blockedTools?.includes('delegate') ?? false;
     const clineAllowSpawnAgent = this.clineAllowSpawnAgent && !clineDelegationBlocked;
     const clineAllowAgentTeams = this.clineAllowAgentTeams && !clineDelegationBlocked;
@@ -1864,6 +1873,8 @@ export class AgentLoop {
                   sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
                   sessionId: resolvedCliSessionId ?? undefined,
                   requestTimeout: options?.requestTimeoutMs,
+                  // Enforced INSIDE the codex turn (usage events), see CodexAppServerProcess.
+                  runTokenBudget: this.runTokenBudget,
                   hostToolBridge,
                   ...(isCline
                     ? {
@@ -1937,6 +1948,29 @@ export class AgentLoop {
           }
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
+
+          // A codex turn interrupted by the run budget is a host decision, not a failure:
+          // stop here with what was collected and let the host record the receipt.
+          if (
+            (error as { code?: unknown })?.code === 'RUN_BUDGET_STOP' ||
+            errorMessage.startsWith('run budget stop:')
+          ) {
+            stoppedBy = 'budget';
+            budgetTokens = Math.max(budgetTokens, this.runTokenBudget);
+            try {
+              this.onBudgetStop?.({
+                channelKey,
+                modelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
+                agentId: options?.agentContext?.roleName,
+                budgetTokens,
+                runTokenBudget: this.runTokenBudget,
+                turns: turn,
+              });
+            } catch {
+              // Receipt failures must never mask the stop itself.
+            }
+            break;
+          }
 
           if (error instanceof McpCompletedMutationInterruptedError) {
             appendCompletedToolExchanges(error.completedToolExchanges);

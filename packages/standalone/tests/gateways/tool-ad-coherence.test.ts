@@ -157,12 +157,9 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
             'kagemusha_messages',
           ])
         );
-        expect(context.role.blockedTools).toEqual([
-          'Bash',
-          'Write',
-          'save_integration_token',
-          'delegate',
-        ]);
+        expect(context.role.blockedTools).toEqual(['save_integration_token', 'delegate']);
+        // Owner decision 2026-09-04: the owner chat turn holds the workspace shell.
+        expect(context.role.allowedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
       } finally {
         resetRoleManager();
         store.close();

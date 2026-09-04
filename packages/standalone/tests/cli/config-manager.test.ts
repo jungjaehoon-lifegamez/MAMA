@@ -890,7 +890,8 @@ describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
     const owner = DEFAULT_ROLES.definitions.owner_console;
 
     expect(owner.allowedTools).toContain('code_act');
-    expect(owner.blockedTools).toEqual(['Bash', 'Write', 'save_integration_token', 'delegate']);
+    expect(owner.blockedTools).toEqual(['save_integration_token', 'delegate']);
+    expect(owner.allowedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
     expect(owner.systemControl).toBe(false);
     expect(owner.sensitiveAccess).toBe(false);
   });

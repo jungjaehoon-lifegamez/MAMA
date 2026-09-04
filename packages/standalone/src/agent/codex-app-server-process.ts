@@ -50,6 +50,13 @@ export interface CodexAppServerProcessOptions {
 }
 
 export interface CodexAppServerPromptOptions {
+  /**
+   * Per-run counted-token budget (input + output + cache reads). A codex turn is a whole
+   * agentic loop of model calls, so the budget is checked on every usage event INSIDE the
+   * turn and the turn is interrupted when it crosses; AgentLoop's per-turn check would only
+   * see the total after the turn ended (0.43.0 stopped board runs one turn too late).
+   */
+  runTokenBudget?: number;
   sessionKey?: string;
   model?: string;
   systemPrompt?: string;
@@ -105,6 +112,9 @@ interface PendingTurn {
   intentionalStop: boolean;
   usageBaseline?: { input: number; output: number; cached: number };
   usageShrinkWarned?: boolean;
+  /** Counted-token budget for this run; 0/undefined disables the in-turn check. */
+  runTokenBudget?: number;
+  budgetStopped?: boolean;
   abortError?: Error;
   settledTerminalError?: HostToolTerminalError;
   onDelta?: (text: string) => void;
@@ -529,7 +539,8 @@ export class CodexAppServerProcess {
           turnText,
           callbacks,
           session.requestTimeout,
-          session.hostToolBridge
+          session.hostToolBridge,
+          overrides.runTokenBudget
         );
         state.bootstrapPending = false;
         return result;
@@ -1008,7 +1019,8 @@ export class CodexAppServerProcess {
     text: string,
     callbacks: PromptCallbacks | undefined,
     requestTimeout: number,
-    hostToolBridge: HostToolBridge | undefined
+    hostToolBridge: HostToolBridge | undefined,
+    runTokenBudget?: number
   ): Promise<PromptResult> {
     return new Promise<PromptResult>((resolveTurn, rejectTurn) => {
       const abortController = new AbortController();
@@ -1021,6 +1033,7 @@ export class CodexAppServerProcess {
         threadId,
         chunks: [],
         usage: { input_tokens: 0, output_tokens: 0 },
+        runTokenBudget,
         timer,
         requestTimeout,
         queuedNotifications: [],
@@ -1317,6 +1330,7 @@ export class CodexAppServerProcess {
           output_tokens: Math.max(0, output),
           cache_read_input_tokens: Math.max(0, cached),
         };
+        this.enforceTurnBudget(turn.threadId, turn);
       } else {
         // No cumulative total on this event: accumulate per-call usage.
         turn.usage = {
@@ -1325,6 +1339,7 @@ export class CodexAppServerProcess {
           cache_read_input_tokens:
             (turn.usage.cache_read_input_tokens ?? 0) + num(last?.cachedInputTokens),
         };
+        this.enforceTurnBudget(turn.threadId, turn);
       }
       return;
     }
@@ -1689,6 +1704,34 @@ export class CodexAppServerProcess {
         (turn.abortError instanceof HostToolTerminalError ? turn.abortError : undefined);
       turn.reject(this.toError(terminalError ?? safe));
     });
+  }
+
+  /** Interrupt a turn whose counted usage crossed its run budget; the loop reports stoppedBy. */
+  private enforceTurnBudget(
+    threadId: string,
+    turn: {
+      runTokenBudget?: number;
+      budgetStopped?: boolean;
+      usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number };
+    }
+  ): void {
+    const budget = turn.runTokenBudget ?? 0;
+    if (budget <= 0 || turn.budgetStopped) {
+      return;
+    }
+    const counted =
+      turn.usage.input_tokens +
+      turn.usage.output_tokens +
+      (turn.usage.cache_read_input_tokens ?? 0);
+    if (counted < budget) {
+      return;
+    }
+    turn.budgetStopped = true;
+    const error = new Error(
+      `run budget stop: ${counted} >= ${budget} counted tokens inside one turn`
+    );
+    (error as Error & { code?: string }).code = 'RUN_BUDGET_STOP';
+    this.timeoutTurn(threadId, error, DEFAULT_TIMEOUT);
   }
 
   private timeoutTurn(threadId: string, error: Error, requestTimeout: number): void {
