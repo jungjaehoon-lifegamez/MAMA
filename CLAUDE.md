@@ -359,7 +359,7 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   occurrence-keyed workorders into the TaskLedger (`operator_tasks`,
   kind='system' rows, host-managed); a single unconditional consumer claims
   serially and runs briefed workerRuns. Since v0.41.0 (One MAMA) every scheduled turn runs as
-  the ONE `owner_console` principal with the ONE operating brief (`~/.mama/operator/console-brief.md`)
+  the ONE `owner_console` principal with the ONE operating brief (`~/.mama/briefs/brief-owner-console.md`)
   plus a host-authored turn-kind section (`buildTurnKindSection`, workorder-consumer.ts); the
   per-kind briefs and the `workorder-*` roles are gone. The grant is projected by the host from
   data in start.ts: owner console + `TURN_KIND_REQUIRED_TOOLS` − `ADMINISTRATION_TOOLS` −
