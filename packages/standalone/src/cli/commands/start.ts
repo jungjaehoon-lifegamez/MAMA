@@ -118,7 +118,13 @@ import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
-import { compileOwnerReportContext } from '../../operator/report-context.js';
+import {
+  compileChannelPacket,
+  compileOwnerReportContext,
+  serializeOwnerReportContext,
+  type OwnerReportContextDeps,
+  type OwnerReportReadScope,
+} from '../../operator/report-context.js';
 import { readChanges } from '../../operator/changes-projection.js';
 import { correlateTasksWithExternalItems } from '../../operator/external-correlation.js';
 import { buildProvenanceLookup } from '../../operator/provenance-lookup.js';
@@ -131,7 +137,6 @@ import {
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import {
-  boardBatchKey,
   boardManualKey,
   ownerEventWorkOrderKey,
   promotionManualKey,
@@ -903,31 +908,19 @@ export function resolveOwnerEventTerminalReceipt(
   batch: OwnerEventBatch,
   deps: {
     ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
-    ownerEventBoardRefreshLedger: Pick<OwnerEventBoardRefreshLedger, 'findAcceptance'>;
-    taskLedger: Pick<TaskLedger, 'findWorkOrderByOccurrence' | 'maxNoUpdateId'>;
+    taskLedger: Pick<TaskLedger, 'maxNoUpdateId'>;
   }
-):
-  | { status: 'acted'; tools: string[] }
-  | { status: 'delegated'; tools: ['workorder_request'] }
-  | { status: 'no_update'; tools: [] }
-  | null {
-  const confirmedEffects = deps.ownerEventEffectLedger.confirmedKinds(batch.id);
+): { status: 'acted'; tools: string[] } | { status: 'no_update'; tools: [] } | null {
+  // Crash-recovery mirror of classifyOwnerEventOutcome: a confirmed deliverable
+  // (drive_upload) is a durable effect; a confirmed telegram_send alone is not,
+  // and the effect ledger's (batch, action_key) idempotency makes the retry safe
+  // from a second send. A persisted Board acceptance is no longer a receipt:
+  // delegation does not complete a batch.
+  const confirmedEffects = deps.ownerEventEffectLedger
+    .confirmedKinds(batch.id)
+    .filter((kind) => kind !== 'telegram_send');
   if (confirmedEffects.length > 0) {
     return { status: 'acted', tools: confirmedEffects };
-  }
-  const acceptedWorkOrder =
-    deps.ownerEventBoardRefreshLedger.findAcceptance(batch.id) ??
-    deps.taskLedger.findWorkOrderByOccurrence('board', boardBatchKey(batch.eventIds)) ??
-    deps.taskLedger.findWorkOrderByOccurrence(
-      'wiki',
-      ownerEventWorkOrderKey('wiki', batch.eventIds)
-    ) ??
-    deps.taskLedger.findWorkOrderByOccurrence(
-      'memory-curation',
-      ownerEventWorkOrderKey('memory-curation', batch.eventIds)
-    );
-  if (acceptedWorkOrder) {
-    return { status: 'delegated', tools: ['workorder_request'] };
   }
   if (deps.taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
     return { status: 'no_update', tools: [] };
@@ -2127,6 +2120,22 @@ export async function runAgentLoop(
         issuance: envelopeBootstrap.metadata.issuance,
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
+      // Scope-independent packet readers, shared by the report leg and the event turn.
+      const reportContextDeps: OwnerReportContextDeps = {
+        listTaskPage: (input) => taskLedger.listPage(input),
+        readClaims: (scope) =>
+          mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
+        readTrello: async (scope) => {
+          if (!scope.rawConnectors.includes('trello')) {
+            throw new Error('Trello is outside the owner-report read scope');
+          }
+          return getTrelloKanban({ maxCardsPerList: 100 });
+        },
+        buildProvenanceLookup,
+        correlate: correlateTasksWithExternalItems,
+        readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
+        now: Date.now,
+      };
       const triggerLoop = new OperatorTriggerLoop({
         backend: runtimeBackend,
         delta: new ConnectorDeltaRepo(
@@ -2209,24 +2218,7 @@ export async function runAgentLoop(
           };
         })(),
         compileFullReportContext: async ({ readScope, windowEvidence, since }) =>
-          compileOwnerReportContext(
-            { readScope, windowEvidence, since },
-            {
-              listTaskPage: (input) => taskLedger.listPage(input),
-              readClaims: (scope) =>
-                mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
-              readTrello: async (scope) => {
-                if (!scope.rawConnectors.includes('trello')) {
-                  throw new Error('Trello is outside the owner-report read scope');
-                }
-                return getTrelloKanban({ maxCardsPerList: 100 });
-              },
-              buildProvenanceLookup,
-              correlate: correlateTasksWithExternalItems,
-              readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
-              now: Date.now,
-            }
-          ),
+          compileOwnerReportContext({ readScope, windowEvidence, since }, reportContextDeps),
         // TG-06: composition supplies provenance immediately to the prepared
         // delivery; this callback receives that durable artifact only after send success.
         fullReportProvenance: () => lastReportProvenance,
@@ -2297,10 +2289,30 @@ export async function runAgentLoop(
           privateConnectorPolicy,
         });
         const ownerEventPromptEnhancer = new PromptEnhancer();
+        // ONE expression for what an event turn may read: the envelope and the
+        // packet are both built from it, so they can never disagree.
+        const ownerEventReadScope = (
+          batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
+        ): OwnerReportReadScope => {
+          const projectId = resolveReactiveProjectRoot(config, process.env);
+          return {
+            projectRefs: [{ kind: 'project' as const, id: projectId }],
+            rawConnectors: [
+              ...privateConnectorPolicy.projectRawConnectors('owner_console', codeActRawConnectors),
+            ],
+            memoryScopes: uniqueMemoryScopes(
+              deriveMemoryScopes({
+                source: 'owner-event',
+                channelId: batch.channelKey,
+                projectId,
+              })
+            ),
+          };
+        };
         const ownerEventIssueEnvelope = async (
           batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
         ) => {
-          const projectId = resolveReactiveProjectRoot(config, process.env);
+          const readScope = ownerEventReadScope(batch);
           const wallSeconds = 300;
           return ownerEventEnvelopeAuthority.buildAndPersist({
             agent_id: 'mama-owner',
@@ -2309,20 +2321,9 @@ export async function runAgentLoop(
             channel_id: batch.channelKey,
             trigger_context: { user_text: '<MAMA owner event turn>' },
             scope: {
-              project_refs: [{ kind: 'project' as const, id: projectId }],
-              raw_connectors: [
-                ...privateConnectorPolicy.projectRawConnectors(
-                  'owner_console',
-                  codeActRawConnectors
-                ),
-              ],
-              memory_scopes: uniqueMemoryScopes(
-                deriveMemoryScopes({
-                  source: 'owner-event',
-                  channelId: batch.channelKey,
-                  projectId,
-                })
-              ),
+              project_refs: readScope.projectRefs,
+              raw_connectors: readScope.rawConnectors,
+              memory_scopes: readScope.memoryScopes,
               allowed_destinations: reportChatId
                 ? [{ kind: 'telegram' as const, id: reportChatId }]
                 : [],
@@ -2336,9 +2337,22 @@ export async function runAgentLoop(
           inbox: ownerEventInbox,
           runner: agentLoop,
           agentContext: ownerEventContext,
-          buildPrompt: async (batch) =>
+          compilePacket: async (batch) =>
+            serializeOwnerReportContext(
+              await compileChannelPacket(
+                {
+                  readScope: ownerEventReadScope(batch),
+                  channelKey: batch.channelKey,
+                  eventIds: batch.eventIds,
+                  since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                },
+                reportContextDeps
+              )
+            ),
+          buildPrompt: async (batch, packet) =>
             buildOwnerEventPrompt({
               batch,
+              packet,
               ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
               skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
               ownerTelegramChatId: reportChatId,
@@ -2348,7 +2362,6 @@ export async function runAgentLoop(
           getTerminalReceipt: (batch) =>
             resolveOwnerEventTerminalReceipt(batch, {
               ownerEventEffectLedger,
-              ownerEventBoardRefreshLedger,
               taskLedger,
             }),
           recordTriggerOutcome: (triggerId, outcome) =>

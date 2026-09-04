@@ -107,15 +107,23 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
         run: async (_prompt, options) => {
           runOptions = options;
           return {
-            response: 'delivered',
+            response: 'recorded and delivered',
             history: [
               {
                 role: 'assistant',
-                content: [{ type: 'tool_use', id: 'send-1', name: 'telegram_send', input: {} }],
+                content: [
+                  { type: 'tool_use', id: 'task-1', name: 'task_create', input: {} },
+                  { type: 'tool_use', id: 'send-1', name: 'telegram_send', input: {} },
+                ],
               },
               {
                 role: 'user',
                 content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'task-1',
+                    content: JSON.stringify({ success: true }),
+                  },
                   {
                     type: 'tool_result',
                     tool_use_id: 'send-1',
@@ -159,7 +167,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     registry.close();
   });
 
-  it('ACKs a persisted Board acceptance after restart without waking the model', async () => {
+  it('a persisted Board acceptance is not a terminal receipt: the model is woken', async () => {
     const db = new Database(':memory:');
     const taskLedger = new TaskLedger(db);
     const inbox = new OwnerEventInbox(db);
@@ -177,51 +185,26 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       eventIds: ['evt-restart'],
       repair: { repairGeneration: 20, noUpdateScope: 'full:20' },
     });
-    const runner = { run: vi.fn(() => Promise.reject(new Error('must not run'))) };
-    const loop = new OwnerEventLoop({
-      inbox,
-      runner,
-      agentContext: ownerContext(),
-      buildPrompt: () => 'must not build',
-      issueEnvelope: async () => envelope(),
-      getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
-      getTerminalReceipt: (batch) =>
-        resolveOwnerEventTerminalReceipt(batch, {
-          ownerEventEffectLedger: effects,
-          ownerEventBoardRefreshLedger: boardIntents,
-          taskLedger,
-        }),
-      log: () => undefined,
-    });
-
-    expect(await loop.tick()).toBe('processed');
-    expect(runner.run).not.toHaveBeenCalled();
-    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
-    db.close();
-  });
-
-  it('lets a durable Board acceptance win after the accepting runner throws', async () => {
-    const db = new Database(':memory:');
-    const taskLedger = new TaskLedger(db);
-    const inbox = new OwnerEventInbox(db);
-    const effects = new OwnerEventEffectLedger(db);
-    const boardIntents = new OwnerEventBoardRefreshLedger(db, taskLedger);
-    const batchId = inbox.enqueue({
-      channelKey: 'chatwork:feedback',
-      eventIds: ['evt-error'],
-      lines: ['feedback arrived'],
-      activations: [],
-    });
-    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
     const runner = {
-      run: vi.fn(async () => {
-        boardIntents.accept({
-          batchId,
-          eventIds: ['evt-error'],
-          repair: { repairGeneration: 21, noUpdateScope: 'full:21' },
-        });
-        throw new Error('runner transport failed after acceptance');
-      }),
+      run: vi.fn(async () => ({
+        response: 'updated',
+        history: [
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 't1', name: 'task_update', input: {} }],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 't1',
+                content: JSON.stringify({ success: true }),
+              },
+            ],
+          },
+        ],
+      })),
     };
     const loop = new OwnerEventLoop({
       inbox,
@@ -233,7 +216,6 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       getTerminalReceipt: (batch) =>
         resolveOwnerEventTerminalReceipt(batch, {
           ownerEventEffectLedger: effects,
-          ownerEventBoardRefreshLedger: boardIntents,
           taskLedger,
         }),
       log: () => undefined,
@@ -242,7 +224,37 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     expect(await loop.tick()).toBe('processed');
     expect(runner.run).toHaveBeenCalledTimes(1);
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
-    expect(boardIntents.findAcceptance(batchId)).not.toBeNull();
+    db.close();
+  });
+
+  it('terminal receipt: a confirmed deliverable counts, a confirmed notification alone does not', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db);
+    const inbox = new OwnerEventInbox(db);
+    const effects = new OwnerEventEffectLedger(db);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-receipt'],
+      lines: ['feedback arrived'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    const batch = inbox.claimNext();
+    if (!batch) throw new Error('batch not claimable');
+    const deps = { ownerEventEffectLedger: effects, taskLedger };
+
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
+
+    effects.begin(batchId, 'telegram-delivery', 'telegram_send', {});
+    effects.confirm(batchId, 'telegram-delivery', 'telegram_send', { messageId: 1 });
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
+
+    effects.begin(batchId, 'drive-upload', 'drive_upload', {});
+    effects.confirm(batchId, 'drive-upload', 'drive_upload', { fileId: 'f1' });
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toEqual({
+      status: 'acted',
+      tools: ['drive_upload'],
+    });
     db.close();
   });
 });

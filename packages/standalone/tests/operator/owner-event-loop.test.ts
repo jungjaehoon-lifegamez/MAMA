@@ -17,14 +17,14 @@ const ownerContext: AgentContext = {
   roleName: 'owner_console',
   role: {
     model: 'gpt-5.6-sol',
-    allowedTools: ['telegram_send', 'contract_no_update'],
+    allowedTools: ['task_update', 'telegram_send', 'contract_no_update'],
     blockedTools: [],
     allowedPaths: [],
     systemControl: false,
     sensitiveAccess: false,
   },
   session: { sessionId: 'owner-event', channelId: 'owner-event', startedAt: new Date(0) },
-  capabilities: ['telegram_send', 'contract_no_update'],
+  capabilities: ['task_update', 'telegram_send', 'contract_no_update'],
   limitations: [],
   tier: 1,
   backend: 'codex',
@@ -42,7 +42,26 @@ const result = (history: Array<{ role: string; content: unknown }>) => ({
   history,
 });
 
+// One MAMA: completion is a ledger change; the notification rides beside it.
 const deliveredHistory = [
+  {
+    role: 'assistant',
+    content: [
+      { type: 'tool_use', id: 'task-1', name: 'task_update', input: {} },
+      { type: 'tool_use', id: 'send-1', name: 'telegram_send', input: {} },
+    ],
+  },
+  {
+    role: 'user',
+    content: [
+      { type: 'tool_result', tool_use_id: 'task-1', content: JSON.stringify({ success: true }) },
+      { type: 'tool_result', tool_use_id: 'send-1', content: JSON.stringify({ success: true }) },
+    ],
+  },
+];
+
+// A turn that only notified: the notification alone is not a ledger change.
+const notifiedHistory = [
   {
     role: 'assistant',
     content: [{ type: 'tool_use', id: 'send-1', name: 'telegram_send', input: {} }],
@@ -50,11 +69,7 @@ const deliveredHistory = [
   {
     role: 'user',
     content: [
-      {
-        type: 'tool_result',
-        tool_use_id: 'send-1',
-        content: JSON.stringify({ success: true }),
-      },
+      { type: 'tool_result', tool_use_id: 'send-1', content: JSON.stringify({ success: true }) },
     ],
   },
 ];
@@ -402,5 +417,82 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(await loop.tick()).toBe('idle');
     expect(outcomes).toEqual([['lease-trigger', 'failed']]);
     expect(dead).toEqual([expect.stringContaining('lease expired repeatedly')]);
+  });
+  it('acks a [decision] notification and retries a plain notification', async () => {
+    inbox.enqueue(batch());
+    const decisionLoop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: {
+        run: async () => ({
+          response: '[decision] Approve the revised quote?',
+          history: notifiedHistory,
+        }),
+      },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await decisionLoop.tick()).toBe('processed');
+    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+
+    inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
+    const logs: string[] = [];
+    const plainLoop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: { run: async () => ({ response: 'Sent a heads-up.', history: notifiedHistory }) },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: (line) => logs.push(line),
+    });
+    expect(await plainLoop.tick()).toBe('failed');
+    expect(logs.at(-1)).toContain('notification without a ledger change');
+  });
+  it('passes the compiled packet into the prompt and proceeds without one on failure', async () => {
+    inbox.enqueue(batch());
+    const seen: Array<string | null> = [];
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: { run: async () => result(deliveredHistory) },
+      compilePacket: async () => '{"schemaVersion":"mama.owner-report-context/v1"}',
+      buildPrompt: async (_batch, packet) => {
+        seen.push(packet);
+        return 'prompt';
+      },
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await loop.tick()).toBe('processed');
+    expect(seen).toEqual(['{"schemaVersion":"mama.owner-report-context/v1"}']);
+
+    inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
+    const logs: string[] = [];
+    const failing = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: { run: async () => result(deliveredHistory) },
+      compilePacket: async () => {
+        throw new Error('ledger unavailable');
+      },
+      buildPrompt: async (_batch, packet) => {
+        seen.push(packet);
+        return 'prompt';
+      },
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: (line) => logs.push(line),
+    });
+    expect(await failing.tick()).toBe('processed');
+    expect(seen.at(-1)).toBeNull();
+    expect(
+      logs.some(
+        (line) => line.includes('packet compile failed') && line.includes('ledger unavailable')
+      )
+    ).toBe(true);
   });
 });

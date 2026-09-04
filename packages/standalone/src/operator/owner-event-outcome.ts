@@ -13,12 +13,22 @@ export interface OwnerEventHistoryMessage {
 
 export type OwnerEventOutcome =
   | { status: 'acted'; tools: string[] }
-  | { status: 'delegated'; tools: string[] }
   | { status: 'no_update'; tools: string[] }
   | { status: 'retry'; tools: string[]; reason: string };
 
-const EFFECT_TOOLS = new Set(['telegram_send', 'drive_upload']);
-const DELEGATION_TOOLS = new Set(['workorder_request']);
+/**
+ * A batch is complete when it durably changed what the system knows or holds.
+ * Notification is not completion: a turn that only sends a Telegram line has
+ * moved nothing, and counting it produced 362 sends against a dead ledger.
+ */
+const LEDGER_EFFECT_TOOLS = new Set([
+  'task_create',
+  'task_update',
+  'mama_save',
+  'mama_update',
+  'drive_upload',
+]);
+const NOTIFY_TOOLS = new Set(['telegram_send']);
 
 function normalizeToolName(name: string): string {
   const match = /^mcp__[A-Za-z0-9_-]+__(.+)$/.exec(name);
@@ -100,17 +110,23 @@ function executedTools(history: ReadonlyArray<OwnerEventHistoryMessage>): string
 export function classifyOwnerEventOutcome(input: {
   history: ReadonlyArray<OwnerEventHistoryMessage>;
   noUpdateRecorded: boolean;
+  /** Host-detected: the turn asked the owner for a decision it cannot make itself. */
+  ownerDecisionRequested?: boolean;
 }): OwnerEventOutcome {
   const tools = executedTools(input.history);
-  const delegated = tools.filter((tool) => DELEGATION_TOOLS.has(tool));
-  if (delegated.length > 0) return { status: 'delegated', tools: delegated };
-
-  const acted = tools.filter((tool) => EFFECT_TOOLS.has(tool));
-  if (acted.length > 0) return { status: 'acted', tools: acted };
+  const ledger = tools.filter((tool) => LEDGER_EFFECT_TOOLS.has(tool));
+  const notified = tools.filter((tool) => NOTIFY_TOOLS.has(tool));
+  if (ledger.length > 0) return { status: 'acted', tools: [...ledger, ...notified] };
+  if (notified.length > 0 && input.ownerDecisionRequested === true) {
+    return { status: 'acted', tools: notified };
+  }
   if (input.noUpdateRecorded) return { status: 'no_update', tools: [] };
   return {
     status: 'retry',
     tools: [],
-    reason: 'no durable action or exact no-update receipt',
+    reason:
+      notified.length > 0
+        ? 'notification without a ledger change'
+        : 'no durable action or exact no-update receipt',
   };
 }
