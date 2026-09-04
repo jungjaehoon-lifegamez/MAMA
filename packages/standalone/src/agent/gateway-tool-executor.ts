@@ -63,7 +63,6 @@ import type {
   ExternalLifecycleReconcileToolInput,
   PrincipalRepository,
   MemberScopeInput,
-  WorkOrderRequestOrigin,
 } from './types.js';
 import type { PrincipalScopeGrantRef } from '@jungjaehoon/mama-core';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
@@ -388,7 +387,6 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'mama_update',
   'report_publish',
   'report_request',
-  'workorder_request',
   'wiki_publish',
   'obsidian',
   'task_create',
@@ -759,12 +757,6 @@ export class GatewayToolExecutor {
     | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
     | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
-  private workOrderRequestHandler:
-    | ((
-        kind: 'board' | 'wiki' | 'memory-curation',
-        origin: WorkOrderRequestOrigin
-      ) => { accepted: boolean; reason?: string })
-    | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
   private wikiPublisher: WikiPagePublisher | null = null;
@@ -983,15 +975,6 @@ export class GatewayToolExecutor {
   /** Forwarder hook for on-demand full reports (plan v6 S1-T3). */
   setReportRequestHandler(fn: () => { accepted: boolean; reason?: string }): void {
     this.reportRequestHandler = fn;
-  }
-  /** Forwarder hook for owner-issued workorders (Stage-2 S2-T4; enqueue+ack only). */
-  setWorkOrderRequestHandler(
-    fn: (
-      kind: 'board' | 'wiki' | 'memory-curation',
-      origin: WorkOrderRequestOrigin
-    ) => { accepted: boolean; reason?: string }
-  ): void {
-    this.workOrderRequestHandler = fn;
   }
   /** Read seam for the owner board slots (plan v6 S1-T4 artifact hub). */
   setReportReader(fn: () => Record<string, { html: string; updatedAt?: string | null }>): void {
@@ -2840,78 +2823,6 @@ export class GatewayToolExecutor {
             message:
               'Full report started. It will be generated fresh (delta-anchored) and delivered to the owner channel - tell the owner it is on its way; do not fabricate its contents.',
           };
-        }
-        case 'workorder_request': {
-          // Owner intent -> a priority workorder. Enqueue + ack ONLY - the
-          // run happens on the operator lane later; awaiting it here would
-          // block the chat turn (plan B6: issue tools are enqueue+ack only).
-          const requestedKind = (input as { kind?: string }).kind;
-          if (
-            requestedKind !== 'board' &&
-            requestedKind !== 'wiki' &&
-            requestedKind !== 'memory-curation'
-          ) {
-            return {
-              success: false,
-              code: 'invalid_workorder_kind',
-              error: `kind must be one of board|wiki|memory-curation, got: ${String(requestedKind)}`,
-            };
-          }
-          if (!this.workOrderRequestHandler) {
-            return {
-              success: false,
-              code: 'workorder_machinery_disabled',
-              error:
-                'The workorder request handler is not wired on this deployment (boot-order fault).',
-            };
-          }
-          // The batch rides from HOST execution state, never from tool input -
-          // an agent-supplied cause is forgeable (S2 review #14).
-          const state = this.getExecutionState();
-          let origin: WorkOrderRequestOrigin;
-          if (state.source === 'owner-event') {
-            const batchId = state.ownerEventEffects?.batchId;
-            const eventIds = state.causeEventIds;
-            if (
-              !Number.isSafeInteger(batchId) ||
-              Number(batchId) <= 0 ||
-              !Array.isArray(eventIds) ||
-              eventIds.length === 0 ||
-              eventIds.some((eventId) => typeof eventId !== 'string' || eventId.trim().length === 0)
-            ) {
-              return {
-                success: false,
-                code: 'workorder_owner_event_authority_missing',
-                error: 'Owner-event workorder request requires host-issued batch authority.',
-              };
-            }
-            origin = { kind: 'owner_event', batchId: Number(batchId), eventIds };
-          } else {
-            origin = { kind: 'owner_manual' };
-          }
-          const enqueued = this.workOrderRequestHandler(requestedKind, origin);
-          if (!enqueued.accepted) {
-            return {
-              success: false,
-              code: `workorder_${enqueued.reason ?? 'unavailable'}`,
-              error: `Workorder enqueue failed: ${enqueued.reason ?? 'unknown'}`,
-            };
-          }
-          return {
-            success: true,
-            message:
-              'Workorder enqueued at priority high. It will run on the operator lane shortly - tell the owner it is queued; do not wait for it or fabricate its result.',
-          };
-        }
-        case 'workorder_status': {
-          if (!this.taskLedger) {
-            return {
-              success: false,
-              code: 'ledger_unavailable',
-              error: 'Task ledger is not wired on this deployment.',
-            };
-          }
-          return { success: true, data: { kinds: this.taskLedger.workOrderStats() } };
         }
         case 'console_brief_update': {
           const { appendConsoleBriefLesson } = await import('../operator/console-brief.js');

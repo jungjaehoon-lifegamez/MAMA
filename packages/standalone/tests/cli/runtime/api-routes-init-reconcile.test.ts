@@ -19,12 +19,6 @@ import { BoardRefreshGate } from '../../../src/operator/board-refresh-gate.js';
 import { REQUIRED_FULL_BOARD_SLOTS } from '../../../src/operator/workorder-hooks.js';
 import type { ReportStore } from '../../../src/api/report-handler.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
-import { OwnerEventInbox } from '../../../src/operator/owner-event-inbox.js';
-import { OwnerEventBoardRefreshLedger } from '../../../src/operator/owner-event-board-refresh.js';
-import {
-  buildOwnerEventBoardRefreshRuntime,
-  buildOwnerWorkOrderRequestHandler,
-} from '../../../src/cli/commands/start.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
 import Database from '../../../src/sqlite.js';
 import type { AgentLoop } from '../../../src/agent/index.js';
@@ -103,7 +97,6 @@ async function registerReconcileRuntime(input: {
   config?: MAMAConfig;
   ledger?: TaskLedger;
   boardRefreshGate?: BoardRefreshGate | null;
-  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
   eventBus?: AgentEventBus;
   rawConnectorScope?: readonly string[];
   getAdapter?: () => { prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] } };
@@ -151,9 +144,6 @@ async function registerReconcileRuntime(input: {
     privateConnectorPolicy: policy,
     rawConnectorScope: input.rawConnectorScope ?? input.connectorConfigLoadResult.enabledNames,
     boardRefreshGate,
-    ...(input.ownerEventBoardRefreshLedger
-      ? { ownerEventBoardRefreshLedger: input.ownerEventBoardRefreshLedger }
-      : {}),
     getAdapter: input.getAdapter ?? (() => input.db),
     requestFullReport: input.requestFullReport,
   });
@@ -218,9 +208,6 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
   });
   const ledger = new TaskLedger(db);
   const boardRefreshGate = new BoardRefreshGate({ initialGeneration: 500 });
-  const ownerEventInbox = new OwnerEventInbox(db, () => 9_000);
-  const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(db, ledger, () => 9_000);
-  const boardRepairNudge: { current: (() => void) | null } = { current: null };
   const duringRun: { current: (() => void) | null } = { current: null };
   toolExecutor.setSessionsDb(db);
   toolExecutor.setTaskLedger(ledger);
@@ -280,15 +267,6 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     runOptionsFor: (workOrder) => ({ workorderAttemptId: workOrder.id }),
     noticeOwner: () => undefined,
     opsAlarm: { configured: false, send: async () => undefined },
-    onEvent: (event) => {
-      if (
-        event.type === 'complete' &&
-        event.workKind === 'board' &&
-        ownerEventBoardRefreshLedger.consumePostTerminalFollowup(event.workOrderId)
-      ) {
-        boardRepairNudge.current?.();
-      }
-    },
   });
 
   const routeHandle = await registerApiRoutes({
@@ -309,14 +287,6 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     sessionsDb: db,
     workOrderConsumer: consumer,
     boardRefreshGate,
-    ownerEventBoardRefreshLedger,
-  });
-  boardRepairNudge.current = routeHandle.requestBoardRepair;
-  const ownerRequest = buildOwnerWorkOrderRequestHandler({
-    taskLedger: ledger,
-    boardRefreshGate,
-    ownerEventBoardRefreshLedger,
-    now: () => 9_000,
   });
   return {
     apiServer,
@@ -325,19 +295,7 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     db,
     eventBus,
     ledger,
-    ownerEventBoardRefreshLedger,
-    enqueueOwnerBatch: (eventId: string) => {
-      const batchId = ownerEventInbox.enqueue({
-        channelKey: 'kagemusha:feedback',
-        eventIds: [eventId],
-        lines: [`line:${eventId}`],
-        activations: [],
-      });
-      if (batchId === null) throw new Error(`owner-event batch deduplicated: ${eventId}`);
-      return batchId;
-    },
     duringRun,
-    ownerRequest,
     routeHandle,
   };
 }
@@ -422,138 +380,6 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       expect(routeHandle.boardReconcileEnabled).toBe(true);
       routeHandle.stop();
     } finally {
-      db.close();
-    }
-  });
-
-  it('TG-06 flag-off boot reattaches persisted intents to one non-force repair', async () => {
-    const db = new Database(':memory:');
-    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
-    process.env.MAMA_BOARD_RECONCILE = '0';
-    try {
-      createBoardInputTables(db);
-      let taskNow = 20;
-      const taskLedger = new TaskLedger(db, { now: () => taskNow, timeZone: 'UTC' });
-      const inbox = new OwnerEventInbox(db, () => 1_000);
-      const firstRuntime = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
-      const batchId = inbox.enqueue({
-        channelKey: 'kagemusha:feedback',
-        eventIds: ['evt-boot-repair'],
-        lines: ['line:evt-boot-repair'],
-        activations: [],
-      });
-      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
-      firstRuntime.boardRefreshGate.markChannelDirty('host:test-owner-event');
-      const accepted = firstRuntime.ownerEventBoardRefreshLedger.accept({
-        batchId,
-        eventIds: ['evt-boot-repair'],
-        repair: firstRuntime.boardRefreshGate.captureFullRepair(),
-      });
-      expect(taskLedger.claimNextWorkOrder()).toBeNull();
-      taskNow += 20 * 60 * 1_000;
-      const abandoned = taskLedger.claimNextWorkOrder();
-      if (!abandoned) throw new Error('abandoned Board workorder expected');
-      taskLedger.failWorkOrder(abandoned.id, 'simulated daemon cutover');
-
-      const restarted = buildOwnerEventBoardRefreshRuntime(db, taskLedger, () => taskNow);
-      expect(restarted.boardRefreshGate.captureFullRepair()).toEqual({
-        repairGeneration: 1_200_020,
-        noUpdateScope: 'full:1200020',
-      });
-      const { ledger, routeHandle } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: enabledConnectorConfig,
-        ledger: taskLedger,
-        boardRefreshGate: restarted.boardRefreshGate,
-        ownerEventBoardRefreshLedger: restarted.ownerEventBoardRefreshLedger,
-      });
-      await vi.advanceTimersByTimeAsync(10_000);
-
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-      taskNow += 20 * 60 * 1_000;
-      const repair = ledger.claimNextWorkOrder();
-      expect(repair).toMatchObject({
-        idempotencyKey: 'board:full:repair',
-        priority: 'high',
-        payload: {
-          mode: 'full',
-          force: false,
-          repairGeneration: 1_200_020,
-          noUpdateScope: 'full:1200020',
-        },
-      });
-      expect(repair?.id).not.toBe(accepted.workOrderId);
-      expect(restarted.ownerEventBoardRefreshLedger.findAcceptance(batchId)?.workOrderId).toBe(
-        repair?.id
-      );
-      expect(routeHandle.boardReconcileEnabled).toBe(false);
-      routeHandle.stop();
-    } finally {
-      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
-      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
-      db.close();
-    }
-  });
-
-  it('TG-06 promotes one delayed owner-event repair on the normal schedule', async () => {
-    const db = new Database(':memory:');
-    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
-    process.env.MAMA_BOARD_RECONCILE = '0';
-    try {
-      createBoardInputTables(db);
-      const taskLedger = new TaskLedger(db, { now: Date.now, timeZone: 'UTC' });
-      const inbox = new OwnerEventInbox(db, Date.now);
-      const boardRefreshGate = new BoardRefreshGate({ initialGeneration: 500 });
-      boardRefreshGate.completeVerifiedFull(500);
-      const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
-        db,
-        taskLedger,
-        Date.now
-      );
-      const { ledger, routeHandle } = await registerReconcileRuntime({
-        db,
-        connectorConfigLoadResult: enabledConnectorConfig,
-        ledger: taskLedger,
-        boardRefreshGate,
-        ownerEventBoardRefreshLedger,
-      });
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000 - 10_000);
-
-      const batchId = inbox.enqueue({
-        channelKey: 'kagemusha:feedback',
-        eventIds: ['evt-scheduled-promotion'],
-        lines: ['line:evt-scheduled-promotion'],
-        activations: [],
-      });
-      if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
-      boardRefreshGate.markChannelDirty('host:test-owner-event');
-      const accepted = ownerEventBoardRefreshLedger.accept({
-        batchId,
-        eventIds: ['evt-scheduled-promotion'],
-        repair: boardRefreshGate.captureFullRepair(),
-      });
-      expect(ledger.claimNextWorkOrder()).toBeNull();
-
-      await vi.advanceTimersByTimeAsync(15 * 60 * 1_000);
-
-      expect(ledger.countPendingWorkOrders()).toBe(1);
-      expect(ledger.claimNextWorkOrder()).toMatchObject({
-        id: accepted.workOrderId,
-        idempotencyKey: 'board:full:repair',
-        payload: {
-          mode: 'full',
-          force: false,
-          repairGeneration: 501,
-          noUpdateScope: 'full:501',
-        },
-      });
-      routeHandle.stop();
-    } finally {
-      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
-      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
       db.close();
     }
   });
@@ -718,150 +544,6 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       db.close();
     }
   });
-
-  it.each(['report'] as const)(
-    'TG-06 owner full %s effect clears shared dirt and suppresses scheduled repair',
-    async (effect) => {
-      const runtime = await registerOwnerFullRuntime(effect);
-      try {
-        expect(runtime.ownerRequest('board')).toEqual({ accepted: true });
-        expect(runtime.boardRefreshGate.needsFullRepair()).toBe(true);
-
-        await runtime.consumer.tick();
-
-        expect(runtime.boardRefreshGate.needsFullRepair()).toBe(false);
-        await vi.advanceTimersByTimeAsync(10_000 + 30 * 60 * 1000);
-        expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
-      } finally {
-        runtime.routeHandle.stop();
-        runtime.db.close();
-      }
-    }
-  );
-
-  it('TG-06 schedules one non-force repair after a verified run when a later intent arrived in-flight', async () => {
-    const runtime = await registerOwnerFullRuntime('report');
-    try {
-      const firstBatchId = runtime.enqueueOwnerBatch('evt-owner-first');
-      expect(
-        runtime.ownerRequest('board', {
-          kind: 'owner_event',
-          batchId: firstBatchId,
-          eventIds: ['evt-owner-first'],
-        })
-      ).toEqual({ accepted: true });
-      const first = runtime.ownerEventBoardRefreshLedger.findAcceptance(firstBatchId);
-      if (!first) throw new Error('first owner-event Board acceptance expected');
-
-      let lateBatchId = 0;
-      runtime.duringRun.current = () => {
-        lateBatchId = runtime.enqueueOwnerBatch('evt-owner-late');
-        expect(
-          runtime.ownerRequest('board', {
-            kind: 'owner_event',
-            batchId: lateBatchId,
-            eventIds: ['evt-owner-late'],
-          })
-        ).toEqual({ accepted: true });
-        expect(runtime.ownerEventBoardRefreshLedger.findAcceptance(lateBatchId)?.workOrderId).toBe(
-          first.workOrderId
-        );
-      };
-
-      await runtime.consumer.tick();
-
-      expect(runtime.ownerEventBoardRefreshLedger.findAcceptance(firstBatchId)?.appliedAt).toBe(
-        9_000
-      );
-      expect(
-        runtime.ownerEventBoardRefreshLedger.findAcceptance(lateBatchId)?.appliedAt
-      ).toBeNull();
-      const followup = runtime.ledger.claimNextWorkOrder();
-      expect(followup).toMatchObject({
-        idempotencyKey: 'board:full:repair',
-        priority: 'high',
-        payload: {
-          mode: 'full',
-          force: false,
-          repairGeneration: 502,
-          noUpdateScope: 'full:502',
-        },
-      });
-      expect(followup?.id).not.toBe(first.workOrderId);
-      expect(runtime.ownerEventBoardRefreshLedger.findAcceptance(lateBatchId)?.workOrderId).toBe(
-        followup?.id
-      );
-      expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
-    } finally {
-      runtime.routeHandle.stop();
-      runtime.db.close();
-    }
-  });
-
-  it.each(['none', 'failed'] as const)(
-    'TG-06 %s full completion does not hot-loop a later accepted intent without verification',
-    async (effect) => {
-      const runtime = await registerOwnerFullRuntime(effect);
-      try {
-        const firstBatchId = runtime.enqueueOwnerBatch(`evt-${effect}-first`);
-        expect(
-          runtime.ownerRequest('board', {
-            kind: 'owner_event',
-            batchId: firstBatchId,
-            eventIds: [`evt-${effect}-first`],
-          })
-        ).toEqual({ accepted: true });
-
-        let lateBatchId = 0;
-        runtime.duringRun.current = () => {
-          lateBatchId = runtime.enqueueOwnerBatch(`evt-${effect}-late`);
-          expect(
-            runtime.ownerRequest('board', {
-              kind: 'owner_event',
-              batchId: lateBatchId,
-              eventIds: [`evt-${effect}-late`],
-            })
-          ).toEqual({ accepted: true });
-        };
-
-        await runtime.consumer.tick();
-
-        expect(
-          runtime.ownerEventBoardRefreshLedger.findAcceptance(firstBatchId)?.appliedAt
-        ).toBeNull();
-        expect(
-          runtime.ownerEventBoardRefreshLedger.findAcceptance(lateBatchId)?.appliedAt
-        ).toBeNull();
-        expect(runtime.ledger.countPendingWorkOrders()).toBe(0);
-      } finally {
-        runtime.routeHandle.stop();
-        runtime.db.close();
-      }
-    }
-  );
-
-  it.each(['no-update', 'none', 'failed'] as const)(
-    'TG-06 owner full %s effect stays dirty and schedules one repair',
-    async (effect) => {
-      const runtime = await registerOwnerFullRuntime(effect);
-      try {
-        expect(runtime.ownerRequest('board', ['evt-owner-full'])).toEqual({ accepted: true });
-
-        await runtime.consumer.tick();
-
-        expect(runtime.boardRefreshGate.needsFullRepair()).toBe(true);
-        await vi.advanceTimersByTimeAsync(10_000);
-        expect(runtime.ledger.claimNextWorkOrder()).toMatchObject({
-          idempotencyKey: 'board:full:repair',
-          payload: { mode: 'full' },
-        });
-        expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
-      } finally {
-        runtime.routeHandle.stop();
-        runtime.db.close();
-      }
-    }
-  );
 
   it('TG-06 forced agent refresh marks a new host generation before enqueue', async () => {
     const runtime = await registerOwnerFullRuntime('none');

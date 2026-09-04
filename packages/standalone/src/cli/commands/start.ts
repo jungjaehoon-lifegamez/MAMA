@@ -26,7 +26,6 @@ import type {
   AgentContext,
   GatewayToolExecutionContext,
   PrincipalRepository,
-  WorkOrderRequestOrigin,
 } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { PromptEnhancer } from '../../agent/prompt-enhancer.js';
@@ -56,7 +55,7 @@ import type {
   CodeActResult,
   GraphHandlerOptions,
 } from '../../api/graph-api-types.js';
-import Database, { type SQLiteDatabase } from '../../sqlite.js';
+import Database from '../../sqlite.js';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
@@ -136,19 +135,8 @@ import {
 } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
-import {
-  boardManualKey,
-  ownerEventWorkOrderKey,
-  promotionManualKey,
-  validateWorkOrderPayload,
-  wikiBatchKey,
-} from '../../operator/workorder-publishers.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
-import {
-  OwnerEventBoardRefreshLedger,
-  resolveInitialBoardRepairGeneration,
-} from '../../operator/owner-event-board-refresh.js';
 import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
@@ -187,7 +175,6 @@ export function workOrderActivityDetails(
 ): Record<string, unknown> | undefined {
   return event.briefHash ? { brief_hash: event.briefHash } : undefined;
 }
-const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -879,31 +866,6 @@ export function buildSystemAgentProcessDefaults(config: {
   };
 }
 
-const OWNER_BOARD_FULL_REPAIR_CHANNEL = 'host:owner-workorder:board-full';
-
-export function buildOwnerEventBoardRefreshRuntime(
-  operatorDb: SQLiteDatabase,
-  taskLedger: TaskLedger,
-  now: () => number = Date.now
-): {
-  ownerEventBoardRefreshLedger: OwnerEventBoardRefreshLedger;
-  boardRefreshGate: BoardRefreshGate;
-} {
-  const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
-    operatorDb,
-    taskLedger,
-    now
-  );
-  const initialGeneration = resolveInitialBoardRepairGeneration(
-    now(),
-    ownerEventBoardRefreshLedger.maxPendingGeneration()
-  );
-  return {
-    ownerEventBoardRefreshLedger,
-    boardRefreshGate: new BoardRefreshGate({ initialGeneration }),
-  };
-}
-
 export function resolveOwnerEventTerminalReceipt(
   batch: OwnerEventBatch,
   deps: {
@@ -918,7 +880,7 @@ export function resolveOwnerEventTerminalReceipt(
   // on retry. A confirmed telegram_send alone is not a receipt, and the effect
   // ledger's (batch, action_key) idempotency makes that retry safe from a second
   // send. A persisted Board acceptance is no longer a receipt.
-  const ledgerEffects = deps.taskLedger.effectsCausedBy(batch.eventIds);
+  const ledgerEffects = deps.taskLedger.effectsCausedBy(batch.eventIds, batch.createdAt);
   const confirmedEffects = deps.ownerEventEffectLedger
     .confirmedKinds(batch.id)
     .filter((kind) => kind !== 'telegram_send');
@@ -930,94 +892,6 @@ export function resolveOwnerEventTerminalReceipt(
     return { status: 'no_update', tools: [] };
   }
   return null;
-}
-
-export interface OwnerWorkOrderRequestHandlerDeps {
-  taskLedger: TaskLedger;
-  boardRefreshGate: BoardRefreshGate | null;
-  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
-  now?: () => number;
-  log?: (line: string) => void;
-  logError?: (line: string, detail: unknown) => void;
-}
-
-/** Build the enqueue-and-ack handler shared by owner chat and owner-event turns. */
-export function buildOwnerWorkOrderRequestHandler(
-  deps: OwnerWorkOrderRequestHandlerDeps
-): (
-  kind: 'board' | 'wiki' | 'memory-curation',
-  origin?: WorkOrderRequestOrigin
-) => { accepted: boolean; reason?: string } {
-  const now = deps.now ?? Date.now;
-  const log = deps.log ?? ((line: string) => ownerWorkOrderLogger.info(line));
-  const logError =
-    deps.logError ?? ((line: string, detail: unknown) => ownerWorkOrderLogger.error(line, detail));
-
-  return (kind, origin = { kind: 'owner_manual' }) => {
-    try {
-      const requestedAt = now();
-      let idempotencyKey: string;
-      let payload: Record<string, unknown>;
-      if (kind === 'board') {
-        if (!deps.boardRefreshGate) {
-          throw new Error('Board refresh gate is unavailable');
-        }
-        if (origin.kind === 'owner_event') {
-          if (!deps.ownerEventBoardRefreshLedger) {
-            throw new Error('Owner-event Board refresh ledger is unavailable');
-          }
-          const existing = deps.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId);
-          if (existing) {
-            log(`[stage2] owner workorder already accepted: board#${existing.workOrderId}`);
-            return { accepted: true };
-          }
-          deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
-          const accepted = deps.ownerEventBoardRefreshLedger.accept({
-            batchId: origin.batchId,
-            eventIds: origin.eventIds,
-            repair: deps.boardRefreshGate.captureFullRepair(),
-          });
-          log(`[stage2] owner workorder accepted: board#${accepted.workOrderId}`);
-          return { accepted: true };
-        }
-        // TG-06: host dirt is recorded before validation or enqueue can fail.
-        // The fixed synthetic channel never trusts model/event identifiers.
-        deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
-        const repair = deps.boardRefreshGate.captureFullRepair();
-        idempotencyKey = boardManualKey(requestedAt);
-        payload = { mode: 'full', force: true, ...repair };
-      } else if (kind === 'wiki') {
-        if (origin.kind === 'owner_event') {
-          idempotencyKey = ownerEventWorkOrderKey('wiki', origin.eventIds);
-          payload = { batchId: idempotencyKey, events: [...origin.eventIds] };
-        } else {
-          idempotencyKey = wikiBatchKey('manual', requestedAt);
-          payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
-        }
-      } else {
-        idempotencyKey =
-          origin.kind === 'owner_event'
-            ? ownerEventWorkOrderKey('memory-curation', origin.eventIds)
-            : promotionManualKey(requestedAt);
-        payload = { scheduledAt: new Date(requestedAt).toISOString() };
-      }
-      validateWorkOrderPayload(kind, payload);
-      const wo = deps.taskLedger.enqueueWorkOrder({
-        workKind: kind,
-        idempotencyKey,
-        input: payload,
-        priority: 'high',
-      });
-      log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
-      return { accepted: true };
-    } catch (err) {
-      logError(
-        `[stage2] owner workorder enqueue failed (${kind}):`,
-        err instanceof Error ? err.message : err
-      );
-      return { accepted: false, reason: 'enqueue-failed' };
-    }
-  };
 }
 
 /**
@@ -1727,10 +1601,9 @@ export async function runAgentLoop(
   // delta reconcile scheduling; exact owner-event Board acceptance, boot
   // recovery, manual refresh, and full verification share this runtime in all
   // configurations.
-  const { ownerEventBoardRefreshLedger, boardRefreshGate } = buildOwnerEventBoardRefreshRuntime(
-    operatorDb,
-    taskLedger
-  );
+  // Host-owned Board repair gate. Generations are wall time: with the owner-event
+  // intent ledger gone there is no persisted pending generation to seed above.
+  const boardRefreshGate = new BoardRefreshGate({ initialGeneration: Date.now() });
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
@@ -1970,26 +1843,9 @@ export async function runAgentLoop(
         } catch {
           /* telemetry only */
         }
-        if (
-          event.type === 'complete' &&
-          event.workKind === 'board' &&
-          ownerEventBoardRefreshLedger.consumePostTerminalFollowup(event.workOrderId)
-        ) {
-          boardRepairNudge.current?.();
-        }
       },
     });
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
-
-    // Owner-issued workorders (workorder_request tool): enqueue+ack only.
-    // Wired here - NOT inside any trigger-loop block (plan C11 class).
-    toolExecutor.setWorkOrderRequestHandler(
-      buildOwnerWorkOrderRequestHandler({
-        taskLedger,
-        boardRefreshGate,
-        ownerEventBoardRefreshLedger,
-      })
-    );
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const temporalAssembly = assembleDaemonTemporalRuntime({
@@ -2462,7 +2318,6 @@ export async function runAgentLoop(
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
-    ownerEventBoardRefreshLedger,
     requestFullReport: () =>
       triggerLoopFullReport.current?.() ?? { accepted: false, reason: 'unavailable' },
   });

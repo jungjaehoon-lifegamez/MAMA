@@ -1271,7 +1271,8 @@ export async function compileChannelPacket(
     tasks.length === 0 && full.taskCoverage.total > 0
       ? [
           ...full.caveats,
-          `channel_tasks_outside_recency_bound: no task for ${label ?? connector} among the ${full.tasks.length} most recently updated of ${full.taskCoverage.total} open tasks; task_list is allowed for this channel`,
+          // Bounded to the caveat cap (160 chars) even for the longest label.
+          `channel_tasks_outside_recency_bound: ${(label ?? connector).slice(0, 24)} has no task among the ${full.tasks.length} most recent of ${full.taskCoverage.total}; task_list allowed`,
         ]
       : full.caveats;
   const packet: OwnerReportContextV1 = {

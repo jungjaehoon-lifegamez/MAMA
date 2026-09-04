@@ -53,6 +53,8 @@ export interface InboxRow extends InboxBatch {
   id: number;
   status: 'pending' | 'claimed' | 'acked' | 'dead';
   attempts: number;
+  /** Enqueue wall time; bounds which durable effects may count as this batch's receipt. */
+  createdAt: number;
 }
 
 export type OwnerEventBatch = InboxRow;
@@ -64,6 +66,7 @@ interface StoredOwnerEventRow {
   lines_json: string;
   activations_json: string;
   attempts: number;
+  created_at: number;
 }
 
 function deadBatch(row: StoredOwnerEventRow, attempts: number): OwnerEventBatch {
@@ -75,6 +78,7 @@ function deadBatch(row: StoredOwnerEventRow, attempts: number): OwnerEventBatch 
     activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
     status: 'dead',
     attempts,
+    createdAt: row.created_at,
   };
 }
 
@@ -143,7 +147,7 @@ export class OwnerEventInbox {
        VALUES (?, ?, ?, ?, ?)`
     );
     this.stmtClaimSelect = this.db.prepare(
-      `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+      `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
          FROM owner_event_inbox
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ?
         ORDER BY id ASC LIMIT 1`
@@ -257,6 +261,7 @@ export class OwnerEventInbox {
           lines_json: string;
           activations_json: string;
           attempts: number;
+          created_at: number;
         }
       | undefined;
     if (!row) {
@@ -274,6 +279,7 @@ export class OwnerEventInbox {
       activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
       status: 'claimed',
       attempts: row.attempts,
+      createdAt: row.created_at,
     };
   }
 
@@ -326,7 +332,7 @@ export class OwnerEventInbox {
     // finite horizon - no table here grows without bound.
     const stalePending = this.db
       .prepare(
-        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
            FROM owner_event_inbox
           WHERE status = 'pending' AND created_at <= ?
           ORDER BY id ASC`
@@ -338,7 +344,7 @@ export class OwnerEventInbox {
     const cutoff = now - olderThanMs;
     const dying = this.db
       .prepare(
-        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts
+        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
            FROM owner_event_inbox
           WHERE status = 'claimed' AND attempts + 1 >= ${MAX_ATTEMPTS}
             AND COALESCE(claimed_at, 0) <= ?

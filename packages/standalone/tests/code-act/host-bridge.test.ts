@@ -768,23 +768,6 @@ describe('HostBridge', () => {
         returnType: '{ message: string }',
         category: 'os',
       });
-      expect(registry.get('workorder_request')).toMatchObject({
-        params: [
-          {
-            name: 'kind',
-            type: "'board' | 'wiki' | 'memory-curation'",
-            required: true,
-          },
-        ],
-        returnType: '{ message: string }',
-        category: 'os',
-      });
-      expect(registry.get('workorder_status')).toMatchObject({
-        params: [],
-        returnType: expect.stringContaining('failedCount'),
-        category: 'os',
-      });
-      expect(registry.get('workorder_status')?.returnType).toContain("'temporal'");
     });
 
     it('TG-03/TG-04 advertises the canonical four-slot report vocabulary', () => {

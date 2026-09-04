@@ -22,10 +22,6 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   'console_brief_update',
   // fire-and-forget into another model turn = a second judgment surface
   'report_request',
-  // delegation no longer completes a batch (owner-event-outcome.ts); a callable tool
-  // that never completes only burns a turn. Task 4 deletes the tools themselves.
-  'workorder_request',
-  'workorder_status',
   // not in the completion set (owner-event-outcome.ts) and not receipted anywhere the
   // crash-recovery resolver can read: `obsidian` covers reads as well as writes, and
   // drive_translate_conti uploads outside the owner-event effect ledger, so a retry

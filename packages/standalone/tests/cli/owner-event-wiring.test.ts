@@ -3,7 +3,6 @@ import Database from '../../src/sqlite.js';
 import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
-import { OwnerEventBoardRefreshLedger } from '../../src/operator/owner-event-board-refresh.js';
 import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
 import { OwnerEventLoop } from '../../src/operator/owner-event-loop.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
@@ -167,12 +166,11 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     registry.close();
   });
 
-  it('a persisted Board acceptance is not a terminal receipt: the model is woken', async () => {
+  it('a batch with no durable receipt wakes the model', async () => {
     const db = new Database(':memory:');
     const taskLedger = new TaskLedger(db);
     const inbox = new OwnerEventInbox(db);
     const effects = new OwnerEventEffectLedger(db);
-    const boardIntents = new OwnerEventBoardRefreshLedger(db, taskLedger);
     const batchId = inbox.enqueue({
       channelKey: 'chatwork:feedback',
       eventIds: ['evt-restart'],
@@ -180,11 +178,6 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       activations: [],
     });
     if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
-    boardIntents.accept({
-      batchId,
-      eventIds: ['evt-restart'],
-      repair: { repairGeneration: 20, noUpdateScope: 'full:20' },
-    });
     const runner = {
       run: vi.fn(async () => ({
         response: 'updated',

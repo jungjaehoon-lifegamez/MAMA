@@ -100,6 +100,8 @@ export const TEMPORAL_WORKORDER_MAX_ATTEMPTS = 3;
 
 /** source_channel namespace for workorder rows: 'workorder:<workKind>'. */
 export const WORKORDER_CHANNEL_PREFIX = 'workorder:';
+/** SQL variable chunk for cause lookups (SQLite default limit is 999). */
+const EFFECT_CAUSE_CHUNK = 500;
 const KNOWN_WORKORDER_CHANNELS = WORKORDER_KINDS.map(
   (workKind) => `${WORKORDER_CHANNEL_PREFIX}${workKind}`
 );
@@ -2448,21 +2450,30 @@ export class TaskLedger implements TaskSource {
    * The owner-event crash-recovery receipt reads it: a ledger write that named
    * the batch's events is a durable outcome even when the run died afterwards.
    */
-  effectsCausedBy(eventIds: readonly string[]): string[] {
+  effectsCausedBy(eventIds: readonly string[], sinceMs = 0): string[] {
     const ids = [...new Set(eventIds.filter((id) => typeof id === 'string' && id.length > 0))];
     if (ids.length === 0) return [];
-    const rows = this.db
-      .prepare(
-        `SELECT DISTINCT effect_kind FROM evidence_effects
-          WHERE cause_state = 'attributed'
-            AND EXISTS (
-              SELECT 1 FROM json_each(evidence_effects.source_event_ids_json)
-               WHERE json_each.value IN (${ids.map(() => '?').join(', ')})
-            )
-          ORDER BY effect_kind ASC`
-      )
-      .all(...ids) as Array<{ effect_kind: string }>;
-    return rows.map((row) => row.effect_kind);
+    const kinds = new Set<string>();
+    // Chunked like the inbox's SEEN_CHUNK: a backfill batch must not hit SQLite's
+    // variable limit and abort the whole tick. Time-bounded to the batch: effects are
+    // never pruned, inbox dedupe is, so a re-delivered old event must not match its
+    // own year-old effect row and skip the model.
+    for (let offset = 0; offset < ids.length; offset += EFFECT_CAUSE_CHUNK) {
+      const chunk = ids.slice(offset, offset + EFFECT_CAUSE_CHUNK);
+      const rows = this.db
+        .prepare(
+          `SELECT DISTINCT effect_kind FROM evidence_effects
+            WHERE cause_state = 'attributed'
+              AND created_at >= ?
+              AND EXISTS (
+                SELECT 1 FROM json_each(evidence_effects.source_event_ids_json)
+                 WHERE json_each.value IN (${chunk.map(() => '?').join(', ')})
+              )`
+        )
+        .all(sinceMs, ...chunk) as Array<{ effect_kind: string }>;
+      for (const row of rows) kinds.add(row.effect_kind);
+    }
+    return [...kinds].sort();
   }
 
   /** Of what this system changed, how much rests on evidence. */

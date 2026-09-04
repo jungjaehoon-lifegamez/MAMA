@@ -59,8 +59,8 @@ failure.
 
 ## Procedure recipes (grow this section from experience)
 
-- Status questions: artifacts first (board_read, workorder_status,
-  audit_findings_read), then live queries; memory recall last and cited.
+- Status questions: artifacts first (board_read, audit_findings_read), then
+  live queries; memory recall last and cited.
 - Business data: use only tools present in the current run catalog. Start with
   a broad summary, narrow to active entities or tasks, then inspect specific
   channels without widening a supplied time window.
