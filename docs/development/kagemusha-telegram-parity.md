@@ -944,6 +944,22 @@ completions, 90 `acted via telegram_send`, 65 `no_update`, 45 `dead` in the curr
 Live inbox at the time of writing (`owner_event_inbox`): 185 acked, 45 dead. All 45 dead rows
 carry a Claude CLI usage-limit error, not a code failure; 0.41.0 does not replay them.
 
+Installed on the daemon 2026-09-04 04:13Z (cutover: `VACUUM INTO` backups of the three databases,
+`npm install -g @jungjaehoon/mama-os@0.41.0`, launchd restart; health 98, owner-event agent and
+trigger loop enabled; schema 65). First observations, all from the daemon log and the operator
+databases, no scratch scripts:
+
+- Boot board full run (`board#4401`, agent `mama-owner`): the host published the `pipeline` slot
+  at 04:14:48Z BEFORE the model run; the run made 9 `task_update` effects (`cause_state=
+unattributed, cause_kind=clock`, correct for `board:full`), published `briefing, action_required,
+decisions` and completed at 04:20Z. Zero `[envelope] scope mismatch` lines since boot (the
+  previous log had one per board run). One `code_act` failure since boot was
+  `connector_out_of_scope` on the wiki turn: the boundary that keeps private connectors out of
+  the wiki envelope refused a read, as designed.
+- Owner-event lane: connectors polled at 04:18-04:19Z; no new delta had arrived by 04:25Z, so
+  acceptance 1 is not yet observable. The 45 dead rows (Claude CLI usage-limit failures under
+  0.40.0) remain dead and are not replayed.
+
 Installed acceptance (to be recorded after cutover):
 
 - [ ] Acceptance 1: one connector delta produces a `task_create`/`task_update` with an
