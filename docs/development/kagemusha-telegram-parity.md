@@ -1002,6 +1002,26 @@ Installed acceptance (to be recorded after cutover):
 - [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
       lane collapse (already merged behind the same release) is re-argued before Phase 2.
 
+## 0.44.0: 2026-09-04 (installed 09:56Z)
+
+PR #254 (squash e099373a), tag v0.44.0, publish.yml published mama-os 0.44.0 (`^2.3.0`,
+mama-core unchanged). The owner chat turn holds the gateway `Bash`/`Write`; every unattended
+turn blocks both by name. Review record: Opus found the budget-stopped turn counted zero
+tokens and the day guard blocked failed rows (859f6fe8); CodeRabbit found neither
+`agent.prompt()` call passed the budget, so the in-turn enforcement shipped in fd0184e3 was
+dead in the loop (1503871c, source-pinned).
+
+- [x] Self-check re-enqueue: before the install the old process created a self-check order every
+      two minutes (36 done + 2 failed on 2026-09-04); after the 09:56:26Z boot, zero new orders
+      in the next eight minutes, and none through the 10:04Z restart.
+- [x] Run budget: `run_token_budget: 0` removed from `config.yaml`, daemon restarted 10:04:24Z on
+      the 3,000,000 default. The first board run (order 4472) completed, counting 1,520,382
+      tokens in its single codex turn; no budget stop was logged after the boot (the five in
+      the log predate it). The same turn was cut at 400,000 on 0.43.0.
+- [ ] A budget stop that is a real receipt on a run that deserved it (none has occurred yet).
+- Note: the operating brief lives at `~/.mama/briefs/brief-owner-console.md`; the earlier
+  `operator/console-brief.md` path in CLAUDE.md was wrong and is corrected.
+
 ## One MAMA Phase 3: 2026-09-04 (release 0.43.0 / mama-core 2.3.0, installed)
 
 PR #253 (squash 3494ac50), tag v0.43.0, publish.yml published mama-core 2.3.0 then mama-os
