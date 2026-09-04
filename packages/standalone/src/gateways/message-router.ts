@@ -45,6 +45,10 @@ import {
 } from '../memory/audit-task-queue.js';
 import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { buildLearningContext, formatLearningAuditLine } from '../operator/learning-context.js';
+import { cappedLearningReader } from '../operator/learning-read.js';
+import { observeOwnerTurn } from '../operator/turn-observer.js';
+import { loadLearningMarkers } from '../operator/learning-markers.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import {
@@ -1349,6 +1353,12 @@ This protects your credentials from being exposed in chat logs.`;
           !isPublicLane && enhanced.skillContent
             ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
             : '';
+        // Owner policy and lessons ride the user message for the same reason skills do:
+        // a persistent CLI session cannot change its system prompt after creation.
+        const learningPrefix =
+          !isPublicLane && agentContext.roleName === 'owner_console'
+            ? await this.buildLearningPrefix(message)
+            : '';
         if (!isPublicLane && enhanced.skillContent) {
           logger.info(
             `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
@@ -1533,7 +1543,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
+          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1579,7 +1589,7 @@ This protects your credentials from being exposed in chat logs.`;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
+          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -1735,6 +1745,21 @@ This protects your credentials from being exposed in chat logs.`;
         if (!persisted) {
           throw new Error('Unable to persist final assistant response');
         }
+      }
+      if (
+        (message.principal?.lane ?? 'owner') !== 'public' &&
+        response &&
+        message.text &&
+        agentContext.roleName === 'owner_console'
+      ) {
+        // Owner corrections and rules become lesson:/policy: rows (turn-observer.ts).
+        // Only AFTER the reply persisted (a failed persist throws above): a turn that did
+        // not commit must not leave standing instructions for later prompts.
+        void this.observeOwnerLearning(message).catch((error: unknown) => {
+          logger.warn(
+            `[learning] observer failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
       }
       if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
         try {
@@ -2348,6 +2373,78 @@ INSTRUCTION:
             `[channel-summary] Failed: ${error instanceof Error ? error.message : String(error)}`
           );
         });
+    }
+  }
+
+  /** Classify a committed owner message and save a policy:/lesson: row when it carries one. */
+  private async observeOwnerLearning(message: NormalizedMessage): Promise<void> {
+    if (!this.mamaApi.saveMemory || !this.mamaApi.queryRelevantTruth) {
+      return;
+    }
+    const scopes = deriveMemoryScopes({
+      source: message.source,
+      channelId: message.channelId,
+      projectId: this.getRuntimeProjectId(),
+    });
+    const result = await observeOwnerTurn({
+      userMessage: message.text,
+      scopes,
+      source: {
+        package: 'standalone',
+        source_type: message.source,
+        channel_id: message.channelId,
+        project_id: this.getRuntimeProjectId(),
+      },
+      markers: loadLearningMarkers(),
+      turnCommitted: true,
+      save: async (input) => {
+        const saved = await this.mamaApi.saveMemory!(input);
+        return { memoryId: saved.id };
+      },
+      // Exact-topic lookup over the active rows in scope. Not capped: a cap keeps the newest
+      // rows and could drop an older exact match, turning a dedupe into a duplicate.
+      findExisting: async (topic) => {
+        const rows = await this.mamaApi.queryRelevantTruth!({ query: '', scopes });
+        const hit = rows.find((row) => row.topic === topic);
+        return hit ? { memory_id: hit.memory_id } : null;
+      },
+      // A repeat carries the same normalized text (that is what the topic hash pins), so the
+      // existing row already says it; dedupe needs no rewrite.
+    });
+    if (result.kind !== 'none') {
+      logger.info(
+        `[learning] observed kind=${result.kind} topic=${result.topic} deduped=${result.deduped === true} (${result.reason})`
+      );
+    }
+  }
+
+  /** <policy>/<lessons> for an owner chat turn, or '' (learning-context.ts). */
+  private async buildLearningPrefix(message: NormalizedMessage): Promise<string> {
+    if (!this.mamaApi.queryRelevantTruth) {
+      return '';
+    }
+    try {
+      const scopes = deriveMemoryScopes({
+        source: message.source,
+        channelId: message.channelId,
+        projectId: this.getRuntimeProjectId(),
+      });
+      const context = await buildLearningContext({
+        scopes,
+        query: message.text.slice(0, 500),
+        readClaims: cappedLearningReader(
+          (params) => this.mamaApi.queryRelevantTruth!(params),
+          (line) => logger.info(line)
+        ),
+      });
+      const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
+      logger.info(formatLearningAuditLine('chat', channelScopeId, context));
+      return context.promptBlock ? `${context.promptBlock}\n\n` : '';
+    } catch (error) {
+      logger.warn(
+        `[learning] chat prefix failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return '';
     }
   }
 

@@ -2958,6 +2958,33 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('ONE-MAMA-P2 Task 2: learning topics are host-owned', () => {
+      it('AC #6 refuses mama_save on policy:/lesson: topics (mama_update carries no topic)', async () => {
+        const executor = new GatewayToolExecutor({
+          envelopeIssuanceMode: 'off',
+          privateConnectorPolicy: resolvePrivateConnectorPolicy({
+            ok: true,
+            config: {},
+            enabledNames: [],
+          }),
+        });
+        const save = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: 'policy:lifecycle-abc',
+          decision: 'treat as done',
+          reasoning: 'agent says so',
+        } as never);
+        expect(save).toMatchObject({ success: false, code: 'learning_topic_refused' });
+        const lesson = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: ' Lesson:report-abc',
+          decision: 'x',
+          reasoning: 'y',
+        } as never);
+        expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
+      });
+    });
+
     describe('Story GT-SEC-1: Bash safety checks', () => {
       describe('AC #1: dangerous Bash commands are blocked', () => {
         it.each([

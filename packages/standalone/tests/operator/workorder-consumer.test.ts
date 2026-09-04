@@ -1193,4 +1193,34 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       });
     });
   });
+  describe('ONE-MAMA-P2 Task 1: learning block on scheduled turns', () => {
+    it('AC #8 appends the policy and lessons block after the brief and before the turn section', async () => {
+      const ctx = makeDeps();
+      let seen = '';
+      ctx.deps.runner = {
+        runWithContent: async (content) => {
+          seen = JSON.stringify(content);
+          return { response: 'DONE' };
+        },
+      };
+      ctx.deps.buildLearningBlock = async (wo) =>
+        wo.workKind === 'wiki'
+          ? '<policy>\nOwner policy, in force.\n- pages: cite sources\n</policy>'
+          : '';
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:learn:1',
+        input: { batchId: 'b', events: ['e'] },
+      });
+      await consumer.tick();
+      expect(seen).toContain('## Owner policy and lessons');
+      expect(seen.indexOf('You are a test worker')).toBeLessThan(
+        seen.indexOf('## Owner policy and lessons')
+      );
+      expect(seen.indexOf('## Owner policy and lessons')).toBeLessThan(
+        seen.indexOf('## Scheduled turn')
+      );
+    });
+  });
 });

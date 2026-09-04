@@ -98,4 +98,46 @@ describe('Story TG-03/TG-04: MAMA owner-event prompt', () => {
       })
     ).not.toContain('## Channel packet');
   });
+  it('ONE-MAMA-P2 Task 1 AC #7: places owner policy and lessons after the brief, above external data', () => {
+    const prompt = buildOwnerEventPrompt({
+      batch: {
+        id: 44,
+        channelKey: 'trello:board',
+        eventIds: ['evt-1'],
+        lines: ['- card moved'],
+        activations: [],
+        status: 'claimed',
+        attempts: 0,
+        createdAt: 0,
+      },
+      ownerBrief: 'brief text',
+      learning: '<policy>\nOwner policy, in force.\n- lifecycle: done after review\n</policy>',
+    });
+    expect(prompt).toContain('## Owner policy and lessons');
+    expect(prompt.indexOf('brief text')).toBeLessThan(
+      prompt.indexOf('## Owner policy and lessons')
+    );
+    expect(prompt.indexOf('## Owner policy and lessons')).toBeLessThan(
+      prompt.indexOf('## Matched installed skill')
+    );
+    expect(prompt.indexOf('## Owner policy and lessons')).toBeLessThan(
+      prompt.indexOf('<<<UNTRUSTED-CONTENT')
+    );
+    expect(
+      buildOwnerEventPrompt({
+        batch: {
+          id: 45,
+          channelKey: 'trello:board',
+          eventIds: [],
+          lines: [],
+          activations: [],
+          status: 'claimed',
+          attempts: 0,
+          createdAt: 0,
+        },
+        ownerBrief: 'b',
+        learning: '',
+      })
+    ).not.toContain('## Owner policy and lessons');
+  });
 });

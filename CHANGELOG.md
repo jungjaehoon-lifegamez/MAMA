@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.42.0] - 2026-09-04
+
+One MAMA, Phase 2 (learning loop). Conversation now changes operations: what the owner
+corrects or rules in chat reaches the next event, scheduled and chat turn as injected policy
+and lessons. Workflow contracts (Kagemusha's trigger-to-procedure runtime) are deferred until
+an owner instruction is measured that policy injection could not carry.
+
+### Added
+
+- **Owner policy and lessons reach every turn.** `policy:` memory rows (rules in force for the
+  turn's project or channel) render unconditionally, `lesson:` rows (corrections bound to the
+  turn's channel) render ranked and bounded, into a `<policy>`/`<lessons>` block appended after
+  the operating brief on event, scheduled and owner chat turns. Rendered values are
+  markup-escaped and lines are budgeted before assembly, so stored text can neither forge nor
+  truncate a block. Reads go through one capped reader (newest 200 rows) and each turn logs a
+  `[learning] turn=... policyIds=[...] lessonIds=[...]` audit line.
+- **Owner corrections and rules become lessons and policies.** After a committed owner chat
+  reply, the host classifies the owner's message with a marker vocabulary (English defaults in
+  source; the owner's language in `~/.mama/operator/locale.json` under `learningMarkers`): a
+  durable rule plus a topic noun becomes a `policy:<noun>-<hash>` row (kind decision), a
+  correction becomes a `lesson:<noun>-<hash>` row (kind lesson), a one-off veto ("this time")
+  blocks both. The topic hash is stable per channel and normalized text, so a repeated
+  instruction is one row. A rule is written project-wide (no channel scope) so event and
+  scheduled turns read it; a correction stays bound to the channel it was given in. The host is
+  the only writer: `mama_save` and the `/graph/ingest` `topicPrefix` refuse `policy:`/`lesson:`
+  topics (`learning_topic_refused`), so neither an agent nor an API caller can grant standing
+  instructions. One scan per turn feeds both blocks (the truth query has no LIMIT; the 200-row
+  cap bounds the prompt, not the scan).
+
 ## mama-os [0.41.0] - 2026-09-04
 
 One MAMA, Phase 1 (Tasks 1-3). The owner-event turn - the run that judges every connector
