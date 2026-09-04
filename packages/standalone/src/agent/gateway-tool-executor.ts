@@ -3554,8 +3554,8 @@ export class GatewayToolExecutor {
             order?: string;
             cursor?: string;
           };
-          // total/returned/nextCursor ride with the rows: a bounded read (default 50,
-          // max 200) is otherwise indistinguishable from the whole board, and a report
+          // total/returned/nextCursor ride with the rows: a read with a caller-passed
+          // limit is otherwise indistinguishable from the whole board, and a report
           // that says "the open items are..." from one page states more than it read.
           const page = this.taskLedger.listPage({
             status: listInput.status as never,

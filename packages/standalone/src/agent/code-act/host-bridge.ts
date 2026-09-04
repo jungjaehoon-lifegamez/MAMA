@@ -622,7 +622,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'List work items from YOUR task board - you maintain it, the owner only views it (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. With no limit it returns the whole board. Pass limit and cursor only when you want a page; include_terminal:false hides done/cancelled.',
+      'List work items from YOUR task board - you maintain it, the owner only views it (order: deadline asc nulls-last, then priority). With no limit it returns the whole board. Pass limit and cursor only when you want a page; include_terminal:false hides done/cancelled.',
     params: [
       { name: 'status', type: 'string', required: false },
       {

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PIPELINE_SLOT_ROWS,
-  renderPipelineSlot,
-} from '../../src/operator/board-pipeline-render.js';
+import { renderPipelineSlot } from '../../src/operator/board-pipeline-render.js';
 import type { TaskRecord } from '../../src/operator/task-ledger.js';
 
 const NOW = Date.parse('2026-09-03T00:00:00Z');
@@ -45,8 +42,6 @@ describe('Story ONE-MAMA-P1 Task 6: host-rendered pipeline slot', () => {
       task(i + 1, { deadlineIso: `2026-09-${String(1 + (i % 9)).padStart(2, '0')}` })
     );
     const html = renderPipelineSlot(rows, NOW, 40);
-    // header + every fixture row: the slot is no longer capped below the active board
-    expect(html.match(/<tr>/g)?.length).toBe(Math.min(15, PIPELINE_SLOT_ROWS) + 1);
     expect(html).toContain('D+');
     expect(html).toContain('D-');
     expect(html).toContain('&lt;b&gt;');

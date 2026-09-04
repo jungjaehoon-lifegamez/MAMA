@@ -136,7 +136,7 @@ describe('createReportPublisher', () => {
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    expect(publish({ ok: '<p>x</p>', huge: 'x'.repeat(70_000) })).toEqual({
+    expect(publish({ ok: '<p>x</p>', huge: 'x'.repeat(600_000) })).toEqual({
       acceptedSlotIds: ['ok'],
       changedSlotIds: ['ok'],
     });
@@ -225,7 +225,7 @@ describe('createReportPublisher', () => {
         pipeline: '<p>new</p>',
         briefing: '<p>same</p>',
         decisions: '<p>changed</p>',
-        oversized: 'x'.repeat(70_000),
+        oversized: 'x'.repeat(600_000),
       })
     ).toEqual({
       acceptedSlotIds: ['briefing', 'decisions', 'pipeline'],
@@ -263,7 +263,7 @@ describe('createReportPublisher', () => {
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    expect(publish({ pipeline: 'x'.repeat(70_000) })).toEqual({
+    expect(publish({ pipeline: 'x'.repeat(600_000) })).toEqual({
       acceptedSlotIds: [],
       changedSlotIds: [],
     });

@@ -395,7 +395,7 @@ describe('compileOwnerReportContext', () => {
     expect(packet.caveats).not.toContain('task_set_truncated');
   });
 
-  it('ranks the bounded active task set by recency so current work is never displaced by stale deadlines', async () => {
+  it('ranks the whole active task set by recency so current work is never displaced by stale deadlines', async () => {
     // Real data (2026-09-02): 264 open tasks, deadline-first ranking put zero tasks
     // updated in the last week and zero in_progress rows into the 50-row packet.
     const inputs: Array<Parameters<OwnerReportContextDeps['listTaskPage']>[0]> = [];
@@ -791,18 +791,24 @@ describe('compileOwnerReportContext', () => {
     expect(serializeOwnerReportContext(packet)).toContain(ordinary);
   });
 
-  it('deterministically reduces oversized content to the 96 KiB packet ceiling', async () => {
-    const huge = 'é'.repeat(60_000);
+  it('deterministically reduces oversized content to the 512 KiB packet ceiling', async () => {
+    const huge = '\u00e9'.repeat(300_000); // two UTF-8 bytes per char; ASCII source
+    // Claims are capped at 30 and clipped, so only the uncapped task list can carry a
+    // packet past 512 KiB: 700 rows of ~1 KB. The removers then shed claims before tasks.
+    const manyTasks = Array.from({ length: 700 }, (_, index) =>
+      task(index + 1, { title: `${index}-${'x'.repeat(995)}` })
+    );
     const packet = await compile({
       readClaims: async () =>
         Array.from({ length: 30 }, (_, index) => ({
           ...claim(`claim-${index}`, NOW - index),
           effective_summary: `${index}:${huge}`,
         })),
+      listTaskPage: () => ({ tasks: manyTasks, total: 700, returned: 700, nextCursor: null }),
     });
     const serialized = serializeOwnerReportContext(packet);
 
-    expect(Buffer.byteLength(serialized)).toBeLessThanOrEqual(96 * 1024);
+    expect(Buffer.byteLength(serialized)).toBeLessThanOrEqual(512 * 1024);
     expect(packet.packet.truncated).toBe(true);
     expect(packet.sources.claims.state).toBe('partial');
     expect(packet.caveats).toContain('packet_size_truncated');
@@ -846,48 +852,13 @@ describe('compileOwnerReportContext', () => {
       })
     );
 
-    expect(Buffer.byteLength(serializeOwnerReportContext(packet))).toBeLessThanOrEqual(96 * 1024);
+    expect(Buffer.byteLength(serializeOwnerReportContext(packet))).toBeLessThanOrEqual(512 * 1024);
     expect(packet.packet.truncated).toBe(true);
   });
 
-  it('recomputes correlation coverage whenever size reduction removes correlation rows', async () => {
-    const rows = Array.from({ length: 50 }, (_, index) =>
-      task(index + 1, { title: `${index}-${'x'.repeat(995)}` })
-    );
-    const packet = await compileOwnerReportContext(
-      {
-        readScope: SCOPE,
-        windowEvidence: denseWindow(false),
-        since: '2026-09-01T03:04:05.000Z',
-      },
-      deps({
-        readClaims: async () => [],
-        listTaskPage: () => ({ tasks: rows, total: 50, returned: 50, nextCursor: null }),
-        correlate: (input) => correlations(input.rows as TaskRecord[]),
-        readTrello: async () => trelloSnapshot({ columns: [] }),
-        readChanges: () => ({
-          success: true,
-          since: '2026-09-01T03:04:05.000Z',
-          total: 0,
-          returned: 0,
-          coverage: { attributed: 0, unattributed: 0 },
-          changes: [],
-        }),
-      })
-    );
-
-    expect(packet.packet.truncated).toBe(true);
-    expect(packet.correlations.rows.length).toBeLessThan(50);
-    expect(packet.correlations.coverage.total).toBe(packet.correlations.rows.length);
-    expect(
-      packet.correlations.coverage.matched +
-        packet.correlations.coverage.unmatched +
-        packet.correlations.coverage.ambiguous +
-        packet.correlations.coverage.historical_only +
-        packet.correlations.coverage.not_applicable
-    ).toBe(packet.correlations.rows.length);
-  });
-
+  // 'recomputes correlation coverage whenever size reduction removes correlation rows' was
+  // deleted on 2026-09-04: with every collection but tasks capped, the largest valid packet
+  // is ~524,225 bytes, under the 512 KiB ceiling, so the correlation remover cannot run.
   it('fails closed before reads when the host scope or window schema is invalid', async () => {
     await expect(
       compileOwnerReportContext(
@@ -931,9 +902,9 @@ describe('compileOwnerReportContext', () => {
     );
   });
 
-  it('rejects a directly supplied packet above the 96 KiB serialization ceiling', async () => {
+  it('rejects a directly supplied packet above the 512 KiB serialization ceiling', async () => {
     const packet = await compile();
-    packet.currentClaims[0].summary = 'x'.repeat(100_000);
+    packet.currentClaims[0].summary = 'x'.repeat(600_000);
 
     expect(() => serializeOwnerReportContext(packet)).toThrow(
       'Invalid owner report context packet'
@@ -995,7 +966,7 @@ describe('compileOwnerReportContext', () => {
     expect(packet.packet.bytes).toBe(Buffer.byteLength(serializeOwnerReportContext(packet)));
   });
 
-  it('names the channel when the recency bound left it with no rows', async () => {
+  it('names the channel when the board has no task for it', async () => {
     const rows = [task(1, { sourceChannel: 'slack:C1', status: 'pending' })];
     const packet = await compileChannelPacket(
       {
@@ -1013,13 +984,13 @@ describe('compileOwnerReportContext', () => {
     expect(packet.tasks).toEqual([]);
     expect(
       packet.caveats.some((line) =>
-        line.startsWith('channel_tasks_outside_recency_bound: trello has no task')
+        line.startsWith('channel_has_no_matching_task: trello has no task')
       )
     ).toBe(true);
     expect(packet.caveats.some((line) => line.includes('task_list allowed'))).toBe(true);
     // The packet validator caps every caveat at 160 chars; overflow drops the whole packet.
     expect(packet.caveats.every((line) => line.length <= 160)).toBe(true);
-    expect(serializeOwnerReportContext(packet)).toContain('channel_tasks_outside_recency_bound');
+    expect(serializeOwnerReportContext(packet)).toContain('channel_has_no_matching_task');
   });
 
   it('keeps every row when the channel connector is unknown to the label map', async () => {
