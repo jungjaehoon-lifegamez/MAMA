@@ -181,6 +181,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'console_brief_update',
         'mama_save',
         'mama_update',
+        'file_export',
         'code_act',
       ],
       blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],

@@ -137,6 +137,7 @@ import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import {
   ensureOperationalIssuesTable,
+  getOperationalIssue,
   listOpenOperationalIssues,
   recordOperationalIssue,
   setOperationalIssueStatus,
@@ -1794,8 +1795,9 @@ export async function runAgentLoop(
       const deltas = (
         mamaCore
           .getAdapter()
+          // indexed_at is ISO text (migration 030); an integer would compare below every row.
           .prepare(`SELECT count(*) AS n FROM connector_event_index WHERE indexed_at >= ?`)
-          .get(dayAgo) as { n?: number } | undefined
+          .get(new Date(dayAgo).toISOString()) as { n?: number } | undefined
       )?.n;
       if (created === 0 && typeof deltas === 'number' && deltas > 0) {
         lastStagnationRecordAt = now;
@@ -1847,6 +1849,7 @@ export async function runAgentLoop(
     });
   };
   toolExecutor.setRepairControls({
+    issueExists: (issueId) => getOperationalIssue(issueDb as never, issueId) !== null,
     setIssueStatus: (issueId, status) =>
       setOperationalIssueStatus(issueDb as never, issueId, status),
     notifyOwner: async (line) => {
@@ -1992,7 +1995,7 @@ export async function runAgentLoop(
         return build(wo.workKind, scope.memory_scopes, wo.workKind);
       },
       selfCheckInput: () => ({
-        openIssues: listOpenOperationalIssues(issueDb as never, 20).map((issue) => ({
+        openIssues: listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
           issueId: issue.issueId,
           surface: issue.surface,
           severity: issue.severity,
@@ -2310,7 +2313,7 @@ export async function runAgentLoop(
       // Scope-independent packet readers, shared by the report leg and the event turn.
       const reportContextDeps: OwnerReportContextDeps = {
         readOperationalIssues: () =>
-          listOpenOperationalIssues(issueDb as never, 20).map((issue) => ({
+          listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
             issueId: issue.issueId,
             surface: issue.surface,
             severity: issue.severity,

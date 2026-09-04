@@ -1270,4 +1270,25 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       expect(seen).toContain('## Turn: self-check');
     });
   });
+  describe('ONE-MAMA-P3 Task 4: budget stop on a scheduled turn', () => {
+    it('AC #3 a budget-stopped run is retried with the reason, not judged on its partial response', async () => {
+      const ctx = makeDeps();
+      ctx.deps.runner = {
+        runWithContent: async () => ({ response: 'DONE (partial)', stoppedBy: 'budget' as const }),
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:budget:1',
+        input: { batchId: 'b', events: ['e'] },
+      });
+      await consumer.tick();
+      expect(
+        ctx.events.some(
+          (e) => e.type !== 'complete' && 'reason' in e && String(e.reason).includes('token budget')
+        )
+      ).toBe(true);
+      expect(ctx.events.some((e) => e.type === 'complete' && e.workOrderId === wo.id)).toBe(false);
+    });
+  });
 });

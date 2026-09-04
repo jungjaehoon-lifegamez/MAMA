@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (Phase 3)
+## mama-os [0.43.0] / mama-core [2.3.0] - 2026-09-04
 
-One MAMA, Phase 3 (capabilities and self-diagnosis), in progress.
+One MAMA, Phase 3 (capabilities and self-diagnosis). The agent can make a file the owner
+receives, sees its own failures as evidence in every packet, files repair requests for code
+defects from a daily self-check turn, and stops a run that crosses its token budget with a
+receipt. mama-core 2.3.0 carries migration 066 (`awareness_operational_issues`).
 
 ### Added
 
@@ -37,6 +40,7 @@ name, columns?, rows?, content?})` writes under the private workspace exports fo
   response with `stoppedBy: 'budget'`, and the host records a `run_budget_stop` effect and a
   `budget` operational issue. An owner-event batch stopped this way stays retryable with a
   named reason; one completed by a ledger change before the stop still completes.
+
 ## mama-os [0.42.0] - 2026-09-04
 
 One MAMA, Phase 2 (learning loop). Conversation now changes operations: what the owner

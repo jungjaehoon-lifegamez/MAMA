@@ -342,6 +342,15 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
 - **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`
   (fire-and-forget into the real report machinery). `workorder_request`/`workorder_status` were
   deleted in v0.41.0 (One MAMA): scheduled work is host-published, never agent-delegated.
+- **Capabilities and self-diagnosis (v0.43.0, One MAMA Phase 3):** `file_export` writes a csv/md
+  under `~/.mama/workspace/exports/` with a `file_export` effect receipt (deliver with
+  `telegram_send(file_path)`); every gateway failure, envelope scope mismatch, dead owner-event
+  batch and ledger stagnation lands in `awareness_operational_issues` (mama-core migration 066,
+  `observability/operational-issues.ts`, redacted, aggregated by signature) and rides in every
+  packet as `operationalIssues`; a daily `self-check` turn triages them with `repair_request`
+  (bundle under `~/.mama/repairs/`, OUTSIDE the workspace so it cannot be sent out) and
+  `issue_close`; `agent.run_token_budget` (default 400000, includes cache tokens) stops a run
+  with a `run_budget_stop` receipt. The agent never edits or restarts its own daemon.
 - **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
   callers only, never from inside an active lane run (deadlock seal).
 - **Stage 2 workorder pipeline** (the ONLY system run path since v0.28.0; the

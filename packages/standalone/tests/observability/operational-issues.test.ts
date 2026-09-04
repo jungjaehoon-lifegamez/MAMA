@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   closeOperationalIssue,
   ensureOperationalIssuesTable,
+  getOperationalIssue,
   listOpenOperationalIssues,
   recordOperationalIssue,
   redactIssueError,
@@ -152,6 +153,25 @@ describe('Story ONE-MAMA-P3 Task 2: operational issues', () => {
       'i1',
     ]);
     expect(listOpenOperationalIssues(adapter(), 2).map((r) => r.signature)).toEqual(['e2', 'e1']);
+    // an old error is never hidden behind newer info rows, and minSeverity skips info
+    for (let i = 0; i < 80; i += 1) {
+      recordOperationalIssue(adapter(), {
+        surface: 'gateway',
+        signature: `noise-${i}`,
+        severity: 'info',
+        error: 'x',
+        nowMs: 100 + i,
+      });
+    }
+    expect(listOpenOperationalIssues(adapter(), 3).map((r) => r.signature)).toEqual([
+      'e2',
+      'e1',
+      'w1',
+    ]);
+    expect(listOpenOperationalIssues(adapter(), 20, 'warn').map((r) => r.severity)).not.toContain(
+      'info'
+    );
+    expect(getOperationalIssue(adapter(), 'iss_nope')).toBeNull();
   });
 
   it('AC #7 closing an unknown id throws; a recurrence reopens a closed issue', () => {

@@ -3,6 +3,7 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { describe, it, expect, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -11,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
 import Database from '../../src/sqlite.js';
-import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { getMemberCandidateStore } from '../../src/gateways/member-candidate-store.js';
@@ -2963,16 +2963,6 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     describe('ONE-MAMA-P2 Task 2: learning topics are host-owned', () => {
       it('AC #6 refuses mama_save on policy:/lesson: topics (mama_update carries no topic)', async () => {
         const executor = new GatewayToolExecutor({
-    describe('ONE-MAMA-P3 Task 2: failures become operational issues', () => {
-      it('AC #11 a failing tool records one gateway issue with a stable signature and the model result is unchanged', async () => {
-        const recorded: Array<{
-          surface: string;
-          signature: string;
-          severity: string;
-          error: string;
-        }> = [];
-        const executor = new GatewayToolExecutor({
-          mamaApi: createMockApi(),
           envelopeIssuanceMode: 'off',
           privateConnectorPolicy: resolvePrivateConnectorPolicy({
             ok: true,
@@ -2994,6 +2984,26 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           reasoning: 'y',
         } as never);
         expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
+      });
+    });
+
+    describe('ONE-MAMA-P3 Task 2: failures become operational issues', () => {
+      it('AC #11 a failing tool records one gateway issue with a stable signature and the model result is unchanged', async () => {
+        const recorded: Array<{
+          surface: string;
+          signature: string;
+          severity: string;
+          error: string;
+        }> = [];
+        const executor = new GatewayToolExecutor({
+          mamaApi: createMockApi(),
+          envelopeIssuanceMode: 'off',
+          privateConnectorPolicy: resolvePrivateConnectorPolicy({
+            ok: true,
+            config: {},
+            enabledNames: [],
+          }),
+        });
         executor.setOperationalIssueSink((input) => recorded.push(input));
         // file_export without a ledger is a deterministic, code-carrying failure
         const result = await executor.execute(
@@ -3006,7 +3016,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect.objectContaining({
             surface: 'gateway',
             signature: 'file_export:ledger_unavailable',
-            severity: 'warn',
+            severity: 'info', // a code-carrying refusal is a designed boundary, not a defect
           }),
         ]);
         // a sink that throws never changes the tool result
@@ -3044,6 +3054,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           executor.setTaskLedger(ledger);
           executor.setOperationalIssueSink((input) => issues.push(input));
           executor.setRepairControls({
+            issueExists: (id) => id !== 'iss_0000000000000000',
             setIssueStatus: (id, status) => void statuses.push([id, status]),
             notifyOwner: async (line) => {
               if (notifyFails) throw new Error('telegram down');
@@ -3097,6 +3108,14 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(issues).toContainEqual(
             expect.objectContaining({ surface: 'delivery', signature: 'repair_notice_failed' })
           );
+
+          const unknown = await executor.execute(
+            'repair_request',
+            { ...req, issue_id: 'iss_0000000000000000' } as never,
+            {} as never
+          );
+          expect(unknown).toMatchObject({ success: false, code: 'issue_not_found' });
+          expect(ledger.listChanges({ targetType: 'issue' })).toHaveLength(2);
 
           const closed = await executor.execute(
             'issue_close',

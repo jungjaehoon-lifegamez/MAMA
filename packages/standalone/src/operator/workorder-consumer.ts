@@ -440,6 +440,12 @@ export class WorkOrderConsumer {
       response = runResult.response;
       tokensUsed = runResult.tokensUsed;
       this.briefHashes.set(wo.id, runResult.briefHash);
+      if (runResult.stoppedBy === 'budget') {
+        // A host budget stop is not a model verdict: the partial response must not be
+        // judged as the outcome. Retry with the reason on the record.
+        this.handleFailure(wo, 'run stopped on its token budget');
+        return;
+      }
     } catch (err) {
       if (this.stopping) {
         this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);

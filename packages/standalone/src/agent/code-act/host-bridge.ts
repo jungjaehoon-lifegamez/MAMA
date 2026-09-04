@@ -163,6 +163,20 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
+    name: 'file_export',
+    description:
+      'Write a deliverable csv or md file under the private workspace exports folder; returns path, bytes, sha256',
+    params: [
+      { name: 'format', type: "'csv' | 'md'", required: true },
+      { name: 'name', type: 'string', required: true },
+      { name: 'columns', type: 'string[]', required: false },
+      { name: 'rows', type: 'Array<Record<string, string | number | null>>', required: false },
+      { name: 'content', type: 'string', required: false },
+    ],
+    returnType: '{ path: string; bytes: number; sha256: string; message: string }',
+    category: 'os',
+  },
+  {
     name: 'repair_request',
     description:
       'File a repair request for an open operational issue (bundle + receipt + owner notice)',
@@ -818,6 +832,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'report_request',
   'repair_request',
   'issue_close',
+  'file_export',
   'wiki_publish',
   // The Obsidian CLI is the tier-2 wiki agent's primary write path; without it
   // the code-act sandbox never injects the function and every run silently
