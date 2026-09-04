@@ -8,7 +8,9 @@
  */
 import type { TaskRecord } from './task-ledger.js';
 
-export const PIPELINE_SLOT_ROWS = 12;
+// The whole active board. 12 rows showed twelve of 216 active items, and July deadlines
+// surfaced as "new work" because the rest was never visible (owner, 2026-09-04).
+export const PIPELINE_SLOT_ROWS = 1_000;
 
 function escapeHtml(text: string): string {
   return text

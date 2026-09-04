@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Removed
+
+- **Sight bounds, step 1 of the Kagemusha-baseline constraint removal**
+  (`docs/superpowers/plans/2026-09-04-kagemusha-baseline-constraint-removal.md`). The owner's
+  verdict on 2026-09-04: no turn ever saw the whole board, so no turn could curate it. Removed:
+  the `task_list` 50-default/200-cap and the "a bounded projection must not page" contract in
+  all three tool descriptions (Kagemusha's task_list is selectAll); the report packet's
+  `MAX_TASKS = 50` recency bound from 0.40.0 (the packet now carries the whole active board);
+  the pipeline slot's 12-row cap; the board turn's "read Trello only through context_compile"
+  and its judgment-substituting rules (never create from absence, never copy Trello status),
+  replaced by one paragraph: read the whole board, compare against live sources, decide, ask
+  the owner what you cannot decide; and the event packet's "do not re-read what it already
+  shows", replaced by "a starting point, not the board". No completion rule is added; rules
+  grow from owner corrections.
+
 ## mama-os [0.45.0] - 2026-09-04
 
 ### Fixed

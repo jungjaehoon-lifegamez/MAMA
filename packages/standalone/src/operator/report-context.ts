@@ -17,7 +17,11 @@ import type {
 import type { ListTasksPage, TaskRecord } from './task-ledger.js';
 
 const MAX_CLAIMS = 30;
-const MAX_TASKS = 50;
+// The packet carries the WHOLE active board. 0.40.0 bounded this to 50 "ranked by recency"
+// for token reasons; the 45.9M/day incident was session replay, not list size, and a bounded
+// slice is what made the board turn judge 216 tasks from 50 (owner, 2026-09-04). Kagemusha's
+// task_list is selectAll. The paging loop below still pages; it just no longer stops early.
+const MAX_TASKS = 10_000;
 const TASK_PAGE_SIZE = 20;
 const MAX_TRELLO_CARDS_PER_LIST = 100;
 const MAX_TRELLO_CARDS = 300;

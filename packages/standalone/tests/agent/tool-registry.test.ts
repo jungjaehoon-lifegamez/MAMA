@@ -29,11 +29,13 @@ describe('ToolRegistry', () => {
       expect(ToolRegistry.getTool('nonexistent')).toBeUndefined();
     });
 
-    it('STORY-016 AC #1 documents the bounded nonterminal task-list projection', () => {
+    it('STORY-016 AC #1 documents the whole-board task-list read (no bounded projection)', () => {
       const tool = ToolRegistry.getTool('task_list');
 
       expect(tool?.params).toContain('include_terminal?');
-      expect(tool?.description).toContain('ranked top-N projection');
+      // 2026-09-04 constraint removal: the description must not teach a bound as a feature.
+      expect(tool?.description).toContain('returns the whole board');
+      expect(tool?.description).not.toContain('must not page');
     });
   });
 

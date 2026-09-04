@@ -375,22 +375,24 @@ describe('compileOwnerReportContext', () => {
     expect(serializeOwnerReportContext(packet)).not.toContain('rawConnectors');
   });
 
-  it('paginates ranked active tasks and exposes the true total when the top fifty are bounded', async () => {
+  it('pages through every ranked active task and reports coverage honestly when the source has more', async () => {
     const all = Array.from({ length: 63 }, (_, index) => task(index + 1));
     const pages: Record<string, ListTasksPage> = {
       first: { tasks: all.slice(0, 20), total: 63, returned: 20, nextCursor: 'second' },
       second: { tasks: all.slice(20, 40), total: 63, returned: 20, nextCursor: 'third' },
       third: { tasks: all.slice(40, 60), total: 63, returned: 20, nextCursor: 'fourth' },
+      fourth: { tasks: all.slice(60, 63), total: 63, returned: 3, nextCursor: null },
     };
     const packet = await compile({
       listTaskPage: ({ cursor }) => pages[cursor ?? 'first'],
       correlate: (input) => correlations(input.rows as TaskRecord[]),
     });
 
-    expect(packet.tasks.map((row) => row.id)).toEqual(Array.from({ length: 50 }, (_, i) => i + 1));
-    expect(packet.taskCoverage).toEqual({ total: 63, returned: 50, truncated: true });
-    expect(packet.sources.tasks).toMatchObject({ state: 'partial', reason: 'task_limit_reached' });
-    expect(packet.caveats).toContain('task_set_truncated');
+    // No 50-row bound: the packet pages to the end and carries the whole board.
+    expect(packet.tasks.map((row) => row.id)).toEqual(Array.from({ length: 63 }, (_, i) => i + 1));
+    expect(packet.taskCoverage).toEqual({ total: 63, returned: 63, truncated: false });
+    expect(packet.sources.tasks.state).not.toBe('partial');
+    expect(packet.caveats).not.toContain('task_set_truncated');
   });
 
   it('ranks the bounded active task set by recency so current work is never displaced by stale deadlines', async () => {
