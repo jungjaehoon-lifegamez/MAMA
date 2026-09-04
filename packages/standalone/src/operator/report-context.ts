@@ -1213,3 +1213,68 @@ export async function compileOwnerReportContext(
   }
   return detached;
 }
+
+/**
+ * One MAMA (Phase 1 Task 3): the event turn starts from the same host-compiled
+ * packet as the report, narrowed to its channel. The read scope MUST be the
+ * owner-event scope the run's envelope holds - reading under another principal
+ * is the mismatch that fails the envelope scope audit.
+ */
+export async function compileChannelPacket(
+  input: {
+    readScope: OwnerReportReadScope;
+    channelKey: string;
+    eventIds: string[];
+    since: string;
+  },
+  deps: OwnerReportContextDeps
+): Promise<OwnerReportContextV1> {
+  const separator = input.channelKey.indexOf(':');
+  const connector = separator > 0 ? input.channelKey.slice(0, separator) : input.channelKey;
+  // The packet validator only accepts sourceLabels from SOURCE_DISPLAY_LABELS, so an
+  // unknown connector fails OPEN: keep every row rather than filter on a label no
+  // row can carry.
+  const label: string | null = SOURCE_DISPLAY_LABELS[connector] ?? null;
+  const end = new Date(deps.now()).toISOString();
+  const full = await compileOwnerReportContext(
+    {
+      readScope: input.readScope,
+      since: input.since,
+      windowEvidence: {
+        start: input.since,
+        end,
+        channelCount: 1,
+        messageCount: input.eventIds.length,
+        channels: [{ label: label ?? connector, count: input.eventIds.length, excerpts: [] }],
+        triggerActivity: [],
+      },
+    },
+    deps
+  );
+  const keep = new Set(
+    full.tasks
+      .filter(
+        (row) =>
+          label === null ||
+          row.sourceLabel === label ||
+          row.status === 'in_progress' ||
+          row.status === 'review'
+      )
+      .map((row) => row.id)
+  );
+  const tasks = full.tasks.filter((row) => keep.has(row.id));
+  const rows = full.correlations.rows.filter((row) => keep.has(row.taskId));
+  const packet: OwnerReportContextV1 = {
+    ...full,
+    tasks,
+    taskCoverage: {
+      total: full.taskCoverage.total,
+      returned: tasks.length,
+      truncated: full.taskCoverage.truncated,
+    },
+    correlations: { coverage: { ...full.correlations.coverage }, rows },
+  };
+  recomputeCorrelationCoverage(packet.correlations);
+  setPacketBytes(packet);
+  return packet;
+}

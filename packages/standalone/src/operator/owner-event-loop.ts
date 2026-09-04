@@ -32,7 +32,9 @@ export interface OwnerEventLoopDeps {
   inbox: OwnerEventInbox;
   runner: OwnerEventRunner;
   agentContext: AgentContext;
-  buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
+  buildPrompt: (batch: OwnerEventBatch, packet: string | null) => Promise<string> | string;
+  /** Host-compiled channel packet (serialized); null or a throw means "no packet". */
+  compilePacket?: (batch: OwnerEventBatch) => Promise<string | null>;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
@@ -93,7 +95,20 @@ export class OwnerEventLoop {
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
 
       try {
-        const prompt = await this.deps.buildPrompt(batch);
+        let packet: string | null = null;
+        if (this.deps.compilePacket) {
+          try {
+            packet = await this.deps.compilePacket(batch);
+          } catch (error) {
+            // The delta itself is the minimum evidence; receipts still gate completion.
+            this.deps.log(
+              `[owner-event] packet compile failed for batch ${batch.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
+        }
+        const prompt = await this.deps.buildPrompt(batch, packet);
         const envelope = await this.deps.issueEnvelope(batch);
         const result = await this.deps.runner.run(prompt, {
           sessionKey: `owner-event:${batch.channelKey}`,
@@ -111,9 +126,13 @@ export class OwnerEventLoop {
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
+        // Host-detected marker, never trusted from tool results: the turn asked the
+        // owner for a decision it cannot make, so the notification IS the outcome.
+        const ownerDecisionRequested = /^\s*\[decision\]/i.test(result.response ?? '');
         const outcome = classifyOwnerEventOutcome({
           history: result.history,
           noUpdateRecorded: this.deps.getNoUpdateMaxId(scope) > noUpdateBefore,
+          ownerDecisionRequested,
         });
         if (outcome.status === 'retry') {
           const recoveredAfterRun = this.deps.getTerminalReceipt?.(batch) ?? null;

@@ -3,21 +3,28 @@ import type { AgentContext } from '../agent/types.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 
+/**
+ * One MAMA (2026-09-04): the event turn holds the owner console grant minus
+ * administration. Every entry below carries the reason it is not "minus nothing".
+ * Ledger and memory tools (task_create/task_update/mama_save/mama_update) are
+ * deliberately NOT here any more - blocking them since v0.37.0 is what left the
+ * owner ledger without a single agent-authored task for two weeks.
+ */
 const OWNER_EVENT_BLOCKED_TOOLS = new Set([
+  // administration: owner-authored chat only
   'member_register',
   'member_suspend',
   'member_offboard',
   'member_scope_grant',
   'member_scope_revoke',
+  // an event turn is driven by UNTRUSTED connector content; letting it rewrite the
+  // one operating brief is a prompt-injection amplifier. Brief edits stay on chat.
   'console_brief_update',
-  'task_create',
-  'task_update',
-  'mama_save',
-  'mama_update',
-  'drive_translate_conti',
-  'obsidian',
-  'report_publish',
+  // fire-and-forget into another model turn = a second judgment surface
   'report_request',
+  // delegation no longer completes a batch (owner-event-outcome.ts); a callable tool
+  // that never completes only burns a turn. Task 4 deletes the tools themselves.
+  'workorder_request',
   'workorder_status',
 ]);
 
