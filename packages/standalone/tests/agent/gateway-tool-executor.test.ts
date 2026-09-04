@@ -2959,7 +2959,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('ONE-MAMA-P2 Task 2: learning topics are host-owned', () => {
-      it('AC #6 refuses mama_save and mama_update on policy:/lesson: topics', async () => {
+      it('AC #6 refuses mama_save on policy:/lesson: topics (mama_update carries no topic)', async () => {
         const executor = new GatewayToolExecutor({
           envelopeIssuanceMode: 'off',
           privateConnectorPolicy: resolvePrivateConnectorPolicy({
@@ -2975,12 +2975,13 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           reasoning: 'agent says so',
         } as never);
         expect(save).toMatchObject({ success: false, code: 'learning_topic_refused' });
-        const update = await executor.execute('mama_update', {
-          id: 'x',
-          topic: 'lesson:report-abc',
-          outcome: 'success',
+        const lesson = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: ' Lesson:report-abc',
+          decision: 'x',
+          reasoning: 'y',
         } as never);
-        expect(update).toMatchObject({ success: false, code: 'learning_topic_refused' });
+        expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
       });
     });
 

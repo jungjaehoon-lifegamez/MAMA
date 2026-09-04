@@ -45,7 +45,9 @@ describe('Story ONE-MAMA-P2 Task 2: turn observer', () => {
     const saved = h.saves[0];
     expect(saved.kind).toBe('decision');
     expect(saved.topic).toMatch(/^policy:lifecycle-[0-9a-f]{12}$/);
-    expect(saved.scopes).toEqual(scopes);
+    // A rule is project-wide: no channel scope, so event and scheduled turns can read it.
+    expect(saved.scopes).toEqual(scopes.filter((s) => s.kind !== 'channel'));
+    expect(saved.scopes.some((s) => s.kind === 'project')).toBe(true);
     expect(saved.source.source_type).toBe(HOST_LEARNING_SOURCE_TYPE);
     expect(saved.source.package).toBe('standalone');
     expect(result.memoryId).toBe('mem_1');
@@ -60,6 +62,7 @@ describe('Story ONE-MAMA-P2 Task 2: turn observer', () => {
     expect(result.kind).toBe('lesson');
     expect(h.saves[0].kind).toBe('lesson');
     expect(h.saves[0].topic).toMatch(/^lesson:report-[0-9a-f]{12}$/);
+    expect(h.saves[0].scopes).toEqual(scopes); // a correction stays on its channel
   });
 
   it('AC #3 the same message twice updates the existing row instead of saving a second', async () => {
@@ -96,18 +99,28 @@ describe('Story ONE-MAMA-P2 Task 2: turn observer', () => {
     expect(h.deps.save).not.toHaveBeenCalled();
   });
 
-  it('AC #5 the written channel scope id is exactly the deriveMemoryScopes format the reader matches on', async () => {
+  it('AC #5 a lesson carries exactly the deriveMemoryScopes channel id the reader matches on; a policy hash is channel-free', async () => {
     const h = harness();
-    await observeOwnerTurn({ ...h.deps, userMessage: 'Always start the report with decisions.' });
+    await observeOwnerTurn({ ...h.deps, userMessage: "Don't start the report with counts." });
     const channel = h.saves[0].scopes.find((s) => s.kind === 'channel');
     expect(channel).toEqual({ kind: 'channel', id: 'telegram:owner-chat' });
-    // different channel, same text -> different topic hash
+    // same correction from another channel -> a different lesson row
     const other = harness();
     await observeOwnerTurn({
       ...other.deps,
       scopes: deriveMemoryScopes({ source: 'telegram', channelId: 'other', projectId: '/p' }),
-      userMessage: 'Always start the report with decisions.',
+      userMessage: "Don't start the report with counts.",
     });
     expect(other.saves[0].topic).not.toBe(h.saves[0].topic);
+    // the same RULE from two channels -> one policy topic
+    const p1 = harness();
+    await observeOwnerTurn({ ...p1.deps, userMessage: 'Always start the report with decisions.' });
+    const p2 = harness();
+    await observeOwnerTurn({
+      ...p2.deps,
+      scopes: deriveMemoryScopes({ source: 'telegram', channelId: 'other', projectId: '/p' }),
+      userMessage: 'Always start the report with decisions.',
+    });
+    expect(p2.saves[0].topic).toBe(p1.saves[0].topic);
   });
 });

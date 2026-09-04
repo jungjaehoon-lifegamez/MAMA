@@ -82,7 +82,13 @@ export async function observeOwnerTurn(
     return { kind: 'none', reason: detected.reason };
   }
   const channelScopeId = input.scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
-  const topic = learningTopic(detected.kind, detected.topicNoun, channelScopeId, input.userMessage);
+  // A policy hash is project-wide too: the same rule from any owner channel is one row.
+  const topic = learningTopic(
+    detected.kind,
+    detected.topicNoun,
+    detected.kind === 'policy' ? null : channelScopeId,
+    input.userMessage
+  );
   const summary = input.userMessage.replace(/\s+/g, ' ').trim().slice(0, 400);
   const details = `Owner ${detected.kind === 'policy' ? 'rule' : 'correction'} recorded from chat; markers: ${detected.matchedMarkers.join(', ')}.`;
 
@@ -99,12 +105,20 @@ export async function observeOwnerTurn(
       reason: detected.reason,
     };
   }
+  // A RULE is project-wide: it must reach event and scheduled turns, whose channel scopes
+  // are never the owner's chat channel. A CORRECTION stays bound to the channel it was
+  // given in. Writing the chat channel onto a policy row was the defect that made every
+  // later turn read policyIds=[].
+  const scopes =
+    detected.kind === 'policy'
+      ? input.scopes.filter((scope) => scope.kind !== 'channel')
+      : input.scopes;
   const saved = await input.save({
     topic,
     kind: detected.kind === 'policy' ? 'decision' : 'lesson',
     summary,
     details,
-    scopes: input.scopes,
+    scopes,
     source: { ...input.source, source_type: HOST_LEARNING_SOURCE_TYPE },
   });
   return { kind: detected.kind, topic, memoryId: saved.memoryId, reason: detected.reason };

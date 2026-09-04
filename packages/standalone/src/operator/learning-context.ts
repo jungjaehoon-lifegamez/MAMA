@@ -13,7 +13,7 @@ import type { MemoryScopeRef, MemoryTruthRow } from '@jungjaehoon/mama-core/memo
 export interface LearningContextInput {
   /** Same scope list the turn's envelope uses; build it with deriveMemoryScopes. */
   scopes: MemoryScopeRef[];
-  /** Free-text used to rank lessons only. Policies ignore it. */
+  /** Kept for the audit line; ranking is by recency (see buildLearningContext). */
   query: string;
   /** Bounded reads. `query: ''` returns everything in scope. */
   readClaims: (input: { scopes: MemoryScopeRef[]; query: string }) => Promise<MemoryTruthRow[]>;
@@ -67,29 +67,35 @@ function renderable(row: MemoryTruthRow): boolean {
   return typeof row.updated_at === 'number' || typeof row.created_at === 'number';
 }
 
-function hasChannelScope(row: MemoryTruthRow, channelScopeId: string | null): boolean {
-  return (
-    channelScopeId !== null &&
-    row.scope_refs.some((scope) => scope.kind === 'channel' && scope.id === channelScopeId)
-  );
+/**
+ * A turn may carry more than one channel scope (a board reconcile carries the synthetic
+ * worker channel AND the channel it judges); a row matches when it names ANY of them.
+ */
+function hasChannelScope(row: MemoryTruthRow, turnChannels: ReadonlySet<string>): boolean {
+  return row.scope_refs.some((scope) => scope.kind === 'channel' && turnChannels.has(scope.id));
 }
 
-/** A policy applies when it names no channel (project- or global-wide) or exactly this one. */
-function policyScopeMatches(row: MemoryTruthRow, channelScopeId: string | null): boolean {
+/** A policy applies when it names no channel (project- or global-wide) or one of this turn's. */
+function policyScopeMatches(row: MemoryTruthRow, turnChannels: ReadonlySet<string>): boolean {
   const channels = row.scope_refs.filter((scope) => scope.kind === 'channel');
   if (channels.length === 0) {
     return true;
   }
-  return hasChannelScope(row, channelScopeId);
+  return hasChannelScope(row, turnChannels);
 }
 
 function recency(row: MemoryTruthRow): number {
   return row.updated_at ?? row.created_at ?? 0;
 }
 
+/** One line per row: a newline in stored text could forge a section heading, so it is collapsed. */
 function renderLine(row: MemoryTruthRow, prefix: string, maxSummaryChars: number): string {
-  const name = escapePromptMarkup(row.topic.slice(prefix.length).trim() || 'untitled');
-  const summary = escapePromptMarkup(row.effective_summary.trim().slice(0, maxSummaryChars));
+  const name = escapePromptMarkup(
+    row.topic.slice(prefix.length).replace(/\s+/g, ' ').trim() || 'untitled'
+  );
+  const summary = escapePromptMarkup(
+    row.effective_summary.replace(/\s+/g, ' ').trim().slice(0, maxSummaryChars)
+  );
   return `- ${name}: ${summary}`;
 }
 
@@ -134,19 +140,22 @@ function renderBlock(
 
 export async function buildLearningContext(input: LearningContextInput): Promise<LearningContext> {
   const limits = { ...DEFAULT_LIMITS, ...(input.limits ?? {}) };
-  const channelScopeId = input.scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
+  const turnChannels = new Set(
+    input.scopes.filter((scope) => scope.kind === 'channel').map((scope) => scope.id)
+  );
 
-  // Policies are unconditional: an empty query bypasses matchesQuery ranking.
-  const policyRows = await input.readClaims({ scopes: input.scopes, query: '' });
-  const lessonRows = await input.readClaims({ scopes: input.scopes, query: input.query });
+  // ONE read with an empty query: it returns every active row in scope, which is a superset
+  // of what a ranked lesson read would return, and queryRelevantTruth has no LIMIT - a second
+  // scan of the same rows bought nothing. Lessons are channel-bound and few; recency ranks them.
+  const rows = await input.readClaims({ scopes: input.scopes, query: '' });
 
-  const policies = policyRows
+  const policies = rows
     .filter((row) => row.topic.startsWith(POLICY_TOPIC_PREFIX) && renderable(row))
-    .filter((row) => policyScopeMatches(row, channelScopeId))
+    .filter((row) => policyScopeMatches(row, turnChannels))
     .sort((a, b) => recency(b) - recency(a));
-  const lessons = lessonRows
+  const lessons = rows
     .filter((row) => row.topic.startsWith(LESSON_TOPIC_PREFIX) && renderable(row))
-    .filter((row) => hasChannelScope(row, channelScopeId))
+    .filter((row) => hasChannelScope(row, turnChannels))
     .sort((a, b) => recency(b) - recency(a))
     .slice(0, limits.maxLessons);
 

@@ -2776,15 +2776,6 @@ export class GatewayToolExecutor {
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update': {
-          if (isLearningTopic((input as { topic?: unknown }).topic)) {
-            // Same choke as mama_save: standing policy is owner-authored, host-written.
-            return {
-              success: false,
-              code: 'learning_topic_refused',
-              error:
-                'Topics starting with policy: or lesson: are written by the host from owner instructions, never by the agent.',
-            };
-          }
           const updateSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
           if (!updateSecretScan.clean) {
             console.warn(
