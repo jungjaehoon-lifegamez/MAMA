@@ -177,7 +177,13 @@ secret boundary to a local-first product.
 - **At-cutover (Stage 2 on 전환 시 함께):** README/standalone README/mama-os.md/package-structure.md의 "상주 타이머 인격 런" 기술을 워크오더 파이프라인 기술로 전환.
 - **Why:** 오늘 기준 거짓인 사용자 대면 사실층은 v0.23 준비 PR에서 수정했고, 나머지는 저빈도 개발 문서라 릴리즈 비차단 판정.
 
-## Board-lane context_compile scope rejection: NOT closed by One MAMA Phase 1 (2026-09-04)
+## Board-lane context_compile scope rejection: CLOSED in 0.41.0 (2026-09-04)
+
+Installed evidence: zero `[envelope] scope mismatch` lines since the 0.41.0 boot across the
+board full run and later reconcile runs (parity doc, "One MAMA Phase 1"). The section below is
+kept as the diagnosis record.
+
+### (record) Board-lane context_compile scope rejection: NOT closed by One MAMA Phase 1
 
 Phase 1 unified every scheduled turn under the `owner_console` principal. Review of that change
 verified that `computeScopeAuditFields` (gateway-tool-executor.ts) keys on MEMORY SCOPES, never
@@ -199,3 +205,13 @@ materialises every matching row before the JS filter; the standalone 200-row cap
 prompt, not the scan. Next: add `limit` and an optional exact `topic` predicate to the core
 query (ORDER BY updated_at DESC LIMIT ?), bump mama-core, and switch both call sites. Raised
 by the Opus review of 154ecda2 and by CodeRabbit on #251.
+
+## One MAMA deferred items (2026-09-04)
+
+- **Task 1b xlsx export.** `file_export` ships csv/md; a workbook writer is a supply-chain
+  decision (pinned dependency, write-only use) recorded in its own commit when needed.
+- **Workflow contracts (Phase 2 Task 3).** Kagemusha's trigger-to-procedure-to-approval
+  runtime is deferred until an owner instruction is measured that `policy:` injection could not
+  carry; the reviewed design stays in the local Phase 2 plan.
+- **Phase 2 installed acceptance** waits on an owner chat rule/correction; queries in the
+  0.42.0 cutover runbook (`phase2`).
