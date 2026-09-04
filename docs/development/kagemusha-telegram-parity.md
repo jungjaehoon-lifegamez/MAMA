@@ -1002,6 +1002,26 @@ Installed acceptance (to be recorded after cutover):
 - [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
       lane collapse (already merged behind the same release) is re-argued before Phase 2.
 
+## One MAMA Phase 2: 2026-09-04 (release 0.42.0, installed)
+
+PR #251 (squash b81fb00a), tag v0.42.0, npm publish succeeded, installed 07:19Z with
+`VACUUM INTO` backups; health 98, owner-event agent and trigger loop enabled. Scenarios: TG-04
+(one brief, host-projected learning block on every principal surface), TG-06 (learning writes
+only after a persisted reply; the agent cannot write `policy:`/`lesson:`).
+
+Installed acceptance (Phase 2 Task 4), recorded as it lands:
+
+- [ ] A rule stated in owner chat appears as a `policy:` row with project/global scopes only,
+      and the next event turn's `[learning] turn=event ... policyIds=[...]` line names it.
+- [ ] A correction appears as a `lesson:` row bound to the chat channel scope id and shows in
+      the next chat turn's `[learning] turn=chat` line.
+- [ ] A message containing `</policy>` is stored and re-injected escaped (`&lt;/policy&gt;`).
+- [ ] Any owner instruction during the observation window that policy injection failed to
+      carry is listed here; that list is the trigger for reviving workflow contracts.
+
+Queries: `scratchpad/cutover-0.42.0.sh phase2` (decisions by `policy:`/`lesson:` topic, their
+scope bindings, and the day's `[learning]` audit lines).
+
 ## Change log
 
 - 2026-08-28: Added the TG-06 `mama report now` completion boundary without a second report
