@@ -1002,6 +1002,28 @@ Installed acceptance (to be recorded after cutover):
 - [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
       lane collapse (already merged behind the same release) is re-argued before Phase 2.
 
+## 0.45.0: 2026-09-04 (installed, board render verified live)
+
+PR #256 (squash 9b4cb079), tag v0.45.0, published mama-os 0.45.0 (mama-core unchanged). Three
+defects the owner surfaced on Telegram within the first hour of 0.44.0.
+
+- [x] Board line breaks. The pre-fix board publish (19:53Z) carried the briefing,
+      action_required and decisions slots as PLAIN TEXT (no `report-card`, no `<div>`), while
+      the host-rendered pipeline slot was already an HTML `<table>` — the exact split the owner
+      saw. After 0.45.0, board run 4483 (20:32 local) published all three judgment slots as HTML
+      using the class vocabulary (`report-summary`, `report-card`, `report-section-title`,
+      `card-badge`). Root cause: One MAMA 0.41.0 replaced the per-kind board brief, which carried
+      that vocabulary, with a host turn section that did not; restored to `buildTurnKindSection`.
+- [x] Run budget off. Codex reports input inclusive of cache; the loop added cache reads again,
+      so the 3,000,000 default stopped a 2.8M wiki turn (logged as 5.5M), a board turn and the
+      owner chat turn within fifteen minutes of the 0.44.0 install. Counting is backend-aware and
+      the default is 0. With it off, wiki orders 4482/4483 completed and zero budget stops were
+      logged after the default-0 boot. The 4.28M "pathology" was itself doubled; no run the budget
+      would legitimately have caught has ever been observed.
+- [x] Chat shell inline interpreters. `python -c` / `node -e` / `bash -c` are what the owner
+      chat shell exists for and were on the Bash guard's block list; removed, with
+      setuid/chown/pipe-to-shell/nc/`/dev/tcp`/mkfifo kept. The owner's first shell request hit it.
+
 ## 0.44.0: 2026-09-04 (installed 09:56Z)
 
 PR #254 (squash e099373a), tag v0.44.0, publish.yml published mama-os 0.44.0 (`^2.3.0`,
