@@ -167,7 +167,8 @@ verified that `computeScopeAuditFields` (gateway-tool-executor.ts) keys on MEMOR
 on `roleName` or the envelope `agent_id`, and that a `context_compile` call with no `scopes`
 argument is exempt. So the daily `[envelope] scope mismatch` on the board lane is a memory-scope
 disagreement between the compile's requested scopes and the envelope's `channel:operator:worker:board`
-scope, not a principal split. Next step: read the exact mismatch payload from daemon.log
-(`alarmScopeMismatch` args) for one board run and compare against `workOrderEnvelopeScope`;
-fix the SCOPE derivation, not the principal. Until then the Phase 1 lifecycle gate on the
-installed runtime stays unproven.
+scope, not a principal split. Confirmed from the compile service: an explicit `scopes` entry
+outside the envelope's read allowance throws `worker_envelope_scope_denied` (403) and the
+enclosing `code_act` fails. Fixed at both layers in 0.41.0: the board reconcile envelope carries
+the judged channel's memory scope (`reconcileChannelKey`), and the board turn section says to
+omit `scopes`. Remaining acceptance: one installed board reconcile run without the warn.
