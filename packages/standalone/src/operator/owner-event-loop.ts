@@ -25,7 +25,7 @@ interface OwnerEventRunner {
       sourceMessageRef: string;
       ownerEventEffects: ReturnType<typeof buildOwnerEventEffectAuthority>;
     }
-  ): Promise<{ response: string; history: OwnerEventHistoryMessage[] }>;
+  ): Promise<{ response: string; history: OwnerEventHistoryMessage[]; stoppedBy?: 'budget' }>;
 }
 
 export interface OwnerEventLoopDeps {
@@ -40,6 +40,8 @@ export interface OwnerEventLoopDeps {
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
   recordTriggerOutcome?: (triggerId: string, outcome: 'succeeded' | 'failed') => void;
   onDead?: (message: string) => void | Promise<void>;
+  /** Failures become evidence: called once per dead batch with a stable signature. */
+  recordIssue?: (input: { channelKey: string; reason: string }) => void;
   log: (line: string) => void;
   leaseMs?: number;
   maxBatchesPerTick?: number;
@@ -126,10 +128,16 @@ export class OwnerEventLoop {
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
-        const outcome = classifyOwnerEventOutcome({
+        const classified = classifyOwnerEventOutcome({
           history: result.history,
           noUpdateRecorded: this.deps.getNoUpdateMaxId(scope) > noUpdateBefore,
         });
+        // A budget stop is a host decision, not a model failure: the batch stays
+        // retryable with a named reason unless the run already changed the ledger.
+        const outcome =
+          result.stoppedBy === 'budget' && classified.status !== 'acted'
+            ? { status: 'retry' as const, tools: [], reason: 'run stopped on its token budget' }
+            : classified;
         if (outcome.status === 'retry') {
           const recoveredAfterRun = this.deps.getTerminalReceipt?.(batch) ?? null;
           if (recoveredAfterRun) {
@@ -221,6 +229,13 @@ export class OwnerEventLoop {
   }
 
   private async notifyDead(batch: OwnerEventBatch, reason: string): Promise<void> {
+    try {
+      this.deps.recordIssue?.({ channelKey: batch.channelKey, reason });
+    } catch (error) {
+      this.deps.log(
+        `[owner-event] dead-batch issue record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if (!this.deps.onDead) return;
     const message = `MAMA owner-event batch ${batch.id} (${batch.channelKey}) is dead: ${reason}`;
     try {

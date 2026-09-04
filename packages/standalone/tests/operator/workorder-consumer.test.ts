@@ -26,6 +26,7 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
   activeSends: string[];
   events: WorkOrderConsumerEvent[];
   logs: string[];
+  db: SQLiteDatabase;
 } {
   const db: SQLiteDatabase = new Database(':memory:');
   const ledger = new TaskLedger(db);
@@ -45,7 +46,7 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
     log: (line) => logs.push(line),
     ...overrides,
   };
-  return { deps, ledger, notices, activeSends, events, logs };
+  return { deps, ledger, db, notices, activeSends, events, logs };
 }
 
 function enqueueTemporalDue(ledger: TaskLedger): string {
@@ -1221,6 +1222,73 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       expect(seen.indexOf('## Owner policy and lessons')).toBeLessThan(
         seen.indexOf('## Scheduled turn')
       );
+    });
+  });
+  describe('ONE-MAMA-P3 Task 3: self-check turn', () => {
+    it('AC #8 the self-check section names the three outcomes and the work order carries the open issues', async () => {
+      const section = buildTurnKindSection('self-check');
+      expect(section).toContain('repair_request({issue_id');
+      expect(section).toContain('issue_close({issue_id, reason})');
+      expect(section).toContain('contract_no_update');
+      const ctx = makeDeps();
+      let seen = '';
+      ctx.deps.runner = {
+        runWithContent: async (content) => {
+          seen = JSON.stringify(content);
+          return { response: 'DONE' };
+        },
+      };
+      ctx.deps.selfCheckInput = () => ({
+        openIssues: [{ issueId: 'iss_0123456789abcdef', surface: 'gateway' }],
+        noUpdateScope: 'self-check:2026-09-04',
+      });
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'self-check',
+        idempotencyKey: 'self-check:2026-09-04',
+        input: { scheduledFor: '2026-09-04' },
+      });
+      expect(wo.workKind).toBe('self-check');
+      // system rows are invisible to the owner-facing getById; read the column directly
+      expect(
+        (
+          ctx.db.prepare('SELECT source_channel FROM operator_tasks WHERE id = ?').get(wo.id) as {
+            source_channel: string;
+          }
+        ).source_channel
+      ).toBe('workorder:self-check');
+      // idempotent on the date key
+      expect(
+        ctx.ledger.enqueueWorkOrder({
+          workKind: 'self-check',
+          idempotencyKey: 'self-check:2026-09-04',
+          input: { scheduledFor: '2026-09-04' },
+        }).id
+      ).toBe(wo.id);
+      await consumer.tick();
+      expect(seen).toContain('iss_0123456789abcdef');
+      expect(seen).toContain('## Turn: self-check');
+    });
+  });
+  describe('ONE-MAMA-P3 Task 4: budget stop on a scheduled turn', () => {
+    it('AC #3 a budget-stopped run is retried with the reason, not judged on its partial response', async () => {
+      const ctx = makeDeps();
+      ctx.deps.runner = {
+        runWithContent: async () => ({ response: 'DONE (partial)', stoppedBy: 'budget' as const }),
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:budget:1',
+        input: { batchId: 'b', events: ['e'] },
+      });
+      await consumer.tick();
+      expect(
+        ctx.events.some(
+          (e) => e.type !== 'complete' && 'reason' in e && String(e.reason).includes('token budget')
+        )
+      ).toBe(true);
+      expect(ctx.events.some((e) => e.type === 'complete' && e.workOrderId === wo.id)).toBe(false);
     });
   });
 });

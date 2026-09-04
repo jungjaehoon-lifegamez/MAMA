@@ -522,4 +522,63 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       )
     ).toBe(true);
   });
+  it('ONE-MAMA-P3 Task 2 AC #12: a dead batch records one inbox issue with the reason and the channel', async () => {
+    inbox.enqueue(batch());
+    const issues: Array<{ channelKey: string; reason: string }> = [];
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: { run: async () => ({ response: 'prose only', history: [] }) },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      recordIssue: (input) => issues.push(input),
+      log: () => {},
+    });
+    // exhaust retries until dead
+    for (let i = 0; i < 12 && inbox.depth().dead === 0; i += 1) {
+      await loop.tick();
+      now += 24 * 60 * 60 * 1000;
+    }
+    expect(inbox.depth().dead).toBe(1);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ channelKey: 'chatwork:C1' });
+    expect(issues[0].reason).toContain('no durable action');
+  });
+  it('ONE-MAMA-P3 Task 4 AC #2: a budget-stopped run stays retryable with a named reason and is not dead', async () => {
+    inbox.enqueue(batch());
+    const logs: string[] = [];
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: {
+        run: async () => ({ response: 'partial', history: [], stoppedBy: 'budget' as const }),
+      },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: (line) => logs.push(line),
+    });
+    expect(await loop.tick()).toBe('failed');
+    expect(inbox.depth()).toEqual({ pending: 1, claimed: 0, dead: 0 });
+    expect(logs.at(-1)).toContain('run stopped on its token budget');
+    // a budget stop AFTER a ledger change still completes
+    inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
+    const acted = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      runner: {
+        run: async () => ({
+          response: 'partial',
+          history: deliveredHistory,
+          stoppedBy: 'budget' as const,
+        }),
+      },
+      buildPrompt: async () => 'prompt',
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await acted.tick()).toBe('processed');
+  });
 });

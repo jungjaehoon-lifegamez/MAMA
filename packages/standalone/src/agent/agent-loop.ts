@@ -76,6 +76,7 @@ import type {
   BackgroundTaskRegistry,
   AgentErrorCode,
   ModelRunProvenance,
+  BudgetStopInfo,
 } from './types.js';
 import {
   AgentError,
@@ -653,6 +654,8 @@ export class AgentLoop {
   private readonly model: string;
   private readonly onTurn?: (turn: TurnInfo) => void;
   private readonly onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
+  private readonly runTokenBudget: number;
+  private readonly onBudgetStop?: (info: BudgetStopInfo) => void;
   private readonly onTokenUsage?: (record: {
     channel_key: string;
     agent_id?: string;
@@ -979,6 +982,9 @@ export class AgentLoop {
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
     this.onTokenUsage = options.onTokenUsage;
+    this.runTokenBudget =
+      options.runTokenBudget && options.runTokenBudget > 0 ? options.runTokenBudget : 0;
+    this.onBudgetStop = options.onBudgetStop;
     this.onMetric = options.onMetric;
 
     this.laneManager = getGlobalLaneManager();
@@ -1262,6 +1268,11 @@ export class AgentLoop {
     };
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
+    // Budget accounting is separate from totalUsage (a published field): it includes cache
+    // creation and cache reads, which are the bulk of a re-sent context and the cost being
+    // bounded - a budget that ignored them would not have stopped a 4.28M-token run.
+    let budgetTokens = 0;
+    let stoppedBy: 'budget' | undefined;
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
     let ownedModelRunId: string | null = null;
@@ -2136,6 +2147,11 @@ export class AgentLoop {
         // Update usage
         totalUsage.input_tokens += response.usage.input_tokens;
         totalUsage.output_tokens += response.usage.output_tokens;
+        budgetTokens +=
+          response.usage.input_tokens +
+          response.usage.output_tokens +
+          (response.usage.cache_creation_input_tokens ?? 0) +
+          (response.usage.cache_read_input_tokens ?? 0);
 
         // Record token usage
         if (this.onTokenUsage) {
@@ -2227,6 +2243,29 @@ export class AgentLoop {
         });
 
         stopReason = response.stop_reason;
+
+        // Per-run budget: checked after this turn's usage and before the next dispatch, so
+        // the budget is never exceeded by more than one turn. The partial response so far is
+        // returned, and the host records the receipt.
+        if (this.runTokenBudget > 0 && budgetTokens >= this.runTokenBudget) {
+          stoppedBy = 'budget';
+          console.warn(
+            `[AgentLoop] run budget stop: ${budgetTokens} >= ${this.runTokenBudget} tokens after turn ${turn} (${channelKey})`
+          );
+          try {
+            this.onBudgetStop?.({
+              channelKey,
+              modelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
+              agentId: options?.agentContext?.roleName,
+              budgetTokens,
+              runTokenBudget: this.runTokenBudget,
+              turns: turn,
+            });
+          } catch {
+            // Receipt failures must never mask the stop itself.
+          }
+          break;
+        }
 
         // Check stop conditions
         if (response.stop_reason === 'end_turn') {
@@ -2344,6 +2383,7 @@ export class AgentLoop {
       const finalResponse = this.extractTextResponse(history);
 
       const result = {
+        ...(stoppedBy ? { stoppedBy } : {}),
         response: finalResponse,
         turns: turn,
         history,

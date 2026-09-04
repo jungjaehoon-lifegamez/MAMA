@@ -24,8 +24,16 @@ import {
   serializeContextRefForProvenance,
 } from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { unlinkSync } from 'node:fs';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { isLearningTopic } from '../operator/learning-context.js';
+import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
+import type { RecordIssueInput } from '../observability/operational-issues.js';
+import {
+  writeRepairBundle,
+  type RepairBundleResult,
+  type RepairRequestInput,
+} from '../operator/repair-request.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
@@ -758,6 +766,15 @@ export class GatewayToolExecutor {
     | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
     | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
+  /** Host-injected: failures become operational issues (observability/operational-issues.ts). */
+  private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
+  /** Host-injected: issue lifecycle + owner notice for the self-check turn's tools. */
+  private repairControls: {
+    issueExists: (issueId: string) => boolean;
+    setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
+    notifyOwner: (line: string) => Promise<void>;
+    repairRoot: () => string;
+  } | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
   private wikiPublisher: WikiPagePublisher | null = null;
@@ -1008,6 +1025,34 @@ export class GatewayToolExecutor {
       );
     }
     return result;
+  }
+
+  /** Issue lifecycle and the one-line owner notice used by repair_request / issue_close. */
+  setRepairControls(controls: {
+    issueExists: (issueId: string) => boolean;
+    setIssueStatus: (issueId: string, status: 'repair_requested' | 'closed') => void;
+    notifyOwner: (line: string) => Promise<void>;
+    repairRoot: () => string;
+  }): void {
+    this.repairControls = controls;
+  }
+
+  /** Where a tool failure or a scope mismatch is recorded as an operational issue. */
+  setOperationalIssueSink(fn: (input: RecordIssueInput) => void): void {
+    this.operationalIssueSink = fn;
+  }
+
+  private recordIssue(input: RecordIssueInput): void {
+    if (!this.operationalIssueSink) {
+      return;
+    }
+    try {
+      this.operationalIssueSink(input);
+    } catch (error) {
+      console.error(
+        `[operational-issue] record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   setReportPublisher(
@@ -1601,6 +1646,23 @@ export class GatewayToolExecutor {
           this.requireActiveTemporalAuthority(toolName);
         });
       }
+      const rawFailure = rawResult as { success?: unknown; code?: unknown; error?: unknown };
+      if (rawFailure.success === false) {
+        // Captured BEFORE sanitizeGatewayFailureResult: the raw text only exists here, and
+        // what the model receives is unchanged by this record. A code-carrying refusal is a
+        // designed boundary (info); an uncoded failure is a defect candidate (warn).
+        this.recordIssue({
+          surface: 'gateway',
+          signature: `${toolName}:${typeof rawFailure.code === 'string' ? rawFailure.code : 'failed'}`,
+          severity: typeof rawFailure.code === 'string' ? 'info' : 'warn',
+          error:
+            typeof rawFailure.error === 'string'
+              ? rawFailure.error
+              : String(rawFailure.code ?? 'failed'),
+          sourceRef: activeCtx.channelId ?? undefined,
+          ownerAgent: activeCtx.agentContext?.roleName,
+        });
+      }
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
         toolName === 'context_compile' ||
@@ -1620,6 +1682,14 @@ export class GatewayToolExecutor {
         activeCtx.signal?.throwIfAborted();
       }
     } catch (error) {
+      this.recordIssue({
+        surface: 'gateway',
+        signature: `${toolName}:threw`,
+        severity: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        sourceRef: activeCtx.channelId ?? undefined,
+        ownerAgent: activeCtx.agentContext?.roleName,
+      });
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
         toolName === 'context_compile' ||
@@ -2342,6 +2412,14 @@ export class GatewayToolExecutor {
     ctx: ActiveGatewayExecutionContext | undefined,
     toolName: string
   ): void {
+    this.recordIssue({
+      surface: 'envelope',
+      signature: `scope_mismatch:${toolName}`,
+      severity: 'warn',
+      error: `requested memory scopes outside the envelope (${ctx?.source ?? 'unknown'})`,
+      sourceRef: ctx?.channelId ?? undefined,
+      ownerAgent: ctx?.agentContext?.roleName,
+    });
     try {
       this.metricsStore?.record({
         name: 'envelope_scope_mismatch',
@@ -2570,6 +2648,159 @@ export class GatewayToolExecutor {
               )
             ),
           };
+        case 'repair_request': {
+          // Containment: this case writes ONE markdown file under the repairs root and
+          // sends ONE text line. No spawn, no signal, no config write, no restart.
+          if (!this.repairControls || !this.taskLedger) {
+            return {
+              success: false,
+              code: 'repair_unavailable',
+              error: 'repair_request needs the issue store, the task ledger and the owner notice.',
+            };
+          }
+          const requestedIssue = (input as { issue_id?: unknown }).issue_id;
+          if (
+            typeof requestedIssue !== 'string' ||
+            !this.repairControls.issueExists(requestedIssue)
+          ) {
+            // A model-authored id must name an issue the host recorded; nothing is written otherwise.
+            return {
+              success: false,
+              code: 'issue_not_found',
+              error:
+                "repair_request: issue_id must name an open operational issue from this turn's input.",
+            };
+          }
+          let bundle: RepairBundleResult;
+          try {
+            bundle = writeRepairBundle(
+              input as RepairRequestInput,
+              this.repairControls.repairRoot()
+            );
+          } catch (error) {
+            return {
+              success: false,
+              code: 'repair_request_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          const issueId = (input as RepairRequestInput).issue_id;
+          if (bundle.created) {
+            const state = this.getExecutionState();
+            this.taskLedger.recordRepairRequest({
+              issueId,
+              repairId: bundle.repairId,
+              runId: state.modelRunId ?? null,
+              causeEventIds: state.causeEventIds,
+            });
+            try {
+              this.repairControls.setIssueStatus(issueId, 'repair_requested');
+            } catch (error) {
+              return {
+                success: false,
+                code: 'repair_request_failed',
+                error: `bundle written but the issue could not be marked: ${error instanceof Error ? error.message : String(error)}`,
+              };
+            }
+            try {
+              await this.repairControls.notifyOwner(
+                `MAMA filed repair request ${bundle.repairId} for issue ${issueId}.`
+              );
+            } catch (error) {
+              // The file is the durable artifact; a failed notice is recorded, not fatal.
+              this.recordIssue({
+                surface: 'delivery',
+                signature: 'repair_notice_failed',
+                severity: 'warn',
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+          return {
+            success: true,
+            repair_id: bundle.repairId,
+            created: bundle.created,
+            message: bundle.created
+              ? `Repair request ${bundle.repairId} filed for ${issueId}.`
+              : `Repair request ${bundle.repairId} already exists for ${issueId}.`,
+          };
+        }
+        case 'issue_close': {
+          if (!this.repairControls) {
+            return {
+              success: false,
+              code: 'repair_unavailable',
+              error: 'issue_close needs the issue store.',
+            };
+          }
+          const { issue_id: closeId, reason } = input as { issue_id?: unknown; reason?: unknown };
+          if (typeof closeId !== 'string' || typeof reason !== 'string' || reason.trim() === '') {
+            return {
+              success: false,
+              code: 'invalid_input',
+              error: 'issue_id and reason are required',
+            };
+          }
+          try {
+            this.repairControls.setIssueStatus(closeId, 'closed');
+          } catch (error) {
+            return {
+              success: false,
+              code: 'issue_close_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+          return { success: true, message: `Issue ${closeId} closed: ${reason.slice(0, 200)}` };
+        }
+        case 'file_export': {
+          const exportInput = input as Partial<ExportFileInput>;
+          if (!this.taskLedger) {
+            return {
+              success: false,
+              code: 'ledger_unavailable',
+              error: 'file_export needs the task ledger to record its receipt.',
+            };
+          }
+          try {
+            const result = await exportFile(
+              {
+                format: exportInput.format as ExportFileInput['format'],
+                name: typeof exportInput.name === 'string' ? exportInput.name : 'export',
+                columns: exportInput.columns,
+                rows: exportInput.rows,
+                content: exportInput.content,
+              },
+              resolveExportRoot()
+            );
+            const state = this.getExecutionState();
+            try {
+              this.taskLedger.recordFileExport({
+                sha256: result.sha256,
+                runId: state.modelRunId ?? null,
+                causeEventIds: state.causeEventIds,
+                channelId: state.channelId ?? null,
+                payload: { format: exportInput.format, bytes: result.bytes },
+              });
+            } catch (receiptError) {
+              // No unrecorded durable change: a file without its receipt is removed again.
+              unlinkSync(result.path);
+              throw receiptError;
+            }
+            return {
+              success: true,
+              path: result.path,
+              bytes: result.bytes,
+              sha256: result.sha256,
+              message: `Wrote ${result.bytes} bytes to ${result.path}`,
+            };
+          } catch (error) {
+            return {
+              success: false,
+              code: 'file_export_failed',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
         case 'drive_upload': {
           const uploadInput = input as DriveUploadInput;
           const state = this.getExecutionState();

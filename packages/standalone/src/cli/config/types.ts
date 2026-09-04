@@ -181,6 +181,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'console_brief_update',
         'mama_save',
         'mama_update',
+        'file_export',
         'code_act',
       ],
       blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],
@@ -262,6 +263,12 @@ export interface AgentConfig {
   effort?: EffortLevel;
   /** Maximum conversation turns */
   max_turns: number;
+  /**
+   * Per-RUN token budget across all turns (input + output + cache creation + cache reads);
+   * the run stops with a receipt after the turn that crosses it. Default 400000.
+   * NOT the same as MAMAConfig.token_budget, which is the DAILY cap.
+   */
+  run_token_budget?: number;
   /** Request timeout in milliseconds */
   timeout: number;
   /**
@@ -765,6 +772,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     backend: 'claude',
     model: 'claude-sonnet-5',
     max_turns: 10,
+    run_token_budget: 400000,
     timeout: 300000, // 5 minutes
     tools: {
       // Default: all tools via Gateway (self-contained, no MCP dependency)

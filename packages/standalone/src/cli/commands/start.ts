@@ -135,6 +135,17 @@ import {
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
+import {
+  ensureOperationalIssuesTable,
+  getOperationalIssue,
+  listOpenOperationalIssues,
+  recordOperationalIssue,
+  setOperationalIssueStatus,
+  type RecordIssueInput,
+} from '../../observability/operational-issues.js';
+import { resolveRepairRoot } from '../../operator/repair-request.js';
+import { budgetStopSink } from '../runtime/agent-loop-init.js';
+import { selfCheckKey } from '../../operator/workorder-publishers.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import {
   OwnerEventLoop,
@@ -645,6 +656,7 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
   wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
   'memory-curation': ['agent_notices', 'contract_no_update'],
   temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
+  'self-check': ['agent_notices', 'contract_no_update', 'repair_request', 'issue_close'],
 };
 
 /**
@@ -712,6 +724,18 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'obsidian',
   ]),
   // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
+  // self-check triages the system's own failures; it files repair requests and closes
+  // issues, and touches nothing the owner or another turn owns
+  'self-check': new Set([
+    'report_publish',
+    'wiki_publish',
+    'mama_save',
+    'mama_update',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+    'obsidian',
+  ]),
   temporal: new Set([
     'report_publish',
     'wiki_publish',
@@ -1743,7 +1767,103 @@ export async function runAgentLoop(
   if (heartbeatCadenceMs !== null) {
     legCadence.declare('heartbeat', heartbeatCadenceMs);
   }
+  // Failures become evidence (One MAMA Phase 3): one sink over the mama-core database.
+  const issueDb = { prepare: (sql: string) => mamaCore.getAdapter().prepare(sql) };
+  ensureOperationalIssuesTable(issueDb as never);
+  const recordIssue = (input: RecordIssueInput): void => {
+    try {
+      recordOperationalIssue(issueDb as never, input);
+    } catch (error) {
+      console.error(
+        `[operational-issue] record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+  toolExecutor.setOperationalIssueSink(recordIssue);
+  // Ledger stagnation probe: deltas keep arriving while no owner task is created for 24h.
+  // Cross-database on purpose (tasks in triggers.db, deltas in mama-memory.db); at most one
+  // record per 12h so occurrences count days, not ticks.
+  let lastStagnationRecordAt = 0;
+  const probeLedgerStagnation = (): void => {
+    const now = Date.now();
+    if (now - lastStagnationRecordAt < 12 * 60 * 60 * 1000) {
+      return;
+    }
+    try {
+      const dayAgo = now - 24 * 60 * 60 * 1000;
+      const created = taskLedger.countOwnerTasksCreatedSince(dayAgo);
+      const deltas = (
+        mamaCore
+          .getAdapter()
+          // indexed_at is ISO text (migration 030); an integer would compare below every row.
+          .prepare(`SELECT count(*) AS n FROM connector_event_index WHERE indexed_at >= ?`)
+          .get(new Date(dayAgo).toISOString()) as { n?: number } | undefined
+      )?.n;
+      if (created === 0 && typeof deltas === 'number' && deltas > 0) {
+        lastStagnationRecordAt = now;
+        recordIssue({
+          surface: 'ledger',
+          signature: 'no_task_created_24h',
+          severity: 'error',
+          error: `${deltas} connector deltas indexed in 24h, zero owner tasks created`,
+          nowMs: now,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `[operational-issue] stagnation probe failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+  // One self-check turn per local day (idempotent on the date key), enqueued from the
+  // watchdog interval so it needs no timer of its own.
+  const enqueueDailySelfCheck = (): void => {
+    try {
+      const localDate = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD in local time
+      taskLedger.enqueueWorkOrder({
+        workKind: 'self-check',
+        idempotencyKey: selfCheckKey(localDate),
+        input: { scheduledFor: localDate },
+      });
+    } catch (error) {
+      console.error(
+        `[self-check] enqueue failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+  budgetStopSink.current = (info) => {
+    try {
+      taskLedger.recordBudgetStop(info);
+    } catch (error) {
+      console.error(
+        `[budget] receipt failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    recordIssue({
+      surface: 'budget',
+      signature: `run_budget_stop:${info.agentId ?? 'unknown'}`,
+      severity: 'warn',
+      error: `run ${info.modelRunId ?? '(no run id)'} stopped at ${info.budgetTokens} of ${info.runTokenBudget} tokens after ${info.turns} turns`,
+      sourceRef: info.channelKey,
+      ownerAgent: info.agentId,
+    });
+  };
+  toolExecutor.setRepairControls({
+    issueExists: (issueId) => getOperationalIssue(issueDb as never, issueId) !== null,
+    setIssueStatus: (issueId, status) =>
+      setOperationalIssueStatus(issueDb as never, issueId, status),
+    notifyOwner: async (line) => {
+      const notify = getLegPageNotifier();
+      if (!notify) {
+        throw new Error('owner notice channel is not configured');
+      }
+      await notify(line);
+    },
+    repairRoot: () => resolveRepairRoot(),
+  });
   const legWatchdog = setInterval(() => {
+    probeLedgerStagnation();
+    enqueueDailySelfCheck();
     try {
       const { pages, recoveries } = legCadence.check();
       for (const page of pages) {
@@ -1874,6 +1994,19 @@ export async function runAgentLoop(
         });
         return build(wo.workKind, scope.memory_scopes, wo.workKind);
       },
+      selfCheckInput: () => ({
+        openIssues: listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
+          issueId: issue.issueId,
+          surface: issue.surface,
+          severity: issue.severity,
+          signature: issue.signature,
+          occurrences: issue.occurrences,
+          firstSeenAt: new Date(issue.firstSeenAt).toISOString(),
+          lastSeenAt: new Date(issue.lastSeenAt).toISOString(),
+          lastError: issue.lastError,
+        })),
+        noUpdateScope: `self-check:${new Date().toLocaleDateString('sv-SE')}`,
+      }),
       publishPipelineSlot: () => {
         const publish = pipelineSlotPublisher.current;
         if (!publish) throw new Error('pipeline slot publisher is not bound yet');
@@ -2179,6 +2312,15 @@ export async function runAgentLoop(
       });
       // Scope-independent packet readers, shared by the report leg and the event turn.
       const reportContextDeps: OwnerReportContextDeps = {
+        readOperationalIssues: () =>
+          listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
+            issueId: issue.issueId,
+            surface: issue.surface,
+            severity: issue.severity,
+            summary: `${issue.signature}: ${issue.lastError ?? ''}`.slice(0, 300),
+            occurrences: issue.occurrences,
+            firstSeenAt: new Date(issue.firstSeenAt).toISOString(),
+          })),
         listTaskPage: (input) => taskLedger.listPage(input),
         readClaims: (scope) =>
           mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
@@ -2430,6 +2572,14 @@ export async function runAgentLoop(
             console.error(message);
             await getLegPageNotifier()?.(message);
           },
+          recordIssue: ({ channelKey, reason }) =>
+            recordIssue({
+              surface: 'inbox',
+              signature: 'dead_batch',
+              severity: 'error',
+              error: reason,
+              sourceRef: channelKey,
+            }),
           log: (line) => console.log(line),
         });
         let ownerEventTickPromise: Promise<unknown> | null = null;
