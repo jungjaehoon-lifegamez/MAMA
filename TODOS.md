@@ -189,3 +189,13 @@ outside the envelope's read allowance throws `worker_envelope_scope_denied` (403
 enclosing `code_act` fails. Fixed at both layers in 0.41.0: the board reconcile envelope carries
 the judged channel's memory scope (`reconcileChannelKey`), and the board turn section says to
 omit `scopes`. Remaining acceptance: one installed board reconcile run without the warn.
+
+## queryRelevantTruth needs a database-side bound (mama-core follow-up, 2026-09-04)
+
+Learning injection (0.42.0) reads active claims in scope with `query: ''` on every event,
+scheduled and owner chat turn, and the observer's exact-topic dedupe does the same on each
+positive classification. `queryRelevantTruth` (mama-core truth-store.ts) has no LIMIT and
+materialises every matching row before the JS filter; the standalone 200-row cap bounds the
+prompt, not the scan. Next: add `limit` and an optional exact `topic` predicate to the core
+query (ORDER BY updated_at DESC LIMIT ?), bump mama-core, and switch both call sites. Raised
+by the Opus review of 154ecda2 and by CodeRabbit on #251.

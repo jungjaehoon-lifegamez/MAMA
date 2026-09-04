@@ -74,4 +74,33 @@ describe('Story ONE-MAMA-P2 Task 2: learning markers', () => {
       expect(word).toMatch(/^[\x20-\x7e]+$/);
     }
   });
+  it('AC #7 blank marker entries in the owner config never classify a message', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mama-locale-blank-'));
+    try {
+      const path = join(dir, 'locale.json');
+      writeFileSync(
+        path,
+        JSON.stringify({
+          learningMarkers: {
+            durableRule: ['', '   '],
+            correction: [' '],
+            oneOffVeto: [''],
+            topicNouns: { report: [''] },
+          },
+        })
+      );
+      const cfg = loadLearningMarkers({ MAMA_OPERATOR_LOCALE_PATH: path } as NodeJS.ProcessEnv);
+      for (const list of [
+        cfg.durableRule,
+        cfg.correction,
+        cfg.oneOffVeto,
+        ...Object.values(cfg.topicNouns),
+      ]) {
+        expect(list.every((m) => m.trim().length > 0)).toBe(true);
+      }
+      expect(detectDurableInstruction('What is the status?', cfg).kind).toBe('none');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

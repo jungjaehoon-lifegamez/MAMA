@@ -46,7 +46,7 @@ export interface MamaApiClient {
   /** Current claims in scope (decisions.status is the authority); used for learning injection. */
   queryRelevantTruth?: (params: {
     query: string;
-    scopes: Array<{ kind: string; id: string }>;
+    scopes: import('@jungjaehoon/mama-core/memory/types').MemoryScopeRef[];
   }) => Promise<import('@jungjaehoon/mama-core/memory/types').MemoryTruthRow[]>;
   /**
    * Search for decisions related to a query

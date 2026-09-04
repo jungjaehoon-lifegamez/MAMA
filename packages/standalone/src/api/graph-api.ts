@@ -1101,6 +1101,18 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
   try {
     const body = await readBody(req);
 
+    if (isLearningTopic(body.topic)) {
+      // Same choke as the gateway and /graph/ingest: standing policy is host-written only.
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          success: false,
+          code: 'learning_topic_refused',
+          error: 'topic may not start with policy: or lesson:',
+        })
+      );
+      return;
+    }
     if (!body.topic || !body.decision || !body.reasoning) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(

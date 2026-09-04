@@ -1611,20 +1611,6 @@ This protects your credentials from being exposed in chat logs.`;
         if (agentSavedThisTurn) {
           logger.info('[memory-agent] extraction skipped - agent saved in-turn (dual-save dedup)');
         }
-        if (
-          !isPublicLane &&
-          response &&
-          message.text &&
-          agentContext.roleName === 'owner_console'
-        ) {
-          // Owner corrections and rules become lesson:/policy: rows (turn-observer.ts).
-          // Only after a committed reply; never on a public lane; host is the only writer.
-          void this.observeOwnerLearning(message).catch((error: unknown) => {
-            logger.warn(
-              `[learning] observer failed: ${error instanceof Error ? error.message : String(error)}`
-            );
-          });
-        }
         if (!isPublicLane && response && message.text && !agentSavedThisTurn) {
           const rawAssistantText = stripGatewayDecorations(response);
           void (async () => {
@@ -1759,6 +1745,21 @@ This protects your credentials from being exposed in chat logs.`;
         if (!persisted) {
           throw new Error('Unable to persist final assistant response');
         }
+      }
+      if (
+        (message.principal?.lane ?? 'owner') !== 'public' &&
+        response &&
+        message.text &&
+        agentContext.roleName === 'owner_console'
+      ) {
+        // Owner corrections and rules become lesson:/policy: rows (turn-observer.ts).
+        // Only AFTER the reply persisted (a failed persist throws above): a turn that did
+        // not commit must not leave standing instructions for later prompts.
+        void this.observeOwnerLearning(message).catch((error: unknown) => {
+          logger.warn(
+            `[learning] observer failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
       }
       if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
         try {
@@ -2400,6 +2401,8 @@ INSTRUCTION:
         const saved = await this.mamaApi.saveMemory!(input);
         return { memoryId: saved.id };
       },
+      // Exact-topic lookup over the active rows in scope. Not capped: a cap keeps the newest
+      // rows and could drop an older exact match, turning a dedupe into a duplicate.
       findExisting: async (topic) => {
         const rows = await this.mamaApi.queryRelevantTruth!({ query: '', scopes });
         const hit = rows.find((row) => row.topic === topic);
