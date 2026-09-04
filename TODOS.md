@@ -2,6 +2,23 @@
 
 ## Deferred until cognitive foundation repair is proven
 
+### Let the Board lane read bounded evidence for lifecycle candidates
+
+**What:** The forced Board workorder on 0.40.0 (#4380) called `context_compile` once for the
+lifecycle candidate set with exact task/source refs and the envelope scope audit rejected it
+(`[envelope] scope mismatch`, parent `code_act`), so the run retained every task. The same
+rejection is logged daily since 2026-08-25. Carry the run's host context (principal, channel
+scope) into Code-Act scoped reads so the Board lane can compile candidate evidence, then re-run
+the installed lifecycle gate: at least one real stale row reclassified with a receipt.
+
+**Why:** The offline copied-DB gate reclassified two stale rows through the ledger primitive, but
+the installed lane cannot reach the same evidence. This is the S3 "principal follows run" defect,
+not a report-path regression; the report path passed its installed gate.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** Nothing; blocks the installed lifecycle gate and the Case roadmap
+
 ### Fail the full-report request, not the tick, when the packet runtime is missing
 
 **What:** In `operator-trigger-loop.ts`, `preparePendingRequest` throws when `reportAsk.full`,
