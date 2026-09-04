@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.45.0] - 2026-09-04
+
+### Fixed
+
+- **Board slots lost their line breaks (0.41.0).** The viewer renders the briefing,
+  action-required and decisions slots as HTML. Until 0.40.0 the report path injected the slot
+  HTML vocabulary; the board worker then relied on the per-kind board brief, and One MAMA
+  (0.41.0) replaced that brief with a host-authored turn section that did not carry the
+  vocabulary. The board turn wrote plain text whose newlines collapsed into spaces. The board
+  turn section now states that each slot is an HTML fragment and lists the class vocabulary;
+  a test pins it to the board kind only. Found by the owner on Telegram on 2026-09-04.
+- **The run token budget counted codex cache reads twice and is now off by default.** Codex
+  reports input tokens inclusive of cached tokens; the loop added cache reads again, so a 2.8M
+  wiki turn read as 5.5M and the owner's own chat turn as 3.65M, and the 3,000,000 default
+  stopped both within fifteen minutes of the 0.44.0 install. The count is backend-aware now
+  (Anthropic reports cache reads outside input; codex inside). The earlier 4.28M "pathology"
+  was a doubled number too, so no run the budget would have caught has been observed:
+  `agent.run_token_budget` defaults to 0 (off) until a named runaway exists.
+- **The chat shell no longer blocks inline interpreters.** `python -c`, `node -e`, `bash -c`
+  and the like were on the Bash guard's dangerous-pattern list as code-injection insurance.
+  They are what the owner chat shell exists for, and no unattended turn holds Bash, so the
+  entries are removed; setuid, chown, pipe-to-shell, netcat listeners, /dev/tcp and mkfifo
+  stay. Found by the owner's first shell request on 2026-09-04.
+
 ## mama-os [0.44.0] - 2026-09-04
 
 ### Changed

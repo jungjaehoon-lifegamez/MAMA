@@ -4265,12 +4265,8 @@ export class GatewayToolExecutor {
       /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sh|bash|zsh|fish)\b/i, // pipe to shell
       /\beval\b/i, // eval in shell
       /\bnc\s+-[el]/i, // netcat listener (reverse shell)
-      /\bpython(?:3)?\s+-c\b/i, // python inline code
-      /\bnode\s+-e\b/i, // node inline code
-      /\bruby\s+-e\b/i, // ruby inline code
-      /\bperl\s+-e\b/i, // perl inline code
-      /\bphp\s+-r\b/i, // php inline code
-      /\b(?:bash|sh|zsh)\b\s+-[cix]\b/i, // shell inline/interactive execution
+      // Inline interpreters (python -c, node -e, bash -c, ...) are NOT here: they are what
+      // the owner chat shell is granted for (2026-09-04), and no unattended turn holds Bash.
       />\s*\/dev\/tcp\//i, // bash /dev/tcp reverse shell
       /\bmkfifo\b/i, // named pipe (often used in reverse shells)
     ];
