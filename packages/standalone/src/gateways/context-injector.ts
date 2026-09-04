@@ -39,6 +39,15 @@ export interface Decision {
  * allowing for easy mocking in tests.
  */
 export interface MamaApiClient {
+  /** Full memory save (host callers only; the turn observer writes policy:/lesson: rows). */
+  saveMemory?: (
+    input: import('@jungjaehoon/mama-core/memory/types').PublicSaveMemoryInput
+  ) => Promise<{ success: boolean; id: string }>;
+  /** Current claims in scope (decisions.status is the authority); used for learning injection. */
+  queryRelevantTruth?: (params: {
+    query: string;
+    scopes: import('@jungjaehoon/mama-core/memory/types').MemoryScopeRef[];
+  }) => Promise<import('@jungjaehoon/mama-core/memory/types').MemoryTruthRow[]>;
   /**
    * Search for decisions related to a query
    */
