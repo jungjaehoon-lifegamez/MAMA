@@ -45,10 +45,12 @@ export function learningMarkersPath(env: NodeJS.ProcessEnv = process.env): strin
   return env.MAMA_OPERATOR_LOCALE_PATH || join(homedir(), '.mama', 'operator', 'locale.json');
 }
 
+/** A marker list; blank entries are dropped (a blank marker would match every message). */
 function stringList(value: unknown): string[] | null {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
-    ? (value as string[])
-    : null;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    return null;
+  }
+  return (value as string[]).map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
 /** Defaults merged with the owner's overrides; overrides ADD to a list, never replace it. */
@@ -110,6 +112,9 @@ function markerRegex(marker: string): RegExp {
 
 function firstMatch(text: string, markers: string[]): string | null {
   for (const marker of markers) {
+    if (!marker.trim()) {
+      continue;
+    }
     if (markerRegex(marker).test(text)) {
       return marker;
     }

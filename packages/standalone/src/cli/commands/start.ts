@@ -1856,11 +1856,16 @@ export async function runAgentLoop(
           return '';
         }
         const projectId = resolveReactiveProjectRoot(config, process.env);
+        // Same binding the run's envelope gets: a recheck's lessons live under its task's channel.
+        const temporalBinding =
+          wo.workKind === 'temporal'
+            ? temporalTaskBinding(taskLedger, buildTemporalWorkerContext(taskLedger, wo).taskId)
+            : null;
         const scope = workOrderEnvelopeScope({
           workKind: wo.workKind,
           projectId,
           laneConnectors: codeActRawConnectors,
-          temporalBinding: null,
+          temporalBinding,
           reconcileChannelKey:
             wo.workKind === 'board' && typeof wo.payload.channelKey === 'string'
               ? wo.payload.channelKey
@@ -2043,6 +2048,34 @@ export async function runAgentLoop(
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });
   }
 
+  // Owner policy and lessons: bound BEFORE the consumer starts (bootAfterRoutes) and
+  // independent of the trigger loop, so scheduled turns carry the block even when
+  // MAMA_TRIGGER_LOOP=0.
+  // Owner policy and lessons for a turn: one bounded read path for event, scheduled
+  // and (via MamaApiClient) chat turns. Returns the rendered block or ''.
+  const learningReader = cappedLearningReader(
+    (params) => mamaCore.queryRelevantTruth({ query: params.query, scopes: params.scopes }),
+    (line) => console.log(line)
+  );
+  const buildLearningBlockFor = async (
+    turn: string,
+    scopes: MemoryScopeRef[],
+    query: string
+  ): Promise<string> => {
+    try {
+      const context = await buildLearningContext({ scopes, query, readClaims: learningReader });
+      const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
+      console.log(formatLearningAuditLine(turn, channelScopeId, context));
+      return context.promptBlock;
+    } catch (error) {
+      console.error(
+        `[learning] ${turn} block failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return '';
+    }
+  };
+  learningBlockRef.current = buildLearningBlockFor;
+
   // ── Trigger loop (M1, default-on): agent-evolved triggers on the live stream ──
   // MAMA_TRIGGER_LOOP=0 is the explicit opt-out. Placed after initConnectors (which feeds
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
@@ -2144,30 +2177,6 @@ export async function runAgentLoop(
         issuance: envelopeBootstrap.metadata.issuance,
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
-      // Owner policy and lessons for a turn: one bounded read path for event, scheduled
-      // and (via MamaApiClient) chat turns. Returns the rendered block or ''.
-      const learningReader = cappedLearningReader(
-        (params) => mamaCore.queryRelevantTruth({ query: params.query, scopes: params.scopes }),
-        (line) => console.log(line)
-      );
-      const buildLearningBlockFor = async (
-        turn: string,
-        scopes: MemoryScopeRef[],
-        query: string
-      ): Promise<string> => {
-        try {
-          const context = await buildLearningContext({ scopes, query, readClaims: learningReader });
-          const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
-          console.log(formatLearningAuditLine(turn, channelScopeId, context));
-          return context.promptBlock;
-        } catch (error) {
-          console.error(
-            `[learning] ${turn} block failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-          return '';
-        }
-      };
-      learningBlockRef.current = buildLearningBlockFor;
       // Scope-independent packet readers, shared by the report leg and the event turn.
       const reportContextDeps: OwnerReportContextDeps = {
         listTaskPage: (input) => taskLedger.listPage(input),
