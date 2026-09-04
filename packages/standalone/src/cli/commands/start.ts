@@ -137,6 +137,7 @@ import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
+import { PIPELINE_SLOT_ROWS, renderPipelineSlot } from '../../operator/board-pipeline-render.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
   buildOwnerEventAgentContext,
@@ -1740,6 +1741,9 @@ export async function runAgentLoop(
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
   const boardRepairNudge: { current: (() => void) | null } = { current: null };
+  const pipelineSlotPublisher: { current: ((slots: Record<string, string>) => unknown) | null } = {
+    current: null,
+  };
   let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
@@ -1807,6 +1811,18 @@ export async function runAgentLoop(
       ledger: taskLedger,
       runner: workerRunner,
       loadOwnerBrief: () => loadConsoleBrief(),
+      // Host-rendered pipeline: the ledger's own deadline_priority page, published through
+      // the SAME report publisher report_publish uses (bound after the API routes exist).
+      publishPipelineSlot: () => {
+        const publish = pipelineSlotPublisher.current;
+        if (!publish) throw new Error('pipeline slot publisher is not bound yet');
+        const page = taskLedger.listPage({
+          includeTerminal: false,
+          order: 'deadline_priority',
+          limit: PIPELINE_SLOT_ROWS,
+        });
+        publish({ pipeline: renderPipelineSlot(page.tasks, Date.now(), page.total) });
+      },
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
@@ -2408,6 +2424,13 @@ export async function runAgentLoop(
       triggerLoopFullReport.current?.() ?? { accepted: false, reason: 'unavailable' },
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
+  {
+    const { createReportPublisher } = await import('../../api/report-handler.js');
+    pipelineSlotPublisher.current = createReportPublisher(
+      apiServer.reportStore,
+      apiServer.reportSseClients
+    );
+  }
   gateways.push({ stop: async () => apiRoutesHandle.stop() });
 
   // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
