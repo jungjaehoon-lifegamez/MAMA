@@ -397,7 +397,14 @@ export function initMainAgentLoop(
       // Stage-2 token telemetry (0.27.5). The first live run under 0.27.5
       // recorded NULL because this return stripped the field - the structural
       // WorkerRunner type could not catch a concrete wrapper dropping it.
-      return { response, totalUsage: result.totalUsage };
+      // stoppedBy must survive too: the consumer retries a budget-stopped order instead of
+      // judging its partial response (a stripped field here is why 0.43.0 completed board#4416
+      // on one turn).
+      return {
+        response,
+        totalUsage: result.totalUsage,
+        ...(result.stoppedBy ? { stoppedBy: result.stoppedBy } : {}),
+      };
     },
   };
 

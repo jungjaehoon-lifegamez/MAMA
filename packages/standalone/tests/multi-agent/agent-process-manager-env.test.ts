@@ -499,7 +499,11 @@ describe('AgentProcessManager env vars by tier', () => {
         'search_codebase',
         'fetch_web_content',
       ]);
-      expect(loop.clineNativeDisallowedTools).toEqual(['apply_patch', 'editor', 'run_commands']);
+      expect([...loop.clineNativeDisallowedTools].sort()).toEqual([
+        'apply_patch',
+        'editor',
+        'run_commands',
+      ]);
       expect(writeFileSyncCalls).toHaveLength(0);
     });
 

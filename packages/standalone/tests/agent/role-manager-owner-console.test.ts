@@ -24,7 +24,8 @@ describe('Story OPS-1: owner_console trust-conditional resolution', () => {
       expect(rm.isToolAllowed(owner.role, 'kagemusha_tasks')).toBe(false);
       expect(rm.isToolAllowed(owner.role, 'task_create')).toBe(true);
       expect(rm.isToolAllowed(owner.role, 'mama_save')).toBe(true);
-      expect(rm.isToolAllowed(owner.role, 'Bash')).toBe(false);
+      // Owner decision 2026-09-04: the owner chat turn holds the guarded workspace shell.
+      expect(rm.isToolAllowed(owner.role, 'Bash')).toBe(true);
       expect(rm.isToolAllowed(owner.role, 'delegate')).toBe(false);
     });
   });

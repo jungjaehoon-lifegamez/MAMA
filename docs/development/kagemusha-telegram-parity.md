@@ -1002,6 +1002,39 @@ Installed acceptance (to be recorded after cutover):
 - [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
       lane collapse (already merged behind the same release) is re-argued before Phase 2.
 
+## One MAMA Phase 3: 2026-09-04 (release 0.43.0 / mama-core 2.3.0, installed)
+
+PR #253 (squash 3494ac50), tag v0.43.0, publish.yml published mama-core 2.3.0 then mama-os
+0.43.0 (`^2.3.0`), installed 08:09Z; schema version 66, `awareness_operational_issues` carries
+`occurrences`, `evidence_effects` rebuilt in place with its 799 rows. Scenarios: TG-03
+(`file_export` writes only under the workspace; the repair bundle lives outside it), TG-04
+(self-check grant), TG-06 (receipts for file, memory, repair and budget effects).
+
+Live within 30 minutes, both recorded by the new self-diagnosis before anyone read a log:
+
+- **Budget defect.** `budget|warn` issues: `run mr_... stopped at 1205537 of 400000 tokens after
+1 turns` and a board run at 2026824. A codex turn is a whole agentic loop, so the per-turn
+  check fired after the first turn on every scheduled run, and the client wrapper dropped
+  `stoppedBy`, so board#4416 completed on a partial response. Mitigation installed:
+  `agent.run_token_budget: 0` in `config.yaml` (the daemon reads yaml, not json). Fix in the
+  next release: in-turn enforcement on codex usage events, wrapper forwards `stoppedBy`,
+  default 3,000,000.
+- **Self-check re-enqueue.** A terminal work order frees its idempotency slot, so the daily
+  self-check re-enqueued every minute after each completion (8 runs 08:10Z to 08:36Z). Fix in
+  the next release: the publisher checks the day's key regardless of status.
+- Also recorded: `gateway|error wiki_publish:threw page type is not supported: project-note`
+  (x2), `task_update:threw lifecycle workorder requires a plain latest_event reason`,
+  `context_compile:context_compile_input_invalid` (info). These are the first agent-visible
+  failure rows; the self-check turn now receives them.
+
+Installed acceptance (Phase 3 Task 5):
+
+- [x] `awareness_operational_issues` populated within the first hour with redacted, aggregated
+      rows; zero token-shaped strings in `last_error`.
+- [x] Self-check turns ran (too often, see above); `~/.mama/repairs/` had no bundle yet.
+- [ ] A spreadsheet request delivered as csv to Telegram (`file_export` effect + send).
+- [ ] A budget stop that is a real receipt on a run that deserved it (after the fix).
+
 ## One MAMA Phase 2: 2026-09-04 (release 0.42.0, installed)
 
 PR #251 (squash b81fb00a), tag v0.42.0, npm publish succeeded, installed 07:19Z with

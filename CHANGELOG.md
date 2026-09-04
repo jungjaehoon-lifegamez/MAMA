@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.44.0] - 2026-09-04
+
+### Changed
+
+- **The owner's chat turn has hands.** `Bash` and `Write` are in the owner console grant for
+  the owner's own 1:1 chat turn: the existing gateway executor runs them with the workspace as
+  cwd, the destructive-command guard and a 60s timeout, on the claude and codex backends alike
+  (tier-1 Code-Act injects them). Every unattended turn (owner-event, board, wiki, curation,
+  recheck, self-check) blocks both by name, because there connector text would become a
+  command. Cline's native `run_commands`/`apply_patch`/`editor` stay disallowed whatever the
+  gateway grants: they bypass the guard. This reverses the 2026-07-16 "no native tools for the
+  main persona" rule for the chat turn only, on the owner's 2026-09-04 decision that an agent
+  that cannot run a command to make a file is not an operator.
+
+### Fixed
+
+- **The run token budget stopped every codex run after its first turn (0.43.0).** A codex
+  turn is a whole agentic loop of model calls, and a normal board run counts ~2.0M tokens
+  (cache reads dominate) inside that one turn, so the 400000 default tripped after turn one
+  and the consumer completed the order on the partial response because the client wrapper
+  dropped `stoppedBy`. Now the budget is enforced INSIDE the codex turn on every usage event
+  (the turn is interrupted when it crosses), the wrapper forwards `stoppedBy` so work orders
+  are retried, and the default is 3000000 (live measurement: normal board run ~2.0M, the
+  pathology 4.28M). Installed mitigation until this ships: `agent.run_token_budget: 0`.
+  Review (#254) then found the in-turn enforcement never reached the codex turn because
+  neither `agent.prompt()` call passed the budget; both do now, a source pin guards it, and
+  the interrupted turn's usage is counted instead of reported as zero.
+- **The daily self-check re-enqueued every minute after each completion (0.43.0).** A terminal
+  work order frees its idempotency slot (the unique index excludes terminal rows), so the
+  publisher's minute tick inserted a fresh order as soon as the previous one finished: 8
+  self-check runs in 26 minutes live. The publisher now checks the day's key regardless of
+  status.
+
 ## mama-os [0.43.0] / mama-core [2.3.0] - 2026-09-04
 
 One MAMA, Phase 3 (capabilities and self-diagnosis). The agent can make a file the owner

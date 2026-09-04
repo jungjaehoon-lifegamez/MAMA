@@ -2512,7 +2512,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(result.success).toBe(true);
           expect(JSON.parse(String(result.message)).value).toEqual({
             search: 'function',
-            bash: 'undefined',
+            bash: 'function', // owner decision 2026-09-04: the owner chat turn holds the guarded shell,
           });
         });
 

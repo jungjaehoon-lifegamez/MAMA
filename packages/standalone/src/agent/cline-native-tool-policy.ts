@@ -28,6 +28,17 @@ export function isClineMcpToolGrant(tool: string): boolean {
   return CLINE_MCP_TOOL_PATTERN.test(tool);
 }
 
+/**
+ * Cline's native shell and editor bypass MAMA's gateway executor (workspace cwd, destructive
+ * guard, receipts). The main persona's gateway Bash/Write grant (owner chat, 2026-09-04) must
+ * never become these; managed tier-2/3 runners keep the plain mapping below.
+ */
+export const CLINE_NATIVE_GUARD_BYPASS: readonly string[] = [
+  'run_commands',
+  'apply_patch',
+  'editor',
+];
+
 export function projectClineNativeTools(tools: readonly string[] | undefined): string[] {
   if (!tools) {
     return [];

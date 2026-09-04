@@ -182,9 +182,14 @@ export const DEFAULT_ROLES: RolesConfig = {
         'mama_save',
         'mama_update',
         'file_export',
+        // Owner decision 2026-09-04: the owner's own chat turn gets the workspace shell and
+        // file writer (cwd ~/.mama/workspace, destructive-pattern guard, 60s). Unattended
+        // turns block both in OWNER_EVENT_BLOCKED_TOOLS / SCHEDULED_TURN_BLOCKED_TOOLS.
+        'Bash',
+        'Write',
         'code_act',
       ],
-      blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],
+      blockedTools: ['save_integration_token', 'delegate'],
       allowedPaths: ['~/.mama/workspace/**'],
       systemControl: false,
       sensitiveAccess: false,
@@ -265,7 +270,8 @@ export interface AgentConfig {
   max_turns: number;
   /**
    * Per-RUN token budget across all turns (input + output + cache creation + cache reads);
-   * the run stops with a receipt after the turn that crosses it. Default 400000.
+   * the run stops with a receipt after the turn that crosses it. Default 3000000 (a normal
+   * codex board run is ~2M counted tokens in one turn; the pathology was 4.28M).
    * NOT the same as MAMAConfig.token_budget, which is the DAILY cap.
    */
   run_token_budget?: number;
@@ -772,7 +778,10 @@ export const DEFAULT_CONFIG: MAMAConfig = {
     backend: 'claude',
     model: 'claude-sonnet-5',
     max_turns: 10,
-    run_token_budget: 400000,
+    // Live measurement 2026-09-04 (0.43.0): a normal board run costs ~2.0M counted tokens in
+    // ONE codex turn (cache reads dominate); the pathology was a 4.28M chat run. 400000
+    // stopped every scheduled run after its first turn.
+    run_token_budget: 3_000_000,
     timeout: 300000, // 5 minutes
     tools: {
       // Default: all tools via Gateway (self-contained, no MCP dependency)

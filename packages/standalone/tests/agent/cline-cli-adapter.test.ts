@@ -1393,3 +1393,12 @@ describe('ClineCLIAdapter Hub persistence', () => {
     await expect(first).resolves.toMatchObject({ response: 'first-held:done' });
   });
 });
+
+describe('owner chat shell: the main persona never receives the Cline-native shell', () => {
+  it('CLINE_NATIVE_GUARD_BYPASS is exactly the projection of the gateway Bash/Write', async () => {
+    const { CLINE_NATIVE_GUARD_BYPASS, projectClineNativeTools } =
+      await import('../../src/agent/cline-native-tool-policy.js');
+    const projected = projectClineNativeTools(['Bash', 'Write', 'mama_search']);
+    expect([...projected].sort()).toEqual([...CLINE_NATIVE_GUARD_BYPASS].sort());
+  });
+});
