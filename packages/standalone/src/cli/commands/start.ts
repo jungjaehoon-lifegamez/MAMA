@@ -152,7 +152,7 @@ import {
   closeOwnerEventBeforeDatabase,
   type OwnerEventTerminalReceipt,
 } from '../../operator/owner-event-loop.js';
-import { PIPELINE_SLOT_ROWS, renderPipelineSlot } from '../../operator/board-pipeline-render.js';
+import { renderPipelineSlot } from '../../operator/board-pipeline-render.js';
 import { buildLearningContext, formatLearningAuditLine } from '../../operator/learning-context.js';
 import { cappedLearningReader } from '../../operator/learning-read.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
@@ -2023,7 +2023,6 @@ export async function runAgentLoop(
         const page = taskLedger.listPage({
           includeTerminal: false,
           order: 'deadline_priority',
-          limit: PIPELINE_SLOT_ROWS,
         });
         publish({ pipeline: renderPipelineSlot(page.tasks, Date.now(), page.total) });
       },

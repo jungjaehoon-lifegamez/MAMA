@@ -98,7 +98,7 @@ describe('HostBridge', () => {
       expect(list?.params).toContainEqual(
         expect.objectContaining({ name: 'include_terminal', type: 'boolean' })
       );
-      expect(list?.description).toContain('ranked top-N projection');
+      expect(list?.description).toContain('returns the whole board');
       expect(list?.returnType).toContain('temporal_state');
     });
 

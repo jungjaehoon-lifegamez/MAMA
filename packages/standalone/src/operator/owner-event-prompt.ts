@@ -85,7 +85,7 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     ...(input.packet
       ? [
           '',
-          '## Channel packet (host-compiled current ledger and evidence; do not re-read what it already shows. It is bounded: a task it does not list may still exist, and its caveats say when task_list is allowed)',
+          '## Channel packet (host-compiled recent ledger and evidence for this batch. A starting point, not the board: call task_list() and the live tools yourself whenever the judgment needs more than it shows)',
           // Host-compiled, but it carries verbatim connector-derived task titles.
           wrapUntrustedContent('owner-event-packet', input.packet),
         ]

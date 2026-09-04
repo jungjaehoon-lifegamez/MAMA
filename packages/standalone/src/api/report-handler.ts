@@ -75,7 +75,9 @@ export function broadcastReportUpdate(
   }
 }
 
-const MAX_SLOT_BYTES = 65_536;
+// 64 KB dropped the whole-board pipeline slot silently past ~280 rows, leaving the owner a
+// stale table with no error (review of #258). The viewer renders HTML; SSE carries it fine.
+const MAX_SLOT_BYTES = 512 * 1024;
 const MAX_SLOTS_PER_PUBLISH = 24;
 
 /**
