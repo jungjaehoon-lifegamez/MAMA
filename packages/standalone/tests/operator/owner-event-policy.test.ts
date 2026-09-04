@@ -50,7 +50,10 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
           'mama_update',
         ])
       );
+      // Never on the event turn: connector text must not become a command.
       expect(context.role.blockedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+      expect(context.role.allowedTools).not.toContain('Bash');
+      expect(context.role.allowedTools).not.toContain('Write');
       for (const administrationOrSecondJudgmentSurface of [
         'member_register',
         'member_suspend',

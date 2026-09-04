@@ -16,7 +16,7 @@ import type { PromptLayer } from './prompt-size-monitor.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { ClineCLIAdapter } from './cline-cli-adapter.js';
-import { projectClineNativeTools } from './cline-native-tool-policy.js';
+import { CLINE_NATIVE_GUARD_BYPASS, projectClineNativeTools } from './cline-native-tool-policy.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import {
   HostToolAbortError,
@@ -77,6 +77,7 @@ import type {
   AgentErrorCode,
   ModelRunProvenance,
   BudgetStopInfo,
+  PromptResult,
 } from './types.js';
 import {
   AgentError,
@@ -1331,12 +1332,21 @@ export class AgentLoop {
     const isDurableRuntime = isCodex || isCline;
     const tracksSessionPolicy = isDurableRuntime || this.backend === 'claude';
     const clineRole = options?.agentContext?.role;
+    // The main persona's gateway Bash/Write run through MAMA's executor; Cline's native
+    // shell/editor would bypass it, so they stay disallowed whatever the role grants.
     const clineAllowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeAllowedTools
-      : projectClineNativeTools(clineRole?.allowedTools);
+      : projectClineNativeTools(clineRole?.allowedTools).filter(
+          (tool) => !CLINE_NATIVE_GUARD_BYPASS.includes(tool)
+        );
     const clineDisallowedTools = this.clineNativePolicyConfigured
       ? this.clineNativeDisallowedTools
-      : projectClineNativeTools(clineRole?.blockedTools);
+      : [
+          ...new Set([
+            ...projectClineNativeTools(clineRole?.blockedTools),
+            ...CLINE_NATIVE_GUARD_BYPASS,
+          ]),
+        ];
     const clineDelegationBlocked = clineRole?.blockedTools?.includes('delegate') ?? false;
     const clineAllowSpawnAgent = this.clineAllowSpawnAgent && !clineDelegationBlocked;
     const clineAllowAgentTeams = this.clineAllowAgentTeams && !clineDelegationBlocked;
@@ -1864,6 +1874,8 @@ export class AgentLoop {
                   sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
                   sessionId: resolvedCliSessionId ?? undefined,
                   requestTimeout: options?.requestTimeoutMs,
+                  // Enforced INSIDE the codex turn (usage events), see CodexAppServerProcess.
+                  runTokenBudget: this.runTokenBudget,
                   hostToolBridge,
                   ...(isCline
                     ? {
@@ -1918,6 +1930,7 @@ export class AgentLoop {
             // Per-run request timeout (operator worker runs); undefined leaves
             // the pool's construction-time default untouched (chat).
             requestTimeout: options?.requestTimeoutMs,
+            runTokenBudget: this.runTokenBudget,
             hostToolBridge,
             toolExecutionContext,
             ...(isCline
@@ -1937,6 +1950,51 @@ export class AgentLoop {
           }
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
+
+          // A codex turn interrupted by the run budget is a host decision, not a failure:
+          // stop here with what was collected and let the host record the receipt.
+          if (
+            (error as { code?: unknown })?.code === 'RUN_BUDGET_STOP' ||
+            errorMessage.startsWith('run budget stop:')
+          ) {
+            stoppedBy = 'budget';
+            const stoppedUsage = (error as { usage?: PromptResult['usage'] }).usage;
+            if (stoppedUsage) {
+              totalUsage.input_tokens += stoppedUsage.input_tokens;
+              totalUsage.output_tokens += stoppedUsage.output_tokens;
+              budgetTokens +=
+                stoppedUsage.input_tokens +
+                stoppedUsage.output_tokens +
+                (stoppedUsage.cache_creation_input_tokens ?? 0) +
+                (stoppedUsage.cache_read_input_tokens ?? 0);
+              try {
+                this.onTokenUsage?.({
+                  channel_key: channelKey,
+                  agent_id: options?.agentContext?.roleName || this.model,
+                  input_tokens: stoppedUsage.input_tokens,
+                  output_tokens: stoppedUsage.output_tokens,
+                  cache_read_tokens: stoppedUsage.cache_read_input_tokens || 0,
+                  cost_usd: 0,
+                });
+              } catch {
+                // Recording failures must never mask the stop itself.
+              }
+            }
+            budgetTokens = Math.max(budgetTokens, this.runTokenBudget);
+            try {
+              this.onBudgetStop?.({
+                channelKey,
+                modelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
+                agentId: options?.agentContext?.roleName,
+                budgetTokens,
+                runTokenBudget: this.runTokenBudget,
+                turns: turn,
+              });
+            } catch {
+              // Receipt failures must never mask the stop itself.
+            }
+            break;
+          }
 
           if (error instanceof McpCompletedMutationInterruptedError) {
             appendCompletedToolExchanges(error.completedToolExchanges);
@@ -2025,6 +2083,7 @@ export class AgentLoop {
                 sessionId: newSessionId,
                 // Carry the per-run timeout onto the reset session too.
                 requestTimeout: options?.requestTimeoutMs,
+                runTokenBudget: this.runTokenBudget,
                 hostToolBridge,
                 toolExecutionContext,
                 ...(isCline
@@ -2370,7 +2429,8 @@ export class AgentLoop {
       }
 
       // Check if we hit max turns
-      if (turn >= this.maxTurns && stopReason === 'tool_use') {
+      // A budget stop on the last allowed turn is a budget stop, not MAX_TURNS.
+      if (turn >= this.maxTurns && stopReason === 'tool_use' && stoppedBy !== 'budget') {
         throw new AgentError(
           `Agent loop exceeded maximum turns (${this.maxTurns})`,
           'MAX_TURNS',

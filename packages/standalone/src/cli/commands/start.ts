@@ -666,8 +666,11 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
  * workspace file reads are owner-conversation material with no use in a scheduled turn.
  */
 export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
-  // workspace file reads are an owner-conversation tool; no turn section instructs one
+  // workspace file reads, the shell and the file writer are owner-conversation tools;
+  // no unattended turn section instructs one
   'Read',
+  'Bash',
+  'Write',
   // every outbound channel, not only Telegram: the grant is derived from the owner's
   // (editable) role config, so a send tool added there must still never run unattended
   'telegram_send',
@@ -1820,6 +1823,13 @@ export async function runAgentLoop(
   const enqueueDailySelfCheck = (): void => {
     try {
       const localDate = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD in local time
+      // A terminal work order frees its idempotency slot (the unique index excludes terminal
+      // rows), so "one per day" must be checked here: without this, 0.43.0 re-enqueued a
+      // self-check every minute after each completion (8 runs in 26 minutes, live).
+      const prior = taskLedger.findWorkOrderByOccurrence('self-check', selfCheckKey(localDate));
+      if (prior && prior.status !== 'failed' && prior.status !== 'cancelled') {
+        return; // failed/cancelled rows are dead and stay retryable (task-ledger.ts)
+      }
       taskLedger.enqueueWorkOrder({
         workKind: 'self-check',
         idempotencyKey: selfCheckKey(localDate),

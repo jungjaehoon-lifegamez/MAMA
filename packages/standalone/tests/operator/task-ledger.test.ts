@@ -1095,3 +1095,25 @@ describe('listPage completeness contract', () => {
     expect(() => ledger.listPage({ limit: 1, cursor: 'not-a-cursor' })).toThrow(/cursor/);
   });
 });
+
+describe('ONE-MAMA-P3 Task 3: one self-check per day', () => {
+  it('a completed self-check still answers findWorkOrderByOccurrence for its day key', () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db);
+      const first = ledger.enqueueWorkOrder({
+        workKind: 'self-check',
+        idempotencyKey: 'self-check:2026-09-04',
+        input: { scheduledFor: '2026-09-04' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(first.id);
+      // the unique index has freed the slot; the publisher's guard must not
+      expect(ledger.findWorkOrderByOccurrence('self-check', 'self-check:2026-09-04')?.id).toBe(
+        first.id
+      );
+    } finally {
+      db.close();
+    }
+  });
+});

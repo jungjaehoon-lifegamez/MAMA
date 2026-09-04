@@ -118,6 +118,8 @@ export interface PromptOptions {
   /** Allow the backend's native multi-agent team primitive for this route. */
   allowAgentTeams?: boolean;
   hostToolBridge?: HostToolBridge;
+  /** Per-run counted-token budget; enforced inside a codex turn (see CodexAppServerProcess). */
+  runTokenBudget?: number;
   systemPrompt?: string;
   /** Stable source/channel route used by persistent backends across daemon restarts. */
   sessionKey?: string;
