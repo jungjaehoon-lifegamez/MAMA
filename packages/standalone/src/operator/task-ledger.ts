@@ -2445,6 +2445,31 @@ export class TaskLedger implements TaskSource {
     return listEffects(this.db as never, query);
   }
 
+  /** Receipt for a deliverable file the owner can receive; target is the content hash. */
+  recordFileExport(input: {
+    sha256: string;
+    runId: string | null;
+    causeEventIds: readonly string[] | undefined;
+    channelId?: string | null;
+    payload: unknown;
+  }): void {
+    const change = {
+      runId: input.runId,
+      channelId: input.channelId ?? null,
+      kind: 'file_export' as const,
+      targetType: 'file' as const,
+      targetId: input.sha256,
+      payload: input.payload,
+      atMs: this.now(),
+    };
+    const causes = (input.causeEventIds ?? []).filter(isUsableCause);
+    if (causes.length > 0) {
+      recordEffect(this.db as never, { ...change, sourceEventIds: causes });
+    } else {
+      recordUnattributedChange(this.db as never, change, 'owner_message');
+    }
+  }
+
   /**
    * Receipt for a memory write made inside a bounded run. Without it a crash between
    * mama_save and the batch ACK re-runs the batch and saves the decision twice; with it
