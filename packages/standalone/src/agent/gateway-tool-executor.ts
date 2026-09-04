@@ -967,6 +967,48 @@ export class GatewayToolExecutor {
     this.disallowedGatewayTools = new Set(tools);
   }
 
+  /**
+   * Record a memory_write receipt for a successful save/update made inside a run, so the
+   * owner-event crash-recovery resolver can see it. Reads only the fields the write named.
+   */
+  private withMemoryWriteReceipt(
+    tool: 'mama_save' | 'mama_update',
+    input: Record<string, unknown>,
+    result: GatewayToolResult
+  ): GatewayToolResult {
+    const record = result as Record<string, unknown>;
+    if (record.success !== true || record.skipped === true || !this.taskLedger) {
+      return result;
+    }
+    const ref =
+      typeof record.id === 'string' && record.id
+        ? record.id
+        : typeof input.id === 'string' && input.id
+          ? input.id
+          : typeof input.topic === 'string' && input.topic
+            ? `topic:${input.topic}`
+            : null;
+    if (!ref) {
+      return result;
+    }
+    const state = this.getExecutionState();
+    try {
+      this.taskLedger.recordMemoryWrite({
+        memoryRef: `${tool}:${ref}`,
+        runId: state.modelRunId ?? null,
+        causeEventIds: state.causeEventIds,
+        channelId: state.channelId ?? null,
+        payload: { tool, ref },
+      });
+    } catch (error) {
+      // A receipt failure must be loud, never hide behind the successful write.
+      console.error(
+        `[memory-receipt] ${tool} receipt failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    return result;
+  }
+
   setReportPublisher(
     fn: (slots: Record<string, string>) => void | readonly string[] | ReportPublishResult
   ): void {
@@ -2700,13 +2742,17 @@ export class GatewayToolExecutor {
             trustedOptions = (await this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId))
               .options;
           }
-          return await handleSave(
-            api,
-            effectiveSaveInput,
-            this.sessionStore?.getHistory
-              ? () => this.sessionStore!.getHistory!('current')
-              : undefined,
-            trustedOptions
+          return this.withMemoryWriteReceipt(
+            'mama_save',
+            input as Record<string, unknown>,
+            await handleSave(
+              api,
+              effectiveSaveInput,
+              this.sessionStore?.getHistory
+                ? () => this.sessionStore!.getHistory!('current')
+                : undefined,
+              trustedOptions
+            )
           );
         }
         case 'mama_search':
@@ -2731,7 +2777,11 @@ export class GatewayToolExecutor {
           }
           const api = await getApi();
           await this.recordMemoryWriteWarnings(api, 'mama_update', updateSecretScan.warnings);
-          return await handleUpdate(api, input as UpdateInput);
+          return this.withMemoryWriteReceipt(
+            'mama_update',
+            input as Record<string, unknown>,
+            await handleUpdate(api, input as UpdateInput)
+          );
         }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);

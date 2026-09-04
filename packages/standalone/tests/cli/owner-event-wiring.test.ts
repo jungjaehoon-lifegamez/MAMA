@@ -177,7 +177,9 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       lines: ['feedback arrived'],
       activations: [],
     });
-    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    if (batchId === null) {
+      throw new Error('test batch unexpectedly deduplicated');
+    }
     const runner = {
       run: vi.fn(async () => ({
         response: 'updated',
@@ -231,9 +233,13 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       lines: ['feedback arrived'],
       activations: [],
     });
-    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    if (batchId === null) {
+      throw new Error('test batch unexpectedly deduplicated');
+    }
     const batch = inbox.claimNext();
-    if (!batch) throw new Error('batch not claimable');
+    if (!batch) {
+      throw new Error('batch not claimable');
+    }
     const deps = { ownerEventEffectLedger: effects, taskLedger };
 
     expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
@@ -247,6 +253,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     expect(resolveOwnerEventTerminalReceipt(batch, deps)).toEqual({
       status: 'acted',
       tools: ['drive_upload'],
+      ownerDecisionRequested: false,
     });
     db.close();
   });
@@ -262,9 +269,13 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       lines: ['feedback arrived'],
       activations: [],
     });
-    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    if (batchId === null) {
+      throw new Error('test batch unexpectedly deduplicated');
+    }
     const batch = inbox.claimNext();
-    if (!batch) throw new Error('batch not claimable');
+    if (!batch) {
+      throw new Error('batch not claimable');
+    }
     const deps = { ownerEventEffectLedger: effects, taskLedger };
     expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
 
@@ -282,6 +293,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     expect(resolveOwnerEventTerminalReceipt(batch, deps)).toEqual({
       status: 'acted',
       tools: ['task_create'],
+      ownerDecisionRequested: false,
     });
     db.close();
   });

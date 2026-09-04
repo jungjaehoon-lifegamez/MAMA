@@ -181,7 +181,7 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   cursors advance, so daemon restarts do not silently discard an owner update.
 - **Owner console:** the `owner_console` role resolves ONLY via trust-conditional
   escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
-  operational artifacts (board, audit findings, workorder status) and can issue
+  operational artifacts (board, audit findings) and can issue
   work (`report_request`) - fire-and-forget, host code runs it. (`workorder_request` was
   deleted in v0.41.0: scheduled work is host-published, never agent-delegated.)
 - **Stage-2 workorder pipeline** (the only system run path since v0.28.0):

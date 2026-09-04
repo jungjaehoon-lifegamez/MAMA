@@ -2446,13 +2446,45 @@ export class TaskLedger implements TaskSource {
   }
 
   /**
+   * Receipt for a memory write made inside a bounded run. Without it a crash between
+   * mama_save and the batch ACK re-runs the batch and saves the decision twice; with it
+   * the crash-recovery resolver (effectsCausedBy) sees the write and ACKs without a run.
+   * Unattributed when the run had no cause: the count of those stays visible.
+   */
+  recordMemoryWrite(input: {
+    memoryRef: string;
+    runId: string | null;
+    causeEventIds: readonly string[] | undefined;
+    channelId?: string | null;
+    payload: unknown;
+  }): void {
+    const change = {
+      runId: input.runId,
+      channelId: input.channelId ?? null,
+      kind: 'memory_write' as const,
+      targetType: 'memory' as const,
+      targetId: input.memoryRef,
+      payload: input.payload,
+      atMs: this.now(),
+    };
+    const causes = (input.causeEventIds ?? []).filter(isUsableCause);
+    if (causes.length > 0) {
+      recordEffect(this.db as never, { ...change, sourceEventIds: causes });
+    } else {
+      recordUnattributedChange(this.db as never, change, 'owner_message');
+    }
+  }
+
+  /**
    * Effect kinds this system recorded with ANY of the given events as cause.
    * The owner-event crash-recovery receipt reads it: a ledger write that named
    * the batch's events is a durable outcome even when the run died afterwards.
    */
   effectsCausedBy(eventIds: readonly string[], sinceMs = 0): string[] {
     const ids = [...new Set(eventIds.filter((id) => typeof id === 'string' && id.length > 0))];
-    if (ids.length === 0) return [];
+    if (ids.length === 0) {
+      return [];
+    }
     const kinds = new Set<string>();
     // Chunked like the inbox's SEEN_CHUNK: a backfill batch must not hit SQLite's
     // variable limit and abort the whole tick. Time-bounded to the batch: effects are

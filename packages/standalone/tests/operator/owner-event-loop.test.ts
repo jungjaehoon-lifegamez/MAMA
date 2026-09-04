@@ -61,18 +61,31 @@ const deliveredHistory = [
 ];
 
 // A turn that only notified: the notification alone is not a ledger change.
-const notifiedHistory = [
-  {
-    role: 'assistant',
-    content: [{ type: 'tool_use', id: 'send-1', name: 'telegram_send', input: {} }],
-  },
-  {
-    role: 'user',
-    content: [
-      { type: 'tool_result', tool_use_id: 'send-1', content: JSON.stringify({ success: true }) },
-    ],
-  },
-];
+const notifiedHistory = notificationHistory('FYI: feedback arrived.');
+// The marker lives in the SENT text; a "[decision]" response over a plain send does not count.
+const decisionHistory = notificationHistory('[decision] Approve the revised quote?');
+
+function notificationHistory(message: string) {
+  return [
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'send-1',
+          name: 'telegram_send',
+          input: { chat_id: 'owner', message },
+        },
+      ],
+    },
+    {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'send-1', content: JSON.stringify({ success: true }) },
+      ],
+    },
+  ];
+}
 
 describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
   let db: SQLiteDatabase;
@@ -174,7 +187,11 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       buildPrompt: async () => '[MAMA OWNER EVENT TURN]',
       issueEnvelope: issueTestEnvelope,
       getNoUpdateMaxId: () => 0,
-      getTerminalReceipt: () => ({ status: 'acted', tools: ['telegram_send'] }),
+      getTerminalReceipt: () => ({
+        status: 'acted',
+        tools: ['drive_upload'],
+        ownerDecisionRequested: false,
+      }),
       log: () => {},
     });
 
@@ -221,7 +238,9 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       getNoUpdateMaxId: () => 0,
       getTerminalReceipt: () => {
         receiptReads += 1;
-        return receiptReads === 1 ? null : { status: 'acted', tools: ['telegram_send'] };
+        return receiptReads === 1
+          ? null
+          : { status: 'acted', tools: ['drive_upload'], ownerDecisionRequested: false };
       },
       log: () => {},
     });
@@ -419,15 +438,16 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(outcomes).toEqual([['lease-trigger', 'failed']]);
     expect(dead).toEqual([expect.stringContaining('lease expired repeatedly')]);
   });
-  it('acks a [decision] notification and retries a plain notification', async () => {
+  it('ONE-MAMA-P1 Task 2 AC #1 (TG-06): acks a [decision] notification and retries a plain notification', async () => {
     inbox.enqueue(batch());
     const decisionLoop = new OwnerEventLoop({
       inbox,
       agentContext: ownerContext,
       runner: {
+        // Response says [decision] too, but the ACK must come from the SENT message.
         run: async () => ({
           response: '[decision] Approve the revised quote?',
-          history: notifiedHistory,
+          history: decisionHistory,
         }),
       },
       buildPrompt: async () => 'prompt',
@@ -446,7 +466,10 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     const plainLoop = new OwnerEventLoop({
       inbox,
       agentContext: ownerContext,
-      runner: { run: async () => ({ response: 'Sent a heads-up.', history: notifiedHistory }) },
+      // A "[decision]" response over a plain notification is NOT a decision.
+      runner: {
+        run: async () => ({ response: '[decision] pretend', history: notifiedHistory }),
+      },
       buildPrompt: async () => 'prompt',
       issueEnvelope: issueTestEnvelope,
       getNoUpdateMaxId: () => 0,
@@ -455,7 +478,7 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(await plainLoop.tick()).toBe('failed');
     expect(logs.at(-1)).toContain('notification without a ledger change');
   });
-  it('passes the compiled packet into the prompt and proceeds without one on failure', async () => {
+  it('ONE-MAMA-P1 Task 3 AC #1: passes the compiled packet into the prompt and proceeds without one on failure', async () => {
     inbox.enqueue(batch());
     const seen: Array<string | null> = [];
     const loop = new OwnerEventLoop({

@@ -920,6 +920,9 @@ change unless they are release-blocking security or data-loss issues.
 ## One MAMA Phase 1: 2026-09-04 (release 0.41.0, pre-install)
 
 Branch `feat/one-mama-phase1`, PR #249. Seven commits, each through the pre-commit test gate.
+Parity scenarios touched: TG-04 (tool projection for every scheduled turn), TG-06 (completion,
+crash-recovery receipts, delivery idempotency on retry), TG-03 (Drive/artifact effects stay on
+the owner conversation; unattended turns never upload).
 
 What changed, measured against the failure recorded on the installed 0.40.0 runtime (zero
 agent-authored owner tasks since 2026-08-19 22:10; 304 `delegated via workorder_request`
