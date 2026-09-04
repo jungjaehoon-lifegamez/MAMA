@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **Board slots lost their line breaks (0.41.0).** The viewer renders the briefing,
+  action-required and decisions slots as HTML. Until 0.40.0 the report path injected the slot
+  HTML vocabulary; the board worker then relied on the per-kind board brief, and One MAMA
+  (0.41.0) replaced that brief with a host-authored turn section that did not carry the
+  vocabulary. The board turn wrote plain text whose newlines collapsed into spaces. The board
+  turn section now states that each slot is an HTML fragment and lists the class vocabulary;
+  a test pins it to the board kind only. Found by the owner on Telegram on 2026-09-04.
+
 ## mama-os [0.44.0] - 2026-09-04
 
 ### Changed

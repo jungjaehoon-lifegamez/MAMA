@@ -27,6 +27,7 @@
  * or verifier transport failures.
  */
 
+import { buildBoardHtmlVocabulary } from './board-slot-instructions.js';
 import { createHash } from 'node:crypto';
 import { TEMPORAL_CONTEXT_COMPILE_INSTRUCTION } from '../agent/context-compile-contract.js';
 
@@ -1085,6 +1086,10 @@ function buildTurnKindBody(kind: WorkOrderKind): string {
         'Unmatched or ambiguous correlation disables Trello-derived judgment for that task; a partial snapshot forbids only absence-based inference.',
         'The pipeline slot is rendered by the host from the ledger and is already published; do not write it.',
         'Publish the THREE judgment slots in ONE report_publish({slots: {briefing, action_required, decisions}}) call, in the owner language.',
+        // The viewer renders slots as HTML. 0.41.0 dropped the per-kind board brief that
+        // carried this vocabulary, and the turn wrote plain text whose newlines collapsed.
+        'Each slot is an HTML fragment, never plain text (a newline in plain text renders as a space).',
+        ...buildBoardHtmlVocabulary(),
         'If nothing changed, call contract_no_update({reason, scope: input.noUpdateScope}) with that exact scope.',
       ].join('\n');
     case 'wiki':

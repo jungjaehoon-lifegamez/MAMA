@@ -1292,3 +1292,14 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     });
   });
 });
+
+describe('board turn section carries the slot HTML vocabulary', () => {
+  it('names the board class vocabulary for the board kind only (0.41.0 regression: plain-text slots)', () => {
+    const board = buildTurnKindSection('board');
+    expect(board).toContain('report-card');
+    expect(board).toContain('HTML fragment, never plain text');
+    for (const kind of ['wiki', 'memory-curation', 'recheck', 'self-check', 'temporal'] as const) {
+      expect(buildTurnKindSection(kind)).not.toContain('report-card');
+    }
+  });
+});
