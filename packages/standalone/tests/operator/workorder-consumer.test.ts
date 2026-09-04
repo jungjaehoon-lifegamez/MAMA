@@ -1121,6 +1121,21 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     ).toBeNull();
     expect(classifyTransientModelError('brief-missing')).toBeNull();
   });
+  describe('One MAMA: turn-kind sections', () => {
+    it('tells the board turn to omit compile scopes and overrides chat-only brief instructions', () => {
+      const board = buildTurnKindSection('board');
+      expect(board).toContain('Do not supply scopes or seed_refs');
+      expect(board).toContain('console_brief_update, sends and uploads are not available here');
+      expect(board).toContain('task_create carrying source_channel and the exact source_event_id');
+      for (const kind of ['wiki', 'memory-curation', 'temporal'] as const) {
+        expect(buildTurnKindSection(kind)).toContain('## Scheduled turn');
+      }
+      expect(buildTurnKindSection('temporal')).toContain(
+        'exactly one successful task_temporal_reconcile'
+      );
+    });
+  });
+
   describe('One MAMA: host-rendered pipeline slot', () => {
     it('publishes the pipeline before the board turn runs and not for other kinds', async () => {
       const ctx = makeDeps();

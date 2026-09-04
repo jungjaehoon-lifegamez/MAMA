@@ -76,11 +76,15 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   reconcile runs are unchanged; the boot repair now runs through the same delta-gated path as
   every later one.
 
-### Known limit
+### Fixed
 
-- The daily `[envelope] scope mismatch` on board-lane `context_compile` is NOT closed by this
-  release: the scope audit keys on memory scopes, not on the principal, so unifying the
-  principal cannot remove it. Tracked in TODOS.md with the next diagnostic step.
+- **The daily board-lane `context_compile` rejection.** The scope check keys on memory scopes,
+  not on the principal: a board reconcile run named the channel it was judging while its
+  envelope carried only the synthetic worker channel, so the compile threw
+  `worker_envelope_scope_denied` and the run failed. The reconcile envelope now carries the
+  judged channel's memory scope, and the board turn is told to omit `scopes` (the host binds
+  them). Installed proof: one board reconcile run without the `[envelope] scope mismatch`
+  warn; recorded in the parity doc.
 
 ### Notes for existing installs
 

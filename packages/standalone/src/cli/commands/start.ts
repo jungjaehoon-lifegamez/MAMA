@@ -500,6 +500,12 @@ export function causeEventIdsFromPayload(payload: unknown): string[] {
 
 export function workOrderEnvelopeScope(input: {
   workKind: WorkOrderKind;
+  /**
+   * Board reconcile mode judges ONE connector channel. Its memories live under that
+   * channel's scope, so the envelope must carry it or the compile's explicit scope check
+   * throws worker_envelope_scope_denied - the daily board-lane failure since 2026-08-25.
+   */
+  reconcileChannelKey?: string | null;
   projectId: string;
   laneConnectors: string[];
   temporalBinding: { connector: string; channel: string } | null;
@@ -551,6 +557,11 @@ export function workOrderEnvelopeScope(input: {
               id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
             },
           ]
+        : []),
+      // Same rule for a board reconcile: the run is bound to the channel whose delta it
+      // judges, and connector memories are scoped by the canonical channel key.
+      ...(input.workKind === 'board' && input.reconcileChannelKey
+        ? [{ kind: 'channel' as const, id: input.reconcileChannelKey }]
         : []),
     ],
     allowed_destinations: [],
@@ -1855,11 +1866,18 @@ export async function runAgentLoop(
           temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         const projectId = resolveReactiveProjectRoot(config, process.env);
+        const reconcileChannelKey =
+          wo.workKind === 'board' &&
+          wo.payload.mode === 'reconcile' &&
+          typeof wo.payload.channelKey === 'string'
+            ? wo.payload.channelKey
+            : null;
         const workOrderScope = workOrderEnvelopeScope({
           workKind: wo.workKind,
           projectId,
           laneConnectors: codeActRawConnectors,
           temporalBinding,
+          reconcileChannelKey,
           privateConnectorPolicy,
         });
 
