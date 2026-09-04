@@ -11,24 +11,31 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
 
 ### Changed
 
-- **Event turns may change the ledger and memory.** `task_create`, `task_update`, `mama_save`,
-  `mama_update`, `drive_translate_conti`, `obsidian`, and `report_publish` reach the owner-event
-  turn. Blocking them since v0.37.0 is what left the owner ledger without one agent-authored
-  task from 2026-08-19 on while 362 Telegram lines went out. The block set now names only
-  administration (`member_*`), `console_brief_update` (untrusted-content-driven turns must not
-  rewrite the operating brief), `report_request` (a second judgment surface), and the
-  `workorder_*` tools (delegation no longer completes a batch).
+- **Event turns may change the ledger and memory.** `task_create`, `task_update`, `mama_save`
+  and `mama_update` reach the owner-event turn. Blocking them since v0.37.0 is what left the
+  owner ledger without one agent-authored task from 2026-08-19 on while 362 Telegram lines went
+  out. Every remaining block entry names its reason in source: administration (`member_*`),
+  `console_brief_update` (untrusted-content-driven turns must not rewrite the operating brief),
+  `report_request` (a second judgment surface), the `workorder_*` tools (delegation no longer
+  completes a batch), and `obsidian` / `drive_translate_conti` (neither is receipted where the
+  crash-recovery resolver can see it, so a retry would repeat the side effect).
 - **Completion is a ledger change, never a notification.** A batch completes on a successful
   `task_*`, `mama_*`, or `drive_upload` result; a `telegram_send` alone is a retry with the
   reason `notification without a ledger change`, unless the host saw the final message begin
   with `[decision]`, the marker for a question only the owner can answer. An accepted
   `workorder_request` no longer counts as anything. The crash-recovery receipt mirrors the
-  rule: a confirmed Drive upload is a receipt, a confirmed Telegram line is not (the effect
-  ledger's per-batch action keys make the retry safe from a second send), and a persisted
-  Board acceptance is no longer a receipt.
+  rule: a ledger write that named the batch's events as its cause (`evidence_effects`) or a
+  confirmed Drive upload is a receipt, so a task created before a transport error is not
+  created again; a confirmed Telegram line is not (the effect ledger's per-batch action keys
+  make the retry safe from a second send); a persisted Board acceptance is no longer a receipt.
+  A send-only completion behind `[decision]` is ACKed with a host-written
+  `unresolved_reason=owner_decision_requested` on the inbox row, so the escape hatch is counted
+  rather than self-graded.
 - **Event turns start from a host-compiled channel packet.** The same `OwnerReportContextV1`
   the full report uses is compiled per batch under the event turn's own read scope, narrowed
   to the batch connector plus every `in_progress`/`review` task, and appended after the delta.
+  When the ledger-wide recency bound leaves the channel with no rows, the packet says so in a
+  caveat and allows `task_list` for that channel instead of inviting a duplicate task.
   The envelope and the packet are built from ONE read-scope expression, so the run can never
   read under a principal its envelope does not hold. A packet compile failure is logged and
   the turn proceeds on the delta alone.

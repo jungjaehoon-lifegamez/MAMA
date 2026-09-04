@@ -2443,6 +2443,28 @@ export class TaskLedger implements TaskSource {
     return listEffects(this.db as never, query);
   }
 
+  /**
+   * Effect kinds this system recorded with ANY of the given events as cause.
+   * The owner-event crash-recovery receipt reads it: a ledger write that named
+   * the batch's events is a durable outcome even when the run died afterwards.
+   */
+  effectsCausedBy(eventIds: readonly string[]): string[] {
+    const ids = [...new Set(eventIds.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (ids.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT effect_kind FROM evidence_effects
+          WHERE cause_state = 'attributed'
+            AND EXISTS (
+              SELECT 1 FROM json_each(evidence_effects.source_event_ids_json)
+               WHERE json_each.value IN (${ids.map(() => '?').join(', ')})
+            )
+          ORDER BY effect_kind ASC`
+      )
+      .all(...ids) as Array<{ effect_kind: string }>;
+    return rows.map((row) => row.effect_kind);
+  }
+
   /** Of what this system changed, how much rests on evidence. */
   changeCoverage(sinceMs?: number, targetType?: EffectTarget): ChangeCoverage {
     return changeCoverage(this.db as never, sinceMs, targetType);

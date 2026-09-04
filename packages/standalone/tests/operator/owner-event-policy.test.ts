@@ -61,6 +61,8 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
         'report_request',
         'workorder_request',
         'workorder_status',
+        'obsidian',
+        'drive_translate_conti',
       ]) {
         expect(context.role.allowedTools).not.toContain(administrationOrSecondJudgmentSurface);
         expect(context.role.blockedTools).toContain(administrationOrSecondJudgmentSurface);

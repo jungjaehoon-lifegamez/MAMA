@@ -257,4 +257,39 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     });
     db.close();
   });
+
+  it('terminal receipt: a ledger write caused by the batch survives a runner crash', () => {
+    const db = new Database(':memory:');
+    const taskLedger = new TaskLedger(db);
+    const inbox = new OwnerEventInbox(db);
+    const effects = new OwnerEventEffectLedger(db);
+    const batchId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-crash-1', 'evt-crash-2'],
+      lines: ['feedback arrived'],
+      activations: [],
+    });
+    if (batchId === null) throw new Error('test batch unexpectedly deduplicated');
+    const batch = inbox.claimNext();
+    if (!batch) throw new Error('batch not claimable');
+    const deps = { ownerEventEffectLedger: effects, taskLedger };
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
+
+    // Another batch's task must not count for this one.
+    taskLedger.create(
+      { title: 'someone else' },
+      { runId: 'mr_other', causeEventIds: ['evt-other'] }
+    );
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toBeNull();
+
+    taskLedger.create(
+      { title: 'created then crashed' },
+      { runId: 'mr_1', causeEventIds: ['evt-crash-2'] }
+    );
+    expect(resolveOwnerEventTerminalReceipt(batch, deps)).toEqual({
+      status: 'acted',
+      tools: ['task_create'],
+    });
+    db.close();
+  });
 });

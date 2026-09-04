@@ -1264,8 +1264,19 @@ export async function compileChannelPacket(
   );
   const tasks = full.tasks.filter((row) => keep.has(row.id));
   const rows = full.correlations.rows.filter((row) => keep.has(row.taskId));
+  // The recency bound is applied to the whole ledger before this channel filter, so a
+  // channel whose rows were not updated recently can come out empty while its tasks
+  // exist. Say so, or the turn will create the task a second time.
+  const caveats =
+    tasks.length === 0 && full.taskCoverage.total > 0
+      ? [
+          ...full.caveats,
+          `channel_tasks_outside_recency_bound: no task for ${label ?? connector} among the ${full.tasks.length} most recently updated of ${full.taskCoverage.total} open tasks; task_list is allowed for this channel`,
+        ]
+      : full.caveats;
   const packet: OwnerReportContextV1 = {
     ...full,
+    caveats,
     tasks,
     taskCoverage: {
       total: full.taskCoverage.total,

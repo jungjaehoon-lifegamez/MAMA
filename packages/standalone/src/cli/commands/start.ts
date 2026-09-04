@@ -908,19 +908,23 @@ export function resolveOwnerEventTerminalReceipt(
   batch: OwnerEventBatch,
   deps: {
     ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
-    taskLedger: Pick<TaskLedger, 'maxNoUpdateId'>;
+    taskLedger: Pick<TaskLedger, 'maxNoUpdateId' | 'effectsCausedBy'>;
   }
 ): { status: 'acted'; tools: string[] } | { status: 'no_update'; tools: [] } | null {
-  // Crash-recovery mirror of classifyOwnerEventOutcome: a confirmed deliverable
-  // (drive_upload) is a durable effect; a confirmed telegram_send alone is not,
-  // and the effect ledger's (batch, action_key) idempotency makes the retry safe
-  // from a second send. A persisted Board acceptance is no longer a receipt:
-  // delegation does not complete a batch.
+  // Crash-recovery mirror of classifyOwnerEventOutcome. A ledger write that
+  // named this batch's events as its cause (evidence_effects) or a confirmed
+  // deliverable (drive_upload) is a durable outcome even if the run died after
+  // it - without this, a task created before a transport error is created again
+  // on retry. A confirmed telegram_send alone is not a receipt, and the effect
+  // ledger's (batch, action_key) idempotency makes that retry safe from a second
+  // send. A persisted Board acceptance is no longer a receipt.
+  const ledgerEffects = deps.taskLedger.effectsCausedBy(batch.eventIds);
   const confirmedEffects = deps.ownerEventEffectLedger
     .confirmedKinds(batch.id)
     .filter((kind) => kind !== 'telegram_send');
-  if (confirmedEffects.length > 0) {
-    return { status: 'acted', tools: confirmedEffects };
+  const durable = [...new Set([...ledgerEffects, ...confirmedEffects])];
+  if (durable.length > 0) {
+    return { status: 'acted', tools: durable };
   }
   if (deps.taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
     return { status: 'no_update', tools: [] };

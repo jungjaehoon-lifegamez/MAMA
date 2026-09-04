@@ -156,6 +156,7 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     // history on every batch (45.9M tokens on 2026-08-20 alone, weekly quota blowout).
     expect(seenOptions?.resumeSession).toBeUndefined();
     expect(outcomes).toEqual([['feedback-trigger', 'succeeded']]);
+    expect(inbox.unresolvedAcks()).toEqual([]);
   });
 
   it('ACKs a durable terminal receipt before waking the model after a crash', async () => {
@@ -436,6 +437,9 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     });
     expect(await decisionLoop.tick()).toBe('processed');
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+    expect(inbox.unresolvedAcks()).toEqual([
+      expect.objectContaining({ id: 1, reason: 'owner_decision_requested' }),
+    ]);
 
     inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
     const logs: string[] = [];
