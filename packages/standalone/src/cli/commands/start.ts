@@ -639,7 +639,12 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
 export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   // workspace file reads are an owner-conversation tool; no turn section instructs one
   'Read',
+  // every outbound channel, not only Telegram: the grant is derived from the owner's
+  // (editable) role config, so a send tool added there must still never run unattended
   'telegram_send',
+  'discord_send',
+  'slack_send',
+  'webchat_send',
   'drive_upload',
   'drive_list_drives',
   'drive_browse',
@@ -661,21 +666,27 @@ export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
  * artifact. Each entry names the artifact it protects.
  */
 export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>> = {
-  // board writes slots and task lifecycle; it does not notify, upload, or touch memory/wiki
-  board: new Set(['telegram_send', 'drive_upload', 'wiki_publish', 'mama_update', 'task_create']),
-  // wiki writes pages; the ledger and the board are not its artifact
+  // board writes judgment slots and task lifecycle (reconcile mode creates rows for new
+  // items, which the action verifier's obligated set expects); it does not touch memory
+  // or the vault (obsidian is the wiki lane's write path)
+  board: new Set([
+    'wiki_publish',
+    'obsidian',
+    'mama_save',
+    'mama_update',
+    'task_temporal_reconcile',
+  ]),
+  // wiki writes pages; the ledger, the board and memory are not its artifact
   wiki: new Set([
-    'telegram_send',
-    'drive_upload',
     'report_publish',
+    'mama_save',
+    'mama_update',
     'task_create',
     'task_update',
     'task_temporal_reconcile',
   ]),
   // curation writes memory; nothing else
   'memory-curation': new Set([
-    'telegram_send',
-    'drive_upload',
     'report_publish',
     'wiki_publish',
     'task_create',
@@ -685,8 +696,6 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
   ]),
   // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
   temporal: new Set([
-    'telegram_send',
-    'drive_upload',
     'report_publish',
     'wiki_publish',
     'mama_save',
@@ -789,6 +798,11 @@ export function buildOperatorReportAgentPolicy(
   };
 }
 
+/** Outbound effect by name: sends to a channel or uploads to a shared store. */
+export function isOutboundToolName(tool: string): boolean {
+  return /(^|_)(send|upload)(_|$)/.test(tool);
+}
+
 export function buildTurnAgentPolicy(
   kind: WorkOrderKind,
   model: string,
@@ -816,6 +830,9 @@ export function buildTurnAgentPolicy(
     ...SCHEDULED_TURN_BLOCKED_TOOLS,
     ...kindBlocked,
     ...(ownerRole.blockedTools ?? []),
+    // Shape rule on top of the named lists: the role config is owner-editable, so a
+    // send or upload tool that appears there tomorrow is still never unattended.
+    ...ownerRole.allowedTools.filter((tool) => isOutboundToolName(tool)),
   ]);
   const projectedRole = buildProjectedLaneRole(
     scopedSurface,
@@ -1906,7 +1923,7 @@ export async function runAgentLoop(
             1800
           );
           runOptions.envelope = await envelopeBootstrap.envelopeAuthority.buildAndPersist({
-            agent_id: `workorder-${wo.workKind}`,
+            agent_id: 'mama-owner',
             instance_id: randomUUID(),
             // 'watch' = daemon-internal issuing source (closed EnvelopeSource
             // union; enforcement authorizes on scope, never on source).
@@ -1928,7 +1945,7 @@ export async function runAgentLoop(
         // keeps the operational trace queryable.
         try {
           logWorkOrderActivity(db, {
-            agent_id: `workorder-${event.workKind}`,
+            agent_id: 'mama-owner',
             agent_version: 0,
             type: `workorder_${event.type}`,
             input_summary: `#${event.workOrderId}`,

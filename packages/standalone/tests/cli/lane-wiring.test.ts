@@ -24,6 +24,7 @@ import {
   OPERATOR_REPORT_TOOL_POLICY,
   TURN_KIND_BLOCKED_TOOLS,
   buildTurnAgentPolicy,
+  isOutboundToolName,
 } from '../../src/cli/commands/start.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { WORKORDER_KINDS } from '../../src/operator/task-ledger.js';
@@ -97,6 +98,82 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
       expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_update');
     }
     expect([...REPORT_GRANT]).not.toContain('task_update');
+  });
+
+  // The grant is derived from the owner's EDITABLE role config. A send tool added there
+  // tomorrow must still never run unattended: the shape rule, not the named list, is the
+  // boundary, and this pins it against every registered tool name.
+  it('never lets a configured send or upload tool reach an unattended turn', async () => {
+    const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
+    const outbound = ToolRegistry.getAllTools()
+      .map((t) => t.name)
+      .filter((name) => isOutboundToolName(name));
+    expect(outbound).toEqual(
+      expect.arrayContaining([
+        'telegram_send',
+        'discord_send',
+        'slack_send',
+        'webchat_send',
+        'drive_upload',
+      ])
+    );
+    const widened = {
+      ...ownerRole,
+      allowedTools: [...ownerRole.allowedTools, 'slack_send', 'discord_send'],
+    };
+    for (const kind of WORKORDER_KINDS) {
+      const allowed = buildTurnAgentPolicy(
+        kind,
+        'gpt-test',
+        'codex',
+        privatePolicy,
+        ['trello'],
+        widened
+      ).agentContext.role.allowedTools;
+      for (const tool of outbound) expect(allowed, `${kind} holds ${tool}`).not.toContain(tool);
+    }
+  });
+
+  // Exact enumeration of every unattended grant under the default role and a private
+  // binding. A widening shows up here as a diff, not as a passing arrayContaining.
+  it('pins the exact default grant of every unattended turn', () => {
+    const grant = (kind: (typeof WORKORDER_KINDS)[number]) =>
+      [...turn(kind, ['trello', 'kagemusha']).agentContext.role.allowedTools].sort();
+    const common = [
+      'agent_notices',
+      'audit_findings_read',
+      'board_read',
+      'changes_read',
+      'code_act',
+      'context_compile',
+      'contract_no_update',
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_overview',
+      'kagemusha_tasks',
+      'mama_provenance',
+      'mama_recall',
+      'mama_search',
+      'schedule_upcoming',
+      'task_list',
+      'trello_card',
+      'trello_kanban',
+      'trello_search',
+    ];
+    expect(grant('board')).toEqual(
+      [
+        ...common,
+        'report_publish',
+        'task_create',
+        'task_external_bind',
+        'task_external_correlation',
+        'task_lifecycle_reconcile',
+        'task_update',
+      ].sort()
+    );
+    expect(grant('wiki')).toEqual([...common, 'obsidian', 'wiki_publish'].sort());
+    expect(grant('memory-curation')).toEqual([...common, 'mama_save', 'mama_update'].sort());
+    expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());
   });
 
   it('gives each turn the tools its section instructs it to use', () => {

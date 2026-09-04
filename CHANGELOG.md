@@ -51,8 +51,13 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   artifact tools (`report_publish`, `wiki_publish`, `task_temporal_reconcile`), minus
   administration, minus deliverable, Drive, member and file-read tools on every unattended
   turn, minus a per-kind block list (a board turn cannot create tasks, notify, upload, or touch
-  memory and wiki; a recheck turn can only file its receipt). Tests pin, per kind, that no
-  unattended turn reaches a send or an upload.
+  memory and wiki; a recheck turn can only file its receipt). The role config is owner-editable,
+  so a shape rule blocks every `*_send`/`*_upload` tool on unattended turns regardless of what
+  the config lists, and a test pins the exact default grant of every turn kind. The board turn
+  keeps `task_create` for reconcile mode (its action verifier expects it) and loses `obsidian`
+  and memory writes, which belong to the wiki and curation turns. Scheduled-turn prompts carry
+  a preamble overriding the brief's chat-only instructions (`console_brief_update`, asking the
+  owner).
 
 - **The board pipeline slot is rendered by the host.** Before every board turn the host
   publishes the pipeline from the ledger's own deadline-first page (twelve rows, D-day,
@@ -70,6 +75,12 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   full rebuilds and nothing else. The host-owned Board repair gate and its scheduled full and
   reconcile runs are unchanged; the boot repair now runs through the same delta-gated path as
   every later one.
+
+### Known limit
+
+- The daily `[envelope] scope mismatch` on board-lane `context_compile` is NOT closed by this
+  release: the scope audit keys on memory scopes, not on the principal, so unifying the
+  principal cannot remove it. Tracked in TODOS.md with the next diagnostic step.
 
 ### Notes for existing installs
 

@@ -229,8 +229,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'task_external_correlation',
           'task_external_bind',
           'task_lifecycle_reconcile',
-          // task_create left the board turn: ledger creation is the event turn's job;
-          // the board turn correlates and updates lifecycle (TURN_KIND_BLOCKED_TOOLS.board).
+          'task_create',
           'task_list',
           'task_update',
           'trello_card',
