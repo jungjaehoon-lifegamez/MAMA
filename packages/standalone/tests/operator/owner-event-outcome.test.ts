@@ -32,14 +32,37 @@ describe('TG-06 owner-event terminal outcome', () => {
     ).toEqual({ status: 'retry', tools: [], reason: 'notification without a ledger change' });
   });
 
-  it('a notification completes when the turn asked the owner for a decision', () => {
+  it('a notification completes only when the SENT message carries the [decision] marker', () => {
     expect(
       classifyOwnerEventOutcome({
-        history: directToolHistory('telegram_send', { success: true }),
+        history: directToolHistory(
+          'telegram_send',
+          { success: true },
+          { chat_id: 'owner', message: '[decision] Approve the revised quote?' }
+        ),
         noUpdateRecorded: false,
-        ownerDecisionRequested: true,
       })
-    ).toEqual({ status: 'acted', tools: ['telegram_send'] });
+    ).toEqual({ status: 'acted', tools: ['telegram_send'], ownerDecisionRequested: true });
+    // A failed send with the marker, or a marker only in prose, is not a decision.
+    expect(
+      classifyOwnerEventOutcome({
+        history: directToolHistory(
+          'telegram_send',
+          { success: false },
+          { chat_id: 'owner', message: '[decision] Approve?' }
+        ),
+        noUpdateRecorded: false,
+      })
+    ).toMatchObject({ status: 'retry' });
+    expect(
+      classifyOwnerEventOutcome({
+        history: [
+          ...directToolHistory('telegram_send', { success: true }, { message: 'FYI' }),
+          { role: 'assistant', content: '[decision] Approve?' },
+        ],
+        noUpdateRecorded: false,
+      })
+    ).toMatchObject({ status: 'retry', reason: 'notification without a ledger change' });
   });
 
   it('a ledger change completes the turn and carries the notification beside it', () => {
@@ -70,6 +93,7 @@ describe('TG-06 owner-event terminal outcome', () => {
     expect(classifyOwnerEventOutcome({ history, noUpdateRecorded: false })).toEqual({
       status: 'acted',
       tools: ['task_update', 'telegram_send'],
+      ownerDecisionRequested: false,
     });
   });
 
@@ -82,7 +106,7 @@ describe('TG-06 owner-event terminal outcome', () => {
         }),
         noUpdateRecorded: false,
       })
-    ).toEqual({ status: 'acted', tools: ['drive_upload'] });
+    ).toEqual({ status: 'acted', tools: ['drive_upload'], ownerDecisionRequested: false });
   });
 
   it('a nested Code-Act ledger change from the host ledger completes the turn', () => {
@@ -96,6 +120,7 @@ describe('TG-06 owner-event terminal outcome', () => {
     expect(classifyOwnerEventOutcome({ history, noUpdateRecorded: false })).toEqual({
       status: 'acted',
       tools: ['task_update'],
+      ownerDecisionRequested: false,
     });
   });
 

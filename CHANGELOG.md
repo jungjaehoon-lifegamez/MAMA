@@ -21,13 +21,14 @@ spec's Phase 0 gate: it is installed alone first, and the owner-event lane is ob
   crash-recovery resolver can see it, so a retry would repeat the side effect).
 - **Completion is a ledger change, never a notification.** A batch completes on a successful
   `task_*`, `mama_*`, or `drive_upload` result; a `telegram_send` alone is a retry with the
-  reason `notification without a ledger change`, unless the host saw the final message begin
-  with `[decision]`, the marker for a question only the owner can answer. An accepted
+  reason `notification without a ledger change`, unless the message the turn actually SENT
+  begins with `[decision]`, the marker for a question only the owner can answer (read from the
+  successful `telegram_send` input, never from the model's prose). An accepted
   `workorder_request` no longer counts as anything. The crash-recovery receipt mirrors the
-  rule: a task write that named the batch's events as its cause (`evidence_effects`, bounded to
-  the batch's own lifetime) or a confirmed Drive upload is a receipt, so a task created before
-  a transport error is not created again (memory writes carry no effect row yet and are not
-  covered); a confirmed Telegram line is not (the effect ledger's per-batch action keys
+  rule: a task or memory write that named the batch's events as its cause (`evidence_effects`,
+  bounded to the batch's own lifetime; `mama_save`/`mama_update` now record a `memory_write`
+  receipt) or a confirmed Drive upload is a receipt, so a task or decision created before a
+  transport error is not created again; a confirmed Telegram line is not (the effect ledger's per-batch action keys
   make the retry safe from a second send); a persisted Board acceptance is no longer a receipt.
   A send-only completion behind `[decision]` is ACKed with a host-written
   `unresolved_reason=owner_decision_requested` on the inbox row, so the escape hatch is counted

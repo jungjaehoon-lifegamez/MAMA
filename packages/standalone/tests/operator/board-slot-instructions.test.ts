@@ -41,7 +41,7 @@ describe('Story BOARD-SLOT: board slot instructions', () => {
     }
   });
 
-  it('publish lines instruct one report_publish call carrying the three judgment slots; pipeline is host-rendered', () => {
+  it('AC #2 (ONE-MAMA-P1 Task 6) publish lines instruct one report_publish call carrying the three judgment slots; pipeline is host-rendered', () => {
     const lines = buildBoardPublishLines().join('\n');
     expect(lines).toContain('report_publish');
     for (const slot of BOARD_SLOT_ORDER) {

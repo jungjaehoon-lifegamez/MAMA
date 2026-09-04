@@ -46,8 +46,8 @@ describe('report lane: instructions against the grant', () => {
   });
 });
 
-describe('one agent: every scheduled turn is the owner principal with a host-projected grant', () => {
-  it('runs every turn kind as owner_console, never an invented per-kind principal', () => {
+describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () => {
+  it('AC #1 runs every turn kind as owner_console, never an invented per-kind principal', () => {
     for (const kind of WORKORDER_KINDS) {
       expect(turn(kind).agentContext.roleName).toBe(ONE_AGENT_TURN_POLICY.roleName);
       expect(turn(kind).agentContext.roleName).toBe('owner_console');
@@ -56,7 +56,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
 
   // The unprojected source list is the owner console default; private tools reach a turn
   // only through the projection, and only when the run's raw scope carries the connector.
-  it('keeps private tools out of the unprojected owner grant and out of unbound runs', () => {
+  it('AC #2 (TG-04) keeps private tools out of the unprojected owner grant and out of unbound runs', () => {
     const privateTools = [
       'kagemusha_overview',
       'kagemusha_entities',
@@ -69,7 +69,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
     }
   });
 
-  it('grants only tools the registry recognises as real', async () => {
+  it('AC #3 grants only tools the registry recognises as real', async () => {
     const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
     const known = new Set(ToolRegistry.getAllTools().map((t) => t.name));
     for (const kind of WORKORDER_KINDS) {
@@ -79,7 +79,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
   });
 
   // No owner is in the loop of a scheduled turn: it never sends, uploads, or administers.
-  it('keeps sends, uploads and administration out of every unattended turn', () => {
+  it('AC #4 (TG-06) keeps sends, uploads and administration out of every unattended turn', () => {
     for (const kind of WORKORDER_KINDS) {
       const allowed = turn(kind).agentContext.role.allowedTools;
       for (const tool of ['telegram_send', 'drive_upload', ...ADMINISTRATION_TOOLS]) {
@@ -92,7 +92,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
     }
   });
 
-  it('keeps task mutation out of the recheck, wiki and curation turns and out of reports', () => {
+  it('AC #7 keeps task mutation out of the recheck, wiki and curation turns and out of reports', () => {
     for (const kind of ['temporal', 'wiki', 'memory-curation'] as const) {
       expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_create');
       expect(turn(kind).agentContext.role.allowedTools).not.toContain('task_update');
@@ -103,7 +103,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
   // The grant is derived from the owner's EDITABLE role config. A send tool added there
   // tomorrow must still never run unattended: the shape rule, not the named list, is the
   // boundary, and this pins it against every registered tool name.
-  it('never lets a configured send or upload tool reach an unattended turn', async () => {
+  it('AC #5 (TG-06) never lets a configured send or upload tool reach an unattended turn', async () => {
     const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
     const outbound = ToolRegistry.getAllTools()
       .map((t) => t.name)
@@ -136,7 +136,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
 
   // Exact enumeration of every unattended grant under the default role and a private
   // binding. A widening shows up here as a diff, not as a passing arrayContaining.
-  it('pins the exact default grant of every unattended turn', () => {
+  it('AC #6 pins the exact default grant of every unattended turn', () => {
     const grant = (kind: (typeof WORKORDER_KINDS)[number]) =>
       [...turn(kind, ['trello', 'kagemusha']).agentContext.role.allowedTools].sort();
     const common = [
@@ -176,7 +176,7 @@ describe('one agent: every scheduled turn is the owner principal with a host-pro
     expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());
   });
 
-  it('gives each turn the tools its section instructs it to use', () => {
+  it('AC #8 gives each turn the tools its section instructs it to use', () => {
     expect(turn('board').agentContext.role.allowedTools).toEqual(
       expect.arrayContaining([
         'code_act',

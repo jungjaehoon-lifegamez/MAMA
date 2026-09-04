@@ -136,7 +136,11 @@ import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
-import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
+import {
+  OwnerEventLoop,
+  closeOwnerEventBeforeDatabase,
+  type OwnerEventTerminalReceipt,
+} from '../../operator/owner-event-loop.js';
 import { PIPELINE_SLOT_ROWS, renderPipelineSlot } from '../../operator/board-pipeline-render.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
@@ -983,7 +987,7 @@ export function resolveOwnerEventTerminalReceipt(
     ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
     taskLedger: Pick<TaskLedger, 'maxNoUpdateId' | 'effectsCausedBy'>;
   }
-): { status: 'acted'; tools: string[] } | { status: 'no_update'; tools: [] } | null {
+): OwnerEventTerminalReceipt | null {
   // Crash-recovery mirror of classifyOwnerEventOutcome. A ledger write that
   // named this batch's events as its cause (evidence_effects) or a confirmed
   // deliverable (drive_upload) is a durable outcome even if the run died after
@@ -997,7 +1001,7 @@ export function resolveOwnerEventTerminalReceipt(
     .filter((kind) => kind !== 'telegram_send');
   const durable = [...new Set([...ledgerEffects, ...confirmedEffects])];
   if (durable.length > 0) {
-    return { status: 'acted', tools: durable };
+    return { status: 'acted', tools: durable, ownerDecisionRequested: false };
   }
   if (deps.taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
     return { status: 'no_update', tools: [] };

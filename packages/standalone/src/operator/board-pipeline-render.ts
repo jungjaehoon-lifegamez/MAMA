@@ -19,13 +19,17 @@ function escapeHtml(text: string): string {
 }
 
 function dDay(deadlineIso: string | null, nowMs: number): string {
-  if (!deadlineIso) return '-';
+  if (!deadlineIso) {
+    return '-';
+  }
   const days = Math.round((Date.parse(`${deadlineIso}T00:00:00Z`) - nowMs) / 86_400_000);
   return days >= 0 ? `D-${days}` : `D+${-days}`;
 }
 
 function sourceLabel(sourceChannel: string | null): string {
-  if (!sourceChannel) return '-';
+  if (!sourceChannel) {
+    return '-';
+  }
   const separator = sourceChannel.indexOf(':');
   // Only the connector name is displayable; the channel id is an internal key.
   return separator > 0 ? sourceChannel.slice(0, separator) : sourceChannel;
@@ -33,11 +37,17 @@ function sourceLabel(sourceChannel: string | null): string {
 
 function statusBadge(row: TaskRecord, nowMs: number): string {
   const overdue = row.deadlineIso !== null && Date.parse(`${row.deadlineIso}T00:00:00Z`) < nowMs;
-  if (overdue) return 'badge-danger';
-  if (row.status === 'review') return 'badge-warning';
+  if (overdue) {
+    return 'badge-danger';
+  }
+  if (row.status === 'review') {
+    return 'badge-warning';
+  }
   if (row.assignee === null && row.deadlineIso !== null) {
     const days = (Date.parse(`${row.deadlineIso}T00:00:00Z`) - nowMs) / 86_400_000;
-    if (days <= 7) return 'badge-warning';
+    if (days <= 7) {
+      return 'badge-warning';
+    }
   }
   return 'badge-info';
 }

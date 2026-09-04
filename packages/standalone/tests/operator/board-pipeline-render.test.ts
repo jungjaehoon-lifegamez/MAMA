@@ -39,8 +39,8 @@ function task(id: number, overrides: Partial<TaskRecord> = {}): TaskRecord {
   } as TaskRecord;
 }
 
-describe('renderPipelineSlot', () => {
-  it('renders at most twelve rows with D-day, escaped titles and no internal ids', () => {
+describe('Story ONE-MAMA-P1 Task 6: host-rendered pipeline slot', () => {
+  it('AC #1 renders at most twelve rows with D-day, escaped titles and no internal ids', () => {
     const rows = Array.from({ length: 15 }, (_, i) =>
       task(i + 1, { deadlineIso: `2026-09-${String(1 + (i % 9)).padStart(2, '0')}` })
     );
@@ -55,7 +55,7 @@ describe('renderPipelineSlot', () => {
     expect(html).toContain('<td>trello</td>');
   });
 
-  it('marks overdue as danger, review and unassigned-soon as warning, hides terminal rows', () => {
+  it('AC #2 marks overdue as danger, review and unassigned-soon as warning, hides terminal rows', () => {
     const html = renderPipelineSlot(
       [
         task(1, { deadlineIso: '2026-09-01' }),

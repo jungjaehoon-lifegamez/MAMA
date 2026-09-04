@@ -8,7 +8,7 @@ import {
   type OwnerEventOutcome,
 } from './owner-event-outcome.js';
 
-type OwnerEventTerminalReceipt = Exclude<OwnerEventOutcome, { status: 'retry' }>;
+export type OwnerEventTerminalReceipt = Exclude<OwnerEventOutcome, { status: 'retry' }>;
 
 interface OwnerEventRunner {
   run(
@@ -126,13 +126,9 @@ export class OwnerEventLoop {
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
-        // Host-detected marker, never trusted from tool results: the turn asked the
-        // owner for a decision it cannot make, so the notification IS the outcome.
-        const ownerDecisionRequested = /^\s*\[decision\]/i.test(result.response ?? '');
         const outcome = classifyOwnerEventOutcome({
           history: result.history,
           noUpdateRecorded: this.deps.getNoUpdateMaxId(scope) > noUpdateBefore,
-          ownerDecisionRequested,
         });
         if (outcome.status === 'retry') {
           const recoveredAfterRun = this.deps.getTerminalReceipt?.(batch) ?? null;
@@ -156,7 +152,7 @@ export class OwnerEventLoop {
         // host records WHY it completed without a ledger change so it can be counted.
         const unresolvedReason =
           outcome.status === 'acted' &&
-          ownerDecisionRequested &&
+          outcome.ownerDecisionRequested &&
           outcome.tools.every((tool) => tool === 'telegram_send')
             ? 'owner_decision_requested'
             : null;

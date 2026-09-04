@@ -12,9 +12,12 @@ export interface OwnerEventHistoryMessage {
 }
 
 export type OwnerEventOutcome =
-  | { status: 'acted'; tools: string[] }
+  | { status: 'acted'; tools: string[]; ownerDecisionRequested: boolean }
   | { status: 'no_update'; tools: string[] }
   | { status: 'retry'; tools: string[]; reason: string };
+
+/** The marker that turns a send-only turn into a completed one: a question only the owner can answer. */
+export const OWNER_DECISION_MARKER = /^\s*\[decision\]/i;
 
 /**
  * A batch is complete when it durably changed what the system knows or holds.
@@ -70,6 +73,39 @@ function nestedHostTools(value: unknown): string[] {
   });
 }
 
+/**
+ * Did a SUCCESSFUL direct telegram_send carry the [decision] marker in the text it actually
+ * sent? Read from the tool_use input, never from the assistant's final prose: a run can say
+ * "[decision]" in its response while the message it delivered was a plain notification.
+ * Nested Code-Act sends carry no input in the host ledger and therefore never qualify.
+ */
+function sentOwnerDecision(history: ReadonlyArray<OwnerEventHistoryMessage>): boolean {
+  const okResults = new Set<string>();
+  for (const message of history) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      if (successfulResult(block.content, block.is_error as boolean | undefined)) {
+        okResults.add(block.tool_use_id);
+      }
+    }
+  }
+  for (const message of history) {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
+      if (typeof block.name !== 'string' || normalizeToolName(block.name) !== 'telegram_send') {
+        continue;
+      }
+      if (!okResults.has(block.id)) continue;
+      const input = parseObject(block.input);
+      const text = input?.message;
+      if (typeof text === 'string' && OWNER_DECISION_MARKER.test(text)) return true;
+    }
+  }
+  return false;
+}
+
 function executedTools(history: ReadonlyArray<OwnerEventHistoryMessage>): string[] {
   const results = new Map<string, { ok: boolean; content: unknown }>();
   for (const message of history) {
@@ -110,15 +146,16 @@ function executedTools(history: ReadonlyArray<OwnerEventHistoryMessage>): string
 export function classifyOwnerEventOutcome(input: {
   history: ReadonlyArray<OwnerEventHistoryMessage>;
   noUpdateRecorded: boolean;
-  /** Host-detected: the turn asked the owner for a decision it cannot make itself. */
-  ownerDecisionRequested?: boolean;
 }): OwnerEventOutcome {
   const tools = executedTools(input.history);
   const ledger = tools.filter((tool) => LEDGER_EFFECT_TOOLS.has(tool));
   const notified = tools.filter((tool) => NOTIFY_TOOLS.has(tool));
-  if (ledger.length > 0) return { status: 'acted', tools: [...ledger, ...notified] };
-  if (notified.length > 0 && input.ownerDecisionRequested === true) {
-    return { status: 'acted', tools: notified };
+  const ownerDecisionRequested = notified.length > 0 && sentOwnerDecision(input.history);
+  if (ledger.length > 0) {
+    return { status: 'acted', tools: [...ledger, ...notified], ownerDecisionRequested };
+  }
+  if (ownerDecisionRequested) {
+    return { status: 'acted', tools: notified, ownerDecisionRequested: true };
   }
   if (input.noUpdateRecorded) return { status: 'no_update', tools: [] };
   return {
