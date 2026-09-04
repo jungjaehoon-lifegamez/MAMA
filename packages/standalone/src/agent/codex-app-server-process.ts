@@ -1719,10 +1719,9 @@ export class CodexAppServerProcess {
     if (budget <= 0 || turn.budgetStopped) {
       return;
     }
-    const counted =
-      turn.usage.input_tokens +
-      turn.usage.output_tokens +
-      (turn.usage.cache_read_input_tokens ?? 0);
+    // Codex reports inputTokens INCLUSIVE of cachedInputTokens (OpenAI usage semantics),
+    // so cached is not added again: 0.44.0 counted a 2.8M wiki turn as 5.5M.
+    const counted = turn.usage.input_tokens + turn.usage.output_tokens;
     if (counted < budget) {
       return;
     }
