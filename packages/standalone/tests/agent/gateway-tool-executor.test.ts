@@ -2963,6 +2963,16 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     describe('ONE-MAMA-P2 Task 2: learning topics are host-owned', () => {
       it('AC #6 refuses mama_save on policy:/lesson: topics (mama_update carries no topic)', async () => {
         const executor = new GatewayToolExecutor({
+    describe('ONE-MAMA-P3 Task 2: failures become operational issues', () => {
+      it('AC #11 a failing tool records one gateway issue with a stable signature and the model result is unchanged', async () => {
+        const recorded: Array<{
+          surface: string;
+          signature: string;
+          severity: string;
+          error: string;
+        }> = [];
+        const executor = new GatewayToolExecutor({
+          mamaApi: createMockApi(),
           envelopeIssuanceMode: 'off',
           privateConnectorPolicy: resolvePrivateConnectorPolicy({
             ok: true,
@@ -2984,6 +2994,34 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           reasoning: 'y',
         } as never);
         expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
+        executor.setOperationalIssueSink((input) => recorded.push(input));
+        // file_export without a ledger is a deterministic, code-carrying failure
+        const result = await executor.execute(
+          'file_export',
+          { format: 'md', name: 'x', content: 'y' } as never,
+          {} as never
+        );
+        expect(result).toMatchObject({ success: false, code: 'ledger_unavailable' });
+        expect(recorded).toEqual([
+          expect.objectContaining({
+            surface: 'gateway',
+            signature: 'file_export:ledger_unavailable',
+            severity: 'warn',
+          }),
+        ]);
+        // a sink that throws never changes the tool result
+        executor.setOperationalIssueSink(() => {
+          throw new Error('sink down');
+        });
+        const again = await executor.execute(
+          'file_export',
+          { format: 'md', name: 'x', content: 'y' } as never,
+          {} as never
+        );
+        expect(again).toEqual(result);
+      });
+    });
+
     describe('ONE-MAMA-P3 Task 1: file_export', () => {
       it('AC #10 a successful export writes exactly one attributed effect row and returns a path inside the root', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'mama-export-exec-'));

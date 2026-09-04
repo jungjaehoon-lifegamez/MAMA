@@ -312,6 +312,7 @@ describe('compileOwnerReportContext', () => {
         ],
       },
       caveats: [],
+      operationalIssues: [],
     });
     expect(Object.keys(packet.tasks[0])).toEqual([
       'id',
@@ -1042,5 +1043,34 @@ describe('compileOwnerReportContext', () => {
       label: 'unknown-connector',
       count: 2,
     });
+  });
+  it('ONE-MAMA-P3 Task 2 AC #9: carries at most 20 open operational issues, highest severity first, and an empty array otherwise', async () => {
+    const issues = Array.from({ length: 25 }, (_, i) => ({
+      issueId: `iss_${i}`,
+      surface: 'gateway',
+      severity: (i % 3 === 0 ? 'info' : i % 3 === 1 ? 'warn' : 'error') as
+        | 'info'
+        | 'warn'
+        | 'error',
+      summary: `sig-${i}: something failed`,
+      occurrences: i + 1,
+      firstSeenAt: '2026-09-01T00:00:00.000Z',
+    }));
+    const packet = await compileOwnerReportContext(
+      { readScope: SCOPE, windowEvidence: WINDOW, since: '2026-09-01T03:04:05.000Z' },
+      { ...deps(), readOperationalIssues: () => issues }
+    );
+    expect(packet.operationalIssues).toHaveLength(20);
+    expect(packet.operationalIssues[0].severity).toBe('error');
+    expect(packet.operationalIssues.map((i) => i.severity).indexOf('info')).toBeGreaterThan(
+      packet.operationalIssues.map((i) => i.severity).lastIndexOf('error')
+    );
+    expect(serializeOwnerReportContext(packet)).toContain('operationalIssues');
+    const empty = await compileOwnerReportContext(
+      { readScope: SCOPE, windowEvidence: WINDOW, since: '2026-09-01T03:04:05.000Z' },
+      deps()
+    );
+    expect(empty.operationalIssues).toEqual([]);
+    expect(Object.keys(empty)).toContain('operationalIssues');
   });
 });

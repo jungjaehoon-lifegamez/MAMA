@@ -135,6 +135,12 @@ import {
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
+import {
+  ensureOperationalIssuesTable,
+  listOpenOperationalIssues,
+  recordOperationalIssue,
+  type RecordIssueInput,
+} from '../../observability/operational-issues.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import {
   OwnerEventLoop,
@@ -1743,7 +1749,55 @@ export async function runAgentLoop(
   if (heartbeatCadenceMs !== null) {
     legCadence.declare('heartbeat', heartbeatCadenceMs);
   }
+  // Failures become evidence (One MAMA Phase 3): one sink over the mama-core database.
+  const issueDb = { prepare: (sql: string) => mamaCore.getAdapter().prepare(sql) };
+  ensureOperationalIssuesTable(issueDb as never);
+  const recordIssue = (input: RecordIssueInput): void => {
+    try {
+      recordOperationalIssue(issueDb as never, input);
+    } catch (error) {
+      console.error(
+        `[operational-issue] record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+  toolExecutor.setOperationalIssueSink(recordIssue);
+  // Ledger stagnation probe: deltas keep arriving while no owner task is created for 24h.
+  // Cross-database on purpose (tasks in triggers.db, deltas in mama-memory.db); at most one
+  // record per 12h so occurrences count days, not ticks.
+  let lastStagnationRecordAt = 0;
+  const probeLedgerStagnation = (): void => {
+    const now = Date.now();
+    if (now - lastStagnationRecordAt < 12 * 60 * 60 * 1000) {
+      return;
+    }
+    try {
+      const dayAgo = now - 24 * 60 * 60 * 1000;
+      const created = taskLedger.countOwnerTasksCreatedSince(dayAgo);
+      const deltas = (
+        mamaCore
+          .getAdapter()
+          .prepare(`SELECT count(*) AS n FROM connector_event_index WHERE indexed_at >= ?`)
+          .get(dayAgo) as { n?: number } | undefined
+      )?.n;
+      if (created === 0 && typeof deltas === 'number' && deltas > 0) {
+        lastStagnationRecordAt = now;
+        recordIssue({
+          surface: 'ledger',
+          signature: 'no_task_created_24h',
+          severity: 'error',
+          error: `${deltas} connector deltas indexed in 24h, zero owner tasks created`,
+          nowMs: now,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `[operational-issue] stagnation probe failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
   const legWatchdog = setInterval(() => {
+    probeLedgerStagnation();
     try {
       const { pages, recoveries } = legCadence.check();
       for (const page of pages) {
@@ -2179,6 +2233,15 @@ export async function runAgentLoop(
       });
       // Scope-independent packet readers, shared by the report leg and the event turn.
       const reportContextDeps: OwnerReportContextDeps = {
+        readOperationalIssues: () =>
+          listOpenOperationalIssues(issueDb as never, 20).map((issue) => ({
+            issueId: issue.issueId,
+            surface: issue.surface,
+            severity: issue.severity,
+            summary: `${issue.signature}: ${issue.lastError ?? ''}`.slice(0, 300),
+            occurrences: issue.occurrences,
+            firstSeenAt: new Date(issue.firstSeenAt).toISOString(),
+          })),
         listTaskPage: (input) => taskLedger.listPage(input),
         readClaims: (scope) =>
           mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
@@ -2430,6 +2493,14 @@ export async function runAgentLoop(
             console.error(message);
             await getLegPageNotifier()?.(message);
           },
+          recordIssue: ({ channelKey, reason }) =>
+            recordIssue({
+              surface: 'inbox',
+              signature: 'dead_batch',
+              severity: 'error',
+              error: reason,
+              sourceRef: channelKey,
+            }),
           log: (line) => console.log(line),
         });
         let ownerEventTickPromise: Promise<unknown> | null = null;

@@ -2445,6 +2445,14 @@ export class TaskLedger implements TaskSource {
     return listEffects(this.db as never, query);
   }
 
+  /** Owner rows created since `sinceMs` (the ledger stagnation probe's numerator). */
+  countOwnerTasksCreatedSince(sinceMs: number): number {
+    const row = this.db
+      .prepare(`SELECT count(*) AS n FROM operator_tasks WHERE kind = 'owner' AND created_at >= ?`)
+      .get(sinceMs) as { n?: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   /** Receipt for a deliverable file the owner can receive; target is the content hash. */
   recordFileExport(input: {
     sha256: string;

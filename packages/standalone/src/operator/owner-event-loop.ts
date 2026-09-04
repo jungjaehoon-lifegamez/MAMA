@@ -40,6 +40,8 @@ export interface OwnerEventLoopDeps {
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
   recordTriggerOutcome?: (triggerId: string, outcome: 'succeeded' | 'failed') => void;
   onDead?: (message: string) => void | Promise<void>;
+  /** Failures become evidence: called once per dead batch with a stable signature. */
+  recordIssue?: (input: { channelKey: string; reason: string }) => void;
   log: (line: string) => void;
   leaseMs?: number;
   maxBatchesPerTick?: number;
@@ -221,6 +223,13 @@ export class OwnerEventLoop {
   }
 
   private async notifyDead(batch: OwnerEventBatch, reason: string): Promise<void> {
+    try {
+      this.deps.recordIssue?.({ channelKey: batch.channelKey, reason });
+    } catch (error) {
+      this.deps.log(
+        `[owner-event] dead-batch issue record failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if (!this.deps.onDead) return;
     const message = `MAMA owner-event batch ${batch.id} (${batch.channelKey}) is dead: ${reason}`;
     try {
