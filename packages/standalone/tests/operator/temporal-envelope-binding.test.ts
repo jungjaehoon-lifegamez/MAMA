@@ -93,6 +93,33 @@ describe('workorder envelope scope', () => {
     expect(scope.raw_connectors).toEqual([]);
   });
 
+  it('binds a board reconcile to the channel it judges, and nothing else', () => {
+    const reconcile = workOrderEnvelopeScope({
+      ...base,
+      workKind: 'board',
+      temporalBinding: null,
+      reconcileChannelKey: 'chat:C001',
+    });
+    expect(reconcile.memory_scopes).toContainEqual({ kind: 'channel', id: 'chat:C001' });
+    expect(reconcile.memory_scopes).toContainEqual({
+      kind: 'channel',
+      id: 'operator:worker:board',
+    });
+
+    const full = workOrderEnvelopeScope({ ...base, workKind: 'board', temporalBinding: null });
+    expect(full.memory_scopes.filter((s) => s.kind === 'channel')).toEqual([
+      { kind: 'channel', id: 'operator:worker:board' },
+    ]);
+    // A wiki turn never inherits a reconcile channel: the key is board-only data.
+    const wiki = workOrderEnvelopeScope({
+      ...base,
+      workKind: 'wiki',
+      temporalBinding: null,
+      reconcileChannelKey: 'chat:C001',
+    });
+    expect(wiki.memory_scopes).not.toContainEqual({ kind: 'channel', id: 'chat:C001' });
+  });
+
   it('leaves every other lane on its configured connectors', () => {
     const scope = workOrderEnvelopeScope({
       ...base,

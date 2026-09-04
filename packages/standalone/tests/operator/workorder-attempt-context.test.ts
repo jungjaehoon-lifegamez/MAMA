@@ -23,7 +23,7 @@ describe('Story A1: claimed workorder attempt context', () => {
           return { response: 'done' };
         },
       },
-      loadBrief: () => 'Execute one synthetic workorder.',
+      loadOwnerBrief: () => 'Execute one synthetic workorder.',
       noticeOwner: () => {},
       opsAlarm: { configured: false, send: async () => {} },
       runOptionsFor: (wo) => {

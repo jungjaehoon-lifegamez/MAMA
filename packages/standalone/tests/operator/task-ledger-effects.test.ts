@@ -215,4 +215,32 @@ describe('task ledger effect recording', () => {
     const [second, first] = listEffects(adapter());
     expect(second?.payloadHash).not.toBe(first?.payloadHash);
   });
+  // ONE-MAMA-P1 AC: a memory write inside a bounded run leaves a receipt the owner-event
+  // crash-recovery resolver can read, so the batch is not re-run and the decision not saved twice.
+  it('records a memory_write receipt attributed to the run cause, unattributed without one', () => {
+    ledger.recordMemoryWrite({
+      memoryRef: 'mama_save:dec_1',
+      runId: 'mr_mem',
+      causeEventIds: ['evt_mem'],
+      payload: { tool: 'mama_save', ref: 'dec_1' },
+    });
+    ledger.recordMemoryWrite({
+      memoryRef: 'mama_update:dec_2',
+      runId: 'mr_chat',
+      causeEventIds: undefined,
+      payload: { tool: 'mama_update', ref: 'dec_2' },
+    });
+    const rows = listEffects(adapter()).filter((e) => e.kind === 'memory_write');
+    expect(rows).toHaveLength(2);
+    expect(rows.find((e) => e.targetId === 'mama_save:dec_1')).toMatchObject({
+      causeState: 'attributed',
+      sourceEventIds: ['evt_mem'],
+      targetType: 'memory',
+    });
+    expect(rows.find((e) => e.targetId === 'mama_update:dec_2')).toMatchObject({
+      causeState: 'unattributed',
+      causeKind: 'owner_message',
+    });
+    expect(ledger.effectsCausedBy(['evt_mem'])).toEqual(['memory_write']);
+  });
 });

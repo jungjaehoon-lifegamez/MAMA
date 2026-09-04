@@ -21,7 +21,7 @@ function consumerFor(
   return new WorkOrderConsumer({
     ledger,
     runner,
-    loadBrief: () => 'Reconcile the board.',
+    loadOwnerBrief: () => 'Reconcile the board.',
     noticeOwner: () => {},
     opsAlarm: { configured: false, send: async () => {} },
     log: () => {},

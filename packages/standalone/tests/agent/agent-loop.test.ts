@@ -1496,8 +1496,6 @@ describe('AgentLoop', () => {
         'context_compile',
         'mama_recall',
         'report_request',
-        'workorder_request',
-        'workorder_status',
       ];
       expect(
         claudeDeclarations.filter((declaration) => ownerWorkflowNames.includes(declaration.name))
@@ -1537,23 +1535,6 @@ describe('AgentLoop', () => {
             '{ bundle: { profile: { static: Array<Record<string, unknown>>; dynamic: Array<Record<string, unknown>>; evidence: Array<Record<string, unknown>> }; memories: Array<Record<string, unknown>>; graph_context: { primary: Array<Record<string, unknown>>; expanded: Array<Record<string, unknown>>; edge_count: number } } }',
         },
         { name: 'report_request', params: [], returnType: '{ message: string }' },
-        {
-          name: 'workorder_request',
-          params: [
-            {
-              name: 'input',
-              type: "{kind: 'board' | 'wiki' | 'memory-curation'}",
-              required: true,
-            },
-          ],
-          returnType: '{ message: string }',
-        },
-        {
-          name: 'workorder_status',
-          params: [],
-          returnType:
-            "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation' | 'temporal'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
-        },
       ]);
 
       const { GatewayToolExecutor: ActualGatewayToolExecutor } = await vi.importActual<
@@ -1591,8 +1572,8 @@ describe('AgentLoop', () => {
         'code_act',
         {
           code: inspectInjectedTypes,
-          allowedTools: ['context_compile', 'mama_recall', 'board_read', 'workorder_request'],
-          blockedTools: ['workorder_request'],
+          allowedTools: ['context_compile', 'mama_recall', 'board_read', 'report_request'],
+          blockedTools: ['report_request'],
         },
         executionContext
       );
@@ -1604,7 +1585,7 @@ describe('AgentLoop', () => {
         context_compile: 'function',
         mama_recall: 'function',
         board_read: 'function',
-        workorder_request: 'undefined',
+        report_request: 'undefined',
         mama_search: 'undefined',
       });
     });

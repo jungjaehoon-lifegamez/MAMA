@@ -11,12 +11,7 @@ export type ConnectorCapabilitySurface =
   | 'os_agent'
   | 'legacy-unbound'
   | 'multi-agent-generic'
-  | 'workorder-board'
-  | 'workorder-memory-curation'
-  | 'workorder-temporal'
   | 'operator-report';
-
-export type PrivateWorkOrderKind = 'board' | 'wiki' | 'memory-curation' | 'temporal';
 
 export interface PrivateConnectorToolDefinition {
   readonly name: GatewayToolName;
@@ -58,13 +53,7 @@ export interface ProjectedToolPolicy {
   readonly blockedTools: readonly string[];
 }
 
-const ELIGIBLE_SURFACES = new Set<ConnectorCapabilitySurface>([
-  'owner_console',
-  'workorder-board',
-  'workorder-memory-curation',
-  'workorder-temporal',
-  'operator-report',
-]);
+const ELIGIBLE_SURFACES = new Set<ConnectorCapabilitySurface>(['owner_console', 'operator-report']);
 
 export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
   Object.freeze({
@@ -218,21 +207,6 @@ function isEligibleSurface(surface: ConnectorCapabilitySurface): boolean {
   return ELIGIBLE_SURFACES.has(surface);
 }
 
-export function resolveWorkOrderPrivateSurface(
-  kind: PrivateWorkOrderKind
-): ConnectorCapabilitySurface {
-  switch (kind) {
-    case 'board':
-      return 'workorder-board';
-    case 'memory-curation':
-      return 'workorder-memory-curation';
-    case 'temporal':
-      return 'workorder-temporal';
-    case 'wiki':
-      return 'multi-agent-generic';
-  }
-}
-
 function privateToolsFor(
   surface: ConnectorCapabilitySurface,
   enabledPrivateConnectors: readonly string[]
@@ -273,9 +247,6 @@ function fingerprintFor(
         'os_agent',
         'legacy-unbound',
         'multi-agent-generic',
-        'workorder-board',
-        'workorder-memory-curation',
-        'workorder-temporal',
         'operator-report',
       ] as const
     ).map((surface) => [surface, privateToolsFor(surface, enabledPrivateConnectors)])
@@ -400,9 +371,6 @@ export function resolvePrivatePrincipalSurface(
   }
   switch (agentContext.roleName) {
     case 'owner_console':
-    case 'workorder-board':
-    case 'workorder-memory-curation':
-    case 'workorder-temporal':
     case 'operator-report':
       return agentContext.roleName;
     default:

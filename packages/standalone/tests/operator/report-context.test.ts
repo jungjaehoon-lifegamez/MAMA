@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  compileChannelPacket,
   compileOwnerReportContext,
   serializeOwnerReportContext,
   type OwnerReportContextDeps,
@@ -963,5 +964,83 @@ describe('compileOwnerReportContext', () => {
 
     expect(packet.tasks[0].sourceLabel).toBeNull();
     expect(serializeOwnerReportContext(packet)).not.toContain(opaqueSource);
+  });
+  it('compiles a channel packet limited to the batch connector plus active lifecycle rows', async () => {
+    const rows = [
+      task(1, { sourceChannel: 'trello:board-private-id', status: 'pending' }),
+      task(2, { sourceChannel: 'slack:C1', status: 'pending' }),
+      task(3, { sourceChannel: 'slack:C1', status: 'review' }),
+    ];
+    const packet = await compileChannelPacket(
+      {
+        readScope: SCOPE,
+        channelKey: 'trello:board-private-id',
+        eventIds: ['evt-a'],
+        since: '2026-09-01T03:04:05.000Z',
+      },
+      {
+        ...deps(),
+        listTaskPage: () => ({ tasks: rows, total: 3, returned: 3, nextCursor: null }),
+        correlate: (input) => correlations(input.rows as TaskRecord[]),
+      }
+    );
+    expect(packet.tasks.map((row) => row.id)).toEqual([1, 3]);
+    expect(packet.windowEvidence.channels).toEqual([{ label: 'trello', count: 1, excerpts: [] }]);
+    expect(packet.taskCoverage).toEqual({ total: 3, returned: 2, truncated: false });
+    expect(packet.correlations.rows.map((row) => row.taskId)).toEqual([1, 3]);
+    expect(packet.correlations.coverage.total).toBe(2);
+    expect(packet.packet.bytes).toBe(Buffer.byteLength(serializeOwnerReportContext(packet)));
+  });
+
+  it('names the channel when the recency bound left it with no rows', async () => {
+    const rows = [task(1, { sourceChannel: 'slack:C1', status: 'pending' })];
+    const packet = await compileChannelPacket(
+      {
+        readScope: SCOPE,
+        channelKey: 'trello:board-private-id',
+        eventIds: ['evt-a'],
+        since: '2026-09-01T03:04:05.000Z',
+      },
+      {
+        ...deps(),
+        listTaskPage: () => ({ tasks: rows, total: 40, returned: 1, nextCursor: null }),
+        correlate: (input) => correlations(input.rows as TaskRecord[]),
+      }
+    );
+    expect(packet.tasks).toEqual([]);
+    expect(
+      packet.caveats.some((line) =>
+        line.startsWith('channel_tasks_outside_recency_bound: trello has no task')
+      )
+    ).toBe(true);
+    expect(packet.caveats.some((line) => line.includes('task_list allowed'))).toBe(true);
+    // The packet validator caps every caveat at 160 chars; overflow drops the whole packet.
+    expect(packet.caveats.every((line) => line.length <= 160)).toBe(true);
+    expect(serializeOwnerReportContext(packet)).toContain('channel_tasks_outside_recency_bound');
+  });
+
+  it('keeps every row when the channel connector is unknown to the label map', async () => {
+    const rows = [
+      task(1, { status: 'pending' }),
+      task(2, { sourceChannel: 'slack:C1', status: 'pending' }),
+    ];
+    const packet = await compileChannelPacket(
+      {
+        readScope: SCOPE,
+        channelKey: 'unknown-connector:x',
+        eventIds: ['evt-a', 'evt-b'],
+        since: '2026-09-01T03:04:05.000Z',
+      },
+      {
+        ...deps(),
+        listTaskPage: () => ({ tasks: rows, total: 2, returned: 2, nextCursor: null }),
+        correlate: (input) => correlations(input.rows as TaskRecord[]),
+      }
+    );
+    expect(packet.tasks.map((row) => row.id)).toEqual([1, 2]);
+    expect(packet.windowEvidence.channels[0]).toMatchObject({
+      label: 'unknown-connector',
+      count: 2,
+    });
   });
 });

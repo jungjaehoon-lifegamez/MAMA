@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentContext } from '../../src/agent/types.js';
-import { buildWorkOrderAgentPolicy } from '../../src/cli/commands/start.js';
+import { buildTurnAgentPolicy } from '../../src/cli/commands/start.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import {
   resolvePrivateConnectorPolicy,
@@ -349,7 +349,7 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     'TG-06 keeps the $backend temporal run catalog and authorization aligned for $binding binding',
     async ({ backend, rawConnectors, privateVisible }) => {
       const privatePolicy = enabledPrivatePolicy();
-      const policy = buildWorkOrderAgentPolicy(
+      const policy = buildTurnAgentPolicy(
         'temporal',
         'worker-model',
         backend,

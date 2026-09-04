@@ -24,7 +24,6 @@ import {
   mapKagemushaLifecycle,
   parseKagemushaExternalSourceId,
 } from './external-lifecycle-candidates.js';
-import { createHash } from 'node:crypto';
 
 export const STAGE2_FLAG_ENV = 'MAMA_STAGE2_WORKORDERS';
 
@@ -70,30 +69,6 @@ export function boardRepairKey(): string {
  *  never dedup against a pending scheduled FULL that lacks force. */
 export function boardManualKey(now: number): string {
   return `board:manual:${now}`;
-}
-
-/**
- * Batch-deterministic key: a MAMA owner-event judgment that delegates carries
- * its inbox batch. The key remains reserved after terminal completion so a
- * post-enqueue/pre-ACK crash cannot order the same work twice.
- */
-export function boardBatchKey(causeEventIds: readonly string[]): string {
-  const digest = createHash('sha256')
-    .update([...causeEventIds].sort().join('\n'))
-    .digest('hex')
-    .slice(0, 16);
-  return `owner-event:board:${digest}`;
-}
-
-export function ownerEventWorkOrderKey(
-  kind: 'wiki' | 'memory-curation',
-  causeEventIds: readonly string[]
-): string {
-  const digest = createHash('sha256')
-    .update([...causeEventIds].sort().join('\n'))
-    .digest('hex')
-    .slice(0, 16);
-  return `owner-event:${kind}:${digest}`;
 }
 
 export function boardReconcileKey(channelKey: string, now: number): string {

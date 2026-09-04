@@ -11,7 +11,6 @@ import {
   projectPrivateToolPolicy,
   resolvePrivateConnectorPolicy,
   resolvePrivatePrincipalSurface,
-  resolveWorkOrderPrivateSurface,
   visibleConnectorNames,
 } from '../../src/connectors/private-connector-policy.js';
 import {
@@ -114,13 +113,7 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
     }
   );
 
-  it.each([
-    'owner_console',
-    'workorder-board',
-    'workorder-memory-curation',
-    'workorder-temporal',
-    'operator-report',
-  ] as const)(
+  it.each(['owner_console', 'operator-report'] as const)(
     'TG-01/TG-06: retains enabled private raw connector scope for the eligible %s surface',
     (surface) => {
       const enabled = resolvePrivateConnectorPolicy(connectorResult(true));
@@ -151,15 +144,6 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
     expect(input).toEqual(['telegram', 'trello']);
   });
 
-  it.each([
-    ['board', 'workorder-board'],
-    ['wiki', 'multi-agent-generic'],
-    ['memory-curation', 'workorder-memory-curation'],
-    ['temporal', 'workorder-temporal'],
-  ] as const)('maps the %s workorder to the canonical %s private surface', (kind, surface) => {
-    expect(resolveWorkOrderPrivateSurface(kind)).toBe(surface);
-  });
-
   it('TG-01: makes the configured private connector visible only from the supplied config names', () => {
     expect(visibleConnectorNames(['telegram', 'kagemusha'])).toEqual(
       expect.arrayContaining(['telegram', 'kagemusha'])
@@ -170,14 +154,10 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
   it('derives an eligible private surface only from trusted agent context', () => {
     expect(resolvePrivatePrincipalSurface({})).toBe('legacy-unbound');
     expect(resolvePrivatePrincipalSurface(trustedContext('owner_console'))).toBe('owner_console');
+    // One MAMA: the former workorder-* principals no longer exist; an unknown role name
+    // falls through to the generic surface, which is exactly why every turn is owner_console.
     expect(resolvePrivatePrincipalSurface(trustedContext('workorder-board'))).toBe(
-      'workorder-board'
-    );
-    expect(resolvePrivatePrincipalSurface(trustedContext('workorder-memory-curation'))).toBe(
-      'workorder-memory-curation'
-    );
-    expect(resolvePrivatePrincipalSurface(trustedContext('workorder-temporal'))).toBe(
-      'workorder-temporal'
+      'multi-agent-generic'
     );
     expect(resolvePrivatePrincipalSurface(trustedContext('operator-report'))).toBe(
       'operator-report'

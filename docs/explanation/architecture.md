@@ -181,16 +181,19 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   cursors advance, so daemon restarts do not silently discard an owner update.
 - **Owner console:** the `owner_console` role resolves ONLY via trust-conditional
   escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
-  operational artifacts (board, audit findings, workorder status) and can issue
-  work (`report_request`, `workorder_request`) - fire-and-forget, host code runs it.
+  operational artifacts (board, audit findings) and can issue
+  work (`report_request`) - fire-and-forget, host code runs it. (`workorder_request` was
+  deleted in v0.41.0: scheduled work is host-published, never agent-delegated.)
 - **Stage-2 workorder pipeline** (the only system run path since v0.28.0):
   scheduled system runs (board / wiki / memory promotion) are durable,
   occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
-  `~/.mama/briefs/brief-<kind>.md`. Workers use the configured Claude, Codex, or Cline
-  backend. Each worker receives a built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`,
-  `workorder-memory-curation`, or `workorder-temporal`) whose allowlist matches that brief. Worker authority
+  one operating brief (`~/.mama/operator/console-brief.md`) plus a host-authored turn-kind
+  section. Workers use the configured Claude, Codex, or Cline backend and run as the same
+  `owner_console` principal as chat and event turns (v0.41.0, One MAMA); the host projects each
+  turn's grant from data (artifact tools added, administration, deliverable and per-kind mutation
+  tools blocked). Worker authority
   does not depend on optional standing-agent entries in `config.yaml`. Board workers
   keep evidence domains explicit: Trello and configured private connectors are read-only
   evidence accessed through `context_compile`, and the native task ledger owns owner-console tasks and the

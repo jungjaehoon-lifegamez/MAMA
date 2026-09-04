@@ -12,13 +12,26 @@ export interface OwnerEventHistoryMessage {
 }
 
 export type OwnerEventOutcome =
-  | { status: 'acted'; tools: string[] }
-  | { status: 'delegated'; tools: string[] }
+  | { status: 'acted'; tools: string[]; ownerDecisionRequested: boolean }
   | { status: 'no_update'; tools: string[] }
   | { status: 'retry'; tools: string[]; reason: string };
 
-const EFFECT_TOOLS = new Set(['telegram_send', 'drive_upload']);
-const DELEGATION_TOOLS = new Set(['workorder_request']);
+/** The marker that turns a send-only turn into a completed one: a question only the owner can answer. */
+export const OWNER_DECISION_MARKER = /^\s*\[decision\]/i;
+
+/**
+ * A batch is complete when it durably changed what the system knows or holds.
+ * Notification is not completion: a turn that only sends a Telegram line has
+ * moved nothing, and counting it produced 362 sends against a dead ledger.
+ */
+const LEDGER_EFFECT_TOOLS = new Set([
+  'task_create',
+  'task_update',
+  'mama_save',
+  'mama_update',
+  'drive_upload',
+]);
+const NOTIFY_TOOLS = new Set(['telegram_send']);
 
 function normalizeToolName(name: string): string {
   const match = /^mcp__[A-Za-z0-9_-]+__(.+)$/.exec(name);
@@ -58,6 +71,39 @@ function nestedHostTools(value: unknown): string[] {
     const execution = entry as Record<string, unknown>;
     return execution.success === true && typeof execution.name === 'string' ? [execution.name] : [];
   });
+}
+
+/**
+ * Did a SUCCESSFUL direct telegram_send carry the [decision] marker in the text it actually
+ * sent? Read from the tool_use input, never from the assistant's final prose: a run can say
+ * "[decision]" in its response while the message it delivered was a plain notification.
+ * Nested Code-Act sends carry no input in the host ledger and therefore never qualify.
+ */
+function sentOwnerDecision(history: ReadonlyArray<OwnerEventHistoryMessage>): boolean {
+  const okResults = new Set<string>();
+  for (const message of history) {
+    if (message.role !== 'user' || !Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
+      if (successfulResult(block.content, block.is_error as boolean | undefined)) {
+        okResults.add(block.tool_use_id);
+      }
+    }
+  }
+  for (const message of history) {
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
+      if (typeof block.name !== 'string' || normalizeToolName(block.name) !== 'telegram_send') {
+        continue;
+      }
+      if (!okResults.has(block.id)) continue;
+      const input = parseObject(block.input);
+      const text = input?.message;
+      if (typeof text === 'string' && OWNER_DECISION_MARKER.test(text)) return true;
+    }
+  }
+  return false;
 }
 
 function executedTools(history: ReadonlyArray<OwnerEventHistoryMessage>): string[] {
@@ -102,15 +148,22 @@ export function classifyOwnerEventOutcome(input: {
   noUpdateRecorded: boolean;
 }): OwnerEventOutcome {
   const tools = executedTools(input.history);
-  const delegated = tools.filter((tool) => DELEGATION_TOOLS.has(tool));
-  if (delegated.length > 0) return { status: 'delegated', tools: delegated };
-
-  const acted = tools.filter((tool) => EFFECT_TOOLS.has(tool));
-  if (acted.length > 0) return { status: 'acted', tools: acted };
+  const ledger = tools.filter((tool) => LEDGER_EFFECT_TOOLS.has(tool));
+  const notified = tools.filter((tool) => NOTIFY_TOOLS.has(tool));
+  const ownerDecisionRequested = notified.length > 0 && sentOwnerDecision(input.history);
+  if (ledger.length > 0) {
+    return { status: 'acted', tools: [...ledger, ...notified], ownerDecisionRequested };
+  }
+  if (ownerDecisionRequested) {
+    return { status: 'acted', tools: notified, ownerDecisionRequested: true };
+  }
   if (input.noUpdateRecorded) return { status: 'no_update', tools: [] };
   return {
     status: 'retry',
     tools: [],
-    reason: 'no durable action or exact no-update receipt',
+    reason:
+      notified.length > 0
+        ? 'notification without a ledger change'
+        : 'no durable action or exact no-update receipt',
   };
 }

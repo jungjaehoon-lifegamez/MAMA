@@ -159,3 +159,16 @@ secret boundary to a local-first product.
 - **What:** v0.23 릴리즈 차단분은 수정 완료. 이연분: developer-playbook.md(2025-11 스냅숏 - mama-plugin 경로/384차원/구 툴명/데드 링크), deployment-architecture.md("4 packages", 워크플로 이름 불일치), docs/guides/deployment.md(e5-small 기본값), testing.md("134 tests"), code-standards.md(구 트리), hooks.md(384차원 예시 + SessionStart/PreCompact 미문서), code-act-sandbox.md + security.md Code-Act 섹션의 샌드박스 툴 표(host-bridge TOOL_REGISTRY와 불일치), reference/api.md에 operator task 라우트 3종 추가, configuration-options.md에 MAMA_TRIGGER_LOOP\* 패밀리/MAMA_BOARD_RECONCILE 행, AGENTS.md 전면 재생성(GitHub Packages/wave-swarm 중심 등 5+ 거짓), entity-substrate-runbook.md 포트 라벨.
 - **At-cutover (Stage 2 on 전환 시 함께):** README/standalone README/mama-os.md/package-structure.md의 "상주 타이머 인격 런" 기술을 워크오더 파이프라인 기술로 전환.
 - **Why:** 오늘 기준 거짓인 사용자 대면 사실층은 v0.23 준비 PR에서 수정했고, 나머지는 저빈도 개발 문서라 릴리즈 비차단 판정.
+
+## Board-lane context_compile scope rejection: NOT closed by One MAMA Phase 1 (2026-09-04)
+
+Phase 1 unified every scheduled turn under the `owner_console` principal. Review of that change
+verified that `computeScopeAuditFields` (gateway-tool-executor.ts) keys on MEMORY SCOPES, never
+on `roleName` or the envelope `agent_id`, and that a `context_compile` call with no `scopes`
+argument is exempt. So the daily `[envelope] scope mismatch` on the board lane is a memory-scope
+disagreement between the compile's requested scopes and the envelope's `channel:operator:worker:board`
+scope, not a principal split. Confirmed from the compile service: an explicit `scopes` entry
+outside the envelope's read allowance throws `worker_envelope_scope_denied` (403) and the
+enclosing `code_act` fails. Fixed at both layers in 0.41.0: the board reconcile envelope carries
+the judged channel's memory scope (`reconcileChannelKey`), and the board turn section says to
+omit `scopes`. Remaining acceptance: one installed board reconcile run without the warn.

@@ -2,6 +2,100 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.41.0] - 2026-09-04
+
+One MAMA, Phase 1 (Tasks 1-3). The owner-event turn - the run that judges every connector
+delta - may now change the owner ledger, and only a ledger change completes it. This is the
+spec's Phase 0 gate: it is installed alone first, and the owner-event lane is observed for
+`task_create`/`task_update` receipts before any lane is collapsed.
+
+### Changed
+
+- **Event turns may change the ledger and memory.** `task_create`, `task_update`, `mama_save`
+  and `mama_update` reach the owner-event turn. Blocking them since v0.37.0 is what left the
+  owner ledger without one agent-authored task from 2026-08-19 on while 362 Telegram lines went
+  out. Every remaining block entry names its reason in source: administration (`member_*`),
+  `console_brief_update` (untrusted-content-driven turns must not rewrite the operating brief),
+  `report_request` (a second judgment surface), the `workorder_*` tools (delegation no longer
+  completes a batch), and `obsidian` / `drive_translate_conti` (neither is receipted where the
+  crash-recovery resolver can see it, so a retry would repeat the side effect).
+- **Completion is a ledger change, never a notification.** A batch completes on a successful
+  `task_*`, `mama_*`, or `drive_upload` result; a `telegram_send` alone is a retry with the
+  reason `notification without a ledger change`, unless the message the turn actually SENT
+  begins with `[decision]`, the marker for a question only the owner can answer (read from the
+  successful `telegram_send` input, never from the model's prose). An accepted
+  `workorder_request` no longer counts as anything. The crash-recovery receipt mirrors the
+  rule: a task or memory write that named the batch's events as its cause (`evidence_effects`,
+  bounded to the batch's own lifetime; `mama_save`/`mama_update` now record a `memory_write`
+  receipt) or a confirmed Drive upload is a receipt, so a task or decision created before a
+  transport error is not created again; a confirmed Telegram line is not (the effect ledger's per-batch action keys
+  make the retry safe from a second send); a persisted Board acceptance is no longer a receipt.
+  A send-only completion behind `[decision]` is ACKed with a host-written
+  `unresolved_reason=owner_decision_requested` on the inbox row, so the escape hatch is counted
+  rather than self-graded.
+- **Event turns start from a host-compiled channel packet.** The same `OwnerReportContextV1`
+  the full report uses is compiled per batch under the event turn's own read scope, narrowed
+  to the batch connector plus every `in_progress`/`review` task, and appended after the delta.
+  When the ledger-wide recency bound leaves the channel with no rows, the packet says so in a
+  caveat and allows `task_list` for that channel instead of inviting a duplicate task.
+  The envelope and the packet are built from ONE read-scope expression, so the run can never
+  read under a principal its envelope does not hold. A packet compile failure is logged and
+  the turn proceeds on the delta alone.
+
+- **One agent policy for every scheduled turn.** Board, wiki, curation and recheck turns run
+  as the same `owner_console` principal the chat and event turns use, with one operating brief
+  (the console brief) plus a short host-authored turn-kind section. The four hand-written
+  per-lane personas, their `workorder-*` principals and the per-kind brief files
+  (`~/.mama/briefs/brief-<kind>.md`) are deleted; reading under a principal the envelope did
+  not hold is what made the Board lane fail the envelope scope audit daily. The grant is
+  projected by the host from data, not prose: the owner console grant plus each turn's
+  artifact tools (`report_publish`, `wiki_publish`, `task_temporal_reconcile`), minus
+  administration, minus deliverable, Drive, member and file-read tools on every unattended
+  turn, minus a per-kind block list (a board turn cannot create tasks, notify, upload, or touch
+  memory and wiki; a recheck turn can only file its receipt). The role config is owner-editable,
+  so a shape rule blocks every `*_send`/`*_upload` tool on unattended turns regardless of what
+  the config lists, and a test pins the exact default grant of every turn kind. The board turn
+  keeps `task_create` for reconcile mode (its action verifier expects it) and loses `obsidian`
+  and memory writes, which belong to the wiki and curation turns. Scheduled-turn prompts carry
+  a preamble overriding the brief's chat-only instructions (`console_brief_update`, asking the
+  owner).
+
+- **The board pipeline slot is rendered by the host.** Before every board turn the host
+  publishes the pipeline from the ledger's own deadline-first page (twelve rows, D-day,
+  assignee, connector name, coverage line; no internal or channel ids) through the same
+  publisher `report_publish` uses, and the turn writes only the three judgment slots. The
+  model no longer re-types a table the system already knows, and a render failure fails the
+  order loudly instead of letting the model fill the slot from memory.
+
+### Removed
+
+- **Delegation is gone from the tool surface.** `workorder_request` and `workorder_status` are
+  deleted from the registry, the executor, the Code-Act bridge, the default owner-console
+  grant, the chat persona and the seeded brief, together with the owner-event Board intent
+  ledger they fed (`owner-event-board-refresh`). Since 2026-08-19 this path produced 224 Board
+  full rebuilds and nothing else. The host-owned Board repair gate and its scheduled full and
+  reconcile runs are unchanged; the boot repair now runs through the same delta-gated path as
+  every later one.
+
+### Fixed
+
+- **The daily board-lane `context_compile` rejection.** The scope check keys on memory scopes,
+  not on the principal: a board reconcile run named the channel it was judging while its
+  envelope carried only the synthetic worker channel, so the compile threw
+  `worker_envelope_scope_denied` and the run failed. The reconcile envelope now carries the
+  judged channel's memory scope, and the board turn is told to omit `scopes` (the host binds
+  them). Installed proof: one board reconcile run without the `[envelope] scope mismatch`
+  warn; recorded in the parity doc.
+
+### Notes for existing installs
+
+- An edited console brief (`~/.mama/operator/console-brief.md`) is never auto-upgraded: remove
+  any line that tells the agent to use `workorder_status` or `workorder_request` by hand.
+- The `owner_event_board_refresh*` tables stay in `~/.mama/operator/triggers.db` as inert data;
+  nothing reads or writes them any more.
+- `~/.mama/briefs/brief-*.md` are no longer read. Owner edits that belonged in them go into the
+  console brief (`console_brief_update` from chat, or the file directly).
+
 ## mama-os [0.40.0] / mama-core [2.2.3] - 2026-09-03
 
 ### Changed

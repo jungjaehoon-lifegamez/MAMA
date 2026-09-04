@@ -41,7 +41,7 @@ describe('Story BOARD-SLOT: board slot instructions', () => {
     }
   });
 
-  it('publish lines instruct one report_publish call carrying all four slots', () => {
+  it('AC #2 (ONE-MAMA-P1 Task 6) publish lines instruct one report_publish call carrying the three judgment slots; pipeline is host-rendered', () => {
     const lines = buildBoardPublishLines().join('\n');
     expect(lines).toContain('report_publish');
     for (const slot of BOARD_SLOT_ORDER) {
@@ -51,28 +51,11 @@ describe('Story BOARD-SLOT: board slot instructions', () => {
     expect(lines.toLowerCase()).toContain("owner's language");
     // no scripts/styles: the board sanitizes and the CSP blocks them anyway
     expect(lines).toContain('class');
-  });
-
-  it('keeps temporal facts separate from workflow and system judgments', () => {
-    const lines = buildBoardPublishLines().join('\n');
-    expect(lines).toContain('temporal_state');
-    expect(lines).toContain('Temporal fact');
-    expect(lines).toContain('Workflow judgment');
-    expect(lines).toContain('System condition');
-    expect(lines).toContain('calendar disappearance');
-    expect(lines).toContain('Never copy external connector lifecycle status');
-    expect(lines).toContain('D-day is an optional display aid');
-    expect(lines).toContain('never use it');
-    expect(lines).not.toContain('blocked/overdue');
-  });
-
-  it('AC #1 projects one nonterminal top-12 page without asking the worker to paginate', () => {
-    const lines = buildBoardPublishLines().join('\n');
-
-    expect(lines).toContain('include_terminal: false');
-    expect(lines).toContain('top 12');
-    expect(lines).toContain('Do not follow nextCursor');
-    expect(lines).toContain('total as coverage');
-    expect(lines).not.toContain('row per open item');
+    // One MAMA: the pipeline is a host projection of the ledger, never model prose.
+    expect(lines).toContain('rendered by the host');
+    expect(lines).toContain(
+      'slots: { briefing: "<html>", action_required: "<html>", decisions: "<html>" }'
+    );
+    expect(lines).not.toContain('task_list(');
   });
 });
