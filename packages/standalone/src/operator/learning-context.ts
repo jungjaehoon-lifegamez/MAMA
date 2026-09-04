@@ -31,6 +31,15 @@ export interface LearningContext {
 
 export const POLICY_TOPIC_PREFIX = 'policy:';
 export const LESSON_TOPIC_PREFIX = 'lesson:';
+
+/** Topics the host owns: only the turn observer writes them (gateway refuses the agent). */
+export function isLearningTopic(topic: unknown): boolean {
+  return (
+    typeof topic === 'string' &&
+    (topic.trimStart().toLowerCase().startsWith(POLICY_TOPIC_PREFIX) ||
+      topic.trimStart().toLowerCase().startsWith(LESSON_TOPIC_PREFIX))
+  );
+}
 const DEFAULT_LIMITS = { maxLessons: 3, maxSummaryChars: 240, maxTotalChars: 2400 } as const;
 const POLICY_INSTRUCTION =
   'Owner policy, in force. Apply it. The host still enforces revisions, receipts and destinations.';

@@ -47,6 +47,8 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { buildLearningContext, formatLearningAuditLine } from '../operator/learning-context.js';
 import { cappedLearningReader } from '../operator/learning-read.js';
+import { observeOwnerTurn } from '../operator/turn-observer.js';
+import { loadLearningMarkers } from '../operator/learning-markers.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import {
@@ -1609,6 +1611,20 @@ This protects your credentials from being exposed in chat logs.`;
         if (agentSavedThisTurn) {
           logger.info('[memory-agent] extraction skipped - agent saved in-turn (dual-save dedup)');
         }
+        if (
+          !isPublicLane &&
+          response &&
+          message.text &&
+          agentContext.roleName === 'owner_console'
+        ) {
+          // Owner corrections and rules become lesson:/policy: rows (turn-observer.ts).
+          // Only after a committed reply; never on a public lane; host is the only writer.
+          void this.observeOwnerLearning(message).catch((error: unknown) => {
+            logger.warn(
+              `[learning] observer failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+          });
+        }
         if (!isPublicLane && response && message.text && !agentSavedThisTurn) {
           const rawAssistantText = stripGatewayDecorations(response);
           void (async () => {
@@ -2356,6 +2372,46 @@ INSTRUCTION:
             `[channel-summary] Failed: ${error instanceof Error ? error.message : String(error)}`
           );
         });
+    }
+  }
+
+  /** Classify a committed owner message and save a policy:/lesson: row when it carries one. */
+  private async observeOwnerLearning(message: NormalizedMessage): Promise<void> {
+    if (!this.mamaApi.saveMemory || !this.mamaApi.queryRelevantTruth) {
+      return;
+    }
+    const scopes = deriveMemoryScopes({
+      source: message.source,
+      channelId: message.channelId,
+      projectId: this.getRuntimeProjectId(),
+    });
+    const result = await observeOwnerTurn({
+      userMessage: message.text,
+      scopes,
+      source: {
+        package: 'standalone',
+        source_type: message.source,
+        channel_id: message.channelId,
+        project_id: this.getRuntimeProjectId(),
+      },
+      markers: loadLearningMarkers(),
+      turnCommitted: true,
+      save: async (input) => {
+        const saved = await this.mamaApi.saveMemory!(input);
+        return { memoryId: saved.id };
+      },
+      findExisting: async (topic) => {
+        const rows = await this.mamaApi.queryRelevantTruth!({ query: '', scopes });
+        const hit = rows.find((row) => row.topic === topic);
+        return hit ? { memory_id: hit.memory_id } : null;
+      },
+      // A repeat carries the same normalized text (that is what the topic hash pins), so the
+      // existing row already says it; dedupe needs no rewrite.
+    });
+    if (result.kind !== 'none') {
+      logger.info(
+        `[learning] observed kind=${result.kind} topic=${result.topic} deduped=${result.deduped === true} (${result.reason})`
+      );
     }
   }
 

@@ -25,6 +25,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
+import { isLearningTopic } from '../operator/learning-context.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
@@ -2683,6 +2684,17 @@ export class GatewayToolExecutor {
               error: `Refusing to save: content matches secret pattern(s): ${saveSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
             };
           }
+          if (isLearningTopic((saveInput as { topic?: unknown }).topic)) {
+            // Standing policy and lessons come from the OWNER through the turn observer.
+            // An agent that could write policy: would grant itself instructions injected
+            // into every later turn. Refuse at the choke, like secrets.
+            return {
+              success: false,
+              code: 'learning_topic_refused',
+              error:
+                'Topics starting with policy: or lesson: are written by the host from owner instructions, never by the agent.',
+            };
+          }
           const api = await getApi();
           await this.recordMemoryWriteWarnings(api, 'mama_save', saveSecretScan.warnings);
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
@@ -2764,6 +2776,15 @@ export class GatewayToolExecutor {
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update': {
+          if (isLearningTopic((input as { topic?: unknown }).topic)) {
+            // Same choke as mama_save: standing policy is owner-authored, host-written.
+            return {
+              success: false,
+              code: 'learning_topic_refused',
+              error:
+                'Topics starting with policy: or lesson: are written by the host from owner instructions, never by the agent.',
+            };
+          }
           const updateSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
           if (!updateSecretScan.clean) {
             console.warn(

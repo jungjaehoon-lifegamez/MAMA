@@ -15,6 +15,15 @@ One MAMA, Phase 2 (learning loop), in progress.
   markup-escaped and lines are budgeted before assembly, so stored text can neither forge nor
   truncate a block. Reads go through one capped reader (newest 200 rows) and each turn logs a
   `[learning] turn=... policyIds=[...] lessonIds=[...]` audit line.
+- **Owner corrections and rules become lessons and policies.** After a committed owner chat
+  reply, the host classifies the owner's message with a marker vocabulary (English defaults in
+  source; the owner's language in `~/.mama/operator/locale.json` under `learningMarkers`): a
+  durable rule plus a topic noun becomes a `policy:<noun>-<hash>` row (kind decision), a
+  correction becomes a `lesson:<noun>-<hash>` row (kind lesson), a one-off veto ("this time")
+  blocks both. The topic hash is stable per channel and normalized text, so a repeated
+  instruction is one row. The host is the only writer: `mama_save`/`mama_update` refuse
+  `policy:`/`lesson:` topics (`learning_topic_refused`), so an agent cannot grant itself
+  standing instructions.
 
 ## mama-os [0.41.0] - 2026-09-04
 
