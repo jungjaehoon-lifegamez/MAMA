@@ -917,6 +917,44 @@ change unless they are release-blocking security or data-loss issues.
 - [ ] Complete a real owner-event and Temporal turn, then compare visible delivery plus 24-hour
       model-work cost against the saved baseline.
 
+## One MAMA Phase 1: 2026-09-04 (release 0.41.0, pre-install)
+
+Branch `feat/one-mama-phase1`, PR #249. Seven commits, each through the pre-commit test gate.
+Parity scenarios touched: TG-04 (tool projection for every scheduled turn), TG-06 (completion,
+crash-recovery receipts, delivery idempotency on retry), TG-03 (Drive/artifact effects stay on
+the owner conversation; unattended turns never upload).
+
+What changed, measured against the failure recorded on the installed 0.40.0 runtime (zero
+agent-authored owner tasks since 2026-08-19 22:10; 304 `delegated via workorder_request`
+completions, 90 `acted via telegram_send`, 65 `no_update`, 45 `dead` in the current daemon log):
+
+- Event turns may change the ledger; completion is a ledger change or an explicit `[decision]`
+  question to the owner; a notification alone is a retry. Delegation is deleted.
+- Crash-recovery receipts read `evidence_effects` rows caused by the batch's events (bounded by
+  the batch's own lifetime), so a task created before a transport error is not created twice.
+- Event turns start from a host-compiled channel packet built from the SAME read scope as the
+  envelope.
+- Every scheduled turn runs as the `owner_console` principal with the one console brief plus a
+  host turn-kind section; the grant is projected from data and pinned by exact enumeration;
+  no unattended turn holds a send or an upload, even if the owner's role config lists one.
+- The board pipeline slot is host-rendered from the ledger before the board turn.
+- Board-lane `context_compile` rejection root-caused to an explicit scope outside the envelope
+  (`worker_envelope_scope_denied`); fixed at both layers.
+
+Live inbox at the time of writing (`owner_event_inbox`): 185 acked, 45 dead. All 45 dead rows
+carry a Claude CLI usage-limit error, not a code failure; 0.41.0 does not replay them.
+
+Installed acceptance (to be recorded after cutover):
+
+- [ ] Acceptance 1: one connector delta produces a `task_create`/`task_update` with an
+      `evidence_effects` row attributed to the event, and no Telegram line for it.
+- [ ] Acceptance 4 (24h): `[owner-event] batch N acted via telegram_send` lines fewer than 10;
+      `unresolved_reason` rows counted from `owner_event_inbox`; owner-event lane tokens for the
+      day from `model_runs`.
+- [ ] Board reconcile run without `[envelope] scope mismatch`.
+- [ ] Phase 0 gate: if acceptance 1 fails after one working day, the diagnosis is wrong and the
+      lane collapse (already merged behind the same release) is re-argued before Phase 2.
+
 ## Change log
 
 - 2026-08-28: Added the TG-06 `mama report now` completion boundary without a second report

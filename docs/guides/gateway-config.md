@@ -475,7 +475,7 @@ gateways:
 
 **⚠️ `allowed_chats` is the OWNER TRUST ANCHOR (v0.22+):** any allowlisted
 chat's 1:1 private DM is granted the `owner_console` role — a wide operational
-surface (board/audit/workorder reads, `report_request`/`workorder_request`,
+surface (board/audit reads, `report_request`,
 `mama_save`/`mama_update`, task creation). Only list chats you trust with
 owner-level access. Group/supergroup IDs (negative numbers) never escalate,
 but listing a teammate's private chat gives THAT person the owner console.

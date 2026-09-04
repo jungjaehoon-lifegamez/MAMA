@@ -33,13 +33,6 @@ export interface BoardRefreshGatePort {
   completeVerifiedFull(capturedGeneration: number): void;
 }
 
-export interface OwnerEventBoardRefreshIntentPort {
-  markVerified(
-    workOrderId: number,
-    capturedGeneration: number
-  ): { applied: number; followupPending: boolean };
-}
-
 /**
  * Clear repair dirt only when both independent authorities agree: the
  * run-bound action verifier observed an effect and candidate receipts (when
@@ -51,8 +44,7 @@ export function applyBoardRefreshVerdict(
   workOrder: WorkOrderRecord,
   actionVerified: boolean,
   receiptVerdict: WorkOrderEffectVerdict,
-  gate: BoardRefreshGatePort,
-  intents?: OwnerEventBoardRefreshIntentPort
+  gate: BoardRefreshGatePort
 ): WorkOrderEffectVerdict {
   if (!actionVerified || receiptVerdict.disposition !== 'complete') {
     return receiptVerdict;
@@ -67,10 +59,6 @@ export function applyBoardRefreshVerdict(
       gate.completeVerifiedReconcile(channelKey, generation as number);
     }
   } else if (workOrder.payload.mode === 'full') {
-    // Persist application before clearing the in-memory repair gate. If the
-    // durable write fails, the required verdict hook fails closed and the
-    // gate remains dirty for recovery.
-    intents?.markVerified(workOrder.id, generation as number);
     gate.completeVerifiedFull(generation as number);
   }
   return receiptVerdict;

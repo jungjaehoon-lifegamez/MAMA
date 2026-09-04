@@ -26,7 +26,7 @@ import { buildTemporalWorkOrderHook } from '../../src/operator/workorder-hooks.j
 import type { WorkerRunnerOptions } from '../../src/operator/worker-run.js';
 import { buildWorkerSystemPrompt } from '../../src/operator/worker-run.js';
 import {
-  buildWorkOrderAgentPolicy,
+  buildTurnAgentPolicy,
   temporalTaskBinding,
   workOrderEnvelopeScope,
 } from '../../src/cli/commands/start.js';
@@ -168,7 +168,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
       runner: {
         runWithContent: async (_content, options) => runModelAction(options),
       },
-      loadBrief: () => 'Reconcile one temporal owner task through the trusted gateway.',
+      loadOwnerBrief: () => 'Reconcile one temporal owner task through the trusted gateway.',
       runOptionsFor: (workOrder) => {
         const temporalWorkContext = buildTemporalWorkerContext(ledger, workOrder);
         const binding = temporalTaskBinding(ledger, temporalWorkContext.taskId);
@@ -179,7 +179,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
           temporalBinding: binding,
           privateConnectorPolicy,
         });
-        const policy = buildWorkOrderAgentPolicy(
+        const policy = buildTurnAgentPolicy(
           'temporal',
           'test-worker-model',
           'codex',

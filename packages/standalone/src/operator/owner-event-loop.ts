@@ -8,7 +8,7 @@ import {
   type OwnerEventOutcome,
 } from './owner-event-outcome.js';
 
-type OwnerEventTerminalReceipt = Exclude<OwnerEventOutcome, { status: 'retry' }>;
+export type OwnerEventTerminalReceipt = Exclude<OwnerEventOutcome, { status: 'retry' }>;
 
 interface OwnerEventRunner {
   run(
@@ -32,7 +32,9 @@ export interface OwnerEventLoopDeps {
   inbox: OwnerEventInbox;
   runner: OwnerEventRunner;
   agentContext: AgentContext;
-  buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
+  buildPrompt: (batch: OwnerEventBatch, packet: string | null) => Promise<string> | string;
+  /** Host-compiled channel packet (serialized); null or a throw means "no packet". */
+  compilePacket?: (batch: OwnerEventBatch) => Promise<string | null>;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
@@ -93,7 +95,20 @@ export class OwnerEventLoop {
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
 
       try {
-        const prompt = await this.deps.buildPrompt(batch);
+        let packet: string | null = null;
+        if (this.deps.compilePacket) {
+          try {
+            packet = await this.deps.compilePacket(batch);
+          } catch (error) {
+            // The delta itself is the minimum evidence; receipts still gate completion.
+            this.deps.log(
+              `[owner-event] packet compile failed for batch ${batch.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
+        }
+        const prompt = await this.deps.buildPrompt(batch, packet);
         const envelope = await this.deps.issueEnvelope(batch);
         const result = await this.deps.runner.run(prompt, {
           sessionKey: `owner-event:${batch.channelKey}`,
@@ -133,13 +148,21 @@ export class OwnerEventLoop {
           return 'failed';
         }
 
-        this.deps.inbox.ack(batch.id);
+        // A send-only completion is allowed only behind the [decision] marker; the
+        // host records WHY it completed without a ledger change so it can be counted.
+        const unresolvedReason =
+          outcome.status === 'acted' &&
+          outcome.ownerDecisionRequested &&
+          outcome.tools.every((tool) => tool === 'telegram_send')
+            ? 'owner_decision_requested'
+            : null;
+        this.deps.inbox.ack(batch.id, unresolvedReason);
         this.recordTriggerOutcomes(batch, 'succeeded');
         processed += 1;
         this.deps.log(
           `[owner-event] batch ${batch.id} ${outcome.status}${
             outcome.tools.length > 0 ? ` via ${outcome.tools.join(',')}` : ''
-          }`
+          }${unresolvedReason ? ` unresolved_reason=${unresolvedReason}` : ''}`
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);

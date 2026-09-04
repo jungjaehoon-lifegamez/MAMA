@@ -23,6 +23,7 @@ describe('Story TG-03/TG-04: MAMA owner-event prompt', () => {
         ],
         status: 'claimed',
         attempts: 0,
+        createdAt: 0,
       },
       ownerBrief: 'When client feedback arrives, translate it and notify me.',
       skillContent: '# Feedback translation skill\nPreserve item codes.',
@@ -41,12 +42,60 @@ describe('Story TG-03/TG-04: MAMA owner-event prompt', () => {
     expect(prompt).toContain('Start from this exact connector delta');
     expect(prompt).toContain('Do not run a general status report or cross-check unrelated sources');
     expect(prompt).toContain('Widen evidence only when');
-    expect(prompt).toContain('Do not call workorder_status after an accepted workorder_request');
+    // One MAMA: completion is a ledger change or an owner decision; delegation is gone.
+    expect(prompt).toContain(
+      'A ledger change (task_create, task_update, mama_save) or a file/delivery effect is the durable outcome.'
+    );
+    expect(prompt).toContain(
+      'Start your final message with [decision] only when the owner must decide something the evidence cannot resolve; a notification without a ledger change does not complete the turn.'
+    );
+    expect(prompt).toContain('Do not publish board slots from this turn.');
+    expect(prompt).not.toContain('workorder_request');
+    expect(prompt).not.toContain('workorder_status');
     expect(prompt).toContain('telegram_send.delivery_key=telegram-delivery');
     expect(prompt).toContain('drive_upload.effect_key=drive-upload');
     expect(prompt.indexOf('When client feedback arrives')).toBeLessThan(
       prompt.indexOf('<<<UNTRUSTED-CONTENT')
     );
     expect(prompt).toContain('[stripped-end-marker]');
+  });
+  it('appends the host-compiled channel packet after the delta, fenced as untrusted', () => {
+    const packet = '{"schemaVersion":"mama.owner-report-context/v1","tasks":[]}';
+    const prompt = buildOwnerEventPrompt({
+      batch: {
+        id: 42,
+        channelKey: 'trello:board',
+        eventIds: ['evt-1'],
+        lines: ['- card moved'],
+        activations: [],
+        status: 'claimed',
+        attempts: 0,
+        createdAt: 0,
+      },
+      ownerBrief: 'brief',
+      packet,
+    });
+    expect(prompt).toContain('## Channel packet');
+    expect(prompt).toContain(packet);
+    expect(prompt.indexOf('- card moved')).toBeLessThan(prompt.indexOf('## Channel packet'));
+    expect(prompt.indexOf('## Channel packet')).toBeLessThan(
+      prompt.indexOf('source=owner-event-packet')
+    );
+    expect(
+      buildOwnerEventPrompt({
+        batch: {
+          id: 43,
+          channelKey: 'trello:board',
+          eventIds: [],
+          lines: [],
+          activations: [],
+          status: 'claimed',
+          attempts: 0,
+          createdAt: 0,
+        },
+        ownerBrief: 'brief',
+        packet: null,
+      })
+    ).not.toContain('## Channel packet');
   });
 });

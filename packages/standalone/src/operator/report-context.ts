@@ -1213,3 +1213,80 @@ export async function compileOwnerReportContext(
   }
   return detached;
 }
+
+/**
+ * One MAMA (Phase 1 Task 3): the event turn starts from the same host-compiled
+ * packet as the report, narrowed to its channel. The read scope MUST be the
+ * owner-event scope the run's envelope holds - reading under another principal
+ * is the mismatch that fails the envelope scope audit.
+ */
+export async function compileChannelPacket(
+  input: {
+    readScope: OwnerReportReadScope;
+    channelKey: string;
+    eventIds: string[];
+    since: string;
+  },
+  deps: OwnerReportContextDeps
+): Promise<OwnerReportContextV1> {
+  const separator = input.channelKey.indexOf(':');
+  const connector = separator > 0 ? input.channelKey.slice(0, separator) : input.channelKey;
+  // The packet validator only accepts sourceLabels from SOURCE_DISPLAY_LABELS, so an
+  // unknown connector fails OPEN: keep every row rather than filter on a label no
+  // row can carry.
+  const label: string | null = SOURCE_DISPLAY_LABELS[connector] ?? null;
+  const end = new Date(deps.now()).toISOString();
+  const full = await compileOwnerReportContext(
+    {
+      readScope: input.readScope,
+      since: input.since,
+      windowEvidence: {
+        start: input.since,
+        end,
+        channelCount: 1,
+        messageCount: input.eventIds.length,
+        channels: [{ label: label ?? connector, count: input.eventIds.length, excerpts: [] }],
+        triggerActivity: [],
+      },
+    },
+    deps
+  );
+  const keep = new Set(
+    full.tasks
+      .filter(
+        (row) =>
+          label === null ||
+          row.sourceLabel === label ||
+          row.status === 'in_progress' ||
+          row.status === 'review'
+      )
+      .map((row) => row.id)
+  );
+  const tasks = full.tasks.filter((row) => keep.has(row.id));
+  const rows = full.correlations.rows.filter((row) => keep.has(row.taskId));
+  // The recency bound is applied to the whole ledger before this channel filter, so a
+  // channel whose rows were not updated recently can come out empty while its tasks
+  // exist. Say so, or the turn will create the task a second time.
+  const caveats =
+    tasks.length === 0 && full.taskCoverage.total > 0
+      ? [
+          ...full.caveats,
+          // Bounded to the caveat cap (160 chars) even for the longest label.
+          `channel_tasks_outside_recency_bound: ${(label ?? connector).slice(0, 24)} has no task among the ${full.tasks.length} most recent of ${full.taskCoverage.total}; task_list allowed`,
+        ]
+      : full.caveats;
+  const packet: OwnerReportContextV1 = {
+    ...full,
+    caveats,
+    tasks,
+    taskCoverage: {
+      total: full.taskCoverage.total,
+      returned: tasks.length,
+      truncated: full.taskCoverage.truncated,
+    },
+    correlations: { coverage: { ...full.correlations.coverage }, rows },
+  };
+  recomputeCorrelationCoverage(packet.correlations);
+  setPacketBytes(packet);
+  return packet;
+}

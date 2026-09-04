@@ -41,29 +41,33 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
           'code_act',
           'telegram_send',
           'contract_no_update',
-          'workorder_request',
           'drive_upload',
           'kagemusha_messages',
+          // One MAMA Phase 1 Task 1: the event turn may change the ledger and memory.
+          'task_create',
+          'task_update',
+          'mama_save',
+          'mama_update',
         ])
       );
       expect(context.role.blockedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
-      for (const ownerMessageOnlyOrNonIdempotent of [
+      for (const administrationOrSecondJudgmentSurface of [
         'member_register',
         'member_suspend',
         'member_offboard',
+        'member_scope_grant',
+        'member_scope_revoke',
         'console_brief_update',
-        'task_create',
-        'task_update',
-        'mama_save',
-        'mama_update',
-        'drive_translate_conti',
-        'obsidian',
-        'report_publish',
         'report_request',
-        'workorder_status',
+        'obsidian',
+        'drive_translate_conti',
       ]) {
-        expect(context.role.allowedTools).not.toContain(ownerMessageOnlyOrNonIdempotent);
+        expect(context.role.allowedTools).not.toContain(administrationOrSecondJudgmentSurface);
+        expect(context.role.blockedTools).toContain(administrationOrSecondJudgmentSurface);
       }
+      // Delegation tools no longer exist anywhere on the surface.
+      expect(context.role.allowedTools).not.toContain('workorder_request');
+      expect(context.role.allowedTools).not.toContain('workorder_status');
       expect(
         buildAgentToolExecutionContext({ agentContext: context, actorId: 'mama-owner' })?.agentId
       ).toBe('mama-owner');

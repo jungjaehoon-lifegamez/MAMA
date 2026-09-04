@@ -26,7 +26,6 @@ import type {
   AgentContext,
   GatewayToolExecutionContext,
   PrincipalRepository,
-  WorkOrderRequestOrigin,
 } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { PromptEnhancer } from '../../agent/prompt-enhancer.js';
@@ -56,7 +55,7 @@ import type {
   CodeActResult,
   GraphHandlerOptions,
 } from '../../api/graph-api-types.js';
-import Database, { type SQLiteDatabase } from '../../sqlite.js';
+import Database from '../../sqlite.js';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
@@ -97,7 +96,6 @@ import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
   resolvePrivateConnectorPolicy,
-  resolveWorkOrderPrivateSurface,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
@@ -118,7 +116,13 @@ import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
-import { compileOwnerReportContext } from '../../operator/report-context.js';
+import {
+  compileChannelPacket,
+  compileOwnerReportContext,
+  serializeOwnerReportContext,
+  type OwnerReportContextDeps,
+  type OwnerReportReadScope,
+} from '../../operator/report-context.js';
 import { readChanges } from '../../operator/changes-projection.js';
 import { correlateTasksWithExternalItems } from '../../operator/external-correlation.js';
 import { buildProvenanceLookup } from '../../operator/provenance-lookup.js';
@@ -130,21 +134,14 @@ import {
 } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
-import {
-  boardBatchKey,
-  boardManualKey,
-  ownerEventWorkOrderKey,
-  promotionManualKey,
-  validateWorkOrderPayload,
-  wikiBatchKey,
-} from '../../operator/workorder-publishers.js';
 import { OwnerEventInbox, type OwnerEventBatch } from '../../operator/owner-event-inbox.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import {
-  OwnerEventBoardRefreshLedger,
-  resolveInitialBoardRepairGeneration,
-} from '../../operator/owner-event-board-refresh.js';
-import { OwnerEventLoop, closeOwnerEventBeforeDatabase } from '../../operator/owner-event-loop.js';
+  OwnerEventLoop,
+  closeOwnerEventBeforeDatabase,
+  type OwnerEventTerminalReceipt,
+} from '../../operator/owner-event-loop.js';
+import { PIPELINE_SLOT_ROWS, renderPipelineSlot } from '../../operator/board-pipeline-render.js';
 import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
 import {
   buildOwnerEventAgentContext,
@@ -182,7 +179,6 @@ export function workOrderActivityDetails(
 ): Record<string, unknown> | undefined {
   return event.briefHash ? { brief_hash: event.briefHash } : undefined;
 }
-const ownerWorkOrderLogger = new DebugLogger('OwnerWorkOrder');
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
 const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   ok: true,
@@ -508,6 +504,12 @@ export function causeEventIdsFromPayload(payload: unknown): string[] {
 
 export function workOrderEnvelopeScope(input: {
   workKind: WorkOrderKind;
+  /**
+   * Board reconcile mode judges ONE connector channel. Its memories live under that
+   * channel's scope, so the envelope must carry it or the compile's explicit scope check
+   * throws worker_envelope_scope_denied - the daily board-lane failure since 2026-08-25.
+   */
+  reconcileChannelKey?: string | null;
   projectId: string;
   laneConnectors: string[];
   temporalBinding: { connector: string; channel: string } | null;
@@ -519,12 +521,20 @@ export function workOrderEnvelopeScope(input: {
   allowed_destinations: never[];
 } {
   const isTemporal = input.workKind === 'temporal';
-  const surface = resolveWorkOrderPrivateSurface(input.workKind);
+  // One principal for every turn; what differs per kind is WHICH connectors the run
+  // may read, and that is data: a recheck reads its task's connector or nothing, a
+  // wiki turn reads no PRIVATE connector (personal channels never feed public pages),
+  // the board and curation turns keep the lane's configured connectors.
+  const surface: ConnectorCapabilitySurface = ONE_AGENT_TURN_POLICY.roleName;
   const candidateConnectors = isTemporal
     ? input.temporalBinding
       ? [input.temporalBinding.connector]
       : []
-    : input.laneConnectors;
+    : input.workKind === 'wiki'
+      ? input.laneConnectors.filter(
+          (name) => !input.privateConnectorPolicy.enabledPrivateConnectors.includes(name)
+        )
+      : input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
     // A temporal run reads its task's connector or nothing. Every other lane keeps the
@@ -551,6 +561,11 @@ export function workOrderEnvelopeScope(input: {
               id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
             },
           ]
+        : []),
+      // Same rule for a board reconcile: the run is bound to the channel whose delta it
+      // judges, and connector memories are scoped by the canonical channel key.
+      ...(input.workKind === 'board' && input.reconcileChannelKey
+        ? [{ kind: 'channel' as const, id: input.reconcileChannelKey }]
         : []),
     ],
     allowed_destinations: [],
@@ -591,49 +606,120 @@ interface WorkOrderToolPolicy {
   allowedTools: readonly string[];
 }
 
-// Stage-2 workers are short-lived operator jobs, not standing multi-agent
-// personas. Their permissions must therefore be complete on a default install
-// and must not vary with optional legacy agent configuration.
-export const WORKORDER_TOOL_POLICIES = {
-  board: {
-    roleName: 'workorder-board',
-    allowedTools: [
-      'agent_notices',
-      'changes_read',
-      'context_compile',
-      'contract_no_update',
-      'mama_search',
-      'report_publish',
-      'task_create',
-      'task_external_correlation',
-      'task_external_bind',
-      'task_lifecycle_reconcile',
-      'task_list',
-      'task_update',
-      'trello_card',
-      'trello_kanban',
-      'trello_search',
-    ],
-  },
-  wiki: {
-    roleName: 'workorder-wiki',
-    allowedTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
-  },
-  'memory-curation': {
-    roleName: 'workorder-memory-curation',
-    allowedTools: ['agent_notices', 'mama_save', 'mama_search'],
-  },
-  temporal: {
-    roleName: 'workorder-temporal',
-    allowedTools: [
-      'agent_notices',
-      'context_compile',
-      'schedule_upcoming',
-      'task_list',
-      'task_temporal_reconcile',
-    ],
-  },
-} as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
+/**
+ * One MAMA: every scheduled turn runs as the SAME principal the owner console and the
+ * event turn use. `roleName` is not a label - resolvePrivatePrincipalSurface switches on
+ * it and falls through to 'multi-agent-generic' for anything it does not know, which
+ * splits the advertised catalog from the execution envelope.
+ */
+export const ONE_AGENT_TURN_POLICY = { roleName: 'owner_console' } as const;
+
+/** Owner-authored chat only: administration never runs unattended. */
+export const ADMINISTRATION_TOOLS: ReadonlySet<string> = new Set([
+  'member_register',
+  'member_suspend',
+  'member_offboard',
+  'member_scope_grant',
+  'member_scope_revoke',
+  'console_brief_update',
+  'report_request',
+]);
+
+/**
+ * Per-turn-kind artifact tools, projected by the HOST. These exist only for scheduled
+ * turns and are deliberately absent from the chat grant: a chat turn never publishes a
+ * board slot or a wiki page and never files a temporal receipt. They are the tools the
+ * turn-kind section instructs the turn to use, so grant and instruction cannot drift.
+ */
+export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> = {
+  board: [
+    'agent_notices',
+    'contract_no_update',
+    'report_publish',
+    'task_external_correlation',
+    'task_external_bind',
+    'task_lifecycle_reconcile',
+  ],
+  wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
+  'memory-curation': ['agent_notices', 'contract_no_update'],
+  temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
+};
+
+/**
+ * Blocked on EVERY unattended turn. Deliverable, image and Drive tools belong to the
+ * owner conversation, and the tier-2 Code-Act projection refuses them anyway - a tool
+ * that is advertised but never injected is a hallucinated-call generator. Member data and
+ * workspace file reads are owner-conversation material with no use in a scheduled turn.
+ */
+export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
+  // workspace file reads are an owner-conversation tool; no turn section instructs one
+  'Read',
+  // every outbound channel, not only Telegram: the grant is derived from the owner's
+  // (editable) role config, so a send tool added there must still never run unattended
+  'telegram_send',
+  'discord_send',
+  'slack_send',
+  'webchat_send',
+  'drive_upload',
+  'drive_list_drives',
+  'drive_browse',
+  'drive_find_folder',
+  'drive_download',
+  'ocr_image',
+  'create_fb_overlay',
+  'translate_conti',
+  'drive_translate_conti',
+  'member_candidates',
+  'member_list',
+  'member_scope_list',
+]);
+
+/**
+ * Per-turn-kind blocked lists, projected by the HOST. One principal and one brief do
+ * not mean one grant for every trigger: an unattended board or wiki turn has no owner
+ * in the loop, so it never holds a send, an upload, or a mutation outside its own
+ * artifact. Each entry names the artifact it protects.
+ */
+export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>> = {
+  // board writes judgment slots and task lifecycle (reconcile mode creates rows for new
+  // items, which the action verifier's obligated set expects); it does not touch memory
+  // or the vault (obsidian is the wiki lane's write path)
+  board: new Set([
+    'wiki_publish',
+    'obsidian',
+    'mama_save',
+    'mama_update',
+    'task_temporal_reconcile',
+  ]),
+  // wiki writes pages; the ledger, the board and memory are not its artifact
+  wiki: new Set([
+    'report_publish',
+    'mama_save',
+    'mama_update',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+  ]),
+  // curation writes memory; nothing else
+  'memory-curation': new Set([
+    'report_publish',
+    'wiki_publish',
+    'task_create',
+    'task_update',
+    'task_temporal_reconcile',
+    'obsidian',
+  ]),
+  // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
+  temporal: new Set([
+    'report_publish',
+    'wiki_publish',
+    'mama_save',
+    'mama_update',
+    'task_create',
+    'task_update',
+    'obsidian',
+  ]),
+};
 
 /**
  * Packet-only reports receive no gateway tools. The host compiles current bounded authorities
@@ -727,38 +813,59 @@ export function buildOperatorReportAgentPolicy(
   };
 }
 
-export function buildWorkOrderAgentPolicy(
+/** Outbound effect by name: sends to a channel or uploads to a shared store. */
+export function isOutboundToolName(tool: string): boolean {
+  return /(^|_)(send|upload)(_|$)/.test(tool);
+}
+
+export function buildTurnAgentPolicy(
   kind: WorkOrderKind,
   model: string,
   backend: RuntimeBackend,
   privateConnectorPolicy: PrivateConnectorPolicy,
-  rawConnectorScope: readonly string[]
+  rawConnectorScope: readonly string[],
+  ownerRole: RoleConfig = DEFAULT_ROLES.definitions.owner_console
 ): WorkOrderAgentPolicy {
   const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
   if (!rawConnectorScope) {
     throw new Error('rawConnectorScope is required');
   }
-  const policy = WORKORDER_TOOL_POLICIES[kind];
-  if (!policy) {
-    throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
+  const kindBlocked = TURN_KIND_BLOCKED_TOOLS[kind];
+  if (!kindBlocked) {
+    throw new Error(`Missing turn-kind blocked list for '${kind}'`);
   }
-  const surface = resolveWorkOrderPrivateSurface(kind);
+  // Same downgrade the event turn applies: a run with no private binding advertises
+  // no private connector tools and gets the disabled brief projection.
   const scopedSurface: ConnectorCapabilitySurface =
     requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
-      ? surface
+      ? ONE_AGENT_TURN_POLICY.roleName
       : 'multi-agent-generic';
+  const blockedSet = new Set<string>([
+    ...ADMINISTRATION_TOOLS,
+    ...SCHEDULED_TURN_BLOCKED_TOOLS,
+    ...kindBlocked,
+    ...(ownerRole.blockedTools ?? []),
+    // Shape rule on top of the named lists: the role config is owner-editable, so a
+    // send or upload tool that appears there tomorrow is still never unattended.
+    ...ownerRole.allowedTools.filter((tool) => isOutboundToolName(tool)),
+  ]);
   const projectedRole = buildProjectedLaneRole(
     scopedSurface,
-    policy.allowedTools,
+    uniqueToolList([...ownerRole.allowedTools, ...TURN_KIND_REQUIRED_TOOLS[kind]]).filter(
+      (tool) => !blockedSet.has(tool)
+    ),
     requiredPrivatePolicy
   );
-  const blockedTools = [...(projectedRole.blockedTools ?? [])];
-  const innerTools = uniqueToolList(projectedRole.allowedTools);
+  const blockedTools = [...new Set([...(projectedRole.blockedTools ?? []), ...blockedSet])];
+  // code_act is the transport, re-added at the front below; it is never an inner tool.
+  const innerTools = uniqueToolList(projectedRole.allowedTools).filter(
+    (tool) => !blockedSet.has(tool) && tool !== 'code_act'
+  );
   const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
-    roleName: policy.roleName,
+    roleName: ONE_AGENT_TURN_POLICY.roleName,
     role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
       sessionId: `operator:worker:${kind}`,
@@ -874,153 +981,32 @@ export function buildSystemAgentProcessDefaults(config: {
   };
 }
 
-const OWNER_BOARD_FULL_REPAIR_CHANNEL = 'host:owner-workorder:board-full';
-
-export function buildOwnerEventBoardRefreshRuntime(
-  operatorDb: SQLiteDatabase,
-  taskLedger: TaskLedger,
-  now: () => number = Date.now
-): {
-  ownerEventBoardRefreshLedger: OwnerEventBoardRefreshLedger;
-  boardRefreshGate: BoardRefreshGate;
-} {
-  const ownerEventBoardRefreshLedger = new OwnerEventBoardRefreshLedger(
-    operatorDb,
-    taskLedger,
-    now
-  );
-  const initialGeneration = resolveInitialBoardRepairGeneration(
-    now(),
-    ownerEventBoardRefreshLedger.maxPendingGeneration()
-  );
-  return {
-    ownerEventBoardRefreshLedger,
-    boardRefreshGate: new BoardRefreshGate({ initialGeneration }),
-  };
-}
-
 export function resolveOwnerEventTerminalReceipt(
   batch: OwnerEventBatch,
   deps: {
     ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
-    ownerEventBoardRefreshLedger: Pick<OwnerEventBoardRefreshLedger, 'findAcceptance'>;
-    taskLedger: Pick<TaskLedger, 'findWorkOrderByOccurrence' | 'maxNoUpdateId'>;
+    taskLedger: Pick<TaskLedger, 'maxNoUpdateId' | 'effectsCausedBy'>;
   }
-):
-  | { status: 'acted'; tools: string[] }
-  | { status: 'delegated'; tools: ['workorder_request'] }
-  | { status: 'no_update'; tools: [] }
-  | null {
-  const confirmedEffects = deps.ownerEventEffectLedger.confirmedKinds(batch.id);
-  if (confirmedEffects.length > 0) {
-    return { status: 'acted', tools: confirmedEffects };
-  }
-  const acceptedWorkOrder =
-    deps.ownerEventBoardRefreshLedger.findAcceptance(batch.id) ??
-    deps.taskLedger.findWorkOrderByOccurrence('board', boardBatchKey(batch.eventIds)) ??
-    deps.taskLedger.findWorkOrderByOccurrence(
-      'wiki',
-      ownerEventWorkOrderKey('wiki', batch.eventIds)
-    ) ??
-    deps.taskLedger.findWorkOrderByOccurrence(
-      'memory-curation',
-      ownerEventWorkOrderKey('memory-curation', batch.eventIds)
-    );
-  if (acceptedWorkOrder) {
-    return { status: 'delegated', tools: ['workorder_request'] };
+): OwnerEventTerminalReceipt | null {
+  // Crash-recovery mirror of classifyOwnerEventOutcome. A ledger write that
+  // named this batch's events as its cause (evidence_effects) or a confirmed
+  // deliverable (drive_upload) is a durable outcome even if the run died after
+  // it - without this, a task created before a transport error is created again
+  // on retry. A confirmed telegram_send alone is not a receipt, and the effect
+  // ledger's (batch, action_key) idempotency makes that retry safe from a second
+  // send. A persisted Board acceptance is no longer a receipt.
+  const ledgerEffects = deps.taskLedger.effectsCausedBy(batch.eventIds, batch.createdAt);
+  const confirmedEffects = deps.ownerEventEffectLedger
+    .confirmedKinds(batch.id)
+    .filter((kind) => kind !== 'telegram_send');
+  const durable = [...new Set([...ledgerEffects, ...confirmedEffects])];
+  if (durable.length > 0) {
+    return { status: 'acted', tools: durable, ownerDecisionRequested: false };
   }
   if (deps.taskLedger.maxNoUpdateId(`owner-event:${batch.id}`) > 0) {
     return { status: 'no_update', tools: [] };
   }
   return null;
-}
-
-export interface OwnerWorkOrderRequestHandlerDeps {
-  taskLedger: TaskLedger;
-  boardRefreshGate: BoardRefreshGate | null;
-  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
-  now?: () => number;
-  log?: (line: string) => void;
-  logError?: (line: string, detail: unknown) => void;
-}
-
-/** Build the enqueue-and-ack handler shared by owner chat and owner-event turns. */
-export function buildOwnerWorkOrderRequestHandler(
-  deps: OwnerWorkOrderRequestHandlerDeps
-): (
-  kind: 'board' | 'wiki' | 'memory-curation',
-  origin?: WorkOrderRequestOrigin
-) => { accepted: boolean; reason?: string } {
-  const now = deps.now ?? Date.now;
-  const log = deps.log ?? ((line: string) => ownerWorkOrderLogger.info(line));
-  const logError =
-    deps.logError ?? ((line: string, detail: unknown) => ownerWorkOrderLogger.error(line, detail));
-
-  return (kind, origin = { kind: 'owner_manual' }) => {
-    try {
-      const requestedAt = now();
-      let idempotencyKey: string;
-      let payload: Record<string, unknown>;
-      if (kind === 'board') {
-        if (!deps.boardRefreshGate) {
-          throw new Error('Board refresh gate is unavailable');
-        }
-        if (origin.kind === 'owner_event') {
-          if (!deps.ownerEventBoardRefreshLedger) {
-            throw new Error('Owner-event Board refresh ledger is unavailable');
-          }
-          const existing = deps.ownerEventBoardRefreshLedger.findAcceptance(origin.batchId);
-          if (existing) {
-            log(`[stage2] owner workorder already accepted: board#${existing.workOrderId}`);
-            return { accepted: true };
-          }
-          deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
-          const accepted = deps.ownerEventBoardRefreshLedger.accept({
-            batchId: origin.batchId,
-            eventIds: origin.eventIds,
-            repair: deps.boardRefreshGate.captureFullRepair(),
-          });
-          log(`[stage2] owner workorder accepted: board#${accepted.workOrderId}`);
-          return { accepted: true };
-        }
-        // TG-06: host dirt is recorded before validation or enqueue can fail.
-        // The fixed synthetic channel never trusts model/event identifiers.
-        deps.boardRefreshGate.markChannelDirty(OWNER_BOARD_FULL_REPAIR_CHANNEL);
-        const repair = deps.boardRefreshGate.captureFullRepair();
-        idempotencyKey = boardManualKey(requestedAt);
-        payload = { mode: 'full', force: true, ...repair };
-      } else if (kind === 'wiki') {
-        if (origin.kind === 'owner_event') {
-          idempotencyKey = ownerEventWorkOrderKey('wiki', origin.eventIds);
-          payload = { batchId: idempotencyKey, events: [...origin.eventIds] };
-        } else {
-          idempotencyKey = wikiBatchKey('manual', requestedAt);
-          payload = { batchId: `${requestedAt}-manual`, events: ['manual'] };
-        }
-      } else {
-        idempotencyKey =
-          origin.kind === 'owner_event'
-            ? ownerEventWorkOrderKey('memory-curation', origin.eventIds)
-            : promotionManualKey(requestedAt);
-        payload = { scheduledAt: new Date(requestedAt).toISOString() };
-      }
-      validateWorkOrderPayload(kind, payload);
-      const wo = deps.taskLedger.enqueueWorkOrder({
-        workKind: kind,
-        idempotencyKey,
-        input: payload,
-        priority: 'high',
-      });
-      log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
-      return { accepted: true };
-    } catch (err) {
-      logError(
-        `[stage2] owner workorder enqueue failed (${kind}):`,
-        err instanceof Error ? err.message : err
-      );
-      return { accepted: false, reason: 'enqueue-failed' };
-    }
-  };
 }
 
 /**
@@ -1150,14 +1136,18 @@ export async function runAgentLoop(
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   const { connectorConfigLoadResult, privateConnectorPolicy } =
     resolveRuntimeConnectorBootstrap(loadConnectorConfig());
+  // ONE owner role for every model turn: chat, event, and scheduled.
+  const ownerRole =
+    config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
   const temporalPolicy =
     temporalStartup.temporalFlag === 'on'
-      ? buildWorkOrderAgentPolicy(
+      ? buildTurnAgentPolicy(
           'temporal',
           config.agent.model,
           runtimeBackend,
           privateConnectorPolicy,
-          []
+          [],
+          ownerRole
         )
       : null;
   const temporalEffectiveTools = temporalPolicy
@@ -1730,10 +1720,9 @@ export async function runAgentLoop(
   // delta reconcile scheduling; exact owner-event Board acceptance, boot
   // recovery, manual refresh, and full verification share this runtime in all
   // configurations.
-  const { ownerEventBoardRefreshLedger, boardRefreshGate } = buildOwnerEventBoardRefreshRuntime(
-    operatorDb,
-    taskLedger
-  );
+  // Host-owned Board repair gate. Generations are wall time: with the owner-event
+  // intent ledger gone there is no persisted pending generation to seed above.
+  const boardRefreshGate = new BoardRefreshGate({ initialGeneration: Date.now() });
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
@@ -1784,6 +1773,9 @@ export async function runAgentLoop(
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
   const boardRepairNudge: { current: (() => void) | null } = { current: null };
+  const pipelineSlotPublisher: { current: ((slots: Record<string, string>) => unknown) | null } = {
+    current: null,
+  };
   let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
@@ -1810,10 +1802,8 @@ export async function runAgentLoop(
   });
   {
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
-    const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
-    // Seed missing default briefs (user edits win) BEFORE the consumer exists -
+    // Seed the ONE operating brief (user edits win) BEFORE the consumer exists -
     // a normal install must never hit the brief-missing fail path.
-    ensureBriefs();
     ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
 
@@ -1852,7 +1842,19 @@ export async function runAgentLoop(
     workOrderConsumer = new WorkOrderConsumer({
       ledger: taskLedger,
       runner: workerRunner,
-      loadBrief: (kind) => loadBrief(kind),
+      loadOwnerBrief: () => loadConsoleBrief(),
+      // Host-rendered pipeline: the ledger's own deadline_priority page, published through
+      // the SAME report publisher report_publish uses (bound after the API routes exist).
+      publishPipelineSlot: () => {
+        const publish = pipelineSlotPublisher.current;
+        if (!publish) throw new Error('pipeline slot publisher is not bound yet');
+        const page = taskLedger.listPage({
+          includeTerminal: false,
+          order: 'deadline_priority',
+          limit: PIPELINE_SLOT_ROWS,
+        });
+        publish({ pipeline: renderPipelineSlot(page.tasks, Date.now(), page.total) });
+      },
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
@@ -1868,11 +1870,18 @@ export async function runAgentLoop(
           temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         const projectId = resolveReactiveProjectRoot(config, process.env);
+        const reconcileChannelKey =
+          wo.workKind === 'board' &&
+          wo.payload.mode === 'reconcile' &&
+          typeof wo.payload.channelKey === 'string'
+            ? wo.payload.channelKey
+            : null;
         const workOrderScope = workOrderEnvelopeScope({
           workKind: wo.workKind,
           projectId,
           laneConnectors: codeActRawConnectors,
           temporalBinding,
+          reconcileChannelKey,
           privateConnectorPolicy,
         });
 
@@ -1881,12 +1890,13 @@ export async function runAgentLoop(
         // spawn-default code-act path, where per-run envelope/capture overrides
         // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
-        const workOrderPolicy = buildWorkOrderAgentPolicy(
+        const workOrderPolicy = buildTurnAgentPolicy(
           wo.workKind,
           config.agent.model,
           runtimeBackend,
           privateConnectorPolicy,
-          workOrderScope.raw_connectors
+          workOrderScope.raw_connectors,
+          ownerRole
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
@@ -1935,7 +1945,7 @@ export async function runAgentLoop(
             1800
           );
           runOptions.envelope = await envelopeBootstrap.envelopeAuthority.buildAndPersist({
-            agent_id: `workorder-${wo.workKind}`,
+            agent_id: 'mama-owner',
             instance_id: randomUUID(),
             // 'watch' = daemon-internal issuing source (closed EnvelopeSource
             // union; enforcement authorizes on scope, never on source).
@@ -1957,7 +1967,7 @@ export async function runAgentLoop(
         // keeps the operational trace queryable.
         try {
           logWorkOrderActivity(db, {
-            agent_id: `workorder-${event.workKind}`,
+            agent_id: 'mama-owner',
             agent_version: 0,
             type: `workorder_${event.type}`,
             input_summary: `#${event.workOrderId}`,
@@ -1973,26 +1983,9 @@ export async function runAgentLoop(
         } catch {
           /* telemetry only */
         }
-        if (
-          event.type === 'complete' &&
-          event.workKind === 'board' &&
-          ownerEventBoardRefreshLedger.consumePostTerminalFollowup(event.workOrderId)
-        ) {
-          boardRepairNudge.current?.();
-        }
       },
     });
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
-
-    // Owner-issued workorders (workorder_request tool): enqueue+ack only.
-    // Wired here - NOT inside any trigger-loop block (plan C11 class).
-    toolExecutor.setWorkOrderRequestHandler(
-      buildOwnerWorkOrderRequestHandler({
-        taskLedger,
-        boardRefreshGate,
-        ownerEventBoardRefreshLedger,
-      })
-    );
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const temporalAssembly = assembleDaemonTemporalRuntime({
@@ -2127,6 +2120,22 @@ export async function runAgentLoop(
         issuance: envelopeBootstrap.metadata.issuance,
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
+      // Scope-independent packet readers, shared by the report leg and the event turn.
+      const reportContextDeps: OwnerReportContextDeps = {
+        listTaskPage: (input) => taskLedger.listPage(input),
+        readClaims: (scope) =>
+          mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
+        readTrello: async (scope) => {
+          if (!scope.rawConnectors.includes('trello')) {
+            throw new Error('Trello is outside the owner-report read scope');
+          }
+          return getTrelloKanban({ maxCardsPerList: 100 });
+        },
+        buildProvenanceLookup,
+        correlate: correlateTasksWithExternalItems,
+        readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
+        now: Date.now,
+      };
       const triggerLoop = new OperatorTriggerLoop({
         backend: runtimeBackend,
         delta: new ConnectorDeltaRepo(
@@ -2209,24 +2218,7 @@ export async function runAgentLoop(
           };
         })(),
         compileFullReportContext: async ({ readScope, windowEvidence, since }) =>
-          compileOwnerReportContext(
-            { readScope, windowEvidence, since },
-            {
-              listTaskPage: (input) => taskLedger.listPage(input),
-              readClaims: (scope) =>
-                mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
-              readTrello: async (scope) => {
-                if (!scope.rawConnectors.includes('trello')) {
-                  throw new Error('Trello is outside the owner-report read scope');
-                }
-                return getTrelloKanban({ maxCardsPerList: 100 });
-              },
-              buildProvenanceLookup,
-              correlate: correlateTasksWithExternalItems,
-              readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
-              now: Date.now,
-            }
-          ),
+          compileOwnerReportContext({ readScope, windowEvidence, since }, reportContextDeps),
         // TG-06: composition supplies provenance immediately to the prepared
         // delivery; this callback receives that durable artifact only after send success.
         fullReportProvenance: () => lastReportProvenance,
@@ -2288,8 +2280,6 @@ export async function runAgentLoop(
         // MAMA itself owns connector events. This is the same AgentLoop and
         // owner operating policy as the owner console, on a durable per-channel
         // background session. There is no separate Conductor persona.
-        const ownerRole =
-          config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
         const ownerEventContext = buildOwnerEventAgentContext({
           backend: runtimeBackend,
           model: config.agent.model,
@@ -2297,10 +2287,30 @@ export async function runAgentLoop(
           privateConnectorPolicy,
         });
         const ownerEventPromptEnhancer = new PromptEnhancer();
+        // ONE expression for what an event turn may read: the envelope and the
+        // packet are both built from it, so they can never disagree.
+        const ownerEventReadScope = (
+          batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
+        ): OwnerReportReadScope => {
+          const projectId = resolveReactiveProjectRoot(config, process.env);
+          return {
+            projectRefs: [{ kind: 'project' as const, id: projectId }],
+            rawConnectors: [
+              ...privateConnectorPolicy.projectRawConnectors('owner_console', codeActRawConnectors),
+            ],
+            memoryScopes: uniqueMemoryScopes(
+              deriveMemoryScopes({
+                source: 'owner-event',
+                channelId: batch.channelKey,
+                projectId,
+              })
+            ),
+          };
+        };
         const ownerEventIssueEnvelope = async (
           batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
         ) => {
-          const projectId = resolveReactiveProjectRoot(config, process.env);
+          const readScope = ownerEventReadScope(batch);
           const wallSeconds = 300;
           return ownerEventEnvelopeAuthority.buildAndPersist({
             agent_id: 'mama-owner',
@@ -2309,20 +2319,9 @@ export async function runAgentLoop(
             channel_id: batch.channelKey,
             trigger_context: { user_text: '<MAMA owner event turn>' },
             scope: {
-              project_refs: [{ kind: 'project' as const, id: projectId }],
-              raw_connectors: [
-                ...privateConnectorPolicy.projectRawConnectors(
-                  'owner_console',
-                  codeActRawConnectors
-                ),
-              ],
-              memory_scopes: uniqueMemoryScopes(
-                deriveMemoryScopes({
-                  source: 'owner-event',
-                  channelId: batch.channelKey,
-                  projectId,
-                })
-              ),
+              project_refs: readScope.projectRefs,
+              raw_connectors: readScope.rawConnectors,
+              memory_scopes: readScope.memoryScopes,
               allowed_destinations: reportChatId
                 ? [{ kind: 'telegram' as const, id: reportChatId }]
                 : [],
@@ -2336,9 +2335,22 @@ export async function runAgentLoop(
           inbox: ownerEventInbox,
           runner: agentLoop,
           agentContext: ownerEventContext,
-          buildPrompt: async (batch) =>
+          compilePacket: async (batch) =>
+            serializeOwnerReportContext(
+              await compileChannelPacket(
+                {
+                  readScope: ownerEventReadScope(batch),
+                  channelKey: batch.channelKey,
+                  eventIds: batch.eventIds,
+                  since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                },
+                reportContextDeps
+              )
+            ),
+          buildPrompt: async (batch, packet) =>
             buildOwnerEventPrompt({
               batch,
+              packet,
               ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
               skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
               ownerTelegramChatId: reportChatId,
@@ -2348,7 +2360,6 @@ export async function runAgentLoop(
           getTerminalReceipt: (batch) =>
             resolveOwnerEventTerminalReceipt(batch, {
               ownerEventEffectLedger,
-              ownerEventBoardRefreshLedger,
               taskLedger,
             }),
           recordTriggerOutcome: (triggerId, outcome) =>
@@ -2440,16 +2451,25 @@ export async function runAgentLoop(
     getAdapter,
     privateConnectorPolicy,
     rawConnectorScope: [
-      ...privateConnectorPolicy.projectRawConnectors('workorder-board', codeActRawConnectors),
+      ...privateConnectorPolicy.projectRawConnectors(
+        ONE_AGENT_TURN_POLICY.roleName,
+        codeActRawConnectors
+      ),
     ],
     sessionsDb: db,
     workOrderConsumer: workOrderConsumer ?? undefined,
     boardRefreshGate,
-    ownerEventBoardRefreshLedger,
     requestFullReport: () =>
       triggerLoopFullReport.current?.() ?? { accepted: false, reason: 'unavailable' },
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
+  {
+    const { createReportPublisher } = await import('../../api/report-handler.js');
+    pipelineSlotPublisher.current = createReportPublisher(
+      apiServer.reportStore,
+      apiServer.reportSseClients
+    );
+  }
   gateways.push({ stop: async () => apiRoutesHandle.stop() });
 
   // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;

@@ -51,7 +51,6 @@ import {
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
 import type { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
-import type { OwnerEventBoardRefreshLedger } from '../../operator/owner-event-board-refresh.js';
 import { REQUIRED_FULL_BOARD_SLOTS } from '../../operator/workorder-hooks.js';
 import {
   agentNoticeTerm,
@@ -290,8 +289,6 @@ export interface RegisterApiRoutesParams {
   workOrderConsumer?: WorkOrderConsumer;
   /** Shared host-owned Board repair gate. Production passes it unconditionally. */
   boardRefreshGate: BoardRefreshGate | null;
-  /** Durable exact-batch intents coalesced onto shared non-force Board repairs. */
-  ownerEventBoardRefreshLedger?: OwnerEventBoardRefreshLedger;
   /** TG-05/TG-06: owner-report context store for the operator recovery surface. */
   reportContextStore?: import('../../gateways/telegram-report-context-store.js').TelegramReportContextStore;
   /** Late-bound on-demand report admission through the existing trigger loop. */
@@ -323,7 +320,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     sessionsDb,
     workOrderConsumer,
     boardRefreshGate,
-    ownerEventBoardRefreshLedger,
   } = params;
   let boardBootTimeout: ReturnType<typeof setTimeout> | null = null;
   let boardInterval: ReturnType<typeof setInterval> | null = null;
@@ -557,26 +553,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       }
       return Number.isFinite(oldest) ? oldest : 0;
     };
-    const runDashboardAgent = (opts?: { force?: boolean; acceptedIntent?: boolean }): void => {
+    const runDashboardAgent = (opts?: { force?: boolean }): void => {
       try {
-        const pendingIntentLedger =
-          ownerEventBoardRefreshLedger?.maxPendingGeneration() !== null
-            ? ownerEventBoardRefreshLedger
-            : undefined;
-        if (opts?.acceptedIntent) {
-          if (!ownerEventBoardRefreshLedger || !boardRefreshGate) {
-            throw new Error('Owner-event Board repair runtime unavailable for accepted intent');
-          }
-          if (!pendingIntentLedger) {
-            return;
-          }
-        }
-        if (
-          !opts?.force &&
-          !opts?.acceptedIntent &&
-          boardRefreshGate &&
-          !boardRefreshGate.needsFullRepair()
-        ) {
+        if (!opts?.force && boardRefreshGate && !boardRefreshGate.needsFullRepair()) {
           return;
         }
         // Cheap host-side delta gate (Fix E). It runs in BOTH configs, because
@@ -621,7 +600,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             `[stage2] board delta gate unavailable (${delta.warning}); enqueueing the full board anyway`
           );
         }
-        if (!opts?.force && !opts?.acceptedIntent && !pendingIntentLedger && !delta.enqueue) {
+        if (!opts?.force && !delta.enqueue) {
           routesLogger.info(
             `[stage2] board full skipped: ${delta.reason} - nothing the board reads has moved since the last published full run`
           );
@@ -634,7 +613,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         }
         const now = Date.now();
         const repair = boardRefreshGate?.captureFullRepair();
-        const workOrder = enqueueWorkOrderOrThrow(
+        enqueueWorkOrderOrThrow(
           'board',
           opts?.force
             ? boardManualKey(now)
@@ -646,16 +625,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             ...(repair ?? {}),
             // Carried so this run's completion becomes the next tick's baseline.
             ...(delta.watermark === null ? {} : { deltaWatermark: delta.watermark }),
-            ...(opts?.acceptedIntent ? { force: false } : {}),
             ...(opts?.force ? { force: true } : {}),
           },
-          opts?.force || opts?.acceptedIntent ? 'high' : undefined
+          opts?.force ? 'high' : undefined
         );
-        if (pendingIntentLedger && workOrder.idempotencyKey === boardRepairKey()) {
-          pendingIntentLedger.attachPendingToWorkOrder(workOrder.id, {
-            readyNow: !opts?.acceptedIntent,
-          });
-        }
       } catch (err) {
         routesLogger.error(
           '[stage2] board enqueue failed:',
@@ -663,20 +636,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         );
       }
     };
-    requestBoardRepair = () => runDashboardAgent({ acceptedIntent: true });
+    // Host-gated repair: runs only when the gate is dirty or the delta moved.
+    requestBoardRepair = () => runDashboardAgent();
 
     // First run after 10s (let connectors poll first), then every 30 min
     // ONE constant feeds both the timer and the declared cadence - if they
     // drift apart the watchdog pages on a schedule nobody is running.
     const DASHBOARD_AGENT_INTERVAL_MS = 30 * 60 * 1000;
     boardBootTimeout = setTimeout(() => {
-      if (
-        ownerEventBoardRefreshLedger &&
-        ownerEventBoardRefreshLedger.maxPendingGeneration() !== null
-      ) {
-        requestBoardRepair();
-        return;
-      }
       runDashboardAgent();
     }, 10_000);
     getLegCadence()?.declare('dashboard-agent', DASHBOARD_AGENT_INTERVAL_MS);
@@ -805,13 +772,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
                 target: isReconcile ? String(wo.payload.channelKey) : scope,
               });
             }
-            return applyBoardRefreshVerdict(
-              wo,
-              effectVerified,
-              receiptVerdict,
-              boardRefreshGate,
-              ownerEventBoardRefreshLedger
-            );
+            return applyBoardRefreshVerdict(wo, effectVerified, receiptVerdict, boardRefreshGate);
           },
         });
       }

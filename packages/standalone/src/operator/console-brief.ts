@@ -7,8 +7,9 @@
  * the system seeds a mechanism skeleton once and provides the write path;
  * the agent fills it from experience (console_brief_update, log-loud).
  *
- * Same ownership contract as the Stage-2 workorder briefs (briefs.ts): seeded
- * only when missing, agent/user edits always win, NO managed auto-upgrade.
+ * Ownership contract: seeded only when missing, agent/user edits always win, NO
+ * managed auto-upgrade. Since One MAMA this is the ONE brief every turn (chat,
+ * event, scheduled) starts from; scheduled turns append a host turn-kind section.
  * The immutable behavioural floor (act-vs-ask boundary, evidence rules) stays
  * code-owned in message-router's discipline - this file layers the EVOLVING
  * knowledge on top and must never be treated as the security boundary.
@@ -59,8 +60,8 @@ failure.
 
 ## Procedure recipes (grow this section from experience)
 
-- Status questions: artifacts first (board_read, workorder_status,
-  audit_findings_read), then live queries; memory recall last and cited.
+- Status questions: artifacts first (board_read, audit_findings_read), then
+  live queries; memory recall last and cited.
 - Business data: use only tools present in the current run catalog. Start with
   a broad summary, narrow to active entities or tasks, then inspect specific
   channels without widening a supplied time window.

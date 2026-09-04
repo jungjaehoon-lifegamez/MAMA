@@ -3,22 +3,32 @@ import type { AgentContext } from '../agent/types.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 
+/**
+ * One MAMA (2026-09-04): the event turn holds the owner console grant minus the
+ * entries below, each with the reason it is not "minus nothing". Ledger and memory
+ * tools (task_create/task_update/mama_save/mama_update) are deliberately NOT here
+ * any more - blocking them since v0.37.0 is what left the owner ledger without a
+ * single agent-authored task for two weeks.
+ */
 const OWNER_EVENT_BLOCKED_TOOLS = new Set([
+  // administration: owner-authored chat only
   'member_register',
   'member_suspend',
   'member_offboard',
   'member_scope_grant',
   'member_scope_revoke',
+  // an event turn is driven by UNTRUSTED connector content; letting it rewrite the
+  // one operating brief is a prompt-injection amplifier. Brief edits stay on chat.
   'console_brief_update',
-  'task_create',
-  'task_update',
-  'mama_save',
-  'mama_update',
-  'drive_translate_conti',
-  'obsidian',
-  'report_publish',
+  // fire-and-forget into another model turn = a second judgment surface
   'report_request',
-  'workorder_status',
+  // not in the completion set (owner-event-outcome.ts) and not receipted anywhere the
+  // crash-recovery resolver can read: `obsidian` covers reads as well as writes, and
+  // drive_translate_conti uploads outside the owner-event effect ledger, so a retry
+  // would upload again. Granting a durable-looking tool that can never complete the
+  // turn only repeats its side effect until the batch dies.
+  'obsidian',
+  'drive_translate_conti',
 ]);
 
 export function resolveOwnerEventExecution(input: {

@@ -199,7 +199,7 @@ describe('Story A2 Task 10: temporal restart integration', () => {
           return { response: 'unexpected model run' };
         },
       },
-      loadBrief: () => 'Reconcile temporal work.',
+      loadOwnerBrief: () => 'Reconcile temporal work.',
       noticeOwner: () => {},
       opsAlarm: { configured: false, send: async () => {} },
       log: () => {},

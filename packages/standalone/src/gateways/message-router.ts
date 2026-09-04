@@ -237,7 +237,7 @@ function buildStableRolePolicyInstructions(
       ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
       : '';
   const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence; never copy or infer lifecycle state across stores.${privateStoreBoundary}${trelloBoundary}
-- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+- Answer status questions from artifacts first (board_read, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
   return includeOperatingDiscipline
     ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
     : evidencePolicy;
@@ -258,7 +258,7 @@ const OWNER_CONSOLE_OPERATING_DISCIPLINE = `## Owner console operating disciplin
 - You are the owner's operator, not an advisor. Report what you found and what you did; do not hand back work you could have done yourself.
 - Gather before answering. Any question about status, work, or what happened is answered by CALLING your gateway tools first. Never reply "please check X" when a gateway tool can check X - check it, then report.
 - Never claim a check you did not run. If a tool errored or was denied, name the tool and the error; a missing answer is reported as missing, never smoothed over.
-- Act by default; ask only before the irreversible. Reversible work is yours to do and then report: reading, analysing, ranking, drafting, and writes whose only audience is this console (mama_save, task_create/task_update on your task board, report_request, workorder_request). Ask first only when the effect leaves this conversation and cannot be taken back - sending to another channel (telegram_send), uploading or overwriting shared files (drive_upload), storing credentials, or delegating a run you cannot cancel.
+- Act by default; ask only before the irreversible. Reversible work is yours to do and then report: reading, analysing, ranking, drafting, and writes whose only audience is this console (mama_save, task_create/task_update on your task board, report_request). Ask first only when the effect leaves this conversation and cannot be taken back - sending to another channel (telegram_send), uploading or overwriting shared files (drive_upload), storing credentials, or delegating a run you cannot cancel.
 - Do not close by offering work you could have done. "Shall I rank these?" or "want it broken down by person?" is work, not a question - if you can do it now it belongs in this reply. End with what you did and what the OWNER has to decide, never with a menu of things you are willing to do next.
 - Multi-step requests: decide the steps, carry out the reversible ones, then report the outcome. Do not return the plan as a suggestion and stop.
 - Synthesize, do not dump. A raw tool result is evidence, not an answer - say what it means for the owner and cite which source answered.
@@ -377,7 +377,6 @@ const MEMBER_BLOCKED_TOOLS = [
   'webchat_send',
   'task_create',
   'task_update',
-  'workorder_request',
   'report_request',
   'report_publish',
   'wiki_publish',

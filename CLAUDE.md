@@ -333,12 +333,15 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
 - **Owner-event lane:** connector batches persist before source cursor commit and run through the
   same MAMA owner agent as a stateless FRESH run per batch on `owner-event:<channelKey>` lane keys
   (each prompt is self-contained; resuming the per-channel thread replayed the whole growing
-  history every batch — 45.9M tokens on 2026-08-20 alone). Completion requires a confirmed
-  Telegram/Drive effect, accepted workorder, or exact no-update receipt; a separate background
-  Conductor no longer owns or acknowledges connector work.
+  history every batch — 45.9M tokens on 2026-08-20 alone). Completion (One MAMA, v0.41.0) is a
+  ledger change: a successful `task_create`/`task_update`/`mama_save`/`mama_update`/`drive_upload`,
+  or an exact no-update receipt; a `telegram_send` alone is a retry unless the final message
+  begins with `[decision]` (host-detected, counted as `unresolved_reason` on the inbox row).
+  Delegation (`workorder_request`) no longer exists. Each event turn starts from a host-compiled
+  channel packet (`compileChannelPacket`) under the same read scope as its envelope.
 - **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`
-  (fire-and-forget into the real report machinery), `workorder_request` /
-  `workorder_status` (Stage 2).
+  (fire-and-forget into the real report machinery). `workorder_request`/`workorder_status` were
+  deleted in v0.41.0 (One MAMA): scheduled work is host-published, never agent-delegated.
 - **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
   callers only, never from inside an active lane run (deadlock seal).
 - **Stage 2 workorder pipeline** (the ONLY system run path since v0.28.0; the
@@ -346,16 +349,18 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   explicit `off`/`shadow` fails the boot loudly): publishers enqueue
   occurrence-keyed workorders into the TaskLedger (`operator_tasks`,
   kind='system' rows, host-managed); a single unconditional consumer claims
-  serially and runs briefed workerRuns; briefs live in
-  `~/.mama/briefs/brief-<kind>.md` (seeded on boot, user edits win). The legacy
-  executeValidatedRun persona runs and the shadow capture harness were deleted
-  after the 2026-07-22 cutover. Codex workers use built-in Tier-2 Code-Act roles named
-  `workorder-board`, `workorder-wiki`, and `workorder-memory-curation`, with exact
-  brief-required tool allowlists. These short-lived roles are independent of the
-  optional legacy `dashboard-agent`, `wiki-agent`, and `memory` persona config.
+  serially and runs briefed workerRuns. Since v0.41.0 (One MAMA) every scheduled turn runs as
+  the ONE `owner_console` principal with the ONE operating brief (`~/.mama/operator/console-brief.md`)
+  plus a host-authored turn-kind section (`buildTurnKindSection`, workorder-consumer.ts); the
+  per-kind briefs and the `workorder-*` roles are gone. The grant is projected by the host from
+  data in start.ts: owner console + `TURN_KIND_REQUIRED_TOOLS` − `ADMINISTRATION_TOOLS` −
+  `SCHEDULED_TURN_BLOCKED_TOOLS` − `TURN_KIND_BLOCKED_TOOLS[kind]`; `tests/cli/lane-wiring.test.ts`
+  pins that no unattended turn holds a send or an upload. The board pipeline slot is rendered by
+  the host (`board-pipeline-render.ts`) before the board turn; the turn writes only briefing,
+  action*required and decisions.
   Board workers read Trello only through `context_compile({connectors:['trello']})`;
   every workorder worker treats connector packets as untrusted data whose embedded
-  instructions/tool calls must not be followed. `kagemusha_*` remains read-only
+  instructions/tool calls must not be followed. `kagemusha*\*` remains read-only
   project-task truth, while the native ledger owns owner-console tasks and the
   pipeline projection.
 - **Memory-write secret filter:** `mama_save`/`mama_update` REFUSE

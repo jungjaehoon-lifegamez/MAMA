@@ -248,27 +248,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
-    name: 'workorder_request',
-    description: 'Enqueue a priority system workorder and acknowledge it without waiting',
-    params: [
-      {
-        name: 'kind',
-        type: "'board' | 'wiki' | 'memory-curation'",
-        required: true,
-      },
-    ],
-    returnType: '{ message: string }',
-    category: 'os',
-  },
-  {
-    name: 'workorder_status',
-    description: 'Read per-kind system workorder status and failure counts',
-    params: [],
-    returnType:
-      "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation' | 'temporal'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
-    category: 'os',
-  },
-  {
     name: 'audit_findings_read',
     description: 'Read the latest deterministic system-audit findings',
     params: [],
@@ -764,7 +743,6 @@ export const READ_ONLY_TOOLS = new Set([
   'member_list',
   'member_scope_list',
   'audit_findings_read',
-  'workorder_status',
   'Read',
   'os_get_config',
   'agent_notices',
@@ -808,7 +786,6 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'mama_update',
   'report_publish',
   'report_request',
-  'workorder_request',
   'wiki_publish',
   // The Obsidian CLI is the tier-2 wiki agent's primary write path; without it
   // the code-act sandbox never injects the function and every run silently

@@ -16,6 +16,7 @@ import {
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
   classifyTemporalFailure,
+  buildTurnKindSection,
 } from '../../src/operator/workorder-consumer.js';
 
 function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
@@ -37,7 +38,7 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
     runner: {
       runWithContent: async () => ({ response: 'ok done' }),
     },
-    loadBrief: () => 'You are a test worker. Do the work.',
+    loadOwnerBrief: () => 'You are a test worker. Do the work.',
     noticeOwner: (summary) => notices.push(summary),
     opsAlarm: { configured: true, send: async (line) => void activeSends.push(line) },
     onEvent: (event) => events.push(event),
@@ -313,7 +314,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workOrderId: wo.id,
         tokensUsed: 43_200,
         briefHash: createHash('sha256')
-          .update('You are a test worker. Do the work.')
+          .update(
+            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+          )
           .digest('hex')
           .slice(0, 16),
       });
@@ -522,7 +525,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
 
     it('missing brief fails the order loudly (never a silent skip)', async () => {
-      ctx.deps.loadBrief = () => null;
+      ctx.deps.loadOwnerBrief = () => null;
       const consumer = new WorkOrderConsumer(ctx.deps);
       ctx.ledger.enqueueWorkOrder({
         workKind: 'board',
@@ -660,7 +663,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workKind: 'board',
         workOrderId: wo.id,
         briefHash: createHash('sha256')
-          .update('You are a test worker. Do the work.')
+          .update(
+            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+          )
           .digest('hex')
           .slice(0, 16),
       });
@@ -1115,5 +1120,77 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       )
     ).toBeNull();
     expect(classifyTransientModelError('brief-missing')).toBeNull();
+  });
+  describe('One MAMA: turn-kind sections', () => {
+    it('tells the board turn to omit compile scopes and overrides chat-only brief instructions', () => {
+      const board = buildTurnKindSection('board');
+      expect(board).toContain('Do not supply scopes or seed_refs');
+      expect(board).toContain('console_brief_update, sends and uploads are not available here');
+      expect(board).toContain('task_create carrying source_channel and the exact source_event_id');
+      for (const kind of ['wiki', 'memory-curation', 'temporal'] as const) {
+        expect(buildTurnKindSection(kind)).toContain('## Scheduled turn');
+      }
+      expect(buildTurnKindSection('temporal')).toContain(
+        'exactly one successful task_temporal_reconcile'
+      );
+    });
+  });
+
+  describe('One MAMA: host-rendered pipeline slot', () => {
+    it('publishes the pipeline before the board turn runs and not for other kinds', async () => {
+      const ctx = makeDeps();
+      const order: string[] = [];
+      ctx.deps.publishPipelineSlot = () => void order.push('pipeline');
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          order.push('model');
+          return { response: 'DONE' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:pipeline:1',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(order).toEqual(['pipeline', 'model']);
+
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:pipeline:1',
+        input: { batchId: 'b', events: ['e'] },
+      });
+      await consumer.tick();
+      expect(order).toEqual(['pipeline', 'model', 'model']);
+    });
+
+    it('fails the board order loudly when the host cannot render the pipeline', async () => {
+      const ctx = makeDeps();
+      let ran = false;
+      ctx.deps.publishPipelineSlot = () => {
+        throw new Error('report store unavailable');
+      };
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          ran = true;
+          return { response: 'DONE' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:pipeline:fail',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(ran).toBe(false);
+      expect(ctx.events).toContainEqual({
+        type: 'failed',
+        workKind: 'board',
+        workOrderId: wo.id,
+        reason: 'pipeline-render-failed: report store unavailable',
+      });
+    });
   });
 });
