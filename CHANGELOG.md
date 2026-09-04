@@ -24,9 +24,12 @@ an owner instruction is measured that policy injection could not carry.
   durable rule plus a topic noun becomes a `policy:<noun>-<hash>` row (kind decision), a
   correction becomes a `lesson:<noun>-<hash>` row (kind lesson), a one-off veto ("this time")
   blocks both. The topic hash is stable per channel and normalized text, so a repeated
-  instruction is one row. The host is the only writer: `mama_save`/`mama_update` refuse
-  `policy:`/`lesson:` topics (`learning_topic_refused`), so an agent cannot grant itself
-  standing instructions.
+  instruction is one row. A rule is written project-wide (no channel scope) so event and
+  scheduled turns read it; a correction stays bound to the channel it was given in. The host is
+  the only writer: `mama_save` and the `/graph/ingest` `topicPrefix` refuse `policy:`/`lesson:`
+  topics (`learning_topic_refused`), so neither an agent nor an API caller can grant standing
+  instructions. One scan per turn feeds both blocks (the truth query has no LIMIT; the 200-row
+  cap bounds the prompt, not the scan).
 
 ## mama-os [0.41.0] - 2026-09-04
 
