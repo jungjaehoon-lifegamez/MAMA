@@ -279,6 +279,7 @@ export async function initMamaCore(
     listDecisions: listDecisionsForContext,
     save: mamaApi.save,
     recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
+    saveMemory: (input) => mamaCore.saveMemory(input),
     queryRelevantTruth: (params) =>
       mamaCore.queryRelevantTruth({
         query: params.query,
