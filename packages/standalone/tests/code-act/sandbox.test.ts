@@ -764,6 +764,73 @@ describe('CodeActSandbox', () => {
   });
 
   describe('error handling', () => {
+    it.each([
+      ['top-level await', 'await Promise.all([read_one({}), read_two({})]);'],
+      ['top-level return', 'return read_one({});'],
+    ])(
+      'TG-03/TG-04 gives actionable synchronous-script help for %s before host calls',
+      async (_caseName, code) => {
+        const sandbox = new CodeActSandbox();
+        sandbox.registerFunction('read_one', async () => ({ value: 1 }));
+        sandbox.registerFunction('read_two', async () => ({ value: 2 }));
+
+        const result = await sandbox.execute(code);
+
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            name: 'SyntaxError',
+            message: expect.stringContaining('synchronous script'),
+          },
+          metrics: { hostCallCount: 0 },
+        });
+        expect(result.error?.message).toContain(
+          'Do not use top-level return, async, await, Promise'
+        );
+        expect(result.error?.message).toContain(
+          'var first=1; var second=2; ({first:first,second:second})'
+        );
+      }
+    );
+
+    it.each([
+      ['JSON.parse', 'JSON.parse("bad")', 'unexpected token'],
+      ['explicit SyntaxError', 'throw new SyntaxError("domain syntax")', 'domain syntax'],
+    ])(
+      'TG-03/TG-04 leaves runtime %s errors free of parser guidance',
+      async (_name, code, message) => {
+        const sandbox = new CodeActSandbox();
+
+        const result = await sandbox.execute(code);
+
+        expect(result).toMatchObject({
+          success: false,
+          error: { name: 'SyntaxError', message: expect.stringContaining(message) },
+          metrics: { hostCallCount: 0 },
+        });
+        expect(result.error?.message).not.toContain('synchronous script');
+        expect(result.error?.message).not.toContain('Do not use top-level return');
+      }
+    );
+
+    it('TG-03/TG-04 executes a valid host effect exactly once after syntax preflight', async () => {
+      let effects = 0;
+      const sandbox = new CodeActSandbox();
+      sandbox.registerFunction('record_effect', async () => {
+        effects += 1;
+        return effects;
+      });
+
+      const result = await sandbox.execute('record_effect()');
+
+      expect(result).toMatchObject({
+        success: true,
+        value: 1,
+        metrics: { hostCallCount: 1 },
+      });
+      expect(effects).toBe(1);
+    });
+
     it('catches syntax errors', async () => {
       const sandbox = new CodeActSandbox();
       const result = await sandbox.execute('var x = {;');

@@ -4,6 +4,25 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+### 0.47.0 live owner turn and 0.47.1 contract repair: 2026-09-05
+
+- TG-03/TG-04: the installed 0.47.0 owner turn exposed one top-level `return` error and three
+  top-level `await` errors before any host call. Sequential calls recovered and a final owner
+  reply was delivered. The same turn corrected a missing `mama_save.type` and performed task
+  updates; these recoveries do not mean the initial tool contract was clear.
+- TG-04/TG-06: an update sent `latestEvent` rather than input `latest_event`; the status changed
+  but its supplied reason was silently ignored. A concurrent Board turn later reopened one of
+  the owner-turn closures based on retained issue evidence. The input-loss fix does not claim
+  to settle that separate semantic disagreement between the two runs.
+- 0.47.1 makes the synchronous-script contract visible at every calling surface and adds an
+  actionable parse-time syntax diagnostic. It rejects unknown task-update fields before mutation;
+  the real executor/ledger regression proves a wrong name leaves status, revision, reason and
+  effect rows unchanged, while corrected input persists exactly one update.
+- Evidence: `code-act/sandbox.test.ts`, `code-act/integration.test.ts`,
+  `code-act/type-definition-generator.test.ts`, `agent/tool-registry.test.ts`,
+  `agent/gateway-tool-executor.test.ts`, `mcp/code-act-server.test.ts`. Final checks: standalone 5422 passed / 9 existing skipped; root 7/7 tasks, build, typecheck, lint and changed-file formatting passed. Independent Sol review: spec/quality PASS. Installation remains a separate release gate. No async evaluator,
+  authorization relaxation, or fixed business-completion rule is introduced.
+
 ## Baselines
 
 - Reference: `mama-suite` commit `ea982c1`, `apps/kagemusha`

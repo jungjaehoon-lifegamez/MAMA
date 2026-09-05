@@ -144,6 +144,20 @@ describe('Code-Act Integration', () => {
       expect(instructions).toContain('code_act({ code:');
       expect(instructions).not.toContain('MCP tool');
       expect(instructions).not.toContain('mcp__code-act__code_act');
+      expect(instructions).toContain('synchronous script');
+      expect(instructions).toContain('Do not use top-level return, async, await, Promise');
+      expect(instructions).toContain('var first=1; var second=2; ({first:first,second:second})');
+    });
+
+    it('TG-03/TG-04 keeps the grammar example valid without mama_search in a Temporal projection', () => {
+      const instructions = getCodeActInstructions('codex', [
+        'code_act',
+        'task_list',
+        'task_temporal_reconcile',
+      ]);
+
+      expect(instructions).toContain('var first=1; var second=2; ({first:first,second:second})');
+      expect(instructions).not.toContain("mama_search({query:'first'})");
     });
 
     it('preserves agent composition freedom instead of prescribing one owner workflow', () => {
