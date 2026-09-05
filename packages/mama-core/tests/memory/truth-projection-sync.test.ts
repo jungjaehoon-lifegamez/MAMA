@@ -66,8 +66,11 @@ describe('Task 1: decisions.status is the only current memory authority', () => 
   afterEach(async () => {
     await closeDB();
     delete process.env.MAMA_DB_PATH;
-    if (originalForceTier3 === undefined) delete process.env.MAMA_FORCE_TIER_3;
-    else process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
+    if (originalForceTier3 === undefined) {
+      delete process.env.MAMA_FORCE_TIER_3;
+    } else {
+      process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
+    }
     cleanupDb();
   });
 
