@@ -410,6 +410,21 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'webchat_send',
   'save_integration_token',
 ]);
+const TASK_UPDATE_PUBLIC_FIELDS = [
+  'id',
+  'title',
+  'status',
+  'priority',
+  'assignee',
+  'deadline',
+  'due_at',
+  'latest_event',
+  'confirmed',
+  'expected_revision',
+  'context_packet_id',
+  'review_anchor_ref',
+] as const;
+const TASK_UPDATE_PUBLIC_FIELD_SET = new Set<string>(TASK_UPDATE_PUBLIC_FIELDS);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
@@ -3801,6 +3816,19 @@ export class GatewayToolExecutor {
                 false
               );
             }
+          }
+          const unsupportedFields = Object.keys(rawTaskUpdate).filter(
+            (field) => !TASK_UPDATE_PUBLIC_FIELD_SET.has(field)
+          );
+          if (unsupportedFields.length > 0) {
+            throw new AgentError(
+              `task_update unsupported field(s): ${unsupportedFields.join(', ')}. ` +
+                `Supported fields: ${TASK_UPDATE_PUBLIC_FIELDS.join(', ')}. ` +
+                'Use latest_event for input; responses return latestEvent.',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
           }
           const {
             id: rawId,

@@ -12,6 +12,7 @@ import type { HostToolDefinition, HostToolJsonValue } from './model-runner.js';
 import { minimatch } from 'minimatch';
 import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../connectors/private-connector-policy.js';
 import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from './context-compile-contract.js';
+import { CODE_ACT_SCRIPT_CONTRACT, CODE_ACT_SCRIPT_EXAMPLE } from './code-act/constants.js';
 
 // ─── Tool Metadata ───────────────────────────────────────────────────────────
 
@@ -388,13 +389,16 @@ register({
 // Code-Act sandbox
 register({
   name: 'code_act',
-  description: 'Execute JavaScript in sandboxed QuickJS',
+  description: `Execute JavaScript in sandboxed QuickJS. ${CODE_ACT_SCRIPT_CONTRACT}`,
   category: 'code_act',
   params: 'code, allowedTools?, blockedTools?',
   inputSchema: {
     type: 'object',
     properties: {
-      code: { type: 'string' },
+      code: {
+        type: 'string',
+        description: `${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
+      },
       allowedTools: { type: 'array', items: { type: 'string' } },
       blockedTools: { type: 'array', items: { type: 'string' } },
     },
@@ -506,7 +510,12 @@ register({
 register({
   name: 'task_update',
   description:
-    'Update a work item on YOUR task board by id. Board workorder lifecycle judgments carry the revision read by the model. A review transition also carries the same-run packet and one exact selected raw submission anchor; the host verifies its source/timestamp and computes review timing. System workorder rows are host-managed and cannot be updated here.',
+    'Update a work item on YOUR task board by id. Input `latest_event` sets the owner reason; ' +
+    'the returned task DTO exposes it as response field `latestEvent`. Board workorder ' +
+    'lifecycle judgments carry the revision read by the model. A review transition also ' +
+    'carries the same-run packet and one exact selected raw submission anchor; the host ' +
+    'verifies its source/timestamp and computes review timing. System workorder rows are ' +
+    'host-managed and cannot be updated here.',
   category: 'os_monitoring',
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, expected_revision?, context_packet_id?, review_anchor_ref?',

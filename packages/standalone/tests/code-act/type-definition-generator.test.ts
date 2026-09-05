@@ -91,6 +91,8 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toMatch(/declare function task_update[\s\S]*expected_revision\?: number/);
       expect(dts).toMatch(/declare function task_update[\s\S]*context_packet_id\?: string/);
       expect(dts).toMatch(/declare function task_update[\s\S]*review_anchor_ref\?: string/);
+      expect(dts).toMatch(/declare function task_update[\s\S]*latest_event\?: string/);
+      expect(dts).toMatch(/declare function task_update[\s\S]*latestEvent: string \| null/);
     });
 
     it('Story TG-04/TG-06 AC #1 projects task_temporal_reconcile as an outcome-discriminated union', () => {

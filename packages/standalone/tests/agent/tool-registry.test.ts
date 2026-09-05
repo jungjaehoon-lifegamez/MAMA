@@ -266,11 +266,14 @@ describe('ToolRegistry', () => {
       expect(definition).toEqual({
         type: 'function',
         name: 'code_act',
-        description: expect.stringContaining('QuickJS'),
+        description: expect.stringContaining('synchronous script'),
         inputSchema: {
           type: 'object',
           properties: {
-            code: { type: 'string' },
+            code: {
+              type: 'string',
+              description: expect.stringContaining('Do not use top-level return, async, await'),
+            },
             allowedTools: { type: 'array', items: { type: 'string' } },
             blockedTools: { type: 'array', items: { type: 'string' } },
           },
@@ -278,6 +281,15 @@ describe('ToolRegistry', () => {
           additionalProperties: false,
         },
       });
+    });
+
+    it('TG-04/TG-06 identifies task_update input latest_event and response latestEvent', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['task_update'],
+      });
+
+      expect(definition.description).toContain('Input `latest_event`');
+      expect(definition.description).toContain('response field `latestEvent`');
     });
 
     it('advertises the duplicate-source revision guard on task_create', () => {
