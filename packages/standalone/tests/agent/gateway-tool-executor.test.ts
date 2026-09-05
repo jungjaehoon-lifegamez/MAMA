@@ -314,62 +314,66 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('bound external lifecycle mutations', () => {
-      it('TG-06 rejects task_update latestEvent before changing the task or its effect receipts', async () => {
-        const db = new Database(':memory:');
-        try {
-          const ledger = new TaskLedger(db);
-          const task = ledger.create({
-            title: 'Owner follow-up',
-            status: 'in_progress',
-            latest_event: 'Original owner reason',
-          });
-          const beforeEffects = ledger.listChanges({ targetType: 'task' });
-          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setTaskLedger(ledger);
+      describe('AC #1: TG-06 rejects invalid input without effects and persists corrected input once', () => {
+        it('TG-06 rejects task_update latestEvent before changing the task or its effect receipts', async () => {
+          const db = new Database(':memory:');
+          try {
+            const ledger = new TaskLedger(db);
+            const task = ledger.create({
+              title: 'Owner follow-up',
+              status: 'in_progress',
+              latest_event: 'Original owner reason',
+            });
+            const beforeEffects = ledger.listChanges({ targetType: 'task' });
+            const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+            executor.setTaskLedger(ledger);
 
-          await expect(
-            executor.execute('task_update', {
+            await expect(
+              executor.execute('task_update', {
+                id: task.id,
+                status: 'done',
+                confirmed: true,
+                latestEvent: 'New owner reason',
+              } as never)
+            ).rejects.toMatchObject({
+              code: 'TOOL_ERROR',
+              message: expect.stringMatching(
+                /unsupported field.*latestEvent.*Supported fields:.*latest_event.*responses return latestEvent/i
+              ),
+            });
+
+            expect(ledger.getById(task.id)).toMatchObject({
+              status: 'in_progress',
+              confirmed: false,
+              latestEvent: 'Original owner reason',
+              revision: task.revision,
+            });
+            expect(ledger.listChanges({ targetType: 'task' })).toEqual(beforeEffects);
+
+            const corrected = await executor.execute('task_update', {
               id: task.id,
               status: 'done',
               confirmed: true,
-              latestEvent: 'New owner reason',
-            } as never)
-          ).rejects.toMatchObject({
-            code: 'TOOL_ERROR',
-            message: expect.stringMatching(
-              /unsupported field.*latestEvent.*Supported fields:.*latest_event.*responses return latestEvent/i
-            ),
-          });
+              latest_event: 'New owner reason',
+            });
 
-          expect(ledger.getById(task.id)).toMatchObject({
-            status: 'in_progress',
-            confirmed: false,
-            latestEvent: 'Original owner reason',
-            revision: task.revision,
-          });
-          expect(ledger.listChanges({ targetType: 'task' })).toEqual(beforeEffects);
-
-          const corrected = await executor.execute('task_update', {
-            id: task.id,
-            status: 'done',
-            confirmed: true,
-            latest_event: 'New owner reason',
-          });
-
-          expect(corrected).toMatchObject({
-            success: true,
-            task: {
-              status: 'done',
-              confirmed: true,
-              latestEvent: 'New owner reason',
-              revision: task.revision + 1,
-            },
-          });
-          expect(ledger.getById(task.id)?.latestEvent).toBe('New owner reason');
-          expect(ledger.listChanges({ targetType: 'task' })).toHaveLength(beforeEffects.length + 1);
-        } finally {
-          db.close();
-        }
+            expect(corrected).toMatchObject({
+              success: true,
+              task: {
+                status: 'done',
+                confirmed: true,
+                latestEvent: 'New owner reason',
+                revision: task.revision + 1,
+              },
+            });
+            expect(ledger.getById(task.id)?.latestEvent).toBe('New owner reason');
+            expect(ledger.listChanges({ targetType: 'task' })).toHaveLength(
+              beforeEffects.length + 1
+            );
+          } finally {
+            db.close();
+          }
+        });
       });
 
       it('fails closed without a host-issued claimed attempt', async () => {

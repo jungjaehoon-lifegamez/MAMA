@@ -4,7 +4,7 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
-### 0.47.0 live owner turn and 0.47.1 contract repair: 2026-09-05
+## 0.47.0 live owner turn and 0.47.1 contract repair: 2026-09-05
 
 - TG-03/TG-04: the installed 0.47.0 owner turn exposed one top-level `return` error and three
   top-level `await` errors before any host call. Sequential calls recovered and a final owner
