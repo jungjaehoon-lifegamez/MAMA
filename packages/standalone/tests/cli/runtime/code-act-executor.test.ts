@@ -203,6 +203,42 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
     }
   );
 
+  it('TG-03/TG-04 exposes progressive discovery through the keyed MCP execution path', async () => {
+    const registry = new RunContextRegistry();
+    registry.register(CONTEXT_KEY, makeTrustedContext('owner_console'));
+    const executeCodeAct = createCodeActExecutor({
+      registry,
+      gatewayToolExecutor: new GatewayToolExecutor({
+        envelopeIssuanceMode: 'off',
+        privateConnectorPolicy: privatePolicy(true),
+      }),
+      executeLegacy: vi.fn(),
+    });
+
+    const result = await executeCodeAct(
+      `
+        var found = tool_search({ query: 'kagemusha_tasks' });
+        var described = tool_describe({ names: ['kagemusha_tasks'] });
+        ({ found: found, described: described, direct: typeof kagemusha_tasks })
+      `,
+      { contextKey: CONTEXT_KEY }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      value: {
+        found: {
+          tools: [expect.objectContaining({ name: 'kagemusha_tasks' })],
+          nextCursor: null,
+        },
+        described: {
+          contracts: [expect.stringContaining('declare function kagemusha_tasks')],
+        },
+        direct: 'function',
+      },
+    });
+  });
+
   it('TG-04 rejects the disabled trusted owner surface and an HTTP role upgrade', async () => {
     const registry = new RunContextRegistry();
     registry.register(CONTEXT_KEY, makeTrustedContext('chat_bot'));

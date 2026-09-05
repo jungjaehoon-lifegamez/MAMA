@@ -27,6 +27,10 @@ function cleanupDb(): void {
 }
 
 describe('Story M2.1: staged memory promotion semantic evolution', () => {
+  // Capture the pre-suite value so teardown restores it instead of unconditionally
+  // deleting the process-level variable a neighboring file may have set (singleFork
+  // shares one process). Same pattern as unit/memory-v2-api.test.ts.
+  const originalForceTier3 = process.env.MAMA_FORCE_TIER_3;
   beforeEach(async () => {
     await closeDB();
     cleanupDb();
@@ -37,7 +41,11 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
   afterEach(async () => {
     await closeDB();
     delete process.env.MAMA_DB_PATH;
-    delete process.env.MAMA_FORCE_TIER_3;
+    if (originalForceTier3 === undefined) {
+      delete process.env.MAMA_FORCE_TIER_3;
+    } else {
+      process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
+    }
     cleanupDb();
   });
 

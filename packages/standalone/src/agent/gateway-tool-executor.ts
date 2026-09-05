@@ -108,6 +108,8 @@ import type {
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
+import { runTaskListView, serializeTaskToolRecord } from '../operator/task-list-views.js';
+import { readBoardView } from '../operator/board-read-views.js';
 import {
   liveBoundaryChannels,
   narrowGrantToEnvelope,
@@ -144,22 +146,6 @@ function isReportPublishResult(
   value: void | readonly string[] | ReportPublishResult
 ): value is ReportPublishResult {
   return value !== undefined && !Array.isArray(value);
-}
-
-function serializeTaskToolRecord(
-  task: import('../operator/task-ledger.js').TaskRecord
-): Record<string, unknown> {
-  return {
-    ...task,
-    due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
-    deadline_offset_minutes: task.deadlineOffsetMinutes,
-    temporal_epoch: task.temporalEpoch,
-    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
-    last_temporal_checked_at: task.lastTemporalCheckedAt,
-    next_temporal_check_at: task.nextTemporalCheckAt,
-    last_temporal_attempt_id: task.lastTemporalAttemptId,
-    temporal_state: task.temporalState,
-  };
 }
 
 function temporalContextPacketBinding(context: TemporalWorkContext): string {
@@ -449,6 +435,31 @@ const OWNER_CONSOLE_MEMBER_TOOLS = new Set([
 ]);
 
 class ContextPacketProvenanceError extends Error {}
+
+/**
+ * Compact model boundary for Code-Act; internal receipts retain the richer result object.
+ * The JSON root (success, audit ledger, terminal codes) stays machine-readable; when the run
+ * read external evidence only the value/logs payload is fenced as untrusted data.
+ */
+export function serializeCodeActModelResult(result: GatewayToolResult): string {
+  const record = result as Record<string, unknown>;
+  const { message, untrustedExternalEvidence, value, logs, ...modelResult } = record;
+  if (typeof message === 'string' && value === undefined && typeof modelResult.error !== 'string') {
+    modelResult.message = message;
+  }
+  const payload = {
+    ...(value !== undefined ? { value } : {}),
+    ...(logs !== undefined ? { logs } : {}),
+  };
+  if (untrustedExternalEvidence === true) {
+    return JSON.stringify({
+      ...modelResult,
+      untrustedExternalEvidence: true,
+      payload: wrapUntrustedContent('external-evidence-code-act', JSON.stringify(payload)),
+    });
+  }
+  return JSON.stringify({ ...modelResult, ...payload });
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -3334,8 +3345,9 @@ export class GatewayToolExecutor {
               error: 'Report store not wired (board_read requires the API server report store).',
             };
           }
-          const slots = this.reportReader();
-          return { success: true, slots };
+          // Default returns slot descriptors only; a named slot pages its text/html
+          // by code points so a long slot is fully reachable, never silently sliced.
+          return readBoardView(input, this.reportReader()) as GatewayToolResult;
         }
         case 'audit_findings_read': {
           const auditStatePath = join(
@@ -3459,14 +3471,17 @@ export class GatewayToolExecutor {
         // kagemusha_*: state questions read the source live, never the
         // connector change-log projection (2026-07-24 incident chain).
         case 'trello_search': {
-          const { searchTrelloCards } = await import('../connectors/trello/query-tools.js');
-          const searchInput = input as { query?: string; limit?: number };
+          const { searchTrelloBoardCards } = await import('../connectors/trello/query-tools.js');
+          const searchInput = input as { query?: string; limit?: number; cursor?: string };
           try {
-            const cards = await searchTrelloCards({
+            // Progressive: honest full match total + continuation + per-board coverage,
+            // not a hidden 20-result cap. Paged over the cached board snapshot.
+            const page = await searchTrelloBoardCards({
               query: searchInput.query ?? '',
               limit: searchInput.limit,
+              cursor: searchInput.cursor,
             });
-            return { success: true, cards };
+            return { success: true, ...page };
           } catch (err) {
             return {
               success: false,
@@ -3476,10 +3491,26 @@ export class GatewayToolExecutor {
           }
         }
         case 'trello_card': {
-          const { getTrelloCard } = await import('../connectors/trello/query-tools.js');
-          const cardInput = input as { cardId?: string };
+          const { getTrelloCardDetail } = await import('../connectors/trello/query-tools.js');
+          const cardInput = input as {
+            cardId?: string;
+            section?: string;
+            offset?: number;
+            limit?: number;
+            checklistId?: string;
+            readVersion?: string;
+          };
           try {
-            const card = await getTrelloCard({ cardId: cardInput.cardId ?? '' });
+            // Sectioned detail (summary|description|checklists|checklist_items) with
+            // explicit continuation; the board allowlist is enforced before any field.
+            const card = await getTrelloCardDetail({
+              cardId: cardInput.cardId ?? '',
+              section: cardInput.section,
+              offset: cardInput.offset,
+              limit: cardInput.limit,
+              checklistId: cardInput.checklistId,
+              readVersion: cardInput.readVersion,
+            });
             return { success: true, card };
           } catch (err) {
             return {
@@ -3490,16 +3521,29 @@ export class GatewayToolExecutor {
           }
         }
         case 'trello_kanban': {
-          const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
-          const kanbanInput = input as { maxCardsPerList?: number };
+          const { getTrelloBoardsOverview, getTrelloListCards } =
+            await import('../connectors/trello/query-tools.js');
+          const kanbanInput = input as {
+            boardId?: string;
+            listId?: string;
+            limit?: number;
+            cursor?: string;
+          };
           try {
-            // Coverage rides alongside the data: `complete`/`boards`/`truncated`/
-            // `observedAt` are what let a caller tell a truly empty board from one it
-            // failed to read, and a whole column from a sliced one.
-            const snapshot = await getTrelloKanban({
-              maxCardsPerList: kanbanInput.maxCardsPerList,
-            });
-            return { success: true, ...snapshot };
+            // Default returns the board/list overview with counts and coverage - NO
+            // card arrays. A named (boardId, listId) pages that list's open cards
+            // beyond the old kanban ceiling, cursor pinned to the read snapshot.
+            if (kanbanInput.boardId !== undefined || kanbanInput.listId !== undefined) {
+              const cards = await getTrelloListCards({
+                boardId: kanbanInput.boardId ?? '',
+                listId: kanbanInput.listId ?? '',
+                limit: kanbanInput.limit,
+                cursor: kanbanInput.cursor,
+              });
+              return { success: true, ...cards };
+            }
+            const overview = await getTrelloBoardsOverview();
+            return { success: true, ...overview };
           } catch (err) {
             return {
               success: false,
@@ -3509,12 +3553,17 @@ export class GatewayToolExecutor {
           }
         }
         case 'kagemusha_messages': {
-          const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');
+          const { queryMessagesPage } = await import('../connectors/kagemusha/query-tools.js');
           const msgInput = input as {
             channelId: string;
             since?: string;
+            before?: string;
             limit?: number;
             search?: string;
+            cursor?: string;
+            messageId?: number;
+            content_offset?: number;
+            content_limit?: number;
           };
           if (!msgInput.channelId) {
             throw new AgentError(
@@ -3524,7 +3573,9 @@ export class GatewayToolExecutor {
               false
             );
           }
-          return { success: true, messages: queryMessages(msgInput) };
+          // Progressive: (created_at,id) keyset over an append-only asOf bound with
+          // total/returned/nextCursor; an unknown channel is a loud missing-source error.
+          return { success: true, ...queryMessagesPage(msgInput) };
         }
         case 'changes_read': {
           if (!this.taskLedger) {
@@ -3544,10 +3595,15 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
+          // Under a Temporal work context the universe is exactly the one host-bound
+          // owner task; the views observe/count only it and treat every other id as
+          // generic missing. Fetch it here so an unavailable bound task stays the same
+          // superseded signal it was before the progressive views.
           const temporalContext = this.getExecutionState().temporalWorkContext;
+          let boundTask: import('../operator/task-ledger.js').TaskRecord | undefined;
           if (temporalContext) {
-            const boundTask = this.taskLedger.getById(temporalContext.taskId);
-            if (!boundTask) {
+            const found = this.taskLedger.getById(temporalContext.taskId);
+            if (!found) {
               throw new AgentError(
                 'Host-bound temporal owner task is unavailable',
                 'WORKORDER_SUPERSEDED',
@@ -3555,39 +3611,12 @@ export class GatewayToolExecutor {
                 false
               );
             }
-            return {
-              success: true,
-              tasks: [serializeTaskToolRecord(boundTask)],
-            };
+            boundTask = found;
           }
-          const listInput = input as {
-            status?: string;
-            include_terminal?: boolean;
-            channel?: string;
-            search?: string;
-            limit?: number;
-            order?: string;
-            cursor?: string;
-          };
-          // total/returned/nextCursor ride with the rows: a read with a caller-passed
-          // limit is otherwise indistinguishable from the whole board, and a report
-          // that says "the open items are..." from one page states more than it read.
-          const page = this.taskLedger.listPage({
-            status: listInput.status as never,
-            includeTerminal: listInput.include_terminal,
-            channel: listInput.channel,
-            search: listInput.search,
-            limit: listInput.limit,
-            order: (listInput.order as never) ?? 'deadline_priority',
-            cursor: listInput.cursor,
-          });
-          return {
-            success: true,
-            tasks: page.tasks.map(serializeTaskToolRecord),
-            total: page.total,
-            returned: page.returned,
-            nextCursor: page.nextCursor,
-          };
+          return runTaskListView(input, {
+            ledger: this.taskLedger,
+            boundTask,
+          }) as GatewayToolResult;
         }
         case 'task_external_correlation': {
           if (!this.taskLedger) {
@@ -5130,7 +5159,7 @@ export class GatewayToolExecutor {
         usedUntrustedExternalEvidence = true;
       }
     };
-    bridge.injectInto(sandbox, policy.names);
+    bridge.injectInto(sandbox, policy);
 
     const result = await sandbox.execute(input.code, { signal: state.signal });
     const terminalMutationCodes = new Set([
@@ -5167,6 +5196,7 @@ export class GatewayToolExecutor {
       metrics: result.metrics,
       hostToolExecutions,
       hostToolsInvoked,
+      ...(usedUntrustedExternalEvidence ? { untrustedExternalEvidence: true } : {}),
       message: result.success
         ? usedUntrustedExternalEvidence
           ? wrapUntrustedContent('external-evidence-code-act', successfulMessage)

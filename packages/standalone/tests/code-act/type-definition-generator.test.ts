@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { CODE_ACT_METADATA_DECLARATIONS } from '../../src/agent/code-act/constants.js';
+
+const TOOL_DESCRIBE_MAX_NAMES = 4;
 
 function policy(tier: 1 | 2 | 3, allowedTools?: string[]) {
   return projectCodeActToolPolicy({ tier, role: { allowedTools } });
@@ -158,36 +162,57 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).not.toContain('declare function Read');
     });
 
-    it('stays within token budget for Tier 1', () => {
-      const dts = TypeDefinitionGenerator.generate(policy(1));
-      // Includes the owner workflow and scoped recall declarations added to
-      // the canonical HostBridge surface while retaining a hard prompt cap.
-      // Ceiling raised 10700->11100 for trello_kanban (deliberate: one bulk
-      // snapshot call replaces a per-card search fan-out in reports), then
-      // 11100->11500 for task_external_correlation (deliberate: the provenance
-      // join is what keeps cross-store claims off title matching), then
-      // 11500->12000 for mama_provenance (deliberate: the return type spells out
-      // every nullable field, because a resolver that hid which supports were
-      // missing would defeat the tool), then 12000->12400 for changes_read
-      // (deliberate: without it the only way to answer "what changed since last
-      // time" is to re-read current state and infer the delta, which costs far
-      // more than these 90 tokens every run and is how a report ends up
-      // restating the board instead of naming the change), then 12400->12500 for
-      // task_update's caused_by and its cause outcome (deliberate: the union IS the
-      // feedback channel - a Code-Act agent reads the .d.ts and nothing else, so without
-      // it a citation that resolved to nothing passes silently and the agent goes on
-      // believing the change was accounted for).
-      expect(dts.length).toBeLessThan(12500);
+    it('injects a COMPACT progressive bootstrap, not the whole catalog', () => {
+      // The runtime no longer injects the full .d.ts. The bootstrap is ONLY the
+      // two discovery primitives; every business tool is reached on demand via
+      // tool_search/tool_describe. So the acceptance is the actual injected
+      // surface: tiny, and NOT an enumeration of the catalog.
+      expect(CODE_ACT_METADATA_DECLARATIONS).toContain('declare function tool_search(');
+      expect(CODE_ACT_METADATA_DECLARATIONS).toContain('declare function tool_describe(');
+      expect(CODE_ACT_METADATA_DECLARATIONS.length).toBeLessThan(400);
+      // Representative business tools are discovered, never enumerated at bootstrap.
+      for (const name of ['trello_kanban', 'task_list', 'board_read', 'context_compile']) {
+        expect(CODE_ACT_METADATA_DECLARATIONS).not.toContain(name);
+      }
+      // The bootstrap is a small fraction of the complete catalog it replaces.
+      const wholeCatalog = TypeDefinitionGenerator.generate(policy(1));
+      expect(CODE_ACT_METADATA_DECLARATIONS.length).toBeLessThan(wholeCatalog.length * 0.1);
+    });
+
+    it('bounds the largest on-demand tool_describe batch and keeps each contract complete', () => {
+      // tool_describe returns 1..4 COMPLETE contracts. The user-facing cost is
+      // that worst-case batch, not the whole catalog: it must stay a bounded,
+      // small fraction of the full surface while remaining complete (metadata
+      // @field lines plus the declaration for every selected tool).
+      const registry = HostBridge.getToolRegistry();
+      const contracts = registry
+        .map((meta) => TypeDefinitionGenerator.generateContract(meta))
+        .sort((left, right) => right.length - left.length);
+      expect(contracts.length).toBeGreaterThan(TOOL_DESCRIBE_MAX_NAMES);
+      const largestBatch = contracts.slice(0, TOOL_DESCRIBE_MAX_NAMES);
+      const batchText = largestBatch.join('\n');
+      // Describing the WHOLE catalog on demand would be every contract at once;
+      // even the four heaviest are a small fraction of that - the progressive win.
+      const allContracts = contracts.join('\n');
+      expect(batchText.length).toBeLessThan(allContracts.length * 0.5);
+      // Each contract is complete: its metadata comment and its declaration.
+      for (const contract of largestBatch) {
+        expect(contract).toContain('@field');
+        expect(contract).toContain('declare function');
+      }
     });
   });
 
   describe('estimateTokens', () => {
-    it('returns reasonable token estimate', () => {
-      const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
-      expect(tokens).toBeGreaterThan(100);
-      // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance,
-      // ->3100 changes_read, ->3130 task_update caused_by (all deliberate)
-      expect(tokens).toBeLessThan(3130);
+    it('estimates the complete-catalog cost as chars/4 (a correctness relation, not an injected budget)', () => {
+      // estimateTokens is a generator utility over the COMPLETE catalog, which is
+      // no longer injected (the runtime injects the bootstrap and discovers the
+      // rest). So the assertion is the definition itself - the estimate tracks the
+      // generated length - rather than a stale absolute ceiling on an unshipped
+      // surface.
+      const dts = TypeDefinitionGenerator.generate(policy(1));
+      expect(TypeDefinitionGenerator.estimateTokens(policy(1))).toBe(Math.ceil(dts.length / 4));
+      expect(TypeDefinitionGenerator.estimateTokens(policy(1))).toBeGreaterThan(100);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

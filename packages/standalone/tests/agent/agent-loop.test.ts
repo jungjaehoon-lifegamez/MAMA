@@ -277,8 +277,10 @@ vi.mock('../../src/agent/session-pool.js', () => {
 });
 
 // Mock the GatewayToolExecutor
-vi.mock('../../src/agent/gateway-tool-executor.js', () => {
+vi.mock('../../src/agent/gateway-tool-executor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/agent/gateway-tool-executor.js')>();
   return {
+    serializeCodeActModelResult: actual.serializeCodeActModelResult,
     GatewayToolExecutor: vi.fn().mockImplementation(() => ({
       setDiscordGateway: vi.fn(),
       setAgentContext: gatewayExecutorSetAgentContextMock,
@@ -1391,11 +1393,72 @@ describe('AgentLoop', () => {
         },
       ]);
       expect(effectivePrompt).toContain('native app-server tool called `code_act`');
-      expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
-      expect(effectivePrompt).toContain('declare function mama_search');
+      expect(effectivePrompt).toContain('declare function tool_search');
+      expect(effectivePrompt).toContain('declare function tool_describe');
+      expect(effectivePrompt).not.toContain(TypeDefinitionGenerator.generate(policy));
+      expect(effectivePrompt).not.toContain('declare function mama_search');
       expect(effectivePrompt).not.toContain('declare function telegram_send');
       expect(effectivePrompt).not.toContain('mcp__code-act__code_act');
       expect(effectivePrompt).not.toContain('MCP transport');
+    });
+
+    it('TG-03/TG-06 gives the native model one framed copy of a Code-Act value', async () => {
+      const sentinel = 'SENTINEL_NATIVE_BUSINESS_VALUE';
+      let nativeContent = '';
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          const result = await bridge.execute({
+            callId: 'native-code-act-sentinel',
+            name: 'code_act',
+            input: { code: 'drive_browse({})' },
+          });
+          nativeContent = result.content;
+          return {
+            response: 'Native evidence inspected',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      gatewayExecutorExecuteMock.mockResolvedValueOnce({
+        success: true,
+        value: { evidence: sentinel },
+        logs: [],
+        metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 10 },
+        hostToolExecutions: [{ name: 'drive_browse', success: true }],
+        hostToolsInvoked: ['drive_browse'],
+        untrustedExternalEvidence: true,
+        message: `duplicate internal ${sentinel}`,
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('inspect external evidence', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: codexContext(),
+      });
+
+      const root = JSON.parse(nativeContent) as Record<string, unknown>;
+      expect(root).toMatchObject({
+        success: true,
+        untrustedExternalEvidence: true,
+        hostToolExecutions: [{ name: 'drive_browse', success: true }],
+        hostToolsInvoked: ['drive_browse'],
+      });
+      expect(Object.keys(root)).not.toContain('message');
+      expect(Object.keys(root)).not.toContain('value');
+      expect(root.payload).toEqual(
+        expect.stringContaining('<<<UNTRUSTED-CONTENT source=external-evidence-code-act>>>')
+      );
+      expect(nativeContent.split(sentinel)).toHaveLength(2);
+      expect(nativeContent).not.toContain('\n  "');
     });
 
     it('keeps effective Claude and Codex Code-Act declarations identical to the injected owner surface', async () => {
@@ -1461,9 +1524,12 @@ describe('AgentLoop', () => {
       const claudeDeclarations = parseDeliveredCodeActDeclarations(claudePrompt);
       const codexDeclarations = parseDeliveredCodeActDeclarations(codexPrompt);
 
-      expect(claudeDeclarations.length).toBeGreaterThan(5);
+      expect(claudeDeclarations.map((declaration) => declaration.name)).toEqual([
+        'tool_describe',
+        'tool_search',
+      ]);
       expect(claudeDeclarations).toEqual(codexDeclarations);
-      expect(claudePrompt).toContain('MCP tool called `code_act`');
+      expect(claudePrompt).toContain('MCP tool called `mcp__code-act__code_act`');
       expect(claudePrompt).toContain('mcp__code-act__code_act');
       expect(claudePrompt).not.toContain('native app-server tool called `code_act`');
       expect(outerBridges.get('claude')).toBeUndefined();
@@ -1500,53 +1566,6 @@ describe('AgentLoop', () => {
       expect(declaredNames).not.toContain('mama_save');
       expect(declaredNames).not.toContain('telegram_send');
 
-      const ownerWorkflowNames = [
-        'audit_findings_read',
-        'board_read',
-        'context_compile',
-        'mama_recall',
-        'report_request',
-      ];
-      expect(
-        claudeDeclarations.filter((declaration) => ownerWorkflowNames.includes(declaration.name))
-      ).toEqual([
-        {
-          name: 'audit_findings_read',
-          params: [],
-          returnType: '{ findings: unknown; message?: string }',
-        },
-        {
-          name: 'board_read',
-          params: [],
-          returnType: '{ slots: Record<string, { html: string; updatedAt?: string | null }> }',
-        },
-        {
-          name: 'context_compile',
-          params: [
-            {
-              name: 'input',
-              type: "{task: string,scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>,connectors?: string[],seed_refs?: Array<Record<string, unknown>>,range?: { start_ms?: number; end_ms?: number },as_of?: string | number | null,limit?: number,max_tool_calls?: number,max_ms?: number,max_tokens?: number,strictness?: 'recall' | 'balanced' | 'strict'}",
-              required: true,
-            },
-          ],
-          returnType:
-            '{ packet_id: string; packet: Record<string, unknown>; model_run_id?: string; parent_model_run_id?: string | null }',
-        },
-        {
-          name: 'mama_recall',
-          params: [
-            {
-              name: 'input',
-              type: "{query: string,scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>}",
-              required: true,
-            },
-          ],
-          returnType:
-            '{ bundle: { profile: { static: Array<Record<string, unknown>>; dynamic: Array<Record<string, unknown>>; evidence: Array<Record<string, unknown>> }; memories: Array<Record<string, unknown>>; graph_context: { primary: Array<Record<string, unknown>>; expanded: Array<Record<string, unknown>>; edge_count: number } } }',
-        },
-        { name: 'report_request', params: [], returnType: '{ message: string }' },
-      ]);
-
       const { GatewayToolExecutor: ActualGatewayToolExecutor } = await vi.importActual<
         typeof import('../../src/agent/gateway-tool-executor.js')
       >('../../src/agent/gateway-tool-executor.js');
@@ -1575,8 +1594,26 @@ describe('AgentLoop', () => {
       const injectedNames = Object.entries(injectedPayload.value)
         .filter(([, type]) => type === 'function')
         .map(([name]) => name)
-        .sort((left, right) => left.localeCompare(right));
-      expect(declaredNames).toEqual(injectedNames);
+        .sort();
+      expect(declaredNames).toEqual(['tool_describe', 'tool_search']);
+
+      const discoveredResult = await actualExecutor.execute(
+        'code_act',
+        {
+          code: `
+            var names = [];
+            var cursor = null;
+            do {
+              var page = tool_search(cursor === null ? {} : { cursor: cursor });
+              for (var i = 0; i < page.tools.length; i++) { names.push(page.tools[i].name); }
+              cursor = page.nextCursor;
+            } while (cursor !== null);
+            names;
+          `,
+        },
+        executionContext
+      );
+      expect(discoveredResult.value).toEqual(injectedNames);
 
       const narrowedResult = await actualExecutor.execute(
         'code_act',
@@ -3480,7 +3517,8 @@ Skills provide additional tools.
       );
 
       const callOptions = adapterMock.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
-      expect(callOptions.systemPrompt).toContain('declare function mama_search');
+      expect(callOptions.systemPrompt).toContain('declare function tool_search');
+      expect(callOptions.systemPrompt).not.toContain('declare function mama_search');
       expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
     });
 
@@ -3508,7 +3546,8 @@ Skills provide additional tools.
       );
 
       const callOptions = adapterMock.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
-      expect(callOptions.systemPrompt).toContain('declare function mama_search');
+      expect(callOptions.systemPrompt).toContain('declare function tool_search');
+      expect(callOptions.systemPrompt).not.toContain('declare function mama_search');
       expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
     });
 
@@ -3573,8 +3612,9 @@ Skills provide additional tools.
       expect(effectivePrompt).not.toContain('# Gateway Tools');
       expect(effectivePrompt).not.toContain('- **drive_download**');
       expect(effectivePrompt).toContain('## Code-Act: Gateway Tool Execution via Sandbox');
-      expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
-      expect(advertised).toEqual(policy.names);
+      expect(effectivePrompt).not.toContain(TypeDefinitionGenerator.generate(policy));
+      expect(policy.names).toContain('mama_search');
+      expect(advertised).toEqual(['tool_describe', 'tool_search']);
       expect(gatewayExecutorExecuteMock).toHaveBeenCalledWith(
         'code_act',
         { code: 'mama_search({ query: "prompt parity" })' },
@@ -3636,8 +3676,9 @@ Skills provide additional tools.
       expect(effectivePrompt).not.toContain('Stale caller guidance that must be replaced.');
       expect(effectivePrompt).not.toContain('declare function Bash');
       expect(effectivePrompt).not.toContain('declare function Write');
-      expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
-      expect(advertised).toEqual(policy.names);
+      expect(effectivePrompt).not.toContain(TypeDefinitionGenerator.generate(policy));
+      expect(policy.names).toContain('mama_search');
+      expect(advertised).toEqual(['tool_describe', 'tool_search']);
     });
 
     it.each([
@@ -3764,7 +3805,43 @@ Skills provide additional tools.
 
       expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
       expect(effectivePrompt).not.toContain('REPORT HISTORY MUST DROP');
-      expect(effectivePrompt).toContain('declare function mama_search');
+      expect(effectivePrompt).toContain('declare function tool_search');
+      expect(effectivePrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
+      expect(effectivePrompt).not.toContain('declare function mama_search');
+    });
+
+    it('keeps the complete bootstrap beside a large owner brief without changing its bytes', async () => {
+      let effectivePrompt = '';
+      const ownerBrief = `OWNER BRIEF BYTES ${'z'.repeat(50_000)} END OWNER BRIEF`;
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          effectivePrompt = promptOptions?.systemPrompt ?? '';
+          return {
+            response: 'Done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Continue', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(createCodexContext()),
+        systemPrompt: ownerBrief,
+      });
+
+      expect(effectivePrompt).toContain(ownerBrief);
+      expect(effectivePrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
+      expect(effectivePrompt).toContain('declare function tool_search');
+      expect(effectivePrompt).toContain('declare function tool_describe');
+      expect(effectivePrompt).toContain('<!-- MAMA_GENERATED_CODE_ACT_END -->');
     });
 
     it('keeps bounded owner-report history as data even when it contains old layer markers', async () => {
@@ -3802,7 +3879,9 @@ Skills provide additional tools.
 
       expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
       expect(effectivePrompt).toContain(reportHistory);
-      expect(effectivePrompt).toContain('declare function mama_search');
+      expect(effectivePrompt).toContain('declare function tool_search');
+      expect(effectivePrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
+      expect(effectivePrompt).not.toContain('declare function mama_search');
     });
 
     it('combines normalized Code-Act policy with the caller session fingerprint', async () => {
@@ -3980,10 +4059,11 @@ Skills provide additional tools.
         .sort();
       expect(effectivePrompt).toContain('Constructor caller content.');
       expect(effectivePrompt).not.toContain('Truncated stale guidance.');
-      expect(effectivePrompt).toContain(TypeDefinitionGenerator.generate(policy));
+      expect(effectivePrompt).not.toContain(TypeDefinitionGenerator.generate(policy));
       expect(effectivePrompt).not.toContain('declare function Bash');
       expect(effectivePrompt).not.toContain('declare function Write');
-      expect(advertised).toEqual(policy.names);
+      expect(policy.names).toContain('mama_search');
+      expect(advertised).toEqual(['tool_describe', 'tool_search']);
     });
 
     it.each([0, 4, Number.NaN, '2'])(

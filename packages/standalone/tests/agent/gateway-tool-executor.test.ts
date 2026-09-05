@@ -9,7 +9,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import {
+  GatewayToolExecutor,
+  serializeCodeActModelResult,
+} from '../../src/agent/gateway-tool-executor.js';
 import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
 import Database from '../../src/sqlite.js';
 import { AgentError } from '../../src/agent/types.js';
@@ -44,6 +47,12 @@ function privatePolicy(enabled: boolean) {
 }
 
 describe('STORY-V019 - GatewayToolExecutor', () => {
+  it('keeps a message-only Code-Act failure when no canonical error field exists', () => {
+    expect(
+      JSON.parse(serializeCodeActModelResult({ success: false, message: 'policy denied' }))
+    ).toEqual({ success: false, message: 'policy denied' });
+  });
+
   const createMockApi = (): MAMAApiInterface => {
     const api: MAMAApiInterface = {
       save: vi.fn().mockResolvedValue({
@@ -2458,6 +2467,215 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
 
       describe('AC #1: request allowlists narrow injected Code-Act functions', () => {
+        it('TG-03/TG-04 discovers, describes, and directly executes an allowed tool', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: `
+              var found = tool_search({ query: 'mama_search' });
+              var described = tool_describe({ names: ['mama_search'] });
+              var executed = mama_search({ query: 'progressive discovery' });
+              ({ found: found, described: described, executed: executed })
+            `,
+            allowedTools: ['mama_search'],
+          });
+
+          expect(result).toMatchObject({
+            success: true,
+            value: {
+              found: {
+                tools: [
+                  {
+                    name: 'mama_search',
+                    description: 'Search decisions and checkpoints',
+                    category: 'memory',
+                  },
+                ],
+                nextCursor: null,
+              },
+              described: {
+                contracts: [expect.stringContaining('declare function mama_search')],
+              },
+              executed: expect.objectContaining({ results: expect.any(Array) }),
+            },
+          });
+          expect(result.hostToolExecutions).toEqual([{ name: 'mama_search', success: true }]);
+          expect(result.hostToolsInvoked).toEqual(['mama_search']);
+        });
+
+        it('returns four complete selected contracts without slicing the largest declarations', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+          const names = [
+            'task_temporal_reconcile',
+            'context_compile',
+            'mama_search',
+            'task_update',
+          ];
+
+          const result = await executor.execute('code_act', {
+            code: `tool_describe({ names: ${JSON.stringify(names)} })`,
+          });
+          const contracts = (result.value as { contracts: string[] }).contracts;
+
+          expect(contracts).toHaveLength(4);
+          expect(JSON.stringify({ contracts }).length).toBeGreaterThan(5_000);
+          for (const [index, name] of names.entries()) {
+            expect(contracts[index]).toContain(`declare function ${name}`);
+            expect(contracts[index].endsWith(';')).toBe(true);
+            expect(contracts[index]).not.toContain('[truncated]');
+          }
+        });
+
+        it('TG-04/TG-05 binds pagination to the exact projected policy and filters', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'owner_console',
+            role: DEFAULT_ROLES.definitions.owner_console,
+          });
+
+          const broad = await executor.execute('code_act', {
+            code: `tool_search({ query: 'task', limit: 1 })`,
+          });
+          const firstPage = broad.value as {
+            tools: Array<{ name: string }>;
+            nextCursor: string | null;
+          };
+          expect(firstPage.tools).toHaveLength(1);
+          expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+          const narrowed = await executor.execute('code_act', {
+            code: `tool_search({ query: 'task', cursor: ${JSON.stringify(firstPage.nextCursor)} })`,
+            allowedTools: ['task_temporal_reconcile'],
+          });
+          expect(narrowed).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid or stale tool catalog cursor'),
+          });
+          expect(String(narrowed.error)).not.toContain(firstPage.tools[0].name);
+
+          const changedQuery = await executor.execute('code_act', {
+            code: `tool_search({ query: 'memory', cursor: ${JSON.stringify(firstPage.nextCursor)} })`,
+          });
+          expect(changedQuery).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid or stale tool catalog cursor'),
+          });
+
+          const changedCategory = await executor.execute('code_act', {
+            code: `tool_search({ query: 'task', category: 'memory', cursor: ${JSON.stringify(firstPage.nextCursor)} })`,
+          });
+          expect(changedCategory).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid or stale tool catalog cursor'),
+          });
+        });
+
+        it('reaches every permitted match in stable order across bounded pages', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'owner_console',
+            role: DEFAULT_ROLES.definitions.owner_console,
+          });
+
+          const result = await executor.execute('code_act', {
+            code: `
+              var names = [];
+              var cursor = null;
+              do {
+                var page = tool_search(cursor === null
+                  ? { limit: 6 }
+                  : { limit: 12, cursor: cursor });
+                for (var i = 0; i < page.tools.length; i++) names.push(page.tools[i].name);
+                cursor = page.nextCursor;
+              } while (cursor !== null);
+              names;
+            `,
+          });
+
+          const names = result.value as string[];
+          expect(names.length).toBeGreaterThan(12);
+          expect(names).toEqual([...names].sort());
+          expect(new Set(names).size).toBe(names.length);
+          expect(names).toEqual(
+            expect.arrayContaining(['mama_search', 'task_list', 'trello_search'])
+          );
+        });
+
+        it('TG-04/TG-05 hides disabled private metadata and rejects its old cursor generically', async () => {
+          const ownerContext = {
+            ...createViewerContext(),
+            source: 'telegram',
+            roleName: 'owner_console',
+            role: { allowedTools: ['code_act', '*'] },
+          };
+          const enabled = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: privatePolicy(true),
+          });
+          enabled.setAgentContext(ownerContext);
+          const enabledSearch = await enabled.execute('code_act', {
+            code: `tool_search({ query: 'kagemusha', limit: 1 })`,
+          });
+          const privateCursor = (enabledSearch.value as { nextCursor: string }).nextCursor;
+          expect(enabledSearch.value).toMatchObject({
+            tools: [expect.objectContaining({ name: expect.stringContaining('kagemusha') })],
+          });
+
+          const disabled = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+            privateConnectorPolicy: privatePolicy(false),
+          });
+          disabled.setAgentContext(ownerContext);
+          const hidden = await disabled.execute('code_act', {
+            code: `tool_search({ query: 'kagemusha' })`,
+          });
+          expect(hidden.value).toEqual({ tools: [], nextCursor: null });
+
+          const unavailable = await disabled.execute('code_act', {
+            code: `tool_describe({ names: ['kagemusha_tasks'] })`,
+          });
+          const unknown = await disabled.execute('code_act', {
+            code: `tool_describe({ names: ['not_a_real_tool'] })`,
+          });
+          expect(unavailable.error).toBe(unknown.error);
+          expect(String(unavailable.error)).not.toContain('kagemusha_tasks');
+
+          const stale = await disabled.execute('code_act', {
+            code: `tool_search({ query: 'kagemusha', cursor: ${JSON.stringify(privateCursor)} })`,
+          });
+          expect(stale).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid or stale tool catalog cursor'),
+          });
+          expect(String(stale.error)).not.toContain('kagemusha');
+        });
+
+        it('rejects invalid search bounds and describe batches explicitly', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          for (const code of [
+            `tool_search({ limit: 0 })`,
+            `tool_search({ limit: 13 })`,
+            `tool_search({ limit: 1.5 })`,
+            `tool_search({ cursor: 'malformed' })`,
+            `tool_describe({ names: [] })`,
+            `tool_describe({ names: [1] })`,
+            `tool_describe({ names: ['Read', 'mama_search', 'mama_recall', 'mama_save', 'mama_update'] })`,
+            `tool_describe({ names: ['mama_search', 'mama_search'] })`,
+          ]) {
+            const result = await executor.execute('code_act', { code });
+            expect(result.success, code).toBe(false);
+            expect(result.error, code).toEqual(expect.any(String));
+          }
+        });
+
         it('only exposes request-allowed gateway tools inside code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext(createViewerContext());

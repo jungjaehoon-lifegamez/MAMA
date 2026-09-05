@@ -23,7 +23,8 @@ export interface CodeActToolPolicyInput {
 }
 
 export interface CodeActToolPolicyFingerprintData {
-  readonly version: 4;
+  readonly version: 5;
+  readonly metadataContractVersion: 1;
   readonly inputs: {
     readonly tier: CodeActTier;
     readonly roleName: string | null;
@@ -113,7 +114,8 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
   );
   const names = Object.freeze(definitions.map((tool) => tool.name));
   const fingerprintData: CodeActToolPolicyFingerprintData = {
-    version: 4,
+    version: 5,
+    metadataContractVersion: 1,
     inputs: {
       tier,
       roleName: input.roleName ?? null,

@@ -6,6 +6,8 @@ import {
   type StreamMessage,
 } from '../../src/agent/persistent-cli-process.js';
 import type { PromptCallbacks } from '../../src/agent/types.js';
+import { codeActMcpResult } from '../../src/mcp/code-act-terminal-transport.js';
+import { completedCodeActMutationWasObserved } from '../../src/agent/code-act/completed-terminal-result.js';
 
 type TestablePersistentProcess = {
   state: 'idle' | 'busy' | 'starting' | 'dead';
@@ -194,6 +196,43 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
       hostToolExecutions: [{ name: 'task_list', success: true }],
       payload: { truncated: true },
     });
+  });
+
+  it('TG-03/TG-06 bounds an oversized fenced external-evidence result from the real MCP producer without losing the mutation audit', async () => {
+    const produced = codeActMcpResult({
+      success: true,
+      value: { board: 'x'.repeat(70 * 1024) },
+      logs: [],
+      metrics: { durationMs: 1, hostCallCount: 2, memoryUsedBytes: 10 },
+      hostToolExecutions: [
+        { name: 'trello_search', success: true },
+        { name: 'task_update', success: true },
+      ],
+      untrustedExternalEvidence: true,
+    });
+    const body = (produced.content as Array<{ text: string }>)[0].text;
+    expect(body).toContain('<<<UNTRUSTED-CONTENT source=external-evidence-code-act>>>');
+
+    const { result } = await drivePrompt([
+      assistantToolUse('mcp-oversized-fenced'),
+      userToolResult('mcp-oversized-fenced', body),
+      successResult(),
+    ]);
+    const exchange = result.completedToolExchanges?.[0];
+    expect(exchange).toBeDefined();
+    expect(exchange!.toolResult.content).not.toContain('<<<UNTRUSTED-CONTENT');
+    expect(JSON.parse(exchange!.toolResult.content)).toMatchObject({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: true,
+      hostToolExecutions: [
+        { name: 'trello_search', success: true },
+        { name: 'task_update', success: true },
+      ],
+      hostToolsInvoked: ['trello_search', 'task_update'],
+      payload: { truncated: true },
+    });
+    expect(completedCodeActMutationWasObserved(result.completedToolExchanges)).toBe(true);
   });
 
   it('TG-06 preserves oversized terminal metadata and never emits a success final callback', async () => {

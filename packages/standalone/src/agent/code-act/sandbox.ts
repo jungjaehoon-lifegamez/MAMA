@@ -132,7 +132,8 @@ function jsonToHandle(
   value: unknown,
   visited = new Set<unknown>()
 ): QuickJSHandle {
-  if (value === null || value === undefined) return ctx.undefined;
+  if (value === null) return ctx.null;
+  if (value === undefined) return ctx.undefined;
   if (value === true) return ctx.true;
   if (value === false) return ctx.false;
   if (typeof value === 'string') return ctx.newString(value);
@@ -444,7 +445,8 @@ export class CodeActSandbox {
         }
         const result = await hostResult;
 
-        if (result === undefined || result === null) return ctx.undefined;
+        if (result === null) return ctx.null;
+        if (result === undefined) return ctx.undefined;
         if (result === true) return ctx.true;
         if (result === false) return ctx.false;
         if (typeof result === 'string') return ctx.newString(result);

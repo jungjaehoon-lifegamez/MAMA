@@ -27,6 +27,11 @@ function getDB(): SQLiteDatabase {
   return db;
 }
 
+/** Test seam: point the read tools at an isolated in-memory database. */
+export function setKagemushaDbForTest(instance: SQLiteDatabase | null): void {
+  db = instance;
+}
+
 export interface EntityProfile {
   id: string;
   name: string;
@@ -272,6 +277,383 @@ export function queryMessages(options: {
     content: row.content,
     timestamp: new Date(row.created_at).toISOString(),
   }));
+}
+
+/** Progressive page bounds shared by kagemusha_messages (Task C). */
+const MESSAGES_DEFAULT_LIMIT = 25;
+const MESSAGES_MAX_LIMIT = 50;
+const CONTENT_DEFAULT_LIMIT = 2000;
+const CONTENT_MAX_LIMIT = 4000;
+
+export interface MessageContentWindow {
+  value: string;
+  /** Unicode code-point offset this window starts at. */
+  offset: number;
+  limit: number;
+  /** Total content length in Unicode code points. */
+  total: number;
+  nextOffset: number | null;
+  complete: boolean;
+}
+
+export interface MessagePageRecord {
+  id: number;
+  channel: string;
+  channelId: string;
+  author: string;
+  role: string;
+  /** Whole message record; long content is a reachable code-point window, never a hidden slice. */
+  content: MessageContentWindow;
+  timestamp: string;
+}
+
+export interface MessagesPage {
+  messages: MessagePageRecord[];
+  total: number;
+  returned: number;
+  nextCursor: string | null;
+  observedAt: string;
+  /**
+   * Append-only upper bound: this page and its continuation only see rows with
+   * id <= asOfId, so later inserts never shift the traversal. It is NOT an
+   * immutable snapshot - edits or deletes to existing rows are not frozen.
+   */
+  snapshot: { asOfId: number; note: string };
+}
+
+interface MessagesCursor {
+  v: 1;
+  /** The scope is FROZEN into the cursor - including an implicit default `since` -
+   *  so a continuation reuses the exact bounds page 1 used. A later clock tick
+   *  cannot silently redefine the query. */
+  channelId: string;
+  sinceMs: number;
+  beforeMs: number | null;
+  search: string | null;
+  asOfId: number;
+  lastCreatedAt: number;
+  lastId: number;
+}
+
+function strictMs(value: string, field: string): number {
+  const ms = new Date(value).getTime();
+  if (Number.isNaN(ms)) {
+    throw new Error(
+      `${field} must be an ISO-8601 date/timestamp (got "${value}"); phrases like "24h ago" are not parseable`
+    );
+  }
+  return ms;
+}
+
+interface ResolvedScope {
+  channelId: string;
+  sinceMs: number;
+  beforeMs: number | null;
+  search: string | null;
+}
+
+/**
+ * Resolve the effective (channel, time, search) scope, freezing an implicit
+ * default `since` when there is no cursor. On a continuation the cursor's frozen
+ * bounds win, and an EXPLICITLY supplied filter that disagrees with them is
+ * rejected - an omitted filter simply inherits the frozen value, so a later clock
+ * tick can no longer turn "same query, next page" into a different-query error.
+ */
+function resolveScope(
+  options: { channelId: string; since?: string | null; before?: string | null; search?: string },
+  cursor: MessagesCursor | null
+): ResolvedScope {
+  const explicitSince =
+    options.since !== undefined && options.since !== null ? strictMs(options.since, 'since') : null;
+  const explicitBefore =
+    options.before !== undefined && options.before !== null
+      ? strictMs(options.before, 'before')
+      : null;
+  const explicitSearch = options.search !== undefined ? options.search : null;
+  if (cursor) {
+    if (cursor.channelId !== options.channelId) {
+      throw scopeChangeError();
+    }
+    if (explicitSince !== null && explicitSince !== cursor.sinceMs) throw scopeChangeError();
+    if (
+      options.before !== undefined &&
+      options.before !== null &&
+      explicitBefore !== cursor.beforeMs
+    ) {
+      throw scopeChangeError();
+    }
+    if (options.search !== undefined && explicitSearch !== cursor.search) throw scopeChangeError();
+    return {
+      channelId: cursor.channelId,
+      sinceMs: cursor.sinceMs,
+      beforeMs: cursor.beforeMs,
+      search: cursor.search,
+    };
+  }
+  return {
+    channelId: options.channelId,
+    sinceMs: explicitSince ?? Date.now() - 7 * 24 * 60 * 60 * 1000,
+    beforeMs: explicitBefore,
+    search: explicitSearch,
+  };
+}
+
+function scopeChangeError(): Error {
+  return new Error(
+    'kagemusha_messages cursor belongs to a different query (channel/time/search changed); restart the read.'
+  );
+}
+
+function scopeSql(scope: ResolvedScope): { where: string[]; params: unknown[] } {
+  const where = ['channel_id = ?', 'created_at > ?'];
+  const params: unknown[] = [scope.channelId, scope.sinceMs];
+  if (scope.beforeMs !== null) {
+    where.push('created_at <= ?');
+    params.push(scope.beforeMs);
+  }
+  if (scope.search !== null) {
+    where.push('content LIKE ?');
+    params.push(`%${scope.search}%`);
+  }
+  return { where, params };
+}
+
+function contentWindow(source: string, offset: number, limit: number): MessageContentWindow {
+  const points = Array.from(source);
+  const start = Math.min(offset, points.length);
+  const slice = points.slice(start, start + limit);
+  const end = start + slice.length;
+  const nextOffset = end < points.length ? end : null;
+  return {
+    value: slice.join(''),
+    offset,
+    limit,
+    total: points.length,
+    nextOffset,
+    complete: nextOffset === null,
+  };
+}
+
+/**
+ * Progressive, bounded read of one channel's messages, newest first. Adds a
+ * (created_at, id) keyset cursor over an append-only asOf upper bound, honest
+ * total/returned/nextCursor, and strict time validation. An unknown channel is a
+ * loud missing-source error, never an empty success; an empty nextCursor means
+ * the END of this channel's scoped matches, not that all channels were read.
+ */
+export function queryMessagesPage(options: {
+  channelId: string;
+  since?: string | null;
+  before?: string | null;
+  search?: string;
+  limit?: number;
+  cursor?: string;
+  messageId?: number;
+  content_offset?: number;
+  content_limit?: number;
+}): MessagesPage {
+  if (!options.channelId || typeof options.channelId !== 'string') {
+    throw new Error('kagemusha_messages requires channelId');
+  }
+  if (options.limit !== undefined) {
+    if (
+      !Number.isInteger(options.limit) ||
+      options.limit < 1 ||
+      options.limit > MESSAGES_MAX_LIMIT
+    ) {
+      throw new Error(
+        `kagemusha_messages limit must be an integer from 1 to ${MESSAGES_MAX_LIMIT}.`
+      );
+    }
+  }
+  const limit = options.limit ?? MESSAGES_DEFAULT_LIMIT;
+  const contentOffset = options.content_offset ?? 0;
+  if (!Number.isInteger(contentOffset) || contentOffset < 0) {
+    throw new Error('kagemusha_messages content_offset must be a non-negative integer.');
+  }
+  const contentLimit = options.content_limit ?? CONTENT_DEFAULT_LIMIT;
+  if (!Number.isInteger(contentLimit) || contentLimit < 1 || contentLimit > CONTENT_MAX_LIMIT) {
+    throw new Error(
+      `kagemusha_messages content_limit must be an integer from 1 to ${CONTENT_MAX_LIMIT}.`
+    );
+  }
+
+  const d = getDB();
+  // Missing-source: an unknown channel is an explicit error, not empty success.
+  const known = d.prepare('SELECT 1 FROM rooms WHERE id = ?').get(options.channelId) as
+    | { 1: number }
+    | undefined;
+  if (!known) {
+    throw new Error(`kagemusha_messages: unknown channel/source "${options.channelId}"`);
+  }
+
+  const cursor = options.cursor !== undefined ? decodeMessagesCursor(options.cursor) : null;
+  const scope = resolveScope(options, cursor);
+  const { where: baseWhere, params: baseParams } = scopeSql(scope);
+
+  // Single-message selection: read ONE long message across content offsets without
+  // returning its peers. It is bound to the SAME channel/time/search scope, so a
+  // foreign id or one outside the scope is a generic not-found - never disclosed.
+  if (options.messageId !== undefined) {
+    if (!Number.isInteger(options.messageId) || options.messageId < 1) {
+      throw new Error('kagemusha_messages messageId must be a positive integer.');
+    }
+    const row = d
+      .prepare(
+        `SELECT id, channel, channel_id, user_id, role, content, created_at
+         FROM channel_messages
+         WHERE ${baseWhere.join(' AND ')} AND id = ?`
+      )
+      .get(...baseParams, options.messageId) as
+      | {
+          id: number;
+          channel: string;
+          channel_id: string;
+          user_id: string;
+          role: string;
+          content: string;
+          created_at: number;
+        }
+      | undefined;
+    if (!row) {
+      throw new Error(
+        `kagemusha_messages: message ${options.messageId} is not in this channel/time/search scope`
+      );
+    }
+    return {
+      messages: [
+        {
+          id: row.id,
+          channel: row.channel,
+          channelId: row.channel_id,
+          author: row.user_id,
+          role: row.role,
+          content: contentWindow(row.content, contentOffset, contentLimit),
+          timestamp: new Date(row.created_at).toISOString(),
+        },
+      ],
+      total: 1,
+      returned: 1,
+      nextCursor: null,
+      observedAt: new Date().toISOString(),
+      snapshot: {
+        asOfId: row.id,
+        note: 'single selected message; content is paged by content_offset/content_limit',
+      },
+    };
+  }
+
+  // Bind the append-only upper id: the cursor pins the first page's asOfId; a
+  // first page captures the current MAX(id) of the scoped set.
+  const asOfId =
+    cursor?.asOfId ??
+    (
+      d
+        .prepare(
+          `SELECT COALESCE(MAX(id), 0) AS m FROM channel_messages WHERE ${baseWhere.join(' AND ')}`
+        )
+        .get(...baseParams) as { m: number }
+    ).m;
+
+  const total = (
+    d
+      .prepare(
+        `SELECT COUNT(*) AS c FROM channel_messages WHERE ${baseWhere.join(' AND ')} AND id <= ?`
+      )
+      .get(...baseParams, asOfId) as { c: number }
+  ).c;
+
+  const pageWhere = [...baseWhere, 'id <= ?'];
+  const pageParams = [...baseParams, asOfId];
+  if (cursor) {
+    pageWhere.push('(created_at < ? OR (created_at = ? AND id < ?))');
+    pageParams.push(cursor.lastCreatedAt, cursor.lastCreatedAt, cursor.lastId);
+  }
+
+  const rows = d
+    .prepare(
+      `SELECT id, channel, channel_id, user_id, role, content, created_at
+       FROM channel_messages
+       WHERE ${pageWhere.join(' AND ')}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(...pageParams, limit + 1) as Array<{
+    id: number;
+    channel: string;
+    channel_id: string;
+    user_id: string;
+    role: string;
+    content: string;
+    created_at: number;
+  }>;
+
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+  const last = pageRows[pageRows.length - 1];
+  return {
+    messages: pageRows.map((row) => ({
+      id: row.id,
+      channel: row.channel,
+      channelId: row.channel_id,
+      author: row.user_id,
+      role: row.role,
+      content: contentWindow(row.content, contentOffset, contentLimit),
+      timestamp: new Date(row.created_at).toISOString(),
+    })),
+    total,
+    returned: pageRows.length,
+    nextCursor:
+      hasMore && last
+        ? encodeMessagesCursor({
+            v: 1,
+            channelId: scope.channelId,
+            sinceMs: scope.sinceMs,
+            beforeMs: scope.beforeMs,
+            search: scope.search,
+            asOfId,
+            lastCreatedAt: last.created_at,
+            lastId: last.id,
+          })
+        : null,
+    observedAt: new Date().toISOString(),
+    snapshot: {
+      asOfId,
+      note: 'append-only upper bound: later inserts are excluded; edits/deletes to existing rows are NOT frozen',
+    },
+  };
+}
+
+function encodeMessagesCursor(payload: MessagesCursor): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function decodeMessagesCursor(raw: unknown): MessagesCursor {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2048) {
+    throw new Error('kagemusha_messages cursor is malformed; restart the read.');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('kagemusha_messages cursor is malformed; restart the read.');
+  }
+  const cursor = parsed as MessagesCursor;
+  if (
+    !cursor ||
+    typeof cursor !== 'object' ||
+    cursor.v !== 1 ||
+    typeof cursor.channelId !== 'string' ||
+    !Number.isSafeInteger(cursor.sinceMs) ||
+    !(cursor.beforeMs === null || Number.isSafeInteger(cursor.beforeMs)) ||
+    !(cursor.search === null || typeof cursor.search === 'string') ||
+    !Number.isSafeInteger(cursor.asOfId) ||
+    !Number.isSafeInteger(cursor.lastCreatedAt) ||
+    !Number.isSafeInteger(cursor.lastId)
+  ) {
+    throw new Error('kagemusha_messages cursor is malformed; restart the read.');
+  }
+  return cursor;
 }
 
 /**

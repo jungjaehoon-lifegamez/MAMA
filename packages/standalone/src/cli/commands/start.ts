@@ -59,6 +59,7 @@ import Database from '../../sqlite.js';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
+import { isUntrustedExternalEvidenceTool } from '../../utils/untrusted-content.js';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -293,6 +294,9 @@ export function serializeCodeActExecutionResult(
     toolCalls,
     hostToolExecutions,
     hostToolsInvoked,
+    ...(toolCalls.some((call) => isUntrustedExternalEvidenceTool(call.name))
+      ? { untrustedExternalEvidence: true }
+      : {}),
   };
 }
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -1505,6 +1509,9 @@ export async function runAgentLoop(
       // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
       // Per-request executionContext carries envelope data; this routing context is legacy fallback.
       toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
+      // Tier+role injection is unchanged; the bridge derives tool_search/tool_describe from
+      // exactly the functions it registers here, so this route gains discovery without any
+      // change to which gateway functions it authorizes.
       bridge.injectInto(sandbox, codeActTier, codeActRole);
       const result = await sandbox.execute(code, { signal: executionContext?.signal });
       finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
