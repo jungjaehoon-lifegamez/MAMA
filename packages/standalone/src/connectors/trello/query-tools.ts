@@ -168,16 +168,41 @@ interface BoardSnapshot {
   rosterDegraded: boolean;
 }
 
+interface CachedSnapshot {
+  at: number;
+  /** The authorization this snapshot was fetched under; a page read under a
+   *  DIFFERENT authorization must never see it (P1: PR #262). */
+  authFp: string;
+  boards: BoardSnapshot[];
+}
+
 /** Per-process snapshot cache. A full report asks about many cards in one
  *  turn; without this every trello_search re-fetched every board serially
  *  (~10s x 15 calls in the 2026-07-24 14:03 report turn). 45s keeps a turn
  *  on one snapshot while staying far fresher than the 5-min poll cadence. */
 const SNAPSHOT_TTL_MS = 45_000;
-let snapshotCache: { at: number; boards: BoardSnapshot[] } | null = null;
+let snapshotCache: CachedSnapshot | null = null;
 
 /** Test seam: drop the snapshot cache. */
 export function clearTrelloSnapshotCache(): void {
   snapshotCache = null;
+}
+
+/**
+ * A stable identity of the CURRENT authorization: the credentials and the sorted
+ * configured board allowlist (id + display name). It is a one-way hash, so tokens
+ * are never exposed, yet a changed token, a removed/added board, or a renamed
+ * board all mint a different value. Cache reuse and cursor continuation require
+ * the SAME fingerprint, so cached cards are never re-served under new auth.
+ */
+function authFingerprint(auth: TrelloAuth): string {
+  const boards = [...auth.boardNames.entries()].sort((left, right) =>
+    left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0
+  );
+  return createHash('sha256')
+    .update(JSON.stringify([auth.apiKey, auth.token, boards]))
+    .digest('base64url')
+    .slice(0, 22);
 }
 
 /**
@@ -188,7 +213,7 @@ export function clearTrelloSnapshotCache(): void {
  * caller restarts, because a page 2 drawn from a different snapshot could skip
  * or repeat cards.
  */
-function peekTrelloSnapshot(): { at: number; boards: BoardSnapshot[] } | null {
+function peekTrelloSnapshot(): CachedSnapshot | null {
   return snapshotCache;
 }
 
@@ -218,10 +243,16 @@ function snapshotId(snapshot: { at: number; boards: BoardSnapshot[] }): string {
 async function fetchBoardSnapshots(
   auth: TrelloAuth,
   fetchFn: typeof fetch
-): Promise<{ at: number; boards: BoardSnapshot[] }> {
-  if (snapshotCache && Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS) {
+): Promise<CachedSnapshot> {
+  const authFp = authFingerprint(auth);
+  if (
+    snapshotCache &&
+    snapshotCache.authFp === authFp &&
+    Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS
+  ) {
     // Cached snapshots keep their ORIGINAL observation time and per-board status:
-    // a degraded read must not re-serve as a fresh successful one for 45s.
+    // a degraded read must not re-serve as a fresh successful one for 45s. Reuse
+    // ALSO requires the same authorization - a token or allowlist change refetches.
     return snapshotCache;
   }
   const boards = await Promise.all(
@@ -257,7 +288,7 @@ async function fetchBoardSnapshots(
       return { boardId, boardName, lists, roster, status, rosterDegraded };
     })
   );
-  snapshotCache = { at: Date.now(), boards };
+  snapshotCache = { at: Date.now(), authFp, boards };
   return snapshotCache;
 }
 
@@ -427,18 +458,30 @@ function encodeRecordCursor(payload: RecordCursor): string {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
-/** Resolve the snapshot a page reads: a cursor pins the EXACT cached snapshot and
- *  rejects if it is gone or replaced; a first page fetches (refreshing on TTL). */
+/** Resolve the snapshot a page reads AND the CURRENT authorization. Authorization
+ *  is re-resolved on EVERY page (P1: PR #262): a disabled connector or unreadable
+ *  config throws here before any cached field is returned. A cursor pins the EXACT
+ *  cached snapshot and rejects if it is gone, replaced, or fetched under a
+ *  different authorization; a first page fetches (refreshing on TTL or auth). */
 async function resolvePageSnapshot(
   cursor: RecordCursor | null,
   scope: string,
   deps: TrelloQueryDeps
-): Promise<{ snapshot: { at: number; boards: BoardSnapshot[] }; id: string }> {
+): Promise<{ snapshot: CachedSnapshot; id: string; auth: TrelloAuth }> {
+  const auth = resolveTrelloQueryAuth(deps);
+  const fetchFn = deps.fetchFn ?? fetch;
   if (cursor) {
     const snapshot = peekTrelloSnapshot();
     if (!snapshot) {
       throw new Error(
         'trello cursor snapshot is no longer cached; restart the read from the overview.'
+      );
+    }
+    // Authorization is re-checked against the cache: a changed token or a changed
+    // board allowlist rejects the continuation rather than filtering old cards.
+    if (snapshot.authFp !== authFingerprint(auth)) {
+      throw new Error(
+        'trello authorization changed since this cursor was issued; restart the read from the overview.'
       );
     }
     const id = snapshotId(snapshot);
@@ -447,12 +490,10 @@ async function resolvePageSnapshot(
         'trello cursor belongs to a replaced snapshot or a different scope; restart the read.'
       );
     }
-    return { snapshot, id };
+    return { snapshot, id, auth };
   }
-  const auth = resolveTrelloQueryAuth(deps);
-  const fetchFn = deps.fetchFn ?? fetch;
   const snapshot = await fetchBoardSnapshots(auth, fetchFn);
-  return { snapshot, id: snapshotId(snapshot) };
+  return { snapshot, id: snapshotId(snapshot), auth };
 }
 
 function decodeRecordCursor(raw: unknown): RecordCursor | null {
@@ -522,7 +563,12 @@ export async function getTrelloListCards(
   const scope = `cards:${boardId}:${listId}`;
   const cursor = decodeRecordCursor(input.cursor);
   const limit = boundedRecordLimit(input.limit);
-  const { snapshot, id } = await resolvePageSnapshot(cursor, scope, deps);
+  const { snapshot, id, auth } = await resolvePageSnapshot(cursor, scope, deps);
+  // Authorize against the CURRENT allowlist before touching the snapshot: never
+  // disclose a board's cards from an old snapshot just because it was cached.
+  if (!auth.boardNames.has(boardId)) {
+    throw new Error(`trello board '${boardId}' is not configured/authorized.`);
+  }
   const board = snapshot.boards.find((b) => b.boardId === boardId);
   if (!board) {
     throw new Error(`trello board '${boardId}' is not configured/authorized.`);
@@ -793,6 +839,18 @@ function boundedInt(value: unknown, field: string, fallback: number, max: number
 }
 
 /**
+ * The ONE deterministic key a checklist is addressed by, used identically when
+ * `checklists` emits headers and when `checklist_items` resolves them. A real
+ * Trello id (present) is used as-is; an ABSENT id falls back to an `idx:<n>`
+ * namespace keyed by the checklist's absolute position, which can never be
+ * confused with a Trello hex id - so every returned header id resolves back to
+ * its own items instead of an undefined-id lookup that could never match.
+ */
+function checklistKey(checklist: { id?: string }, index: number): string {
+  return checklist.id ?? `idx:${index}`;
+}
+
+/**
  * Sectioned card detail. `summary` (default) is metadata plus description length
  * and checklist/item counts; `description` pages the text by Unicode CODE POINTS
  * (offset/limit); `checklists` pages whole checklist headers by RECORD; and
@@ -872,7 +930,7 @@ export async function getTrelloCardDetail(
     assertCardVersion(input.readVersion, readVersion, offset);
     const limit = boundedInt(input.limit, 'limit', CHECKLIST_DEFAULT_LIMIT, CHECKLIST_MAX_LIMIT);
     const slice = checklists.slice(offset, offset + limit).map((cl, index) => ({
-      id: cl.id ?? `checklist-${offset + index}`,
+      id: checklistKey(cl, offset + index),
       name: cl.name,
       itemCount: cl.checkItems?.length ?? 0,
       completeCount: (cl.checkItems ?? []).filter((it) => it.state === 'complete').length,
@@ -894,7 +952,9 @@ export async function getTrelloCardDetail(
   if (!checklistId) {
     throw new Error('trello_card section checklist_items requires checklistId.');
   }
-  const checklist = checklists.find((cl) => cl.id === checklistId);
+  // Resolve by the SAME deterministic key the headers emit, so an absent-id
+  // checklist (addressed as idx:<n>) reaches its items too.
+  const checklist = checklists.find((cl, index) => checklistKey(cl, index) === checklistId);
   if (!checklist) {
     throw new Error(`trello_card unknown checklistId '${checklistId}' on this card.`);
   }

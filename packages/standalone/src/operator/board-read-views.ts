@@ -67,8 +67,12 @@ export function readBoardView(rawInput: unknown, slots: BoardSlots): BoardReadRe
   const format = parseFormat(input.format);
   const offset = parseNonNegativeInt(input.offset, 'offset');
   const limit = parseBoundedInt(input.limit, 'limit', CONTENT_DEFAULT_LIMIT, CONTENT_MAX_LIMIT);
-  const representation = format === 'html' ? entry.html : extractText(entry.html);
-  const readVersion = contentVersion(slot, format, entry.html);
+  // Normalize once: a missing html (despite the nominal type) is an empty slot,
+  // not a throw. The same normalized value backs both the representation and the
+  // content version, so a text read, an html read and readVersion all agree.
+  const html = entry.html ?? '';
+  const representation = format === 'html' ? html : extractText(html);
+  const readVersion = contentVersion(slot, format, html);
   // Continuation must be pinned: a document that changed between chunks would
   // otherwise splice two versions at a raw offset. Page 1 (offset 0) issues the
   // version; every later page must echo the one it was handed.

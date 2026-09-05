@@ -400,7 +400,7 @@ export interface OverviewResult {
   readVersion: string;
   status: Record<string, number>;
   priority: Record<string, number>;
-  /** null source_channel is keyed as the literal string "null". */
+  /** An unassigned source_channel is reported as a real null `channel`, not the string "null". */
   channels: Array<{ channel: string | null; count: number }>;
   /** null assignee (unassigned) is reported with assignee: null. */
   assignees: Array<{ assignee: string | null; count: number }>;

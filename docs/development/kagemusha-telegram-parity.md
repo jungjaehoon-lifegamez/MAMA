@@ -14,7 +14,8 @@ scenario IDs from this document.
   whole-board APIs remain available to their actual consumers.
 - TG-03/TG-04/TG-06: Trello and message readers provide explicit coverage and continuation;
   configured-board membership gates card details, and content versions prevent mixed-document
-  reconstruction. Board HTML is parsed without execution for selected text reads.
+  reconstruction. Cached Trello pages revalidate the current connector and board authorization.
+  Board HTML is parsed without execution for selected text reads.
 - TG-05/TG-06: one-copy model results preserve machine-readable MCP audit/terminal envelopes;
   the untrusted payload alone is fenced. Parent reproduced and corrected a framing regression
   that had hidden observed mutations from the completed-exchange consumer.
