@@ -750,7 +750,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'task_update',
-    description: 'Update a task-ledger item by id.',
+    description:
+      'Update a task-ledger item by id. Input latest_event sets the owner reason; the returned task uses latestEvent.',
     params: [
       { name: 'id', type: 'number', required: true },
       { name: 'title', type: 'string', required: false },
@@ -776,7 +777,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'review_anchor_ref', type: 'string', required: false },
     ],
     returnType:
-      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
+      '{ task: { latestEvent: string | null; due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
     category: 'memory',
   },
   {
