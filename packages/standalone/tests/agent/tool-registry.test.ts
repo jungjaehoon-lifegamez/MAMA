@@ -140,7 +140,7 @@ describe('ToolRegistry', () => {
       ]);
     });
 
-    it('TG-04/TG-06 defines task_temporal_reconcile with a closed schema and per-outcome field rules', () => {
+    it('Story TG-04/TG-06 AC #1 defines task_temporal_reconcile with a closed schema and per-outcome field rules', () => {
       const [definition] = ToolRegistry.getHostToolDefinitions({
         allowedTools: ['task_temporal_reconcile'],
       });

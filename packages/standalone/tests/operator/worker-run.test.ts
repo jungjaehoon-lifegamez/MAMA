@@ -296,7 +296,7 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
    * context_compile, never judge lifecycle, never ask. A system prompt that contradicts the
    * turn section is not a boundary, it is a coin toss. The data boundaries stay.
    */
-  describe('Task 1 (TG-04/TG-06): board system prompt agrees with the board turn section', () => {
+  describe('AC #1 (TG-04/TG-06): board system prompt agrees with the board turn section', () => {
     const prompt = buildWorkerSystemPrompt('', 'codex', 'board');
 
     it('no longer restricts Trello to context_compile (the grant holds trello_* readers)', () => {

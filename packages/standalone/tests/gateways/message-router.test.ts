@@ -1103,7 +1103,7 @@ describe('MessageRouter', () => {
       }
     );
 
-    it('TG-04/TG-05 owner policy names granted live Trello reads and permits lifecycle judgment on the initial and the rebuilt session', async () => {
+    it('AC #1 (TG-04/TG-05) owner policy names granted live Trello reads and permits lifecycle judgment on the initial and the rebuilt session', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-owner-live-reads';
       getRoleManager({ rolesConfig: DEFAULT_ROLES }).setTelegramTrust([ownerChannelId]);

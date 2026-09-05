@@ -141,7 +141,7 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
     ).not.toContain('## Owner policy and lessons');
   });
 
-  it('TG-05/TG-06 treats bounded prior handling as old untrusted data and permits quiet no-update', () => {
+  it('AC #2 (TG-05/TG-06) treats bounded prior handling as old untrusted data and permits quiet no-update', () => {
     const prompt = buildOwnerEventPrompt({
       batch: {
         id: 52,

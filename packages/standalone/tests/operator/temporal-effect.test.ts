@@ -444,7 +444,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     }
   );
 
-  describe('TG-04/TG-06 model-visible declaration matches the production validator', () => {
+  describe('AC #1 (TG-04/TG-06): accepted and rejected outcome fields match the model declaration', () => {
     interface DeclaredVariant {
       outcome: string;
       required: string[];
@@ -614,6 +614,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
             expectedError
           );
           expect(ledger.getById(taskId)?.revision).toBe(context.revision);
+          expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
         }
       }
     });
@@ -632,6 +633,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
         )
       ).toThrow(/outcome is unknown or forbidden/);
       expect(ledger.getById(taskId)?.revision).toBe(context.revision);
+      expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
     });
   });
 
