@@ -7,6 +7,8 @@ import {
   type TemporalReconcileInput,
   type TemporalWorkContext,
 } from '../../src/operator/temporal-effect.js';
+import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 
 describe('Story A2 Task 6: atomic temporal effect', () => {
   let db: SQLiteDatabase;
@@ -441,6 +443,199 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       expect(ledger.countOpenWorkOrders('temporal')).toBe(0);
     }
   );
+
+  describe('AC #1 (TG-04/TG-06): accepted and rejected outcome fields match the model declaration', () => {
+    interface DeclaredVariant {
+      outcome: string;
+      required: string[];
+      optional: string[];
+    }
+
+    /** Parse every object variant from the generated task_temporal_reconcile declaration. */
+    function declaredVariants(): DeclaredVariant[] {
+      const dts = TypeDefinitionGenerator.generate(
+        projectCodeActToolPolicy({ tier: 2, role: { allowedTools: ['task_temporal_reconcile'] } })
+      );
+      const declaration = dts
+        .split('\n')
+        .find((line) => line.startsWith('declare function task_temporal_reconcile('));
+      expect(declaration).toBeDefined();
+      const inputStart = declaration!.indexOf('(input:') + '(input:'.length;
+      const inputEnd = declaration!.lastIndexOf('): ');
+      const inputType = declaration!.slice(inputStart, inputEnd);
+      return inputType.split('} | {').map((variant) => {
+        const body = variant.replace(/^\{/, '').replace(/\}$/, '');
+        const outcome = /outcome: '([a-z_]+)'/.exec(body)?.[1];
+        expect(outcome).toBeDefined();
+        const required: string[] = [];
+        const optional: string[] = [];
+        for (const match of body.matchAll(/(?:^|,)([a-z_]+)(\??): /g)) {
+          (match[2] === '?' ? optional : required).push(match[1]);
+        }
+        return { outcome: outcome!, required, optional };
+      });
+    }
+
+    /**
+     * Each probe needs its own owner task and claimed generation. `setup()`
+     * reuses one synthetic (source_channel, source_event_id), which UPSERTS on
+     * a shared ledger, so every probe starts from a fresh in-memory ledger.
+     */
+    function freshSetup(): ReturnType<typeof setup> {
+      db.close();
+      db = new Database(':memory:');
+      ledger = new TaskLedger(db, { now: () => now, timeZone: 'Asia/Seoul' });
+      return setup();
+    }
+
+    const sampleValue = (field: string): unknown => {
+      switch (field) {
+        case 'status':
+          return 'done';
+        case 'due_at':
+          return '2026-07-23T09:00:00+09:00';
+        case 'evidence_summary':
+          return 'The source card remains explicitly open.';
+        case 'next_temporal_check_at':
+          return new Date(now + 60_000).toISOString();
+        case 'reason':
+          return 'declaration fidelity probe';
+        default:
+          throw new Error(`no sample value for ${field}`);
+      }
+    };
+
+    // context_packet_id is consumed by the gateway executor (evidence
+    // attestation) and never reaches the ledger validator; the executor-path
+    // test in temporal-work-context.test.ts covers that half.
+    const LEDGER_INPUT_FIELDS = ['expected_revision', 'outcome', 'reason'];
+    const OUTCOME_FIELDS = ['status', 'due_at', 'evidence_summary', 'next_temporal_check_at'];
+
+    function buildInput(
+      context: TemporalWorkContext,
+      variant: DeclaredVariant,
+      extra: Record<string, unknown> = {}
+    ): TemporalReconcileInput {
+      const input: Record<string, unknown> = {
+        expected_revision: context.revision,
+        outcome: variant.outcome,
+        reason: sampleValue('reason'),
+      };
+      for (const field of variant.required) {
+        if (!LEDGER_INPUT_FIELDS.includes(field) && field !== 'context_packet_id') {
+          input[field] = sampleValue(field);
+        }
+      }
+      return { ...input, ...extra } as TemporalReconcileInput;
+    }
+
+    it('advertises the three validator outcomes with two valid resolved field shapes', () => {
+      const variants = declaredVariants();
+      expect(variants.map((variant) => variant.outcome)).toEqual([
+        'resolved',
+        'resolved',
+        'final_no_update',
+        'deferred',
+      ]);
+      for (const variant of variants) {
+        expect(variant.required).toEqual(
+          expect.arrayContaining(['context_packet_id', 'expected_revision', 'reason', 'outcome'])
+        );
+      }
+    });
+
+    it('every advertised variant passes the real validator with only its own fields', () => {
+      for (const variant of declaredVariants()) {
+        if (variant.outcome === 'resolved') {
+          expect(variant.required.filter((field) => OUTCOME_FIELDS.includes(field))).toHaveLength(
+            1
+          );
+          expect(new Set([...variant.required, ...variant.optional])).toEqual(
+            new Set([
+              'context_packet_id',
+              'expected_revision',
+              'reason',
+              'outcome',
+              'status',
+              'due_at',
+            ])
+          );
+          const { context, taskId } = freshSetup();
+          const receipt = applyEffect(context, buildInput(context, variant), now);
+          expect(receipt.outcome).toBe('resolved');
+          expect(ledger.getById(taskId)?.revision).toBe(context.revision + 1);
+        } else {
+          expect(variant.optional).toEqual([]);
+          const { context, taskId } = freshSetup();
+          const receipt = applyEffect(context, buildInput(context, variant), now);
+          expect(receipt.outcome).toBe(variant.outcome);
+          expect(ledger.getById(taskId)?.revision).toBe(context.revision + 1);
+        }
+        // Every optional field of the same variant is accepted together with
+        // the required ones (resolved: status and due_at in one call).
+        if (variant.optional.length > 0) {
+          const { context: second } = freshSetup();
+          const withOptional: Record<string, unknown> = {};
+          for (const field of variant.optional) {
+            withOptional[field] = sampleValue(field);
+          }
+          expect(applyEffect(second, buildInput(second, variant, withOptional), now).outcome).toBe(
+            variant.outcome
+          );
+        }
+      }
+    });
+
+    it('every field advertised only for another outcome is rejected, not silently stripped', () => {
+      for (const variant of declaredVariants()) {
+        const own = new Set([...variant.required, ...variant.optional]);
+        for (const field of OUTCOME_FIELDS.filter((candidate) => !own.has(candidate))) {
+          const { context, taskId } = freshSetup();
+          expect(() =>
+            applyEffect(context, buildInput(context, variant, { [field]: sampleValue(field) }), now)
+          ).toThrow(/unknown or forbidden fields/);
+          expect(ledger.getById(taskId)?.revision).toBe(context.revision);
+          expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+        }
+      }
+    });
+
+    it('every field advertised as required for an outcome is rejected when omitted', () => {
+      for (const variant of declaredVariants()) {
+        for (const field of variant.required.filter((candidate) =>
+          OUTCOME_FIELDS.includes(candidate)
+        )) {
+          const { context, taskId } = freshSetup();
+          const input = buildInput(context, variant) as unknown as Record<string, unknown>;
+          delete input[field];
+          const expectedError =
+            variant.outcome === 'resolved' ? /actual status or due_at change/ : new RegExp(field);
+          expect(() => applyEffect(context, input as TemporalReconcileInput, now)).toThrow(
+            expectedError
+          );
+          expect(ledger.getById(taskId)?.revision).toBe(context.revision);
+          expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+        }
+      }
+    });
+
+    it('keeps rejecting an unknown outcome regardless of the declared union', () => {
+      const { context, taskId } = freshSetup();
+      expect(() =>
+        applyEffect(
+          context,
+          {
+            expected_revision: context.revision,
+            outcome: 'superseded',
+            reason: 'not a declared outcome',
+          } as unknown as TemporalReconcileInput,
+          now
+        )
+      ).toThrow(/outcome is unknown or forbidden/);
+      expect(ledger.getById(taskId)?.revision).toBe(context.revision);
+      expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+    });
+  });
 
   it('rolls every table back when immutable receipt insertion fails', () => {
     const { context, generationKey, taskId } = setup();

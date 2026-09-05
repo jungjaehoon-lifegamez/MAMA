@@ -1066,6 +1066,88 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
   });
 
+  it('TG-04/TG-06 commits a final_no_update call shaped exactly as the declaration advertises', async () => {
+    const packetId = 'ctxp_temporal_final_no_update';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [boundRawRef()],
+        created_at: now + 1,
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    const result = await executor.execute(
+      'task_temporal_reconcile',
+      {
+        context_packet_id: packetId,
+        expected_revision: context.revision,
+        outcome: 'final_no_update',
+        evidence_summary: 'The bound card is still open with no new activity.',
+        reason: 'Current pending state remains correct',
+      } as never,
+      {
+        ...executionContext,
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_temporal_final_no_update',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true, receipt: { outcome: 'final_no_update' } });
+    expect(ledger.getById(taskId)).toMatchObject({
+      status: 'pending',
+      revision: 2,
+      temporalReconciledOccurrenceKey: context.occurrenceKey,
+    });
+  });
+
+  it('TG-04/TG-06 rejects a resolved call that carries the final_no_update evidence field', async () => {
+    const packetId = 'ctxp_temporal_cross_outcome';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [boundRawRef()],
+        created_at: now + 1,
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    // The host never strips an out-of-outcome field as a courtesy: the call is
+    // refused whole and the ledger row keeps its revision.
+    await expect(
+      executor.execute(
+        'task_temporal_reconcile',
+        {
+          context_packet_id: packetId,
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          status: 'done',
+          evidence_summary: 'belongs to final_no_update',
+          reason: 'mixed outcome fields',
+        } as never,
+        {
+          ...executionContext,
+          envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+          modelRunId: 'mr_temporal_cross_outcome',
+        }
+      )
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+    expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+  });
+
   it('allows a source-empty deferred packet while keeping final outcomes source-backed', async () => {
     const packetId = 'ctxp_temporal_deferred';
     executor = new GatewayToolExecutor({

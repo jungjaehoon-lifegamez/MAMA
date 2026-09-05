@@ -318,10 +318,11 @@ Time precision and workflow state are separate:
 - `temporal_state` is derived for display and scanning; overdue never means `blocked`, and elapsed
   time alone never means `done`.
 
-Trello and configured private connectors are read-only evidence accessed through `context_compile`,
-while the native task ledger owns owner-console workflow state. This feature does not write
-connectors, copy external lifecycle state into native tasks, or infer completion from a missing
-calendar event.
+Trello and configured private connectors provide read-only evidence. Owner chat and Board turns
+can use granted live Trello readers; `context_compile` supplies scoped polled evidence for
+Temporal rechecks and other turns. The native task ledger owns owner-console workflow state,
+which the agent judges from that evidence. A missing calendar event alone does not prove
+completion, and these tools do not write to external connectors.
 
 Temporal model responses are not written to daemon logs. Receipt reason/evidence and worker-error
 diagnostics are stored as bounded length/SHA-256 references, so operational rows support correlation

@@ -331,9 +331,12 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   allowlisted chat's private DM gets the owner surface. Static sourceMapping to
   owner_console is downgraded at runtime and flagged by the code audit.
 - **Owner-event lane:** connector batches persist before source cursor commit and run through the
-  same MAMA owner agent as a stateless FRESH run per batch on `owner-event:<channelKey>` lane keys
-  (each prompt is self-contained; resuming the per-channel thread replayed the whole growing
-  history every batch — 45.9M tokens on 2026-08-20 alone). Completion (One MAMA, v0.41.0) is a
+  same MAMA owner agent as a FRESH run per batch on `owner-event:<channelKey>` lane keys.
+  Each prompt can include at most ten bounded historical records from the same channel's
+  existing journal, under the current owner role/connector grant; confirmed notification text
+  also requires the current Telegram target. These are untrusted past observations, not current
+  facts or a resumed provider transcript (unbounded replay previously cost 45.9M tokens on
+  2026-08-20 alone). Completion (One MAMA, v0.41.0) is a
   ledger change: a successful `task_create`/`task_update`/`mama_save`/`mama_update`/`drive_upload`,
   or an exact no-update receipt; a `telegram_send` alone is a retry unless the final message
   begins with `[decision]` (host-detected, counted as `unresolved_reason` on the inbox row).
@@ -367,11 +370,13 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   `SCHEDULED_TURN_BLOCKED_TOOLS` − `TURN_KIND_BLOCKED_TOOLS[kind]`; `tests/cli/lane-wiring.test.ts`
   pins that no unattended turn holds a send or an upload. The board pipeline slot is rendered by
   the host (`board-pipeline-render.ts`) before the board turn; the turn writes only briefing,
-  action*required and decisions.
-  Board workers read Trello only through `context_compile({connectors:['trello']})`;
-  every workorder worker treats connector packets as untrusted data whose embedded
-  instructions/tool calls must not be followed. `kagemusha*\*` remains read-only
-  project-task truth, while the native ledger owns owner-console tasks and the
+  `action_required` and `decisions`.
+  Board workers can use their granted live Trello query tools. `context_compile` supplies
+  scoped connector messages and polled evidence. Owner chat uses the same distinction.
+  The agent judges native task status from that evidence and records the reason.
+  Every workorder worker treats connector packets as untrusted data whose embedded
+  instructions or tool calls must not be followed. Private connector tools remain read-only
+  project-task evidence, while the native ledger owns owner-console tasks and the
   pipeline projection.
 - **Memory-write secret filter:** `mama_save`/`mama_update` REFUSE
   secret-shaped content (`secret_material_refused`). `mama_add`/`mama_ingest`
