@@ -157,7 +157,7 @@ describe('Code-Act Integration', () => {
       ]);
 
       expect(instructions).toContain('var first=1; var second=2; ({first:first,second:second})');
-      expect(instructions).not.toContain("mama_search({query:'first'})");
+      expect(instructions).not.toContain('mama_search');
     });
 
     it('preserves agent composition freedom instead of prescribing one owner workflow', () => {

@@ -510,7 +510,12 @@ register({
 register({
   name: 'task_update',
   description:
-    'Update a work item on YOUR task board by id. Input `latest_event` sets the owner reason; the returned task DTO exposes it as response field `latestEvent`. Board workorder lifecycle judgments carry the revision read by the model. A review transition also carries the same-run packet and one exact selected raw submission anchor; the host verifies its source/timestamp and computes review timing. System workorder rows are host-managed and cannot be updated here.',
+    'Update a work item on YOUR task board by id. Input `latest_event` sets the owner reason; ' +
+    'the returned task DTO exposes it as response field `latestEvent`. Board workorder ' +
+    'lifecycle judgments carry the revision read by the model. A review transition also ' +
+    'carries the same-run packet and one exact selected raw submission anchor; the host ' +
+    'verifies its source/timestamp and computes review timing. System workorder rows are ' +
+    'host-managed and cannot be updated here.',
   category: 'os_monitoring',
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, expected_revision?, context_packet_id?, review_anchor_ref?',
