@@ -140,6 +140,50 @@ describe('ToolRegistry', () => {
       ]);
     });
 
+    it('TG-04/TG-06 defines task_temporal_reconcile with a closed schema and per-outcome field rules', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['task_temporal_reconcile'],
+      });
+
+      // The native JSON schema cannot express "evidence_summary only when
+      // outcome is final_no_update" (no oneOf in HostToolInputSchema), so the
+      // schema is the closed superset and the description names the exact
+      // required/forbidden combinations the validator enforces.
+      expect(definition).toEqual(
+        expect.objectContaining({
+          name: 'task_temporal_reconcile',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              context_packet_id: { type: 'string' },
+              expected_revision: { type: 'integer', minimum: 0 },
+              outcome: { enum: ['resolved', 'final_no_update', 'deferred'] },
+              reason: { type: 'string' },
+              status: {
+                enum: ['pending', 'in_progress', 'review', 'blocked', 'done', 'cancelled'],
+              },
+              due_at: { type: ['string', 'null'] },
+              evidence_summary: { type: 'string', minLength: 1, maxLength: 1000 },
+              next_temporal_check_at: { type: 'string' },
+            },
+            required: ['context_packet_id', 'expected_revision', 'outcome', 'reason'],
+            additionalProperties: false,
+          },
+        })
+      );
+      for (const rule of [
+        'resolved',
+        'final_no_update',
+        'deferred',
+        'evidence_summary (required',
+        'next_temporal_check_at (required',
+        'strictly',
+        'rejected',
+      ]) {
+        expect(definition?.description).toContain(rule);
+      }
+    });
+
     it('should advertise all non-viewer registered tools when allowedTools is undefined', () => {
       const definitions = ToolRegistry.getHostToolDefinitions();
 

@@ -12,6 +12,7 @@
  * display excerpt. Trigger activations are immutable procedure snapshots.
  */
 import type { SQLiteDatabase } from '../sqlite.js';
+import { scanForSecrets } from '../memory/secret-filter.js';
 import type { TriggerProcedureStep } from './trigger-types.js';
 
 const MAX_ATTEMPTS = 5;
@@ -59,6 +60,24 @@ export interface InboxRow extends InboxBatch {
 
 export type OwnerEventBatch = InboxRow;
 
+export interface OwnerEventPriorContextItem {
+  observedAt: string;
+  completedAt: string;
+  observations: string[];
+  outcome: 'acted' | 'no_update' | 'owner_decision_requested';
+  effects: string[];
+  note?: string;
+  notification?: string;
+}
+
+export interface OwnerEventPriorContextAccess {
+  currentBatchId: number;
+  channelKey: string;
+  principalRole: string;
+  allowedRawConnectors: readonly string[];
+  ownerTelegramChatId?: string | null;
+}
+
 interface StoredOwnerEventRow {
   id: number;
   channel_key: string;
@@ -67,6 +86,92 @@ interface StoredOwnerEventRow {
   activations_json: string;
   attempts: number;
   created_at: number;
+}
+
+interface StoredPriorRow {
+  id: number;
+  event_ids_json: string;
+  lines_json: string;
+  unresolved_reason: string | null;
+  created_at: number;
+  acked_at: number;
+}
+
+function tableExists(db: SQLiteDatabase, name: string): boolean {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name)
+  );
+}
+
+function safeStringArray(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function historicalText(value: string): string {
+  const flattened = value.replace(/[\r\n]+/g, ' ').trim();
+  if (
+    !scanForSecrets(flattened).clean ||
+    /\b(?:token|api[_-]?key|password|secret|authorization)\s*[:=]\s*\S+/i.test(flattened)
+  ) {
+    return '[redacted-secret]';
+  }
+  return flattened.slice(0, 800);
+}
+
+function safeRecord(value: string | null): Record<string, unknown> | null {
+  if (value === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function confirmedTelegramText(
+  intentJson: string,
+  resultJson: string | null,
+  ownerTelegramChatId: string | null | undefined
+): string | null {
+  if (!ownerTelegramChatId) return null;
+  const intent = safeRecord(intentJson);
+  const result = safeRecord(resultJson);
+  const variant = intent?.variant;
+  if (
+    intent?.version !== 1 ||
+    intent.chatId !== ownerTelegramChatId ||
+    typeof intent.deliveryId !== 'string' ||
+    intent.deliveryId.length === 0 ||
+    (variant !== 'text' && variant !== 'file' && variant !== 'image' && variant !== 'sticker') ||
+    result?.version !== 1 ||
+    result.state !== 'delivered' ||
+    result.deliveryId !== intent.deliveryId ||
+    result.variant !== variant ||
+    typeof result.payloadIdentity !== 'string' ||
+    result.payloadIdentity.length === 0 ||
+    typeof result.confirmedAt !== 'number' ||
+    !Number.isFinite(result.confirmedAt)
+  ) {
+    return null;
+  }
+  return typeof intent.message === 'string' && intent.message.trim()
+    ? historicalText(intent.message)
+    : null;
+}
+
+function isoTimestamp(value: number): string | null {
+  if (!Number.isFinite(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function deadBatch(row: StoredOwnerEventRow, attempts: number): OwnerEventBatch {
@@ -369,5 +474,130 @@ export class OwnerEventInbox {
       claimed: byStatus.get('claimed') ?? 0,
       dead: byStatus.get('dead') ?? 0,
     };
+  }
+
+  /**
+   * Bounded historical data for a fresh owner-event run. The journal has no
+   * transferable principal grant, so callers must present the current owner
+   * role and connector grant. Notification text additionally requires the
+   * exact current Telegram target and a confirmed versioned receipt.
+   */
+  readPriorContext(input: OwnerEventPriorContextAccess): OwnerEventPriorContextItem[] {
+    const separator = input.channelKey.indexOf(':');
+    const connector = separator > 0 ? input.channelKey.slice(0, separator) : input.channelKey;
+    if (
+      input.principalRole !== 'owner_console' ||
+      !input.allowedRawConnectors.includes(connector)
+    ) {
+      return [];
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, event_ids_json, lines_json, unresolved_reason, created_at, acked_at
+           FROM owner_event_inbox
+          WHERE status = 'acked' AND channel_key = ? AND id <> ? AND acked_at IS NOT NULL
+          ORDER BY acked_at DESC, id DESC
+          LIMIT 10`
+      )
+      .all(input.channelKey, input.currentBatchId) as StoredPriorRow[];
+    const hasEvidenceEffects = tableExists(this.db, 'evidence_effects');
+    const hasExternalEffects = tableExists(this.db, 'owner_event_effects');
+    const hasNoUpdates = tableExists(this.db, 'operator_no_update_notes');
+    const context: OwnerEventPriorContextItem[] = [];
+
+    for (const row of rows) {
+      const observedAt = isoTimestamp(row.created_at);
+      const completedAt = isoTimestamp(row.acked_at);
+      if (!observedAt || !completedAt || row.acked_at < row.created_at) continue;
+      const eventIds = safeStringArray(row.event_ids_json);
+      const effectKinds = new Set<string>();
+      if (hasEvidenceEffects && eventIds.length > 0) {
+        for (let offset = 0; offset < eventIds.length; offset += SEEN_CHUNK) {
+          const chunk = eventIds.slice(offset, offset + SEEN_CHUNK);
+          const effects = this.db
+            .prepare(
+              `SELECT DISTINCT effect_kind FROM evidence_effects
+                WHERE cause_state = 'attributed' AND channel_id = ?
+                  AND created_at BETWEEN ? AND ?
+                  AND EXISTS (
+                    SELECT 1 FROM json_each(evidence_effects.source_event_ids_json)
+                     WHERE json_each.value IN (${chunk.map(() => '?').join(', ')})
+                  )`
+            )
+            .all(input.channelKey, row.created_at, row.acked_at, ...chunk) as Array<{
+            effect_kind: string;
+          }>;
+          for (const effect of effects) effectKinds.add(effect.effect_kind);
+        }
+      }
+
+      let notification: string | null = null;
+      if (hasExternalEffects) {
+        const externalRows = this.db
+          .prepare(
+            `SELECT effect_kind, intent_json, result_json
+               FROM owner_event_effects
+              WHERE batch_id = ? AND status = 'confirmed'
+                AND created_at BETWEEN ? AND ? AND updated_at <= ?
+              ORDER BY effect_kind ASC, action_key ASC`
+          )
+          .all(row.id, row.created_at, row.acked_at, row.acked_at) as Array<{
+          effect_kind: string;
+          intent_json: string;
+          result_json: string | null;
+        }>;
+        for (const effect of externalRows) {
+          if (effect.effect_kind === 'telegram_send') {
+            const text = confirmedTelegramText(
+              effect.intent_json,
+              effect.result_json,
+              input.ownerTelegramChatId
+            );
+            if (text !== null) {
+              notification = text;
+              effectKinds.add('telegram_send');
+            }
+          } else if (effect.effect_kind === 'drive_upload') {
+            effectKinds.add('drive_upload');
+          }
+        }
+      }
+
+      const noUpdate = hasNoUpdates
+        ? (this.db
+            .prepare(
+              `SELECT reason FROM operator_no_update_notes
+                WHERE scope = ? AND created_at BETWEEN ? AND ?
+                ORDER BY id DESC LIMIT 1`
+            )
+            .get(`owner-event:${row.id}`, row.created_at, row.acked_at) as
+            | { reason: string }
+            | undefined)
+        : undefined;
+      const ownerDecisionRequested =
+        row.unresolved_reason === 'owner_decision_requested' && notification !== null;
+      const hasActedEffect = [...effectKinds].some((kind) => kind !== 'telegram_send');
+      const outcome = ownerDecisionRequested
+        ? 'owner_decision_requested'
+        : hasActedEffect
+          ? 'acted'
+          : noUpdate
+            ? 'no_update'
+            : null;
+      if (outcome === null) continue;
+
+      context.push({
+        observedAt,
+        completedAt,
+        observations: safeStringArray(row.lines_json).slice(0, 10).map(historicalText),
+        outcome,
+        effects: [...effectKinds].sort(),
+        ...(noUpdate ? { note: historicalText(noUpdate.reason) } : {}),
+        ...(notification ? { notification } : {}),
+      });
+      if (context.length === 10) break;
+    }
+    return context;
   }
 }

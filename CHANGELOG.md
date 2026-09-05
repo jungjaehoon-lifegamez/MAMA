@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.47.0] - 2026-09-05
+
+### Fixed
+
+- Owner chat and scheduled Board prompts now allow the live Trello readers already present in
+  their tool grants and let the agent judge native task state from evidence. They distinguish
+  live card data from polled `context_compile` evidence, describe revision/reason and candidate
+  update requirements, and route Board questions to the decisions slot without adding send
+  permission. Existing owner sessions rotate to the updated policy on their next turn.
+- `task_temporal_reconcile` now advertises outcome-specific Code-Act input types. Resolved
+  results require a status or deadline field, no-update results require their evidence summary,
+  and deferred results require their next check. The existing validator, source binding and
+  revision checks remain unchanged.
+
+### Changed
+
+- Fresh owner-event turns now receive a bounded view of prior same-channel handling from the
+  existing journal and effect receipts. Historical records remain untrusted, and prior Telegram
+  text is shown only for the current owner target with a confirmed receipt. No new persistence
+  table or growing provider transcript is added.
+- Event instructions distinguish quiet no-update handling from useful owner notifications;
+  routine observations do not require a task, memory write, or Telegram message merely to finish
+  the turn. Existing delivery identity and retry recovery remain in place.
+
 ## mama-os [0.46.0] - 2026-09-04
 
 ### Removed

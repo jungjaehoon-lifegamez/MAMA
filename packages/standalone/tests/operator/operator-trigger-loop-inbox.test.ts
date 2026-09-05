@@ -237,6 +237,53 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     expect(row.lines.filter((l) => l === '')).toEqual([]); // never padded (review: positional zip)
   });
 
+  it('TG-05 keeps distinct 200/166-event semantic batches while showing 10 lines each', async () => {
+    const inbox = new OwnerEventInbox(db);
+    const batches = [200, 166].map((count, batchIndex) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: batchIndex * 1_000 + i + 1,
+        channel: 'chat',
+        channelId: 'C1',
+        userId: 'redacted-user',
+        role: 'user' as const,
+        content: `semantic repeat ${i + 1}`,
+        createdAt: batchIndex * 1_000_000 + i,
+        eventIndexId: `batch-${batchIndex + 1}-event-${i + 1}`,
+      }))
+    );
+    let drain = 0;
+    const loop = new OperatorTriggerLoop({
+      delta: {
+        drainNew: () => batches[drain++] ?? [],
+        commit: () => {},
+      },
+      memory: fakeMem(),
+      registry: reg,
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 200,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+      ownerEventInbox: inbox,
+    });
+
+    await loop.tick();
+    const first = inbox.claimNext()!;
+    expect(first.eventIds).toHaveLength(200);
+    expect(first.lines).toHaveLength(10);
+    inbox.ack(first.id);
+    await loop.tick();
+    const second = inbox.claimNext()!;
+    expect(second.eventIds).toHaveLength(166);
+    expect(second.lines).toHaveLength(10);
+    expect(new Set([...first.eventIds, ...second.eventIds]).size).toBe(366);
+  });
+
   it('groups per channel and enqueues each group with full event identity', async () => {
     const inbox = new OwnerEventInbox(db);
     const events: OperatorChannelEvent[] = [

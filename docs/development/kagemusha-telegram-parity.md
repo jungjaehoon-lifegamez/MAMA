@@ -235,6 +235,42 @@ scenario IDs from this document.
 - **Status:** CODE GREEN, merged as PR #231, and released in v0.39.0; a real Temporal canary
   remains pending.
 
+### Temporal outcome declaration fidelity: 2026-09-05
+
+- **TG-03/TG-04:** `task_temporal_reconcile` is projected to Code-Act as an
+  outcome-discriminated TypeScript input. `resolved` requires at least one of `status` and
+  `due_at` and exposes only those two outcome fields,
+  `final_no_update` requires `evidence_summary`, and `deferred` requires
+  `next_temporal_check_at`. The generated gateway catalog and canonical registry state the same
+  field boundary, while the native dynamic-tool JSON Schema remains a closed superset whose
+  description names every outcome-specific required and forbidden combination.
+- **TG-06:** declaration-to-validator tests send each advertised outcome through the production
+  ledger validator, reject fields belonging to another outcome without changing the task or
+  writing a receipt, retain unknown-outcome rejection, and cover the real executor packet/source
+  attestation path. The existing revision CAS, trusted task/source identity, and deterministic
+  repeat boundary remain in force; no TaskLedger runtime behavior changed.
+- **Verification:** the focused Task 2 gate passed 10 files and 219 tests. Standalone TypeScript
+  checking and changed-file ESLint passed; changed-file Prettier and `git diff --check` were clean.
+  This is uncommitted code/test evidence only; release and a real Temporal canary remain pending.
+
+### Quiet owner-event prior context: 2026-09-05
+
+- **TG-01/TG-05:** each fresh owner-event run may read at most ten older acked batches from the
+  exact channel, newest first. The reader requires the current `owner_console` principal and
+  connector grant, excludes the current/retried batch, and exposes old source/notification prose
+  only as timestamped untrusted JSON data. Each item is at most 800 characters and the data layer
+  is at most 8,000 characters. Confirmed Telegram text is included only when its versioned receipt
+  matches the current owner target; foreign channels, targets, unconfirmed effects, secrets, and
+  records without a terminal receipt are omitted.
+- **TG-06:** the completion contract now permits a successful no-update observation to end quietly
+  with `contract_no_update`, without inventing a task, memory, or Telegram send. Real new risks,
+  requests, durable changes, and required owner decisions remain available through the existing
+  authorized effects and decision path; the host does not prescribe a tool sequence.
+- **Verification:** focused reader/prompt/loop coverage includes a file-backed database reopen,
+  confirmed-send no-replay, malformed/secret record filtering, and distinct synthetic 200/166-event
+  batches whose full identities remain separate while each displays ten lines. This is code and
+  scripted-provider evidence only; model judgment quality and installed behavior remain pending.
+
 ### v0.39.0 live canary partial evidence: 2026-08-26
 
 - **TG-03/TG-04/TG-06:** real owner-event traffic produced host-bound exact batch intents and
