@@ -54,6 +54,15 @@ export default class Database {
     this.db.close();
   }
 
+  /**
+   * Test-only escape hatch to the underlying better-sqlite3 handle, for harnesses
+   * that need connection-scoped features the wrapper does not surface (UDFs, TEMP
+   * views). Never use this on a production path.
+   */
+  get unsafeRawHandle(): BetterSqlite3.Database {
+    return this.db;
+  }
+
   get open(): boolean {
     return this.db.open;
   }

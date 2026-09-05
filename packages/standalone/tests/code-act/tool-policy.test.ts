@@ -291,6 +291,7 @@ describe('Code-Act canonical tool policy', () => {
     expect(typeof first.fingerprintPayload).toBe('string');
     expect(first.fingerprintPayload).toBe(second.fingerprintPayload);
     const fingerprint = JSON.parse(first.fingerprintPayload) as CodeActToolPolicyFingerprintData;
+    expect(fingerprint).toMatchObject({ version: 5, metadataContractVersion: 1 });
     expect(fingerprint.inputs).toEqual({
       tier: 2,
       roleName: null,
@@ -353,7 +354,7 @@ describe('Code-Act canonical tool policy', () => {
     expect(policy.fingerprintPayload).toBe(fingerprint);
   });
 
-  it('keeps advertised, registered, and invoked names identical for one complete projection', async () => {
+  it('keeps projected business tools exact while adding read-only metadata primitives', async () => {
     const execute = vi.fn().mockResolvedValue({ success: true });
     const executor = { execute } as unknown as GatewayToolExecutor;
     const policyInput: CodeActToolPolicyInput = {
@@ -406,7 +407,7 @@ describe('Code-Act canonical tool policy', () => {
 
     expect(result.success).toBe(true);
     expect(advertised.length).toBeGreaterThan(0);
-    expect(registered).toEqual(advertised);
+    expect(registered).toEqual([...advertised, 'tool_describe', 'tool_search'].sort());
     expect(invoked).toEqual(advertised);
   });
 });

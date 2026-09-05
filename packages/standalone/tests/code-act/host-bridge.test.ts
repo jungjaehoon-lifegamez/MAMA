@@ -98,7 +98,10 @@ describe('HostBridge', () => {
       expect(list?.params).toContainEqual(
         expect.objectContaining({ name: 'include_terminal', type: 'boolean' })
       );
-      expect(list?.description).toContain('returns the whole board');
+      // Progressive reader (Task B): the whole board is reachable through pages,
+      // not one implied return; the items rows still carry temporal_state.
+      expect(list?.description).toContain('view:items (DEFAULT)');
+      expect(list?.description).toContain('nextCursor');
       expect(list?.returnType).toContain('temporal_state');
     });
 
@@ -199,7 +202,7 @@ describe('HostBridge', () => {
       expect(registered).not.toContain('Bash');
     });
 
-    it('filters by role when RoleManager provided', () => {
+    it('filters execution and metadata by role when RoleManager provided', async () => {
       const role: RoleConfig = {
         allowedTools: ['Read', 'mama_search'],
       };
@@ -212,6 +215,11 @@ describe('HostBridge', () => {
       expect(registered).toContain('mama_search');
       expect(registered).not.toContain('Bash');
       expect(registered).not.toContain('Write');
+      const discovery = await sandbox.execute(`tool_search({ query: 'Bash' })`);
+      expect(discovery).toMatchObject({
+        success: true,
+        value: { tools: [], nextCursor: null },
+      });
     });
 
     it('registers exactly an already-projected name set', () => {
@@ -220,7 +228,12 @@ describe('HostBridge', () => {
 
       bridge.injectInto(sandbox, ['mama_search', 'Read'], { allowedTools: ['Write'] });
 
-      expect(sandbox.getRegisteredFunctions().sort()).toEqual(['Read', 'mama_search']);
+      expect(sandbox.getRegisteredFunctions().sort()).toEqual([
+        'Read',
+        'mama_search',
+        'tool_describe',
+        'tool_search',
+      ]);
     });
   });
 
@@ -749,10 +762,12 @@ describe('HostBridge', () => {
         category: 'memory',
       });
       expect(registry.get('board_read')).toMatchObject({
-        params: [],
-        returnType: '{ slots: Record<string, { html: string; updatedAt?: string | null }> }',
+        // Progressive reader (Task B): default lists slot descriptors, a named
+        // slot pages text/html by code points. Superseded the whole-HTML return.
+        returnType: expect.stringContaining('htmlLength'),
         category: 'os',
       });
+      expect(registry.get('board_read')?.returnType).toContain('nextOffset');
       expect(registry.get('audit_findings_read')).toMatchObject({
         params: [],
         returnType: '{ findings: unknown; message?: string }',

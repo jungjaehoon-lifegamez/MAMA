@@ -37,7 +37,6 @@ import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
 import {
   CODE_ACT_MARKER,
-  TypeDefinitionGenerator,
   getCodeActInstructions,
   projectCodeActToolPolicy,
 } from '../agent/code-act/index.js';
@@ -988,15 +987,9 @@ ${skillsPrompt}## Guidelines
         tier: tier as 1 | 2 | 3,
         role: { allowedTools: [...catalog.toolNames], blockedTools: [] },
       });
-      const typeDefs = TypeDefinitionGenerator.generate(policy);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
       const codeActBackend = backend;
-      return (
-        getCodeActInstructions(codeActBackend, policy.names) +
-        '\n```typescript\n' +
-        typeDefs +
-        '\n```\n'
-      );
+      return getCodeActInstructions(codeActBackend, policy.names) + '\n';
     }
 
     // Per-agent tool filtering via ToolRegistry (STORY-018)

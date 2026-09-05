@@ -81,11 +81,15 @@ function serializeGatewayResult(result: GatewayToolResult): CodeActResult {
   const hostToolsInvoked = normalizeStringArray(record.hostToolsInvoked);
   const logs = normalizeStringArray(record.logs);
   const metrics = normalizeMetrics(record.metrics);
+  const hasCanonicalResult = 'value' in record || typeof record.error === 'string';
   return {
     success: result.success,
     ...('value' in record ? { value: record.value } : {}),
     ...(logs ? { logs } : {}),
     ...(typeof record.error === 'string' ? { error: record.error } : {}),
+    ...(!hasCanonicalResult && typeof record.message === 'string'
+      ? { message: record.message }
+      : {}),
     ...(code && TERMINAL_MUTATION_CODES.has(code)
       ? {
           terminalCode: code as NonNullable<CodeActResult['terminalCode']>,
@@ -98,6 +102,7 @@ function serializeGatewayResult(result: GatewayToolResult): CodeActResult {
     ...(metrics ? { metrics } : {}),
     ...(hostToolExecutions ? { hostToolExecutions } : {}),
     ...(hostToolsInvoked ? { hostToolsInvoked } : {}),
+    ...(record.untrustedExternalEvidence === true ? { untrustedExternalEvidence: true } : {}),
   };
 }
 

@@ -136,9 +136,11 @@ export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     name: 'kagemusha_messages' as const,
-    description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
+    description:
+      "Read raw messages from a specific channel (follow entities -> tasks -> messages). Progressive: a bounded page newest-first (limit 1..50, default 25) with total/returned/nextCursor over an append-only asOf upper bound - walk nextCursor for the rest, and an empty nextCursor is the END of this channel's matches, not that all channels were read. An unknown channel is a loud missing-source error, never an empty success. Long message content is a reachable code-point window (content_offset/content_limit), never a hidden slice; pass messageId (bound to the same channel/time/search scope) to page ONE long message without its peers. All time strings are strictly validated ISO-8601.",
     category: 'business_data' as const,
-    params: 'channelId (required), since?, limit?, search?',
+    params:
+      'channelId (required), since?, before?, search?, limit? (1..50, default 25), cursor?, messageId? (one scoped message), content_offset?, content_limit? (1..4000, default 2000)',
     codeAct: Object.freeze({
       params: Object.freeze([
         Object.freeze({
@@ -151,18 +153,53 @@ export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
           name: 'since',
           type: 'string',
           required: false,
-          description: 'ISO date (default: 7 days ago)',
+          description: 'ISO date/timestamp (default: 7 days ago)',
         }),
-        Object.freeze({ name: 'limit', type: 'number', required: false }),
+        Object.freeze({
+          name: 'before',
+          type: 'string',
+          required: false,
+          description: 'ISO date/timestamp upper bound (inclusive)',
+        }),
         Object.freeze({
           name: 'search',
           type: 'string',
           required: false,
           description: 'Text search in content',
         }),
+        Object.freeze({
+          name: 'limit',
+          type: 'number',
+          required: false,
+          description: 'integer 1..50, default 25',
+        }),
+        Object.freeze({
+          name: 'cursor',
+          type: 'string',
+          required: false,
+          description: "previous page's nextCursor",
+        }),
+        Object.freeze({
+          name: 'messageId',
+          type: 'number',
+          required: false,
+          description: 'read ONE scoped message across content offsets, without its peers',
+        }),
+        Object.freeze({
+          name: 'content_offset',
+          type: 'number',
+          required: false,
+          description: 'code-point offset into each message content, default 0',
+        }),
+        Object.freeze({
+          name: 'content_limit',
+          type: 'number',
+          required: false,
+          description: 'code points per content window, default 2000, max 4000',
+        }),
       ]),
       returnType:
-        '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
+        '{ messages: Array<{ id: number; channel: string; channelId: string; author: string; role: string; content: { value: string; offset: number; limit: number; total: number; nextOffset: number | null; complete: boolean }; timestamp: string }>; total: number; returned: number; nextCursor: string | null; observedAt: string; snapshot: { asOfId: number; note: string } }',
       category: 'memory' as const,
     }),
   }),

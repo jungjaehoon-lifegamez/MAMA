@@ -348,6 +348,17 @@ export interface ListTasksFilter {
   includeTerminal?: boolean;
   channel?: string;
   search?: string;
+  /** Exact assignee match (progressive overview/items filter). */
+  assignee?: string;
+  /** Exact priority match (progressive overview/items filter). */
+  priority?: TaskPriority;
+  /** Exact due_at strictly before this epoch ms. Date-only-deadline rows (no due_at)
+   *  are NOT matched: an exact-time filter never invents a clock for a date-only row. */
+  dueBeforeMs?: number;
+  /** Exact due_at at or after this epoch ms. Same date-only exclusion as dueBeforeMs. */
+  dueAfterMs?: number;
+  /** updated_at at or after this epoch ms. */
+  updatedSinceMs?: number;
   limit?: number;
   /** 'deadline_priority' = deadline asc NULLS LAST, then high>normal>low, then id. */
   order?: 'deadline_priority' | 'updated';
@@ -373,6 +384,33 @@ export interface ListTasksPage {
   returned: number;
   /** Cursor for the next page, or null when this page ends the set. */
   nextCursor: string | null;
+}
+
+/**
+ * Aggregate counts over the SAME owner predicate a page would return, plus the
+ * due buckets derived from the identical temporal classification `items` uses,
+ * under one captured `now`. Every facet partitions `total`, so a caller can add
+ * up any facet and check it against the number it drew the page from.
+ */
+export interface OverviewResult {
+  total: number;
+  /** Snapshot instant (ms) captured once for every bucket in this result. */
+  observedAt: number;
+  /** Conservative change signature; a cursor pinned to it is rejected after any owner write. */
+  readVersion: string;
+  status: Record<string, number>;
+  priority: Record<string, number>;
+  /** null source_channel is keyed as the literal string "null". */
+  channels: Array<{ channel: string | null; count: number }>;
+  /** null assignee (unassigned) is reported with assignee: null. */
+  assignees: Array<{ assignee: string | null; count: number }>;
+  /**
+   * Partition of `total` by temporal disposition under `observedAt`:
+   * missing = no due_at and no deadline; overdue/upcoming from the same
+   * deriveTemporalState `items` uses (date_due counts as upcoming); closed =
+   * done/cancelled. The four sum to `total`.
+   */
+  due: { missing: number; overdue: number; upcoming: number; closed: number };
 }
 
 const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
@@ -731,6 +769,26 @@ export class TaskLedger implements TaskSource {
       const like = `%${filter.search}%`;
       params.push(like, like, like);
     }
+    if (filter.assignee !== undefined) {
+      where.push('assignee = ?');
+      params.push(filter.assignee);
+    }
+    if (filter.priority !== undefined) {
+      where.push('priority = ?');
+      params.push(filter.priority);
+    }
+    if (filter.dueBeforeMs !== undefined) {
+      where.push('due_at IS NOT NULL AND due_at < ?');
+      params.push(filter.dueBeforeMs);
+    }
+    if (filter.dueAfterMs !== undefined) {
+      where.push('due_at IS NOT NULL AND due_at >= ?');
+      params.push(filter.dueAfterMs);
+    }
+    if (filter.updatedSinceMs !== undefined) {
+      where.push('updated_at >= ?');
+      params.push(filter.updatedSinceMs);
+    }
     return { where, params };
   }
 
@@ -818,6 +876,139 @@ export class TaskLedger implements TaskSource {
       returned: tasks.length,
       nextCursor: hasMore && last ? encodeListCursor(TaskLedger.cursorFor(last, order)) : null,
     };
+  }
+
+  /**
+   * One `listPage`, with the read generation and observation instant captured
+   * in the SAME synchronous call so total/rows/version cannot straddle a write
+   * from this process. The progressive `items` view pins its cursor to this
+   * readVersion and restarts if a later page observes a different one.
+   */
+  itemsPage(filter: ListTasksPageFilter = {}): ListTasksPage & {
+    readVersion: string;
+    observedAt: number;
+  } {
+    // One DEFERRED read transaction: the generation, the total and the rows all
+    // read the SAME SQLite snapshot, so another connection committing between the
+    // statements cannot make the returned readVersion disagree with the page it
+    // describes. Synchronous JS alone is not a cross-connection snapshot.
+    return this.readSnapshot(() => {
+      const observedAt = this.now();
+      const readVersion = this.readGeneration();
+      const page = this.listPage(filter);
+      return { ...page, readVersion, observedAt };
+    });
+  }
+
+  /** The ledger's clock (injected in tests); progressive views stamp observedAt with it. */
+  nowMs(): number {
+    return this.now();
+  }
+
+  /**
+   * Run a read-only body inside a single DEFERRED transaction so every statement
+   * shares one snapshot. better-sqlite3 nests via SAVEPOINT, so this is safe even
+   * if a caller is already inside a transaction.
+   */
+  private readSnapshot<T>(body: () => T): T {
+    const runner = this.db.transaction(body as unknown as (...args: never[]) => unknown);
+    return (runner as unknown as () => T)();
+  }
+
+  /**
+   * A conservative change signature for the whole owner board, derived from
+   * existing columns - no snapshot table. COUNT catches inserts/deletes,
+   * SUM(revision) catches every owner update (each bumps revision), MAX(id)
+   * catches inserts, MAX(updated_at) is a coarse tie-breaker. It is NOT an
+   * immutable snapshot id: it only lets a paged read reject its own cursor once
+   * ANY owner row has changed, so a "whole board" claim never spans a write.
+   * System workorder churn is deliberately excluded (kind='owner').
+   */
+  readGeneration(): string {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c, COALESCE(SUM(revision), 0) AS r,
+                COALESCE(MAX(id), 0) AS m, COALESCE(MAX(updated_at), 0) AS u
+         FROM operator_tasks WHERE kind = 'owner'`
+      )
+      .get() as { c: number; r: number; m: number; u: number };
+    return createHash('sha256')
+      .update(`${row.c}:${row.r}:${row.m}:${row.u}`)
+      .digest('base64url')
+      .slice(0, 22);
+  }
+
+  /**
+   * Aggregate counts over the same owner predicate `listPage` filters by. Facets
+   * come from SQL GROUP BY (each partitions total); due buckets are computed in
+   * one JS pass over minimal rows using the SAME deriveTemporalState `items`
+   * uses, so an overview bucket and an item's temporal_state never disagree.
+   * readGeneration is captured in the same synchronous call as the counts.
+   */
+  overview(filter: ListTasksFilter = {}): OverviewResult {
+    return this.readSnapshot(() => this.overviewInSnapshot(filter));
+  }
+
+  private overviewInSnapshot(filter: ListTasksFilter): OverviewResult {
+    // One captured time for every derived due bucket; one snapshot for every count.
+    const now = this.now();
+    const readVersion = this.readGeneration();
+    const { where, params } = this.buildListPredicate(filter);
+    const whereSql = where.join(' AND ');
+    const groupBy = (column: string): Array<{ key: string | null; count: number }> =>
+      this.db
+        .prepare(
+          `SELECT ${column} AS key, COUNT(*) AS count FROM operator_tasks
+           WHERE ${whereSql} GROUP BY ${column}`
+        )
+        .all(...params) as Array<{ key: string | null; count: number }>;
+
+    const total = (
+      this.db
+        .prepare(`SELECT COUNT(*) AS total FROM operator_tasks WHERE ${whereSql}`)
+        .get(...params) as { total: number }
+    ).total;
+
+    const status: Record<string, number> = {};
+    for (const row of groupBy('status')) status[String(row.key)] = row.count;
+    const priority: Record<string, number> = {};
+    for (const row of groupBy('priority')) priority[String(row.key)] = row.count;
+    const channels = groupBy('source_channel').map((row) => ({
+      channel: row.key,
+      count: row.count,
+    }));
+    const assignees = groupBy('assignee').map((row) => ({ assignee: row.key, count: row.count }));
+
+    const due = { missing: 0, overdue: 0, upcoming: 0, closed: 0 };
+    const rows = this.db
+      .prepare(
+        `SELECT status, due_at, deadline, deadline_offset_minutes
+         FROM operator_tasks WHERE ${whereSql}`
+      )
+      .all(...params) as Array<{
+      status: string;
+      due_at: number | null;
+      deadline: string | null;
+      deadline_offset_minutes: number | null;
+    }>;
+    for (const row of rows) {
+      const state = deriveTemporalState(
+        {
+          status: row.status,
+          dueAt: row.due_at,
+          deadlineIso: row.deadline,
+          deadlineOffsetMinutes: row.deadline_offset_minutes,
+        },
+        now,
+        this.timeZone
+      );
+      if (state === 'closed') due.closed += 1;
+      else if (state === 'unscheduled') due.missing += 1;
+      else if (state === 'exact_overdue' || state === 'date_overdue') due.overdue += 1;
+      else due.upcoming += 1;
+    }
+
+    return { total, observedAt: now, readVersion, status, priority, channels, assignees, due };
   }
 
   /** Internal bounded page for temporal reconciliation; excludes rows that can never be candidates. */

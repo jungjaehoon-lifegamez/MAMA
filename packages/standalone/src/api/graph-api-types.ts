@@ -47,6 +47,7 @@ export interface CodeActResult {
   value?: unknown;
   logs?: string[];
   error?: string;
+  message?: string;
   errorCode?: string;
   terminalCode?: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
   retryable?: boolean;
@@ -54,6 +55,8 @@ export interface CodeActResult {
   metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
   hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
   hostToolsInvoked?: string[];
+  /** Model boundary must wrap connector-derived values as untrusted external data. */
+  untrustedExternalEvidence?: boolean;
 }
 
 export interface CodeActExecutionContext {

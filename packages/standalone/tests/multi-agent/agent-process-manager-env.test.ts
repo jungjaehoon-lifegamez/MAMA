@@ -306,7 +306,7 @@ describe('AgentProcessManager env vars by tier', () => {
   });
 
   describe('STORY-CODE-ACT-GATEWAY-PERMISSIONS: Code-Act gateway allowlist separation', () => {
-    it('filters CLI-only allowed tools out of generated Code-Act declarations', async () => {
+    it('TG-03/TG-04 emits only progressive discovery declarations', async () => {
       const config = makeConfig({
         dashboard: {
           tier: 2,
@@ -322,8 +322,10 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
       const systemPrompt = args[args.indexOf('--system-prompt') + 1];
-      expect(systemPrompt).toContain('declare function mama_search');
-      expect(systemPrompt).toContain('declare function report_publish');
+      expect(systemPrompt).toContain('declare function tool_search');
+      expect(systemPrompt).toContain('declare function tool_describe');
+      expect(systemPrompt).not.toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function report_publish');
       expect(systemPrompt).not.toContain('declare function code_act');
       expect(systemPrompt).not.toContain('declare function mcp__brave-search__');
     });
@@ -349,7 +351,8 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
       const systemPrompt = args[args.indexOf('--system-prompt') + 1];
-      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).toContain('declare function tool_search');
+      expect(systemPrompt).not.toContain('declare function mama_search');
       expect(systemPrompt).not.toContain('declare function mama_save');
     });
 
@@ -369,7 +372,8 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
       const systemPrompt = args[args.indexOf('--system-prompt') + 1];
-      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).toContain('declare function tool_search');
+      expect(systemPrompt).not.toContain('declare function mama_search');
       expect(systemPrompt).not.toContain('declare function mama_save');
     });
 
@@ -389,7 +393,8 @@ describe('AgentProcessManager env vars by tier', () => {
 
       const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
       const systemPrompt = args[args.indexOf('--system-prompt') + 1];
-      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).toContain('declare function tool_search');
+      expect(systemPrompt).not.toContain('declare function mama_search');
       expect(systemPrompt).not.toContain('declare function mama_save');
     });
 
