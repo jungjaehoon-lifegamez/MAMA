@@ -153,23 +153,26 @@ export function buildWorkerSystemPrompt(
     'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
     ...toolInstructions,
     UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
+    // Board DATA boundaries only. The judgment itself (what is the same work, what is
+    // finished, what to ask the owner) belongs to the turn section; a system prompt that
+    // forbade it while the turn section required it (0.46.0) left the model a coin toss.
     ...(kind === 'board'
       ? [
           '',
           'Board data boundaries (non-negotiable):',
-          "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }).",
-          '- Other connector task sources projected into the current run are separate read-only evidence.',
-          '- task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source.',
-          '- Never infer or copy lifecycle status across those stores.',
-          '- Never copy external connector lifecycle status into the native ledger.',
-          '- Temporal fact: use task_list.temporal_state as the canonical time category and render it separately.',
-          '- Workflow judgment: preserve the source-of-truth lifecycle status; overdue does not mean blocked.',
+          '- task_list/task_create/task_update is YOUR task board: you maintain its rows, and the pipeline projection is rendered from them.',
+          '- Trello, calendar and channel data are external evidence. Read them through the read tools this run offers (the trello_* readers; context_compile for connector messages and the polled delta) and keep the stores apart in what you write: say which store a fact came from, and never present one store as another.',
+          '- An external status is evidence for your judgment, not a value you copy: decide the ledger status from what the sources show, and record why and where you saw it.',
+          '- Temporal fact: task_list.temporal_state is the canonical time category; render it separately. Overdue is a time fact, not a lifecycle status.',
           '- System condition: reconciliation retrying or authority unavailable is not task lifecycle state.',
           '- Set due_at only from trusted, unambiguous time and time zone evidence; otherwise retain date-only precision.',
-          '- Never infer completion from calendar disappearance.',
+          '- Absence from a snapshot is not evidence: a card missing from a partial Trello read or an event gone from a calendar window proves nothing by itself.',
         ]
       : []),
-    'Do not ask questions; finish with the exact final line your brief specifies.',
+    // Nobody replies inside a scheduled run. The route to the owner is the turn section's
+    // (the board writes the decisions slot; other turns state it in the final message);
+    // no unattended turn holds a send, so the prompt must not imply one.
+    'No one replies inside this run: never wait for an answer. What needs the owner goes where your turn section says, and the run ends with a short final message.',
     ...(backend === 'claude' ? ['', gatewayToolsPrompt.trim()] : []),
   ].join('\n');
 }

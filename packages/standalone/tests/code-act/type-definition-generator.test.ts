@@ -93,6 +93,35 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toMatch(/declare function task_update[\s\S]*review_anchor_ref\?: string/);
     });
 
+    it('TG-04/TG-06 projects task_temporal_reconcile as an outcome-discriminated union', () => {
+      const dts = TypeDefinitionGenerator.generate(policy(2, ['task_temporal_reconcile']));
+      const declaration = dts
+        .split('\n')
+        .find((line) => line.startsWith('declare function task_temporal_reconcile('));
+      expect(declaration).toBeDefined();
+
+      // The validator accepts evidence_summary ONLY on final_no_update and
+      // next_temporal_check_at ONLY on deferred, and REQUIRES each there. A flat
+      // `evidence_summary?: string` advertises a field the model may add to any
+      // outcome, which the host then rejects with a hashed error the model cannot
+      // read. The signature must say exactly what each outcome accepts.
+      expect(declaration).not.toContain('evidence_summary?:');
+      expect(declaration).not.toContain('next_temporal_check_at?:');
+      expect(declaration).toMatch(
+        /^declare function task_temporal_reconcile\(input:\{context_packet_id: string,expected_revision: number,reason: string,outcome: 'resolved',status: 'pending' \| 'in_progress' \| 'review' \| 'blocked' \| 'done' \| 'cancelled',due_at\?: string \| null\} \| \{context_packet_id: string,expected_revision: number,reason: string,outcome: 'resolved',status\?: 'pending' \| 'in_progress' \| 'review' \| 'blocked' \| 'done' \| 'cancelled',due_at: string \| null\} \| \{context_packet_id: string,expected_revision: number,reason: string,outcome: 'final_no_update',evidence_summary: string\} \| \{context_packet_id: string,expected_revision: number,reason: string,outcome: 'deferred',next_temporal_check_at: string\}\): \{receipt:\{taskId:number;workorderAttemptId:number;outcome:string\}\};$/
+      );
+    });
+
+    it('TG-04 leaves declarations without an explicit input type on the generated object form', () => {
+      const dts = TypeDefinitionGenerator.generate(
+        policy(2, ['task_update', 'contract_no_update'])
+      );
+      expect(dts).toContain('declare function task_update(input:{id: number,');
+      expect(dts).toContain(
+        'declare function contract_no_update(input:{reason: string,scope: string}): { note: { id: number } };'
+      );
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/path: string/);

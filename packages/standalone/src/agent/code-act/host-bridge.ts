@@ -19,7 +19,32 @@ export interface ToolMeta {
   }[];
   readonly returnType: string;
   readonly category: FunctionDescriptor['category'];
+  /**
+   * Explicit TypeScript type for the single `input` argument. When present it
+   * replaces the object type generated from `params`, so a tool whose accepted
+   * fields depend on another field (a discriminated union) can advertise that
+   * exactly. `params` stays the flat field list for positional-argument mapping
+   * and required-field checks; every field named in the union must appear there.
+   */
+  readonly inputType?: string;
 }
+
+const TEMPORAL_RECONCILE_COMMON_FIELDS =
+  'context_packet_id: string,expected_revision: number,reason: string';
+const TEMPORAL_RECONCILE_STATUS_TYPE =
+  "'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled'";
+/**
+ * Mirrors TemporalReconcileInput (operator/temporal-effect.ts) and the ledger
+ * validator: each outcome accepts ONLY its own extra fields, and the field an
+ * outcome names without `?` is required there. A flat optional list advertised
+ * evidence_summary/next_temporal_check_at on every outcome, and the host
+ * rejected those calls with a hashed error the model could not read.
+ */
+const TEMPORAL_RECONCILE_INPUT_TYPE =
+  `{${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'resolved',status: ${TEMPORAL_RECONCILE_STATUS_TYPE},due_at?: string | null}` +
+  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'resolved',status?: ${TEMPORAL_RECONCILE_STATUS_TYPE},due_at: string | null}` +
+  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'final_no_update',evidence_summary: string}` +
+  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'deferred',next_temporal_check_at: string}`;
 
 /** All gateway tool metadata */
 const TOOL_REGISTRY: ToolMeta[] = [
@@ -756,7 +781,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'task_temporal_reconcile',
-    description: 'Commit this temporal result; host context supplies identity.',
+    description:
+      "Commit this temporal result; host context supplies identity. The input is a union keyed by outcome: pass ONLY that outcome's fields (resolved: status and/or due_at with an actual change; final_no_update: evidence_summary; deferred: a strictly future next_temporal_check_at). A field that belongs to another outcome is rejected, never stripped.",
     params: [
       { name: 'context_packet_id', type: 'string', required: true },
       { name: 'expected_revision', type: 'number', required: true },
@@ -766,11 +792,32 @@ const TOOL_REGISTRY: ToolMeta[] = [
         required: true,
       },
       { name: 'reason', type: 'string', required: true },
-      { name: 'status', type: 'string', required: false },
-      { name: 'due_at', type: 'string | null', required: false },
-      { name: 'evidence_summary', type: 'string', required: false },
-      { name: 'next_temporal_check_at', type: 'string', required: false },
+      {
+        name: 'status',
+        type: TEMPORAL_RECONCILE_STATUS_TYPE,
+        required: false,
+        description: 'resolved only',
+      },
+      {
+        name: 'due_at',
+        type: 'string | null',
+        required: false,
+        description: 'resolved only; RFC 3339 with explicit offset, or null to clear',
+      },
+      {
+        name: 'evidence_summary',
+        type: 'string',
+        required: false,
+        description: 'final_no_update only, and required there (1-1000 chars)',
+      },
+      {
+        name: 'next_temporal_check_at',
+        type: 'string',
+        required: false,
+        description: 'deferred only, and required there; RFC 3339, strictly in the future',
+      },
     ],
+    inputType: TEMPORAL_RECONCILE_INPUT_TYPE,
     returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
     category: 'memory',
   },

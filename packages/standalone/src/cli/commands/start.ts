@@ -2555,19 +2555,28 @@ export async function runAgentLoop(
                 reportContextDeps
               )
             ),
-          buildPrompt: async (batch, packet) =>
-            buildOwnerEventPrompt({
+          buildPrompt: async (batch, packet) => {
+            const readScope = ownerEventReadScope(batch);
+            return buildOwnerEventPrompt({
               batch,
               packet,
               learning: await buildLearningBlockFor(
                 'event',
-                ownerEventReadScope(batch).memoryScopes,
+                readScope.memoryScopes,
                 batch.lines.join('\n').slice(0, 500)
               ),
               ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
               skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
               ownerTelegramChatId: reportChatId,
-            }),
+              priorContext: ownerEventInbox.readPriorContext({
+                currentBatchId: batch.id,
+                channelKey: batch.channelKey,
+                principalRole: ownerEventContext.roleName,
+                allowedRawConnectors: readScope.rawConnectors,
+                ownerTelegramChatId: reportChatId,
+              }),
+            });
+          },
           issueEnvelope: ownerEventIssueEnvelope,
           getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
           getTerminalReceipt: (batch) =>

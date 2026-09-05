@@ -9,6 +9,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
+import {
+  buildOwnerEventTelegramIntent,
+  OwnerEventEffectLedger,
+} from '../../src/operator/owner-event-effects.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 
 const batch = (n: number) => ({
   channelKey: `chat C${n}`,
@@ -213,5 +218,160 @@ describe('OwnerEventInbox', () => {
 
     expect(inbox.claimNext()).toBeNull();
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+  });
+
+  it('TG-05 reads only bounded terminal history proven for the current owner channel and target', () => {
+    const taskLedger = new TaskLedger(db, { now: () => now });
+    const effects = new OwnerEventEffectLedger(db, () => now);
+    const oldIds: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const id = inbox.enqueue({
+        channelKey: 'chatwork:feedback',
+        eventIds: [`evt-old-${i}`],
+        lines: [`old observation ${i}`],
+        activations: [],
+      });
+      if (id === null) throw new Error('old fixture unexpectedly deduplicated');
+      const claimed = inbox.claimNext();
+      if (!claimed) throw new Error('old fixture was not claimable');
+      taskLedger.recordNoUpdate(`owner-event:${id}`, `no material change ${i}`);
+      inbox.ack(id);
+      oldIds.push(id);
+      now += 1_000;
+    }
+    const notifiedId = oldIds.at(-1)!;
+    const intent = buildOwnerEventTelegramIntent({
+      chatId: 'owner-chat',
+      deliveryId: `owner-event:${notifiedId}:telegram:telegram-delivery`,
+      message: '[decision] choose a response',
+    });
+    effects.begin(notifiedId, 'telegram-delivery', 'telegram_send', intent);
+    effects.confirm(notifiedId, 'telegram-delivery', 'telegram_send', {
+      version: 1,
+      deliveryId: intent.deliveryId,
+      variant: 'text',
+      state: 'delivered',
+      payloadIdentity: 'sha256:redacted-fixture',
+      confirmedAt: now,
+    });
+    db.prepare(
+      `UPDATE owner_event_inbox
+          SET unresolved_reason = 'owner_decision_requested', acked_at = ?
+        WHERE id = ?`
+    ).run(now, notifiedId);
+    taskLedger.create(
+      {
+        title: 'bounded fixture task',
+        source_channel: 'chatwork:feedback',
+        source_event_id: 'evt-old-10',
+      },
+      { runId: 'redacted-run', causeEventIds: ['evt-old-10'] }
+    );
+    db.prepare(`UPDATE owner_event_inbox SET acked_at = ? WHERE id = ?`).run(now, oldIds.at(-2)!);
+
+    const foreignId = inbox.enqueue({
+      channelKey: 'chatwork:private',
+      eventIds: ['evt-foreign'],
+      lines: ['foreign channel content'],
+      activations: [],
+    })!;
+    inbox.claimNext();
+    taskLedger.recordNoUpdate(`owner-event:${foreignId}`, 'foreign outcome');
+    inbox.ack(foreignId);
+    const currentId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-current'],
+      lines: ['current observation'],
+      activations: [],
+    })!;
+
+    const history = inbox.readPriorContext({
+      currentBatchId: currentId,
+      channelKey: 'chatwork:feedback',
+      principalRole: 'owner_console',
+      allowedRawConnectors: ['chatwork'],
+      ownerTelegramChatId: 'owner-chat',
+    });
+    expect(history).toHaveLength(10);
+    expect(history[0]?.observations).toEqual(['old observation 11']);
+    expect(history[0]).toMatchObject({
+      outcome: 'owner_decision_requested',
+      effects: ['telegram_send'],
+      notification: '[decision] choose a response',
+    });
+    expect(history.at(-1)?.observations).toEqual(['old observation 2']);
+    expect(history[1]).toMatchObject({ outcome: 'acted', effects: ['task_create'] });
+    expect(JSON.stringify(history)).not.toContain('foreign channel content');
+    expect(JSON.stringify(history)).not.toContain('current observation');
+
+    expect(
+      inbox.readPriorContext({
+        currentBatchId: currentId,
+        channelKey: 'chatwork:feedback',
+        principalRole: 'member',
+        allowedRawConnectors: ['chatwork'],
+        ownerTelegramChatId: 'owner-chat',
+      })
+    ).toEqual([]);
+    expect(
+      inbox.readPriorContext({
+        currentBatchId: currentId,
+        channelKey: 'chatwork:feedback',
+        principalRole: 'owner_console',
+        allowedRawConnectors: [],
+        ownerTelegramChatId: 'owner-chat',
+      })
+    ).toEqual([]);
+    const wrongTarget = inbox.readPriorContext({
+      currentBatchId: currentId,
+      channelKey: 'chatwork:feedback',
+      principalRole: 'owner_console',
+      allowedRawConnectors: ['chatwork'],
+      ownerTelegramChatId: 'different-owner',
+    });
+    expect(wrongTarget[0]?.notification).toBeUndefined();
+    expect(wrongTarget[0]?.effects).toEqual([]);
+  });
+
+  it('TG-05 excludes malformed, unconfirmed, and secret-shaped historical fields', () => {
+    const taskLedger = new TaskLedger(db, { now: () => now });
+    const effects = new OwnerEventEffectLedger(db, () => now);
+    const id = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-old'],
+      lines: ['token=top-secret-value', 'safe observation'],
+      activations: [],
+    })!;
+    inbox.claimNext();
+    taskLedger.recordNoUpdate(`owner-event:${id}`, 'Bearer abcdefghijklmnopqrstuvwxyz123');
+    effects.begin(id, 'telegram-delivery', 'telegram_send', {
+      message: 'unconfirmed notification',
+    });
+    inbox.ack(id);
+    db.prepare(`UPDATE owner_event_inbox SET event_ids_json = 'not-json' WHERE id = ?`).run(id);
+    const currentId = inbox.enqueue({
+      channelKey: 'chatwork:feedback',
+      eventIds: ['evt-current-malformed'],
+      lines: ['current'],
+      activations: [],
+    })!;
+
+    const history = inbox.readPriorContext({
+      currentBatchId: currentId,
+      channelKey: 'chatwork:feedback',
+      principalRole: 'owner_console',
+      allowedRawConnectors: ['chatwork'],
+      ownerTelegramChatId: 'owner-chat',
+    });
+    expect(history).toEqual([
+      expect.objectContaining({
+        observations: ['[redacted-secret]', 'safe observation'],
+        outcome: 'no_update',
+        note: '[redacted-secret]',
+      }),
+    ]);
+    expect(JSON.stringify(history)).not.toContain('unconfirmed notification');
+    expect(JSON.stringify(history)).not.toContain('top-secret-value');
+    expect(JSON.stringify(history)).not.toContain('abcdefghijklmnopqrstuvwxyz123');
   });
 });
