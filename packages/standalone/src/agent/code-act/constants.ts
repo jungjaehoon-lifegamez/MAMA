@@ -7,100 +7,30 @@ export const CODE_ACT_SCRIPT_CONTRACT =
 
 export const CODE_ACT_SCRIPT_EXAMPLE = 'var first=1; var second=2; ({first:first,second:second})';
 
+export const CODE_ACT_METADATA_DECLARATIONS = `declare function tool_search(input?:{query?:string,category?:string,limit?:number,cursor?:string}): {tools:Array<{name:string,description:string,category:string}>,nextCursor:string|null};
+declare function tool_describe(input:{names:string[]}): {contracts:string[]};`;
+
 export function getCodeActInstructions(
   backend: CodeActBackend,
-  allowedTools?: readonly string[]
+  _allowedTools?: readonly string[]
 ): string {
   const isCodex = backend === 'codex';
   const isCline = backend === 'cline';
-  const allowedSummary = formatAllowedToolsSummary(allowedTools);
-  const hasExplicitGatewayAllowlist = allowedSummary !== null;
-
-  const blockedToolsSection = isCodex
-    ? `**DO NOT use these built-in tools** (they bypass MAMA's pipeline):
-- \`exec_command\`
-- \`apply_patch\`
-- \`request_user_input\` — not available (headless daemon)
-- \`update_plan\` — not available (no plan mode)
-
-Use only functions in the current allowlist below. Never assume that Bash, Write,
-or a communication function exists unless it is listed for this run.
-
-`
-    : '';
-
-  const gatewayToolsList = isCodex
-    ? hasExplicitGatewayAllowlist
-      ? `**USE code_act only for these allowed gateway tools:**
-${allowedSummary}`
-      : `**USE code_act for ALL gateway tools:**
-- File ops: Read, Write, Edit, Bash
-- Memory: mama_search, mama_save, mama_update
-- Communication: discord_send, slack_send, telegram_send, webchat_send
-- System: os_get_config
-- Dashboard: report_publish
-- Wiki: wiki_publish`
-    : hasExplicitGatewayAllowlist
-      ? `**USE code_act only for these allowed gateway tools** (NOT available as direct tools):
-${allowedSummary}`
-      : `**USE code_act for these gateway tools** (NOT available as direct tools):
-- Memory: mama_search, mama_save, mama_update
-- Communication: discord_send, slack_send, telegram_send, webchat_send
-- System: os_get_config
-- Dashboard: report_publish
-- Wiki: wiki_publish
-
-**Use your native tools directly** (do NOT wrap in code_act):
-- Read, Write, Edit, Bash — these are your built-in tools, use them normally`;
-
   const transportIntroduction = isCodex
     ? `You have a native app-server tool called \`code_act\` that executes JavaScript in a sandboxed environment.
-The functions listed below are **ONLY available inside code_act** — they are NOT direct native tools.`
-    : `You have an MCP tool called \`code_act\` that executes JavaScript in a sandboxed environment.
-The functions listed below are **ONLY available inside code_act** — they are NOT direct MCP tools.`;
-  const directToolSection = isCodex
-    ? `**Call the native \`code_act\` tool directly** with a normal model tool call.`
-    : isCline
-      ? `**Use this MCP tool for MAMA gateway operations** (normal tool_use call):
-- \`mcp__code-act__code_act\` — memory, connector, report, wiki, and other MAMA gateway functions
-
-**Use your Cline native tools directly** for local work, subject to the current Tool Permissions:
-- \`read_files\`, \`search_codebase\` — file and code discovery
-- \`run_commands\` — shell commands
-- native file editing, web, skill, and agent tools when allowed
-
-Do not wrap native local operations in code_act. Do not call a native tool that the
-current Tool Permissions mark as blocked.`
-      : `**USE these MCP tools directly** (normal tool_use calls):
-- \`mcp__code-act__code_act\` — gateway tool execution (see below)
-- \`mcp__brave-search__*\` — web search
-- \`mcp__brave-devtools__*\` — browser control
-- \`mcp__searxng__*\` — search engine`;
-
-  const compositionContract = `
-### Composition contract
-
-Treat the listed functions as composable primitives, not as a fixed workflow.
-Plan and combine whichever primitives are needed for the user's requested outcome.
-Guidance functions are optional; they never replace agent judgment.
-For requested writes, uploads, messages, or other side effects, continue until each
-required tool returns success. Never claim an artifact or delivery exists after a
-failed or skipped call. If a necessary primitive is absent, name that exact missing
-function only after checking the current allowlist.
-`;
+Use code_act for gateway work; provider-native operations cannot bypass MAMA's current policy.
+Do not use the Codex built-ins \`exec_command\` or \`apply_patch\` (they bypass MAMA's pipeline);
+\`request_user_input\` and \`update_plan\` are unavailable in this headless daemon.`
+    : `You have an MCP tool called \`mcp__code-act__code_act\` that executes JavaScript in a sandboxed environment.
+Gateway functions and the metadata functions below are available only inside it. Permitted
+${isCline ? 'Cline' : 'Claude'} native local tools remain native and should be called directly.`;
 
   return `## Code-Act: Gateway Tool Execution via Sandbox
 
 ${transportIntroduction}
 
-### IMPORTANT: Tool usage rules
+### Synchronous grammar
 
-${blockedToolsSection}${directToolSection}
-
-${gatewayToolsList}
-${compositionContract}
-
-**code_act rules:**
 - ${CODE_ACT_SCRIPT_CONTRACT}
 - \`console.log()\` output is captured
 
@@ -109,26 +39,23 @@ ${compositionContract}
 code_act({ code: "${CODE_ACT_SCRIPT_EXAMPLE}" })
 \`\`\`
 
-### Gateway Functions (ONLY inside code_act)
+### Progressive gateway discovery
+
+The catalog is the exact gateway policy for this run. \`tool_search\` returns 6 compact,
+name-sorted matches by default; \`limit\` must be an integer from 1 to 12. Continue with
+\`nextCursor\` until it is null when you need complete
+coverage. \`tool_describe\` returns complete contracts for 1 to 4 selected names without
+slicing declarations. A gateway function you already know may be called directly; discovery
+does not grant access or create a required call order.
+
+Treat the permitted gateway functions as composable primitives and choose the composition needed
+for the requested outcome. Never claim that a write, artifact, upload, message, or delivery exists
+after its required tool failed or was skipped.
+
+\`\`\`typescript
+${CODE_ACT_METADATA_DECLARATIONS}
+\`\`\`
 `;
-}
-
-function formatAllowedToolsSummary(allowedTools?: readonly string[]): string | null {
-  if (!allowedTools || allowedTools.includes('*')) {
-    return null;
-  }
-  if (allowedTools.length === 0) {
-    return '- No gateway tools are currently allowed.';
-  }
-
-  const visibleTools = allowedTools.filter(
-    (tool) => tool !== 'code_act' && !tool.startsWith('mcp__')
-  );
-  if (visibleTools.length === 0) {
-    return '- No gateway tools are currently allowed.';
-  }
-
-  return visibleTools.map((tool) => `- ${tool}`).join('\n');
 }
 
 /**

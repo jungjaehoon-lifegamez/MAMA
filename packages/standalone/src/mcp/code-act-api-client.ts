@@ -14,6 +14,7 @@ export interface CodeActApiResponse {
   metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
   hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
   hostToolsInvoked?: string[];
+  untrustedExternalEvidence?: boolean;
   toolCalls?: { name: string; input: Record<string, unknown> }[];
 }
 

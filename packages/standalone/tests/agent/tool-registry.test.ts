@@ -29,12 +29,16 @@ describe('ToolRegistry', () => {
       expect(ToolRegistry.getTool('nonexistent')).toBeUndefined();
     });
 
-    it('STORY-016 AC #1 documents the whole-board task-list read (no bounded projection)', () => {
+    it('documents the progressive task-list facade (bounded items default, full board via pages)', () => {
       const tool = ToolRegistry.getTool('task_list');
 
       expect(tool?.params).toContain('include_terminal?');
-      // 2026-09-04 constraint removal: the description must not teach a bound as a feature.
-      expect(tool?.description).toContain('returns the whole board');
+      // Progressive reader (Task B): the public default is a bounded items page,
+      // and the whole board stays reachable by walking nextCursor - never one
+      // implied "the board is..." return. It must still not forbid paging.
+      expect(tool?.description).toContain('view:items');
+      expect(tool?.description).toContain('nextCursor');
+      expect(tool?.description).not.toContain('returns the whole board');
       expect(tool?.description).not.toContain('must not page');
     });
   });

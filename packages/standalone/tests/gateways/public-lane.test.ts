@@ -48,7 +48,7 @@ import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import type { AgentContext, AgentLoopOptions } from '../../src/agent/types.js';
 import { getRoleManager, resetRoleManager, RoleManager } from '../../src/agent/role-manager.js';
-import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import { DEFAULT_ROLES, type RoleConfig } from '../../src/cli/config/types.js';
 import { createMockMamaApi, type MamaApiClient } from '../../src/gateways/context-injector.js';
 import { MessageRouter, PUBLIC_LANE_SYSTEM_PROMPT } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
@@ -317,8 +317,27 @@ describe('Task 7: safe public lane', () => {
 
     const sandbox = new CodeActSandbox();
     new HostBridge(executor, roleManager).injectInto(sandbox, 1, role);
+    // The no-tools public role gets NO callable path - not even the discovery
+    // primitives: metadata must not become a back door for a role that cannot
+    // execute outer Code-Act.
     expect(sandbox.getRegisteredFunctions()).toEqual([]);
     expect(roleManager.isToolAllowed(role, 'anything')).toBe(false);
+    expect(roleManager.isToolAllowed(role, 'code_act')).toBe(false);
+  });
+
+  it('registers ONLY discovery for a code_act-authorized role with zero business tools', () => {
+    // The other boundary: outer Code-Act IS allowed, so authorized zero-business
+    // discovery stays - tool_search/tool_describe register, but no business tool.
+    const roleManager = new RoleManager();
+    const role: RoleConfig = { allowedTools: ['code_act'] };
+    expect(roleManager.isToolAllowed(role, 'code_act')).toBe(true);
+    expect(roleManager.isToolAllowed(role, 'mama_search')).toBe(false);
+
+    const executor = new GatewayToolExecutor({ envelopeIssuanceMode: 'off' });
+    const sandbox = new CodeActSandbox();
+    new HostBridge(executor, roleManager).injectInto(sandbox, 1, role);
+    expect(sandbox.getRegisteredFunctions().sort()).toEqual(['tool_describe', 'tool_search']);
+    expect(sandbox.getRegisteredFunctions()).not.toContain('mama_search');
   });
 
   it('keeps the Telegram owner prompt, memory hook, and full tool role unchanged', async () => {

@@ -19,7 +19,11 @@ import {
   codeActMcpResult,
   terminalMcpResult,
 } from './code-act-terminal-transport.js';
-import { CODE_ACT_SCRIPT_CONTRACT, CODE_ACT_SCRIPT_EXAMPLE } from '../agent/code-act/constants.js';
+import {
+  CODE_ACT_METADATA_DECLARATIONS,
+  CODE_ACT_SCRIPT_CONTRACT,
+  CODE_ACT_SCRIPT_EXAMPLE,
+} from '../agent/code-act/constants.js';
 
 // MCP servers must use stderr for logging (stdout = JSON-RPC)
 const log = (msg: string) => process.stderr.write(`[code-act-mcp] ${msg}\n`);
@@ -89,10 +93,7 @@ function replyError(id: string | number, code: number, message: string): void {
 const CODE_ACT_TOOL = {
   name: 'code_act',
   description:
-    'Execute JavaScript code in a sandboxed environment with the caller agent gateway allowlist enforced by MAMA OS. ' +
-    `Policy: allowed=${formatToolListForLog(CALLER_ALLOWED_TOOLS)}, blocked=${formatToolListForLog(
-      CALLER_BLOCKED_TOOLS
-    )}. ` +
+    'Execute JavaScript in a sandbox with the exact current-run gateway policy enforced by MAMA OS. ' +
     CODE_ACT_SCRIPT_CONTRACT,
   inputSchema: {
     type: 'object',
@@ -100,9 +101,11 @@ const CODE_ACT_TOOL = {
       code: {
         type: 'string',
         description:
-          'JavaScript code to execute. Gateway tools available as global functions ' +
-          '(e.g., mama_search({query:"auth"}), mama_save({topic:"x",decision:"y",reasoning:"z"}), Read({path:"/tmp/test.txt"})). ' +
-          `${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
+          'JavaScript code to execute. Discover current-run gateway tools inside the sandbox with ' +
+          '`tool_search` (default 6, integer limit 1..12), then read 1..4 complete selected contracts ' +
+          'with `tool_describe`; known permitted ' +
+          'gateway functions remain directly callable. ' +
+          `${CODE_ACT_METADATA_DECLARATIONS} ${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
       },
     },
     required: ['code'],

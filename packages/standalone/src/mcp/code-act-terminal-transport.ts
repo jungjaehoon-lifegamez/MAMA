@@ -1,4 +1,5 @@
 import { DEFAULT_SANDBOX_CONFIG } from '../agent/code-act/types.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 export const CODE_ACT_MCP_REQUEST_TIMEOUT_MS =
   DEFAULT_SANDBOX_CONFIG.timeoutMs + DEFAULT_SANDBOX_CONFIG.mutationSettlementGraceMs + 5_000;
@@ -21,6 +22,7 @@ export interface HostToolExecutionAudit {
 
 interface CodeActMcpPayload {
   value?: unknown;
+  message?: string;
   logs?: string[];
   metrics?: unknown;
 }
@@ -33,6 +35,7 @@ interface CodeActMcpSourceResult extends CodeActMcpPayload {
   retryable?: boolean;
   abort?: boolean;
   hostToolExecutions?: Array<{ name: string; success: boolean; code?: string }>;
+  untrustedExternalEvidence?: boolean;
 }
 
 export class CodeActPostSendTransportError extends Error {
@@ -97,22 +100,33 @@ export function codeActMcpResult(result: CodeActMcpSourceResult): Record<string,
       hostToolsInvoked.push(execution.name);
     }
   }
+  const payload = {
+    ...(result.value !== undefined ? { value: result.value } : {}),
+    ...(result.success && result.value === undefined && result.message !== undefined
+      ? { message: result.message }
+      : {}),
+    ...(result.logs !== undefined ? { logs: result.logs } : {}),
+    ...(result.metrics !== undefined ? { metrics: result.metrics } : {}),
+  };
+  // The versioned root stays machine-readable for host consumers
+  // (completed-terminal-result.ts, persistent-cli-process.ts stream bounding,
+  // owner-event-outcome.ts). Only the model-facing payload is fenced as untrusted data.
+  const fenced = result.untrustedExternalEvidence === true;
   const envelope = {
     protocol: 'mama.code_act.result',
     version: 1,
     success: result.success,
     hostToolExecutions,
     hostToolsInvoked,
-    payload: {
-      ...(result.value !== undefined ? { value: result.value } : {}),
-      ...(result.logs !== undefined ? { logs: result.logs } : {}),
-      ...(result.metrics !== undefined ? { metrics: result.metrics } : {}),
-    },
+    ...(fenced ? { untrustedExternalEvidence: true } : {}),
+    payload: fenced
+      ? wrapUntrustedContent('external-evidence-code-act', JSON.stringify(payload))
+      : payload,
     ...(result.success
       ? {}
       : {
           error: {
-            message: result.error ?? 'Unknown error',
+            message: result.error ?? result.message ?? 'Unknown error',
             ...(result.errorCode || result.terminalCode
               ? { code: result.errorCode ?? result.terminalCode }
               : {}),

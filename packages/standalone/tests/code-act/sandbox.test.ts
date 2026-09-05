@@ -105,6 +105,15 @@ describe('CodeActSandbox', () => {
       expect(result.value).toEqual({ a: 1, b: 'hello' });
     });
 
+    it('preserves null distinctly from undefined in host-function results', async () => {
+      const sandbox = new CodeActSandbox();
+      sandbox.registerFunction('metadata_page', async () => ({ nextCursor: null }));
+
+      const result = await sandbox.execute('metadata_page()');
+
+      expect(result).toMatchObject({ success: true, value: { nextCursor: null } });
+    });
+
     it('captures console.log', async () => {
       const sandbox = new CodeActSandbox();
       const result = await sandbox.execute(`
