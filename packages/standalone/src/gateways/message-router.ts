@@ -219,6 +219,14 @@ export function hashSessionPolicyFingerprint({
   return hash.digest('hex');
 }
 
+/** Trello read primitives an owner turn may hold; the policy names only the granted ones. */
+const TRELLO_READ_TOOLS = [
+  'trello_kanban',
+  'trello_search',
+  'trello_card',
+  'context_compile',
+] as const;
+
 function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
   roleManager: RoleManager,
@@ -230,17 +238,32 @@ function buildStableRolePolicyInstructions(
     return '';
   }
   const { includeOperatingDiscipline = true } = options;
+  // TG-04: name the Trello read primitives the role actually holds. The former text said
+  // Trello was reachable "only through context_compile" while the owner role also held
+  // trello_search/trello_card/trello_kanban, and forbade the lifecycle judgment the owner
+  // asks for. Data boundaries (untrusted, store separation, no blind copy) stay.
+  const trelloReadTools = TRELLO_READ_TOOLS.filter((tool) =>
+    roleManager.isToolAllowed(agentContext.role, tool)
+  );
   const trelloBoundary =
-    trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
+    trelloAvailable && trelloReadTools.length > 0
       ? `
 - ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
-- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that one store is another or substitute lifecycle state across stores.`
+- Trello is separate external connector evidence, read through ${trelloReadTools
+          .map((tool) =>
+            tool === 'context_compile'
+              ? 'context_compile (polled connector evidence)'
+              : `${tool} (live card data)`
+          )
+          .join(
+            ', '
+          )}. Say which store a fact came from and never present one store as another; a Trello status is evidence for your judgment about the task board, not a value you copy.`
       : '';
   const privateStoreBoundary =
     privateConnectorPolicy.enabledPrivateConnectors.length > 0
       ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
       : '';
-  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence; never copy or infer lifecycle state across stores.${privateStoreBoundary}${trelloBoundary}
+  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence: name the store a fact came from, and decide the board's lifecycle from what the evidence shows rather than copying an external status.${privateStoreBoundary}${trelloBoundary}
 - Answer status questions from artifacts first (board_read, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
   return includeOperatingDiscipline
     ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`

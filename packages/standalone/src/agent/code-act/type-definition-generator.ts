@@ -35,7 +35,14 @@ export class TypeDefinitionGenerator {
 
         const optionalInput =
           meta.params.length > 0 && meta.params.every((param) => !param.required);
-        const input = params.length > 0 ? `input${optionalInput ? '?' : ''}:{${params}}` : '';
+        // An explicit input type (e.g. an outcome-discriminated union) is the
+        // model-visible contract verbatim; otherwise the flat params become one
+        // object type.
+        const input = meta.inputType
+          ? `input:${meta.inputType}`
+          : params.length > 0
+            ? `input${optionalInput ? '?' : ''}:{${params}}`
+            : '';
         lines.push(`declare function ${meta.name}(${input}): ${meta.returnType};`);
       }
     }
