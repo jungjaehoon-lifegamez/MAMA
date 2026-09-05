@@ -38,8 +38,12 @@ beforeEach(() => {
   ledgerDb.pragma('journal_mode = WAL');
 });
 afterEach(() => {
-  if (other?.open) other.close();
-  if (ledgerDb?.open) ledgerDb.close();
+  if (other?.open) {
+    other.close();
+  }
+  if (ledgerDb?.open) {
+    ledgerDb.close();
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -59,10 +63,14 @@ describe('P1: itemsPage reads one snapshot even when another connection commits 
     ledgerDb.unsafeRawHandle.function('probe', (revision: unknown) => {
       if (fired === 0) {
         fired += 1;
+        // revision 1 mirrors a normal owner task (create() starts at 1). The
+        // generation would detect this insert regardless of the revision value,
+        // since readGeneration also folds COUNT(*) and MAX(id) - both of which a
+        // new row changes - so the interleave is caught even if SUM(revision) did not move.
         other
           .prepare(
             `INSERT INTO operator_tasks (title, kind, status, priority, revision, created_at, updated_at)
-             VALUES ('injected', 'owner', 'pending', 'normal', 0, ?, ?)`
+             VALUES ('injected', 'owner', 'pending', 'normal', 1, ?, ?)`
           )
           .run(NOW, NOW);
       }

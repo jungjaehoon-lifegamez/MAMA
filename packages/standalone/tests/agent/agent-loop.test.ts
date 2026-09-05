@@ -1605,7 +1605,7 @@ describe('AgentLoop', () => {
             var cursor = null;
             do {
               var page = tool_search(cursor === null ? {} : { cursor: cursor });
-              for (var i = 0; i < page.tools.length; i++) names.push(page.tools[i].name);
+              for (var i = 0; i < page.tools.length; i++) { names.push(page.tools[i].name); }
               cursor = page.nextCursor;
             } while (cursor !== null);
             names;

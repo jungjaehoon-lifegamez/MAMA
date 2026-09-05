@@ -155,4 +155,28 @@ describe('Task B: board_read selected content', () => {
     expect(page.nextOffset).toBeNull();
     expect(page.content).toContain('ship');
   });
+
+  it('treats a missing html slot as an empty complete window, never throwing', () => {
+    // The nominal type says string, but a slot could arrive without html; a
+    // boundary cast reproduces it. Descriptor and both formats stay non-throwing.
+    const slots = {
+      empty: { html: undefined as unknown as string, updatedAt: null },
+    } as BoardSlots;
+    const descriptors = readBoardView({}, slots) as {
+      slots: Array<{ name: string; htmlLength: number }>;
+    };
+    expect(descriptors.slots[0]).toMatchObject({ name: 'empty', htmlLength: 0 });
+    for (const format of ['text', 'html'] as const) {
+      const page = readBoardView({ slot: 'empty', format }, slots) as {
+        content: string;
+        total: number;
+        complete: boolean;
+        nextOffset: number | null;
+      };
+      expect(page.content).toBe('');
+      expect(page.total).toBe(0);
+      expect(page.complete).toBe(true);
+      expect(page.nextOffset).toBeNull();
+    }
+  });
 });

@@ -52,7 +52,7 @@ function items(ledger: TaskLedger, input: Record<string, unknown> = {}) {
   };
 }
 
-describe('Task B: task_list items view', () => {
+describe('TG-05/TG-06 AC #1: task_list items view', () => {
   let ledger: TaskLedger;
   beforeEach(() => {
     ledger = makeLedger();
@@ -137,7 +137,7 @@ describe('Task B: task_list items view', () => {
   });
 });
 
-describe('Task B: task_list overview view', () => {
+describe('TG-04 AC #2: task_list overview view', () => {
   let ledger: TaskLedger;
   beforeEach(() => {
     ledger = makeLedger();
@@ -171,7 +171,7 @@ describe('Task B: task_list overview view', () => {
   });
 });
 
-describe('Task B: task_list detail view', () => {
+describe('TG-04/TG-06 AC #3: task_list detail view', () => {
   let ledger: TaskLedger;
   let longTask: TaskRecord;
   const longReason = 'r'.repeat(2500);
@@ -242,7 +242,7 @@ describe('Task B: task_list detail view', () => {
   });
 });
 
-describe('Task B: task_list input rejection', () => {
+describe('TG-04 AC #4: task_list input rejection', () => {
   const ledger = makeLedger();
   it('rejects an unknown view', () => {
     expect(() => runTaskListView({ view: 'nonsense' }, { ledger })).toThrow(/view must be/);
@@ -252,7 +252,7 @@ describe('Task B: task_list input rejection', () => {
   });
 });
 
-describe('Task B: task_list under a narrow Temporal work context', () => {
+describe('TG-05 AC #5: task_list under a narrow Temporal work context', () => {
   let ledger: TaskLedger;
   let bound: TaskRecord;
   beforeEach(() => {

@@ -23,6 +23,8 @@ All notable changes to this project will be documented in this file.
   remain stable across pages. Task overview/page reads use a consistent SQLite read transaction.
 - Report text extraction uses a non-executing HTML parser, preserving visible text and block
   boundaries. Direct Trello detail reads verify configured-board membership before disclosure.
+- Trello snapshot reuse and cursor continuations revalidate the current connector credentials and
+  configured-board scope before returning cached fields.
 
 ## mama-os [0.47.1] - 2026-09-05
 

@@ -36,6 +36,25 @@ function writeConfig(channels: Record<string, unknown>): void {
   );
 }
 
+/** Full trello config with a variable token/enabled, for authorization-change tests. */
+function writeAuthConfig(opts: {
+  channels: Record<string, unknown>;
+  token?: string;
+  enabled?: boolean;
+}): void {
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      trello: {
+        enabled: opts.enabled ?? true,
+        pollIntervalMinutes: 5,
+        auth: { type: 'token', token: opts.token ?? 'myKey:myTok' },
+        channels: opts.channels,
+      },
+    })
+  );
+}
+
 const TWO_BOARDS = {
   b1: { role: 'truth', name: 'Board One', boardId: 'b1' },
   b2: { role: 'hub', name: 'Board Two', boardId: 'b2' },
@@ -107,7 +126,9 @@ describe('Task C: trello cards view', () => {
       );
       total = page.total;
       pages += 1;
-      for (const card of page.cards) seen.add(card.cardId);
+      for (const card of page.cards) {
+        seen.add(card.cardId);
+      }
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     expect(total).toBe(130);
@@ -208,7 +229,9 @@ describe('Task C: trello cards view', () => {
           { configPath, fetchFn }
         );
         expect(page.total).toBe(listId === 'listA' ? 3 : 5);
-        for (const card of page.cards) seen.add(card.cardId);
+        for (const card of page.cards) {
+          seen.add(card.cardId);
+        }
         cursor = page.nextCursor ?? undefined;
       } while (cursor);
       return seen;
@@ -247,11 +270,95 @@ describe('Task C: trello search', () => {
       total = page.total;
       // A failed board keeps search incomplete: a missing match is not proven absent.
       expect(page.coverage.complete).toBe(false);
-      for (const card of page.cards) seen.add(card.cardId);
+      for (const card of page.cards) {
+        seen.add(card.cardId);
+      }
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     expect(total).toBe(30);
     expect(seen.size).toBe(30);
+  });
+});
+
+describe('TG-04 AC: Trello authorization is re-bound on every page (P1)', () => {
+  // Page 1 caches the snapshot; the config is then mutated, and the cursor
+  // continuation must reject BEFORE any cached card field is returned.
+  async function firstCardPage(): Promise<string> {
+    const fetchFn = routedBoards();
+    const first = await getTrelloListCards(
+      { boardId: 'b1', listId: 'l1', limit: 1 },
+      { configPath, fetchFn }
+    );
+    expect(first.nextCursor).not.toBeNull();
+    return first.nextCursor!;
+  }
+
+  it('rejects a cards continuation after the read board leaves the allowlist', async () => {
+    writeConfig(TWO_BOARDS);
+    const cursor = await firstCardPage();
+    // b1 (the board being read) is removed from the configured allowlist.
+    writeAuthConfig({ channels: { b2: { role: 'hub', name: 'Board Two', boardId: 'b2' } } });
+    await expect(
+      getTrelloListCards({ boardId: 'b1', listId: 'l1', cursor }, { configPath })
+    ).rejects.toThrow(/authorization changed|not configured\/authorized/);
+  });
+
+  it('rejects a cards continuation after another configured board is removed', async () => {
+    writeConfig(TWO_BOARDS);
+    const cursor = await firstCardPage();
+    // b1 is still configured, but the allowlist changed (b2 removed): the whole
+    // authorization fingerprint moves, so the cached snapshot is not reused.
+    writeAuthConfig({ channels: { b1: { role: 'truth', name: 'Board One', boardId: 'b1' } } });
+    await expect(
+      getTrelloListCards({ boardId: 'b1', listId: 'l1', cursor }, { configPath })
+    ).rejects.toThrow(/authorization changed/);
+  });
+
+  it('rejects a cards continuation after the connector is disabled', async () => {
+    writeConfig(TWO_BOARDS);
+    const cursor = await firstCardPage();
+    writeAuthConfig({ channels: TWO_BOARDS, enabled: false });
+    await expect(
+      getTrelloListCards({ boardId: 'b1', listId: 'l1', cursor }, { configPath })
+    ).rejects.toThrow(/not enabled/);
+  });
+
+  it('rejects a cards continuation after the token changes', async () => {
+    writeConfig(TWO_BOARDS);
+    const cursor = await firstCardPage();
+    writeAuthConfig({ channels: TWO_BOARDS, token: 'newKey:newTok' });
+    await expect(
+      getTrelloListCards({ boardId: 'b1', listId: 'l1', cursor }, { configPath })
+    ).rejects.toThrow(/authorization changed/);
+  });
+
+  it('continues a cards continuation when authorization is unchanged', async () => {
+    writeConfig(TWO_BOARDS);
+    const fetchFn = routedBoards();
+    const first = await getTrelloListCards(
+      { boardId: 'b1', listId: 'l1', limit: 1 },
+      { configPath, fetchFn }
+    );
+    const second = await getTrelloListCards(
+      { boardId: 'b1', listId: 'l1', limit: 1, cursor: first.nextCursor! },
+      { configPath, fetchFn }
+    );
+    expect(second.returned).toBe(1);
+    expect(second.cards[0]?.cardId).not.toBe(first.cards[0]?.cardId);
+  });
+
+  it('rejects a search continuation after the token changes', async () => {
+    writeConfig(TWO_BOARDS);
+    const fetchFn = routedBoards();
+    const first = await searchTrelloBoardCards(
+      { query: 'special', limit: 1 },
+      { configPath, fetchFn }
+    );
+    expect(first.nextCursor).not.toBeNull();
+    writeAuthConfig({ channels: TWO_BOARDS, token: 'newKey:newTok' });
+    await expect(
+      searchTrelloBoardCards({ query: 'special', cursor: first.nextCursor! }, { configPath })
+    ).rejects.toThrow(/authorization changed/);
   });
 });
 
@@ -282,6 +389,61 @@ describe('Task C: trello card detail sections + allowlist', () => {
       );
     }) as unknown as typeof fetch;
   }
+
+  it('resolves every checklist header id to its items, including an absent-id checklist', async () => {
+    writeConfig(TWO_BOARDS);
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: 'c9',
+            name: 'x',
+            due: null,
+            dateLastActivity: '2026-07-24T10:00:00.000Z',
+            desc: '',
+            labels: [],
+            members: [],
+            list: { name: 'L' },
+            board: { id: 'b1', name: 'B' },
+            checklists: [
+              {
+                id: 'aa11bb22cc33dd44ee55ff66',
+                name: 'has-id',
+                checkItems: [{ name: 'i0', state: 'complete' }],
+              },
+              // No raw id: addressed by the shared idx: namespace, still reachable.
+              {
+                name: 'no-id',
+                checkItems: [
+                  { name: 'j0', state: 'incomplete' },
+                  { name: 'j1', state: 'complete' },
+                ],
+              },
+            ],
+          })
+        )
+    ) as unknown as typeof fetch;
+
+    const headers = (await getTrelloCardDetail(
+      { cardId: 'c9', section: 'checklists' },
+      { configPath, fetchFn }
+    )) as { checklists: Array<{ id: string; itemCount: number }>; readVersion: string };
+    // The absent-id checklist gets an idx: key that cannot be confused with a hex id.
+    expect(headers.checklists.map((c) => c.id)).toEqual(['aa11bb22cc33dd44ee55ff66', 'idx:1']);
+    // EVERY returned header id resolves back to its own items.
+    for (const header of headers.checklists) {
+      const items = (await getTrelloCardDetail(
+        {
+          cardId: 'c9',
+          section: 'checklist_items',
+          checklistId: header.id,
+          readVersion: headers.readVersion,
+        },
+        { configPath, fetchFn }
+      )) as { items: unknown[]; total: number };
+      expect(items.total).toBe(header.itemCount);
+    }
+  });
 
   it('summary reports lengths/counts and description/checklists/items page their tails', async () => {
     writeConfig(TWO_BOARDS);
