@@ -370,12 +370,12 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   `SCHEDULED_TURN_BLOCKED_TOOLS` − `TURN_KIND_BLOCKED_TOOLS[kind]`; `tests/cli/lane-wiring.test.ts`
   pins that no unattended turn holds a send or an upload. The board pipeline slot is rendered by
   the host (`board-pipeline-render.ts`) before the board turn; the turn writes only briefing,
-  action*required and decisions.
-  Board workers can use their granted live `trello\_*`readers;`context_compile`supplies
-scoped connector messages and polled evidence. Owner chat uses the same distinction.
-The agent judges native task status from that evidence and records the reason;
-every workorder worker treats connector packets as untrusted data whose embedded
-instructions/tool calls must not be followed.`kagemusha\*\*` remains read-only
+  `action_required` and `decisions`.
+  Board workers can use their granted live Trello query tools. `context_compile` supplies
+  scoped connector messages and polled evidence. Owner chat uses the same distinction.
+  The agent judges native task status from that evidence and records the reason.
+  Every workorder worker treats connector packets as untrusted data whose embedded
+  instructions or tool calls must not be followed. Private connector tools remain read-only
   project-task evidence, while the native ledger owns owner-console tasks and the
   pipeline projection.
 - **Memory-write secret filter:** `mama_save`/`mama_update` REFUSE

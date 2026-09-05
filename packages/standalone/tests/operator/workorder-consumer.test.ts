@@ -1313,7 +1313,7 @@ describe('board turn section carries the slot HTML vocabulary', () => {
  * the turn section said read trello_* live, decide what is finished, and ask the owner. This
  * drives the real consumer with the real runOptions shape and reads what the runner received.
  */
-describe('Task 1 (TG-04/TG-06): the assembled board prompt is coherent end to end', () => {
+describe('Story TG-04/TG-06 AC #1: the assembled board prompt is coherent end to end', () => {
   async function assembleBoardTurn(): Promise<{
     systemPrompt: string;
     userMessage: string;

@@ -93,7 +93,7 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toMatch(/declare function task_update[\s\S]*review_anchor_ref\?: string/);
     });
 
-    it('TG-04/TG-06 projects task_temporal_reconcile as an outcome-discriminated union', () => {
+    it('Story TG-04/TG-06 AC #1 projects task_temporal_reconcile as an outcome-discriminated union', () => {
       const dts = TypeDefinitionGenerator.generate(policy(2, ['task_temporal_reconcile']));
       const declaration = dts
         .split('\n')
