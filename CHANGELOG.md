@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.47.1] - 2026-09-05
+
+### Fixed
+
+- Code-Act now states its synchronous-script grammar consistently in native tool metadata,
+  the code parameter, system instructions, and MCP discovery. Parse-time `SyntaxError` results
+  retain the original error and include a valid script example. Guest async/Promise
+  execution is not added.
+- `task_update` refuses unsupported fields before any mutation or receipt. A misspelled input
+  such as `latestEvent` can no longer silently succeed while leaving the old reason intact;
+  errors identify the supported fields and the canonical input name `latest_event`.
+
 ## mama-os [0.47.0] - 2026-09-05
 
 ### Fixed

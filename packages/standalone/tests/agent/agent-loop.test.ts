@@ -38,6 +38,10 @@ import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agen
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import {
+  CODE_ACT_SCRIPT_CONTRACT,
+  CODE_ACT_SCRIPT_EXAMPLE,
+} from '../../src/agent/code-act/constants.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
@@ -1370,11 +1374,14 @@ describe('AgentLoop', () => {
         {
           type: 'function',
           name: 'code_act',
-          description: expect.stringContaining('QuickJS'),
+          description: `Execute JavaScript in sandboxed QuickJS. ${CODE_ACT_SCRIPT_CONTRACT} Parameters: code, allowedTools?, blockedTools?`,
           inputSchema: {
             type: 'object',
             properties: {
-              code: { type: 'string' },
+              code: {
+                type: 'string',
+                description: `${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
+              },
               allowedTools: { type: 'array', items: { type: 'string' } },
               blockedTools: { type: 'array', items: { type: 'string' } },
             },
@@ -1466,11 +1473,14 @@ describe('AgentLoop', () => {
         {
           type: 'function',
           name: 'code_act',
-          description: expect.any(String),
+          description: `Execute JavaScript in sandboxed QuickJS. ${CODE_ACT_SCRIPT_CONTRACT} Parameters: code, allowedTools?, blockedTools?`,
           inputSchema: {
             type: 'object',
             properties: {
-              code: { type: 'string' },
+              code: {
+                type: 'string',
+                description: `${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
+              },
               allowedTools: { type: 'array', items: { type: 'string' } },
               blockedTools: { type: 'array', items: { type: 'string' } },
             },

@@ -1,5 +1,12 @@
 export type CodeActBackend = 'claude' | 'codex' | 'cline';
 
+export const CODE_ACT_SCRIPT_CONTRACT =
+  'Code-Act runs a synchronous script. Host function calls settle before returning. ' +
+  'Use plain sequential calls with var and make the desired value the last expression. ' +
+  'Do not use top-level return, async, await, Promise, Promise.all, or async IIFEs.';
+
+export const CODE_ACT_SCRIPT_EXAMPLE = 'var first=1; var second=2; ({first:first,second:second})';
+
 export function getCodeActInstructions(
   backend: CodeActBackend,
   allowedTools?: readonly string[]
@@ -94,14 +101,12 @@ ${gatewayToolsList}
 ${compositionContract}
 
 **code_act rules:**
-- Functions are **synchronous** (no async/await needed)
-- Use \`var\` for variables (not let/const)
-- Last expression is the return value
+- ${CODE_ACT_SCRIPT_CONTRACT}
 - \`console.log()\` output is captured
 
-**Example:** Count decisions
+**Example:** Synchronous script shape
 \`\`\`
-code_act({ code: "var r=mama_search({query:'auth'}); r.results.length" })
+code_act({ code: "${CODE_ACT_SCRIPT_EXAMPLE}" })
 \`\`\`
 
 ### Gateway Functions (ONLY inside code_act)

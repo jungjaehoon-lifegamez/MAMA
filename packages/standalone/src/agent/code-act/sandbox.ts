@@ -23,6 +23,7 @@ import {
   CODE_ACT_MUTATION_OUTCOME_UNKNOWN,
   type CodeActTerminalMutationCode,
 } from './types.js';
+import { CODE_ACT_SCRIPT_CONTRACT, CODE_ACT_SCRIPT_EXAMPLE } from './constants.js';
 
 const MAX_LIVE_SANDBOXES = 8;
 
@@ -275,8 +276,18 @@ export class CodeActSandbox {
         );
       }
 
-      // Execute code
-      const result = await ctx.evalCodeAsync(code, 'code-act.js');
+      // Compile without running first so parse errors can receive grammar help without
+      // misclassifying a runtime SyntaxError. Dispose the bytecode and execute the original
+      // program once through the existing asyncified path; host effects never run in preflight.
+      const syntaxCheck = await ctx.evalCodeAsync(code, 'code-act.js', { compileOnly: true });
+      const parseFailed = Boolean(syntaxCheck.error);
+      let result: VmCallResult<QuickJSHandle>;
+      if (syntaxCheck.error) {
+        result = syntaxCheck;
+      } else {
+        syntaxCheck.value.dispose();
+        result = await ctx.evalCodeAsync(code, 'code-act.js');
+      }
 
       const durationMs = performance.now() - startTime;
       const memUsage = ctx.dump(rt.computeMemoryUsage());
@@ -307,7 +318,7 @@ export class CodeActSandbox {
         result.error.dispose();
         return complete({
           success: false,
-          error: this._normalizeError(err),
+          error: this._normalizeExecutionError(err, parseFailed),
           logs,
           metrics: { durationMs, hostCallCount: totalCallCount.value, memoryUsedBytes },
         });
@@ -344,7 +355,7 @@ export class CodeActSandbox {
       const durationMs = performance.now() - startTime;
       return complete({
         success: false,
-        error: this._normalizeError(terminalMutation.error ?? err),
+        error: this._normalizeExecutionError(terminalMutation.error ?? err, false),
         logs,
         metrics: { durationMs, hostCallCount: totalCallCount.value, memoryUsedBytes: 0 },
       });
@@ -580,5 +591,21 @@ export class CodeActSandbox {
       };
     }
     return { name: 'Error', message: String(err) };
+  }
+
+  private _normalizeExecutionError(
+    err: unknown,
+    parseFailed: boolean
+  ): ReturnType<CodeActSandbox['_normalizeError']> {
+    const normalized = this._normalizeError(err);
+    if (!parseFailed || normalized.name !== 'SyntaxError') {
+      return normalized;
+    }
+    return {
+      ...normalized,
+      message:
+        `${normalized.message}. ${CODE_ACT_SCRIPT_CONTRACT} ` +
+        `Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
+    };
   }
 }

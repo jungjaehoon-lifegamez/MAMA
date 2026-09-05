@@ -144,7 +144,44 @@ async function invokeCodeAct(
   }
 }
 
+async function listCodeActTool(): Promise<Record<string, unknown>> {
+  const child = spawn(process.execPath, ['--import', 'tsx', SERVER_ENTRY], {
+    cwd: PACKAGE_ROOT,
+    env: process.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  children.push(child);
+  let stderr = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  child.stdin.write(
+    `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })}\n`
+  );
+  const stdout = await readLine(child.stdout, () => stderr);
+  child.stdin.end();
+  const response = JSON.parse(stdout) as {
+    result: { tools: Record<string, unknown>[] };
+  };
+  return response.result.tools[0];
+}
+
 describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
+  it('TG-03/TG-04 advertises the synchronous script contract at the MCP tools/list boundary', async () => {
+    const tool = await listCodeActTool();
+    const schema = tool.inputSchema as {
+      properties: { code: { description: string } };
+    };
+
+    expect(tool.description).toEqual(expect.stringContaining('synchronous script'));
+    expect(schema.properties.code.description).toContain(
+      'Do not use top-level return, async, await, Promise'
+    );
+    expect(schema.properties.code.description).toContain(
+      'var first=1; var second=2; ({first:first,second:second})'
+    );
+  });
+
   it('sends the inherited process context key once without exposing it in MCP output or logs', async () => {
     const contextKey = 'A'.repeat(43);
 

@@ -19,6 +19,7 @@ import {
   codeActMcpResult,
   terminalMcpResult,
 } from './code-act-terminal-transport.js';
+import { CODE_ACT_SCRIPT_CONTRACT, CODE_ACT_SCRIPT_EXAMPLE } from '../agent/code-act/constants.js';
 
 // MCP servers must use stderr for logging (stdout = JSON-RPC)
 const log = (msg: string) => process.stderr.write(`[code-act-mcp] ${msg}\n`);
@@ -92,7 +93,7 @@ const CODE_ACT_TOOL = {
     `Policy: allowed=${formatToolListForLog(CALLER_ALLOWED_TOOLS)}, blocked=${formatToolListForLog(
       CALLER_BLOCKED_TOOLS
     )}. ` +
-    'Use var for variables. Last expression is the return value. No async/await.',
+    CODE_ACT_SCRIPT_CONTRACT,
   inputSchema: {
     type: 'object',
     properties: {
@@ -101,7 +102,7 @@ const CODE_ACT_TOOL = {
         description:
           'JavaScript code to execute. Gateway tools available as global functions ' +
           '(e.g., mama_search({query:"auth"}), mama_save({topic:"x",decision:"y",reasoning:"z"}), Read({path:"/tmp/test.txt"})). ' +
-          'Use var for variables. Last expression = return value.',
+          `${CODE_ACT_SCRIPT_CONTRACT} Example: ${CODE_ACT_SCRIPT_EXAMPLE}`,
       },
     },
     required: ['code'],
