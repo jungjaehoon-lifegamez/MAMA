@@ -29,7 +29,7 @@ import {
   type IModelRunner,
   type ModelRunnerErrorCode,
 } from './model-runner.js';
-import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import { GatewayToolExecutor, serializeCodeActModelResult } from './gateway-tool-executor.js';
 import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
 import { buildGatewayToolCatalog } from './gateway-tool-catalog.js';
@@ -38,7 +38,6 @@ import {
   resolvePrivatePrincipalSurface,
 } from '../connectors/private-connector-policy.js';
 import {
-  TypeDefinitionGenerator,
   getCodeActInstructions,
   projectCodeActToolPolicy,
   requireCodeActTier,
@@ -828,7 +827,7 @@ export class AgentLoop {
         this.useCodeAct &&
         roleAllowsOuterCodeAct(options.agentContext?.role, this.disallowedTools)
       ) {
-        // Code-Act mode: replace verbose gateway tools markdown with compact .d.ts
+        // Code-Act mode: expose the compact progressive-discovery bootstrap.
         const tierForTypeDefs = options.agentContext?.tier ?? 1;
         const policy = projectCodeActToolPolicy({
           tier: tierForTypeDefs,
@@ -840,15 +839,14 @@ export class AgentLoop {
             [],
           envelopeRawConnectors: options.envelope?.scope.raw_connectors ?? [],
         });
-        const typeDefs = TypeDefinitionGenerator.generate(policy);
         const codeActPrompt = wrapGeneratedPromptSection(
           'codeAct',
-          getCodeActInstructions(backend, policy.names) + '\n```typescript\n' + typeDefs + '\n```'
+          getCodeActInstructions(backend, policy.names)
         );
         promptLayers.push({
           name: 'codeAct',
           content: codeActPrompt,
-          priority: 2,
+          priority: 1,
           protectedPrefix: GENERATED_CODE_ACT_START,
           protectedSuffix: GENERATED_CODE_ACT_END,
         });
@@ -1542,13 +1540,9 @@ export class AgentLoop {
           );
           if (outerCodeActAllowed) {
             const policy = codeActPolicy!;
-            const typeDefs = TypeDefinitionGenerator.generate(policy);
             gatewayToolsPrompt = wrapGeneratedPromptSection(
               'codeAct',
-              getCodeActInstructions(this.backend, policy.names) +
-                '\n```typescript\n' +
-                typeDefs +
-                '\n```'
+              getCodeActInstructions(this.backend, policy.names)
             );
           }
         } else if (this.isGatewayMode && !isCodex) {
@@ -1605,7 +1599,7 @@ export class AgentLoop {
                 {
                   name: 'gatewayTools',
                   content: gatewayToolsPrompt,
-                  priority: 2,
+                  priority: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START) ? 1 : 2,
                   protectedPrefix: gatewayToolsPrompt.startsWith(GENERATED_CODE_ACT_START)
                     ? GENERATED_CODE_ACT_START
                     : GENERATED_GATEWAY_TOOLS_START,
@@ -2651,7 +2645,10 @@ export class AgentLoop {
             toolResultRecord = toolResult as Record<string, unknown>;
           }
         }
-        result = JSON.stringify(toolResult, null, 2);
+        result =
+          executionToolName === CODE_ACT_MARKER
+            ? serializeCodeActModelResult(toolResult)
+            : JSON.stringify(toolResult, null, 2);
 
         // Check if tool execution failed
         const hasSuccess = 'success' in toolResult;

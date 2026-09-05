@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.0] - 2026-09-06
+
+### Changed
+
+- Agents discover authorized gateway tools and request selected contracts instead of receiving
+  the full tool catalog in every system prompt. Known tools remain directly callable.
+- `task_list` now defaults to a 25-item page, with explicit overview and detail views, complete
+  pagination metadata, scoped cursors, and separately preserved date-only and exact deadlines.
+- `board_read` returns slot descriptors by default. Selected text/HTML, Trello card sections,
+  and long messages support explicit continuation instead of silently dropping their tails.
+- Trello board/list overviews, card pages, and search expose coverage and snapshot-bound cursors;
+  message reads support scoped keyset pages and selected-message content.
+
+### Fixed
+
+- Code-Act model results carry business values once while preserving trusted execution evidence
+  and fencing external content. Null values survive the sandbox boundary.
+- Reader continuations reject stale content and changed queries; implicit message date windows
+  remain stable across pages. Task overview/page reads use a consistent SQLite read transaction.
+- Report text extraction uses a non-executing HTML parser, preserving visible text and block
+  boundaries. Direct Trello detail reads verify configured-board membership before disclosure.
+
 ## mama-os [0.47.1] - 2026-09-05
 
 ### Fixed

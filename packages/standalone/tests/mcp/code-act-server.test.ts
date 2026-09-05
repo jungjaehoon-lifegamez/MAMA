@@ -180,6 +180,9 @@ describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
     expect(schema.properties.code.description).toContain(
       'var first=1; var second=2; ({first:first,second:second})'
     );
+    expect(schema.properties.code.description).toContain('tool_search');
+    expect(schema.properties.code.description).not.toContain('mama_search');
+    expect(schema.properties.code.description).not.toContain('mama_save');
   });
 
   it('sends the inherited process context key once without exposing it in MCP output or logs', async () => {
@@ -208,6 +211,36 @@ describe('Story S3/TG-03: Code-Act MCP process context transport', () => {
         metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 10 },
       },
     });
+  });
+
+  it('TG-03/TG-06 emits one framed copy of external evidence through stdio MCP', async () => {
+    const sentinel = 'SENTINEL_STDIO_EXTERNAL_VALUE';
+    const observed = await invokeCodeAct(undefined, {
+      success: true,
+      value: { evidence: sentinel },
+      logs: [],
+      metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 10 },
+      hostToolExecutions: [{ name: 'drive_browse', success: true }],
+      hostToolsInvoked: ['drive_browse'],
+      untrustedExternalEvidence: true,
+    });
+    const response = JSON.parse(observed.stdout) as {
+      result: { content: Array<{ text: string }> };
+    };
+    const text = response.result.content[0].text;
+    const root = JSON.parse(text) as Record<string, unknown>;
+
+    expect(root).toMatchObject({
+      protocol: 'mama.code_act.result',
+      version: 1,
+      success: true,
+      untrustedExternalEvidence: true,
+      hostToolExecutions: [{ name: 'drive_browse', success: true }],
+    });
+    expect(root.payload).toEqual(
+      expect.stringContaining('<<<UNTRUSTED-CONTENT source=external-evidence-code-act>>>')
+    );
+    expect(text.split(sentinel)).toHaveLength(2);
   });
 
   it('keeps the legacy HTTP body unchanged when no process context key exists', async () => {

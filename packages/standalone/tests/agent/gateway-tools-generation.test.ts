@@ -130,6 +130,9 @@ describe('Gateway tools generation', () => {
       ]);
       // (?<![\w-]) guards against slicing fragments out of mcp__*-namespaced
       // examples; '__' names and 'tool_use' are protocol prose, not tools.
+      // Sandbox-only metadata primitives (host-bridge.ts injectInto) are not gateway
+      // tools and are deliberately absent from the registry.
+      const sandboxMetadata = new Set(['tool_search', 'tool_describe']);
       const names = [...text.matchAll(/(?<![\w-])([a-z][a-z0-9]*_[a-z0-9]+)(?![\w-])/g)].map(
         (m) => m[1]
       );
@@ -139,7 +142,8 @@ describe('Gateway tools generation', () => {
           !n.includes('__') &&
           n !== 'code_act' &&
           n !== 'tool_use' &&
-          !codexNative.has(n)
+          !codexNative.has(n) &&
+          !sandboxMetadata.has(n)
       );
       expect(unknown, `backend=${backend}`).toEqual([]);
     }

@@ -4,6 +4,26 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.48.0 progressive discovery candidate: 2026-09-06
+
+- TG-03/TG-04: `code_act` now exposes policy-filtered `tool_search` and `tool_describe`.
+  Bootstrap contracts remain complete; selected business contracts are read on demand. Metadata
+  queries do not grant authority or count as business mutations.
+- TG-04/TG-05: owner task overview, bounded items and selected details preserve full reachability,
+  Temporal single-task authority, query/version-bound cursors, and date precision. Internal
+  whole-board APIs remain available to their actual consumers.
+- TG-03/TG-04/TG-06: Trello and message readers provide explicit coverage and continuation;
+  configured-board membership gates card details, and content versions prevent mixed-document
+  reconstruction. Board HTML is parsed without execution for selected text reads.
+- TG-05/TG-06: one-copy model results preserve machine-readable MCP audit/terminal envelopes;
+  the untrusted payload alone is fenced. Parent reproduced and corrected a framing regression
+  that had hidden observed mutations from the completed-exchange consumer.
+- Evidence: focused reader, catalog, policy, sandbox, MCP, streaming and real SQLite/WAL
+  regressions. Independent Opus reviews passed for Task A, the reader phase, and the final
+  corrections. The release candidate passed the root build (2/2 tasks), root tests (7/7 tasks),
+  and standalone tests (5,487 passed / 9 existing skipped). Publication and installation remain
+  separate release gates. New real Telegram quality is not claimed from scripted tests.
+
 ## 0.47.0 live owner turn and 0.47.1 contract repair: 2026-09-05
 
 - TG-03/TG-04: the installed 0.47.0 owner turn exposed one top-level `return` error and three

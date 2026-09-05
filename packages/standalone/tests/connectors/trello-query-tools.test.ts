@@ -9,8 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   resolveTrelloQueryAuth,
-  searchTrelloCards,
-  getTrelloCard,
+  searchTrelloBoardCards,
   getTrelloKanban,
   clearTrelloSnapshotCache,
 } from '../../src/connectors/trello/query-tools.js';
@@ -70,54 +69,15 @@ describe('resolveTrelloQueryAuth', () => {
   });
 });
 
-describe('searchTrelloCards', () => {
-  it('returns live card summaries with list, labels, and assignee names', async () => {
+// Migrated from the removed live-`/search` helper: the public progressive search
+// now scans the cached board snapshot (honest total, no 20-cap). The CJK-substring
+// and empty-query regressions carry over; the old per-`/search` HTTP-throw is
+// superseded by per-board coverage.failed (see trello-progressive.test.ts).
+describe('searchTrelloBoardCards (local board scan)', () => {
+  it('matches CJK substrings and underscore compounds, resolving assignee names', async () => {
     writeConfig();
     const fetchFn = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      expect(u).toContain('/search?');
-      expect(u).toContain('idBoards=b1');
-      expect(u).toContain('card_list=true');
-      return new Response(
-        JSON.stringify({
-          cards: [
-            {
-              id: 'c9',
-              name: 'ex_100_card',
-              due: null,
-              dateLastActivity: '2026-07-24T10:00:00.000Z',
-              labels: [{ name: '初稿' }, { name: 'artist-a' }],
-              members: [{ fullName: 'Alice Kim' }, { username: 'bob' }],
-              list: { name: '提出中' },
-              board: { id: 'b1', name: 'Board One' },
-            },
-          ],
-        })
-      );
-    }) as unknown as typeof fetch;
-
-    const cards = await searchTrelloCards({ query: 'ex_100' }, { configPath, fetchFn });
-    expect(cards).toEqual([
-      {
-        cardId: 'c9',
-        name: 'ex_100_card',
-        board: 'Board One',
-        list: '提出中',
-        labels: ['初稿', 'artist-a'],
-        assignees: ['Alice Kim', 'bob'],
-        due: null,
-        lastActivity: '2026-07-24T10:00:00.000Z',
-      },
-    ]);
-  });
-
-  it('falls back to a board scan with local substring match when /search misses (CJK)', async () => {
-    // Trello's /search tokenizes on word boundaries and misses CJK substrings
-    // and underscore compounds - most of the production board vocabulary.
-    writeConfig();
-    const fetchFn = vi.fn(async (url: string | URL) => {
-      const u = String(url);
-      if (u.includes('/search?')) return new Response(JSON.stringify({ cards: [] }));
       if (u.includes('/boards/b1/lists')) {
         return new Response(
           JSON.stringify([
@@ -151,12 +111,14 @@ describe('searchTrelloCards', () => {
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const cards = await searchTrelloCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
-    expect(cards).toHaveLength(1);
-    expect(cards[0]?.name).toBe('ex_100_エルデリーゼ(メイド)');
-    expect(cards[0]?.list).toBe('提出中');
-    expect(cards[0]?.labels).toEqual(['初稿']);
-    expect(cards[0]?.assignees).toEqual(['Alice Kim']);
+    const page = await searchTrelloBoardCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
+    expect(page.total).toBe(1);
+    expect(page.cards).toHaveLength(1);
+    expect(page.cards[0]?.name).toBe('ex_100_エルデリーゼ(メイド)');
+    expect(page.cards[0]?.list).toBe('提出中');
+    expect(page.cards[0]?.labels).toEqual(['初稿']);
+    expect(page.cards[0]?.assignees).toEqual(['Alice Kim']);
+    expect(page.coverage.complete).toBe(true);
     // The ignore-role board (b2) is never scanned.
     const scannedBoards = fetchFn.mock.calls
       .map((c) => String(c[0]))
@@ -164,14 +126,10 @@ describe('searchTrelloCards', () => {
     expect(scannedBoards.every((u) => u.includes('/boards/b1/'))).toBe(true);
   });
 
-  it('refuses an empty query and surfaces HTTP failures loudly', async () => {
+  it('refuses an empty query', async () => {
     writeConfig();
-    await expect(searchTrelloCards({ query: '  ' }, { configPath })).rejects.toThrow(/non-empty/);
-    const fetchFn = vi.fn(
-      async () => new Response('x', { status: 401 })
-    ) as unknown as typeof fetch;
-    await expect(searchTrelloCards({ query: 'q' }, { configPath, fetchFn })).rejects.toThrow(
-      /HTTP 401/
+    await expect(searchTrelloBoardCards({ query: '  ' }, { configPath })).rejects.toThrow(
+      /non-empty/
     );
   });
 });
@@ -306,57 +264,11 @@ describe('getTrelloKanban + snapshot cache', () => {
     writeConfig();
     const fetchFn = routed();
     await getTrelloKanban({}, { configPath, fetchFn });
-    await searchTrelloCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
-    await searchTrelloCards({ query: 'ex_100' }, { configPath, fetchFn });
+    await searchTrelloBoardCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
+    await searchTrelloBoardCards({ query: 'ex_100' }, { configPath, fetchFn });
     const boardFetches = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls
       .map((c) => String(c[0]))
       .filter((u) => u.includes('/boards/b1/lists')).length;
     expect(boardFetches).toBe(1);
-  });
-});
-
-describe('getTrelloCard', () => {
-  it('returns detail with bounded description and checklist completion states', async () => {
-    writeConfig();
-    const fetchFn = vi.fn(async (url: string | URL) => {
-      expect(String(url)).toContain('/cards/c9?');
-      return new Response(
-        JSON.stringify({
-          id: 'c9',
-          name: 'ex_100_card',
-          due: '2026-08-01T00:00:00.000Z',
-          dateLastActivity: '2026-07-24T10:00:00.000Z',
-          desc: 'd'.repeat(2000),
-          labels: [{ name: '1回修正' }],
-          members: [{ fullName: 'Alice Kim' }],
-          list: { name: 'FB対応' },
-          board: { id: 'b1', name: 'Board One' },
-          checklists: [
-            {
-              name: 'rounds',
-              checkItems: [
-                { name: '初稿', state: 'complete' },
-                { name: '1回修正', state: 'incomplete' },
-              ],
-            },
-          ],
-        })
-      );
-    }) as unknown as typeof fetch;
-
-    const card = await getTrelloCard({ cardId: 'c9' }, { configPath, fetchFn });
-    expect(card.list).toBe('FB対応');
-    expect(card.labels).toEqual(['1回修正']);
-    expect(card.description).toHaveLength(1000);
-    expect(card.checklists[0]?.items).toEqual([
-      { name: '初稿', complete: true },
-      { name: '1回修正', complete: false },
-    ]);
-  });
-
-  it('rejects a missing or non-alphanumeric cardId before any network call', async () => {
-    writeConfig();
-    await expect(getTrelloCard({ cardId: '' }, { configPath })).rejects.toThrow(/cardId/);
-    await expect(getTrelloCard({ cardId: '../x' }, { configPath })).rejects.toThrow(/cardId/);
   });
 });

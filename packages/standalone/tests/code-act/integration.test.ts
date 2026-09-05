@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
-import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
-import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import {
   CODE_ACT_INSTRUCTIONS,
   CODE_ACT_MARKER,
+  CODE_ACT_SCRIPT_CONTRACT,
   getCodeActInstructions,
 } from '../../src/agent/code-act/constants.js';
 import { vi } from 'vitest';
@@ -130,10 +129,9 @@ describe('Code-Act Integration', () => {
       it('does not describe all gateway tools when an explicit allowlist filters to none', () => {
         const instructions = getCodeActInstructions('codex', ['code_act', 'mcp__brave-search__*']);
 
-        expect(instructions).toContain('USE code_act only for these allowed gateway tools');
-        expect(instructions).toContain('No gateway tools are currently allowed');
-        expect(instructions).not.toContain('USE code_act for ALL gateway tools');
-        expect(instructions).not.toContain('- Memory: mama_search');
+        expect(instructions).toContain('exact gateway policy for this run');
+        expect(instructions).toContain('tool_search');
+        expect(instructions).not.toContain('mama_search');
       });
     });
 
@@ -172,7 +170,7 @@ describe('Code-Act Integration', () => {
 
       expect(instructions).toContain('composable primitives');
       expect(instructions).toContain('requested outcome');
-      expect(instructions).toContain('Guidance functions are optional');
+      expect(instructions).toContain('choose the composition');
       expect(instructions).not.toContain('Drive image translation workflow');
       expect(instructions).not.toContain('same resolved Drive folder');
     });
@@ -180,7 +178,7 @@ describe('Code-Act Integration', () => {
     it('never advertises unavailable Bash or Write functions on a narrowed Codex run', () => {
       const instructions = getCodeActInstructions('codex', ['Read', 'drive_browse']);
 
-      expect(instructions).toContain('only functions in the current allowlist');
+      expect(instructions).toContain('exact gateway policy for this run');
       expect(instructions).not.toContain('Bash({command:');
       expect(instructions).not.toContain('Write({file_path:');
     });
@@ -188,42 +186,30 @@ describe('Code-Act Integration', () => {
     it('preserves Claude MCP guidance', () => {
       const instructions = getCodeActInstructions('claude', ['mama_search']);
 
-      expect(instructions).toContain('MCP tool called `code_act`');
+      expect(instructions).toContain('MCP tool called `mcp__code-act__code_act`');
       expect(instructions).toContain('mcp__code-act__code_act');
     });
 
     it('TG-03/TG-04 keeps Cline native tools and routes only MAMA gateways through Code-Act', () => {
       const instructions = getCodeActInstructions('cline', ['mama_search']);
 
-      expect(instructions).toContain('MCP tool called `code_act`');
+      expect(instructions).toContain('MCP tool called `mcp__code-act__code_act`');
       expect(instructions).toContain('mcp__code-act__code_act');
-      expect(instructions).toContain('Use your Cline native tools directly');
-      expect(instructions).toContain('`run_commands`');
-      expect(instructions).toContain('USE code_act only for these allowed gateway tools');
-      expect(instructions).not.toContain('DO NOT use these Cline built-in tools');
-      expect(instructions).not.toContain('mcp__brave-search__*');
+      expect(instructions).toContain('Cline native local tools remain native');
+      expect(instructions).toContain('exact gateway policy for this run');
+      expect(instructions).not.toContain('mama_search');
     });
   });
 
-  it('system prompt combines instructions + type definitions', () => {
-    const typeDefs = TypeDefinitionGenerator.generate(projectCodeActToolPolicy({ tier: 1 }));
-    const fullPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
-    expect(fullPrompt).toContain('declare function mama_search');
-    expect(fullPrompt).toContain('declare function Read');
+  it('TG-03/TG-04 bootstrap advertises bounded metadata discovery without gateway declarations', () => {
+    const fullPrompt = CODE_ACT_INSTRUCTIONS;
+    expect(fullPrompt).toContain('declare function tool_search');
+    expect(fullPrompt).toContain('declare function tool_describe');
     expect(fullPrompt).toContain('## Code-Act');
-    // The first-turn-only declaration budget includes the complete owner
-    // query, Drive, image translation, and delivery surface.
-    // 12700->13100: trello_kanban declaration (deliberate ceiling bump).
-    // 13100->13500: task_external_correlation, the provenance join that keeps
-    // cross-store claims off title matching (deliberate ceiling bump).
-    // 13500->14000: mama_provenance, which is what lets a claim be traced back to
-    // the events behind it instead of asserted (deliberate ceiling bump).
-    // 14000->14400: changes_read, which is what lets the system say what IT changed
-    // and on what evidence, instead of inferring a delta from current state
-    // (deliberate ceiling bump).
-    // 14400->14500: task_update's caused_by and its cause outcome, which is the only way a
-    // Code-Act agent learns that its citation named nothing (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(14500);
+    expect(fullPrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
+    expect(fullPrompt).not.toContain('declare function mama_search');
+    expect(fullPrompt).not.toContain('declare function Read');
+    expect(fullPrompt.length).toBeLessThan(4_000);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {
