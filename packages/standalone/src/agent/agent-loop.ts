@@ -47,7 +47,10 @@ import {
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
 import { laneChannelId } from '../gateways/principal.js';
-import { OWNER_RUNTIME_SESSION_KEY } from '../operator/owner-runtime.js';
+import {
+  OWNER_RUNTIME_SESSION_KEY,
+  OWNER_SUBAGENT_INSTRUCTIONS,
+} from '../operator/owner-runtime.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -544,6 +547,7 @@ function ownerRuntimeSessionPolicyFingerprint(
   return JSON.stringify({
     version: 1,
     subject: OWNER_RUNTIME_SESSION_KEY,
+    subagentPolicy: OWNER_SUBAGENT_INSTRUCTIONS,
     model: model ?? null,
     allowedTools: [...(role?.allowedTools ?? [])].sort(),
     blockedTools: [...(role?.blockedTools ?? [])].sort(),
@@ -1576,6 +1580,9 @@ export class AgentLoop {
         includeOwnerRecovery = false
       ): string => {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
+        if (ownerRuntime && !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)) {
+          baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_SUBAGENT_INSTRUCTIONS}`;
+        }
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && this.useCodeAct) {
           baseSystemPrompt = stripTrailingCanonicalCodeActSection(
@@ -1676,9 +1683,6 @@ export class AgentLoop {
         return effectivePrompt;
       };
 
-      const includeInitialOwnerRecovery =
-        ownerRuntime && sessionIsNew && options?.resumeSession !== true;
-
       let perCallSystemPrompt: string;
       if (isCline && this.isGatewayMode && this.useCodeAct && !sessionIsNew) {
         // TG-05: a compatible Cline Hub session ignores the per-call system prompt.
@@ -1693,10 +1697,8 @@ export class AgentLoop {
         perCallSystemPrompt = prepareSystemPrompt(
           options?.systemPrompt,
           options?.resumeSession === true,
-          includeInitialOwnerRecovery
+          false
         );
-      } else if (includeInitialOwnerRecovery) {
-        perCallSystemPrompt = prepareSystemPrompt(undefined, false, true);
       } else {
         perCallSystemPrompt = this.defaultSystemPrompt;
         console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
@@ -1713,7 +1715,7 @@ export class AgentLoop {
       const resumeInstructions =
         isDurableRuntime && freshSystemPromptBuilder
           ? async (): Promise<string> =>
-              prepareSystemPrompt(await freshSystemPromptBuilder(), false, true)
+              prepareSystemPrompt(await freshSystemPromptBuilder(), false, false)
           : undefined;
 
       // Reset StopContinuation state for this channel to prevent leaking
@@ -1882,7 +1884,7 @@ export class AgentLoop {
         };
         try {
           const durablePolicyStatus =
-            tracksSessionPolicy && turn === 1 && shouldResume
+            tracksSessionPolicy && turn === 1 && (shouldResume || ownerRuntime)
               ? this.agent.getSessionPolicyStatus?.({
                   model: options?.model,
                   resumeSession: true,
@@ -1926,6 +1928,10 @@ export class AgentLoop {
                   false,
                   true
                 );
+              } else if (ownerRuntime) {
+                // Background stimuli use the standing base policy. Recover their journal only
+                // after the backend proves replacement is required, never from host pool state.
+                requestSystemPrompt = prepareSystemPrompt(options?.systemPrompt, false, true);
               }
             } catch (rebuildError) {
               this.sessionPool.invalidateSession(channelKey, newSessionId);
@@ -2085,6 +2091,8 @@ export class AgentLoop {
                   false,
                   true
                 );
+              } else if (ownerRuntime) {
+                resetSystemPrompt = prepareSystemPrompt(options?.systemPrompt, false, true);
               }
 
               piResult = await this.agent.prompt(promptText, callbacks, {

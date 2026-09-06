@@ -318,7 +318,7 @@ Once saved:
 - Important function signature changes
 - Architecture pattern decisions
 
-## Owner Runtime & Owner Console (v0.49.1)
+## Owner Runtime & Owner Console (v0.49.2)
 
 - Authenticated owner conversations, reports, events, cron, heartbeat, and maintenance all enter
   `owner:runtime`. Channel and work kind select source/authority metadata, not a separate model.
@@ -326,7 +326,8 @@ Once saved:
   queued background stimuli; they do not wait for a separate SessionPool polling lock.
 - Host-only `prepareEnvelope` issues signed authority after both queue waits, before the model
   run and tool context are created. Static signed envelopes are never implicitly renewed.
-- Compatible durable sessions get no copied conversation or report. The boot client forwards
+- Compatible durable sessions get no copied conversation or report. Owner-event prompts do not
+  automatically read or render prior channel outcomes or notification text. The boot client forwards
   `probesDurableSession` and `ownerRecoveryJournalEnabled`; actual replacement uses the bounded
   owner recovery journal under the normal prompt budget and untrusted-history boundary.
 - MAMA chooses its tools and may directly invoke native subagents. It reviews their evidence and

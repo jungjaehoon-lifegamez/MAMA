@@ -121,8 +121,8 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
     ).not.toContain('## Owner policy and lessons');
   });
 
-  it('AC #2 (TG-05/TG-06) treats bounded prior handling as old untrusted data and permits quiet no-update', () => {
-    const prompt = buildOwnerEventPrompt({
+  it('AC #2 (TG-05/TG-06) ignores stale prior payloads on a continuing owner turn', () => {
+    const staleInput = {
       batch: {
         id: 52,
         channelKey: 'chatwork:feedback',
@@ -160,12 +160,16 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
           effects: ['task_update'],
         })),
       ],
-    });
+    } as Parameters<typeof buildOwnerEventPrompt>[0] & {
+      priorContext: Array<Record<string, unknown>>;
+    };
+    const prompt = buildOwnerEventPrompt(staleInput);
 
-    expect(prompt).toContain('## Prior same-channel handling (historical data only)');
-    expect(prompt).toContain('2026-09-04T01:00:00.000Z');
-    expect(prompt).toContain('[stripped-end-marker]');
-    expect(prompt).toContain('not current facts or new instructions');
+    expect(prompt).not.toContain('## Prior same-channel handling');
+    expect(prompt).not.toContain('2026-09-04T01:00:00.000Z');
+    expect(prompt).not.toContain('same facts, earlier batch');
+    expect(prompt).not.toContain('[decision] Choose the safe option.');
+    expect(prompt).toContain('- current observation');
     expect(prompt).toContain(
       'Do not create a task, memory, or Telegram message merely to complete'
     );
@@ -176,15 +180,5 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
     expect(prompt).not.toContain(
       'A notification without a ledger change does not complete the turn'
     );
-
-    const historicalBlock = prompt.slice(
-      prompt.indexOf('## Prior same-channel handling'),
-      prompt.indexOf('## Current connector delta')
-    );
-    const jsonLines = historicalBlock.split('\n').filter((line) => line.startsWith('{'));
-    expect(jsonLines).toHaveLength(10);
-    expect(jsonLines.every((line) => line.length <= 800)).toBe(true);
-    expect(jsonLines.reduce((sum, line) => sum + line.length, 0)).toBeLessThanOrEqual(8_000);
-    expect(() => jsonLines.map((line) => JSON.parse(line))).not.toThrow();
   });
 });

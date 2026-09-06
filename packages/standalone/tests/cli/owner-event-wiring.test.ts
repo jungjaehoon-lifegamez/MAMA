@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -35,6 +35,14 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       scope: { allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }] },
     } as Envelope;
   }
+
+  it('TG-05 production prompt assembly never reads same-channel prior context', () => {
+    const source = readFileSync(
+      new URL('../../src/cli/commands/start.ts', import.meta.url),
+      'utf8'
+    );
+    expect(source).not.toMatch(/ownerEventInbox\.readPriorContext\s*\(/);
+  });
 
   it('moves one connector event from durable intake to a receipted MAMA owner turn', async () => {
     const db = new Database(':memory:');
@@ -305,7 +313,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     db.close();
   });
 
-  it('TG-01/TG-05/TG-06 restores bounded prior handling after DB reopen without resending it', async () => {
+  it('TG-01/TG-05/TG-06 keeps stored audit history out of a continued turn after DB reopen', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mama-owner-event-context-'));
     const dbPath = join(directory, 'operator.db');
     try {
@@ -394,13 +402,6 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
             batch,
             ownerBrief: 'brief',
             ownerTelegramChatId: 'owner-chat',
-            priorContext: inbox.readPriorContext({
-              currentBatchId: batch.id,
-              channelKey: batch.channelKey,
-              principalRole: 'owner_console',
-              allowedRawConnectors: ['chatwork'],
-              ownerTelegramChatId: 'owner-chat',
-            }),
           }),
         issueEnvelope: async () => envelope(),
         getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
@@ -409,8 +410,8 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
 
       expect(await loop.tick()).toBe('processed');
       expect(runner.run).toHaveBeenCalledTimes(1);
-      expect(seenPrompt).toContain('[decision] prior owner question');
-      expect(seenPrompt).toContain('historical data only');
+      expect(seenPrompt).not.toContain('[decision] prior owner question');
+      expect(seenPrompt).not.toContain('historical data only');
       expect(seenPrompt).not.toContain('current-event-1');
       expect(
         reopenedDb
@@ -424,7 +425,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     }
   });
 
-  it('TG-05 exposes a newer ACKed same-channel batch when an older backed-off batch retries', async () => {
+  it('TG-05 does not replay a newer ACKed batch when an older backed-off batch retries', async () => {
     let now = 1_000;
     const db = new Database(':memory:');
     const inbox = new OwnerEventInbox(db, () => now);
@@ -492,13 +493,6 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
         buildOwnerEventPrompt({
           batch,
           ownerBrief: 'brief',
-          priorContext: inbox.readPriorContext({
-            currentBatchId: batch.id,
-            channelKey: batch.channelKey,
-            principalRole: 'owner_console',
-            allowedRawConnectors: ['chatwork'],
-            ownerTelegramChatId: 'owner-chat',
-          }),
         }),
       issueEnvelope: async () => envelope(),
       getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
@@ -506,12 +500,9 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     });
 
     expect(await loop.tick()).toBe('processed');
-    const priorBlock = seenPrompt.slice(
-      seenPrompt.indexOf('## Prior same-channel handling'),
-      seenPrompt.indexOf('## Current connector delta')
-    );
-    expect(priorBlock).toContain('newer handling completed while older batch waited');
-    expect(priorBlock).not.toContain('older observation');
+    expect(seenPrompt).not.toContain('newer handling completed while older batch waited');
+    expect(seenPrompt).toContain('older observation');
+    expect(seenPrompt).not.toContain('## Prior same-channel handling');
     db.close();
   });
 
@@ -624,13 +615,6 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
           batch,
           ownerBrief: 'brief',
           ownerTelegramChatId: 'owner-chat',
-          priorContext: inbox.readPriorContext({
-            currentBatchId: batch.id,
-            channelKey: batch.channelKey,
-            principalRole: 'owner_console',
-            allowedRawConnectors: ['chatwork'],
-            ownerTelegramChatId: 'owner-chat',
-          }),
         }),
       issueEnvelope: async () => envelope(),
       getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
@@ -638,29 +622,12 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     });
 
     expect(await loop.tick()).toBe('processed');
-    const priorItems = seenPrompt
-      .slice(
-        seenPrompt.indexOf('## Prior same-channel handling'),
-        seenPrompt.indexOf('## Current connector delta')
-      )
-      .split('\n')
-      .filter((line) => line.startsWith('{'))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(priorItems).toEqual([
-      expect.objectContaining({
-        observations: ['real Drive artifact completed'],
-        outcome: 'acted',
-        effects: ['drive_upload'],
-      }),
-      expect.objectContaining({
-        observations: ['administrative confirmation'],
-        outcome: 'no_update',
-        effects: ['telegram_send'],
-        notification: 'Informational confirmation',
-      }),
-    ]);
-    expect(JSON.stringify(priorItems)).not.toContain('Plain notification without terminal proof');
-    expect(JSON.stringify(priorItems)).not.toContain('legacy Telegram-only ACK');
+    expect(seenPrompt).not.toContain('real Drive artifact completed');
+    expect(seenPrompt).not.toContain('administrative confirmation');
+    expect(seenPrompt).not.toContain('Informational confirmation');
+    expect(seenPrompt).not.toContain('Plain notification without terminal proof');
+    expect(seenPrompt).not.toContain('legacy Telegram-only ACK');
+    expect(seenPrompt).toContain('current observation');
     db.close();
   });
 });
