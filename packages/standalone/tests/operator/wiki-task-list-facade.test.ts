@@ -12,6 +12,8 @@ import Database from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { runTaskListView } from '../../src/operator/task-list-views.js';
 import { evaluateWikiContinuity } from '../../src/operator/wiki-continuity.js';
+import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 
 describe('wiki taskUpdatedSince against the real task_list facade', () => {
   it('is accepted by runTaskListView and filters at range.start_ms, while the numeric value is rejected', () => {
@@ -69,5 +71,71 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('TG-03/TG-06 enforces the exact wiki range at the gateway boundary', async () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db, { timeZone: 'Asia/Seoul' });
+      ledger.create({ title: 'bounded task' });
+      const executor = new GatewayToolExecutor();
+      executor.setTaskLedger(ledger);
+      const wikiTaskRange = {
+        updatedSince: '2026-08-08T15:00:00.000Z',
+        updatedBefore: '2026-08-09T15:00:00.000Z',
+      };
+      const context = { executionSurface: 'model_tool' as const, wikiTaskRange };
+
+      await expect(
+        executor.execute(
+          'task_list',
+          {
+            view: 'items',
+            updated_since: wikiTaskRange.updatedSince,
+            updated_before: wikiTaskRange.updatedBefore,
+          },
+          context
+        )
+      ).resolves.toMatchObject({ success: true, view: 'items' });
+      await expect(
+        executor.execute(
+          'task_list',
+          { view: 'items', updated_since: wikiTaskRange.updatedSince },
+          context
+        )
+      ).rejects.toThrow(/exact host-issued.*updated_since\/updated_before/i);
+      await expect(
+        executor.execute(
+          'task_list',
+          {
+            view: 'detail',
+            ids: [1],
+            updated_since: wikiTaskRange.updatedSince,
+            updated_before: wikiTaskRange.updatedBefore,
+          },
+          context
+        )
+      ).rejects.toThrow(/requires view items/i);
+      await expect(
+        executor.execute(
+          'task_list',
+          {},
+          {
+            executionSurface: 'model_tool',
+            wikiTaskRange: { updatedSince: null, updatedBefore: null },
+          }
+        )
+      ).rejects.toThrow(/legacy input/i);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('TG-05 carries the host wiki range into every nested tool call', () => {
+    const wikiTaskRange = {
+      updatedSince: '2026-08-08T15:00:00.000Z',
+      updatedBefore: '2026-08-09T15:00:00.000Z',
+    };
+    expect(buildAgentToolExecutionContext({ wikiTaskRange })).toMatchObject({ wikiTaskRange });
   });
 });

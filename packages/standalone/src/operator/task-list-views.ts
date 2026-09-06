@@ -588,7 +588,7 @@ function filterFingerprint(filter: NormalizedFilter): string {
     filter.dueBeforeMs ?? null,
     filter.dueAfterMs ?? null,
     filter.updatedSinceMs ?? null,
-    filter.updatedBeforeMs ?? null,
+    ...(filter.updatedBeforeMs === undefined ? [] : [filter.updatedBeforeMs]),
     filter.qualification ?? null,
     filter.order,
   ]);
