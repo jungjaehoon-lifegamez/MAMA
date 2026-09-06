@@ -1838,6 +1838,8 @@ describe('Story: Codex app-server process', () => {
     await runner.stop();
   });
 
+  // Story TG-05: preserve an active durable Codex turn.
+  // AC: streamed progress refreshes the idle deadline beyond the original timeout.
   it('treats streamed progress as activity and refreshes the turn idle timeout', async () => {
     const item = fixture('progress-delayed');
     const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
