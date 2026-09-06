@@ -1690,6 +1690,7 @@ export class AgentLoop {
         // complete policy lazily through freshSessionSystemPrompt below.
         perCallSystemPrompt = options?.systemPrompt ?? this.defaultSystemPrompt;
       } else if (
+        ownerRuntime ||
         options?.systemPrompt ||
         options?.gatewayToolsPrompt !== undefined ||
         (this.isGatewayMode && this.useCodeAct)

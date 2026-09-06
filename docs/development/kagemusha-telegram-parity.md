@@ -1516,3 +1516,13 @@ scope bindings, and the day's `[learning]` audit lines).
   expired leases that are still draining pinned executions.
 - 2026-07-22: Created after partial, file-by-file parity work repeatedly missed end-to-end
   boundaries. Reference source was re-read from `mama-suite` commit `ea982c1`.
+
+## 0.49.3 owner default-path correction: 2026-09-07
+
+- TG-04/TG-05: a background-first owner turn without a custom system prompt or Code-Act now
+  prepares the standing owner policy. This closes the default Claude path omitted by 0.49.2.
+  Non-owner defaults and compatible Cline continuation retain their prior behavior.
+- Public 0.49.2 installed Trello reads succeeded; the first tool-free continuity probe committed
+  on the canonical owner thread. A compatible 0.49.2 restart returned the
+  withheld value from the same thread, with zero tools and zero new recovery blocks. Final public
+  0.49.3 publication/install remains a distinct gate, recorded in the final release audit.
