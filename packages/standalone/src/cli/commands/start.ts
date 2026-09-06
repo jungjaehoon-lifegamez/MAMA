@@ -100,6 +100,7 @@ import {
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
+import { publicWikiConnectorScope } from '../../operator/wiki-continuity.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
@@ -549,8 +550,9 @@ export function workOrderEnvelopeScope(input: {
       ? [input.temporalBinding.connector]
       : []
     : input.workKind === 'wiki'
-      ? input.laneConnectors.filter(
-          (name) => !input.privateConnectorPolicy.enabledPrivateConnectors.includes(name)
+      ? publicWikiConnectorScope(
+          input.laneConnectors,
+          input.privateConnectorPolicy.enabledPrivateConnectors
         )
       : input.laneConnectors;
   return {
@@ -661,7 +663,7 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
     // ledger row stays evidence, and an existing row gets a named disposition.
     'task_reclassify',
   ],
-  wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
+  wiki: ['agent_notices', 'contract_no_update', 'wiki_read', 'wiki_publish'],
   'memory-curation': ['agent_notices', 'contract_no_update'],
   temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
   'self-check': ['agent_notices', 'contract_no_update', 'repair_request', 'issue_close'],
@@ -731,6 +733,7 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'task_update',
     'task_reclassify',
     'task_temporal_reconcile',
+    'obsidian',
   ]),
   // curation writes memory; nothing else
   'memory-curation': new Set([
@@ -2126,15 +2129,27 @@ export async function runAgentLoop(
           runOptions.temporalWorkContext = temporalContext;
         }
         if (wo.workKind === 'wiki') {
+          const wikiRange =
+            typeof wo.payload.range === 'object' && wo.payload.range !== null
+              ? (wo.payload.range as Record<string, unknown>)
+              : null;
           runOptions.wikiTaskRange = {
-            updatedSince:
-              typeof wo.payload.taskUpdatedSince === 'string'
-                ? wo.payload.taskUpdatedSince
+            ownerDate: typeof wo.payload.ownerDate === 'string' ? wo.payload.ownerDate : null,
+            rangeStartMs: typeof wikiRange?.start_ms === 'number' ? wikiRange.start_ms : null,
+            rangeEndMs: typeof wikiRange?.end_ms === 'number' ? wikiRange.end_ms : null,
+            connectors:
+              Array.isArray(wo.payload.connectors) &&
+              wo.payload.connectors.every((connector) => typeof connector === 'string')
+                ? [...wo.payload.connectors]
                 : null,
+            updatedSince:
+              typeof wo.payload.taskUpdatedSince === 'string' ? wo.payload.taskUpdatedSince : null,
             updatedBefore:
               typeof wo.payload.taskUpdatedBefore === 'string'
                 ? wo.payload.taskUpdatedBefore
                 : null,
+            noUpdateScope:
+              typeof wo.payload.noUpdateScope === 'string' ? wo.payload.noUpdateScope : null,
           };
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway

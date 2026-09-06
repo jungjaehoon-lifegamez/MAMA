@@ -1152,7 +1152,8 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       // All three source classes, read progressively.
       expect(wiki).toContain('context_compile');
       expect(wiki).toContain('task_list({view:"items"');
-      expect(wiki).toContain('updated_since');
+      expect(wiki).toContain('taskUpdatedSince/taskUpdatedBefore');
+      expect(wiki).toContain('the host injects');
       expect(wiki).toContain('nextCursor');
       expect(wiki).toContain('mama_search');
       // Memory is supplementary, never the authoritative last-30 gate.

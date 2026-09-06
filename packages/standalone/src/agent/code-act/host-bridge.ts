@@ -386,13 +386,41 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   // Wiki
   {
+    name: 'wiki_read',
+    description:
+      'Read host-bound MAMA wiki pages by exact relative path. Returns existence, bounded content, and contentVersion for safe publishing.',
+    params: [
+      {
+        name: 'paths',
+        type: 'string[]',
+        required: true,
+        description: 'One to 20 exact paths under Home.md, the bound daily page, or lessons/.',
+      },
+      {
+        name: 'content_offset',
+        type: 'number',
+        required: false,
+        description: 'Character offset for continuing a truncated page read.',
+      },
+      {
+        name: 'content_limit',
+        type: 'number',
+        required: false,
+        description: 'Characters per page, 1-20000 (default 20000).',
+      },
+    ],
+    returnType:
+      '{ pages: Array<{ path: string; exists: boolean; content: string | null; contentVersion: string | null; totalContentChars: number; contentOffset: number; nextContentOffset: number | null; truncated: boolean }>; totalChars: number; truncated: boolean }',
+    category: 'os',
+  },
+  {
     name: 'wiki_publish',
     description:
       'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
     params: [
       {
         name: 'pages',
-        type: "Array<{ path: string; title: string; type: string; content: string; confidence?: 'high' | 'medium' | 'low'; sourceIds?: string[]; sourceRefs?: Array<{ kind: string; id: string; connector?: string }> }>",
+        type: "Array<{ path: string; expectedContentVersion?: string | null; title: string; type: string; content: string; confidence?: 'high' | 'medium' | 'low'; sourceIds?: string[]; sourceRefs?: Array<{ kind: string; id: string; connector?: string }> }>",
         required: true,
         description:
           'Array of wiki pages to publish. Path must be relative to the wiki directory. sourceRefs is canonical vNext provenance; sourceIds is legacy-compatible provenance.',
@@ -1041,6 +1069,7 @@ export const READ_ONLY_TOOLS = new Set([
   'member_list',
   'member_scope_list',
   'audit_findings_read',
+  'wiki_read',
   'Read',
   'os_get_config',
   'agent_notices',

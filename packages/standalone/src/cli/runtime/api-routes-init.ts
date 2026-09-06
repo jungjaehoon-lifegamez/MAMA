@@ -66,6 +66,7 @@ import {
   evaluateWikiContinuity,
   ownerDateForInstant,
   parseStrictOwnerDate,
+  publicWikiConnectorScope,
 } from '../../operator/wiki-continuity.js';
 import type {
   TaskLedger,
@@ -937,10 +938,13 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
     // Wire wiki_publish tool to shared gateway executor (used by code-act path)
     toolExecutor.setWikiPublisher((pages) => {
-      for (const page of pages) {
-        obsWriter.writePage(page as import('../../wiki/types.js').WikiPage);
-      }
-      if (pages.length > 0) {
+      const scheduledPages = pages.every((page) => page.expectedContentVersion !== undefined);
+      if (scheduledPages) {
+        obsWriter.writePagesAtomically(pages);
+      } else {
+        for (const page of pages) {
+          obsWriter.writePage(page as import('../../wiki/types.js').WikiPage);
+        }
         obsWriter.updateIndex(pages as import('../../wiki/types.js').WikiPage[]);
         obsWriter.appendLog('compile', `Published ${pages.length} pages`);
       }
@@ -998,7 +1002,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         const decision = evaluateWikiContinuity({
           nowMs: now,
           timeZone: wikiTimeZone,
-          connectors: rawConnectorScope,
+          connectors: publicWikiConnectorScope(
+            rawConnectorScope,
+            privateConnectorPolicy.enabledPrivateConnectors
+          ),
           trigger,
           forced: opts?.forced === true,
           requestedOwnerDate: opts?.ownerDate,
@@ -1050,6 +1057,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         LANE_OBLIGATED_TOOLS.wiki
       );
       workOrderConsumer.registerHook('wiki', {
+        verdictRequired: true,
         // The trace rowid before the run is what makes the count run-bound; without it the
         // hook would count any wiki_publish this process ever made.
         before: () => wikiTraces.getTraceMaxId(),

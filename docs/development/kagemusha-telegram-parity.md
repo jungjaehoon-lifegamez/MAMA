@@ -4,13 +4,35 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.48.3 configured wiki vault boundary candidate: 2026-09-06
+
+- TG-03/TG-04/TG-05: scheduled wiki runs receive one bounded, direct-filesystem `wiki_read`
+  primitive for the configured MAMA root and publish through `wiki_publish`; the generic Obsidian
+  CLI is removed from that lane. Reads are batched and character-paged, while host-issued content
+  versions prevent a stale read from overwriting a newer daily or lesson page.
+- TG-05/TG-06: host authority includes the owner date. It permits only `Home.md`, the exact
+  `daily/<ownerDate>.md`, and direct lesson pages under the three canonical lesson folders. Every
+  publish must include the bound daily page, and a successful read cannot satisfy workorder
+  completion. A no-update receipt is accepted only after connector, all bounded task pages, the
+  bound daily page, and Home have been read completely.
+- TG-03/TG-05: native task bounds are injected rather than repeated by the model on every page,
+  and a null first-page cursor is normalized away. The payload and context envelope now share the
+  same public connector projection, avoiding guaranteed private-connector retries.
+- Candidate evidence: focused boundary, task facade, continuity, hook, Code-Act and lane tests are
+  green; the stable standalone regression passed 5,616 tests with 9 existing skips. Independent
+  review findings on partial reads, human-section trust, partial publication and no-read no-update
+  completion were repaired. PR CI, publication, clean installation and new live backfills remain
+  separate gates.
+
 ## 0.48.2 bounded historical task reads: 2026-09-06
 
 - TG-03/TG-05/TG-06: a live 2026-08-09 backfill exposed that `taskUpdatedSince` had no upper
   bound and returned 221 later task rows. Wiki payloads now carry `taskUpdatedBefore` equal to
   `range.end_ms`, and the progressive task facade enforces the half-open range on every page.
-  Legacy payloads without the upper bound fail closed. The interrupted broad backfill and queued
-  follow-ups were cancelled before another run could start; bounded runtime proof remains pending.
+  Legacy payloads without the upper bound fail closed. Live 0.48.2 reduced the current-day task
+  result to 35 bounded rows, but exposed an independent vault-boundary failure: 20 Code-Act calls
+  produced 32 generic Obsidian calls and created five pages in the focused `finance` vault. The
+  daemon was stopped and all five newly created files were checksum-quarantined and removed.
 
 ## 0.48.1 wiki continuity and task recalibration candidate: 2026-09-06
 

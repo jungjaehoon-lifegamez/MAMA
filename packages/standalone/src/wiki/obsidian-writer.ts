@@ -5,10 +5,16 @@ import {
   writeFileSync,
   appendFileSync,
   readdirSync,
+  copyFileSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
 } from 'fs';
-import { join, dirname, basename, posix } from 'path';
+import { join, dirname, basename, posix, relative } from 'path';
 import type { WikiPage } from './types.js';
 import { normalizeWikiPagePath } from './path-safety.js';
+import { readWikiPageVersion } from './wiki-read.js';
 
 const HUMAN_MARKER = '<!-- human -->';
 const FRONTMATTER_LIST_UNSAFE_PATTERN = /[\r\n]/;
@@ -144,12 +150,13 @@ export class ObsidianWriter {
     // the wiki_publish fallback path is actually used.
   }
 
-  writePage(page: WikiPage): string {
+  writePage(page: WikiPage, options?: { exactPath?: boolean }): string {
     const safePage = { ...page, path: normalizeWikiPagePath(page.path) };
     // Dedup: check if a similar page already exists in the same directory. A
     // daily journal page has identity by exact normalized path only - fuzzy
     // title/slug matching must never fold one date onto another.
-    const existingPath = isDailyPagePath(safePage.path) ? null : this.findExistingPage(safePage);
+    const existingPath =
+      options?.exactPath || isDailyPagePath(safePage.path) ? null : this.findExistingPage(safePage);
     const effectivePath = existingPath || safePage.path;
 
     const filePath = join(this.wikiPath, effectivePath);
@@ -165,6 +172,11 @@ export class ObsidianWriter {
     const titlePrefix = `# ${safePage.title}`;
     if (cleanContent.startsWith(titlePrefix)) {
       cleanContent = cleanContent.slice(titlePrefix.length).trimStart();
+    }
+
+    const incomingMarkerIdx = cleanContent.indexOf(HUMAN_MARKER);
+    if (incomingMarkerIdx !== -1) {
+      cleanContent = cleanContent.slice(0, incomingMarkerIdx).trimEnd();
     }
 
     let humanSection = '';
@@ -200,6 +212,116 @@ export class ObsidianWriter {
 
     writeFileSync(filePath, body, 'utf8');
     return effectivePath;
+  }
+
+  /**
+   * Stage every scheduled page before activation and roll back a failed activation.
+   * This keeps a later page error from leaving an earlier daily/lesson page durable while
+   * the workorder is retried.
+   */
+  writePagesAtomically(
+    pages: readonly (WikiPage & { expectedContentVersion?: string | null })[]
+  ): string[] {
+    if (pages.length === 0) {
+      return [];
+    }
+    const stagingRoot = mkdtempSync(join(this.wikiPath, '.mama-publish-'));
+    const stagedWriter = new ObsidianWriter(stagingRoot, '.');
+    const prepared: Array<{
+      path: string;
+      target: string;
+      staged: string;
+      backup: string;
+      existed: boolean;
+      expectedContentVersion: string | null;
+    }> = [];
+    const activated: typeof prepared = [];
+    let preserveRecovery = false;
+    try {
+      stagedWriter.ensureDirectories();
+      for (const page of pages) {
+        const path = normalizeWikiPagePath(page.path);
+        const target = join(this.wikiPath, path);
+        const staged = join(stagingRoot, path);
+        const backup = join(stagingRoot, '.backup', path);
+        const existed = existsSync(target);
+        if (page.expectedContentVersion === undefined) {
+          throw new Error(`atomic wiki page ${path} requires expectedContentVersion`);
+        }
+        mkdirSync(dirname(staged), { recursive: true });
+        if (existed) {
+          copyFileSync(target, staged);
+          mkdirSync(dirname(backup), { recursive: true });
+          copyFileSync(target, backup);
+        }
+        stagedWriter.writePage({ ...page, path }, { exactPath: true });
+        prepared.push({
+          path,
+          target,
+          staged,
+          backup,
+          existed,
+          expectedContentVersion: page.expectedContentVersion,
+        });
+      }
+
+      for (const entry of prepared) {
+        const currentVersion = readWikiPageVersion(this.wikiPath, entry.path);
+        if (currentVersion !== entry.expectedContentVersion) {
+          throw new Error(`atomic wiki page ${entry.path} changed before activation`);
+        }
+        mkdirSync(dirname(entry.target), { recursive: true });
+        renameSync(entry.staged, entry.target);
+        activated.push(entry);
+      }
+      return prepared.map((entry) => entry.path);
+    } catch (error) {
+      const rollbackErrors: string[] = [];
+      for (const entry of activated.reverse()) {
+        try {
+          if (entry.existed) {
+            copyFileSync(entry.backup, entry.target);
+          } else if (existsSync(entry.target)) {
+            unlinkSync(entry.target);
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push(
+            `${entry.path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+          );
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        preserveRecovery = true;
+        const manifestPath = join(stagingRoot, 'RECOVERY.json');
+        writeFileSync(
+          manifestPath,
+          JSON.stringify(
+            {
+              createdAt: new Date().toISOString(),
+              publishError: error instanceof Error ? error.message : String(error),
+              rollbackErrors,
+              pages: prepared.map((entry) => ({
+                path: entry.path,
+                existed: entry.existed,
+                backup: entry.existed ? relative(stagingRoot, entry.backup) : null,
+              })),
+            },
+            null,
+            2
+          ),
+          'utf8'
+        );
+        throw new Error(
+          `Wiki publication rollback incomplete; recovery preserved at ${manifestPath}`,
+          { cause: error }
+        );
+      }
+      throw error;
+    } finally {
+      if (!preserveRecovery) {
+        rmSync(stagingRoot, { recursive: true, force: true });
+      }
+    }
   }
 
   appendLog(action: string, message: string): void {

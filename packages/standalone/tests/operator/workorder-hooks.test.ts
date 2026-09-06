@@ -528,19 +528,18 @@ describe('Story S2-T3: extracted workorder hooks', () => {
 
     it('reports a compile nothing wrote as UNVERIFIED', () => {
       const run = wikiRun(0);
-      run.hook(fakeWo, 'compiled 2 pages', 0);
+      expect(run.hook(fakeWo, 'compiled 2 pages', 0)).toEqual({
+        disposition: 'fail',
+        reason: expect.stringContaining('no obligated tool'),
+      });
       expect(run.lines[0]).toContain('UNVERIFIED');
       expect(run.unverified).toHaveLength(1);
     });
 
-    // Deliberately NOT the word "verified": the obligated `obsidian` tool covers reads too
-    // and the trace carries only its name, so the strongest honest claim is that the lane
-    // exercised the vault.
-    it('reports a trace-backed run as vault exercised, never as a proven write', () => {
+    it('returns a completion verdict for a run-bound publish or no-update trace', () => {
       const run = wikiRun(1);
-      run.hook(fakeWo, 'compiled 2 pages', 0);
-      expect(run.lines[0]).toContain('vault exercised');
-      expect(run.lines[0]).not.toContain('wrote');
+      expect(run.hook(fakeWo, 'compiled 2 pages', 0)).toEqual({ disposition: 'complete' });
+      expect(run.lines[0]).toContain('verified');
       expect(run.unverified).toEqual([]);
     });
   });
