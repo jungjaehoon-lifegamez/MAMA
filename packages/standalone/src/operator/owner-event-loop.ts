@@ -22,7 +22,7 @@ interface OwnerEventRunner {
       channelId: string;
       sessionPolicyRole: RoleConfig;
       agentContext: AgentContext;
-      envelope: Envelope;
+      prepareEnvelope: () => Promise<Envelope>;
       causeEventIds: readonly string[];
       sourceMessageRef: string;
       ownerJournalPrompt: string;
@@ -100,7 +100,6 @@ export class OwnerEventLoop {
 
       try {
         const prompt = await this.deps.buildPrompt(batch);
-        const envelope = await this.deps.issueEnvelope(batch);
         const result = await this.deps.runner.run(prompt, {
           sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'owner-event',
@@ -108,7 +107,7 @@ export class OwnerEventLoop {
           channelId: batch.channelKey,
           agentContext: this.deps.agentContext,
           sessionPolicyRole: this.deps.ownerRuntimeRole ?? this.deps.agentContext.role,
-          envelope,
+          prepareEnvelope: () => this.deps.issueEnvelope(batch),
           causeEventIds: batch.eventIds,
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerJournalPrompt: batch.lines.join('\n'),

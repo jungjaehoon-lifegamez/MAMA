@@ -12,6 +12,7 @@ import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentLoopOptions, GatewayToolInput } from '../../src/agent/types.js';
 import { makeAuthorityHarness, makeSignedEnvelope } from '../envelope/fixtures.js';
 import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
+import { getSessionPool } from '../../src/agent/session-pool.js';
 
 function makeReactiveEnvelopeConfig(): ReactiveEnvelopeConfig {
   return {
@@ -46,6 +47,49 @@ describe('Reactive Main envelope tool path', () => {
   afterEach(() => {
     sessionStore?.close();
     sessionStore = undefined;
+  });
+
+  it('TG-05 admits owner input to the shared priority queue while a report holds the session', async () => {
+    const pool = getSessionPool();
+    const held = pool.getSession('owner:runtime');
+    let captured: AgentLoopOptions | undefined;
+    const fakeAgentLoop: AgentLoopClient = {
+      childRuntimeToolCapable: false,
+      managesOwnerQueue: true,
+      async run(_prompt, options) {
+        captured = options;
+        return { response: 'queued owner response' };
+      },
+    };
+    const harness = makeRouterHarness(fakeAgentLoop);
+    sessionStore = harness.sessionStore;
+    const pending = harness.router.process(
+      withOwnerPrincipal({
+        source: 'telegram',
+        channelId: 'owner-queue-test',
+        userId: 'owner',
+        text: 'continue',
+      })
+    );
+    let admitted = false;
+    pending.then(() => {
+      admitted = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      expect(admitted).toBe(true);
+      expect(captured?.sessionKey).toBe('owner:runtime');
+      expect(captured?.lanePriority).toBe(100);
+      expect(captured?.cliSessionId).toBeUndefined();
+      expect(captured?.resumeSession).toBe(true);
+      expect(captured?.freshSessionSystemPrompt).toBeTypeOf('function');
+      expect(captured?.envelope).toBeUndefined();
+      expect((await captured?.prepareEnvelope?.())?.signature).toBeDefined();
+      expect(pool.peekSession('owner:runtime').busy).toBe(true);
+    } finally {
+      pool.releaseSession('owner:runtime', held.sessionId);
+      await pending;
+    }
   });
 
   it('passes signed envelope from MessageRouter into AgentLoopOptions for text and content runs', async () => {
