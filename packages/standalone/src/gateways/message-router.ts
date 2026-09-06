@@ -294,6 +294,8 @@ export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
  * Agent Loop interface for message processing
  */
 export interface AgentLoopClient {
+  /** The real runtime queues owner stimuli and acquires their session only when executing. */
+  readonly managesOwnerQueue?: boolean;
   /** True when a construction-wide child runtime can invoke native or MCP tools. */
   readonly childRuntimeToolCapable: boolean;
   /** Can distinguish a live durable backend thread from a missing one before prompting. */
@@ -1040,7 +1042,19 @@ This protects your credentials from being exposed in chat logs.`;
     const runtimeSessionKey =
       agentContext.roleName === 'owner_console' ? OWNER_RUNTIME_SESSION_KEY : channelKey;
     const sessionPool = getSessionPool();
-    const initialSession = sessionPool.getSession(runtimeSessionKey);
+    const runtimeOwnsSession =
+      runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY && this.agentLoop.managesOwnerQueue === true;
+    const ownerSession = runtimeOwnsSession
+      ? sessionPool.peekSession(runtimeSessionKey)
+      : undefined;
+    const initialSession = runtimeOwnsSession
+      ? {
+          sessionId: ownerSession?.sessionId ?? session.id,
+          isNew: !ownerSession?.sessionId,
+          busy: false,
+        }
+      : sessionPool.getSession(runtimeSessionKey);
+    if (ownerSession?.busy) processOptions?.onQueued?.();
     let cliSessionId = initialSession.sessionId;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
@@ -1056,7 +1070,7 @@ This protects your credentials from being exposed in chat logs.`;
       .join(':');
 
     // Track lock ownership for proper cleanup in finally block
-    let acquiredLock = !busy; // If not busy, we acquired lock from initialSession
+    let acquiredLock = !runtimeOwnsSession && !busy;
 
     // If session is busy, notify caller immediately and wait for it to be released
     if (busy) {
@@ -1152,7 +1166,8 @@ This protects your credentials from being exposed in chat logs.`;
         // thread with a minimal continuation; AgentLoop invokes the lazy full
         // builder only when the registry says the thread is actually missing.
         const lazyDurableResume =
-          this.config.backend === 'codex' && this.agentLoop.probesDurableSession === true;
+          runtimeOwnsSession ||
+          (this.config.backend === 'codex' && this.agentLoop.probesDurableSession === true);
         const needsFullContext = isNewCliSession && !lazyDurableResume;
 
         // Persistent backends skip repeated retrieval after the first turn.
@@ -1230,7 +1245,8 @@ This protects your credentials from being exposed in chat logs.`;
         // After a daemon restart the pool is new, but the durable Codex thread may
         // still exist and should be resumed. Keep prompt/context freshness separate
         // from backend conversation continuity.
-        const shouldResumeBackend = this.config.backend === 'codex' ? true : shouldResume;
+        const shouldResumeBackend =
+          runtimeOwnsSession || this.config.backend === 'codex' ? true : shouldResume;
         const usesContinuationContext = shouldResume || lazyDurableResume;
 
         // For resumed sessions: inject minimal context only
@@ -1289,7 +1305,9 @@ This protects your credentials from being exposed in chat logs.`;
         let pendingNotices = false;
         let pendingChannelNoticeCount = 0;
         let pendingBroadcastNoticeCount = 0;
-        const envelope = this.buildReactiveEnvelope(message, agentContext, memberEffectiveScope);
+        const envelope = runtimeOwnsSession
+          ? undefined
+          : this.buildReactiveEnvelope(message, agentContext, memberEffectiveScope);
         const options: AgentLoopOptions = {
           systemPrompt: effectivePrompt,
           sessionPolicyFingerprint,
@@ -1307,7 +1325,8 @@ This protects your credentials from being exposed in chat logs.`;
             ? { sessionPolicyRole: ownerRuntimeRole }
             : {}),
           resumeSession: shouldResumeBackend,
-          cliSessionId, // Pass CLI session ID to avoid double-locking
+          // Queued owner input must not claim a busy session or pin a stale pool id.
+          ...(runtimeOwnsSession ? {} : { cliSessionId }),
           // AgentLoop may replace a stale backend session while this request still
           // owns the channel lock. Keep cleanup guarded by the current owner ID.
           onCliSessionReset: (sessionId) => {
@@ -1315,6 +1334,12 @@ This protects your credentials from being exposed in chat logs.`;
           },
           streamCallbacks: wrappedOnStream || processOptions?.onStream,
           envelope,
+          ...(runtimeOwnsSession
+            ? {
+                prepareEnvelope: () =>
+                  this.buildReactiveEnvelope(message, agentContext, memberEffectiveScope),
+              }
+            : {}),
           sourceTurnId,
           sourceMessageRef,
           ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY

@@ -20,7 +20,13 @@
 
 import { createHash } from 'node:crypto';
 import type { TaskLedger, TaskRecord, ListTasksPageFilter } from './task-ledger.js';
-import { parseExactDueAt } from './task-temporal.js';
+import {
+  DUE_BUCKETS,
+  dueBucketForTemporalState,
+  parseExactDueAt,
+  type DueBucket,
+  type TemporalState,
+} from './task-temporal.js';
 
 const ITEMS_DEFAULT_LIMIT = 25;
 const ITEMS_MAX_LIMIT = 50;
@@ -72,6 +78,7 @@ interface NormalizedFilter {
   search?: string;
   assignee?: string;
   priority?: (typeof PRIORITIES)[number];
+  dueBucket?: DueBucket;
   dueBeforeMs?: number;
   dueAfterMs?: number;
   updatedSinceMs?: number;
@@ -86,6 +93,7 @@ interface ItemsCursorPayload {
   readonly order: (typeof ORDERS)[number];
   readonly readVersion: string;
   readonly inner: string;
+  readonly temporalAsOfMs?: number;
 }
 
 export type TaskListViewResult =
@@ -183,7 +191,8 @@ function boundOverview(
 ): OverviewView & { success: true } {
   const task = ctx.boundTask!;
   const observedAt = ctx.ledger.nowMs();
-  const matched = boundTaskMatches(task, filter) ? [task] : [];
+  const temporalState = ctx.ledger.temporalStateAt(task, observedAt);
+  const matched = boundTaskMatches(task, filter, temporalState) ? [task] : [];
   const status: Record<string, number> = {};
   const priority: Record<string, number> = {};
   const channels = new Map<string | null, number>();
@@ -194,7 +203,7 @@ function boundOverview(
     priority[row.priority] = (priority[row.priority] ?? 0) + 1;
     channels.set(row.sourceChannel, (channels.get(row.sourceChannel) ?? 0) + 1);
     assignees.set(row.assignee, (assignees.get(row.assignee) ?? 0) + 1);
-    bucketOf(row.temporalState, due);
+    due[dueBucketForTemporalState(temporalState)] += 1;
   }
   return {
     success: true,
@@ -208,13 +217,6 @@ function boundOverview(
     assignees: [...assignees].map(([assignee, count]) => ({ assignee, count })),
     due,
   };
-}
-
-function bucketOf(state: TaskRecord['temporalState'], due: OverviewView['due']): void {
-  if (state === 'closed') due.closed += 1;
-  else if (state === 'unscheduled') due.missing += 1;
-  else if (state === 'exact_overdue' || state === 'date_overdue') due.overdue += 1;
-  else due.upcoming += 1;
 }
 
 // ─── items ───────────────────────────────────────────────────────────────────
@@ -231,15 +233,23 @@ function runItemsView(
   const currentFp = filterFingerprint(filter);
   let innerCursor: string | undefined;
   let expectedReadVersion: string | undefined;
+  let temporalAsOfMs: number | undefined;
   if (input.cursor !== undefined) {
-    const decoded = decodeItemsCursor(input.cursor, currentFp, filter.order);
+    const decoded = decodeItemsCursor(
+      input.cursor,
+      currentFp,
+      filter.order,
+      filter.dueBucket !== undefined
+    );
     innerCursor = decoded.inner;
     expectedReadVersion = decoded.readVersion;
+    temporalAsOfMs = decoded.temporalAsOfMs;
   }
   const page = ctx.ledger.itemsPage({
     ...toLedgerFilter(filter),
     limit,
     cursor: innerCursor,
+    temporalAsOfMs,
   } as ListTasksPageFilter);
   if (expectedReadVersion !== undefined && expectedReadVersion !== page.readVersion) {
     throw new Error(
@@ -249,13 +259,19 @@ function runItemsView(
   return {
     success: true,
     view: 'items',
-    tasks: page.tasks.map(compactItem),
+    tasks: page.tasks.map((task) => compactItem(task)),
     total: page.total,
     returned: page.returned,
     nextCursor:
       page.nextCursor === null
         ? null
-        : encodeItemsCursor(currentFp, filter.order, page.readVersion, page.nextCursor),
+        : encodeItemsCursor(
+            currentFp,
+            filter.order,
+            page.readVersion,
+            page.nextCursor,
+            page.observedAt
+          ),
     observedAt: new Date(page.observedAt).toISOString(),
     readVersion: page.readVersion,
   };
@@ -269,18 +285,24 @@ function boundItems(
 ): ItemsView & { success: true } {
   const task = ctx.boundTask!;
   const observedAt = ctx.ledger.nowMs();
+  const temporalState = ctx.ledger.temporalStateAt(task, observedAt);
   const readVersion = boundReadVersion(task);
   // A single-task universe never paginates; a cursor over it can only be one
   // that binds this same generation, and there is never a second page.
   if (rawCursor !== undefined) {
-    decodeItemsCursor(rawCursor, filterFingerprint(filter), filter.order);
+    decodeItemsCursor(
+      rawCursor,
+      filterFingerprint(filter),
+      filter.order,
+      filter.dueBucket !== undefined
+    );
   }
-  const matched = boundTaskMatches(task, filter) ? [task] : [];
+  const matched = boundTaskMatches(task, filter, temporalState) ? [task] : [];
   const bounded = matched.slice(0, limit);
   return {
     success: true,
     view: 'items',
-    tasks: bounded.map(compactItem),
+    tasks: bounded.map((row) => compactItem(row, temporalState)),
     total: matched.length,
     returned: bounded.length,
     nextCursor: null,
@@ -289,7 +311,10 @@ function boundItems(
   };
 }
 
-function compactItem(task: TaskRecord): Record<string, unknown> {
+function compactItem(
+  task: TaskRecord,
+  temporalState: TemporalState = task.temporalState
+): Record<string, unknown> {
   return {
     id: task.id,
     title: task.title,
@@ -303,7 +328,7 @@ function compactItem(task: TaskRecord): Record<string, unknown> {
     revision: task.revision,
     sourceChannel: task.sourceChannel,
     sourceEventId: task.sourceEventId,
-    temporal_state: task.temporalState,
+    temporal_state: temporalState,
     // Records vs tasks: what would finish this row, and (once terminal) WHY it
     // closed. Without both, a page of rows cannot be judged - completed work and
     // an item that was never a task look identical.
@@ -395,6 +420,7 @@ function parseFilter(input: Record<string, unknown>): NormalizedFilter {
     search: parseOptionalString(input.search, 'search'),
     assignee: parseOptionalString(input.assignee, 'assignee'),
     priority: parsePriority(input.priority),
+    dueBucket: parseDueBucket(input.due_bucket),
     dueBeforeMs: parseOptionalStrictTime(input.due_before, 'due_before'),
     dueAfterMs: parseOptionalStrictTime(input.due_after, 'due_after'),
     updatedSinceMs: parseOptionalStrictTime(input.updated_since, 'updated_since'),
@@ -412,6 +438,7 @@ function toLedgerFilter(filter: NormalizedFilter): ListTasksPageFilter {
     search: filter.search,
     assignee: filter.assignee,
     priority: filter.priority,
+    dueBucket: filter.dueBucket,
     dueBeforeMs: filter.dueBeforeMs,
     dueAfterMs: filter.dueAfterMs,
     updatedSinceMs: filter.updatedSinceMs,
@@ -421,7 +448,11 @@ function toLedgerFilter(filter: NormalizedFilter): ListTasksPageFilter {
   };
 }
 
-function boundTaskMatches(task: TaskRecord, filter: NormalizedFilter): boolean {
+function boundTaskMatches(
+  task: TaskRecord,
+  filter: NormalizedFilter,
+  temporalState: TemporalState
+): boolean {
   if (filter.status !== undefined && task.status !== filter.status) return false;
   if (filter.status === undefined && filter.include_terminal === false) {
     if (task.status === 'done' || task.status === 'cancelled') return false;
@@ -429,6 +460,12 @@ function boundTaskMatches(task: TaskRecord, filter: NormalizedFilter): boolean {
   if (filter.channel !== undefined && task.sourceChannel !== filter.channel) return false;
   if (filter.assignee !== undefined && task.assignee !== filter.assignee) return false;
   if (filter.priority !== undefined && task.priority !== filter.priority) return false;
+  if (
+    filter.dueBucket !== undefined &&
+    dueBucketForTemporalState(temporalState) !== filter.dueBucket
+  ) {
+    return false;
+  }
   if (filter.search !== undefined) {
     const needle = filter.search.toLowerCase();
     const hay = `${task.title}\n${task.latestEvent ?? ''}\n${task.assignee ?? ''}`.toLowerCase();
@@ -481,6 +518,14 @@ function parsePriority(value: unknown): NormalizedFilter['priority'] {
     throw new Error(`task_list priority must be one of ${PRIORITIES.join('|')}.`);
   }
   return value as NormalizedFilter['priority'];
+}
+
+function parseDueBucket(value: unknown): DueBucket | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !(DUE_BUCKETS as readonly string[]).includes(value)) {
+    throw new Error(`task_list due_bucket must be one of ${DUE_BUCKETS.join('|')}.`);
+  }
+  return value as DueBucket;
 }
 
 function parseOrder(value: unknown): NormalizedFilter['order'] {
@@ -591,6 +636,7 @@ function filterFingerprint(filter: NormalizedFilter): string {
     ...(filter.updatedBeforeMs === undefined ? [] : [filter.updatedBeforeMs]),
     filter.qualification ?? null,
     filter.order,
+    ...(filter.dueBucket === undefined ? [] : [filter.dueBucket]),
   ]);
   return createHash('sha256').update(canonical).digest('base64url').slice(0, 22);
 }
@@ -599,16 +645,25 @@ function encodeItemsCursor(
   fp: string,
   order: NormalizedFilter['order'],
   readVersion: string,
-  inner: string
+  inner: string,
+  temporalAsOfMs: number
 ): string {
-  const payload: ItemsCursorPayload = { v: CURSOR_VERSION, fp, order, readVersion, inner };
+  const payload: ItemsCursorPayload = {
+    v: CURSOR_VERSION,
+    fp,
+    order,
+    readVersion,
+    inner,
+    temporalAsOfMs,
+  };
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
 function decodeItemsCursor(
   rawCursor: unknown,
   currentFp: string,
-  order: NormalizedFilter['order']
+  order: NormalizedFilter['order'],
+  requireTemporalAsOf = false
 ): ItemsCursorPayload {
   if (typeof rawCursor !== 'string' || rawCursor.length === 0 || rawCursor.length > 4096) {
     throw new Error('[task_list] malformed items cursor; restart from the first page.');
@@ -629,6 +684,12 @@ function decodeItemsCursor(
     typeof cursor.readVersion !== 'string' ||
     typeof cursor.inner !== 'string' ||
     cursor.order !== order
+  ) {
+    throw new Error('[task_list] malformed items cursor; restart from the first page.');
+  }
+  if (
+    (cursor.temporalAsOfMs !== undefined && !Number.isSafeInteger(cursor.temporalAsOfMs)) ||
+    (requireTemporalAsOf && !Number.isSafeInteger(cursor.temporalAsOfMs))
   ) {
     throw new Error('[task_list] malformed items cursor; restart from the first page.');
   }

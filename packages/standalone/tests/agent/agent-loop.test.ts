@@ -3839,7 +3839,7 @@ Skills provide additional tools.
       const stableOwnerRole = ownerContext.role;
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
-        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        { backend: 'codex', model: 'gpt-5.6-sol', systemPrompt: 'base prompt', useCodeAct: true },
         {},
         { mamaApi: createMockApi() }
       );
@@ -3847,6 +3847,7 @@ Skills provide additional tools.
       await agentLoop.run('telegram owner turn', {
         sessionKey: 'owner:runtime',
         source: 'telegram',
+        model: 'gpt-5.6-sol',
         channelId: 'owner-chat',
         sessionPolicyFingerprint: 'telegram-channel-policy',
         sessionPolicyRole: stableOwnerRole,

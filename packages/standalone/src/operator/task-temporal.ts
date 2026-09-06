@@ -16,6 +16,16 @@ export type TemporalState =
   | 'date_overdue'
   | 'unscheduled';
 
+export const DUE_BUCKETS = ['missing', 'overdue', 'upcoming', 'closed'] as const;
+export type DueBucket = (typeof DUE_BUCKETS)[number];
+
+export function dueBucketForTemporalState(state: TemporalState): DueBucket {
+  if (state === 'closed') return 'closed';
+  if (state === 'unscheduled') return 'missing';
+  if (state === 'exact_overdue' || state === 'date_overdue') return 'overdue';
+  return 'upcoming';
+}
+
 export interface TemporalStateInput {
   status: string;
   dueAt: number | null;

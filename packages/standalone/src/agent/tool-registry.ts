@@ -463,10 +463,35 @@ register({
 register({
   name: 'task_list',
   description:
-    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled unless status is explicit.',
+    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; due_bucket filters that same derived partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, temporal observation time, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled unless status is explicit.',
   category: 'os_monitoring',
   params:
-    "view? (overview|items|detail, default items), status? (pending|in_progress|review|blocked|done|cancelled), include_terminal? (default true; false excludes done/cancelled unless status is explicit), qualification? (qualified|legacy_unqualified), channel?, search?, assignee?, priority? (high|normal|low), due_before?/due_after? (RFC 3339 + offset, exact due_at only), updated_since?/updated_before? (RFC 3339 + offset; updated_at half-open range), order? ('deadline_priority'|'updated'), limit? (items, 1..50, default 25), cursor? (items, nextCursor from the previous page), ids? (detail, 1..4 distinct), text_offset?/text_limit? (detail, code points; default 1000, max 2000)",
+    "view? (overview|items|detail, default items), status? (pending|in_progress|review|blocked|done|cancelled), include_terminal? (default true; false excludes done/cancelled unless status is explicit), qualification? (qualified|legacy_unqualified), channel?, search?, assignee?, priority? (high|normal|low), due_bucket? (missing|overdue|upcoming|closed), due_before?/due_after? (RFC 3339 + offset, exact due_at only), updated_since?/updated_before? (RFC 3339 + offset; updated_at half-open range), order? ('deadline_priority'|'updated'), limit? (items, 1..50, default 25), cursor? (items, nextCursor from the previous page), ids? (detail, 1..4 distinct), text_offset?/text_limit? (detail, code points; default 1000, max 2000)",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      view: { enum: ['overview', 'items', 'detail'] },
+      status: { enum: ['pending', 'in_progress', 'review', 'blocked', 'done', 'cancelled'] },
+      include_terminal: { type: 'boolean' },
+      qualification: { enum: ['qualified', 'legacy_unqualified'] },
+      channel: { type: 'string' },
+      search: { type: 'string' },
+      assignee: { type: 'string' },
+      priority: { enum: ['high', 'normal', 'low'] },
+      due_bucket: { enum: ['missing', 'overdue', 'upcoming', 'closed'] },
+      due_before: { type: 'string' },
+      due_after: { type: 'string' },
+      updated_since: { type: 'string' },
+      updated_before: { type: 'string' },
+      order: { enum: ['deadline_priority', 'updated'] },
+      limit: { type: 'integer', minimum: 1, maximum: 50 },
+      cursor: { type: 'string' },
+      ids: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1, maxItems: 4 },
+      text_offset: { type: 'integer', minimum: 0 },
+      text_limit: { type: 'integer', minimum: 1, maximum: 2000 },
+    },
+    additionalProperties: false,
+  },
 });
 register({
   name: 'task_external_correlation',

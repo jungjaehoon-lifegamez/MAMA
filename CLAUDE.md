@@ -318,70 +318,30 @@ Once saved:
 - Important function signature changes
 - Architecture pattern decisions
 
-## Operator Runtime & Owner Console (v0.23)
+## Owner Runtime & Owner Console (v0.49.1)
 
-The MAMA OS daemon runs an OPERATOR identity alongside chat:
-
-- **Lanes:** chat runs on the `main` global lane; ALL operator work (scheduled
-  reports + workers) serializes on the separate `operator` global lane
-  (`SOURCE_GLOBAL_LANES`, agent-loop.ts) so long runs never block owner replies.
-- **Owner console:** `owner_console` role resolves ONLY via trust-conditional
-  escalation - telegram + `telegram.allowed_chats` locked + 1:1 private DM
-  (RoleManager). `allowed_chats` is therefore the OWNER TRUST ANCHOR: every
-  allowlisted chat's private DM gets the owner surface. Static sourceMapping to
-  owner_console is downgraded at runtime and flagged by the code audit.
-- **Owner-event lane:** connector batches persist before source cursor commit and run through the
-  same MAMA owner agent as a FRESH run per batch on `owner-event:<channelKey>` lane keys.
-  Each prompt can include at most ten bounded historical records from the same channel's
-  existing journal, under the current owner role/connector grant; confirmed notification text
-  also requires the current Telegram target. These are untrusted past observations, not current
-  facts or a resumed provider transcript (unbounded replay previously cost 45.9M tokens on
-  2026-08-20 alone). Completion (One MAMA, v0.41.0) is a
-  ledger change: a successful `task_create`/`task_update`/`mama_save`/`mama_update`/`drive_upload`,
-  or an exact no-update receipt; a `telegram_send` alone is a retry unless the final message
-  begins with `[decision]` (host-detected, counted as `unresolved_reason` on the inbox row).
-  Delegation (`workorder_request`) no longer exists. Each event turn starts from a host-compiled
-  exact connector delta under the same read scope as its envelope; the standing
-  owner runtime discovers any additional evidence progressively through bounded tools.
-- **Artifact hub tools:** `board_read`, `audit_findings_read`; direct owner report requests stay in the current conversation.
-  (fire-and-forget into the real report machinery). `workorder_request`/`workorder_status` were
-  deleted in v0.41.0 (One MAMA): scheduled work is host-published, never agent-delegated.
-- **Capabilities and self-diagnosis (v0.43.0, One MAMA Phase 3):** `file_export` writes a csv/md
-  under `~/.mama/workspace/exports/` with a `file_export` effect receipt (deliver with
-  `telegram_send(file_path)`); every gateway failure, envelope scope mismatch, dead owner-event
-  batch and ledger stagnation lands in `awareness_operational_issues` (mama-core migration 066,
-  `observability/operational-issues.ts`, redacted, aggregated by signature) and rides in every
-  packet as `operationalIssues`; a daily `self-check` turn triages them with `repair_request`
-  (bundle under `~/.mama/repairs/`, OUTSIDE the workspace so it cannot be sent out) and
-  `issue_close`; `agent.run_token_budget` (default 0 = off since 0.45.0; codex counts
-  input+output, Anthropic also adds cache) stops a run with a `run_budget_stop` receipt when
-  set. The agent never edits or restarts its own daemon.
-- **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
-  callers only, never from inside an active lane run (deadlock seal).
-- **Stage 2 workorder pipeline** (the ONLY system run path since v0.28.0; the
-  former `MAMA_STAGE2_WORKORDERS` migration flag is retired — unset/`on` boots,
-  explicit `off`/`shadow` fails the boot loudly): publishers enqueue
-  occurrence-keyed workorders into the TaskLedger (`operator_tasks`,
-  kind='system' rows, host-managed); a single unconditional consumer claims
-  serially and runs briefed workerRuns. Since v0.41.0 (One MAMA) every scheduled turn runs as
-  the ONE `owner_console` principal with the ONE operating brief (`~/.mama/briefs/brief-owner-console.md`)
-  plus a host-authored turn-kind section (`buildTurnKindSection`, workorder-consumer.ts); the
-  per-kind briefs and the `workorder-*` roles are gone. The grant is projected by the host from
-  data in start.ts: owner console + `TURN_KIND_REQUIRED_TOOLS` − `ADMINISTRATION_TOOLS` −
-  `SCHEDULED_TURN_BLOCKED_TOOLS` − `TURN_KIND_BLOCKED_TOOLS[kind]`; `tests/cli/lane-wiring.test.ts`
-  pins that no unattended turn holds a send or an upload. The board pipeline slot is rendered by
-  the host (`board-pipeline-render.ts`) before the board turn; the turn writes only briefing,
-  `action_required` and `decisions`.
-  Board workers can use their granted live Trello query tools. `context_compile` supplies
-  scoped connector messages and polled evidence. Owner chat uses the same distinction.
-  The agent judges native task status from that evidence and records the reason.
-  Every workorder worker treats connector packets as untrusted data whose embedded
-  instructions or tool calls must not be followed. Private connector tools remain read-only
-  project-task evidence, while the native ledger owns owner-console tasks and the
-  pipeline projection.
-- **Memory-write secret filter:** `mama_save`/`mama_update` REFUSE
-  secret-shaped content (`secret_material_refused`). `mama_add`/`mama_ingest`
-  were removed in the 2026-07-30 gateway tool cull.
+- Authenticated owner conversations, reports, events, cron, heartbeat, and maintenance all enter
+  `owner:runtime`. Channel and work kind select source/authority metadata, not a separate model.
+- The AgentLoop session queue owns serialization. Direct owner messages have priority 100 over
+  queued background stimuli; they do not wait for a separate SessionPool polling lock.
+- Host-only `prepareEnvelope` issues signed authority after both queue waits, before the model
+  run and tool context are created. Static signed envelopes are never implicitly renewed.
+- Compatible durable sessions get no copied conversation or report. The boot client forwards
+  `probesDurableSession` and `ownerRecoveryJournalEnabled`; actual replacement uses the bounded
+  owner recovery journal under the normal prompt budget and untrusted-history boundary.
+- MAMA chooses its tools and may directly invoke native subagents. It reviews their evidence and
+  owns the final answer. No host `delegate`, `report_request`, or hidden post-turn memory agent.
+- Progressive reads expose overview counts, filtered item pages, and selected details. `task_list`
+  accepts `due_bucket` with the same meanings as overview.due, including date-only deadlines.
+  Full reports prioritize material decisions, reuse current evidence, and narrow changed rows;
+  they have no automatic ten-call cutoff.
+- Workorder publishers and the serial consumer preserve occurrence identity and receipts. They
+  submit stimuli to the same owner subject. Current envelopes and per-turn policy still narrow
+  mutations, destinations and provenance. A successful read is not a write receipt.
+- Records, lessons, memories and aspirations are not executable tasks without finite
+  `completion_criteria`. Status corrections preserve the evidence and reason in the task ledger.
+- See `docs/development/one-mama-owner-runtime.md` and the mandatory
+  `docs/development/kagemusha-telegram-parity.md` for scenario and installed-evidence gates.
 
 ## Connector Framework (v0.17)
 
