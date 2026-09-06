@@ -124,6 +124,39 @@ describe('Story S2-T2: publisher contracts', () => {
       ).toThrow(/deltaWatermark is full-only/);
     });
 
+    it('TG-04/TG-06 validates the bounded host-issued reclassification set', () => {
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: 7, taskRevision: 3 }],
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [
+            { taskId: 7, taskRevision: 3 },
+            { taskId: 7, taskRevision: 3 },
+          ],
+        })
+      ).toThrow(/duplicate/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: 7, taskRevision: -1 }],
+        })
+      ).toThrow(/taskId\/taskRevision/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: Array.from({ length: 11 }, (_, index) => ({
+            taskId: index + 1,
+            taskRevision: 0,
+          })),
+        })
+      ).toThrow(/0-10/);
+    });
+
     it('TG-06 validates generation-bound full and reconcile repair payloads', () => {
       expect(() =>
         validateWorkOrderPayload('board', {

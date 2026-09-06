@@ -155,12 +155,19 @@ export interface BoardPayload {
   readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
   readonly eventIds?: readonly string[];
+  /** Host-issued rows this attempt may reclassify; never model-authored. */
+  readonly reclassificationCandidates?: readonly TaskReclassificationCandidate[];
   /** Host-authored immutable candidates; reconcile-only. */
   readonly candidates?: {
     readonly bindingCandidates: readonly BindingCandidate[];
     readonly lifecycleCandidates: readonly LifecycleCandidate[];
     readonly diagnostics?: readonly ExternalLifecycleDiagnostic[];
   };
+}
+
+export interface TaskReclassificationCandidate {
+  readonly taskId: number;
+  readonly taskRevision: number;
 }
 
 /**
@@ -195,6 +202,7 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
     'channelKey',
     'deltaLines',
     'eventIds',
+    'reclassificationCandidates',
     'candidates',
   ],
   wiki: [
@@ -268,6 +276,9 @@ export function validateWorkOrderPayload(
     }
     if (payload.deltaWatermark !== undefined && !isBoundedString(payload.deltaWatermark)) {
       throw new Error(`workorder payload (board): deltaWatermark must contain 1-1000 characters`);
+    }
+    if (payload.reclassificationCandidates !== undefined) {
+      validateTaskReclassificationCandidates(payload.reclassificationCandidates);
     }
     if (mode === 'reconcile') {
       if (payload.deltaWatermark !== undefined) {
@@ -432,6 +443,31 @@ export function validateWorkOrderPayload(
         throw new Error(`workorder payload (temporal): ${field} must be null or 1-300 characters`);
       }
     }
+  }
+}
+
+function validateTaskReclassificationCandidates(value: unknown): void {
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new Error('workorder payload (board): reclassificationCandidates must have 0-10 rows');
+  }
+  const taskIds = new Set<number>();
+  for (const candidate of value) {
+    if (
+      !isPlainObject(candidate) ||
+      !exactKeys(candidate, ['taskId', 'taskRevision']) ||
+      !Number.isSafeInteger(candidate.taskId) ||
+      (candidate.taskId as number) < 1 ||
+      !Number.isSafeInteger(candidate.taskRevision) ||
+      (candidate.taskRevision as number) < 0
+    ) {
+      throw new Error(
+        'workorder payload (board): reclassification candidate needs taskId/taskRevision'
+      );
+    }
+    if (taskIds.has(candidate.taskId as number)) {
+      throw new Error('workorder payload (board): duplicate reclassification taskId');
+    }
+    taskIds.add(candidate.taskId as number);
   }
 }
 

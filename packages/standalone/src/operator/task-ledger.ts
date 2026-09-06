@@ -260,6 +260,8 @@ export interface ChangeOrigin {
    * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
    */
   causeEventIds?: readonly string[];
+  /** Owner-event task reclassification stays within the exact causal channel. */
+  reclassificationCauseBound?: boolean;
   /** Host-verified raw submission/delivery evidence. Never populated from model timestamps. */
   verifiedReviewEvidence?: {
     contextPacketId: string;
@@ -392,7 +394,7 @@ export interface UpdateTaskInput {
   title?: string;
   expected_revision?: number;
   /** Concrete finite exit condition; lets legacy rows become qualified tasks. */
-  completion_criteria?: string;
+  completion_criteria?: string | null;
   /**
    * HOST-INTERNAL: written only by reclassify(). The public task_update surface
    * rejects it (TASK_UPDATE_PUBLIC_FIELDS), so an agent cannot stamp a semantic
@@ -568,10 +570,10 @@ function assertIsoDate(value: string, field: string): void {
 }
 
 function normalizeCompletionCriteria(
-  value: string | undefined,
+  value: string | null | undefined,
   operation: 'task_create' | 'task_update'
 ): string | null {
-  if (value === undefined) return null;
+  if (value === undefined || value === null) return null;
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`${operation}: completion_criteria must be a non-empty string`);
   }
@@ -2113,6 +2115,7 @@ export class TaskLedger implements TaskSource {
           `task_reclassify: expected revision ${input.expected_revision}, current ${existing.revision}`
         );
       }
+      this.assertTaskReclassificationAuthorized(existing, origin);
 
       const patch = this.buildReclassifyPatch(existing, disposition, reason);
       // Same primitive as task_update: candidate guard, board-attempt liveness,
@@ -2123,6 +2126,55 @@ export class TaskLedger implements TaskSource {
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
+    }
+  }
+
+  private assertTaskReclassificationAuthorized(existing: TaskRow, origin: ChangeOrigin): void {
+    if (origin.workOrderAttemptId !== undefined) {
+      const attempt = this.getWorkOrderById(origin.workOrderAttemptId);
+      if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
+        throw new Error(
+          `task_reclassify: Board workorder ${String(origin.workOrderAttemptId)} is no longer active`
+        );
+      }
+      const { attempts: _attempts, ...payload } = attempt.payload;
+      validateWorkOrderPayload('board', payload);
+      const candidates = Array.isArray(payload.reclassificationCandidates)
+        ? (payload.reclassificationCandidates as Array<{
+            taskId: number;
+            taskRevision: number;
+          }>)
+        : [];
+      const candidate = candidates.find((item) => item.taskId === existing.id);
+      if (!candidate || candidate.taskRevision !== existing.revision) {
+        throw new Error(
+          `task_reclassify: task ${existing.id} is outside this host-issued Board candidate set`
+        );
+      }
+    }
+
+    if (origin.reclassificationCauseBound) {
+      const eventIds = (origin.causeEventIds ?? []).filter(isUsableCause);
+      if (eventIds.length === 0) {
+        throw new Error('task_reclassify: owner-event reclassification requires causal events');
+      }
+      if (existing.source_event_id && eventIds.includes(existing.source_event_id)) return;
+      const placeholders = eventIds.map(() => '?').join(',');
+      const channels = this.db
+        .prepare(
+          `SELECT DISTINCT inbox.channel_key
+             FROM owner_event_inbox AS inbox, json_each(inbox.event_ids_json) AS event
+            WHERE event.value IN (${placeholders})`
+        )
+        .all(...eventIds) as Array<{ channel_key: string }>;
+      if (
+        existing.source_channel === null ||
+        !channels.some((row) => row.channel_key === existing.source_channel)
+      ) {
+        throw new Error(
+          `task_reclassify: task ${existing.id} is outside this owner-event source channel`
+        );
+      }
     }
   }
 
@@ -2171,7 +2223,12 @@ export class TaskLedger implements TaskSource {
     }
     // non_task_record / non_task_memory: this was never a task. Cancelled, not done,
     // so accounting never reads it as finished work.
-    return { ...base, status: 'cancelled', resolution_kind: disposition };
+    return {
+      ...base,
+      status: 'cancelled',
+      completion_criteria: null,
+      resolution_kind: disposition,
+    };
   }
 
   /** True when the row carries a deadline/due_at that has already passed. */
@@ -2464,7 +2521,8 @@ export class TaskLedger implements TaskSource {
     if (
       origin.workOrderAttemptId === undefined ||
       (!Object.prototype.hasOwnProperty.call(patch, 'status') &&
-        !Object.prototype.hasOwnProperty.call(patch, 'latest_event'))
+        !Object.prototype.hasOwnProperty.call(patch, 'latest_event') &&
+        !Object.prototype.hasOwnProperty.call(patch, 'completion_criteria'))
     ) {
       return;
     }
@@ -2480,6 +2538,26 @@ export class TaskLedger implements TaskSource {
     }
     const { attempts: _attempts, ...payload } = attempt.payload;
     validateWorkOrderPayload('board', payload);
+    if (Object.prototype.hasOwnProperty.call(patch, 'completion_criteria')) {
+      const reclassificationCandidates = Array.isArray(payload.reclassificationCandidates)
+        ? (payload.reclassificationCandidates as Array<{
+            taskId: number;
+            taskRevision: number;
+          }>)
+        : [];
+      const qualificationCandidate = reclassificationCandidates.find(
+        (candidate) => candidate.taskId === taskId
+      );
+      if (
+        !qualificationCandidate ||
+        (patch.expected_revision !== undefined &&
+          qualificationCandidate.taskRevision !== patch.expected_revision)
+      ) {
+        throw new Error(
+          `task_update: task ${taskId} is outside this host-issued qualification candidate set`
+        );
+      }
+    }
     if (payload.mode !== 'reconcile' || !payload.candidates) {
       return;
     }

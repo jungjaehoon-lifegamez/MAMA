@@ -3938,6 +3938,7 @@ export class GatewayToolExecutor {
                     causeEventIds: this.getExecutionState().causeEventIds,
                     causeKind:
                       this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
+                    reclassificationCauseBound: this.getExecutionState().source === 'owner-event',
                   }
                 )
               ),
@@ -3982,6 +3983,29 @@ export class GatewayToolExecutor {
               undefined,
               false
             );
+          }
+          if (Object.prototype.hasOwnProperty.call(rawTaskUpdate, 'completion_criteria')) {
+            if (this.getExecutionState().source === 'owner-event') {
+              throw new AgentError(
+                'task_update completion_criteria is unavailable on owner-event turns; full Board maintenance or the owner conversation owns qualification',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const criteria = rawTaskUpdate.completion_criteria;
+            if (
+              typeof criteria !== 'string' ||
+              criteria.trim().length === 0 ||
+              criteria.trim().length > TASK_COMPLETION_CRITERIA_MAX_LENGTH
+            ) {
+              throw new AgentError(
+                `task_update completion_criteria must be a non-empty string of at most ${TASK_COMPLETION_CRITERIA_MAX_LENGTH} characters`,
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
           }
           const {
             id: rawId,

@@ -623,6 +623,18 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         }
         const now = Date.now();
         const repair = boardRefreshGate?.captureFullRepair();
+        const ledger = toolExecutor.getTaskLedger();
+        if (!ledger) {
+          throw new Error('TaskLedger unavailable - cannot issue reclassification candidates');
+        }
+        const reclassificationCandidates = ledger
+          .list({
+            includeTerminal: false,
+            qualification: 'legacy_unqualified',
+            order: 'deadline_priority',
+            limit: 10,
+          })
+          .map((task) => ({ taskId: task.id, taskRevision: task.revision }));
         enqueueWorkOrderOrThrow(
           'board',
           opts?.force
@@ -635,6 +647,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             ...(repair ?? {}),
             // Carried so this run's completion becomes the next tick's baseline.
             ...(delta.watermark === null ? {} : { deltaWatermark: delta.watermark }),
+            reclassificationCandidates,
             ...(opts?.force ? { force: true } : {}),
           },
           opts?.force ? 'high' : undefined
@@ -820,6 +833,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               privateConnectorPolicy,
               rawConnectorScope,
             });
+            const reclassificationCandidates = ledger
+              .list({ channel: channelKey, order: 'updated', limit: 10 })
+              .map((task) => ({ taskId: task.id, taskRevision: task.revision }));
             enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
               mode: 'reconcile',
               channelKey,
@@ -828,6 +844,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               // `[id:evt_...]` text and could only be recovered by parsing prose.
               eventIds,
               repairGeneration,
+              reclassificationCandidates,
               // Host-authored structural authority. deltaLines remain untrusted,
               // human-readable context and never grant lifecycle mutations.
               candidates,

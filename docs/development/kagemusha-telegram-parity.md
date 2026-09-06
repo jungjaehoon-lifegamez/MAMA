@@ -18,7 +18,9 @@ scenario IDs from this document.
   ten-row `legacy_unqualified` active page per run. Genuine legacy tasks gain completion criteria;
   completed or non-task rows leave the active queue. A partial source read still cannot prove
   absence, while a passed deadline plus a complete relevant-source check with no issue supports
-  completion under the owner's current policy.
+  completion under the owner's current policy. The durable workorder binds reclassification to
+  the host-selected task IDs and revisions, and owner-event recorrection stays within the channel
+  named by its causal inbox batch.
 - Local production audit before mutation found 170 active rows, 168 carrying an external event
   key, 48 overdue, and at least 22 whose structured source already reported a terminal state.
   This is diagnosis only; cleanup, release installation, and live Telegram proof remain separate

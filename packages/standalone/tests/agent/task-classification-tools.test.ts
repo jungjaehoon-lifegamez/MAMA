@@ -15,6 +15,7 @@ import { TaskLedger } from '../../src/operator/task-ledger.js';
 import Database from '../../src/sqlite.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 
 const NOW = Date.parse('2026-09-07T04:00:00Z');
 
@@ -28,7 +29,7 @@ function makeExecutor(): { executor: GatewayToolExecutor; ledger: TaskLedger } {
   return { executor, ledger };
 }
 
-describe('records vs tasks: public task tool boundary', () => {
+describe('Story TASK-RECAL-2: public task tool boundary', () => {
   let executor: GatewayToolExecutor;
   let ledger: TaskLedger;
 
@@ -36,7 +37,7 @@ describe('records vs tasks: public task tool boundary', () => {
     ({ executor, ledger } = makeExecutor());
   });
 
-  describe('task_create requires completion_criteria', () => {
+  describe('Acceptance Criteria #1: task_create requires completion criteria', () => {
     it('rejects a title-only public task_create', async () => {
       await expect(executor.execute('task_create', { title: '열심히 살자' })).rejects.toThrow(
         /completion_criteria/
@@ -78,7 +79,7 @@ describe('records vs tasks: public task tool boundary', () => {
     });
   });
 
-  describe('legacy qualification', () => {
+  describe('Acceptance Criteria #2: progressive legacy qualification', () => {
     it('lets task_update add a completion criterion to a real legacy task', async () => {
       const legacy = ledger.create({ title: 'ship the approved asset' });
       const result = (await executor.execute('task_update', {
@@ -88,6 +89,14 @@ describe('records vs tasks: public task tool boundary', () => {
       expect(result.task.completionCriteria).toBe(
         'approved asset is delivered to the client channel'
       );
+    });
+
+    it('does not let public task_update clear a completion criterion', async () => {
+      const task = ledger.create({ title: 'qualified', completion_criteria: 'artifact delivered' });
+      await expect(
+        executor.execute('task_update', { id: task.id, completion_criteria: null })
+      ).rejects.toThrow(/completion_criteria/);
+      expect(ledger.getById(task.id)?.completionCriteria).toBe('artifact delivered');
     });
 
     it('filters one bounded active legacy page without reading the whole board', async () => {
@@ -108,7 +117,7 @@ describe('records vs tasks: public task tool boundary', () => {
     });
   });
 
-  describe('task_reclassify dispatch', () => {
+  describe('Acceptance Criteria #3: task_reclassify dispatch', () => {
     it('closes a past-deadline row as completed_no_issue', async () => {
       const created = (await executor.execute('task_create', {
         title: 'ship the August report',
@@ -196,9 +205,70 @@ describe('records vs tasks: public task tool boundary', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('not configured');
     });
+
+    it('binds an owner-event executor call to its causal source channel (TG-03/TG-06)', async () => {
+      const db = new Database(':memory:');
+      const boundLedger = new TaskLedger(db, { now: () => NOW, timeZone: 'Asia/Seoul' });
+      const inbox = new OwnerEventInbox(db, () => NOW);
+      inbox.enqueue({
+        channelKey: 'slack:C001',
+        eventIds: ['evt-current'],
+        lines: ['current feedback'],
+        activations: [],
+      });
+      const sameChannel = boundLedger.create({
+        title: 'same channel',
+        source_channel: 'slack:C001',
+      });
+      const unrelated = boundLedger.create({
+        title: 'unrelated',
+        source_channel: 'slack:C999',
+      });
+      const boundExecutor = new GatewayToolExecutor();
+      boundExecutor.setTaskLedger(boundLedger);
+      const context = { source: 'owner-event', causeEventIds: ['evt-current'] };
+
+      await expect(
+        boundExecutor.execute(
+          'task_update',
+          {
+            id: unrelated.id,
+            completion_criteria: 'unrelated task is complete',
+            expected_revision: unrelated.revision,
+            latest_event: 'untrusted delta named another task',
+          },
+          context
+        )
+      ).rejects.toThrow(/unavailable on owner-event turns/i);
+
+      await expect(
+        boundExecutor.execute(
+          'task_reclassify',
+          {
+            id: unrelated.id,
+            disposition: 'non_task_record',
+            reason: 'untrusted delta named another task',
+            expected_revision: unrelated.revision,
+          },
+          context
+        )
+      ).rejects.toThrow(/outside this owner-event source channel/i);
+      const allowed = (await boundExecutor.execute(
+        'task_reclassify',
+        {
+          id: sameChannel.id,
+          disposition: 'non_task_record',
+          reason: 'same channel record',
+          expected_revision: sameChannel.revision,
+        },
+        context
+      )) as { task: { status: string } };
+      expect(allowed.task.status).toBe('cancelled');
+      db.close();
+    });
   });
 
-  describe('task_list exposes the classification fields', () => {
+  describe('Acceptance Criteria #4: task_list exposes classification', () => {
     it('the items view carries completion_criteria and resolution_kind', async () => {
       const created = (await executor.execute('task_create', {
         title: 'ship the August report',
@@ -224,7 +294,7 @@ describe('records vs tasks: public task tool boundary', () => {
     });
   });
 
-  describe('every agent-visible projection agrees', () => {
+  describe('Acceptance Criteria #5: agent-visible projections agree', () => {
     it('ToolRegistry advertises task_reclassify with the exact input contract', () => {
       const tool = ToolRegistry.getTool('task_reclassify');
       expect(tool).toBeDefined();
@@ -267,6 +337,8 @@ describe('records vs tasks: public task tool boundary', () => {
       expect(criteria?.required).toBe(true);
       const list = bridge.get('task_list');
       expect(list?.params.some((param) => param.name === 'qualification')).toBe(true);
+      expect(list?.returnType).toContain('completion_criteria: string | null');
+      expect(list?.returnType).toContain('resolution_kind: string | null');
       const update = bridge.get('task_update');
       expect(update?.params.some((param) => param.name === 'completion_criteria')).toBe(true);
     });
