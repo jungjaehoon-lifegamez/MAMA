@@ -5,12 +5,17 @@ import type { PrivateConnectorPolicy } from '../connectors/private-connector-pol
 
 /**
  * One MAMA (2026-09-04): the event turn holds the owner console grant minus the
- * entries below, each with the reason it is not "minus nothing". Ledger and memory
- * tools (task_create/task_update/mama_save/mama_update) are deliberately NOT here
- * any more - blocking them since v0.37.0 is what left the owner ledger without a
- * single agent-authored task for two weeks.
+ * entries below, each with the reason it is not "minus nothing". Existing ledger
+ * rows and memory remain maintainable, but task_create is blocked because connector
+ * observations are evidence and only an owner conversation may create finite work.
  */
 const OWNER_EVENT_BLOCKED_TOOLS = new Set([
+  // Records and tasks are SEPARATE (owner policy, v0.48.1). An event turn is driven by
+  // connector OBSERVATIONS - evidence, not work items. Creating a native row from one is
+  // what turned records, principles and open questions into owner tasks. The turn keeps
+  // task_update/task_reclassify so it can still recorrect and reopen the source-bound
+  // rows that already exist; only an owner CONVERSATION may create.
+  'task_create',
   // administration: owner-authored chat only
   'member_register',
   'member_suspend',

@@ -38,9 +38,14 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
 
   describe('Acceptance Criteria: create/list round-trip', () => {
     it('task_create -> task_list round-trip in canonical order', async () => {
-      await executor.execute('task_create', { title: 'later', deadline: '2026-09-01' });
+      await executor.execute('task_create', {
+        title: 'later',
+        completion_criteria: 'done when shipped',
+        deadline: '2026-09-01',
+      });
       await executor.execute('task_create', {
         title: 'sooner',
+        completion_criteria: 'c',
         deadline: '2026-07-20',
         priority: 'high',
         assignee: 'worker-a',
@@ -56,10 +61,26 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
     });
 
     it('returns one bounded nonterminal page when include_terminal is false', async () => {
-      await executor.execute('task_create', { title: 'pending', status: 'pending' });
-      await executor.execute('task_create', { title: 'active', status: 'in_progress' });
-      await executor.execute('task_create', { title: 'finished', status: 'done' });
-      await executor.execute('task_create', { title: 'dropped', status: 'cancelled' });
+      await executor.execute('task_create', {
+        title: 'pending',
+        completion_criteria: 'c',
+        status: 'pending',
+      });
+      await executor.execute('task_create', {
+        title: 'active',
+        completion_criteria: 'c',
+        status: 'in_progress',
+      });
+      await executor.execute('task_create', {
+        title: 'finished',
+        completion_criteria: 'c',
+        status: 'done',
+      });
+      await executor.execute('task_create', {
+        title: 'dropped',
+        completion_criteria: 'c',
+        status: 'cancelled',
+      });
 
       const result = (await executor.execute('task_list', {
         include_terminal: false,
@@ -80,6 +101,7 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
     it('accepts exact due_at and returns the normalized temporal projection', async () => {
       const created = (await executor.execute('task_create', {
         title: 'exact',
+        completion_criteria: 'c',
         due_at: '2026-07-22T09:00:00+09:00',
       })) as {
         task: Record<string, unknown>;
@@ -104,11 +126,16 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
 
     it('rejects offset-free and conflicting exact due inputs through the ledger boundary', async () => {
       await expect(
-        executor.execute('task_create', { title: 'bad', due_at: '2026-07-22T09:00:00' })
+        executor.execute('task_create', {
+          title: 'bad',
+          completion_criteria: 'c',
+          due_at: '2026-07-22T09:00:00',
+        })
       ).rejects.toThrow(/explicit offset/);
       await expect(
         executor.execute('task_create', {
           title: 'conflict',
+          completion_criteria: 'c',
           due_at: '2026-07-22T09:00:00+09:00',
           deadline: '2026-07-23',
         })
@@ -118,7 +145,10 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
 
   describe('Acceptance Criteria: update semantics', () => {
     it('task_update coerces a string id ("12" pattern) and patches the row', async () => {
-      const created = (await executor.execute('task_create', { title: 'x' })) as {
+      const created = (await executor.execute('task_create', {
+        title: 'x',
+        completion_criteria: 'c',
+      })) as {
         task: { id: number };
       };
       const result = (await executor.execute('task_update', {
@@ -142,11 +172,13 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
     it('task_create upserts on duplicate source key through the tool surface', async () => {
       await executor.execute('task_create', {
         title: 'review still',
+        completion_criteria: 'c',
         source_channel: 'slack:C001',
         source_event_id: 'ev-9',
       });
       await executor.execute('task_create', {
         title: 'review still v2',
+        completion_criteria: 'c',
         source_channel: 'slack:C001',
         source_event_id: 'ev-9',
         latest_event: 'resubmitted',

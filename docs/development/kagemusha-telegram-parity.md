@@ -4,6 +4,28 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.48.1 wiki continuity and task recalibration candidate: 2026-09-06
+
+- TG-03/TG-04: connector events remain evidence. `task_create` is host-blocked on every
+  unattended turn and is available only in the owner conversation, where a concrete finite
+  `completion_criteria` is required. Lessons, principles, aspirations and open questions no
+  longer become native tasks merely because they were observed.
+- TG-04/TG-06: `task_reclassify` preserves why an existing row closed as
+  `completed_evidence`, `completed_no_issue`, `non_task_record`, or `non_task_memory`, and reopens
+  the same row when later feedback arrives. Revision, owner-row, candidate and workorder-attempt
+  guards share the task-update mutation boundary.
+- TG-03/TG-05/TG-06: Board recalibration starts with an overview and processes at most one
+  ten-row `legacy_unqualified` active page per run. Genuine legacy tasks gain completion criteria;
+  completed or non-task rows leave the active queue. A partial source read still cannot prove
+  absence, while a passed deadline plus a complete relevant-source check with no issue supports
+  completion under the owner's current policy. The durable workorder binds reclassification to
+  the host-selected task IDs and revisions, and owner-event recorrection stays within the channel
+  named by its causal inbox batch.
+- Local production audit before mutation found 170 active rows, 168 carrying an external event
+  key, 48 overdue, and at least 22 whose structured source already reported a terminal state.
+  This is diagnosis only; cleanup, release installation, and live Telegram proof remain separate
+  gates.
+
 ## 0.48.0 progressive discovery candidate: 2026-09-06
 
 - TG-03/TG-04: `code_act` now exposes policy-filtered `tool_search` and `tool_describe`.

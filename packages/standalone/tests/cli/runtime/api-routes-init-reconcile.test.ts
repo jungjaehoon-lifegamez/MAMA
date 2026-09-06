@@ -337,6 +337,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
+      const legacy = ledger.create({ title: 'legacy task' });
+      ledger.create({ title: 'qualified task', completion_criteria: 'artifact delivered' });
 
       await vi.advanceTimersByTimeAsync(10_000);
       const bootRepair = ledger.claimNextWorkOrder();
@@ -347,6 +349,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
           mode: 'full',
           repairGeneration: expect.any(Number),
           noUpdateScope: expect.stringMatching(/^full:\d+$/),
+          reclassificationCandidates: [{ taskId: legacy.id, taskRevision: legacy.revision }],
         },
       });
       expect(bootRepair?.payload.noUpdateScope).toBe(
@@ -394,7 +397,6 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
-
       await vi.advanceTimersByTimeAsync(10_000);
       const boot = ledger.claimNextWorkOrder();
       // The boot run has no completed predecessor, so it always runs, and it
@@ -502,6 +504,11 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
+      const channelTask = ledger.create({
+        title: 'existing channel task',
+        source_channel: 'telegram:owner',
+      });
+      ledger.create({ title: 'other channel task', source_channel: 'telegram:other' });
 
       const response = await request(apiServer.app)
         .post('/api/operator/reconcile')
@@ -517,6 +524,9 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         channelKey: 'telegram:owner',
         eventIds: [],
         repairGeneration: expect.any(Number),
+        reclassificationCandidates: [
+          { taskId: channelTask.id, taskRevision: channelTask.revision },
+        ],
       });
     } finally {
       db.close();
@@ -672,6 +682,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
         force: true,
         repairGeneration: expect.any(Number),
         noUpdateScope: expect.stringMatching(/^full:\d+$/),
+        reclassificationCandidates: [],
         // A forced full run is still a real rebuild, so it records a baseline.
         deltaWatermark: expect.any(String),
       });

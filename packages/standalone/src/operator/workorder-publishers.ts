@@ -9,7 +9,9 @@
  * (migration plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md).
  */
 
+import { createHash } from 'node:crypto';
 import type { WorkOrderKind } from './task-ledger.js';
+import { parseStrictOwnerDate } from './wiki-continuity.js';
 import {
   EXTERNAL_LIFECYCLE_DIAGNOSTIC_CODES,
   EXTERNAL_LIFECYCLE_STATUSES,
@@ -84,6 +86,27 @@ export function wikiBatchKey(trigger: string, now: number): string {
   return `wiki:${now}-${trigger}`;
 }
 
+/**
+ * Non-forced wiki continuity runs dedupe on the TYPED source snapshot: the same
+ * owner date + same source watermark resolve to one open workorder through the
+ * ledger's pending/in_progress dedup, so boot/hourly/event against an unchanged
+ * snapshot cannot pile up open duplicates before any becomes DONE. The watermark
+ * is digested, so raw connector/task/memory terms never appear in the key.
+ */
+export function wikiContinuityKey(ownerDate: string, sourceWatermark: string): string {
+  const digest = createHash('sha256').update(sourceWatermark).digest('hex').slice(0, 16);
+  return `wiki:cont:${ownerDate}:${digest}`;
+}
+
+/**
+ * Signal-unavailable occurrences (null watermark) have no source snapshot to key
+ * on, so they dedupe on a coarse per-owner-date hour bucket - bounded and
+ * disclosing no raw source terms.
+ */
+export function wikiUnavailableKey(ownerDate: string, now: number): string {
+  return `wiki:na:${ownerDate}:${Math.floor(now / (60 * 60 * 1000))}`;
+}
+
 export function normalizePromotionIntervalMs(intervalMs: number): number {
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     throw new Error('promotion interval must be a positive finite number');
@@ -132,6 +155,8 @@ export interface BoardPayload {
   readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
   readonly eventIds?: readonly string[];
+  /** Host-issued rows this attempt may reclassify; never model-authored. */
+  readonly reclassificationCandidates?: readonly TaskReclassificationCandidate[];
   /** Host-authored immutable candidates; reconcile-only. */
   readonly candidates?: {
     readonly bindingCandidates: readonly BindingCandidate[];
@@ -140,11 +165,18 @@ export interface BoardPayload {
   };
 }
 
-export interface WikiPayload {
-  batchId: string;
-  /** Trigger provenance; the run does its own novelty check, events carry no content. */
-  events: string[];
+export interface TaskReclassificationCandidate {
+  readonly taskId: number;
+  readonly taskRevision: number;
 }
+
+/**
+ * The wiki payload's typed continuity fields. Re-exported from wiki-continuity,
+ * which owns their construction from HOST-computed owner date, range and source
+ * watermark. Kept in one place so the enqueue-time validation below and the host
+ * planner cannot drift.
+ */
+export type { WikiPayload, WikiRange } from './wiki-continuity.js';
 
 export interface PromotionPayload {
   scheduledAt: string;
@@ -170,9 +202,19 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
     'channelKey',
     'deltaLines',
     'eventIds',
+    'reclassificationCandidates',
     'candidates',
   ],
-  wiki: ['batchId', 'events'],
+  wiki: [
+    'batchId',
+    'events',
+    'ownerDate',
+    'range',
+    'taskUpdatedSince',
+    'sourceWatermark',
+    'connectors',
+    'noUpdateScope',
+  ],
   'memory-curation': ['scheduledAt'],
   'self-check': ['scheduledFor'],
   temporal: [
@@ -235,6 +277,9 @@ export function validateWorkOrderPayload(
     if (payload.deltaWatermark !== undefined && !isBoundedString(payload.deltaWatermark)) {
       throw new Error(`workorder payload (board): deltaWatermark must contain 1-1000 characters`);
     }
+    if (payload.reclassificationCandidates !== undefined) {
+      validateTaskReclassificationCandidates(payload.reclassificationCandidates);
+    }
     if (mode === 'reconcile') {
       if (payload.deltaWatermark !== undefined) {
         throw new Error(`workorder payload (board reconcile): deltaWatermark is full-only`);
@@ -280,6 +325,89 @@ export function validateWorkOrderPayload(
     ) {
       throw new Error(`workorder payload (wiki): events[] of strings required`);
     }
+    // The typed continuity fields are ALL-OR-NONE: a legacy trigger-only row
+    // (enqueued before deploy) stays valid, but once ANY continuity field is
+    // present the whole set must be, so a partially upgraded payload cannot pass
+    // with an ambiguous half-boundary. A null sourceWatermark still counts as
+    // present (the key exists), so the remaining fields are still required.
+    const continuityKeys = [
+      'ownerDate',
+      'range',
+      'taskUpdatedSince',
+      'sourceWatermark',
+      'connectors',
+      'noUpdateScope',
+    ] as const;
+    const presentContinuityKeys = continuityKeys.filter((key) =>
+      Object.prototype.hasOwnProperty.call(payload, key)
+    );
+    if (presentContinuityKeys.length > 0 && presentContinuityKeys.length < continuityKeys.length) {
+      throw new Error(
+        `workorder payload (wiki): continuity fields ownerDate/range/taskUpdatedSince/sourceWatermark/connectors/noUpdateScope must be supplied together`
+      );
+    }
+    // Each present field is validated below.
+    if (payload.ownerDate !== undefined) {
+      if (typeof payload.ownerDate !== 'string') {
+        throw new Error(`workorder payload (wiki): ownerDate must be a YYYY-MM-DD string`);
+      }
+      // Throws with an "owner date" message on malformed/overflow/unpadded input.
+      parseStrictOwnerDate(payload.ownerDate);
+    }
+    if (payload.range !== undefined) {
+      const range = payload.range;
+      if (!isPlainObject(range) || !exactKeys(range, ['start_ms', 'end_ms'])) {
+        throw new Error(`workorder payload (wiki): range must be { start_ms, end_ms }`);
+      }
+      if (!Number.isSafeInteger(range.start_ms) || !Number.isSafeInteger(range.end_ms)) {
+        throw new Error(
+          `workorder payload (wiki): range bounds must be epoch millisecond integers`
+        );
+      }
+      if ((range.start_ms as number) > (range.end_ms as number)) {
+        throw new Error(`workorder payload (wiki): range start_ms must not exceed end_ms`);
+      }
+    }
+    // taskUpdatedSince is the canonical RFC3339 string the turn passes to
+    // task_list.updated_since; it must be new Date(range.start_ms).toISOString()
+    // exactly, so it names the SAME instant as range.start_ms.
+    if (payload.taskUpdatedSince !== undefined) {
+      if (typeof payload.taskUpdatedSince !== 'string') {
+        throw new Error(`workorder payload (wiki): taskUpdatedSince must be an RFC 3339 string`);
+      }
+      const range = payload.range as { start_ms?: unknown } | undefined;
+      const startMs = range?.start_ms;
+      if (
+        typeof startMs !== 'number' ||
+        !Number.isSafeInteger(startMs) ||
+        payload.taskUpdatedSince !== new Date(startMs).toISOString()
+      ) {
+        throw new Error(
+          `workorder payload (wiki): taskUpdatedSince must equal new Date(range.start_ms).toISOString()`
+        );
+      }
+    }
+    if (
+      payload.sourceWatermark !== undefined &&
+      payload.sourceWatermark !== null &&
+      !isBoundedString(payload.sourceWatermark)
+    ) {
+      throw new Error(
+        `workorder payload (wiki): sourceWatermark must be null or 1-1000 characters`
+      );
+    }
+    if (
+      payload.connectors !== undefined &&
+      (!Array.isArray(payload.connectors) ||
+        payload.connectors.some((name) => !isBoundedString(name)))
+    ) {
+      throw new Error(
+        `workorder payload (wiki): connectors[] must contain 1-1000 character strings`
+      );
+    }
+    if (payload.noUpdateScope !== undefined && !isBoundedString(payload.noUpdateScope)) {
+      throw new Error(`workorder payload (wiki): noUpdateScope must contain 1-1000 characters`);
+    }
   } else if (kind === 'memory-curation') {
     if (typeof payload.scheduledAt !== 'string' || payload.scheduledAt === '') {
       throw new Error(`workorder payload (memory-curation): scheduledAt required`);
@@ -315,6 +443,31 @@ export function validateWorkOrderPayload(
         throw new Error(`workorder payload (temporal): ${field} must be null or 1-300 characters`);
       }
     }
+  }
+}
+
+function validateTaskReclassificationCandidates(value: unknown): void {
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new Error('workorder payload (board): reclassificationCandidates must have 0-10 rows');
+  }
+  const taskIds = new Set<number>();
+  for (const candidate of value) {
+    if (
+      !isPlainObject(candidate) ||
+      !exactKeys(candidate, ['taskId', 'taskRevision']) ||
+      !Number.isSafeInteger(candidate.taskId) ||
+      (candidate.taskId as number) < 1 ||
+      !Number.isSafeInteger(candidate.taskRevision) ||
+      (candidate.taskRevision as number) < 0
+    ) {
+      throw new Error(
+        'workorder payload (board): reclassification candidate needs taskId/taskRevision'
+      );
+    }
+    if (taskIds.has(candidate.taskId as number)) {
+      throw new Error('workorder payload (board): duplicate reclassification taskId');
+    }
+    taskIds.add(candidate.taskId as number);
   }
 }
 
