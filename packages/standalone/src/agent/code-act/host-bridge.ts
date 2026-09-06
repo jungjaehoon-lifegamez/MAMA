@@ -416,11 +416,11 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'wiki_publish',
     description:
-      'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
+      "Publish compiled wiki pages to the configured vault. sourceRefs kinds: memory, raw, entity, case, decision, os_task, agent_situation_packet, report_slot, context_packet, model_run, tool_trace, wiki_page, report, legacy. Use os_task for native tasks; message uses {kind:'legacy', legacy_kind:'message', id}. Use sourceIds strings when no typed ref fits.",
     params: [
       {
         name: 'pages',
-        type: "Array<{ path: string; expectedContentVersion?: string | null; title: string; type: string; content: string; confidence?: 'high' | 'medium' | 'low'; sourceIds?: string[]; sourceRefs?: Array<{ kind: string; id: string; connector?: string }> }>",
+        type: "Array<{ path: string; expectedContentVersion?: string | null; title: string; type: string; content: string; confidence?: 'high' | 'medium' | 'low'; sourceIds?: string[]; sourceRefs?: Array<{ kind: 'memory' | 'raw' | 'entity' | 'case' | 'decision' | 'os_task' | 'agent_situation_packet' | 'report_slot' | 'context_packet' | 'model_run' | 'tool_trace' | 'wiki_page' | 'report' | 'legacy'; id: string; connector?: string; legacy_kind?: 'message' | 'conversation' | 'raw_memory' }> }>",
         required: true,
         description:
           'Array of wiki pages to publish. Path must be relative to the wiki directory. sourceRefs is canonical vNext provenance; sourceIds is legacy-compatible provenance.',
