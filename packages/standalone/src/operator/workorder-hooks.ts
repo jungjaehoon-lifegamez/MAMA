@@ -108,21 +108,9 @@ export function boardCandidateReceiptVerdict(
  */
 export const LANE_OBLIGATED_TOOLS = {
   board: OBLIGATED_TOOLS,
-  // `obsidian` first, because it is what the lane actually calls: measured on the live
-  // install, worker:wiki has 928 obsidian traces and ZERO wiki_publish ones. The vault it
-  // writes to is the one the owner has open, NOT the configured wiki dir - which is why
-  // `wiki_page_index` looks frozen since 2026-07-04 while the vault took writes minutes ago.
-  // 07-04 is when the LEGACY system:wiki-agent path stopped; the Stage-2 worker replaced it
-  // and moved to a different write path. `wiki_publish` stays obligated so the index route
-  // counts if anything revives it.
-  //
-  // KNOWN LIMIT, stated rather than hidden: `obsidian` is one tool for search, read, create,
-  // append, move and delete, and the trace row records only the tool NAME - not the
-  // sub-command. So a wiki run that only READ the vault produces an obligated trace. This
-  // lane's verdict therefore means "the lane exercised the vault", which is strictly weaker
-  // than "the lane wrote", and the log wording says so. Closing the gap needs the
-  // sub-command on the trace row; until then do not read wiki `verified` as proof of a write.
-  wiki: ['obsidian', 'wiki_publish', 'contract_no_update'],
+  // A wiki run either publishes through the configured-root publisher or records the exact
+  // no-update scope. Reads never satisfy completion.
+  wiki: ['wiki_publish', 'contract_no_update'],
   'memory-curation': ['mama_save', 'contract_no_update'],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -135,7 +123,7 @@ export const LANE_OBLIGATED_TOOLS = {
  * questions, two counts: did the lane act, and did it write.
  */
 export const LANE_WRITE_TOOLS = {
-  wiki: ['obsidian', 'wiki_publish'],
+  wiki: ['wiki_publish'],
   'memory-curation': ['mama_save'],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -369,24 +357,24 @@ export function buildPromotionAfterHook(
 export function buildWikiAfterHook(
   log: (line: string) => void,
   deps?: Omit<LaneAfterHookDeps, 'log'>
-): (wo: WorkOrderRecord, response: string, before?: unknown) => void {
+): (wo: WorkOrderRecord, response: string, before?: unknown) => WorkOrderEffectVerdict {
   return (_wo, response, before) => {
     const claim = readLaneClaim(response);
     if (!deps) {
-      log(`[stage2] wiki worker: ${claim.noUpdate ? 'no changes claimed' : 'completion claimed'}`);
-      return;
+      const reason = 'wiki effect trace source unavailable';
+      log(`[stage2] wiki worker: UNVERIFIED - ${reason}`);
+      return { disposition: 'fail', reason };
     }
     const traceCount = deps.traces.countObligatedTraceRowsSince(
       typeof before === 'number' ? before : 0
     );
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
-    // "vault exercised", not "verified": the obligated `obsidian` tool covers reads as well
-    // as writes and the trace records only its name, so this cannot claim a write happened.
-    // See the KNOWN LIMIT on LANE_OBLIGATED_TOOLS.wiki.
-    log(
-      `[stage2] wiki worker: ${verdict.verified ? 'vault exercised' : 'UNVERIFIED'} - ${verdict.note}`
-    );
-    if (!verdict.verified) deps.onUnverified?.(verdict.note);
+    log(`[stage2] wiki worker: ${verdict.verified ? 'verified' : 'UNVERIFIED'} - ${verdict.note}`);
+    if (!verdict.verified) {
+      deps.onUnverified?.(verdict.note);
+      return { disposition: 'fail', reason: verdict.note };
+    }
+    return { disposition: 'complete' };
   };
 }
 

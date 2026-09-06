@@ -407,6 +407,7 @@ const MEMBER_BLOCKED_TOOLS = [
   'task_reclassify',
   'report_request',
   'report_publish',
+  'wiki_read',
   'wiki_publish',
   'obsidian',
   'save_integration_token',

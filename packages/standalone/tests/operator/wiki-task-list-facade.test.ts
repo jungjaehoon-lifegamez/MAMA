@@ -76,15 +76,28 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
   it('TG-03/TG-06 enforces the exact wiki range at the gateway boundary', async () => {
     const db = new Database(':memory:');
     try {
-      const ledger = new TaskLedger(db, { timeZone: 'Asia/Seoul' });
-      ledger.create({ title: 'bounded task' });
+      const ledger = new TaskLedger(db, {
+        timeZone: 'Asia/Seoul',
+        now: () => Date.parse('2026-08-09T00:00:00.000Z'),
+      });
+      ledger.create({ title: 'bounded task 1' });
+      ledger.create({ title: 'bounded task 2' });
       const executor = new GatewayToolExecutor();
       executor.setTaskLedger(ledger);
       const wikiTaskRange = {
+        ownerDate: '2026-08-09',
+        rangeStartMs: Date.parse('2026-08-08T15:00:00.000Z'),
+        rangeEndMs: Date.parse('2026-08-09T15:00:00.000Z'),
+        connectors: ['slack'],
         updatedSince: '2026-08-08T15:00:00.000Z',
         updatedBefore: '2026-08-09T15:00:00.000Z',
+        noUpdateScope: 'wiki:2026-08-09:test',
       };
-      const context = { executionSurface: 'model_tool' as const, wikiTaskRange };
+      const context = {
+        executionSurface: 'model_tool' as const,
+        workorderAttemptId: 17,
+        wikiTaskRange,
+      };
 
       await expect(
         executor.execute(
@@ -97,13 +110,29 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
           context
         )
       ).resolves.toMatchObject({ success: true, view: 'items' });
+      const firstPage = (await executor.execute(
+        'task_list',
+        { view: 'items', cursor: null, limit: 1 },
+        context
+      )) as { success: boolean; nextCursor?: string };
+      expect(firstPage).toMatchObject({ success: true, nextCursor: expect.any(String) });
       await expect(
         executor.execute(
           'task_list',
-          { view: 'items', updated_since: wikiTaskRange.updatedSince },
+          { view: 'items', cursor: firstPage.nextCursor, limit: 1 },
           context
         )
-      ).rejects.toThrow(/exact host-issued.*updated_since\/updated_before/i);
+      ).resolves.toMatchObject({ success: true, view: 'items' });
+      await expect(
+        executor.execute(
+          'task_list',
+          { view: 'items', updated_before: '2026-08-10T15:00:00.000Z' },
+          context
+        )
+      ).rejects.toThrow(/contradict.*host-issued/i);
+      await expect(
+        executor.execute('task_list', { view: 'items', search: 'nomatch' }, context)
+      ).rejects.toThrow(/cannot narrow.*search/i);
       await expect(
         executor.execute(
           'task_list',
@@ -118,11 +147,33 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
       ).rejects.toThrow(/requires view items/i);
       await expect(
         executor.execute(
+          'contract_no_update',
+          { reason: 'no movement', scope: 'wiki:wrong' },
+          context
+        )
+      ).rejects.toThrow(/exact host-issued scope/i);
+      await expect(
+        executor.execute(
+          'contract_no_update',
+          { reason: 'no movement', scope: wikiTaskRange.noUpdateScope },
+          context
+        )
+      ).rejects.toThrow(/completed context_compile/i);
+      await expect(
+        executor.execute(
           'task_list',
           {},
           {
             executionSurface: 'model_tool',
-            wikiTaskRange: { updatedSince: null, updatedBefore: null },
+            wikiTaskRange: {
+              ownerDate: null,
+              rangeStartMs: null,
+              rangeEndMs: null,
+              connectors: null,
+              updatedSince: null,
+              updatedBefore: null,
+              noUpdateScope: null,
+            },
           }
         )
       ).rejects.toThrow(/legacy input/i);
@@ -133,8 +184,13 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
 
   it('TG-05 carries the host wiki range into every nested tool call', () => {
     const wikiTaskRange = {
+      ownerDate: '2026-08-09',
+      rangeStartMs: Date.parse('2026-08-08T15:00:00.000Z'),
+      rangeEndMs: Date.parse('2026-08-09T15:00:00.000Z'),
+      connectors: ['slack'],
       updatedSince: '2026-08-08T15:00:00.000Z',
       updatedBefore: '2026-08-09T15:00:00.000Z',
+      noUpdateScope: 'wiki:2026-08-09:test',
     };
     expect(buildAgentToolExecutionContext({ wikiTaskRange })).toMatchObject({ wikiTaskRange });
   });

@@ -240,7 +240,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       {
         kind: 'wiki' as const,
         roleName: 'owner_console',
-        innerTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
+        innerTools: [
+          'agent_notices',
+          'context_compile',
+          'mama_search',
+          'wiki_read',
+          'wiki_publish',
+        ],
       },
       {
         kind: 'memory-curation' as const,

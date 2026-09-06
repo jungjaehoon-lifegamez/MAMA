@@ -104,6 +104,12 @@ import {
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
+import { buildObsidianCliArgs, parseObsidianVaultPath } from './obsidian-cli-args.js';
+import {
+  assertAllowedWikiWorkorderPath,
+  assertWikiWorkorderPublish,
+  readWikiPages,
+} from '../wiki/wiki-read.js';
 import type {
   TemporalEvidenceAttestation,
   TemporalWorkContext,
@@ -833,9 +839,24 @@ export class GatewayToolExecutor {
   private wikiPublishAdapter: WikiPublishAdapter | null = null;
   private obsidianVaultPath: string | null = null;
   private obsidianVaultName: string | null = null;
+  private obsidianVaultVerified = false;
+  private readonly wikiReadCoverage = new Map<
+    string,
+    { contentVersion: string | null; nextOffset: number | null; complete: boolean }
+  >();
+  private readonly wikiSourceCoverage = new Map<
+    number,
+    { contextCompileComplete: boolean; taskListComplete: boolean }
+  >();
   setObsidianVaultPath(vaultPath: string, vaultName?: string): void {
     this.obsidianVaultPath = vaultPath;
     this.obsidianVaultName = vaultName ?? null;
+    this.obsidianVaultVerified = false;
+  }
+  releaseWikiAttemptCoverage(workorderAttemptId: number): void {
+    if (Number.isSafeInteger(workorderAttemptId) && workorderAttemptId > 0) {
+      this.clearWikiAttemptCoverage(workorderAttemptId);
+    }
   }
   private taskLedger: import('../operator/task-ledger.js').TaskLedger | null = null;
   private ownerEventEffectLedger:
@@ -3439,13 +3460,71 @@ export class GatewayToolExecutor {
               false
             );
           }
+          const wikiAuthority = this.getExecutionState().wikiTaskRange;
+          if (wikiAuthority) {
+            if (!this.obsidianVaultPath) {
+              throw new AgentError(
+                'Wiki vault path not configured',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            if (wikiAuthority.ownerDate === null) {
+              throw new AgentError(
+                'wiki_publish is unavailable for legacy input without a host-issued ownerDate',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            try {
+              assertWikiWorkorderPublish({
+                root: this.obsidianVaultPath,
+                ownerDate: wikiAuthority.ownerDate,
+                pages: pagesInput,
+              });
+              const attemptId = this.getExecutionState().workorderAttemptId;
+              if (!Number.isSafeInteger(attemptId) || (attemptId as number) < 1) {
+                throw new Error('wiki_publish requires a host-issued workorder attempt');
+              }
+              for (const page of pagesInput) {
+                const path = assertAllowedWikiWorkorderPath(page.path, wikiAuthority.ownerDate);
+                const coverage = this.wikiReadCoverage.get(
+                  this.wikiReadCoverageKey(attemptId as number, path)
+                );
+                if (
+                  !coverage?.complete ||
+                  coverage.contentVersion !== page.expectedContentVersion
+                ) {
+                  throw new Error(
+                    `wiki_publish page ${path} requires a complete contiguous wiki_read at the expected content version`
+                  );
+                }
+              }
+            } catch (error) {
+              throw new AgentError(
+                error instanceof Error ? error.message : 'Wiki publication authority failed',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
+          const publishPages = wikiAuthority
+            ? pagesInput
+            : pagesInput.map(({ expectedContentVersion: _ignored, ...page }) => page);
           const adapter =
             this.wikiPublishAdapter ??
             createWikiPublishAdapter({
               publisher: this.wikiPublisher,
             });
           try {
-            const publishResult = adapter.publish({ pages: pagesInput });
+            const publishResult = adapter.publish({ pages: publishPages });
+            if (wikiAuthority) {
+              const attemptId = this.getExecutionState().workorderAttemptId as number;
+              this.clearWikiAttemptCoverage(attemptId);
+            }
             return {
               success: true,
               message: `Wiki published: ${publishResult.pagesPublished} pages`,
@@ -3454,6 +3533,82 @@ export class GatewayToolExecutor {
           } catch (error) {
             throw new AgentError(
               error instanceof Error ? error.message : 'Wiki publish failed',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+        }
+        case 'wiki_read': {
+          const wikiAuthority = this.getExecutionState().wikiTaskRange;
+          if (!wikiAuthority || wikiAuthority.ownerDate === null) {
+            throw new AgentError(
+              'wiki_read requires a host-issued wiki workorder ownerDate',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          if (!this.obsidianVaultPath) {
+            throw new AgentError('Wiki vault path not configured', 'TOOL_ERROR', undefined, false);
+          }
+          try {
+            const attemptId = this.getExecutionState().workorderAttemptId;
+            if (!Number.isSafeInteger(attemptId) || (attemptId as number) < 1) {
+              throw new Error('wiki_read requires a host-issued workorder attempt');
+            }
+            const readInput = input as {
+              paths?: unknown;
+              content_offset?: unknown;
+              content_limit?: unknown;
+            };
+            const requestedOffset = readInput.content_offset ?? 0;
+            if (!Number.isSafeInteger(requestedOffset) || (requestedOffset as number) < 0) {
+              throw new Error('wiki_read content_offset must be a non-negative safe integer');
+            }
+            const paths = Array.isArray(readInput.paths) ? readInput.paths : [];
+            for (const rawPath of paths) {
+              const path = assertAllowedWikiWorkorderPath(rawPath, wikiAuthority.ownerDate);
+              const key = this.wikiReadCoverageKey(attemptId as number, path);
+              const prior = this.wikiReadCoverage.get(key);
+              if ((requestedOffset as number) === 0) {
+                this.wikiReadCoverage.delete(key);
+              } else if (!prior || prior.complete || prior.nextOffset !== requestedOffset) {
+                throw new Error(
+                  `wiki_read page ${path} must continue from the host-issued nextContentOffset`
+                );
+              }
+            }
+            const result = readWikiPages({
+              root: this.obsidianVaultPath,
+              ownerDate: wikiAuthority.ownerDate,
+              paths: readInput.paths,
+              contentOffset: readInput.content_offset,
+              contentLimit: readInput.content_limit,
+            });
+            for (const page of result.pages) {
+              const key = this.wikiReadCoverageKey(attemptId as number, page.path);
+              const prior = this.wikiReadCoverage.get(key);
+              if (
+                (requestedOffset as number) > 0 &&
+                prior?.contentVersion !== page.contentVersion
+              ) {
+                this.wikiReadCoverage.delete(key);
+                throw new Error(`wiki_read page ${page.path} changed; restart from offset 0`);
+              }
+              this.wikiReadCoverage.set(key, {
+                contentVersion: page.contentVersion,
+                nextOffset: page.nextContentOffset,
+                complete: page.nextContentOffset === null,
+              });
+            }
+            return {
+              success: true,
+              ...result,
+            } as GatewayToolResult;
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'Wiki read failed',
               'TOOL_ERROR',
               undefined,
               false
@@ -3629,6 +3784,7 @@ export class GatewayToolExecutor {
           // superseded signal it was before the progressive views.
           const temporalContext = this.getExecutionState().temporalWorkContext;
           const wikiTaskRange = this.getExecutionState().wikiTaskRange;
+          let taskListInput: unknown = input;
           if (wikiTaskRange) {
             const taskInput =
               input !== null && typeof input === 'object' && !Array.isArray(input)
@@ -3642,18 +3798,57 @@ export class GatewayToolExecutor {
                 false
               );
             }
-            if (
-              (taskInput.view !== undefined && taskInput.view !== 'items') ||
-              taskInput.updated_since !== wikiTaskRange.updatedSince ||
-              taskInput.updated_before !== wikiTaskRange.updatedBefore
-            ) {
+            if (taskInput.view !== undefined && taskInput.view !== 'items') {
               throw new AgentError(
-                'Wiki task_list requires view items and the exact host-issued updated_since/updated_before range',
+                'Wiki task_list requires view items',
                 'TOOL_ERROR',
                 undefined,
                 false
               );
             }
+            const allowedFields = new Set([
+              'view',
+              'cursor',
+              'limit',
+              'updated_since',
+              'updated_before',
+            ]);
+            const narrowingFields = Object.keys(taskInput).filter(
+              (field) => !allowedFields.has(field)
+            );
+            if (narrowingFields.length > 0) {
+              throw new AgentError(
+                `Wiki task_list cannot narrow the host-issued range with: ${narrowingFields.join(', ')}`,
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            if (
+              (taskInput.updated_since !== undefined &&
+                taskInput.updated_since !== wikiTaskRange.updatedSince) ||
+              (taskInput.updated_before !== undefined &&
+                taskInput.updated_before !== wikiTaskRange.updatedBefore)
+            ) {
+              throw new AgentError(
+                'Wiki task_list parameters contradict the host-issued updated_since/updated_before range',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const normalizedInput = { ...taskInput };
+            if (normalizedInput.cursor === null) {
+              delete normalizedInput.cursor;
+            }
+            taskListInput = {
+              ...normalizedInput,
+              view: 'items',
+              include_terminal: true,
+              order: 'updated',
+              updated_since: wikiTaskRange.updatedSince,
+              updated_before: wikiTaskRange.updatedBefore,
+            };
           }
           let boundTask: import('../operator/task-ledger.js').TaskRecord | undefined;
           if (temporalContext) {
@@ -3668,10 +3863,17 @@ export class GatewayToolExecutor {
             }
             boundTask = found;
           }
-          return runTaskListView(input, {
+          const taskListResult = runTaskListView(taskListInput, {
             ledger: this.taskLedger,
             boundTask,
           }) as GatewayToolResult;
+          if (wikiTaskRange && taskListResult.success === true) {
+            const nextCursor = (taskListResult as { nextCursor?: unknown }).nextCursor;
+            if (nextCursor === null || nextCursor === undefined) {
+              this.markWikiSourceCoverage('task_list');
+            }
+          }
+          return taskListResult;
         }
         case 'task_external_correlation': {
           if (!this.taskLedger) {
@@ -4310,7 +4512,49 @@ export class GatewayToolExecutor {
               false
             );
           }
-          return { success: true, note: this.taskLedger.recordNoUpdate(scope, reason) };
+          const wikiAuthority = this.getExecutionState().wikiTaskRange;
+          if (wikiAuthority) {
+            if (wikiAuthority.noUpdateScope === null) {
+              throw new AgentError(
+                'contract_no_update is unavailable for legacy wiki input without a host-issued scope',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            if (scope !== wikiAuthority.noUpdateScope) {
+              throw new AgentError(
+                'Wiki contract_no_update scope must match the exact host-issued scope',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const attemptId = this.getExecutionState().workorderAttemptId;
+            if (!Number.isSafeInteger(attemptId) || (attemptId as number) < 1) {
+              throw new AgentError(
+                'Wiki contract_no_update requires a host-issued workorder attempt',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            try {
+              this.assertWikiNoUpdateCoverage(attemptId as number, wikiAuthority);
+            } catch (error) {
+              throw new AgentError(
+                error instanceof Error ? error.message : 'Wiki source coverage is incomplete',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
+          const note = this.taskLedger.recordNoUpdate(scope, reason);
+          if (wikiAuthority) {
+            this.clearWikiAttemptCoverage(this.getExecutionState().workorderAttemptId as number);
+          }
+          return { success: true, note };
         }
         case 'agent_notices': {
           const rawLimit = Number((input as { limit?: number }).limit);
@@ -5206,19 +5450,48 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
+    if (this.obsidianVaultName && !this.obsidianVaultVerified) {
+      try {
+        const { stdout } = await execFileAsync(
+          'obsidian',
+          buildObsidianCliArgs('vault', undefined, this.obsidianVaultName),
+          {
+            timeout: 15000,
+            encoding: 'utf-8',
+            maxBuffer: 1024 * 1024,
+          }
+        );
+        const configuredPath = realpathSync(this.obsidianVaultPath);
+        const selectedPath = realpathSync(parseObsidianVaultPath(stdout));
+        if (selectedPath !== configuredPath) {
+          throw new Error(
+            `Obsidian CLI selected ${selectedPath}, expected configured wiki vault ${configuredPath}`
+          );
+        }
+        this.obsidianVaultVerified = true;
+      } catch (error) {
+        throw new AgentError(
+          error instanceof Error ? error.message : 'Obsidian vault target verification failed',
+          'TOOL_ERROR',
+          undefined,
+          false
+        );
+      }
+    }
+
     // Obsidian CLI syntax: obsidian <command> key=value ... [flags]
     // Without vault=<name> the CLI targets the FOCUSED vault, so wiki writes
     // could land in whatever vault the owner has open. Pin it when configured.
-    const cliArgs = [command];
-    if (this.obsidianVaultName) {
-      cliArgs.push(`vault=${this.obsidianVaultName}`);
-    }
-    for (const [key, value] of Object.entries(args || {})) {
-      if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
-        cliArgs.push(key);
-      } else {
-        cliArgs.push(`${key}=${value}`);
-      }
+    let cliArgs: string[];
+    try {
+      cliArgs = buildObsidianCliArgs(command, args, this.obsidianVaultName);
+    } catch (error) {
+      throw new AgentError(
+        error instanceof Error ? error.message : 'Invalid Obsidian CLI arguments',
+        'TOOL_ERROR',
+        undefined,
+        false
+      );
     }
 
     try {
@@ -5243,6 +5516,58 @@ export class GatewayToolExecutor {
         success: false,
         error: `Obsidian CLI error: ${msg.substring(0, 500)}`,
       } as GatewayToolResult;
+    }
+  }
+
+  private wikiReadCoverageKey(attemptId: number, path: string): string {
+    return `${attemptId}:${path}`;
+  }
+
+  private markWikiSourceCoverage(source: 'context_compile' | 'task_list'): void {
+    const attemptId = this.getExecutionState().workorderAttemptId;
+    if (!Number.isSafeInteger(attemptId) || (attemptId as number) < 1) {
+      return;
+    }
+    const current = this.wikiSourceCoverage.get(attemptId as number) ?? {
+      contextCompileComplete: false,
+      taskListComplete: false,
+    };
+    this.wikiSourceCoverage.set(attemptId as number, {
+      contextCompileComplete: current.contextCompileComplete || source === 'context_compile',
+      taskListComplete: current.taskListComplete || source === 'task_list',
+    });
+  }
+
+  private assertWikiNoUpdateCoverage(
+    attemptId: number,
+    authority: NonNullable<GatewayToolExecutionContext['wikiTaskRange']>
+  ): void {
+    if (authority.ownerDate === null) {
+      throw new Error('Wiki no-update coverage requires a host-issued ownerDate');
+    }
+    const sources = this.wikiSourceCoverage.get(attemptId);
+    if (!sources?.contextCompileComplete || !sources.taskListComplete) {
+      throw new Error(
+        'Wiki contract_no_update requires completed context_compile and all bounded task_list pages'
+      );
+    }
+    for (const path of ['Home.md', `daily/${authority.ownerDate}.md`]) {
+      const read = this.wikiReadCoverage.get(this.wikiReadCoverageKey(attemptId, path));
+      if (!read?.complete) {
+        throw new Error(
+          'Wiki contract_no_update requires complete wiki_read coverage for Home.md and the bound daily page'
+        );
+      }
+    }
+  }
+
+  private clearWikiAttemptCoverage(attemptId: number): void {
+    this.wikiSourceCoverage.delete(attemptId);
+    const prefix = `${attemptId}:`;
+    for (const key of this.wikiReadCoverage.keys()) {
+      if (key.startsWith(prefix)) {
+        this.wikiReadCoverage.delete(key);
+      }
     }
   }
 
@@ -5566,6 +5891,44 @@ export class GatewayToolExecutor {
       let effectiveInput = temporalContext
         ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
         : input;
+      const wikiAuthority = ctx.wikiTaskRange;
+      if (wikiAuthority) {
+        if (
+          wikiAuthority.rangeStartMs === null ||
+          wikiAuthority.rangeEndMs === null ||
+          wikiAuthority.connectors === null
+        ) {
+          throw new Error('context_compile is unavailable for legacy wiki input');
+        }
+        const providedRange = input.range;
+        if (
+          providedRange !== undefined &&
+          (providedRange.start_ms !== wikiAuthority.rangeStartMs ||
+            providedRange.end_ms !== wikiAuthority.rangeEndMs)
+        ) {
+          throw new Error('context_compile range contradicts the host-issued wiki range');
+        }
+        if (input.connectors !== undefined) {
+          const providedConnectors = [...input.connectors].sort();
+          const allowedConnectors = [...wikiAuthority.connectors].sort();
+          if (
+            providedConnectors.length !== allowedConnectors.length ||
+            providedConnectors.some((connector, index) => connector !== allowedConnectors[index])
+          ) {
+            throw new Error(
+              'context_compile connectors contradict the host-issued wiki connector scope'
+            );
+          }
+        }
+        effectiveInput = {
+          ...effectiveInput,
+          range: {
+            start_ms: wikiAuthority.rangeStartMs,
+            end_ms: wikiAuthority.rangeEndMs,
+          },
+          connectors: [...wikiAuthority.connectors],
+        };
+      }
       // (d)-by-construction (S2 measurement: 94% of reconcile rejections were
       // packets carrying only recalled memories). The HOST knows the bound
       // source - the task row holds it raw; the context carries only hashes -
@@ -5655,6 +6018,9 @@ export class GatewayToolExecutor {
         )
       ) {
         throw new Error('context_compile packet exceeds the active temporal task source');
+      }
+      if (wikiAuthority) {
+        this.markWikiSourceCoverage('context_compile');
       }
       return {
         success: true,

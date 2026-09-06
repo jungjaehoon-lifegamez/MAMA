@@ -264,11 +264,34 @@ register({
   },
 });
 register({
+  name: 'wiki_read',
+  description:
+    'Read up to 20 host-bound MAMA wiki pages by exact relative path with content versions.',
+  category: 'os_monitoring',
+  params: 'paths: string[], content_offset?, content_limit?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 1,
+        maxItems: 20,
+      },
+      content_offset: { type: 'number', minimum: 0 },
+      content_limit: { type: 'number', minimum: 1, maximum: 20000 },
+    },
+    required: ['paths'],
+    additionalProperties: false,
+  },
+});
+register({
   name: 'wiki_publish',
   description:
     'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
   category: 'os_monitoring',
-  params: 'pages: [{path, title, type, content, confidence?, sourceIds?, sourceRefs?}]',
+  params:
+    'pages: [{path, expectedContentVersion?, title, type, content, confidence?, sourceIds?, sourceRefs?}]',
 });
 register({
   name: 'obsidian',
