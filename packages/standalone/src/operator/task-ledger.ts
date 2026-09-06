@@ -262,6 +262,8 @@ export interface ChangeOrigin {
   causeEventIds?: readonly string[];
   /** Owner-event task reclassification stays within the exact causal channel. */
   reclassificationCauseBound?: boolean;
+  /** Internal marker: a duplicate-source task_create is using update semantics. */
+  taskCreateUpsert?: boolean;
   /** Host-verified raw submission/delivery evidence. Never populated from model timestamps. */
   verifiedReviewEvidence?: {
     contextPacketId: string;
@@ -1918,6 +1920,7 @@ export class TaskLedger implements TaskSource {
           // carried nothing.
           {
             ...origin,
+            taskCreateUpsert: true,
             causeEventIds: origin.causeEventIds?.length
               ? origin.causeEventIds
               : input.source_event_id
@@ -2538,7 +2541,10 @@ export class TaskLedger implements TaskSource {
     }
     const { attempts: _attempts, ...payload } = attempt.payload;
     validateWorkOrderPayload('board', payload);
-    if (Object.prototype.hasOwnProperty.call(patch, 'completion_criteria')) {
+    if (
+      Object.prototype.hasOwnProperty.call(patch, 'completion_criteria') &&
+      !origin.taskCreateUpsert
+    ) {
       const reclassificationCandidates = Array.isArray(payload.reclassificationCandidates)
         ? (payload.reclassificationCandidates as Array<{
             taskId: number;
