@@ -24,9 +24,12 @@ export const OWNER_DECISION_MARKER = /^\s*\[decision\]/i;
  * Notification is not completion: a turn that only sends a Telegram line has
  * moved nothing, and counting it produced 362 sends against a dead ledger.
  */
-const LEDGER_EFFECT_TOOLS = new Set([
+export const LEDGER_EFFECT_TOOLS = new Set([
   'task_create',
   'task_update',
+  // A reclassification is a durable ledger change (status + semantic resolution),
+  // so it settles a batch exactly like an update does.
+  'task_reclassify',
   'mama_save',
   'mama_update',
   'drive_upload',

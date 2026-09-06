@@ -167,17 +167,22 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
       'trello_kanban',
       'trello_search',
     ];
+    // v0.48.1: task_create is host-blocked on EVERY unattended turn (records and
+    // tasks are separate); the board recorrects with task_reclassify instead.
     expect(grant('board')).toEqual(
       [
         ...common,
         'report_publish',
-        'task_create',
         'task_external_bind',
         'task_external_correlation',
         'task_lifecycle_reconcile',
+        'task_reclassify',
         'task_update',
       ].sort()
     );
+    for (const kind of WORKORDER_KINDS) {
+      expect(grant(kind), `${kind} may not create tasks`).not.toContain('task_create');
+    }
     expect(grant('wiki')).toEqual([...common, 'obsidian', 'wiki_publish'].sort());
     expect(grant('memory-curation')).toEqual([...common, 'mama_save', 'mama_update'].sort());
     expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());

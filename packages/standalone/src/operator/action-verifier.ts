@@ -27,8 +27,12 @@ import {
 
 export const OBLIGATED_TOOLS = [
   'report_publish',
+  // task_create stays in the obligated set for historical traces; unattended turns
+  // can no longer call it (SCHEDULED_TURN_BLOCKED_TOOLS) and discharge their board
+  // judgment through task_update / task_reclassify instead.
   'task_create',
   'task_update',
+  'task_reclassify',
   'contract_no_update',
 ] as const;
 

@@ -44,8 +44,10 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
           'drive_upload',
           'kagemusha_messages',
           // One MAMA Phase 1 Task 1: the event turn may change the ledger and memory.
-          'task_create',
+          // v0.48.1: records and tasks are separate - the event turn may RECORRECT
+          // existing rows but never create one from a connector observation.
           'task_update',
+          'task_reclassify',
           'mama_save',
           'mama_update',
         ])

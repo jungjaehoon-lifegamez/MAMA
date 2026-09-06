@@ -160,7 +160,7 @@ export function buildWorkerSystemPrompt(
       ? [
           '',
           'Board data boundaries (non-negotiable):',
-          '- task_list/task_create/task_update is YOUR task board: you maintain its rows, and the pipeline projection is rendered from them.',
+          '- task_list/task_update/task_reclassify is YOUR task board: you maintain its existing rows, and the pipeline projection is rendered from them. task_create is blocked on unattended turns; connector records stay evidence.',
           '- Trello, calendar and channel data are external evidence. Read them through the read tools this run offers (the trello_* readers; context_compile for connector messages and the polled delta) and keep the stores apart in what you write: say which store a fact came from, and never present one store as another.',
           '- An external status is evidence for your judgment, not a value you copy: decide the ledger status from what the sources show, and record why and where you saw it.',
           '- Temporal fact: task_list.temporal_state is the canonical time category; render it separately. Overdue is a time fact, not a lifecycle status.',

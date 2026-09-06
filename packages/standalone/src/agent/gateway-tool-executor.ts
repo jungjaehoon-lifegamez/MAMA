@@ -83,6 +83,7 @@ import {
 } from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
 import { validateExternalLifecycleDecision } from '../operator/external-lifecycle-candidates.js';
+import { TASK_COMPLETION_CRITERIA_MAX_LENGTH } from '../operator/task-ledger.js';
 import SqliteDatabase from '../sqlite.js';
 import {
   handleSave,
@@ -386,6 +387,7 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'obsidian',
   'task_create',
   'task_update',
+  'task_reclassify',
   'contract_no_update',
   'task_temporal_reconcile',
   'Write',
@@ -409,8 +411,31 @@ const TASK_UPDATE_PUBLIC_FIELDS = [
   'expected_revision',
   'context_packet_id',
   'review_anchor_ref',
+  'completion_criteria',
 ] as const;
 const TASK_UPDATE_PUBLIC_FIELD_SET = new Set<string>(TASK_UPDATE_PUBLIC_FIELDS);
+/**
+ * Records and tasks are separate. `completion_criteria` is REQUIRED here (not in
+ * the ledger) so the public agent boundary refuses a title-only row while
+ * internal/system seeding stays backward compatible.
+ */
+const TASK_CREATE_PUBLIC_FIELDS = [
+  'title',
+  'completion_criteria',
+  'status',
+  'priority',
+  'assignee',
+  'deadline',
+  'due_at',
+  'source_channel',
+  'source_event_id',
+  'latest_event',
+  'confirmed',
+  'expected_revision',
+] as const;
+const TASK_CREATE_PUBLIC_FIELD_SET = new Set<string>(TASK_CREATE_PUBLIC_FIELDS);
+const TASK_RECLASSIFY_PUBLIC_FIELDS = ['id', 'disposition', 'reason', 'expected_revision'] as const;
+const TASK_RECLASSIFY_PUBLIC_FIELD_SET = new Set<string>(TASK_RECLASSIFY_PUBLIC_FIELDS);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
@@ -3810,6 +3835,41 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
+          const rawTaskCreate = input as Record<string, unknown>;
+          const unsupportedCreateFields = Object.keys(rawTaskCreate).filter(
+            (field) => !TASK_CREATE_PUBLIC_FIELD_SET.has(field)
+          );
+          if (unsupportedCreateFields.length > 0) {
+            throw new AgentError(
+              `task_create unsupported field(s): ${unsupportedCreateFields.join(', ')}. ` +
+                `Supported fields: ${TASK_CREATE_PUBLIC_FIELDS.join(', ')}.`,
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          // The records-vs-tasks boundary. A row without a concrete, finite
+          // completion condition is a RECORD, and a record must not become a task.
+          const completionCriteria = rawTaskCreate.completion_criteria;
+          if (typeof completionCriteria !== 'string' || completionCriteria.trim().length === 0) {
+            throw new AgentError(
+              'task_create requires a non-empty completion_criteria: name the concrete, finite ' +
+                'condition under which this is finished. Observations, lessons, principles, ' +
+                'aspirations and open questions are records or memory, not tasks - do not create ' +
+                'a row for them.',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (completionCriteria.trim().length > TASK_COMPLETION_CRITERIA_MAX_LENGTH) {
+            throw new AgentError(
+              `task_create completion_criteria must be at most ${TASK_COMPLETION_CRITERIA_MAX_LENGTH} characters`,
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           return {
             success: true,
             task: serializeTaskToolRecord(
@@ -3826,6 +3886,70 @@ export class GatewayToolExecutor {
               })
             ),
           };
+        }
+        case 'task_reclassify': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const rawReclassify = input as { id: unknown } & Record<string, unknown>;
+          const unsupportedReclassifyFields = Object.keys(rawReclassify).filter(
+            (field) => !TASK_RECLASSIFY_PUBLIC_FIELD_SET.has(field)
+          );
+          if (unsupportedReclassifyFields.length > 0) {
+            throw new AgentError(
+              `task_reclassify unsupported field(s): ${unsupportedReclassifyFields.join(', ')}. ` +
+                `Supported fields: ${TASK_RECLASSIFY_PUBLIC_FIELDS.join(', ')}.`,
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const rawReclassifyId = rawReclassify.id;
+          const reclassifyId =
+            typeof rawReclassifyId === 'string'
+              ? Number(rawReclassifyId.trim())
+              : (rawReclassifyId as number);
+          if (!Number.isInteger(reclassifyId) || reclassifyId <= 0) {
+            throw new AgentError(
+              `task_reclassify requires a numeric id, got: ${String(rawReclassifyId)}`,
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          try {
+            return {
+              success: true,
+              task: serializeTaskToolRecord(
+                this.taskLedger.reclassify(
+                  reclassifyId,
+                  {
+                    disposition: rawReclassify.disposition as never,
+                    reason: rawReclassify.reason as string,
+                    expected_revision: rawReclassify.expected_revision as number,
+                  },
+                  {
+                    // Same trusted-identity rule as task_update: the run and the
+                    // board attempt come from execution state, never the tool call.
+                    runId: this.getExecutionState().modelRunId ?? null,
+                    workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+                    requiresExpectedRevision:
+                      this.getExecutionState().workorderAttemptId !== undefined,
+                    causeEventIds: this.getExecutionState().causeEventIds,
+                    causeKind:
+                      this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
+                  }
+                )
+              ),
+            } as GatewayToolResult;
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'task_reclassify failed',
+              'TOOL_ERROR',
+              error instanceof Error ? error : undefined,
+              false
+            );
+          }
         }
         case 'task_update': {
           if (!this.taskLedger) {

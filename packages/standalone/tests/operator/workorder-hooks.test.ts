@@ -134,7 +134,7 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       // gateway_tool_call row itself (real logGatewayToolCall shape).
       const result = (await executor.execute(
         'task_create',
-        { title: `probe ${channelId}` } as never,
+        { title: `probe ${channelId}`, completion_criteria: 'probe complete' } as never,
         { executionSurface: 'model_tool', source: 'operator', channelId } as never
       )) as { success?: boolean };
       expect(result.success).toBe(true);
@@ -373,7 +373,8 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       const queries = buildWorkerTraceQueries(sessionsDb, 'worker:board');
       const before = queries.getTraceMaxId();
 
-      // A real refusal through the real executor: task_create with no title fails validation.
+      // A real refusal through the real executor: task_create with no completion_criteria
+      // fails the records-vs-tasks boundary.
       // It rejects rather than returning success:false, and the executor logs the attempt
       // either way - which is the point. The row exists; it must not be counted.
       await expect(
@@ -386,7 +387,7 @@ describe('Story S2-T3: extracted workorder hooks', () => {
             channelId: 'worker:board',
           } as never
         )
-      ).rejects.toThrow(/task title/);
+      ).rejects.toThrow(/completion_criteria/);
 
       expect(queries.getTraceMaxId()).toBeGreaterThan(before);
       expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
