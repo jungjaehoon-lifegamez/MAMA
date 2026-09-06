@@ -1010,6 +1010,8 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
+  /** Host-only issuer invoked after session/global queue admission, before model/tool context. */
+  prepareEnvelope?: () => Envelope | undefined | Promise<Envelope | undefined>;
   /** Construction-time durable recovery journal for the one owner subject. */
   ownerRuntimeJournal?: OwnerRuntimeJournalPort;
   /** Raw owner stimulus stored for recovery instead of prefixed model input. */

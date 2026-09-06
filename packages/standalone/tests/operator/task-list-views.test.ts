@@ -164,6 +164,86 @@ describe('TG-05/TG-06 AC #1: task_list items view', () => {
     );
     expect(exact).toMatchObject({ due_at: '2026-07-20T09:00:00.000Z', deadline: '2026-07-20' });
   });
+
+  it('filters before paging and counting with the same due buckets as overview', () => {
+    const bucketLedger = makeLedger();
+    bucketLedger.create({ title: 'missing', status: 'pending' });
+    bucketLedger.create({ title: 'exact overdue', due_at: '2026-07-21T12:00:00Z' });
+    bucketLedger.create({ title: 'exact upcoming', due_at: '2026-07-21T12:00:01Z' });
+    bucketLedger.create({ title: 'date overdue', deadline: '2026-07-20' });
+    bucketLedger.create({ title: 'date due today', deadline: '2026-07-21' });
+    bucketLedger.create({ title: 'date upcoming', deadline: '2026-07-22' });
+    bucketLedger.create({
+      title: 'closed despite past due',
+      status: 'done',
+      due_at: '2026-07-20T12:00:00Z',
+    });
+
+    const expected = {
+      missing: ['missing'],
+      overdue: ['date overdue', 'exact overdue'],
+      upcoming: ['date due today', 'date upcoming', 'exact upcoming'],
+      closed: ['closed despite past due'],
+    } as const;
+    for (const [dueBucket, titles] of Object.entries(expected)) {
+      const page = items(bucketLedger, { due_bucket: dueBucket, limit: 50 });
+      expect(page.total).toBe(titles.length);
+      expect(page.returned).toBe(titles.length);
+      expect(page.tasks.map((task) => task.title).sort()).toEqual([...titles].sort());
+      const overview = runTaskListView(
+        { view: 'overview', due_bucket: dueBucket },
+        { ledger: bucketLedger }
+      ) as { total: number; due: Record<string, number> };
+      expect(overview.total).toBe(titles.length);
+      expect(overview.due[dueBucket]).toBe(titles.length);
+      expect(Object.values(overview.due).reduce((sum, count) => sum + count, 0)).toBe(
+        titles.length
+      );
+    }
+
+    const today = items(bucketLedger, { due_bucket: 'upcoming', search: 'date due today' });
+    expect(today.tasks).toEqual([
+      expect.objectContaining({
+        title: 'date due today',
+        deadline: '2026-07-21',
+        due_at: null,
+        temporal_state: 'date_due',
+      }),
+    ]);
+  });
+
+  it('binds a cursor to due_bucket and pins its temporal as-of across a due boundary', () => {
+    let clock = NOW;
+    const movingLedger = new TaskLedger(new Database(':memory:'), {
+      now: () => clock,
+      timeZone: 'UTC',
+    });
+    for (let index = 1; index <= 3; index += 1) {
+      movingLedger.create({
+        title: `crossing-${index}`,
+        due_at: '2026-07-21T12:00:01Z',
+      });
+    }
+    const first = items(movingLedger, { due_bucket: 'upcoming', limit: 1 });
+    expect(first.total).toBe(3);
+    expect(first.nextCursor).not.toBeNull();
+    clock = NOW + 2_000;
+    const second = items(movingLedger, {
+      due_bucket: 'upcoming',
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    expect(second.total).toBe(3);
+    expect(second.tasks[0]).toMatchObject({ temporal_state: 'exact_upcoming' });
+    expect(second.observedAt).toBe(first.observedAt);
+    expect(() =>
+      items(movingLedger, {
+        due_bucket: 'overdue',
+        limit: 1,
+        cursor: first.nextCursor,
+      })
+    ).toThrow(/different query/i);
+  });
 });
 
 describe('TG-04 AC #2: task_list overview view', () => {
@@ -279,6 +359,9 @@ describe('TG-04 AC #4: task_list input rejection', () => {
   it('rejects a due filter that is not a strict RFC 3339 timestamp', () => {
     expect(() => runTaskListView({ due_before: '2026-07-21' }, { ledger })).toThrow(/RFC 3339/);
   });
+  it('rejects an unknown due bucket', () => {
+    expect(() => runTaskListView({ due_bucket: 'today' }, { ledger })).toThrow(/due_bucket/);
+  });
 });
 
 describe('TG-05 AC #5: task_list under a narrow Temporal work context', () => {
@@ -327,5 +410,32 @@ describe('TG-05 AC #5: task_list under a narrow Temporal work context', () => {
     // it can never surface the other owner rows.
     expect(mismatch.total).toBe(0);
     expect(mismatch.returned).toBe(0);
+  });
+
+  it('applies the same due bucket to bound items and overview without exposing foreign rows', () => {
+    ledger.create({ title: 'foreign upcoming task', deadline: '2026-07-21' });
+    bound = ledger.update(bound.id, {
+      deadline: '2026-07-21',
+      expected_revision: bound.revision,
+    });
+    const page = items(ledger, { due_bucket: 'upcoming' });
+    const scopedPage = runTaskListView(
+      { view: 'items', due_bucket: 'upcoming' },
+      { ledger, boundTask: bound }
+    ) as { total: number; tasks: Array<Record<string, unknown>> };
+    const scopedOverview = runTaskListView(
+      { view: 'overview', due_bucket: 'upcoming' },
+      { ledger, boundTask: bound }
+    ) as { total: number; due: Record<string, number> };
+    expect(page.total).toBeGreaterThan(1);
+    expect(scopedPage.total).toBe(1);
+    expect(scopedPage.tasks).toEqual([
+      expect.objectContaining({ id: bound.id, temporal_state: 'date_due', due_at: null }),
+    ]);
+    expect(scopedOverview.total).toBe(1);
+    expect(scopedOverview.due).toEqual({ missing: 0, overdue: 0, upcoming: 1, closed: 0 });
+    expect(
+      runTaskListView({ view: 'items', due_bucket: 'missing' }, { ledger, boundTask: bound })
+    ).toMatchObject({ total: 0, tasks: [] });
   });
 });

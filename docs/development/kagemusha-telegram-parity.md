@@ -4,6 +4,34 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.49.1 owner queue and progressive due queries: 2026-09-07
+
+- **TG-05/TG-06:** owner messages join the same priority queue while background work is active.
+  MessageRouter no longer polls a separate SessionPool lock before admission. The runtime acquires
+  the session and invokes the host envelope issuer after both session and global waits.
+- **TG-03/TG-05:** `task_list` overview/items accept `due_bucket` using the shared temporal
+  classifier. Date-only and exact deadlines preserve their semantics, and cursor pages keep the
+  first observation time. This enables selective reads of overdue/upcoming/missing/closed work.
+- **TG-05:** the boot client forwards the runtime's durable-session probe and bounded-journal
+  capabilities, allowing lazy recovery after restart instead of duplicate history preparation.
+- **Live 0.49.0 evidence:** PR #267 merged (`c0312c43`), CI/release succeeded and npm 0.49.0 was
+  installed. The Sol report recovered in `owner:runtime`, made direct task changes and delivered
+  once with disposition `consumed_turn`. Provider evidence shows 41 Code-Act attempts (38 success,
+  3 failures), 26 task-list calls and four whole-board traversals over 612 seconds. The model
+  received no due-bucket item filter. Total usage was 2,257,145 tokens, including 2,135,808 cached
+  input tokens; this is provider accounting, not a claim about billed price.
+- **Boundary:** the unshipped fixed ten-call experiment was withdrawn: it bypassed Claude MCP and
+  would prevent necessary action (the first live reclassification occurred at call 26). There is
+  no automatic report call-count cap. Further live efficiency and inbound Telegram continuity
+  evidence are required; tests alone do not establish either.
+
+  0.49.1 verification: root build 2/2 and root tests 7/7 passed. Standalone ran 410 test files
+  with 5,509 passing tests and seven existing skips. Root lint, version-document synchronization,
+  changed-file formatting and diff checks passed. Independent queue review findings were repaired;
+  no P1/P2 remain. The Trello credential startup regression was restored using the established
+  start script; a live daemon Code-Act overview returned ten boards successfully. PR/CI and the
+  0.49.1 installed canary remain separate gates.
+
 ## One MAMA owner-runtime candidate: 2026-09-06
 
 - **TG-03/TG-04:** authenticated owner channels, connector events, reports, workorders, cron,
@@ -25,8 +53,8 @@ scenario IDs from this document.
   tests (7/7), and standalone 409 files / 5,498 tests with seven existing skips. An independent
   bounded review found and then verified fixes for legacy API session bypass, recovery stimulus
   loss, recovery token-budget bypass, journal corruption, untrusted recovery data, and durability
-  propagation; its final result has no remaining P1/P2. PR/CI, release, clean installation, and a
-  real Telegram same-session canary remain pending.
+  propagation; its final result had no remaining P1/P2. PR #267, CI, release and installation
+  completed; installed report evidence and remaining limitations are recorded above.
 
 ## 0.48.4 wiki provenance retry reduction candidate: 2026-09-06
 

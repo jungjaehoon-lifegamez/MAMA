@@ -115,18 +115,34 @@ flowchart LR
 - A compatible continuation adds zero historical prompt text.
 - A real replacement restores only the bounded owner-runtime journal once.
 - Report/task/card/message discovery remains paged and coverage-aware.
-- Owner messages run before queued background stimuli.
+- Owner messages enter the shared priority queue directly and run before queued background stimuli.
+- Execution authority starts after both session/global waits; an issuance failure runs no model.
+- The boot client forwards durable-session and recovery-journal capabilities.
+- Due-bucket queries narrow rows before pagination, preserving a stable temporal observation time.
 - Native subagent use is initiated and supervised by MAMA, with no host `delegate` function.
 - Restart, timeout, failure, and retry preserve one accountable judgment subject.
 - Kagemusha TG-03/TG-04/TG-05/TG-06 pass in code, then in an installed Telegram canary.
 
 ## Current evidence boundary
 
-The `0.49.0` candidate passes standalone typecheck, lint, root build (2/2 tasks), and root tests
-(7/7 tasks). Standalone completed 409 test files and 5,498 tests with seven existing skips. The
-independent bounded review found four initial continuity/durability issues; all were repaired and
-the final review found no remaining P1/P2 findings. Changed files pass Prettier and
-`git diff --check`; the repository-wide format check still names unrelated pre-existing files.
+PR #267 merged as `c0312c43`; main CI, release and npm installation of 0.49.0 succeeded.
+The installed Sol owner runtime recovered the on-demand report, performed direct task judgments,
+committed the run and delivered once with `consumed_turn` attributed to `owner:runtime`.
 
-PR/CI, publication, clean installation, daemon restart, and the real Telegram same-session canary
-remain separate gates until their evidence is recorded.
+That report used 41 outer Code-Act attempts (38 success, 3 failure), including 26 task-list calls
+and four complete board traversals, over 612 seconds. Its first reclassification was call 26.
+An unshipped automatic ten-call limit was withdrawn because it would block authorized actions and
+also failed to cover Claude MCP. The 0.49.1 changes instead add selective due-bucket queries,
+execution-time envelope issuance, direct owner priority admission and missing boot capability
+forwarding. There is no automatic report tool-count cutoff.
+
+Code, independent review, full tests, PR/CI, release, installation, and live proof remain distinct.
+A new installed report, inbound owner follow-up on the same durable thread, and a native subagent
+result integrated by that owner must be observed before the overall goal is complete.
+
+0.49.1 verification: root build 2/2 and root tests 7/7 passed. Standalone ran 410 test files
+with 5,509 passing tests and seven existing skips. Root lint, version-document synchronization,
+changed-file formatting and diff checks passed. Independent queue review findings were repaired;
+no P1/P2 remain. The Trello credential startup regression was restored using the established
+start script; a live daemon Code-Act overview returned ten boards successfully. PR/CI and the
+0.49.1 installed canary remain separate gates.

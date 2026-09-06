@@ -98,6 +98,12 @@ describe('HostBridge', () => {
       expect(list?.params).toContainEqual(
         expect.objectContaining({ name: 'include_terminal', type: 'boolean' })
       );
+      expect(list?.params).toContainEqual(
+        expect.objectContaining({
+          name: 'due_bucket',
+          type: "'missing' | 'overdue' | 'upcoming' | 'closed'",
+        })
+      );
       // Progressive reader (Task B): the whole board is reachable through pages,
       // not one implied return; the items rows still carry temporal_state.
       expect(list?.description).toContain('view:items (DEFAULT)');

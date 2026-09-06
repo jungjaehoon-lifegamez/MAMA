@@ -33,6 +33,12 @@ describe('ToolRegistry', () => {
       const tool = ToolRegistry.getTool('task_list');
 
       expect(tool?.params).toContain('include_terminal?');
+      expect(tool?.params).toContain('due_bucket?');
+      expect(tool?.inputSchema).toMatchObject({
+        properties: {
+          due_bucket: { enum: ['missing', 'overdue', 'upcoming', 'closed'] },
+        },
+      });
       // Progressive reader (Task B): the public default is a bounded items page,
       // and the whole board stays reachable by walking nextCursor - never one
       // implied "the board is..." return. It must still not forbid paging.

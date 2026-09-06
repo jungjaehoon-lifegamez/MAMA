@@ -48,11 +48,13 @@ import {
   type TemporalWorkContext,
 } from './temporal-effect.js';
 import {
+  dueBucketForTemporalState,
   deriveTemporalState,
   occurrenceKeyForTask,
   parseExactDueAt,
   temporalGenerationKey,
   type TemporalState,
+  type DueBucket,
 } from './task-temporal.js';
 import type {
   BindingCandidate,
@@ -415,6 +417,10 @@ export interface ListTasksFilter {
   assignee?: string;
   /** Exact priority match (progressive overview/items filter). */
   priority?: TaskPriority;
+  /** Derived temporal partition. date_due belongs to upcoming. */
+  dueBucket?: DueBucket;
+  /** Internal snapshot instant used to keep derived membership stable across cursor pages. */
+  temporalAsOfMs?: number;
   /** Exact due_at strictly before this epoch ms. Date-only-deadline rows (no due_at)
    *  are NOT matched: an exact-time filter never invents a clock for a date-only row. */
   dueBeforeMs?: number;
@@ -650,6 +656,14 @@ export class TaskLedger implements TaskSource {
     return rowToRecord(row, this.now(), this.timeZone);
   }
 
+  private toRecordAt(row: TaskRow, observedAt: number): TaskRecord {
+    return rowToRecord(row, observedAt, this.timeZone);
+  }
+
+  temporalStateAt(task: TaskRecord, observedAt: number): TemporalState {
+    return deriveTemporalState(task, observedAt, this.timeZone);
+  }
+
   private runMigration(): void {
     // Both construction sites (start.ts boot + operator-handler lazy) run this;
     // busy_timeout here covers BOTH connections against the rebuild race.
@@ -824,7 +838,11 @@ export class TaskLedger implements TaskSource {
   }
 
   list(filter: ListTasksFilter = {}): TaskRecord[] {
-    const { where, params } = this.buildListPredicate(filter);
+    const observedAt = this.temporalAsOf(filter.temporalAsOfMs);
+    const { where, params } = this.buildListPredicate({
+      ...filter,
+      temporalAsOfMs: observedAt,
+    });
     const rawLimit = Number(filter.limit);
     // No LIMIT at all unless the caller asks for one: the whole board is the read, and the
     // 50/200 bound is what made the board turn judge 216 tasks from 50 (owner, 2026-09-04).
@@ -837,7 +855,15 @@ export class TaskLedger implements TaskSource {
          ${limit === null ? '' : 'LIMIT ?'}`
       )
       .all(...params, ...(limit === null ? [] : [limit])) as TaskRow[];
-    return rows.map((row) => this.toRecord(row));
+    return rows.map((row) => this.toRecordAt(row, observedAt));
+  }
+
+  private temporalAsOf(value: number | undefined): number {
+    const observedAt = value ?? this.now();
+    if (!Number.isSafeInteger(observedAt)) {
+      throw new Error('task list temporal as-of must be a finite integer epoch millisecond');
+    }
+    return observedAt;
   }
 
   /** Shared filter predicate. Owner surface only - system workorder rows never appear in
@@ -889,6 +915,39 @@ export class TaskLedger implements TaskSource {
     } else if (filter.qualification === 'legacy_unqualified') {
       where.push('completion_criteria IS NULL');
     }
+    if (filter.dueBucket !== undefined) {
+      const observedAt = this.temporalAsOf(filter.temporalAsOfMs);
+      const rows = this.db
+        .prepare(
+          `SELECT id, status, due_at, deadline, deadline_offset_minutes
+           FROM operator_tasks WHERE ${where.join(' AND ')}`
+        )
+        .all(...params) as Array<{
+        id: number;
+        status: string;
+        due_at: number | null;
+        deadline: string | null;
+        deadline_offset_minutes: number | null;
+      }>;
+      const ids = rows
+        .filter((row) => {
+          const state = deriveTemporalState(
+            {
+              status: row.status,
+              dueAt: row.due_at,
+              deadlineIso: row.deadline,
+              deadlineOffsetMinutes: row.deadline_offset_minutes,
+            },
+            observedAt,
+            this.timeZone
+          );
+          return dueBucketForTemporalState(state) === filter.dueBucket;
+        })
+        .map((row) => row.id);
+      // One JSON parameter avoids SQLite's variable limit even on a large board.
+      where.push('id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))');
+      params.push(JSON.stringify(ids));
+    }
     return { where, params };
   }
 
@@ -929,8 +988,12 @@ export class TaskLedger implements TaskSource {
    * read that quietly lost items.
    */
   listPage(filter: ListTasksPageFilter = {}): ListTasksPage {
+    const observedAt = this.temporalAsOf(filter.temporalAsOfMs);
     const order = filter.order === 'updated' ? 'updated' : 'deadline_priority';
-    const { where, params } = this.buildListPredicate(filter);
+    const { where, params } = this.buildListPredicate({
+      ...filter,
+      temporalAsOfMs: observedAt,
+    });
     const rawLimit = Number(filter.limit);
     // No cap and a whole-board default: Kagemusha's task_list is selectAll, and the 50/200
     // bound is what made the board turn judge 216 tasks from 50 (owner, 2026-09-04). The
@@ -968,7 +1031,7 @@ export class TaskLedger implements TaskSource {
       .all(...pageParams, limit + 1) as TaskRow[];
 
     const hasMore = rows.length > limit;
-    const tasks = rows.slice(0, limit).map((row) => this.toRecord(row));
+    const tasks = rows.slice(0, limit).map((row) => this.toRecordAt(row, observedAt));
     const last = tasks[tasks.length - 1];
     return {
       tasks,
@@ -993,9 +1056,9 @@ export class TaskLedger implements TaskSource {
     // statements cannot make the returned readVersion disagree with the page it
     // describes. Synchronous JS alone is not a cross-connection snapshot.
     return this.readSnapshot(() => {
-      const observedAt = this.now();
+      const observedAt = this.temporalAsOf(filter.temporalAsOfMs);
       const readVersion = this.readGeneration();
-      const page = this.listPage(filter);
+      const page = this.listPage({ ...filter, temporalAsOfMs: observedAt });
       return { ...page, readVersion, observedAt };
     });
   }
@@ -1051,9 +1114,9 @@ export class TaskLedger implements TaskSource {
 
   private overviewInSnapshot(filter: ListTasksFilter): OverviewResult {
     // One captured time for every derived due bucket; one snapshot for every count.
-    const now = this.now();
+    const now = this.temporalAsOf(filter.temporalAsOfMs);
     const readVersion = this.readGeneration();
-    const { where, params } = this.buildListPredicate(filter);
+    const { where, params } = this.buildListPredicate({ ...filter, temporalAsOfMs: now });
     const whereSql = where.join(' AND ');
     const groupBy = (column: string): Array<{ key: string | null; count: number }> =>
       this.db
@@ -1102,10 +1165,7 @@ export class TaskLedger implements TaskSource {
         now,
         this.timeZone
       );
-      if (state === 'closed') due.closed += 1;
-      else if (state === 'unscheduled') due.missing += 1;
-      else if (state === 'exact_overdue' || state === 'date_overdue') due.overdue += 1;
-      else due.upcoming += 1;
+      due[dueBucketForTemporalState(state)] += 1;
     }
 
     return { total, observedAt: now, readVersion, status, priority, channels, assignees, due };
