@@ -4,6 +4,17 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.48.4 wiki provenance retry reduction candidate: 2026-09-06
+
+- TG-03/TG-04/TG-06: live 0.48.3 proved the configured vault boundary: the 2026-09-05 daily,
+  Home and lesson pages landed only under `mama-operator`, with zero generic Obsidian calls. The
+  resulting daily reports 66 bounded task changes over three pages.
+- TG-03/TG-05: the first two publish attempts used undeclared `sourceRefs` kinds (`task`, then
+  `message`) and failed, causing the model to reread the same three task pages and source packet.
+  The public contract now lists the strict provenance kinds, names `os_task` and the legacy
+  message form, and falls back to `sourceIds`; the host normalizes those two common aliases for
+  compatibility. Focused adapter and contract proof is pending.
+
 ## 0.48.3 configured wiki vault boundary candidate: 2026-09-06
 
 - TG-03/TG-04/TG-05: scheduled wiki runs receive one bounded, direct-filesystem `wiki_read`

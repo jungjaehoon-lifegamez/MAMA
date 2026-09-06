@@ -41,6 +41,9 @@ const REQUIRED_RUNTIME_SECTIONS = [
   // read-before-create/append
   'wiki_read',
   'expectedContentVersion',
+  'kind "os_task"',
+  'legacy_kind:"message"',
+  'Never invent kinds',
   'APPEND',
   // Lesson rules
   'superseded',

@@ -1,4 +1,4 @@
-import { serializeSourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
+import { serializeSourceRef, type SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
 
 import type { WikiPageType } from '../wiki/types.js';
 import {
@@ -42,8 +42,20 @@ function normalizeSourceIds(sourceIds: string[] | undefined, fallback: string[])
   return sourceIds.map((id) => requiredWikiString(id, 'sourceIds[]', 'wiki_publish page'));
 }
 
+function normalizeWikiSourceRef(ref: SourceRef): SourceRef {
+  const runtimeRef = ref as unknown as Record<string, unknown>;
+  if (runtimeRef.kind === 'task') {
+    return { kind: 'os_task', id: runtimeRef.id as string };
+  }
+  if (runtimeRef.kind === 'message') {
+    return { kind: 'legacy', legacy_kind: 'message', id: runtimeRef.id as string };
+  }
+  return ref;
+}
+
 function normalizePage(page: WikiPublishPageInput, compiledAt: string): SourceLinkedWikiPage {
-  const sourceRefs = page.sourceRefs?.map((ref) => serializeSourceRef(ref)) ?? [];
+  const sourceRefs =
+    page.sourceRefs?.map((ref) => serializeSourceRef(normalizeWikiSourceRef(ref))) ?? [];
   const content = requiredWikiString(page.content, 'content', 'wiki_publish page');
   if (content.length > MAX_WIKI_PAGE_CONTENT_CHARS) {
     throw new Error(

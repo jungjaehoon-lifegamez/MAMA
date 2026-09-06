@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.4] - 2026-09-06
+
+### Fixed
+
+- `wiki_publish` now declares every supported provenance kind, including `os_task` and legacy
+  messages, and directs untyped identifiers to `sourceIds`. Common model aliases `task` and
+  `message` are normalized at the host boundary so a valid page does not trigger a full source
+  reread merely to correct provenance syntax.
+
 ## mama-os [0.48.3] - 2026-09-06
 
 ### Fixed

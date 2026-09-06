@@ -288,10 +288,10 @@ register({
 register({
   name: 'wiki_publish',
   description:
-    'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
+    'Publish compiled wiki pages to Obsidian vault. sourceRefs.kind supports memory, raw, entity, case, decision, os_task, agent_situation_packet, report_slot, context_packet, model_run, tool_trace, wiki_page, report, or legacy; use sourceIds when a typed ref is unavailable.',
   category: 'os_monitoring',
   params:
-    'pages: [{path, expectedContentVersion?, title, type, content, confidence?, sourceIds?, sourceRefs?}]',
+    'pages: [{path, expectedContentVersion?, title, type, content, confidence?, sourceIds?, sourceRefs?: [{kind, id, connector?, legacy_kind?}]}]',
 });
 register({
   name: 'obsidian',
