@@ -49,6 +49,7 @@ export const WIKI_TURN_CONTRACT: readonly string[] = [
   'HOME.md. Keep Home.md current: links to the last 7 daily notes and the lessons grouped by subfolder.',
   '',
   'PUBLISH. Send the exact daily page, plus any changed lesson pages and Home.md, together in ONE wiki_publish call. Every page includes expectedContentVersion from wiki_read (the SHA-256 string for an existing page, null for a page observed missing). Omit the <!-- human --> marker and its owner-authored suffix from generated content; the host preserves that section from disk. The host rejects stale versions, another date, and every path outside Home.md, daily/<ownerDate>.md, and lessons/{clients,process,system}/*.md.',
+  'PROVENANCE. sourceRefs uses only the kinds declared by wiki_publish. Native tasks are kind "os_task". A message is a raw connector ref when its connector event id is known, otherwise {kind:"legacy", legacy_kind:"message", id:"..."}. Never invent kinds such as task, task_list, or message. If no typed ref fits, omit sourceRefs and put readable identifiers in sourceIds.',
   'If nothing in the range changed, call contract_no_update({reason, scope: <the literal noUpdateScope string from the workorder payload>}); use that exact string and never derive the scope from batchId or invent one.',
 ];
 

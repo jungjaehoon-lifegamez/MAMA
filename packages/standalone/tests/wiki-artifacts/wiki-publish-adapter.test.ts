@@ -40,6 +40,36 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
       ]);
     });
 
+    it('normalizes the two common model aliases without retrying the publication', () => {
+      const publisher = vi.fn();
+      const adapter = createWikiPublishAdapter({
+        publisher,
+        now: () => new Date('2026-09-06T00:00:00.000Z'),
+      });
+
+      adapter.publish({
+        pages: [
+          {
+            path: 'daily/2026-09-05.md',
+            title: '2026-09-05',
+            type: 'daily',
+            content: 'content',
+            sourceRefs: [
+              { kind: 'task', id: '1853' } as never,
+              { kind: 'message', id: '510277' } as never,
+            ],
+          },
+        ],
+      });
+
+      expect(publisher).toHaveBeenCalledWith([
+        expect.objectContaining({
+          sourceRefs: ['os_task:1853', 'message:510277'],
+          sourceIds: ['os_task:1853', 'message:510277'],
+        }),
+      ]);
+    });
+
     it('rejects malformed page fields before invoking the publisher', () => {
       const publisher = vi.fn();
       const adapter = createWikiPublishAdapter({ publisher });
