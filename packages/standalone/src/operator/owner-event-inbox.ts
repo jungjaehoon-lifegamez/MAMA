@@ -477,7 +477,8 @@ export class OwnerEventInbox {
   }
 
   /**
-   * Bounded historical data for a fresh owner-event run. The journal has no
+   * Explicit bounded historical audit read, never automatic owner prompt context.
+   * The continuing owner runtime already knows its outcomes. The journal has no
    * transferable principal grant, so callers must present the current owner
    * role and connector grant. Notification text additionally requires the
    * exact current Telegram target and a confirmed versioned receipt.
