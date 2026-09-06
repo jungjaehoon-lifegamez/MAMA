@@ -318,7 +318,7 @@ Once saved:
 - Important function signature changes
 - Architecture pattern decisions
 
-## Owner Runtime & Owner Console (v0.49.2)
+## Owner Runtime & Owner Console (v0.49.3)
 
 - Authenticated owner conversations, reports, events, cron, heartbeat, and maintenance all enter
   `owner:runtime`. Channel and work kind select source/authority metadata, not a separate model.
