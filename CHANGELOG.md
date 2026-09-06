@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.3] - 2026-09-06
+
+### Fixed
+
+- Scheduled wiki runs now read only the configured MAMA wiki root through a bounded `wiki_read`
+  primitive and publish all changes through the configured-root `wiki_publish` path. Exact daily
+  paths and content versions are host-enforced, so another date, vault, stale page, or generic
+  Obsidian write cannot be accepted.
+- Obsidian's global `vault=` selector now precedes the command and is verified once against the
+  configured canonical path. Model input cannot override the target vault.
+- A wiki work order reaches `done` only after a run-bound `wiki_publish`, or an exact
+  `contract_no_update` receipt after connector, task, daily, and Home reads all complete. A read
+  call alone no longer counts as proof of a write.
+- Wiki task ranges are injected by the host, including cursor pages, and contradictory model
+  parameters still fail closed. Wiki payloads advertise only the public connector scope actually
+  present in the execution envelope.
+
 ## mama-os [0.48.2] - 2026-09-06
 
 ### Fixed

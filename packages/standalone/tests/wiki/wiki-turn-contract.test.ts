@@ -23,16 +23,13 @@ const REQUIRED_RUNTIME_SECTIONS = [
   'sourceWatermark',
   'connectors',
   'is not a watermark',
-  // Progressive source reads with the exact connector call shape + pagination.
-  // The call examples use payload-field LABELS (literal-value placeholders), not
-  // a sandbox `input`/`range` variable.
+  // Progressive source reads with host-injected connector/range authority.
   'context_compile({task',
-  'connectors: <the payload connectors array>',
-  'range: <the payload range object>',
+  'the host injects the exact payload connector scope and range',
   'task_list({view:"items"',
-  // C1: updated_since is the canonical RFC3339 string, not the numeric start_ms.
-  'updated_since: <the payload taskUpdatedSince string>',
-  'updated_before: <the payload taskUpdatedBefore string>',
+  // The host owns and injects both RFC3339 boundaries on every page.
+  'taskUpdatedSince/taskUpdatedBefore',
+  'the host injects',
   'nextCursor',
   'mama_search',
   // Daily journal behavior
@@ -42,6 +39,8 @@ const REQUIRED_RUNTIME_SECTIONS = [
   '## Issues',
   'Lesson candidates',
   // read-before-create/append
+  'wiki_read',
+  'expectedContentVersion',
   'APPEND',
   // Lesson rules
   'superseded',
@@ -80,12 +79,11 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
     expect(section).toContain('never write `input.connectors` or `range.start_ms` as code');
   });
 
-  it('instructs the RFC3339 taskUpdatedSince string for task_list, not the numeric start_ms (C1)', () => {
+  it('keeps task boundaries host-owned instead of asking the model to repeat them', () => {
     const section = buildTurnKindSection('wiki');
-    // The RFC 3339 string is required; the raw numeric epoch is called out as rejected.
-    expect(section).toContain('updated_since: <the payload taskUpdatedSince string>');
-    expect(section).toContain('updated_before: <the payload taskUpdatedBefore string>');
-    expect(section).toContain('RFC 3339');
+    expect(section).toContain('task_list({view:"items"})');
+    expect(section).toContain('taskUpdatedSince/taskUpdatedBefore');
+    expect(section).toContain('the host injects');
     expect(section).not.toContain('updated_since: range.start_ms');
   });
 

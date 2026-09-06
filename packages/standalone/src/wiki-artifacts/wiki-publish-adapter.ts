@@ -59,6 +59,9 @@ function normalizePage(page: WikiPublishPageInput, compiledAt: string): SourceLi
     sourceRefs,
     compiledAt,
     confidence: normalizeConfidence(page.confidence),
+    ...(Object.prototype.hasOwnProperty.call(page, 'expectedContentVersion')
+      ? { expectedContentVersion: page.expectedContentVersion }
+      : {}),
   };
 }
 
