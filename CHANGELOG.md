@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.1] - 2026-09-06
+
+### Fixed
+
+- One MAMA wiki work orders again receive the complete daily-history and lesson contract. The host
+  supplies an explicit owner date, bounded source range, RFC 3339 task boundary, authorized
+  connectors, source watermark, and no-update scope instead of letting the worker infer them from
+  a batch ID or a MAMA-heavy recent-decision window.
+- Wiki continuity now tracks connector observations, native owner-task movement, and memory
+  changes. Boot, event, and hourly triggers coalesce the same source snapshot, while authenticated
+  manual runs can backfill a strict past owner date and report enqueue failures honestly.
+- Daily pages use their exact `daily/YYYY-MM-DD.md` path. Fuzzy lesson/entity title matching can no
+  longer overwrite a different date's journal file.
+
 ## mama-os [0.48.0] - 2026-09-06
 
 ### Changed

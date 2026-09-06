@@ -46,6 +46,8 @@ import {
   boardManualKey,
   boardReconcileKey,
   wikiBatchKey,
+  wikiContinuityKey,
+  wikiUnavailableKey,
   normalizePromotionIntervalMs,
   promotionKey,
   promotionManualKey,
@@ -59,6 +61,12 @@ import {
   evaluateBoardFullDelta,
   memoryRecencyTerm,
 } from '../../operator/board-delta-gate.js';
+import {
+  composeWikiSourceWatermark,
+  evaluateWikiContinuity,
+  ownerDateForInstant,
+  parseStrictOwnerDate,
+} from '../../operator/wiki-continuity.js';
 import type {
   TaskLedger,
   WorkOrderKind,
@@ -323,6 +331,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   } = params;
   let boardBootTimeout: ReturnType<typeof setTimeout> | null = null;
   let boardInterval: ReturnType<typeof setInterval> | null = null;
+  let wikiBootTimeout: ReturnType<typeof setTimeout> | null = null;
+  let wikiContinuityInterval: ReturnType<typeof setInterval> | null = null;
   let boardReconcileScheduler:
     | import('../../operator/board-reconcile.js').ReconcileScheduler
     | null = null;
@@ -892,7 +902,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // Obsidian; registering the wiki directory as a vault is a one-time manual
     // setup step. If it is not registered, the CLI reports unavailable and the
     // agent falls back to wiki_publish (direct file writes still work).
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && !process.env.VITEST) {
       try {
         const { execFile: execFileChild } = await import('child_process');
         execFileChild(
@@ -925,22 +935,90 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
     });
 
+    // Owner/host IANA time zone - the same source the temporal runtime and the
+    // TaskLedger derive the owner day from.
+    const wikiTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // The wiki source watermark covers connector observation, native owner tasks
+    // and memory recency. Agent notices are DELIBERATELY EXCLUDED: a wiki
+    // completion/no-update notice must not move the watermark and so wake the
+    // wiki turn forever.
+    const readWikiSourceWatermark = (): string => {
+      const ledger = toolExecutor.getTaskLedger();
+      if (!ledger) {
+        throw new Error('TaskLedger unavailable - cannot read the wiki source watermark');
+      }
+      const adapter = getAdapter();
+      return composeWikiSourceWatermark([
+        connectorObservationTerm(adapter),
+        ledger.ownerTaskTerm(),
+        memoryRecencyTerm(adapter),
+      ]);
+    };
+
     // Wiki compile runs are workorders: enqueue-only, the consumer lane runs
-    // them serially under the wiki brief (no direct persona run path).
-    const runWikiAgent = (trigger: string): void => {
+    // them serially under the wiki brief (no direct persona run path). The HOST
+    // computes the typed continuity payload (owner date, range, source
+    // watermark, connectors); the run never infers a boundary from batchId.
+    //
+    // Returns a concrete outcome so the authenticated MANUAL route can report a
+    // real failure instead of a false 'enqueued'. Scheduled/boot/event callers
+    // ignore it - their errors stay log-only.
+    type WikiRunOutcome =
+      | { status: 'enqueued'; workOrderId: number }
+      | { status: 'skipped'; reason: string }
+      | { status: 'error'; error: string };
+    const runWikiAgent = (
+      trigger: string,
+      opts?: { forced?: boolean; ownerDate?: string }
+    ): WikiRunOutcome => {
       try {
         const now = Date.now();
-        enqueueWorkOrderOrThrow(
+        const ledger = toolExecutor.getTaskLedger();
+        if (!ledger) {
+          throw new Error('TaskLedger unavailable - cannot plan a wiki run');
+        }
+        const decision = evaluateWikiContinuity({
+          nowMs: now,
+          timeZone: wikiTimeZone,
+          connectors: rawConnectorScope,
+          trigger,
+          forced: opts?.forced === true,
+          requestedOwnerDate: opts?.ownerDate,
+          readSourceWatermark: readWikiSourceWatermark,
+          readBaseline: () => ledger.lastCompletedWikiRun(),
+        });
+        if (decision.warning) {
+          routesLogger.error(
+            `[stage2] wiki source watermark unavailable (${decision.warning}); enqueueing the wiki run anyway`
+          );
+        }
+        if (!decision.enqueue || decision.payload === null) {
+          routesLogger.info(
+            `[stage2] wiki skipped: ${decision.reason} - same owner date and source watermark already completed`
+          );
+          return { status: 'skipped', reason: decision.reason };
+        }
+        // Non-forced continuity runs dedupe on the typed source snapshot (owner
+        // date + watermark) so boot/hourly/event against an unchanged snapshot
+        // resolve to ONE open workorder; a null watermark falls back to a coarse
+        // per-day hour bucket; a forced manual run stays occurrence-unique.
+        const idempotencyKey = opts?.forced
+          ? wikiBatchKey(trigger, now)
+          : decision.payload.sourceWatermark === null
+            ? wikiUnavailableKey(decision.payload.ownerDate, now)
+            : wikiContinuityKey(decision.payload.ownerDate, decision.payload.sourceWatermark);
+        const wo = enqueueWorkOrderOrThrow(
           'wiki',
-          wikiBatchKey(trigger, now),
-          { batchId: `${now}-${trigger}`, events: [trigger] },
-          trigger === 'manual' ? 'high' : undefined
+          idempotencyKey,
+          { ...decision.payload },
+          opts?.forced ? 'high' : undefined
         );
+        return { status: 'enqueued', workOrderId: wo.id };
       } catch (err) {
-        routesLogger.error(
-          '[stage2] wiki enqueue failed:',
-          err instanceof Error ? err.message : err
-        );
+        const error = err instanceof Error ? err.message : String(err);
+        routesLogger.error('[stage2] wiki enqueue failed:', error);
+        return { status: 'error', error };
       }
     };
 
@@ -973,15 +1051,25 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
     // Event-driven: compile when extraction completes. Trailing-edge debounce so
     // bursts of extraction:completed events coalesce into one wiki compile run.
+    // Scheduled/event callers discard the run outcome - their failures are
+    // log-only inside runWikiAgent; only the manual route surfaces an error.
     eventBus.onDebounced(
       'extraction:completed',
-      () => runWikiAgent('extraction:completed'),
+      () => {
+        runWikiAgent('extraction:completed');
+      },
       30_000
     );
 
     // Promotion feeds the wiki: freshly promoted decisions are exactly the
     // material daily notes and lessons compile from.
-    eventBus.onDebounced('memory:promoted', () => runWikiAgent('memory:promoted'), 30_000);
+    eventBus.onDebounced(
+      'memory:promoted',
+      () => {
+        runWikiAgent('memory:promoted');
+      },
+      30_000
+    );
 
     // Emit agent:action notices when wiki pages are compiled
     eventBus.on('wiki:compiled', (event) => {
@@ -997,17 +1085,62 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       }
     });
 
-    // Manual trigger API
-    apiServer.app.post('/api/wiki/compile', requireAuth, async (_req, res) => {
-      runWikiAgent('manual');
-      res.json({ ok: true, message: 'Wiki compile workorder enqueued' });
+    // Manual trigger API. A manual request bypasses the skip gate (forced) and
+    // may backfill a missed recent day via a STRICT optional ownerDate; a
+    // malformed date is rejected rather than silently defaulted.
+    apiServer.app.post('/api/wiki/compile', requireAuth, async (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      let ownerDate: string | undefined;
+      if (body.ownerDate !== undefined) {
+        if (typeof body.ownerDate !== 'string') {
+          res.status(400).json({ ok: false, error: 'ownerDate must be a YYYY-MM-DD string' });
+          return;
+        }
+        try {
+          ownerDate = parseStrictOwnerDate(body.ownerDate);
+        } catch (err) {
+          res
+            .status(400)
+            .json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+          return;
+        }
+        // A future day cannot be backfilled: reject at the HTTP boundary with a
+        // clear 400 rather than letting the planner throw into a swallowed 200.
+        const currentOwnerDate = ownerDateForInstant(Date.now(), wikiTimeZone);
+        if (ownerDate > currentOwnerDate) {
+          res.status(400).json({
+            ok: false,
+            error: `ownerDate ${ownerDate} is in the future (current owner date ${currentOwnerDate})`,
+          });
+          return;
+        }
+      }
+      const outcome = runWikiAgent('manual', { forced: true, ownerDate });
+      if (outcome.status === 'error') {
+        // A real planning/ledger/validation/enqueue failure must not be reported
+        // as success (M1): return a non-2xx and never say enqueued.
+        res.status(500).json({ ok: false, error: outcome.error });
+        return;
+      }
+      res.json({ ok: true, message: 'Wiki compile workorder enqueued', status: outcome.status });
     });
 
-    // First run after 15s (let connectors and dashboard agent go first)
-    setTimeout(() => runWikiAgent('boot'), 15_000);
+    // First run after 15s (let connectors and dashboard agent go first).
+    wikiBootTimeout = setTimeout(() => {
+      runWikiAgent('boot');
+    }, 15_000);
+
+    // Host-owned hourly continuity tick. The cheap watermark/date gate inside
+    // runWikiAgent skips the model when the same owner date and source watermark
+    // already completed; a new owner date still gets one run even when quiet.
+    const WIKI_CONTINUITY_INTERVAL_MS = 60 * 60 * 1000;
+    wikiContinuityInterval = setInterval(() => {
+      runWikiAgent('hourly');
+    }, WIKI_CONTINUITY_INTERVAL_MS);
+    wikiContinuityInterval.unref?.();
 
     routesLogger.info(
-      '[Wiki Agent] Ready — triggers: extraction:completed event, POST /api/wiki/compile'
+      '[Wiki Agent] Ready — triggers: boot, hourly continuity tick, extraction:completed / memory:promoted events, POST /api/wiki/compile'
     );
   }
 
@@ -1937,6 +2070,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       boardBootTimeout = null;
       if (boardInterval) clearInterval(boardInterval);
       boardInterval = null;
+      if (wikiBootTimeout) clearTimeout(wikiBootTimeout);
+      wikiBootTimeout = null;
+      if (wikiContinuityInterval) clearInterval(wikiContinuityInterval);
+      wikiContinuityInterval = null;
       boardReconcileScheduler?.stop();
       boardReconcileScheduler = null;
     },
