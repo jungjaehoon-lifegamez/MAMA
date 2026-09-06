@@ -727,6 +727,7 @@ describe('HostBridge', () => {
       const result = await sandbox.execute(`
         task_create({
           title: "QA follow-up",
+          completion_criteria: "QA sign-off recorded",
           status: "todo"
         })
       `);
@@ -734,6 +735,7 @@ describe('HostBridge', () => {
       expect(result.success).toBe(true);
       expect(executeFn).toHaveBeenCalledWith('task_create', {
         title: 'QA follow-up',
+        completion_criteria: 'QA sign-off recorded',
         status: 'todo',
       });
     });

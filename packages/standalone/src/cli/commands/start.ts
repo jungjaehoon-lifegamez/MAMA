@@ -308,6 +308,7 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'wiki_publish',
   'task_create',
   'task_update',
+  'task_reclassify',
   'task_temporal_reconcile',
   'contract_no_update',
 ]);
@@ -656,6 +657,9 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
     'task_external_correlation',
     'task_external_bind',
     'task_lifecycle_reconcile',
+    // The board RECORRECTS rows it can no longer create: a connector item with no
+    // ledger row stays evidence, and an existing row gets a named disposition.
+    'task_reclassify',
   ],
   wiki: ['agent_notices', 'contract_no_update', 'wiki_publish'],
   'memory-curation': ['agent_notices', 'contract_no_update'],
@@ -670,6 +674,12 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
  * workspace file reads are owner-conversation material with no use in a scheduled turn.
  */
 export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
+  // Records and tasks are SEPARATE (owner policy). An unattended turn reads connector
+  // evidence, and connector observations, principles and open questions are records -
+  // letting a scheduled turn mint owner rows is what filled the board with non-tasks.
+  // Only an owner CONVERSATION creates a task; unattended turns recorrect with
+  // task_reclassify instead.
+  'task_create',
   // workspace file reads, the shell and the file writer are owner-conversation tools;
   // no unattended turn section instructs one
   'Read',
@@ -702,9 +712,9 @@ export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
  * artifact. Each entry names the artifact it protects.
  */
 export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>> = {
-  // board writes judgment slots and task lifecycle (reconcile mode creates rows for new
-  // items, which the action verifier's obligated set expects); it does not touch memory
-  // or the vault (obsidian is the wiki lane's write path)
+  // board writes judgment slots and recorrects existing task lifecycle through
+  // task_update/task_reclassify; it does not create rows, touch memory, or touch the
+  // vault (obsidian is the wiki lane's write path)
   board: new Set([
     'wiki_publish',
     'obsidian',
@@ -719,6 +729,7 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'mama_update',
     'task_create',
     'task_update',
+    'task_reclassify',
     'task_temporal_reconcile',
   ]),
   // curation writes memory; nothing else
@@ -727,6 +738,7 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'wiki_publish',
     'task_create',
     'task_update',
+    'task_reclassify',
     'task_temporal_reconcile',
     'obsidian',
   ]),
@@ -740,6 +752,7 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'mama_update',
     'task_create',
     'task_update',
+    'task_reclassify',
     'task_temporal_reconcile',
     'obsidian',
   ]),
@@ -750,6 +763,7 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
     'mama_update',
     'task_create',
     'task_update',
+    'task_reclassify',
     'obsidian',
   ]),
 };

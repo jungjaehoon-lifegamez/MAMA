@@ -188,6 +188,73 @@ describe('ObsidianWriter', () => {
     expect(log).toContain('Compiled 3 entity pages');
   });
 
+  it('never fuzzy-dedups a daily page against a different date', () => {
+    // Regression: date tokens overlap above the 60% title threshold, so the
+    // 2026-09-04 daily note was stored into daily/2026-08-09.md.
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const aug: WikiPage = {
+      path: 'daily/2026-08-09.md',
+      title: '2026-08-09',
+      type: 'daily',
+      content: '## Log\n\nAugust movement.',
+      sourceIds: ['d_aug'],
+      compiledAt: '2026-08-09T12:00:00Z',
+      confidence: 'high',
+    };
+    writer.writePage(aug);
+    const augFile = join(wikiDir, 'daily', '2026-08-09.md');
+    const augBefore = readFileSync(augFile, 'utf8');
+
+    const sep: WikiPage = {
+      path: 'daily/2026-09-04.md',
+      title: '2026-09-04',
+      type: 'daily',
+      content: '## Log\n\nSeptember movement.',
+      sourceIds: ['d_sep'],
+      compiledAt: '2026-09-04T12:00:00Z',
+      confidence: 'high',
+    };
+    const written = writer.writePage(sep);
+
+    // Identity is the exact normalized path, not a fuzzy title match.
+    expect(written).toBe('daily/2026-09-04.md');
+    expect(existsSync(join(wikiDir, 'daily', '2026-09-04.md'))).toBe(true);
+    // The earlier daily page is byte-for-byte untouched.
+    expect(readFileSync(augFile, 'utf8')).toBe(augBefore);
+    const sepContent = readFileSync(join(wikiDir, 'daily', '2026-09-04.md'), 'utf8');
+    expect(sepContent).toContain('September movement.');
+  });
+
+  it('still fuzzy-dedups non-daily pages that share most of their title words', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const first: WikiPage = {
+      path: 'clients/acme-alpha.md',
+      title: 'Acme Alpha Project',
+      type: 'entity',
+      content: 'First.',
+      sourceIds: ['d_1'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+    writer.writePage(first);
+
+    const second: WikiPage = {
+      path: 'clients/acme-beta.md',
+      title: 'Acme Alpha Rollout',
+      type: 'entity',
+      content: 'Second.',
+      sourceIds: ['d_2'],
+      compiledAt: '2026-04-08T13:00:00Z',
+      confidence: 'high',
+    };
+    const written = writer.writePage(second);
+    // >60% word overlap folds the second write onto the first file.
+    expect(written).toBe('clients/acme-alpha.md');
+    expect(existsSync(join(wikiDir, 'clients', 'acme-beta.md'))).toBe(false);
+  });
+
   it('updates index.md', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();

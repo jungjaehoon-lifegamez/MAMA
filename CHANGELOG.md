@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.1] - 2026-09-06
+
+### Fixed
+
+- One MAMA wiki work orders again receive the complete daily-history and lesson contract. The host
+  supplies an explicit owner date, bounded source range, RFC 3339 task boundary, authorized
+  connectors, source watermark, and no-update scope instead of letting the worker infer them from
+  a batch ID or a MAMA-heavy recent-decision window.
+- Wiki continuity now tracks connector observations, native owner-task movement, and memory
+  changes. Boot, event, and hourly triggers coalesce the same source snapshot, while authenticated
+  manual runs can backfill a strict past owner date and report enqueue failures honestly.
+- Daily pages use their exact `daily/YYYY-MM-DD.md` path. Fuzzy lesson/entity title matching can no
+  longer overwrite a different date's journal file.
+- Records and tasks are separated at the host boundary. Unattended connector and Board turns can
+  no longer create native tasks, and owner-created tasks require a concrete completion criterion.
+  Existing rows can be reclassified from explicit completion evidence, completed-with-no-issue,
+  record, memory, or reopened while preserving the reason and revision history.
+- Board maintenance starts from an overview and processes one ten-row page of active legacy rows.
+  Genuine tasks gain completion criteria; non-tasks and expired issue-free work leave the active
+  board without loading every task into one model turn. The host binds each run to those exact
+  task IDs and revisions; owner-event reclassification is bound to its causal source channel.
+
 ## mama-os [0.48.0] - 2026-09-06
 
 ### Changed

@@ -854,6 +854,7 @@ export type GatewayToolName =
   | 'changes_read'
   | 'task_create'
   | 'task_update'
+  | 'task_reclassify'
   | 'task_temporal_reconcile'
   | 'contract_no_update'
   | 'schedule_upcoming'

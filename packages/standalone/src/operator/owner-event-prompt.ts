@@ -123,6 +123,10 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     '- Widen evidence only when a matched procedure or the selected durable effect requires it.',
     '- Use a change or delivery tool only when the current evidence calls for that real effect.',
     '- Do not create a task, memory, or Telegram message merely to complete this batch.',
+    // Records and tasks are SEPARATE (owner policy, v0.48.1). A connector delta is an
+    // OBSERVATION; task_create is host-blocked on this turn.
+    '- RECORDS AND TASKS ARE SEPARATE. This delta is evidence, not a work item, and you cannot create a native task here (task_create is blocked). Lessons, memories, principles, aspirations ("열심히 살자") and open questions ("how should we manage X?") stay records, memory or decisions - never tasks. Only an owner conversation creates a task.',
+    '- You MAY recorrect an existing source-bound row with task_reclassify({id, disposition, reason, expected_revision}) using the revision you read: "completed_evidence" when an authoritative source explicitly reports completion; "completed_no_issue" only when its deadline or due_at has already passed and your check of the relevant sources found no open issue; "non_task_record" or "non_task_memory" when it was never a task; "reopen" when this delta is later feedback on a terminal row, which continues the SAME row.',
     '- A successful no-update observation may end quietly with the exact contract_no_update receipt.',
     '- A new risk, request, or required owner decision may still be notified through the authorized path.',
     '- Do not claim success from prose. A completed tool result is required.',

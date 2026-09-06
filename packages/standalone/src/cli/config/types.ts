@@ -154,6 +154,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'changes_read',
         'task_create',
         'task_update',
+        'task_reclassify',
         'schedule_upcoming',
         'drive_list_drives',
         'drive_browse',

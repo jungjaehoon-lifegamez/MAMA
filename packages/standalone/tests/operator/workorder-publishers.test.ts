@@ -124,6 +124,39 @@ describe('Story S2-T2: publisher contracts', () => {
       ).toThrow(/deltaWatermark is full-only/);
     });
 
+    it('TG-04/TG-06 validates the bounded host-issued reclassification set', () => {
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: 7, taskRevision: 3 }],
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [
+            { taskId: 7, taskRevision: 3 },
+            { taskId: 7, taskRevision: 3 },
+          ],
+        })
+      ).toThrow(/duplicate/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: 7, taskRevision: -1 }],
+        })
+      ).toThrow(/taskId\/taskRevision/);
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'full',
+          reclassificationCandidates: Array.from({ length: 11 }, (_, index) => ({
+            taskId: index + 1,
+            taskRevision: 0,
+          })),
+        })
+      ).toThrow(/0-10/);
+    });
+
     it('TG-06 validates generation-bound full and reconcile repair payloads', () => {
       expect(() =>
         validateWorkOrderPayload('board', {
@@ -358,6 +391,107 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(() =>
         validateWorkOrderPayload('memory-curation', { scheduledAt: '2026-07-18T12:00:00Z' })
       ).not.toThrow();
+    });
+
+    it('wiki validates explicit continuity fields when present', () => {
+      const good = {
+        batchId: 'b-1',
+        events: ['hourly'],
+        ownerDate: '2026-09-05',
+        range: { start_ms: 1000, end_ms: 2000 },
+        taskUpdatedSince: new Date(1000).toISOString(),
+        sourceWatermark: 'w1:c:slack=10',
+        connectors: ['slack', 'chatwork'],
+        noUpdateScope: 'wiki:2026-09-05:abc123',
+      };
+      expect(() => validateWorkOrderPayload('wiki', good)).not.toThrow();
+      // sourceWatermark is nullable (signal-unavailable at enqueue time).
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, sourceWatermark: null })
+      ).not.toThrow();
+      // empty connector scope is allowed (no authorized connectors).
+      expect(() => validateWorkOrderPayload('wiki', { ...good, connectors: [] })).not.toThrow();
+      // noUpdateScope must be a bounded non-empty string.
+      expect(() => validateWorkOrderPayload('wiki', { ...good, noUpdateScope: '' })).toThrow(
+        /noUpdateScope/
+      );
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, noUpdateScope: 'x'.repeat(1001) })
+      ).toThrow(/noUpdateScope/);
+      // taskUpdatedSince must be the canonical RFC3339 string for range.start_ms.
+      expect(() => validateWorkOrderPayload('wiki', { ...good, taskUpdatedSince: 1000 })).toThrow(
+        /taskUpdatedSince/
+      );
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, taskUpdatedSince: 'not-a-date' })
+      ).toThrow(/taskUpdatedSince/);
+      // A string naming a DIFFERENT instant than range.start_ms is rejected.
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, taskUpdatedSince: new Date(999).toISOString() })
+      ).toThrow(/taskUpdatedSince/);
+      // malformed owner date rejected loudly.
+      expect(() => validateWorkOrderPayload('wiki', { ...good, ownerDate: '2026-9-5' })).toThrow(
+        /owner date/i
+      );
+      // inverted / non-integer range rejected.
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, range: { start_ms: 2000, end_ms: 1000 } })
+      ).toThrow(/range/);
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, range: { start_ms: 1.5, end_ms: 2 } })
+      ).toThrow(/range/);
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, range: { start_ms: 1000 } })
+      ).toThrow(/range/);
+      // connectors must be strings.
+      expect(() => validateWorkOrderPayload('wiki', { ...good, connectors: [1] })).toThrow(
+        /connectors/
+      );
+      // unknown field still rejected loudly.
+      expect(() => validateWorkOrderPayload('wiki', { ...good, bogus: 1 })).toThrow(
+        /unknown field/
+      );
+    });
+
+    it('wiki continuity fields are all-or-none once any is present', () => {
+      const full = {
+        batchId: 'b-1',
+        events: ['hourly'],
+        ownerDate: '2026-09-05',
+        range: { start_ms: 1000, end_ms: 2000 },
+        taskUpdatedSince: new Date(1000).toISOString(),
+        sourceWatermark: 'w1:c:slack=10',
+        connectors: ['slack'],
+        noUpdateScope: 'wiki:2026-09-05:abc123',
+      };
+      // Legacy trigger-only payloads and the full typed payload both pass.
+      expect(() => validateWorkOrderPayload('wiki', { batchId: 'b-1', events: [] })).not.toThrow();
+      expect(() => validateWorkOrderPayload('wiki', full)).not.toThrow();
+      // A null sourceWatermark still counts as PRESENT, so the rest are required.
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...full, sourceWatermark: null })
+      ).not.toThrow();
+      // Any single continuity field present while another is missing is rejected.
+      for (const key of [
+        'ownerDate',
+        'range',
+        'taskUpdatedSince',
+        'sourceWatermark',
+        'connectors',
+        'noUpdateScope',
+      ] as const) {
+        const partial: Record<string, unknown> = { batchId: 'b-1', events: ['hourly'] };
+        partial[key] = full[key];
+        expect(() => validateWorkOrderPayload('wiki', partial), `only ${key}`).toThrow(
+          /must be supplied together/
+        );
+      }
+      // Missing exactly one of the set is also rejected.
+      const { noUpdateScope, ...missingScope } = full;
+      void noUpdateScope;
+      expect(() => validateWorkOrderPayload('wiki', missingScope)).toThrow(
+        /must be supplied together/
+      );
     });
 
     it('rejects caller-supplied attempts for every normal publisher kind', () => {
