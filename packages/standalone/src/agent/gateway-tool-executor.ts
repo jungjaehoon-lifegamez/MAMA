@@ -853,6 +853,11 @@ export class GatewayToolExecutor {
     this.obsidianVaultName = vaultName ?? null;
     this.obsidianVaultVerified = false;
   }
+  releaseWikiAttemptCoverage(workorderAttemptId: number): void {
+    if (Number.isSafeInteger(workorderAttemptId) && workorderAttemptId > 0) {
+      this.clearWikiAttemptCoverage(workorderAttemptId);
+    }
+  }
   private taskLedger: import('../operator/task-ledger.js').TaskLedger | null = null;
   private ownerEventEffectLedger:
     | import('../operator/owner-event-effects.js').OwnerEventEffectLedger
@@ -3801,6 +3806,24 @@ export class GatewayToolExecutor {
                 false
               );
             }
+            const allowedFields = new Set([
+              'view',
+              'cursor',
+              'limit',
+              'updated_since',
+              'updated_before',
+            ]);
+            const narrowingFields = Object.keys(taskInput).filter(
+              (field) => !allowedFields.has(field)
+            );
+            if (narrowingFields.length > 0) {
+              throw new AgentError(
+                `Wiki task_list cannot narrow the host-issued range with: ${narrowingFields.join(', ')}`,
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
             if (
               (taskInput.updated_since !== undefined &&
                 taskInput.updated_since !== wikiTaskRange.updatedSince) ||
@@ -3821,6 +3844,8 @@ export class GatewayToolExecutor {
             taskListInput = {
               ...normalizedInput,
               view: 'items',
+              include_terminal: true,
+              order: 'updated',
               updated_since: wikiTaskRange.updatedSince,
               updated_before: wikiTaskRange.updatedBefore,
             };

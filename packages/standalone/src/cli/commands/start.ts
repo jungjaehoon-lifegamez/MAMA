@@ -1992,10 +1992,18 @@ export async function runAgentLoop(
         if (!agentLoopClient.runWithContent) {
           throw new Error('[stage2] agentLoopClient.runWithContent unavailable');
         }
-        return agentLoopClient.runWithContent(
-          content as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[0],
-          options as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[1]
-        );
+        const workorderAttemptId = (options as { workorderAttemptId?: unknown }).workorderAttemptId;
+        const isWikiAttempt = (options as { wikiTaskRange?: unknown }).wikiTaskRange !== undefined;
+        try {
+          return await agentLoopClient.runWithContent(
+            content as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[0],
+            options as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[1]
+          );
+        } finally {
+          if (isWikiAttempt && typeof workorderAttemptId === 'number') {
+            toolExecutor.releaseWikiAttemptCoverage(workorderAttemptId);
+          }
+        }
       },
     };
     workOrderConsumer = new WorkOrderConsumer({

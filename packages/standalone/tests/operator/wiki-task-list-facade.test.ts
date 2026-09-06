@@ -131,6 +131,9 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
         )
       ).rejects.toThrow(/contradict.*host-issued/i);
       await expect(
+        executor.execute('task_list', { view: 'items', search: 'nomatch' }, context)
+      ).rejects.toThrow(/cannot narrow.*search/i);
+      await expect(
         executor.execute(
           'task_list',
           {

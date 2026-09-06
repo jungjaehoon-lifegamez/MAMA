@@ -17,6 +17,7 @@ export const WIKI_READ_MAX_PATHS = 20;
 export const WIKI_READ_MAX_PAGE_CHARS = 20_000;
 export const WIKI_READ_MAX_TOTAL_CHARS = 60_000;
 export const WIKI_LESSON_ROOTS = ['lessons/clients', 'lessons/process', 'lessons/system'] as const;
+export const WIKI_HUMAN_MARKER = '<!-- human -->';
 
 const OWNER_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -116,7 +117,9 @@ function resolveInsideRoot(root: string, normalizedPath: string): string | null 
 /** Current content hash at the configured root, or null when the page does not exist. */
 export function readWikiPageVersion(root: string, normalizedPath: string): string | null {
   const real = resolveInsideRoot(root, normalizedPath);
-  if (real === null) return null;
+  if (real === null) {
+    return null;
+  }
   return wikiContentVersion(readFileSync(real, 'utf-8'));
 }
 
@@ -199,6 +202,7 @@ export function readWikiPages(input: {
 
 export interface WikiWorkorderPublishPage {
   path: unknown;
+  content?: unknown;
   expectedContentVersion?: unknown;
 }
 
@@ -226,6 +230,11 @@ export function assertWikiWorkorderPublish(input: {
     seen.add(normalized);
     if (normalized === dailyPath) {
       dailyCount += 1;
+    }
+    if (typeof page.content === 'string' && page.content.includes(WIKI_HUMAN_MARKER)) {
+      throw new Error(
+        `wiki_publish page ${normalized} content must omit ${WIKI_HUMAN_MARKER} and its owner-authored suffix`
+      );
     }
     if (!('expectedContentVersion' in page)) {
       throw new Error(

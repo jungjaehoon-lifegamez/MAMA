@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildObsidianCliArgs, parseObsidianVaultPath } from '../../src/agent/obsidian-cli-args.js';
 
-describe('obsidian gateway tool', () => {
-  describe('argument building', () => {
+describe('Story WIKI-VB: obsidian gateway tool', () => {
+  describe('AC #1: configured-vault argument building', () => {
     it('parses the actual path reported by the selected vault preflight', () => {
       expect(
         parseObsidianVaultPath(
@@ -104,7 +104,7 @@ describe('obsidian gateway tool', () => {
     });
   });
 
-  describe('error handling', () => {
+  describe('AC #2: fail-closed error handling', () => {
     it('returns error when vault path not configured', () => {
       const result = { success: false, error: 'Wiki vault path not configured' };
       expect(result.success).toBe(false);
