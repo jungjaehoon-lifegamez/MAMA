@@ -29,43 +29,45 @@ function turnTools(kind: (typeof WORKORDER_KINDS)[number]): string[] {
   ];
 }
 
-describe('task creation authority: unattended turns cannot create tasks', () => {
-  it('no scheduled turn holds task_create', () => {
-    for (const kind of WORKORDER_KINDS) {
-      expect(turnTools(kind), `${kind} holds task_create`).not.toContain('task_create');
-    }
-  });
-
-  it('the board turn keeps task_update and gains task_reclassify', () => {
-    const board = turnTools('board');
-    expect(board).toContain('task_update');
-    expect(board).toContain('task_reclassify');
-    // Blocked for EVERY unattended turn, not just the board.
-    expect(SCHEDULED_TURN_BLOCKED_TOOLS.has('task_create')).toBe(true);
-    expect(TURN_KIND_REQUIRED_TOOLS.board).toContain('task_reclassify');
-  });
-
-  it('the owner-event turn blocks task_create but may reclassify and settle no-update', () => {
-    const context = buildOwnerEventAgentContext({
-      backend: 'codex',
-      model: 'gpt-test',
-      ownerRole,
-      privateConnectorPolicy: privatePolicy,
+describe('Story TASK-RECAL-3: unattended task creation authority', () => {
+  describe('Acceptance Criteria #1: only the owner conversation can create tasks', () => {
+    it('no scheduled turn holds task_create', () => {
+      for (const kind of WORKORDER_KINDS) {
+        expect(turnTools(kind), `${kind} holds task_create`).not.toContain('task_create');
+      }
     });
-    const tools = [...context.role.allowedTools];
-    expect(tools).not.toContain('task_create');
-    expect(context.role.blockedTools ?? []).toContain('task_create');
-    expect(tools).toContain('task_reclassify');
-    expect(tools).toContain('task_update');
-    expect(tools).toContain('contract_no_update');
-  });
 
-  it('an owner CONVERSATION keeps task_create (the only surface that may create)', () => {
-    expect(ownerRole.allowedTools).toContain('task_create');
-    expect(ownerRole.allowedTools).toContain('task_reclassify');
-  });
+    it('the board turn keeps task_update and gains task_reclassify', () => {
+      const board = turnTools('board');
+      expect(board).toContain('task_update');
+      expect(board).toContain('task_reclassify');
+      // Blocked for EVERY unattended turn, not just the board.
+      expect(SCHEDULED_TURN_BLOCKED_TOOLS.has('task_create')).toBe(true);
+      expect(TURN_KIND_REQUIRED_TOOLS.board).toContain('task_reclassify');
+    });
 
-  it('a reclassification counts as owner-event completion (a ledger change, not a send)', () => {
-    expect(LEDGER_EFFECT_TOOLS.has('task_reclassify')).toBe(true);
+    it('the owner-event turn blocks task_create but may reclassify and settle no-update', () => {
+      const context = buildOwnerEventAgentContext({
+        backend: 'codex',
+        model: 'gpt-test',
+        ownerRole,
+        privateConnectorPolicy: privatePolicy,
+      });
+      const tools = [...context.role.allowedTools];
+      expect(tools).not.toContain('task_create');
+      expect(context.role.blockedTools ?? []).toContain('task_create');
+      expect(tools).toContain('task_reclassify');
+      expect(tools).toContain('task_update');
+      expect(tools).toContain('contract_no_update');
+    });
+
+    it('an owner CONVERSATION keeps task_create (the only surface that may create)', () => {
+      expect(ownerRole.allowedTools).toContain('task_create');
+      expect(ownerRole.allowedTools).toContain('task_reclassify');
+    });
+
+    it('a reclassification counts as owner-event completion (a ledger change, not a send)', () => {
+      expect(LEDGER_EFFECT_TOOLS.has('task_reclassify')).toBe(true);
+    });
   });
 });

@@ -73,7 +73,8 @@ const TASK_LIST_RETURN_TYPE =
   " | { view: 'items'; tasks: Array<{ id: number; title: string; status: string;" +
   ' priority: string; assignee: string | null; deadline: string | null;' +
   ' due_at: string | null; revision: number; sourceChannel: string | null;' +
-  ' sourceEventId: string | null; temporal_state: string }>; total: number;' +
+  ' sourceEventId: string | null; temporal_state: string; completion_criteria: string | null;' +
+  ' resolution_kind: string | null }>; total: number;' +
   ' returned: number; nextCursor: string | null; observedAt: string; readVersion: string }' +
   " | { view: 'detail'; tasks: Array<Record<string, unknown>>; missingIds: number[];" +
   ' observedAt: string }';
@@ -761,7 +762,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled.',
+      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled unless status is explicit.',
     params: [
       {
         name: 'view',
@@ -964,7 +965,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_reclassify',
     description:
-      'Recorrect an existing row with a named disposition so a closed row says WHY. completed_evidence uses an authoritative completion signal; completed_no_issue needs an already-past deadline plus a complete relevant-source check; non_task_record/non_task_memory mean it was never a task (classification does not itself write memory); reopen (terminal rows only) continues the SAME row after later feedback.',
+      'Recorrect an existing row with a named disposition so a closed row says WHY. completed_evidence uses an authoritative completion signal; completed_no_issue needs an already-past deadline plus a complete relevant-source check; non_task_record/non_task_memory mean it was never a task (classification does not itself write memory); reopen (terminal rows only) continues the SAME row after later feedback. Board targets are host-issued; owner-event targets stay in the causal channel.',
     params: [
       { name: 'id', type: 'number', required: true },
       {

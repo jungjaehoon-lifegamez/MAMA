@@ -16,11 +16,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 import { listEffects } from '../../src/evidence/effects.js';
 
 const NOW = Date.parse('2026-09-07T04:00:00Z');
 
-describe('task ledger: completion criteria + reclassification', () => {
+describe('Story TASK-RECAL-1: task completion criteria and reclassification', () => {
   let db: SQLiteDatabase;
   let ledger: TaskLedger;
   const adapter = () => db as never;
@@ -30,7 +31,7 @@ describe('task ledger: completion criteria + reclassification', () => {
     ledger = new TaskLedger(db, { now: () => NOW, timeZone: 'Asia/Seoul' });
   });
 
-  describe('completion_criteria persistence', () => {
+  describe('Acceptance Criteria #1: completion criteria persistence', () => {
     it('persists completion_criteria and exposes it on the record', () => {
       const task = ledger.create({
         title: 'send the September invoice',
@@ -50,7 +51,7 @@ describe('task ledger: completion criteria + reclassification', () => {
     });
   });
 
-  describe('completion dispositions', () => {
+  describe('Acceptance Criteria #2: evidence and no-issue completion', () => {
     it('closes from explicit completion evidence without requiring a deadline', () => {
       const task = ledger.create({
         title: 'send the approved asset',
@@ -115,11 +116,14 @@ describe('task ledger: completion criteria + reclassification', () => {
     });
   });
 
-  describe('non_task dispositions', () => {
+  describe('Acceptance Criteria #3: non-task dispositions', () => {
     it.each(['non_task_record', 'non_task_memory'] as const)(
       '%s cancels the row and preserves reason + resolution kind',
       (disposition) => {
-        const task = ledger.create({ title: '열심히 살자' });
+        const task = ledger.create({
+          title: '열심히 살자',
+          completion_criteria: 'incorrectly invented forever condition',
+        });
         const out = ledger.reclassify(task.id, {
           disposition,
           reason: 'an aspiration, not a finite work item; belongs in memory',
@@ -128,6 +132,7 @@ describe('task ledger: completion criteria + reclassification', () => {
         expect(out.status).toBe('cancelled');
         expect(out.resolutionKind).toBe(disposition);
         expect(out.latestEvent).toBe('an aspiration, not a finite work item; belongs in memory');
+        expect(out.completionCriteria).toBeNull();
       }
     );
 
@@ -153,7 +158,7 @@ describe('task ledger: completion criteria + reclassification', () => {
     });
   });
 
-  describe('reopen', () => {
+  describe('Acceptance Criteria #4: later feedback reopens the same row', () => {
     it('reopens a terminal row, clearing resolution kind and the stale deadline', () => {
       const task = ledger.create({
         title: 'ship the August report',
@@ -227,13 +232,17 @@ describe('task ledger: completion criteria + reclassification', () => {
     });
   });
 
-  describe('authority and input rules (equivalent to task_update)', () => {
+  describe('Acceptance Criteria #5: revision and source-bound authority', () => {
     it('requires revision and reason when a Board run qualifies a legacy task', () => {
       const task = ledger.create({ title: 'real legacy work' });
+      const unrelated = ledger.create({ title: 'unrelated legacy work' });
       const board = ledger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: 'board:qualify:1',
-        input: { mode: 'full' },
+        input: {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: task.id, taskRevision: task.revision }],
+        },
       });
       ledger.claimNextWorkOrder();
       const origin = { workOrderAttemptId: board.id, requiresExpectedRevision: true };
@@ -258,6 +267,17 @@ describe('task ledger: completion criteria + reclassification', () => {
           origin
         ).completionCriteria
       ).toBe('artifact delivered');
+      expect(() =>
+        ledger.update(
+          unrelated.id,
+          {
+            completion_criteria: 'unrelated artifact delivered',
+            expected_revision: unrelated.revision,
+            latest_event: 'connector text named another task',
+          },
+          origin
+        )
+      ).toThrow(/outside this host-issued qualification candidate set/i);
     });
 
     it('requires the exact current revision', () => {
@@ -320,7 +340,10 @@ describe('task ledger: completion criteria + reclassification', () => {
       const board = ledger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: 'board:full:1',
-        input: { mode: 'full' },
+        input: {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: task.id, taskRevision: task.revision }],
+        },
       });
       ledger.claimNextWorkOrder();
       ledger.completeWorkOrder(board.id); // attempt is no longer active
@@ -335,6 +358,92 @@ describe('task ledger: completion criteria + reclassification', () => {
           { workOrderAttemptId: board.id, requiresExpectedRevision: true }
         )
       ).toThrow(/no longer active/i);
+    });
+
+    it('allows only host-issued Board reclassification candidates (TG-04/TG-06)', () => {
+      const allowed = ledger.create({ title: 'allowed legacy row' });
+      const unrelated = ledger.create({ title: 'unrelated row' });
+      const board = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:candidate-bound',
+        input: {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: allowed.id, taskRevision: allowed.revision }],
+        },
+      });
+      ledger.claimNextWorkOrder();
+      const origin = { workOrderAttemptId: board.id, requiresExpectedRevision: true };
+
+      expect(
+        ledger.reclassify(
+          allowed.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'host-issued candidate is a record',
+            expected_revision: allowed.revision,
+          },
+          origin
+        ).status
+      ).toBe('cancelled');
+      expect(() =>
+        ledger.reclassify(
+          unrelated.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'connector text named another row',
+            expected_revision: unrelated.revision,
+          },
+          origin
+        )
+      ).toThrow(/outside this host-issued Board candidate set/i);
+    });
+
+    it('keeps owner-event reclassification inside its causal source channel (TG-03/TG-06)', () => {
+      const inbox = new OwnerEventInbox(db, () => NOW);
+      inbox.enqueue({
+        channelKey: 'slack:C001',
+        eventIds: ['evt-current'],
+        lines: ['current feedback'],
+        activations: [],
+      });
+      const sameChannel = ledger.create({
+        title: 'same channel',
+        source_channel: 'slack:C001',
+        source_event_id: 'evt-old',
+      });
+      const otherChannel = ledger.create({
+        title: 'other channel',
+        source_channel: 'slack:C999',
+        source_event_id: 'evt-other',
+      });
+      const origin = {
+        causeEventIds: ['evt-current'],
+        causeKind: 'owner_message' as const,
+        reclassificationCauseBound: true,
+      };
+
+      expect(
+        ledger.reclassify(
+          sameChannel.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'current channel shows this is only a record',
+            expected_revision: sameChannel.revision,
+          },
+          origin
+        ).status
+      ).toBe('cancelled');
+      expect(() =>
+        ledger.reclassify(
+          otherChannel.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'unrelated channel',
+            expected_revision: otherChannel.revision,
+          },
+          origin
+        )
+      ).toThrow(/outside this owner-event source channel/i);
     });
 
     it('records one atomic effect receipt for the reclassification', () => {

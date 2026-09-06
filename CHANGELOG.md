@@ -21,7 +21,8 @@ All notable changes to this project will be documented in this file.
   record, memory, or reopened while preserving the reason and revision history.
 - Board maintenance starts from an overview and processes one ten-row page of active legacy rows.
   Genuine tasks gain completion criteria; non-tasks and expired issue-free work leave the active
-  board without loading every task into one model turn.
+  board without loading every task into one model turn. The host binds each run to those exact
+  task IDs and revisions; owner-event reclassification is bound to its causal source channel.
 
 ## mama-os [0.48.0] - 2026-09-06
 

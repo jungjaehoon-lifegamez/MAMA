@@ -1472,9 +1472,9 @@ describe('Story TG-04/TG-06 AC #1: the assembled board prompt is coherent end to
     expect(systemPrompt).toContain('task_list.temporal_state');
     expect(userMessage).toMatch(/partial or truncated snapshot is not evidence of absence/i);
     expect(userMessage).toContain('Do not supply scopes or seed_refs');
-    expect(userMessage).toContain('qualification:"legacy_unqualified"');
-    expect(userMessage).toContain('limit:10');
-    expect(userMessage).toMatch(/Do not walk every cursor or load the whole board/i);
+    expect(userMessage).toContain('input.reclassificationCandidates');
+    expect(userMessage).toMatch(/at most ten taskId\/taskRevision pairs/i);
+    expect(userMessage).toMatch(/Do not walk cursors or load the whole board/i);
   });
 
   it('TG-06 task_update mechanics are stated as the ledger enforces them: revision read + latest_event on lifecycle fields only', async () => {
