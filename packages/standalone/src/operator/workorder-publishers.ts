@@ -211,6 +211,7 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
     'ownerDate',
     'range',
     'taskUpdatedSince',
+    'taskUpdatedBefore',
     'sourceWatermark',
     'connectors',
     'noUpdateScope',
@@ -334,6 +335,7 @@ export function validateWorkOrderPayload(
       'ownerDate',
       'range',
       'taskUpdatedSince',
+      'taskUpdatedBefore',
       'sourceWatermark',
       'connectors',
       'noUpdateScope',
@@ -343,7 +345,7 @@ export function validateWorkOrderPayload(
     );
     if (presentContinuityKeys.length > 0 && presentContinuityKeys.length < continuityKeys.length) {
       throw new Error(
-        `workorder payload (wiki): continuity fields ownerDate/range/taskUpdatedSince/sourceWatermark/connectors/noUpdateScope must be supplied together`
+        `workorder payload (wiki): continuity fields ownerDate/range/taskUpdatedSince/taskUpdatedBefore/sourceWatermark/connectors/noUpdateScope must be supplied together`
       );
     }
     // Each present field is validated below.
@@ -384,6 +386,22 @@ export function validateWorkOrderPayload(
       ) {
         throw new Error(
           `workorder payload (wiki): taskUpdatedSince must equal new Date(range.start_ms).toISOString()`
+        );
+      }
+    }
+    if (payload.taskUpdatedBefore !== undefined) {
+      if (typeof payload.taskUpdatedBefore !== 'string') {
+        throw new Error(`workorder payload (wiki): taskUpdatedBefore must be an RFC 3339 string`);
+      }
+      const range = payload.range as { end_ms?: unknown } | undefined;
+      const endMs = range?.end_ms;
+      if (
+        typeof endMs !== 'number' ||
+        !Number.isSafeInteger(endMs) ||
+        payload.taskUpdatedBefore !== new Date(endMs).toISOString()
+      ) {
+        throw new Error(
+          `workorder payload (wiki): taskUpdatedBefore must equal new Date(range.end_ms).toISOString()`
         );
       }
     }

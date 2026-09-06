@@ -60,6 +60,8 @@ export interface WikiPayload {
    * range.start_ms.
    */
   taskUpdatedSince: string;
+  /** `range.end_ms` as RFC 3339; task_list uses a half-open [since,before) range. */
+  taskUpdatedBefore: string;
   /**
    * Composite watermark over connector observation, native owner tasks and
    * memory recency. Null only when the host signal was unusable at enqueue time.
@@ -271,6 +273,7 @@ function buildPayload(
     ownerDate,
     range,
     taskUpdatedSince: new Date(range.start_ms).toISOString(),
+    taskUpdatedBefore: new Date(range.end_ms).toISOString(),
     sourceWatermark,
     connectors: [...input.connectors],
     noUpdateScope: wikiNoUpdateScope(ownerDate, sourceWatermark),

@@ -59,7 +59,7 @@ const TASK_LIST_FILTERS =
   'include_terminal?: boolean,channel?: string,search?: string,assignee?: string,' +
   "qualification?: 'qualified' | 'legacy_unqualified'," +
   "priority?: 'high' | 'normal' | 'low',due_before?: string,due_after?: string," +
-  "updated_since?: string,order?: 'deadline_priority' | 'updated'";
+  "updated_since?: string,updated_before?: string,order?: 'deadline_priority' | 'updated'";
 const TASK_LIST_INPUT_TYPE =
   `{view?: 'items',${TASK_LIST_FILTERS},limit?: number,cursor?: string}` +
   ` | {view: 'overview',${TASK_LIST_FILTERS}}` +
@@ -803,6 +803,12 @@ const TOOL_REGISTRY: ToolMeta[] = [
         type: 'string',
         required: false,
         description: 'updated_at at/after (RFC 3339 + offset)',
+      },
+      {
+        name: 'updated_before',
+        type: 'string',
+        required: false,
+        description: 'updated_at strictly before (RFC 3339 + offset)',
       },
       { name: 'order', type: 'string', required: false },
       {

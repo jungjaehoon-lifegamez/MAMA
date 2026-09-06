@@ -24,6 +24,8 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
       ledger.create({ title: 'early-task' }); // updated 10:00Z (before boundary)
       clock = Date.parse('2026-09-04T20:00:00Z');
       ledger.create({ title: 'late-task' }); // updated 20:00Z (after boundary)
+      clock = Date.parse('2026-09-05T02:00:00Z');
+      ledger.create({ title: 'at-range-end-task' });
 
       // A current-day run at 2026-09-05T02:00Z -> owner day 2026-09-05, start
       // 2026-09-04T15:00:00Z.
@@ -38,22 +40,31 @@ describe('wiki taskUpdatedSince against the real task_list facade', () => {
       const payload = decision.payload!;
       expect(payload.range.start_ms).toBe(Date.parse('2026-09-04T15:00:00Z'));
       expect(payload.taskUpdatedSince).toBe(new Date(payload.range.start_ms).toISOString());
+      expect(payload.taskUpdatedBefore).toBe(new Date(payload.range.end_ms).toISOString());
 
       // The instructed call — task_list({view:"items", updated_since: <the
       // literal taskUpdatedSince string>}) — is ACCEPTED and filters correctly.
       const result = runTaskListView(
-        { view: 'items', updated_since: payload.taskUpdatedSince },
+        {
+          view: 'items',
+          updated_since: payload.taskUpdatedSince,
+          updated_before: payload.taskUpdatedBefore,
+        },
         { ledger }
       );
       expect(result.success).toBe(true);
       const titles = (result as { tasks: Array<{ title: string }> }).tasks.map((t) => t.title);
       expect(titles).toContain('late-task');
       expect(titles).not.toContain('early-task');
+      expect(titles).not.toContain('at-range-end-task');
 
       // The numeric range.start_ms the pre-fix contract instructed is REJECTED
       // by the real facade — exactly the C1 mismatch.
       expect(() =>
         runTaskListView({ view: 'items', updated_since: payload.range.start_ms }, { ledger })
+      ).toThrow(/RFC 3339/);
+      expect(() =>
+        runTaskListView({ view: 'items', updated_before: payload.range.end_ms }, { ledger })
       ).toThrow(/RFC 3339/);
     } finally {
       db.close();
