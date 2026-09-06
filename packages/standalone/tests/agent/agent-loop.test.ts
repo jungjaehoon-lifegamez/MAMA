@@ -3889,6 +3889,145 @@ Skills provide additional tools.
       expect(fingerprints[0]).not.toContain('operator-report-policy');
     });
 
+    it.each(['claude', 'codex', 'cline'] as const)(
+      'TG-05 excludes recovery from compatible %s restarts despite an empty host pool',
+      async (backend) => {
+        const delivered: string[] = [];
+        persistentPromptMock.mockImplementation(
+          async (_text: string, _callbacks: unknown, opts?: PromptOptions) => {
+            delivered.push(opts?.systemPrompt ?? '');
+            if (opts?.resumeInstructions) delivered.push(await opts.resumeInstructions());
+            return {
+              response: 'continued',
+              usage: { input_tokens: 1, output_tokens: 1 },
+              session_id: 'owner-thread',
+            };
+          }
+        );
+        const policyStatus = {
+          claude: claudeSessionPolicyStatusMock,
+          codex: codexSessionPolicyStatusMock,
+          cline: clineSessionPolicyStatusMock,
+        }[backend];
+        policyStatus.mockReturnValue('compatible');
+        const journal = { append: vi.fn(), recoveryBlock: vi.fn(() => 'PAST_OWNER_RECOVERY') };
+        const context = withOuterCodeAct({ ...createCodexContext(), backend });
+        const loop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend,
+            systemPrompt: 'base policy',
+            useCodeAct: true,
+            ownerRuntimeJournal: journal,
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const common = {
+          sessionKey: 'owner:runtime',
+          source: 'operator',
+          agentContext: context,
+          sessionPolicyRole: context.role,
+        };
+        await loop.run('background after restart', common);
+        await loop.run('continued owner input', {
+          ...common,
+          resumeSession: true,
+          freshSessionSystemPrompt: async () => 'FULL_CURRENT_POLICY',
+        });
+        expect(delivered.every((text) => !text.includes('PAST_OWNER_RECOVERY'))).toBe(true);
+        expect(journal.recoveryBlock).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(['claude', 'codex', 'cline'] as const)(
+      'TG-05 restores once for an actually missing %s owner even with omitted resume options',
+      async (backend) => {
+        let delivered = '';
+        persistentPromptMock.mockImplementation(
+          async (_text: string, _callbacks: unknown, opts?: PromptOptions) => {
+            delivered = opts?.systemPrompt ?? '';
+            return {
+              response: 'restored',
+              usage: { input_tokens: 1, output_tokens: 1 },
+              session_id: 'owner-thread',
+            };
+          }
+        );
+        const policyStatus = {
+          claude: claudeSessionPolicyStatusMock,
+          codex: codexSessionPolicyStatusMock,
+          cline: clineSessionPolicyStatusMock,
+        }[backend];
+        policyStatus.mockReturnValue('missing');
+        const journal = { append: vi.fn(), recoveryBlock: vi.fn(() => 'PAST_OWNER_RECOVERY') };
+        const context = withOuterCodeAct({ ...createCodexContext(), backend });
+        const loop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend,
+            systemPrompt: 'base policy',
+            useCodeAct: true,
+            ownerRuntimeJournal: journal,
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        await loop.run('background after loss', {
+          sessionKey: 'owner:runtime',
+          source: 'operator',
+          agentContext: context,
+          sessionPolicyRole: context.role,
+        });
+        expect(policyStatus).toHaveBeenCalledOnce();
+        expect(delivered).toContain('base policy');
+        expect(delivered).toContain('PAST_OWNER_RECOVERY');
+        expect(journal.recoveryBlock).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('TG-05 recovers a background owner retry without a caller prompt builder', async () => {
+      let replacementPrompt = '';
+      persistentPromptMock
+        .mockRejectedValueOnce(
+          new Error('Codex app-server thread policy mismatch; reset the session explicitly')
+        )
+        .mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, opts?: PromptOptions) => {
+            replacementPrompt = opts?.systemPrompt ?? '';
+            return {
+              response: 'restored on retry',
+              usage: { input_tokens: 1, output_tokens: 1 },
+              session_id: 'replacement-thread',
+            };
+          }
+        );
+      codexSessionPolicyStatusMock.mockReturnValue('compatible');
+      const journal = { append: vi.fn(), recoveryBlock: vi.fn(() => 'PAST_OWNER_RECOVERY') };
+      const context = withOuterCodeAct(createCodexContext());
+      const loop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'base policy',
+          useCodeAct: true,
+          ownerRuntimeJournal: journal,
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const result = await loop.run('background stimulus', {
+        sessionKey: 'owner:runtime',
+        source: 'operator',
+        agentContext: context,
+        sessionPolicyRole: context.role,
+      });
+      expect(result.response).toBe('restored on retry');
+      expect(replacementPrompt).toContain('base policy');
+      expect(replacementPrompt).toContain('PAST_OWNER_RECOVERY');
+      expect(journal.recoveryBlock).toHaveBeenCalledOnce();
+    });
+
     it('TG-05 restores the owner journal once only when the durable thread is missing', async () => {
       const deliveredPrompts: string[] = [];
       persistentPromptMock.mockImplementation(

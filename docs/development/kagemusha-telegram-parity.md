@@ -4,6 +4,29 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.49.2 removal of legacy event-history replay: 2026-09-07
+
+- **TG-05:** a completion audit found that a single model thread was still receiving historical
+  same-channel outcome and notification records on every owner-event turn. Bounded/untrusted
+  wrapping did not satisfy the no-reinjection requirement. The production prior-context read
+  and prompt renderer are removed; current event evidence and effect identities stay intact.
+- **TG-05 restart:** an empty host SessionPool no longer triggers recovery by itself. Compatible
+  resume policy re-anchoring excludes the journal; backend missing/mismatch and replacement retry
+  paths recover it once on Claude, Codex and Cline, including background turns without builders.
+- **Boundary:** the shared owner journal remains the only conversation replay at actual backend
+  replacement. Historical inbox records are retained for explicit audit. This correction is
+  tracked separately from PR #268 / released 0.49.1, and the entire goal remains unproven until
+  the new release is installed and Telegram continuation is observed.
+
+Telegram native-subagent proof was observed on installed 0.49.1: owner model run
+`mr_3748a2b333034ea9aa57d2b81659fb7d` handled the actual incoming request, invoked native
+`spawn_agent` then `wait_agent` on the same owner thread, and returned analysis plus MAMA's own
+judgment. The Telegram message ledger confirms delivered, with no uncertain delivery. The
+subagent used a full-history fork; 0.49.2 adds stable guidance to prefer bounded evidence and
+no history fork when sufficient. This guidance is part of the owner policy fingerprint so each
+backend adopts the genuine policy change once. A subsequent compatible restart must not replay
+history. Public 0.49.2 installation remains the final runtime gate.
+
 ## 0.49.1 owner queue and progressive due queries: 2026-09-07
 
 - **TG-05/TG-06:** owner messages join the same priority queue while background work is active.
