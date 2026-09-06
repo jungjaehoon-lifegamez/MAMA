@@ -47,7 +47,10 @@ import {
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
 import { laneChannelId } from '../gateways/principal.js';
-import { OWNER_RUNTIME_SESSION_KEY } from '../operator/owner-runtime.js';
+import {
+  OWNER_RUNTIME_SESSION_KEY,
+  OWNER_SUBAGENT_INSTRUCTIONS,
+} from '../operator/owner-runtime.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -544,6 +547,7 @@ function ownerRuntimeSessionPolicyFingerprint(
   return JSON.stringify({
     version: 1,
     subject: OWNER_RUNTIME_SESSION_KEY,
+    subagentPolicy: OWNER_SUBAGENT_INSTRUCTIONS,
     model: model ?? null,
     allowedTools: [...(role?.allowedTools ?? [])].sort(),
     blockedTools: [...(role?.blockedTools ?? [])].sort(),
@@ -1576,6 +1580,9 @@ export class AgentLoop {
         includeOwnerRecovery = false
       ): string => {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
+        if (ownerRuntime && !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)) {
+          baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_SUBAGENT_INSTRUCTIONS}`;
+        }
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && this.useCodeAct) {
           baseSystemPrompt = stripTrailingCanonicalCodeActSection(
