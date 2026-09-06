@@ -404,7 +404,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
     });
 
-    it('TG-03/TG-04/TG-05 gives packet-only reports no Code-Act or gateway tools', () => {
+    it('TG-03/TG-04/TG-05 gives progressive reports bounded owner tools', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const context = policy.agentContext;
       const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
@@ -412,39 +412,43 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(context).toMatchObject({
         source: 'operator',
         platform: 'cli',
-        roleName: 'operator-report',
+        roleName: 'owner_console',
         backend: 'codex',
         tier: 1,
-        role: { blockedTools: [], model: 'gpt-5.4' },
+        role: { model: 'gpt-5.4' },
       });
       expect(
         ToolRegistry.getHostToolDefinitions({
           allowedTools: context.role.allowedTools,
           blockedTools: context.role.blockedTools,
         }).some((tool) => tool.name === CODE_ACT_MARKER)
-      ).toBe(false);
-      expect(projected.names).toEqual([]);
+      ).toBe(true);
+      expect(projected.names).toContain('task_list');
+      expect(projected.names).toContain('changes_read');
       // Prompt/permission coherence: advertise exactly what the executor will run.
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
       ].map((match) => match[1]);
-      expect(advertised.sort()).toEqual([...projected.names].sort());
-      // The report envelope grants no send surface, and the report observes rather than
-      // maintains the board, so no destination or task-mutation tool may be advertised.
-      for (const forbidden of ['task_create', 'task_update', 'send_message', 'Bash', 'Write']) {
+      expect(advertised.sort()).toEqual(
+        projected.names.filter((name) => name !== CODE_ACT_MARKER).sort()
+      );
+      // The report envelope grants no send surface and cannot create tasks.
+      for (const forbidden of ['task_create', 'send_message', 'Bash', 'Write']) {
         expect(projected.names).not.toContain(forbidden);
         expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
       }
     });
 
-    it('removes the retired report gather surface entirely', () => {
+    it('removes the retired report relay while keeping progressive reads', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const projected = projectCodeActToolPolicy({
         tier: policy.agentContext.tier,
         role: policy.agentContext.role,
       });
-      expect(projected.names).toEqual([]);
-      expect(policy.gatewayToolsPrompt).toBe('');
+      expect(projected.names).toContain('task_list');
+      expect(projected.names).toContain('changes_read');
+      expect(projected.names).not.toContain('report_request');
+      expect(policy.gatewayToolsPrompt).not.toContain('report_request');
     });
 
     it.each([
@@ -473,14 +477,16 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       }
     );
 
-    it('TG-03/TG-04 keeps report composition tool-free in both private connector directions', () => {
+    it('TG-03/TG-04 projects private reads without changing the owner report identity', () => {
       const enabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const disabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', privatePolicy(false));
 
-      expect(enabled.agentContext.role.allowedTools).toEqual([]);
-      expect(enabled.gatewayToolsPrompt).toBe('');
-      expect(disabled.agentContext.role.allowedTools).toEqual([]);
-      expect(disabled.gatewayToolsPrompt).toBe('');
+      expect(enabled.agentContext.role.allowedTools).toContain('task_list');
+      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_tasks');
+      expect(disabled.agentContext.role.allowedTools).toContain('task_list');
+      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+      expect(enabled.agentContext.roleName).toBe('owner_console');
+      expect(disabled.agentContext.roleName).toBe('owner_console');
     });
 
     it('wires one temporal runtime from projected and registered transport tools', () => {

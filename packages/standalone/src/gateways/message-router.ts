@@ -26,6 +26,7 @@ import {
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
 import { loadConsoleBrief, projectConsoleBriefForPrompt } from '../operator/console-brief.js';
+import { OWNER_RUNTIME_SESSION_KEY, projectOwnerRuntimeRole } from '../operator/owner-runtime.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
 import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
@@ -38,11 +39,6 @@ import type { RoleConfig } from '../cli/config/types.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
 import { laneChannelId, makeHostPrincipal } from './principal.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import {
-  AuditTaskQueue,
-  type MemoryAuditAckLike,
-  type MemoryAuditJob,
-} from '../memory/audit-task-queue.js';
 import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { buildLearningContext, formatLearningAuditLine } from '../operator/learning-context.js';
@@ -50,19 +46,12 @@ import { cappedLearningReader } from '../operator/learning-read.js';
 import { observeOwnerTurn } from '../operator/turn-observer.js';
 import { loadLearningMarkers } from '../operator/learning-markers.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
-import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import {
   stripUntrustedBlocks,
   UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
-import type {
-  ReportCarryPeek,
-  ReportCarryPort,
-  ReportCarryTarget,
-} from '../operator/report-carry.js';
-import type { OwnerReportInboxPort } from './owner-report-inbox.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -99,9 +88,6 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 
 export interface MessageRouterDependencies {
   privateConnectorPolicy?: PrivateConnectorPolicy;
-  reportCarry?: ReportCarryPort;
-  /** TG-05/TG-06: delivered-pending owner reports consumed by verified owner turns. */
-  ownerReportInbox?: OwnerReportInboxPort;
   /** Resolve exactly one detached authority snapshot for each admitted member turn. */
   memberScopeResolver?: MemberScopeResolver;
 }
@@ -285,12 +271,20 @@ const OWNER_CONSOLE_OPERATING_DISCIPLINE = `## Owner console operating disciplin
 - You are the owner's operator, not an advisor. Report what you found and what you did; do not hand back work you could have done yourself.
 - Gather before answering. Any question about status, work, or what happened is answered by CALLING your gateway tools first. Never reply "please check X" when a gateway tool can check X - check it, then report.
 - Never claim a check you did not run. If a tool errored or was denied, name the tool and the error; a missing answer is reported as missing, never smoothed over.
-- Act by default; ask only before the irreversible. Reversible work is yours to do and then report: reading, analysing, ranking, drafting, and writes whose only audience is this console (mama_save, task_create/task_update on your task board, report_request). Ask first only when the effect leaves this conversation and cannot be taken back - sending to another channel (telegram_send), uploading or overwriting shared files (drive_upload), storing credentials, or delegating a run you cannot cancel.
+- Act by default; ask only before the irreversible. Reversible work is yours to do and then report: reading, analysing, ranking, drafting, and writes whose only audience is this console (mama_save, task_create/task_update on your task board). Ask first only when the effect leaves this conversation and cannot be taken back - sending to another channel (telegram_send), uploading or overwriting shared files (drive_upload), storing credentials, or delegating a run you cannot cancel.
+- A status or full-report request is YOUR judgment task in THIS conversation. Use compact descriptors and overview reads first, deepen only the material uncertainties through bounded pages, take authorized reversible actions, and answer the owner directly. Never hand it to another report agent and never reply with only an acknowledgement.
 - Do not close by offering work you could have done. "Shall I rank these?" or "want it broken down by person?" is work, not a question - if you can do it now it belongs in this reply. End with what you did and what the OWNER has to decide, never with a menu of things you are willing to do next.
 - Multi-step requests: decide the steps, carry out the reversible ones, then report the outcome. Do not return the plan as a suggestion and stop.
 - Synthesize, do not dump. A raw tool result is evidence, not an answer - say what it means for the owner and cite which source answered.
 - Before saying something is done, verify it (re-read the artifact or re-run the query) and say what you verified.
 - Reply in the language the owner writes in.`;
+
+export function projectOwnerConversationAgency(roleName: string, role: RoleConfig): RoleConfig {
+  if (roleName !== 'owner_console') {
+    return role;
+  }
+  return projectOwnerRuntimeRole(role);
+}
 
 /** Channel-less host alarms (workorder failures) park here; every resumed
  *  owner turn reads this key in addition to its own channel key. */
@@ -302,6 +296,10 @@ export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
 export interface AgentLoopClient {
   /** True when a construction-wide child runtime can invoke native or MCP tools. */
   readonly childRuntimeToolCapable: boolean;
+  /** Can distinguish a live durable backend thread from a missing one before prompting. */
+  readonly probesDurableSession?: boolean;
+  /** AgentLoop owns one bounded cross-channel recovery journal. */
+  readonly ownerRecoveryJournalEnabled?: boolean;
   /**
    * Run the agent loop with a prompt
    */
@@ -312,6 +310,7 @@ export interface AgentLoopClient {
     response: string;
     modelRunId?: string | null;
     modelRunProvenance?: ModelRunProvenance;
+    ownerJournalProvenance?: 'commit_failed';
   }>;
   /**
    * Run the agent loop with multimodal content
@@ -323,18 +322,8 @@ export interface AgentLoopClient {
     response: string;
     modelRunId?: string | null;
     modelRunProvenance?: ModelRunProvenance;
+    ownerJournalProvenance?: 'commit_failed';
   }>;
-}
-
-export interface MemoryAgentProcessLike {
-  sendMessage(
-    content: string,
-    options?: { sourceTurnId?: string; sourceMessageRef?: string; parentModelRunId?: string }
-  ): Promise<{ response?: string; ack?: MemoryAuditAckLike } | { response?: string }>;
-}
-
-export interface MemoryAgentProcessManagerLike {
-  getSharedProcess(agentId: 'memory'): Promise<MemoryAgentProcessLike>;
 }
 
 export interface GatewayRegistry {
@@ -397,7 +386,7 @@ const MEMBER_BLOCKED_TOOLS = [
   'Read',
   'Write',
   'Bash',
-  'delegate',
+  'native_subagent',
   'discord_send',
   'slack_send',
   'telegram_send',
@@ -405,7 +394,6 @@ const MEMBER_BLOCKED_TOOLS = [
   'task_create',
   'task_update',
   'task_reclassify',
-  'report_request',
   'report_publish',
   'wiki_read',
   'wiki_publish',
@@ -502,10 +490,6 @@ function sanitizeForPrompt(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function stripGatewayDecorations(text: string): string {
-  return text.replace(/^(?:\s*\|\|[\s\S]*?\|\|\s*)+/u, '').trim();
-}
-
 /**
  * True when the agent persisted memory during THIS turn (gateway mama_save in
  * the reasoning header) - the extractor safety net then skips to avoid the
@@ -557,33 +541,11 @@ export class MessageRouter implements TurnProcessor {
   private envelopeConfig?: ReactiveEnvelopeConfig;
   private envelopeAuthority?: EnvelopeAuthority;
   private readonly privateConnectorPolicy: PrivateConnectorPolicy;
-  private readonly reportCarry?: ReportCarryPort;
-  private readonly ownerReportInbox?: OwnerReportInboxPort;
   private readonly memberScopeResolver?: MemberScopeResolver;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
-  private gatewayRegistry: GatewayRegistry | null = null;
-  private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
-  private memoryAuditQueue?: AuditTaskQueue;
   private memoryNoticeQueue = new AgentNoticeQueue();
-  private memoryAuditCooldowns = new Map<string, number>();
   private channelTails = new Map<string, Promise<void>>();
-  private memoryAgentStats = {
-    turnsObserved: 0,
-    candidatesDetected: 0,
-    factsExtracted: 0,
-    factsSaved: 0,
-    acksApplied: 0,
-    acksSkipped: 0,
-    acksFailed: 0,
-    lastExtraction: null as number | null,
-    recentExtractions: [] as Array<{
-      topic: string;
-      timestamp: number;
-      channelKey?: string;
-      status: 'applied' | 'skipped' | 'failed';
-    }>,
-  };
 
   // Sessions DB for MAMA frontdoor activity logging
   private sessionsDb: import('../sqlite.js').default | null = null;
@@ -597,15 +559,9 @@ export class MessageRouter implements TurnProcessor {
     this.uiCommandQueue = queue;
   }
 
-  // Validation service for memory agent + MAMA sessions
-  private validationService:
-    | import('../validation/session-service.js').ValidationSessionService
-    | null = null;
   setValidationService(
-    svc: import('../validation/session-service.js').ValidationSessionService
-  ): void {
-    this.validationService = svc;
-  }
+    _svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {}
 
   private getPageContextPrefix(message: NormalizedMessage): string {
     if (!this.uiCommandQueue) {
@@ -698,37 +654,20 @@ export class MessageRouter implements TurnProcessor {
     return lines.join('\n') + '\n';
   }
 
-  setGatewayRegistry(registry: GatewayRegistry): void {
-    this.gatewayRegistry = registry;
-  }
-
-  setMemoryAgent(processManager: MemoryAgentProcessManagerLike): void {
-    this.memoryAgentProcessManager = processManager;
-    this.memoryAuditQueue = new AuditTaskQueue(async (job) => {
-      const process = await processManager.getSharedProcess('memory');
-      const result = await process.sendMessage(this.buildMemoryAuditPrompt(job), {
-        sourceTurnId: job.turnId,
-        sourceMessageRef: [job.source, job.channelId, job.turnId].filter(Boolean).join(':'),
-        parentModelRunId: job.parentModelRunId,
-      });
-      if (
-        result &&
-        typeof result === 'object' &&
-        'ack' in result &&
-        result.ack &&
-        typeof result.ack === 'object'
-      ) {
-        return result.ack as MemoryAuditAckLike;
-      }
-
-      return this.classifyMemoryAuditResponse(
-        typeof result?.response === 'string' ? result.response : ''
-      );
-    });
-  }
+  setGatewayRegistry(_registry: GatewayRegistry): void {}
 
   getMemoryAgentStats() {
-    return { ...this.memoryAgentStats };
+    return {
+      turnsObserved: 0,
+      candidatesDetected: 0,
+      factsExtracted: 0,
+      factsSaved: 0,
+      acksApplied: 0,
+      acksSkipped: 0,
+      acksFailed: 0,
+      lastExtraction: null,
+      recentExtractions: [],
+    };
   }
 
   /**
@@ -748,44 +687,6 @@ export class MessageRouter implements TurnProcessor {
       recommended_action: 'recheck',
       relevant_memories: [],
     });
-  }
-
-  /**
-   * Public API for auditing a conversation via the memory agent.
-   * Used by the /api/mama/audit-conversation endpoint for benchmarking.
-   * Bypasses cooldown and candidate detection — caller provides conversation + optional candidates.
-   */
-  async auditConversation(job: {
-    conversation: string;
-    scopes: Array<{ kind: string; id: string }>;
-    candidates?: Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>;
-  }): Promise<MemoryAuditAckLike> {
-    if (!this.memoryAuditQueue) {
-      throw new Error('Memory agent not initialized — cannot audit conversation');
-    }
-    const auditJob: MemoryAuditJob = {
-      turnId: `audit_${Date.now()}`,
-      channelKey: 'api:default',
-      source: 'api',
-      scopeContext: job.scopes.map((s) => ({
-        kind: s.kind as 'global' | 'user' | 'channel' | 'project',
-        id: s.id,
-      })),
-      conversation: job.conversation,
-      candidates: job.candidates?.map((c) => ({
-        id: `api_${Date.now()}`,
-        kind: c.kind as 'decision' | 'preference' | 'fact' | 'change',
-        topicHint: c.topicHint,
-        confidence: c.confidence,
-        summary: c.summary,
-        evidence: [c.summary],
-        channelKey: 'api:default',
-        source: 'api',
-        channelId: 'default',
-        createdAt: Date.now(),
-      })),
-    };
-    return this.memoryAuditQueue.enqueue(auditJob);
   }
 
   constructor(
@@ -809,8 +710,6 @@ export class MessageRouter implements TurnProcessor {
     this.envelopeAuthority = envelopeAuthority;
     this.privateConnectorPolicy =
       dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
-    this.reportCarry = dependencies.reportCarry;
-    this.ownerReportInbox = dependencies.ownerReportInbox;
     this.memberScopeResolver = dependencies.memberScopeResolver;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
@@ -871,22 +770,18 @@ export class MessageRouter implements TurnProcessor {
   private createAgentContext(message: NormalizedMessage, sessionId: string): AgentContext {
     // Per-message trust context: chatType is runtime state (a locked allowlist
     // alone cannot prove owner - allowlisted groups contain third parties).
-    const { roleName, role } = this.roleManager.getRoleForSource(message.source, {
-      channelId: message.channelId,
-      chatType:
-        typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
-      principal: message.principal,
-    });
+    const { roleName, role } = this.resolveMessageRole(message);
     const surface: ConnectorCapabilitySurface =
       roleName === 'owner_console'
         ? 'owner_console'
         : roleName === 'os_agent'
           ? 'os_agent'
           : 'multi-agent-generic';
-    const projectedRole =
+    const connectorProjectedRole =
       message.principal?.class === 'member'
         ? memberReadOnlyRole(role)
         : this.privateConnectorPolicy.projectRole(surface, role);
+    const projectedRole = projectOwnerConversationAgency(roleName, connectorProjectedRole);
     const capabilities = this.roleManager.getCapabilities(projectedRole);
     const limitations = this.roleManager.getLimitations(projectedRole);
 
@@ -911,6 +806,15 @@ export class MessageRouter implements TurnProcessor {
       ctx.tier = 2;
     }
     return ctx;
+  }
+
+  private resolveMessageRole(message: NormalizedMessage): { roleName: string; role: RoleConfig } {
+    return this.roleManager.getRoleForSource(message.source, {
+      channelId: message.channelId,
+      chatType:
+        typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
+      principal: message.principal,
+    });
   }
 
   /**
@@ -1015,17 +919,18 @@ export class MessageRouter implements TurnProcessor {
       assertUsableMemberEffectiveScope(memberEffectiveScope, admittedPrincipal.principalId ?? '');
     }
 
-    const channelKey = buildChannelKey(
-      admittedMessage.source,
-      laneChannelId(admittedMessage.channelId, lane)
-    );
-    const previous = this.channelTails.get(channelKey);
+    const admissionRoleName = this.resolveMessageRole(admittedMessage).roleName;
+    const admissionKey =
+      admissionRoleName === 'owner_console'
+        ? OWNER_RUNTIME_SESSION_KEY
+        : buildChannelKey(admittedMessage.source, laneChannelId(admittedMessage.channelId, lane));
+    const previous = this.channelTails.get(admissionKey);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const currentTail = (previous ?? Promise.resolve()).catch(() => {}).then(() => gate);
-    this.channelTails.set(channelKey, currentTail);
+    this.channelTails.set(admissionKey, currentTail);
 
     try {
       if (previous) {
@@ -1042,8 +947,8 @@ export class MessageRouter implements TurnProcessor {
       );
     } finally {
       release();
-      if (this.channelTails.get(channelKey) === currentTail) {
-        this.channelTails.delete(channelKey);
+      if (this.channelTails.get(admissionKey) === currentTail) {
+        this.channelTails.delete(admissionKey);
       }
     }
   }
@@ -1124,11 +1029,18 @@ This protects your credentials from being exposed in chat logs.`;
       message.userId,
       message.channelName
     );
+    const agentContext = this.createAgentContext(message, session.id);
+    const ownerRuntimeRole =
+      agentContext.roleName === 'owner_console'
+        ? projectOwnerConversationAgency('owner_console', this.resolveMessageRole(message).role)
+        : agentContext.role;
 
     // 2. Check if session is busy (another request in progress)
     const channelKey = buildChannelKey(message.source, sessionChannelId);
+    const runtimeSessionKey =
+      agentContext.roleName === 'owner_console' ? OWNER_RUNTIME_SESSION_KEY : channelKey;
     const sessionPool = getSessionPool();
-    const initialSession = sessionPool.getSession(channelKey);
+    const initialSession = sessionPool.getSession(runtimeSessionKey);
     let cliSessionId = initialSession.sessionId;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
@@ -1136,6 +1048,7 @@ This protects your credentials from being exposed in chat logs.`;
     // assignment sits inside the agent-run block and is not visible at the return.
     let completedModelRunId: string | null = null;
     let completedProvenanceReason: 'backend_no_run' | 'commit_failed' = 'backend_no_run';
+    let completedOwnerJournalProvenance: 'commit_failed' | undefined;
     const sourceTurnId =
       message.metadata?.messageId ?? `generated:${randomUUID().replace(/-/g, '')}`;
     const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
@@ -1159,7 +1072,7 @@ This protects your credentials from being exposed in chat logs.`;
       while (Date.now() - waitStart < maxWaitMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         // Use read-only peek to avoid side effects (no lock increment)
-        const check = sessionPool.peekSession(channelKey);
+        const check = sessionPool.peekSession(runtimeSessionKey);
         if (!check.busy) {
           logger.debug(
             `Session released for ${channelKey} after ${Math.round((Date.now() - waitStart) / 1000)}s`
@@ -1176,7 +1089,7 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       // Re-acquire session after wait (properly locks it this time)
-      const reacquired = sessionPool.getSession(channelKey);
+      const reacquired = sessionPool.getSession(runtimeSessionKey);
       if (reacquired.busy) {
         // Still busy after timeout - we never acquired the lock
         throw new Error(`Session for ${channelKey} timed out after ${maxWaitMs / 1000}s`);
@@ -1189,48 +1102,22 @@ This protects your credentials from being exposed in chat logs.`;
     let lockReleased = false;
     const releaseCliSessionLock = (): void => {
       if (!acquiredLock || lockReleased) return;
-      sessionPool.releaseSession(channelKey, cliSessionId);
+      sessionPool.releaseSession(runtimeSessionKey, cliSessionId);
       lockReleased = true;
     };
 
     try {
-      const agentContext = this.createAgentContext(message, session.id);
-      const reportCarryTarget: ReportCarryTarget | null =
-        agentContext.roleName === 'owner_console' && message.source === 'telegram'
-          ? { source: message.source, channelId: message.channelId }
-          : null;
-      const reportCarryChannelKey = reportCarryTarget
-        ? buildChannelKey(
-            reportCarryTarget.source,
-            laneChannelId(reportCarryTarget.channelId, lane)
-          )
-        : null;
-      const reportCarryPeek: ReportCarryPeek | null = reportCarryTarget
-        ? (this.reportCarry?.peek(reportCarryTarget) ?? null)
-        : null;
-      // TG-05: inbox lookup only AFTER the owner-console trust check
-      // (reportCarryTarget is non-null only for a verified owner turn). The
-      // snapshot is captured once; its exact ordered IDs are the only
-      // consumable set for this turn.
-      const ownerReportSnapshot = reportCarryTarget
-        ? (this.ownerReportInbox?.snapshot(reportCarryTarget) ?? null)
-        : null;
       const mediaInstructions = buildUploadedMediaInstructions(
         message,
         agentContext.role.allowedTools,
         agentContext.roleName === 'owner_console'
       );
-      // Save user message immediately for crash/refresh resilience. A
-      // report-consuming turn is provisional until its atomic final commit.
-      this.sessionStore.appendMessage(
-        session.id,
-        {
-          role: 'user',
-          content: [message.text, mediaInstructions].filter(Boolean).join('\n\n'),
-          timestamp: Date.now(),
-        },
-        ownerReportSnapshot ? { sourceMessageRef } : {}
-      );
+      // Save user message immediately for crash/refresh resilience.
+      this.sessionStore.appendMessage(session.id, {
+        role: 'user',
+        content: [message.text, mediaInstructions].filter(Boolean).join('\n\n'),
+        timestamp: Date.now(),
+      });
 
       let response = '';
       let context: InjectedContext = { prompt: '', decisions: [], hasContext: false };
@@ -1246,7 +1133,6 @@ This protects your credentials from being exposed in chat logs.`;
         // CONTINUE turns: Codex server retains full conversation via threadId,
         // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
         let systemPrompt: string;
-        let ownerReportHistoryPrompt = '';
         const historyContext = message.metadata?.historyContext;
 
         // Public turns never inspect private workspace rules, skills, or AGENTS files.
@@ -1261,7 +1147,13 @@ This protects your credentials from being exposed in chat logs.`;
         // TG-05: every main backend keeps its live conversation in a durable
         // runtime session. Only a genuinely new/replacement session rebuilds
         // bounded MAMA context.
-        const needsFullContext = isNewCliSession;
+        // The in-memory SessionPool is empty after a daemon restart, while a
+        // durable Codex thread may still be alive. Codex first attempts that
+        // thread with a minimal continuation; AgentLoop invokes the lazy full
+        // builder only when the registry says the thread is actually missing.
+        const lazyDurableResume =
+          this.config.backend === 'codex' && this.agentLoop.probesDurableSession === true;
+        const needsFullContext = isNewCliSession && !lazyDurableResume;
 
         // Persistent backends skip repeated retrieval after the first turn.
         context =
@@ -1294,10 +1186,12 @@ This protects your credentials from being exposed in chat logs.`;
               sessionStartupContext,
               agentContext,
               enhanced,
-              true,
+              !(
+                runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY &&
+                this.agentLoop.ownerRecoveryJournalEnabled === true
+              ),
               trelloAvailable
             );
-            ownerReportHistoryPrompt = this.buildOwnerReportHistoryPrompt(session);
           }
         }
 
@@ -1337,13 +1231,14 @@ This protects your credentials from being exposed in chat logs.`;
         // still exist and should be resumed. Keep prompt/context freshness separate
         // from backend conversation continuity.
         const shouldResumeBackend = this.config.backend === 'codex' ? true : shouldResume;
+        const usesContinuationContext = shouldResume || lazyDurableResume;
 
         // For resumed sessions: inject minimal context only
         // Persistent CLI keeps the process alive with full system prompt from initial request
         // Only inject per-message context (related decisions) to avoid context overflow
         const effectivePrompt = isPublicLane
           ? publicLaneBaseInstructions
-          : shouldResume
+          : usesContinuationContext
             ? this.buildMinimalResumePrompt(context.prompt, agentContext)
             : systemPrompt;
 
@@ -1369,8 +1264,6 @@ This protects your credentials from being exposed in chat logs.`;
             }
           }, streamFlushIntervalMs);
         }
-
-        let parentModelRunId: string | undefined;
 
         // Skill on-demand injection: prepend matched skill content to user message
         // (not system prompt — PersistentCLI can't update system prompt after creation)
@@ -1399,17 +1292,20 @@ This protects your credentials from being exposed in chat logs.`;
         const envelope = this.buildReactiveEnvelope(message, agentContext, memberEffectiveScope);
         const options: AgentLoopOptions = {
           systemPrompt: effectivePrompt,
-          ...(ownerReportHistoryPrompt ? { ownerReportHistoryPrompt } : {}),
           sessionPolicyFingerprint,
           ...(memberEffectiveScope ? { memberEffectiveScope } : {}),
           ...(memberEffectiveScope ? { memberScopeRequired: true } : {}),
           userId: message.userId,
           model: roleModel, // Role-specific model override
           maxTurns: roleMaxTurns, // Role-specific max turns
-          sessionKey: channelKey,
+          sessionKey: runtimeSessionKey,
+          ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY ? { lanePriority: 100 } : {}),
           source: message.source,
           channelId: message.channelId,
           agentContext,
+          ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY
+            ? { sessionPolicyRole: ownerRuntimeRole }
+            : {}),
           resumeSession: shouldResumeBackend,
           cliSessionId, // Pass CLI session ID to avoid double-locking
           // AgentLoop may replace a stale backend session while this request still
@@ -1421,6 +1317,9 @@ This protects your credentials from being exposed in chat logs.`;
           envelope,
           sourceTurnId,
           sourceMessageRef,
+          ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY
+            ? { ownerJournalPrompt: message.text, ownerJournalTrust: 'owner' as const }
+            : {}),
           // The owner's message is what caused whatever this turn changes, and the router
           // knows it BEFORE the agent runs - the same shape as a reconcile work order
           // carrying its delta batch. Without this the chat lane had no cause wire at all:
@@ -1433,7 +1332,7 @@ This protects your credentials from being exposed in chat logs.`;
           // citation this ledger exists to refuse.
           ...(causeFromOwnerMessage(sourceTurnId, sourceMessageRef) ?? {}),
         };
-        if (shouldResume) {
+        if (shouldResumeBackend) {
           options.freshSessionSystemPrompt = async () => {
             if (isPublicLane) {
               return memberEffectiveScope
@@ -1454,32 +1353,25 @@ This protects your credentials from being exposed in chat logs.`;
               sessionStartupContext,
               agentContext,
               enhanced,
-              true,
+              !(
+                runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY &&
+                this.agentLoop.ownerRecoveryJournalEnabled === true
+              ),
               trelloAvailable
             );
           };
-          if (!isPublicLane) {
-            options.freshSessionOwnerReportHistoryPrompt = () =>
-              this.buildOwnerReportHistoryPrompt(session);
-          }
         }
 
-        if (shouldResume) {
+        if (usesContinuationContext) {
           logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
         } else {
           logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
         }
 
-        // TG-05/TG-06: carry is captured once before the model call and travels
-        // only in this turn's user message, never in a rebuilt system prompt.
-        const carryPrefix = !isPublicLane ? (reportCarryPeek?.prefix ?? '') : '';
-        const inboxPrefix =
-          !isPublicLane && ownerReportSnapshot ? `${ownerReportSnapshot.text}\n\n` : '';
-
         try {
           if (isPublicLane) {
             memoryPrefix = '';
-          } else if (shouldResume) {
+          } else if (usesContinuationContext) {
             // Per-channel notices PLUS the operator broadcast key: host-code
             // alarms (workorder failures) have no conversation channel at
             // enqueue time - without the broadcast read they dead-letter
@@ -1508,7 +1400,7 @@ This protects your credentials from being exposed in chat logs.`;
           logger.warn(
             `[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`
           );
-          if (!isPublicLane && shouldResume) {
+          if (!isPublicLane && usesContinuationContext) {
             try {
               memoryPrefix = await this.getPerTurnMemoryPrefix(message);
             } catch (fallbackErr) {
@@ -1568,7 +1460,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}`;
+          const effectiveMessageText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1606,56 +1498,27 @@ This protects your credentials from being exposed in chat logs.`;
           const turnStart = Date.now();
           const result = await this.agentLoop.runWithContent(contentBlocks, options);
           response = result.response;
-          parentModelRunId = result.modelRunId ?? undefined;
           completedModelRunId = result.modelRunId ?? completedModelRunId;
           if (result.modelRunProvenance === 'commit_failed') {
             completedProvenanceReason = 'commit_failed';
           }
+          completedOwnerJournalProvenance = result.ownerJournalProvenance;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${inboxPrefix}${carryPrefix}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}`;
+          const effectiveText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
-          parentModelRunId = result.modelRunId ?? undefined;
           completedModelRunId = result.modelRunId ?? completedModelRunId;
           if (result.modelRunProvenance === 'commit_failed') {
             completedProvenanceReason = 'commit_failed';
           }
+          completedOwnerJournalProvenance = result.ownerJournalProvenance;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         }
 
-        // Auto-extract facts from conversation (fire-and-forget, non-blocking).
-        // Dual-save dedup: when the agent ALREADY persisted memory during this
-        // turn (gateway mama_save in the reasoning header), the extractor safety
-        // net would save the same instruction twice (proven live 2026-07-17:
-        // decision_* + mem_* duplicates for one directive). The in-turn save is
-        // the agent's judgment; the net exists for turns where it did not act.
-        const agentSavedThisTurn = agentSavedInTurn(response);
-        if (agentSavedThisTurn) {
-          logger.info('[memory-agent] extraction skipped - agent saved in-turn (dual-save dedup)');
-        }
-        if (!isPublicLane && response && message.text && !agentSavedThisTurn) {
-          const rawAssistantText = stripGatewayDecorations(response);
-          void (async () => {
-            try {
-              await this.triggerMemoryAgent(
-                channelKey,
-                message.text,
-                rawAssistantText,
-                message,
-                sourceTurnId,
-                sourceMessageRef,
-                parentModelRunId
-              );
-            } catch {
-              /* non-fatal */
-            }
-          })();
-        }
-
-        if (shouldResume && pendingNotices) {
+        if (usesContinuationContext && pendingNotices) {
           // Drain each queue by ITS OWN peeked count - notices enqueued while
           // the agent run was in flight stay for the next turn (review N2).
           if (pendingChannelNoticeCount > 0) {
@@ -1690,7 +1553,7 @@ This protects your credentials from being exposed in chat logs.`;
 
         if (isCriticalError) {
           logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
-          sessionPool.invalidateSession(channelKey, cliSessionId);
+          sessionPool.invalidateSession(runtimeSessionKey, cliSessionId);
         }
 
         // Release session lock before re-throwing
@@ -1740,36 +1603,15 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       // 6. Update session context — finalize assistant response
-      if (ownerReportSnapshot) {
-        // TG-05 (design Decision 6): the final turn, its receipt, and the
-        // consumption marks commit in ONE SQLite transaction. A failure here
-        // MUST surface - no report caller may swallow persistence failure and
-        // report success.
-        this.sessionStore.finalizeTurnWithReportReceipt({
-          sessionId: session.id,
-          sourceMessageRef,
-          finalResponse: response,
-          committedAtIso: new Date().toISOString(),
-          receipt: {
-            deliveryIds: ownerReportSnapshot.deliveryIds,
-            projectionVersion: ownerReportSnapshot.version,
-            projectionText: ownerReportSnapshot.text,
-            projectionHash: ownerReportSnapshot.projectionHash,
-          },
+      const persisted =
+        this.sessionStore.flushStreamingResponse(session.id, response) ||
+        this.sessionStore.appendMessage(session.id, {
+          role: 'assistant',
+          content: response,
+          timestamp: Date.now(),
         });
-      } else {
-        // Use flushStreamingResponse first (updates existing turn from periodic flush),
-        // fall back to appendMessage if no turn exists yet (non-streaming path)
-        const persisted =
-          this.sessionStore.flushStreamingResponse(session.id, response) ||
-          this.sessionStore.appendMessage(session.id, {
-            role: 'assistant',
-            content: response,
-            timestamp: Date.now(),
-          });
-        if (!persisted) {
-          throw new Error('Unable to persist final assistant response');
-        }
+      if (!persisted) {
+        throw new Error('Unable to persist final assistant response');
       }
       if (
         (message.principal?.lane ?? 'owner') !== 'public' &&
@@ -1786,23 +1628,6 @@ This protects your credentials from being exposed in chat logs.`;
           );
         });
       }
-      if (reportCarryPeek && reportCarryTarget && reportCarryChannelKey) {
-        try {
-          this.reportCarry?.acknowledge({
-            deliveryId: reportCarryPeek.deliveryId,
-            target: reportCarryTarget,
-            consumingChannelKey: reportCarryChannelKey,
-            consumedAtIso: new Date().toISOString(),
-          });
-        } catch (error) {
-          logger.warn(
-            `[report-carry] acknowledgement failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-
       // Release session lock AFTER final persistence to prevent out-of-order turns
       releaseCliSessionLock();
 
@@ -1820,6 +1645,14 @@ This protects your credentials from being exposed in chat logs.`;
           : { status: 'unavailable' as const, reason: completedProvenanceReason },
         sourceTurnId,
         sourceMessageRef,
+        ...(completedOwnerJournalProvenance
+          ? {
+              recoveryProvenance: {
+                status: 'unavailable' as const,
+                reason: 'journal_commit_failed' as const,
+              },
+            }
+          : {}),
       };
     } finally {
       // Session persistence, media post-processing, and history writes can all
@@ -2002,26 +1835,6 @@ ${historyContext}
     }
 
     return this.projectPrivatePromptText(prompt);
-  }
-
-  /** TG-05 Decision 7: exact receipt history travels as a separate budget layer. */
-  private buildOwnerReportHistoryPrompt(session: Session): string {
-    if (!this.ownerReportInbox || session.source !== 'telegram') {
-      return '';
-    }
-    const restoredTurns = this.sessionStore
-      .getHistory(session.id)
-      .filter((turn) => turn.state !== 'provisional')
-      .slice(-5);
-    const reportHistory = this.ownerReportInbox.historyBlock(
-      { source: 'telegram', channelId: session.channelId },
-      restoredTurns
-    );
-    if (!reportHistory) {
-      return '';
-    }
-    logger.info(`Prepared ${reportHistory.length} chars of owner-report history (new session)`);
-    return `## Previously Consumed Owner Reports (reference only)\n${reportHistory}`;
   }
 
   private buildSessionPolicyFingerprint(
@@ -2238,170 +2051,10 @@ ${historyContext}
     return this.sessionStore.updateChannelName(source, channelId, channelName);
   }
 
-  /**
-   * Trigger memory agent to extract facts (fire-and-forget).
-   * Uses AgentProcessManager persistent process.
-   */
-  private static readonly EXTRACT_COOLDOWN_MS = 30_000;
-  private static readonly MIN_CONTENT_LENGTH = 100;
-  private static readonly MAX_CONTENT_LENGTH = 10_000;
-
   private getRuntimeProjectId(): string | undefined {
     return process.env.MAMA_WORKSPACE || process.cwd();
   }
 
-  private buildMemoryAuditPrompt(job: MemoryAuditJob): string {
-    const escapeBackticks = (s: string) => s.replace(/```/g, '\\`\\`\\`');
-    const scopeContext = job.scopeContext.map((scope) => `${scope.kind}:${scope.id}`).join(', ');
-    const candidateLines = (job.candidates ?? []).map((candidate) => {
-      const topic = candidate.topicHint ? ` topic=${escapeBackticks(candidate.topicHint)}` : '';
-      return `- kind=${candidate.kind}${topic} confidence=${candidate.confidence} summary=${JSON.stringify(candidate.summary)}`;
-    });
-    const safeConversation = escapeBackticks(job.conversation);
-    return `Memory scopes: ${scopeContext}
-Conversation:
-\`\`\`conversation
-${safeConversation}
-\`\`\`
-
-Candidates:
-${candidateLines.length > 0 ? candidateLines.join('\n') : '- none'}
-
-INSTRUCTION:
-- Call mama_search exactly once first.
-- If the conversation contains a decision, preference, fact, lesson, or superseding update, call mama_save exactly once.
-- If nothing should be saved, do not call mama_save.
-- Do not call resource discovery tools.
-- Do not ask follow-up questions.
-- After tool work finishes, respond with exactly DONE or SKIP.`;
-  }
-
-  private classifyMemoryAuditResponse(response: string): MemoryAuditAckLike {
-    const normalized = response.trim().toLowerCase();
-
-    if (normalized.length === 0) {
-      return {
-        status: 'skipped',
-        action: 'no_op',
-        event_ids: [],
-        reason: 'memory agent returned an empty response',
-      };
-    }
-
-    if (
-      normalized.includes('nothing worth saving') ||
-      normalized.includes('nothing is worth saving') ||
-      normalized.includes('no-op') ||
-      normalized.includes('no op') ||
-      normalized.includes('skip')
-    ) {
-      return {
-        status: 'skipped',
-        action: 'no_op',
-        event_ids: [],
-        reason: response,
-      };
-    }
-
-    if (normalized === 'failed' || normalized.includes('failed')) {
-      return {
-        status: 'failed',
-        action: 'no_op',
-        event_ids: [],
-        reason: response,
-      };
-    }
-
-    if (normalized === 'done' || normalized === 'applied') {
-      return {
-        status: 'applied',
-        action: 'save',
-        event_ids: [],
-        reason: response,
-      };
-    }
-
-    return {
-      status: 'skipped',
-      action: 'no_op',
-      event_ids: [],
-      reason: response,
-    };
-  }
-
-  private recordMemoryAuditAck(
-    ack: MemoryAuditAckLike,
-    topic: string,
-    channelKey?: string,
-    displayTopic?: string,
-    deltaKey?: string
-  ): void {
-    const timestamp = Date.now();
-
-    if (ack.status === 'applied') {
-      this.memoryAgentStats.acksApplied++;
-      this.memoryAgentStats.factsSaved++;
-
-      // Fire-and-forget save confirmation to originating channel
-      if (this.gatewayRegistry && channelKey) {
-        const [source, ...channelParts] = channelKey.split(':');
-        const channelId = channelParts.join(':');
-        const confirmMsg = `✅ Memory saved: ${displayTopic}`;
-        this.gatewayRegistry.sendMessage(source, channelId, confirmMsg).catch((err) => {
-          logger.warn(
-            `[memory-feedback] Failed to send confirmation: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
-    } else if (ack.status === 'skipped') {
-      this.memoryAgentStats.acksSkipped++;
-    } else {
-      this.memoryAgentStats.acksFailed++;
-      logger.warn(`[memory-agent] Audit failed: ${ack.reason ?? 'unknown failure'}`);
-      this.memoryNoticeQueue.enqueue(channelKey ?? 'memory-agent:shared', {
-        type: 'memory_warning',
-        severity: 'high',
-        summary: 'memory audit failed',
-        evidence: [],
-        recommended_action: 'consult_memory',
-        relevant_memories: [],
-      });
-    }
-
-    this.memoryAgentStats.recentExtractions.unshift({
-      topic,
-      timestamp,
-      channelKey,
-      status: ack.status,
-    });
-    this.memoryAgentStats.recentExtractions = this.memoryAgentStats.recentExtractions.slice(0, 10);
-    this.memoryAgentStats.lastExtraction = timestamp;
-
-    if (ack.status === 'applied' && channelKey && this.mamaApi.upsertChannelSummary) {
-      const summaryMarkdown = [
-        '## Channel Summary',
-        `- Last memory update: ${displayTopic ?? topic}`,
-        `- Status: ${ack.action}`,
-        ack.reason ? `- Notes: ${ack.reason.slice(0, 240)}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      void this.mamaApi
-        .upsertChannelSummary({
-          channelKey,
-          summaryMarkdown,
-          deltaHash: `${deltaKey ?? topic}:${ack.action}`,
-        })
-        .catch((error) => {
-          logger.warn(
-            `[channel-summary] Failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-        });
-    }
-  }
-
-  /** Classify a committed owner message and save a policy:/lesson: row when it carries one. */
   private async observeOwnerLearning(message: NormalizedMessage): Promise<void> {
     if (!this.mamaApi.saveMemory || !this.mamaApi.queryRelevantTruth) {
       return;
@@ -2505,157 +2158,6 @@ INSTRUCTION:
     }
 
     return `[MAMA Memory]\n${context.prompt}\n[/MAMA Memory]\n\n`;
-  }
-
-  private async triggerMemoryAgent(
-    channelKey: string,
-    userText: string,
-    botResponse: string,
-    message?: NormalizedMessage,
-    sourceTurnId?: string,
-    _sourceMessageRef?: string,
-    parentModelRunId?: string
-  ): Promise<void> {
-    const memoryAuditQueue = this.memoryAuditQueue;
-    if (!this.memoryAgentProcessManager || !memoryAuditQueue) {
-      return;
-    }
-
-    const now = Date.now();
-    const source = message?.source ?? 'memory-agent';
-    const channelId = message?.channelId ?? 'shared';
-    const userId = message?.userId;
-    const candidates = extractSaveCandidates({
-      userText,
-      gatewayWrapped: message?.metadata?.untrustedWrapped === true,
-      botResponse,
-      channelKey,
-      source,
-      channelId,
-      userId,
-      projectId: this.getRuntimeProjectId(),
-      createdAt: now,
-    });
-    const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
-    const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
-    // The cooldown rate-limits memory-agent invocations for ORDINARY chatter.
-    // Candidate-bearing turns are owner directives/decisions - discarding one
-    // because another arrived within 30s loses real instructions, so they
-    // bypass the cooldown (bounded by how fast an owner can type directives).
-    if (candidates.length === 0 && now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
-      return;
-    }
-
-    let content = `User: ${userText}\nAssistant: ${botResponse}`;
-    if (content.length < MessageRouter.MIN_CONTENT_LENGTH && candidates.length === 0) {
-      return;
-    }
-    if (content.length > MessageRouter.MAX_CONTENT_LENGTH) {
-      content = content.substring(0, MessageRouter.MAX_CONTENT_LENGTH);
-    }
-
-    if (candidates.length === 0) return;
-
-    this.memoryAuditCooldowns.set(cooldownKey, now);
-
-    // Evict stale cooldown entries (older than 2x cooldown window)
-    if (this.memoryAuditCooldowns.size > 100) {
-      const staleThreshold = now - MessageRouter.EXTRACT_COOLDOWN_MS * 2;
-      for (const [key, ts] of this.memoryAuditCooldowns) {
-        if (ts < staleThreshold) this.memoryAuditCooldowns.delete(key);
-      }
-    }
-
-    this.memoryAgentStats.turnsObserved++;
-    this.memoryAgentStats.candidatesDetected += candidates.length;
-    this.memoryAgentStats.factsExtracted += candidates.length;
-
-    const scopes = deriveMemoryScopes({
-      source,
-      channelId,
-      userId,
-      projectId: this.getRuntimeProjectId(),
-    });
-    const job: MemoryAuditJob = {
-      turnId: sourceTurnId ?? `turn_${now}`,
-      channelKey,
-      source,
-      channelId,
-      userId,
-      parentModelRunId,
-      scopeContext: scopes,
-      conversation: content,
-      candidates,
-    };
-    const rawTopic = userText.slice(0, 40).toLowerCase();
-    const asciiTopic = rawTopic.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    const topic =
-      asciiTopic || `topic_${createHash('sha256').update(rawTopic).digest('hex').slice(0, 8)}`;
-    const displayTopic = candidates[0]?.topicHint || userText.slice(0, 80).trim() || 'memory_audit';
-    const deltaKeySource = candidates[0]?.id || userText;
-    const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
-
-    const memoryStart = Date.now();
-    // Start validation session for memory agent
-    let memValSession: { id: string } | null = null;
-    if (this.validationService && this.sessionsDb) {
-      try {
-        const ver = getLatestVersion(this.sessionsDb, 'memory');
-        memValSession = this.validationService.startSession('memory', ver?.version ?? 0, 'audit', {
-          goal: `Extract: ${displayTopic.slice(0, 100)}`,
-        });
-      } catch {
-        /* non-fatal */
-      }
-    }
-
-    void (async () => {
-      try {
-        const ack = await memoryAuditQueue.enqueue(job);
-        this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
-        const dur = Date.now() - memoryStart;
-        this.logAgentActivity(
-          'memory',
-          'task_complete',
-          displayTopic.slice(0, 200),
-          undefined,
-          dur
-        );
-        if (memValSession && this.validationService) {
-          try {
-            this.validationService.finalizeSession(memValSession.id, {
-              execution_status: 'completed',
-              metrics: { duration_ms: dur },
-            });
-          } catch {
-            /* non-fatal */
-          }
-        }
-      } catch (err) {
-        this.memoryAgentStats.acksFailed++;
-        const dur = Date.now() - memoryStart;
-        this.logAgentActivity(
-          'memory',
-          'task_error',
-          displayTopic.slice(0, 200),
-          undefined,
-          dur,
-          err instanceof Error ? err.message : String(err)
-        );
-        if (memValSession && this.validationService) {
-          try {
-            this.validationService.finalizeSession(memValSession.id, {
-              execution_status: 'failed',
-              error_message: err instanceof Error ? err.message : String(err),
-              metrics: { duration_ms: dur },
-            });
-          } catch {
-            /* non-fatal */
-          }
-        }
-        logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    })();
   }
 
   // ── Activity Logging (shared by MAMA frontdoor + memory agent) ──────

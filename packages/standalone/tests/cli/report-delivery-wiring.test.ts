@@ -41,7 +41,7 @@ describe('owner-report delivery wiring (structural)', () => {
     const start = readFileSync(join(SRC, 'cli/commands/start.ts'), 'utf8');
     const constructions = start.match(/new TelegramReportContextStore\(/g) ?? [];
     expect(constructions).toHaveLength(1);
-    expect(start).toContain('new TelegramReportContextStore(db,');
+    expect(start).toContain('new TelegramReportContextStore(db)');
   });
 
   it('reconciles ledger pins from SQLite truth during startup assembly', () => {

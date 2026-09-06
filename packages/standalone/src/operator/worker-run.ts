@@ -1,10 +1,10 @@
 /**
  * workerRun - the operator's worker primitive (plan: owner-console v6 S0-T1).
  *
- * A worker is NOT a standing agent identity and NOT a delegate/native-Task
- * subagent: it is a briefed, FRESH-session lane run - the same substrate the
- * report lane already uses (LaneManager serialization, loud failure, result
- * returned to the caller, gateway calls audited).
+ * A maintenance work order is a bounded stimulus for the standing owner agent.
+ * The maintenance kind never creates another model identity. If specialist or
+ * parallel work is useful, the owner agent creates native subagents itself and
+ * remains responsible for their result.
  *
  * CALLER CONTRACT (deadlock seal):
  * - Callers must be HOST CODE running OUTSIDE any lane (scheduler ticks,
@@ -14,27 +14,21 @@
  *   slot for its whole duration, so a nested awaited lane run can queue
  *   behind its own parent forever.
  *
- * Concurrency: same-kind runs serialize on the `operator:worker:<kind>`
- * session lane; ALL operator work (reports + workers) serializes on the
- * 'operator' global lane, which is separate from chat 'main' so long worker
- * runs never block owner replies.
+ * Concurrency: every owner stimulus serializes on the one owner runtime lane.
  */
 
 import { createHash } from 'node:crypto';
 import type { AgentLoopOptions, ContentBlock } from '../agent/types.js';
-import type { BackendType } from '../agent/model-runner.js';
-import type { WorkOrderKind } from './task-ledger.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 import { projectConsoleBriefForPrompt } from './console-brief.js';
 import { stripMarkedPrivatePromptOverlays } from '../connectors/private-prompt-overlay.js';
-import { UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION } from '../utils/untrusted-content.js';
+import { OWNER_RUNTIME_SESSION_KEY } from './owner-runtime.js';
 
 /** Identity fields workerRun owns - never overridable by callers (plan E7/G3). */
 export interface WorkerIdentityOptions {
   sessionKey: string;
   source: string;
   channelId: string;
-  freshSession: boolean;
 }
 
 export type WorkerRunnerOptions = WorkerIdentityOptions &
@@ -53,6 +47,7 @@ export interface WorkerRunner {
     totalUsage?: { input_tokens: number; output_tokens: number };
     /** Host-side stop on the per-run token budget (agent-loop.ts). */
     stoppedBy?: 'budget';
+    ownerJournalProvenance?: 'commit_failed';
   }>;
 }
 
@@ -65,6 +60,8 @@ export interface WorkerRunOutput {
   /** input+output tokens of the run; undefined when the runner reported no usage
    *  (never a fabricated 0 - absence must stay distinguishable from "free"). */
   tokensUsed?: number;
+  /** The work completed, but bounded owner-runtime recovery did not persist. */
+  ownerJournalProvenance?: 'commit_failed';
 }
 
 export interface WorkerRunInput {
@@ -117,68 +114,11 @@ export function resolveWorkerRequestTimeoutMs(env: NodeJS.ProcessEnv = process.e
   return seconds * 1000;
 }
 
-/**
- * Worker-specific system prompt (shadow-gate finding §8.2): the spawn-default
- * persona prompt carries code-act sandbox instructions, so worker tool calls
- * went through POST /api/code-act - a server-side surface the per-run
- * execution-context seam (envelope, capture override) cannot reach. A custom
- * systemPrompt REPLACES the persona layers entirely (agent-loop.ts:484-486),
- * so Claude workers advertise only the text-gateway syntax while Codex workers
- * use the injected native host tools. Both routes reach the same in-process
- * gateway executor where the per-run seam works.
- */
-export function buildWorkerSystemPrompt(
-  gatewayToolsPrompt: string,
-  backend: BackendType = 'claude',
-  kind?: WorkOrderKind
-): string {
-  const toolInstructions =
-    backend === 'codex'
-      ? [
-          'Follow the brief in the user message. Use the single injected native `code_act` tool.',
-          'Pass JavaScript to code_act and call allowlisted gateway functions only inside its sandbox;',
-          'never call agent_notices, task_list, or another gateway function as a top-level native tool.',
-        ]
-      : backend === 'cline'
-        ? [
-            'Follow the brief in the user message. Use the injected mcp__code-act__code_act Hub tool.',
-            'Write JavaScript that calls only the injected TypeScript-declared gateway functions;',
-            'never emit fenced tool_call JSON or pretend a tool ran in prose.',
-          ]
-        : [
-            'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
-            'blocks documented below - no other execution mechanism exists in this session.',
-          ];
-  return [
-    'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
-    ...toolInstructions,
-    UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
-    // Board DATA boundaries only. The judgment itself (what is the same work, what is
-    // finished, what to ask the owner) belongs to the turn section; a system prompt that
-    // forbade it while the turn section required it (0.46.0) left the model a coin toss.
-    ...(kind === 'board'
-      ? [
-          '',
-          'Board data boundaries (non-negotiable):',
-          '- task_list/task_update/task_reclassify is YOUR task board: you maintain its existing rows, and the pipeline projection is rendered from them. task_create is blocked on unattended turns; connector records stay evidence.',
-          '- Trello, calendar and channel data are external evidence. Read them through the read tools this run offers (the trello_* readers; context_compile for connector messages and the polled delta) and keep the stores apart in what you write: say which store a fact came from, and never present one store as another.',
-          '- An external status is evidence for your judgment, not a value you copy: decide the ledger status from what the sources show, and record why and where you saw it.',
-          '- Temporal fact: task_list.temporal_state is the canonical time category; render it separately. Overdue is a time fact, not a lifecycle status.',
-          '- System condition: reconciliation retrying or authority unavailable is not task lifecycle state.',
-          '- Set due_at only from trusted, unambiguous time and time zone evidence; otherwise retain date-only precision.',
-          '- Absence from a snapshot is not evidence: a card missing from a partial Trello read or an event gone from a calendar window proves nothing by itself.',
-        ]
-      : []),
-    // Nobody replies inside a scheduled run. The route to the owner is the turn section's
-    // (the board writes the decisions slot; other turns state it in the final message);
-    // no unattended turn holds a send, so the prompt must not imply one.
-    'No one replies inside this run: never wait for an answer. What needs the owner goes where your turn section says, and the run ends with a short final message.',
-    ...(backend === 'claude' ? ['', gatewayToolsPrompt.trim()] : []),
-  ].join('\n');
-}
-
 export function buildWorkerSessionKey(kind: string): string {
-  return `operator:worker:${kind}`;
+  if (!KIND_PATTERN.test(kind)) {
+    throw new Error(`[worker-run] invalid worker kind "${kind}" (expected kebab-case)`);
+  }
+  return OWNER_RUNTIME_SESSION_KEY;
 }
 
 /** Attach a claimed system-row id after all caller-provided options. */
@@ -193,7 +133,7 @@ export function attachWorkOrderAttemptContext(
 }
 
 /**
- * Run a briefed worker on its own operator lane and return its output.
+ * Submit a briefed maintenance stimulus to the standing owner runtime.
  * Throws loudly on invalid input, runner failure, or an empty response -
  * a worker never ends silently.
  */
@@ -211,8 +151,12 @@ export async function workerRun(
     throw new Error(`[worker-run] empty input for worker kind "${kind}"`);
   }
 
-  const { workOrderBriefProjectionPolicy: rawBriefProjectionPolicy, ...forwardedRunOptions } =
-    runOptions ?? {};
+  const {
+    workOrderBriefProjectionPolicy: rawBriefProjectionPolicy,
+    freshSession: _discardedFreshSession,
+    systemPrompt: _discardedWorkerPersona,
+    ...forwardedRunOptions
+  } = runOptions ?? {};
   const briefProjectionPolicy = rawBriefProjectionPolicy as PrivateConnectorPolicy | undefined;
   // One brief for every kind: the private-connector projection is the guarantee that
   // matters here, and it no longer depends on which kind is running.
@@ -236,13 +180,9 @@ export async function workerRun(
     // runOptions: identity fields below always win (plan E7/G3).
     ...forwardedRunOptions,
     sessionKey: buildWorkerSessionKey(kind),
-    // freshSession pool reset keys on source+channelId (agent-loop.ts) -
-    // both MUST be explicit per call or another lane's pool entry gets reset.
     source: 'operator',
     channelId: `worker:${kind}`,
-    // Workers are stateless: continuity lives in the brief + artifacts,
-    // never in session accumulation (owner principle: session = cache).
-    freshSession: true,
+    ownerJournalPrompt: `Maintenance ${kind}: ${input.trim()}`,
   });
 
   const response = result.response?.trim();
@@ -256,7 +196,11 @@ export async function workerRun(
       : undefined;
   const briefHash = createHash('sha256').update(brief).digest('hex').slice(0, 16);
   const stopped = result.stoppedBy === 'budget' ? { stoppedBy: 'budget' as const } : {};
+  const journal =
+    result.ownerJournalProvenance === 'commit_failed'
+      ? { ownerJournalProvenance: 'commit_failed' as const }
+      : {};
   return tokensUsed === undefined
-    ? { response, briefHash, ...stopped }
-    : { response, tokensUsed, briefHash, ...stopped };
+    ? { response, briefHash, ...stopped, ...journal }
+    : { response, tokensUsed, briefHash, ...stopped, ...journal };
 }

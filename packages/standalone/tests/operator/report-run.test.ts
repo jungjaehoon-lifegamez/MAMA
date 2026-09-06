@@ -1,9 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import type { OwnerReportContextV1 } from '../../src/operator/report-context.js';
-import {
-  createPersonaReportAsk,
-  OPERATOR_REPORT_SESSION_KEY,
-} from '../../src/operator/report-run.js';
+import { describe, it, expect, vi } from 'vitest';
+import { createPersonaReportAsk } from '../../src/operator/report-run.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 
 let nextId = 0;
 function exchange(name: string, result: { error?: boolean; body?: string } = {}) {
@@ -24,68 +21,12 @@ function exchange(name: string, result: { error?: boolean; body?: string } = {})
   ];
 }
 
-function ownerReportContext(): OwnerReportContextV1 {
-  return {
-    schemaVersion: 'mama.owner-report-context/v1',
-    observedAt: '2026-09-02T03:04:05.000Z',
-    windowEvidence: {
-      start: '2026-09-01T03:04:05.000Z',
-      end: '2026-09-02T03:04:05.000Z',
-      channelCount: 1,
-      messageCount: 2,
-      channels: [],
-      triggerActivity: [],
-    },
-    sources: {
-      claims: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
-      tasks: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
-      trello: {
-        state: 'partial',
-        observedAt: '2026-09-02T03:04:00.000Z',
-        reason: 'trello_snapshot_incomplete',
-      },
-      changes: { state: 'complete', observedAt: '2026-09-02T03:04:05.000Z' },
-    },
-    packet: { bytes: 2048, truncated: false },
-    taskCoverage: { total: 3, returned: 2, truncated: true },
-    currentClaims: [],
-    tasks: [],
-    trello: {
-      observedAt: '2026-09-02T03:04:00.000Z',
-      complete: false,
-      truncated: false,
-      boards: [],
-      columns: [],
-    },
-    correlations: {
-      coverage: {
-        total: 2,
-        matched: 1,
-        unmatched: 0,
-        ambiguous: 0,
-        historical_only: 1,
-        not_applicable: 0,
-      },
-      rows: [],
-    },
-    changes: {
-      since: '2026-09-01T03:04:05.000Z',
-      total: 4,
-      returned: 4,
-      coverage: { attributed: 3, unattributed: 1 },
-      rows: [],
-    },
-    caveats: ['trello_snapshot_incomplete'],
-    operationalIssues: [],
-  };
-}
-
 describe('createPersonaReportAsk (M3-T4)', () => {
-  it('exposes a stable dedicated session key', () => {
-    expect(OPERATOR_REPORT_SESSION_KEY).toBe('operator:report');
+  it('uses the one durable owner runtime key', () => {
+    expect(OWNER_RUNTIME_SESSION_KEY).toBe('owner:runtime');
   });
 
-  it('TG-05 binds the packet SHA to one fresh full-report model turn', async () => {
+  it('TG-05 carries the scheduled occurrence into the owner runtime turn', async () => {
     const calls: Array<{ prompt: string; sourceMessageRef?: string }> = [];
     const ask = createPersonaReportAsk({
       run: async (prompt, sourceMessageRef) => {
@@ -97,20 +38,19 @@ describe('createPersonaReportAsk (M3-T4)', () => {
 
     const output = await ask.full({
       prompt: 'packet prompt',
-      context: ownerReportContext(),
-      contextSha256: 'a'.repeat(64),
+      sourceMessageRef: 'owner-report:scheduled-1',
     });
 
     expect(output).toBe('grounded report');
     expect(calls).toEqual([
       {
         prompt: 'packet prompt',
-        sourceMessageRef: `owner-report-context:${'a'.repeat(64)}`,
+        sourceMessageRef: 'owner-report:scheduled-1',
       },
     ]);
   });
 
-  it('TG-05 refuses a full report that required more than one model turn', async () => {
+  it('TG-05 permits progressive tool rounds in the same owner turn', async () => {
     const ask = createPersonaReportAsk({
       run: async () => ({ response: 'late report', history: [], turns: 2 }),
       log: () => {},
@@ -118,11 +58,10 @@ describe('createPersonaReportAsk (M3-T4)', () => {
 
     await expect(
       ask.full({
-        prompt: 'packet prompt',
-        context: ownerReportContext(),
-        contextSha256: 'b'.repeat(64),
+        prompt: 'progressive report prompt',
+        sourceMessageRef: 'owner-report:scheduled-2',
       })
-    ).rejects.toThrow('exactly one model turn');
+    ).resolves.toBe('late report');
   });
 
   it('TG-06 does not recover an empty full response from an earlier assistant turn', async () => {
@@ -138,13 +77,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     await expect(
       ask.full({
         prompt: 'packet prompt',
-        context: ownerReportContext(),
-        contextSha256: 'c'.repeat(64),
       })
     ).rejects.toThrow('empty report response');
   });
 
-  it('TG-03/TG-04 audits only packet schema, source states, counts, coverage, and completeness', async () => {
+  it('TG-03/TG-04 does not log or bind a bulk evidence packet', async () => {
     const logs: string[] = [];
     const ask = createPersonaReportAsk({
       run: async () => ({ response: 'report', history: [], turns: 1 }),
@@ -152,19 +89,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     });
 
     await ask.full({
-      prompt: 'packet prompt',
-      context: ownerReportContext(),
-      contextSha256: 'd'.repeat(64),
+      prompt: 'progressive prompt',
+      sourceMessageRef: 'owner-report:scheduled-3',
     });
 
-    expect(logs).toEqual([expect.stringContaining('schema=mama.owner-report-context/v1')]);
-    expect(logs[0]).toContain('trello=partial');
-    expect(logs[0]).toContain('messages=2');
-    expect(logs[0]).toContain('tasks=2/3');
-    expect(logs[0]).toContain('correlations=2');
-    expect(logs[0]).toContain('changes=4/4');
-    expect(logs[0]).not.toContain('trello_snapshot_incomplete');
-    expect(logs.join('\n')).not.toContain('gateway gather tools');
+    expect(logs).toEqual([]);
   });
   // The boundary used to return prose and drop everything else, so a delivered report
   // could not be traced to the run that wrote it - the same defect the gateway turn seam
@@ -207,6 +136,22 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       { status: 'unavailable', reason: 'no_run_handle' },
       { status: 'unavailable', reason: 'commit_failed' },
     ]);
+  });
+
+  it('surfaces owner-runtime recovery failure without discarding the report', async () => {
+    const onRecoveryFailure = vi.fn();
+    const ask = createPersonaReportAsk({
+      run: async () => ({
+        response: 'body',
+        history: [],
+        ownerJournalProvenance: 'commit_failed',
+      }),
+      log: () => {},
+      onRecoveryFailure,
+    });
+
+    await expect(ask('compose')).resolves.toBe('body');
+    expect(onRecoveryFailure).toHaveBeenCalledOnce();
   });
 
   it('does not infer ordinary report quality from tool history', async () => {

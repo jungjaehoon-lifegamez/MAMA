@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 
-describe('Story BOUNDARY-6: stateless reports/anchor', () => {
+describe('Story BOUNDARY-6: explicit stateless runtime', () => {
   describe('AC #1: freshSession resets the pool session instead of reusing it', () => {
     it('resets the pool session instead of reusing it', async () => {
       const loop = new AgentLoop({} as never, { toolsConfig: { gateway: ['*'], mcp: [] } });
@@ -27,7 +27,7 @@ describe('Story BOUNDARY-6: stateless reports/anchor', () => {
 
       await loop.runWithContent([{ type: 'text', text: 'report' }], {
         source: 'operator',
-        channelId: 'report',
+        channelId: 'stateless-test',
         modelRunId: 'test-run',
         freshSession: true,
       });

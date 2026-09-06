@@ -22,6 +22,37 @@ const silentLogger = {
 };
 
 describe('LaneManager', () => {
+  it('runs a queued owner message before older background work in the same session', async () => {
+    const manager = new LaneManager();
+    const order: string[] = [];
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    const active = manager.enqueue('session:owner:runtime', async () => {
+      order.push('active-background');
+      await activeGate;
+    });
+    const background = manager.enqueue(
+      'session:owner:runtime',
+      async () => {
+        order.push('queued-background');
+      },
+      { priority: 0 }
+    );
+    const owner = manager.enqueue(
+      'session:owner:runtime',
+      async () => {
+        order.push('owner-message');
+      },
+      { priority: 100 }
+    );
+
+    releaseActive();
+    await Promise.all([active, background, owner]);
+    expect(order).toEqual(['active-background', 'owner-message', 'queued-background']);
+  });
+
   beforeEach(() => {
     resetGlobalLaneManager();
   });

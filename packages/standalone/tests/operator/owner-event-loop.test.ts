@@ -122,7 +122,7 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(order).toEqual(['owner-event:stopping', 'owner-event:stopped', 'database:closed']);
   });
 
-  it('runs the event as the MAMA owner agent on a durable per-channel session', async () => {
+  it('TG-05 uses one durable owner runtime session across different channel batches', async () => {
     inbox.enqueue({
       ...batch(),
       activations: [
@@ -135,14 +135,20 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
         },
       ],
     });
-    let seenOptions: Record<string, unknown> | undefined;
+    inbox.enqueue({
+      channelKey: 'slack:C2',
+      eventIds: ['evt-2'],
+      lines: ['- client: second feedback arrived'],
+      activations: [],
+    });
+    const seenOptions: Array<Record<string, unknown>> = [];
     const outcomes: Array<[string, 'succeeded' | 'failed']> = [];
     const loop = new OwnerEventLoop({
       inbox,
       agentContext: ownerContext,
       runner: {
         run: async (_prompt, options) => {
-          seenOptions = options;
+          seenOptions.push(options);
           return result(deliveredHistory);
         },
       },
@@ -155,19 +161,30 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
 
     expect(await loop.tick()).toBe('processed');
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
-    expect(seenOptions).toMatchObject({
-      sessionKey: 'owner-event:chatwork:C1',
-      source: 'owner-event',
-      actorId: 'mama-owner',
-      channelId: 'chatwork:C1',
-      freshSession: true,
-      agentContext: ownerContext,
-      causeEventIds: ['evt-1'],
-      sourceMessageRef: 'owner-event:1',
-    });
-    // Stateless lane: resuming the per-channel thread replayed the whole growing
-    // history on every batch (45.9M tokens on 2026-08-20 alone, weekly quota blowout).
-    expect(seenOptions?.resumeSession).toBeUndefined();
+    expect(seenOptions).toHaveLength(2);
+    expect(seenOptions.map((options) => options.sessionKey)).toEqual([
+      'owner:runtime',
+      'owner:runtime',
+    ]);
+    expect(seenOptions).toEqual([
+      expect.objectContaining({
+        source: 'owner-event',
+        actorId: 'mama-owner',
+        channelId: 'chatwork:C1',
+        agentContext: ownerContext,
+        causeEventIds: ['evt-1'],
+        sourceMessageRef: 'owner-event:1',
+      }),
+      expect.objectContaining({
+        source: 'owner-event',
+        actorId: 'mama-owner',
+        channelId: 'slack:C2',
+        agentContext: ownerContext,
+        causeEventIds: ['evt-2'],
+        sourceMessageRef: 'owner-event:2',
+      }),
+    ]);
+    expect(seenOptions.every((options) => !('freshSession' in options))).toBe(true);
     expect(outcomes).toEqual([['feedback-trigger', 'succeeded']]);
     expect(inbox.unresolvedAcks()).toEqual([]);
   });
@@ -478,16 +495,15 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     expect(await plainLoop.tick()).toBe('failed');
     expect(logs.at(-1)).toContain('notification without a ledger change');
   });
-  it('ONE-MAMA-P1 Task 3 AC #1: passes the compiled packet into the prompt and proceeds without one on failure', async () => {
+  it('TG-05 submits the bounded delta without a host-compiled bulk packet', async () => {
     inbox.enqueue(batch());
-    const seen: Array<string | null> = [];
+    const seen: number[] = [];
     const loop = new OwnerEventLoop({
       inbox,
       agentContext: ownerContext,
       runner: { run: async () => result(deliveredHistory) },
-      compilePacket: async () => '{"schemaVersion":"mama.owner-report-context/v1"}',
-      buildPrompt: async (_batch, packet) => {
-        seen.push(packet);
+      buildPrompt: async (claimed) => {
+        seen.push(claimed.id);
         return 'prompt';
       },
       issueEnvelope: issueTestEnvelope,
@@ -495,32 +511,7 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
       log: () => {},
     });
     expect(await loop.tick()).toBe('processed');
-    expect(seen).toEqual(['{"schemaVersion":"mama.owner-report-context/v1"}']);
-
-    inbox.enqueue({ ...batch(), eventIds: ['evt-2'] });
-    const logs: string[] = [];
-    const failing = new OwnerEventLoop({
-      inbox,
-      agentContext: ownerContext,
-      runner: { run: async () => result(deliveredHistory) },
-      compilePacket: async () => {
-        throw new Error('ledger unavailable');
-      },
-      buildPrompt: async (_batch, packet) => {
-        seen.push(packet);
-        return 'prompt';
-      },
-      issueEnvelope: issueTestEnvelope,
-      getNoUpdateMaxId: () => 0,
-      log: (line) => logs.push(line),
-    });
-    expect(await failing.tick()).toBe('processed');
-    expect(seen.at(-1)).toBeNull();
-    expect(
-      logs.some(
-        (line) => line.includes('packet compile failed') && line.includes('ledger unavailable')
-      )
-    ).toBe(true);
+    expect(seen).toEqual([1]);
   });
   it('ONE-MAMA-P3 Task 2 AC #12: a dead batch records one inbox issue with the reason and the channel', async () => {
     inbox.enqueue(batch());

@@ -20,7 +20,7 @@ import {
   type ContextCompileService,
 } from '../../agent/context-compile-service.js';
 import { SkillRegistry } from '../../skills/skill-registry.js';
-import type { AgentLoop } from '../../agent/index.js';
+import type { OwnerRuntimeRunner } from '../../operator/owner-runtime.js';
 import type { CronScheduler } from '../../scheduler/index.js';
 import type { HealthScoreService } from '../../observability/health-score.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
@@ -46,7 +46,7 @@ export interface InitApiServerParams {
   enabledConnectors: string[];
   connectorConfigLoadResult: ConnectorConfigLoadResult;
   privateConnectorPolicy: PrivateConnectorPolicy;
-  agentLoop: AgentLoop;
+  runOwnerStimulus: OwnerRuntimeRunner;
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
   contextCompileService?: ContextCompileService;
@@ -105,7 +105,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     enabledConnectors,
     connectorConfigLoadResult,
     privateConnectorPolicy,
-    agentLoop,
+    runOwnerStimulus,
     getAdapter,
     envelopeMetadata,
     envelopeAuthority,
@@ -209,7 +209,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     privateConnectorPolicy,
     onHeartbeat: async (prompt) => {
       try {
-        const result = await agentLoop.run(prompt);
+        const result = await runOwnerStimulus(prompt, 'api-heartbeat');
         // Capture agent's text response and use it as the briefing slot,
         // through the same single write path the report_publish tool uses.
         const { createReportPublisher } = await import('../../api/report-handler.js');

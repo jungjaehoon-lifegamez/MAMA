@@ -214,13 +214,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
-    name: 'report_request',
-    description: 'Start a fresh full operator report and acknowledge that it is on its way',
-    params: [],
-    returnType: '{ message: string }',
-    category: 'os',
-  },
-  {
     name: 'file_export',
     description:
       'Write a deliverable csv or md file under the private workspace exports folder; returns path, bytes, sha256',
@@ -1112,7 +1105,6 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'context_compile',
   'mama_update',
   'report_publish',
-  'report_request',
   'repair_request',
   'issue_close',
   'file_export',

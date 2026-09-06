@@ -76,11 +76,6 @@ export interface GraphHandlerOptions {
   healthCheckService?: {
     check(): Promise<import('../observability/health-check.js').SystemHealthReport>;
   };
-  auditConversation?: (job: {
-    conversation: string;
-    scopes: Array<{ kind: string; id: string }>;
-    candidates?: Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>;
-  }) => Promise<{ status: string; action: string; event_ids: string[]; reason?: string }>;
   /** Sessions database for agent version tracking */
   sessionsDb?: import('../sqlite.js').SQLiteDatabase;
   /** UI command queue for bidirectional Agent↔Viewer communication */

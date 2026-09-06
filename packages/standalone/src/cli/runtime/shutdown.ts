@@ -56,7 +56,6 @@ export interface ShutdownDeps {
 
   // Agent loops
   agentLoop: AgentLoop;
-  memoryAgentLoop: AgentLoop | null;
   stopExtraction: () => Promise<void>;
 
   // Session/DB
@@ -241,7 +240,7 @@ export function installShutdownHandlers(deps: ShutdownDeps): void {
       );
 
       // Stop agent loop
-      await stopAgentLoops([deps.agentLoop, deps.memoryAgentLoop]);
+      await stopAgentLoops([deps.agentLoop]);
 
       // Release all CLI sessions
       getSessionPool().dispose();

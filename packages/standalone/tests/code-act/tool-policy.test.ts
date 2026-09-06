@@ -46,7 +46,9 @@ describe('Code-Act canonical tool policy', () => {
       'owner_console',
       DEFAULT_ROLES.definitions.owner_console
     );
-    const expectedInnerTools = owner.allowedTools.filter((tool) => tool !== 'code_act');
+    const expectedInnerTools = owner.allowedTools.filter(
+      (tool) => tool !== 'code_act' && tool !== 'native_subagent'
+    );
     const registryNames = HostBridge.getToolRegistry().map((tool) => tool.name);
     const policy = projectCodeActToolPolicy({
       tier: 1,
