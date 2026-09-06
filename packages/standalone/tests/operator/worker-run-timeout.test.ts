@@ -100,7 +100,7 @@ describe('Story M0-2: workorder worker-run request timeout', () => {
         },
       });
       expect(runner.options.requestTimeoutMs).toBe(700_000);
-      expect(runner.options.sessionKey).toBe('operator:worker:board');
+      expect(runner.options.sessionKey).toBe('owner:runtime');
       expect(runner.options.source).toBe('operator');
     });
   });

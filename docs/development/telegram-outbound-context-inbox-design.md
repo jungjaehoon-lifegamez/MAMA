@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-03
 
-**Status:** Implemented (PR #222, 2026-08-06) with adversarial-review fixes; operational Telegram verification pending
+**Status:** Superseded by [One MAMA owner runtime](one-mama-owner-runtime.md). This file records the
+v0.39-v0.48 migration history only; its separate report subject and context-reinjection design are
+not current architecture.
 
 **Parity scenarios:** TG-05, TG-06
 

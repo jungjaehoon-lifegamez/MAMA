@@ -10,7 +10,8 @@ import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import type { AgentLoopOptions } from '../../src/agent/types.js';
 import { makeAuthorityHarness } from '../envelope/fixtures.js';
-import { buildChannelKey, SessionPool, setSessionPool } from '../../src/agent/session-pool.js';
+import { SessionPool, setSessionPool } from '../../src/agent/session-pool.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 import { withOwnerPrincipal } from '../gateways/helpers/principal-fixture.js';
 
 type CapturedRun = {
@@ -183,7 +184,7 @@ describe('reactive envelope issuance', () => {
       userId: 'u:busy',
       text: 'queued hello',
     });
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const channelKey = OWNER_RUNTIME_SESSION_KEY;
     sessionPool.getSession(channelKey);
     let queued = false;
 
@@ -227,7 +228,7 @@ describe('reactive envelope issuance', () => {
       userId: 'u:envelope-fail',
       text: 'hello',
     });
-    const channelKey = buildChannelKey(message.source, message.channelId);
+    const channelKey = OWNER_RUNTIME_SESSION_KEY;
 
     await expect(router.process(message)).rejects.toThrow('synthetic envelope failure');
 

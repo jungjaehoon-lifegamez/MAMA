@@ -7,6 +7,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { AgentLoop } from '../agent/agent-loop.js';
+import type { AgentLoopOptions } from '../agent/types.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../operator/owner-runtime.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { getLegCadence } from '../operator/leg-cadence.js';
 
@@ -34,15 +36,18 @@ export class HeartbeatScheduler {
   private startupTimer: NodeJS.Timeout | null = null;
   private running = false;
   private sendNotification?: (channelId: string, message: string) => Promise<void>;
+  private runOptionsFactory?: () => Promise<AgentLoopOptions> | AgentLoopOptions;
 
   constructor(
     agentLoop: AgentLoop,
     config: Partial<HeartbeatConfig> = {},
-    sendNotification?: (channelId: string, message: string) => Promise<void>
+    sendNotification?: (channelId: string, message: string) => Promise<void>,
+    runOptionsFactory?: () => Promise<AgentLoopOptions> | AgentLoopOptions
   ) {
     this.agentLoop = agentLoop;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.sendNotification = sendNotification;
+    this.runOptionsFactory = runOptionsFactory;
   }
 
   /**
@@ -157,9 +162,15 @@ Response format:
 - Notification: NOTIFY: [message content]
 - Task completed: DONE: [completion details]`;
 
-      // Run agent loop as a stateless fresh session - a resumed heartbeat
-      // thread replays every prior poll on each tick and only grows.
-      const result = await this.agentLoop.run(prompt, { freshSession: true });
+      const runOptions = this.runOptionsFactory
+        ? await this.runOptionsFactory()
+        : { sessionKey: OWNER_RUNTIME_SESSION_KEY };
+      const result = await this.agentLoop.run(prompt, {
+        ...runOptions,
+        sessionKey: OWNER_RUNTIME_SESSION_KEY,
+        source: 'operator',
+        channelId: 'heartbeat',
+      });
       const response = result.response.trim();
 
       memoryLogger.logEvent('heartbeat', response.substring(0, 100));

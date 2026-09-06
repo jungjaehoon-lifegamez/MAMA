@@ -53,10 +53,10 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('TG-03/TG-04 keeps zero-parameter tool declarations callable with no input', () => {
-      const dts = TypeDefinitionGenerator.generate(policy(2, ['report_request']));
+      const dts = TypeDefinitionGenerator.generate(policy(2, ['audit_findings_read']));
 
-      expect(dts).toContain('declare function report_request(): { message: string };');
-      expect(dts).not.toContain('report_request(input:');
+      expect(dts).toContain('declare function audit_findings_read():');
+      expect(dts).not.toContain('audit_findings_read(input:');
     });
 
     it('marks optional params with ?', () => {

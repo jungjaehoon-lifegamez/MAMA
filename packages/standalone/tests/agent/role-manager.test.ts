@@ -98,7 +98,7 @@ describe('RoleManager', () => {
       expect(memberRoleNames).not.toContain('owner_console');
     });
 
-    it('uses principal console eligibility only for Telegram owner messages', () => {
+    it('uses principal console eligibility for every authenticated owner connector', () => {
       const manager = new RoleManager();
       const principal: PrincipalContext = {
         class: 'owner',
@@ -108,7 +108,9 @@ describe('RoleManager', () => {
       };
 
       expect(manager.getRoleForSource('telegram', { principal }).roleName).toBe('owner_console');
-      expect(manager.getRoleForSource('discord', { principal }).roleName).toBe('chat_bot');
+      expect(manager.getRoleForSource('discord', { principal }).roleName).toBe('owner_console');
+      expect(manager.getRoleForSource('slack', { principal }).roleName).toBe('owner_console');
+      expect(manager.getRoleForSource('chatwork', { principal }).roleName).toBe('owner_console');
     });
 
     it('should return chat_bot role for discord source', () => {

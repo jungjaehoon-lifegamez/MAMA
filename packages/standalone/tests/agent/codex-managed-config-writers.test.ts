@@ -33,7 +33,6 @@ const PINNED_DIRECT_SITES = [
   'agent/backend-model-runner-factory.ts',
   'multi-agent/agent-process-manager.ts',
   'multi-agent/runtime-process.ts',
-  'operator/trigger-author.ts',
 ] as const;
 
 /**
@@ -44,7 +43,6 @@ const PINNED_DIRECT_SITES = [
 const PINNED_AGENT_LOOP_SITES = [
   'cli/commands/run.ts',
   'cli/runtime/agent-loop-init.ts',
-  'cli/runtime/memory-agent-init.ts',
   'multi-agent/agent-process-manager.ts',
 ] as const;
 

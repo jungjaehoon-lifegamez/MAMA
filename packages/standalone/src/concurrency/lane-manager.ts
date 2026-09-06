@@ -135,10 +135,12 @@ export class LaneManager {
         reject,
         enqueuedAt: Date.now(),
         warnAfterMs: options?.warnAfterMs ?? this.config.warnAfterMs,
+        priority: options?.priority ?? 0,
         onWait: options?.onWait,
       };
 
       state.queue.push(entry as QueueEntry<unknown>);
+      state.queue.sort((left, right) => right.priority - left.priority);
       this.config.logger.debug(
         `Enqueued: lane=${lane} queueSize=${state.queue.length + state.active}`
       );
@@ -178,13 +180,14 @@ export class LaneManager {
   enqueueWithSession<T>(
     sessionKey: string,
     task: () => Promise<T>,
-    globalLane?: string
+    globalLane?: string,
+    options?: EnqueueOptions
   ): Promise<T> {
     const sessionLaneName = this.resolveSessionLane(sessionKey);
     const globalLaneName = this.resolveGlobalLane(globalLane);
 
     // Nested queueing: session → global
-    return this.enqueue(sessionLaneName, () => this.enqueue(globalLaneName, task));
+    return this.enqueue(sessionLaneName, () => this.enqueue(globalLaneName, task), options);
   }
 
   /**

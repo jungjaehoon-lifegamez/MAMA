@@ -1,10 +1,6 @@
-/** Packet-only owner report composition and provenance binding. */
+/** Owner-runtime report composition and provenance binding. */
 import type { AskAgent } from './trigger-author.js';
 import type { ArtifactProvenance } from './report-carry.js';
-import type { OwnerReportContextV1 } from './report-context.js';
-
-/** Dedicated persona session lane for fresh packet-only report composition. */
-export const OPERATOR_REPORT_SESSION_KEY = 'operator:report';
 
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:
  *  keeps this module free of agent-internal imports so tests use plain synthetic objects. */
@@ -22,14 +18,14 @@ export interface PersonaReportRunResult {
   modelRunId?: string | null;
   /** Set by the agent loop when a run existed but its handle could not be committed. */
   modelRunProvenance?: string;
+  ownerJournalProvenance?: 'commit_failed';
 }
 export interface PersonaReportRunner {
   (prompt: string, sourceMessageRef?: string): Promise<PersonaReportRunResult>;
 }
 export interface FullReportRunInput {
   prompt: string;
-  context: OwnerReportContextV1;
-  contextSha256: string;
+  sourceMessageRef?: string;
 }
 export interface PersonaReportAsk extends AskAgent {
   full(input: FullReportRunInput): Promise<string>;
@@ -44,38 +40,17 @@ export interface PersonaReportAskDeps {
    * behind it, which is the same defect the gateway turn seam had.
    */
   onRunProvenance?: (provenance: ArtifactProvenance) => void;
+  /** Surfaces bounded recovery failure without discarding an already generated report. */
+  onRecoveryFailure?: () => void;
 }
 
 /**
- * Build the report-composition AskAgent. Full reports receive one persisted packet and no report
- * tool envelope; digest composition keeps its legacy response semantics. Both paths retain model
- * run provenance and fail on an empty final body.
+ * Build the report-composition adapter. Both full and digest stimuli run through the standing
+ * owner subject, retain model-run provenance, and fail on an empty final body.
  */
-export function formatReportContextAudit(
-  context: OwnerReportContextV1,
-  contextSha256: string
-): string {
-  const sourceStates = Object.entries(context.sources)
-    .map(([name, source]) => `${name}=${source.state}`)
-    .join(',');
-  return (
-    `[trigger-loop] full report context schema=${context.schemaVersion} sha256=${contextSha256} ` +
-    `sources=${sourceStates} messages=${context.windowEvidence.messageCount} ` +
-    `tasks=${context.taskCoverage.returned}/${context.taskCoverage.total} ` +
-    `correlations=${context.correlations.coverage.total} ` +
-    `changes=${context.changes.returned}/${context.changes.total} ` +
-    `trello_complete=${context.trello.complete} trello_truncated=${context.trello.truncated} ` +
-    `packet_bytes=${context.packet.bytes} packet_truncated=${context.packet.truncated} ` +
-    `caveats=${context.caveats.length}`
-  );
-}
-
 export function createPersonaReportAsk(deps: PersonaReportAskDeps): PersonaReportAsk {
   const execute = async (prompt: string, fullInput?: FullReportRunInput): Promise<string> => {
-    const result = await deps.run(
-      prompt,
-      fullInput ? `owner-report-context:${fullInput.contextSha256}` : undefined
-    );
+    const result = await deps.run(prompt, fullInput?.sourceMessageRef);
     const { response, history } = result;
     deps.onRunProvenance?.(
       result.modelRunId
@@ -86,11 +61,8 @@ export function createPersonaReportAsk(deps: PersonaReportAskDeps): PersonaRepor
               result.modelRunProvenance === 'commit_failed' ? 'commit_failed' : 'no_run_handle',
           }
     );
-    if (fullInput) {
-      if (result.turns !== 1) {
-        throw new Error('Full owner report must complete in exactly one model turn');
-      }
-      deps.log(formatReportContextAudit(fullInput.context, fullInput.contextSha256));
+    if (result.ownerJournalProvenance === 'commit_failed') {
+      deps.onRecoveryFailure?.();
     }
     let reportText = (response ?? '').trim();
     if (reportText === '' && !fullInput) {

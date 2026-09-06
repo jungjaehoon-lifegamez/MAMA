@@ -17,6 +17,7 @@ import {
 import { HostToolTerminalError, ModelRunnerError } from '../../src/agent/model-runner.js';
 import type { HostToolBridge, PromptOptions } from '../../src/agent/model-runner.js';
 import { PromptSizeMonitor } from '../../src/agent/prompt-size-monitor.js';
+import { countTokens } from '../../src/agent/token-estimator.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import {
   AgentError,
@@ -30,14 +31,11 @@ import type {
   MAMAApiInterface,
 } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
-import {
-  createPersonaReportAsk,
-  OPERATOR_REPORT_SESSION_KEY,
-} from '../../src/operator/report-run.js';
+import { createPersonaReportAsk } from '../../src/operator/report-run.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
-import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import {
   CODE_ACT_SCRIPT_CONTRACT,
   CODE_ACT_SCRIPT_EXAMPLE,
@@ -432,209 +430,6 @@ describe('AgentLoop', () => {
     });
   });
 
-  describe('Cline main backend', () => {
-    it('TG-03/TG-04 selects Cline and projects CodeAct through its Hub tool bridge', async () => {
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        {
-          backend: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          systemPrompt: 'Cline owner prompt.',
-          useCodeAct: true,
-          toolsConfig: { gateway: [], mcp: ['*'], mcp_config: '/tmp/mama-cline-mcp.json' },
-          clineCommand: '/opt/cline/bin/cline',
-          clineProvider: 'cline',
-          clineDataDir: '/tmp/mama-cline-data',
-        },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      await agentLoop.run('owner status', {
-        source: 'telegram',
-        channelId: 'owner-chat',
-        agentContext: {
-          ...createChatBotContext(),
-          backend: 'cline',
-          roleName: 'owner_console',
-          role: DEFAULT_ROLES.definitions.owner_console,
-        },
-      });
-
-      expect(clineAdapterOptionsMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: '/opt/cline/bin/cline',
-          provider: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          dataDir: '/tmp/mama-cline-data',
-          systemPrompt: expect.stringContaining('Cline owner prompt.'),
-        })
-      );
-      expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('owner status');
-      expect(persistentPromptMock.mock.calls[0]?.[2]?.hostToolBridge?.tools).toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: 'code_act' })])
-      );
-      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
-        allowedTools: ['read_files'],
-        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
-        allowSpawnAgent: false,
-        allowAgentTeams: false,
-      });
-    });
-
-    it('TG-04 exposes the role-filtered Code-Act transport for the real non-owner role', async () => {
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        {
-          backend: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          systemPrompt: 'Restricted chat prompt.',
-          useCodeAct: true,
-          toolsConfig: { gateway: ['*'], mcp: [] },
-        },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      await agentLoop.run('group status', {
-        source: 'telegram',
-        channelId: 'group-chat',
-        agentContext: {
-          ...createChatBotContext(),
-          backend: 'cline',
-          role: DEFAULT_ROLES.definitions.chat_bot,
-          capabilities: DEFAULT_ROLES.definitions.chat_bot.allowedTools,
-        },
-      });
-
-      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
-        allowedTools: ['read_files'],
-        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
-        allowSpawnAgent: false,
-        allowAgentTeams: false,
-      });
-      expect(persistentPromptMock.mock.calls[0]?.[2]?.hostToolBridge?.tools).toEqual([
-        expect.objectContaining({ name: 'code_act' }),
-      ]);
-      expect(DEFAULT_ROLES.definitions.chat_bot.allowedTools).toContain('mama_search');
-      expect(DEFAULT_ROLES.definitions.chat_bot.allowedTools).not.toContain('trello_kanban');
-    });
-
-    it('TG-04 preserves managed native permissions independently of the Code-Act role', async () => {
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        {
-          backend: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          systemPrompt: 'Managed worker prompt.',
-          useCodeAct: true,
-          toolsConfig: { gateway: ['*'], mcp: [] },
-          clineNativeAllowedTools: ['read_files', 'search_codebase'],
-          clineNativeDisallowedTools: ['run_commands', 'apply_patch', 'editor'],
-        },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      await agentLoop.run('review', {
-        source: 'telegram',
-        channelId: 'managed-review',
-        agentContext: {
-          ...createChatBotContext(),
-          backend: 'cline',
-          roleName: 'managed-reviewer',
-          role: {
-            ...createChatBotContext().role,
-            allowedTools: ['code_act', 'mama_search'],
-            blockedTools: ['mama_save'],
-          },
-        },
-      });
-
-      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
-        allowedTools: ['read_files', 'search_codebase'],
-        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
-      });
-    });
-
-    it('TG-05 keeps a compatible Cline continuation prompt lazy and minimal', async () => {
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        {
-          backend: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          systemPrompt: 'Full constructor policy.',
-          useCodeAct: true,
-          toolsConfig: { gateway: ['*'], mcp: [] },
-        },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      await agentLoop.run('continue', {
-        source: 'telegram',
-        channelId: 'owner-chat',
-        cliSessionId: 'existing-cline-session',
-        resumeSession: true,
-        systemPrompt: '[Role: owner_console]',
-        agentContext: {
-          ...createChatBotContext(),
-          backend: 'cline',
-          roleName: 'owner_console',
-          role: DEFAULT_ROLES.definitions.owner_console,
-        },
-      });
-
-      expect(persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt).toBe('[Role: owner_console]');
-    });
-
-    it('TG-03 routes an inbound image through Cline read_files instead of Claude Read', async () => {
-      const imageRoot = mkdtempSync(join(tmpdir(), 'mama-cline-image-'));
-      const imagePath = join(imageRoot, 'synthetic.png');
-      writeFileSync(imagePath, Buffer.from('image'));
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        {
-          backend: 'cline',
-          model: 'deepseek/deepseek-v4-flash',
-          systemPrompt: 'Cline image prompt.',
-          useCodeAct: true,
-          toolsConfig: { gateway: ['*'], mcp: [] },
-        },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      try {
-        await agentLoop.runWithContent(
-          [
-            { type: 'text', text: 'translate' },
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
-              localPath: imagePath,
-            } as ContentBlock & { localPath: string },
-          ],
-          {
-            source: 'telegram',
-            channelId: 'cline-image',
-            agentContext: {
-              ...createChatBotContext(),
-              backend: 'cline',
-              roleName: 'owner_console',
-              role: DEFAULT_ROLES.definitions.owner_console,
-            },
-          }
-        );
-
-        expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('MUST call the read_files tool');
-        expect(persistentPromptMock.mock.calls[0]?.[0]).not.toContain('MUST call the Read tool');
-      } finally {
-        rmSync(imageRoot, { recursive: true, force: true });
-      }
-    });
-  });
-
   describe('Codex native gateway bridge', () => {
     const codexContext = createCodexContext;
 
@@ -883,7 +678,7 @@ describe('AgentLoop', () => {
       ['enabled', true],
       ['disabled', false],
     ] as const)(
-      'TG-03/TG-04/TG-05 packet-only report gives a Claude run zero generated tools when private connectors are %s',
+      'TG-03/TG-04/TG-05 progressive owner report keeps one Claude runtime and bounded tools when private connectors are %s',
       async (_label, enabled) => {
         const userOwnedGatewayExample = [
           '# User-authored CLAUDE instructions',
@@ -940,12 +735,12 @@ describe('AgentLoop', () => {
         const ask = createPersonaReportAsk({
           run: async (prompt) => {
             const result = await agentLoop.runWithContent([{ type: 'text', text: prompt }], {
-              sessionKey: OPERATOR_REPORT_SESSION_KEY,
+              sessionKey: OWNER_RUNTIME_SESSION_KEY,
               source: 'operator',
               channelId: 'report',
               agentContext: reportPolicy.agentContext,
+              sessionPolicyRole: DEFAULT_ROLES.definitions.owner_console,
               gatewayToolsPrompt: reportPolicy.gatewayToolsPrompt,
-              freshSession: true,
             });
             return result;
           },
@@ -955,20 +750,20 @@ describe('AgentLoop', () => {
         await ask('compose the owner report');
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
-        expect(effectivePrompt).not.toContain('**changes_read**');
+        expect(effectivePrompt).toContain('**changes_read**');
         expect(effectivePrompt).not.toContain('**drive_download**');
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
-        ).toHaveLength(0);
+        ).toHaveLength(1);
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_END -->/g) ?? []
-        ).toHaveLength(0);
+        ).toHaveLength(1);
         expect(
           new PromptSizeMonitor().check([
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(effectivePrompt).not.toContain('**kagemusha_tasks**');
+        expect(effectivePrompt.includes('**kagemusha_tasks**')).toBe(enabled);
       }
     );
 
@@ -1565,76 +1360,6 @@ describe('AgentLoop', () => {
       expect(declaredNames).not.toContain('mama_update');
       expect(declaredNames).not.toContain('mama_save');
       expect(declaredNames).not.toContain('telegram_send');
-
-      const { GatewayToolExecutor: ActualGatewayToolExecutor } = await vi.importActual<
-        typeof import('../../src/agent/gateway-tool-executor.js')
-      >('../../src/agent/gateway-tool-executor.js');
-      const actualExecutor = new ActualGatewayToolExecutor({ mamaApi: createMockApi() });
-      const registryNames = HostBridge.getToolRegistry().map((tool) => tool.name);
-      const inspectInjectedTypes = `({ ${registryNames
-        .map((name) => `${JSON.stringify(name)}: typeof ${name}`)
-        .join(', ')} })`;
-      const executionContext = {
-        agentContext: contextFor('codex'),
-        agentId: 'owner_console',
-        source: 'telegram',
-        channelId: 'owner-parity-codex',
-        executionSurface: 'model_tool' as const,
-        disallowedGatewayTools: runtimeDisallowedTools,
-      };
-      const injectedResult = await actualExecutor.execute(
-        'code_act',
-        { code: inspectInjectedTypes },
-        executionContext
-      );
-      expect(injectedResult.success).toBe(true);
-      const injectedPayload = JSON.parse(String(injectedResult.message)) as {
-        value: Record<string, string>;
-      };
-      const injectedNames = Object.entries(injectedPayload.value)
-        .filter(([, type]) => type === 'function')
-        .map(([name]) => name)
-        .sort();
-      expect(declaredNames).toEqual(['tool_describe', 'tool_search']);
-
-      const discoveredResult = await actualExecutor.execute(
-        'code_act',
-        {
-          code: `
-            var names = [];
-            var cursor = null;
-            do {
-              var page = tool_search(cursor === null ? {} : { cursor: cursor });
-              for (var i = 0; i < page.tools.length; i++) { names.push(page.tools[i].name); }
-              cursor = page.nextCursor;
-            } while (cursor !== null);
-            names;
-          `,
-        },
-        executionContext
-      );
-      expect(discoveredResult.value).toEqual(injectedNames);
-
-      const narrowedResult = await actualExecutor.execute(
-        'code_act',
-        {
-          code: inspectInjectedTypes,
-          allowedTools: ['context_compile', 'mama_recall', 'board_read', 'report_request'],
-          blockedTools: ['report_request'],
-        },
-        executionContext
-      );
-      expect(narrowedResult.success).toBe(true);
-      const narrowedPayload = JSON.parse(String(narrowedResult.message)) as {
-        value: Record<string, string>;
-      };
-      expect(narrowedPayload.value).toMatchObject({
-        context_compile: 'function',
-        mama_recall: 'function',
-        board_read: 'function',
-        report_request: 'undefined',
-        mama_search: 'undefined',
-      });
     });
 
     it('exposes outer code_act for the owner while keeping sensitive inner tools inaccessible', async () => {
@@ -3273,6 +2998,242 @@ Skills provide additional tools.
     });
   });
 
+  describe('Cline main backend', () => {
+    it('TG-03/TG-04 selects Cline and projects CodeAct through its Hub tool bridge', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Cline owner prompt.',
+          useCodeAct: true,
+          toolsConfig: { gateway: [], mcp: ['*'], mcp_config: '/tmp/mama-cline-mcp.json' },
+          clineCommand: '/opt/cline/bin/cline',
+          clineProvider: 'cline',
+          clineDataDir: '/tmp/mama-cline-data',
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('owner status', {
+        source: 'telegram',
+        channelId: 'owner-chat',
+        agentContext: {
+          ...createChatBotContext(),
+          backend: 'cline',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        },
+      });
+
+      expect(clineAdapterOptionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: '/opt/cline/bin/cline',
+          provider: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          dataDir: '/tmp/mama-cline-data',
+          systemPrompt: expect.stringContaining('Cline owner prompt.'),
+        })
+      );
+      expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('owner status');
+      expect(persistentPromptMock.mock.calls[0]?.[2]?.hostToolBridge?.tools).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'code_act' })])
+      );
+      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
+        allowedTools: ['read_files'],
+        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
+        allowSpawnAgent: false,
+        allowAgentTeams: false,
+      });
+    });
+
+    it('TG-04 exposes the role-filtered Code-Act transport for the real non-owner role', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Restricted chat prompt.',
+          useCodeAct: true,
+          toolsConfig: { gateway: ['*'], mcp: [] },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('group status', {
+        source: 'telegram',
+        channelId: 'group-chat',
+        agentContext: {
+          ...createChatBotContext(),
+          backend: 'cline',
+          role: DEFAULT_ROLES.definitions.chat_bot,
+          capabilities: DEFAULT_ROLES.definitions.chat_bot.allowedTools,
+        },
+      });
+
+      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
+        allowedTools: ['read_files'],
+        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
+        allowSpawnAgent: false,
+        allowAgentTeams: false,
+      });
+      expect(persistentPromptMock.mock.calls[0]?.[2]?.hostToolBridge?.tools).toEqual([
+        expect.objectContaining({ name: 'code_act' }),
+      ]);
+      expect(DEFAULT_ROLES.definitions.chat_bot.allowedTools).toContain('mama_search');
+      expect(DEFAULT_ROLES.definitions.chat_bot.allowedTools).not.toContain('trello_kanban');
+    });
+
+    it('TG-04 grants native Cline subagents only to the explicit owner capability', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Owner prompt.',
+          useCodeAct: true,
+          toolsConfig: { gateway: ['*'], mcp: [] },
+          clineAllowSpawnAgent: true,
+          clineAllowAgentTeams: true,
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('owner task', {
+        source: 'telegram',
+        channelId: 'owner-chat',
+        agentContext: {
+          ...createChatBotContext(),
+          backend: 'cline',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        },
+      });
+
+      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
+        allowSpawnAgent: true,
+        allowAgentTeams: true,
+      });
+    });
+
+    it('TG-04 preserves managed native permissions independently of the Code-Act role', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Managed worker prompt.',
+          useCodeAct: true,
+          toolsConfig: { gateway: ['*'], mcp: [] },
+          clineNativeAllowedTools: ['read_files', 'search_codebase'],
+          clineNativeDisallowedTools: ['run_commands', 'apply_patch', 'editor'],
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('review', {
+        source: 'telegram',
+        channelId: 'managed-review',
+        agentContext: {
+          ...createChatBotContext(),
+          backend: 'cline',
+          roleName: 'managed-reviewer',
+          role: {
+            ...createChatBotContext().role,
+            allowedTools: ['code_act', 'mama_search'],
+            blockedTools: ['mama_save'],
+          },
+        },
+      });
+
+      expect(persistentPromptMock.mock.calls[0]?.[2]).toMatchObject({
+        allowedTools: ['read_files', 'search_codebase'],
+        disallowedTools: ['run_commands', 'apply_patch', 'editor'],
+      });
+    });
+
+    it('TG-05 keeps a compatible Cline continuation prompt lazy and minimal', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Full constructor policy.',
+          useCodeAct: true,
+          toolsConfig: { gateway: ['*'], mcp: [] },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('continue', {
+        source: 'telegram',
+        channelId: 'owner-chat',
+        cliSessionId: 'existing-cline-session',
+        resumeSession: true,
+        systemPrompt: '[Role: owner_console]',
+        agentContext: {
+          ...createChatBotContext(),
+          backend: 'cline',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        },
+      });
+
+      expect(persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt).toBe('[Role: owner_console]');
+    });
+
+    it('TG-03 routes an inbound image through Cline read_files instead of Claude Read', async () => {
+      const imageRoot = mkdtempSync(join(tmpdir(), 'mama-cline-image-'));
+      const imagePath = join(imageRoot, 'synthetic.png');
+      writeFileSync(imagePath, Buffer.from('image'));
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'cline',
+          model: 'deepseek/deepseek-v4-flash',
+          systemPrompt: 'Cline image prompt.',
+          useCodeAct: true,
+          toolsConfig: { gateway: ['*'], mcp: [] },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      try {
+        await agentLoop.runWithContent(
+          [
+            { type: 'text', text: 'translate' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+              localPath: imagePath,
+            } as ContentBlock & { localPath: string },
+          ],
+          {
+            source: 'telegram',
+            channelId: 'cline-image',
+            agentContext: {
+              ...createChatBotContext(),
+              backend: 'cline',
+              roleName: 'owner_console',
+              role: DEFAULT_ROLES.definitions.owner_console,
+            },
+          }
+        );
+
+        expect(persistentPromptMock.mock.calls[0]?.[0]).toContain('MUST call the read_files tool');
+        expect(persistentPromptMock.mock.calls[0]?.[0]).not.toContain('MUST call the Read tool');
+      } finally {
+        rmSync(imageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('run()', () => {
     it('should return response for simple prompt', async () => {
       const agentLoop = new AgentLoop(
@@ -3415,7 +3376,8 @@ Skills provide additional tools.
       expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
         'viewer:mama_os_main:user-1',
         expect.any(Function),
-        'viewer'
+        'viewer',
+        { priority: 0 }
       );
     });
 
@@ -3433,7 +3395,8 @@ Skills provide additional tools.
       expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
         'system:conductor-audit-123:system',
         expect.any(Function),
-        'system'
+        'system',
+        { priority: 0 }
       );
     });
   });
@@ -3772,44 +3735,6 @@ Skills provide additional tools.
       expect(effectivePrompt).toContain('<!-- MAMA_GENERATED_CODE_ACT_END -->');
     });
 
-    it('drops oversized owner-report history before the Code-Act catalog', async () => {
-      let effectivePrompt = '';
-      persistentPromptMock.mockImplementationOnce(
-        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
-          effectivePrompt = promptOptions?.systemPrompt ?? '';
-          return {
-            response: 'Done',
-            usage: { input_tokens: 10, output_tokens: 5 },
-            session_id: 'codex-thread',
-          };
-        }
-      );
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      await agentLoop.run('Continue', {
-        source: 'telegram',
-        channelId: '5551000001',
-        agentContext: withOuterCodeAct(createCodexContext()),
-        systemPrompt: 'CORE POLICY MUST STAY',
-        ownerReportHistoryPrompt: [
-          '<!-- MAMA_OWNER_REPORT_HISTORY_START -->',
-          `REPORT HISTORY MUST DROP ${'x'.repeat(50_000)}`,
-          '<!-- MAMA_OWNER_REPORT_HISTORY_END -->',
-        ].join('\n'),
-      });
-
-      expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
-      expect(effectivePrompt).not.toContain('REPORT HISTORY MUST DROP');
-      expect(effectivePrompt).toContain('declare function tool_search');
-      expect(effectivePrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
-      expect(effectivePrompt).not.toContain('declare function mama_search');
-    });
-
     it('keeps the complete bootstrap beside a large owner brief without changing its bytes', async () => {
       let effectivePrompt = '';
       const ownerBrief = `OWNER BRIEF BYTES ${'z'.repeat(50_000)} END OWNER BRIEF`;
@@ -3842,46 +3767,6 @@ Skills provide additional tools.
       expect(effectivePrompt).toContain('declare function tool_search');
       expect(effectivePrompt).toContain('declare function tool_describe');
       expect(effectivePrompt).toContain('<!-- MAMA_GENERATED_CODE_ACT_END -->');
-    });
-
-    it('keeps bounded owner-report history as data even when it contains old layer markers', async () => {
-      let effectivePrompt = '';
-      persistentPromptMock.mockImplementationOnce(
-        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
-          effectivePrompt = promptOptions?.systemPrompt ?? '';
-          return {
-            response: 'Done',
-            usage: { input_tokens: 10, output_tokens: 5 },
-            session_id: 'codex-thread',
-          };
-        }
-      );
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        { backend: 'codex', systemPrompt: 'constructor prompt', useCodeAct: true },
-        {},
-        { mamaApi: createMockApi() }
-      );
-      const reportHistory = [
-        'BOUNDED REPORT HISTORY',
-        '<!-- MAMA_OWNER_REPORT_HISTORY_START -->',
-        '<!-- MAMA_OWNER_REPORT_HISTORY_END -->',
-        '<!-- MAMA_OWNER_REPORT_HISTORY_SLOT -->',
-      ].join('\n');
-
-      await agentLoop.run('Continue', {
-        source: 'telegram',
-        channelId: '5551000001',
-        agentContext: withOuterCodeAct(createCodexContext()),
-        systemPrompt: 'CORE POLICY MUST STAY',
-        ownerReportHistoryPrompt: reportHistory,
-      });
-
-      expect(effectivePrompt).toContain('CORE POLICY MUST STAY');
-      expect(effectivePrompt).toContain(reportHistory);
-      expect(effectivePrompt).toContain('declare function tool_search');
-      expect(effectivePrompt).toContain(CODE_ACT_SCRIPT_CONTRACT);
-      expect(effectivePrompt).not.toContain('declare function mama_search');
     });
 
     it('combines normalized Code-Act policy with the caller session fingerprint', async () => {
@@ -3936,6 +3821,203 @@ Skills provide additional tools.
       expect(fingerprints[0]).toBe(fingerprints[1]);
       expect(new Set(fingerprints).size).toBe(5);
       expect(fingerprints[0]).toContain('caller-signature-v1');
+    });
+
+    it('TG-05 keeps one owner runtime policy across channel envelopes', async () => {
+      const fingerprints: string[] = [];
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          fingerprints.push(promptOptions?.sessionPolicyFingerprint ?? '');
+          return {
+            response: 'Done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'owner-thread',
+          };
+        }
+      );
+      const ownerContext = withOuterCodeAct(createCodexContext());
+      const stableOwnerRole = ownerContext.role;
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('telegram owner turn', {
+        sessionKey: 'owner:runtime',
+        source: 'telegram',
+        channelId: 'owner-chat',
+        sessionPolicyFingerprint: 'telegram-channel-policy',
+        sessionPolicyRole: stableOwnerRole,
+        agentContext: ownerContext,
+        envelope: makeSignedEnvelope({
+          channel_id: 'owner-chat',
+          scope: {
+            project_refs: [],
+            raw_connectors: ['trello'],
+            memory_scopes: [],
+            allowed_destinations: [],
+          },
+        }),
+      });
+      await agentLoop.run('scheduled owner turn', {
+        sessionKey: 'owner:runtime',
+        source: 'operator',
+        channelId: 'report',
+        sessionPolicyFingerprint: 'operator-report-policy',
+        sessionPolicyRole: stableOwnerRole,
+        agentContext: {
+          ...ownerContext,
+          role: { ...ownerContext.role, allowedTools: ['code_act', 'task_list'] },
+        },
+        envelope: makeSignedEnvelope({
+          channel_id: 'report',
+          scope: {
+            project_refs: [],
+            raw_connectors: ['gmail'],
+            memory_scopes: [],
+            allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }],
+          },
+        }),
+      });
+
+      expect(fingerprints).toHaveLength(2);
+      expect(fingerprints[0]).toBe(fingerprints[1]);
+      expect(fingerprints[0]).not.toContain('telegram-channel-policy');
+      expect(fingerprints[0]).not.toContain('operator-report-policy');
+    });
+
+    it('TG-05 restores the owner journal once only when the durable thread is missing', async () => {
+      const deliveredPrompts: string[] = [];
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          deliveredPrompts.push(promptOptions?.systemPrompt ?? '');
+          return {
+            response: 'owner response',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'owner-thread',
+          };
+        }
+      );
+      codexSessionPolicyStatusMock.mockReturnValueOnce('missing').mockReturnValue('compatible');
+      const journal = {
+        append: vi.fn(),
+        recoveryBlock: vi.fn(() => 'RECOVERY_ONLY_OWNER_JOURNAL'),
+      };
+      const context = withOuterCodeAct(createCodexContext());
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          ownerRuntimeJournal: journal,
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const common = {
+        sessionKey: 'owner:runtime',
+        source: 'telegram',
+        channelId: 'owner-chat',
+        agentContext: context,
+        sessionPolicyRole: context.role,
+        resumeSession: true,
+        freshSessionSystemPrompt: async () => 'FULL OWNER POLICY',
+      } as const;
+
+      await agentLoop.run('first after loss', common);
+      await agentLoop.run('live continuation', common);
+
+      expect(deliveredPrompts[0]).toContain('FULL OWNER POLICY');
+      expect(deliveredPrompts[0]).toContain('RECOVERY_ONLY_OWNER_JOURNAL');
+      expect(deliveredPrompts[1]).not.toContain('RECOVERY_ONLY_OWNER_JOURNAL');
+      expect(journal.recoveryBlock).toHaveBeenCalledOnce();
+      expect(journal.append).toHaveBeenCalledTimes(2);
+    });
+
+    it('TG-05 includes recovery inside the prompt budget instead of appending past it', async () => {
+      let deliveredSystemPrompt = '';
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          deliveredSystemPrompt = promptOptions?.systemPrompt ?? '';
+          return {
+            response: 'owner response',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'owner-thread',
+          };
+        }
+      );
+      codexSessionPolicyStatusMock.mockReturnValueOnce('missing');
+      const recoveryTail = `RECOVERY_START${'r'.repeat(80_000)}RECOVERY_END`;
+      const context = withOuterCodeAct(createCodexContext());
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          ownerRuntimeJournal: {
+            append: vi.fn(),
+            recoveryBlock: vi.fn(() => recoveryTail),
+          },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('after loss', {
+        sessionKey: 'owner:runtime',
+        source: 'telegram',
+        channelId: 'owner-chat',
+        agentContext: context,
+        sessionPolicyRole: context.role,
+        resumeSession: true,
+        freshSessionSystemPrompt: async () => 'FULL OWNER POLICY',
+      });
+
+      expect(deliveredSystemPrompt).toContain('FULL OWNER POLICY');
+      expect(deliveredSystemPrompt).not.toContain('RECOVERY_END');
+      expect(countTokens(deliveredSystemPrompt)).toBeLessThanOrEqual(6_300);
+    });
+
+    it('TG-05 reports recovery durability failure on the successful model result', async () => {
+      persistentPromptMock.mockResolvedValue({
+        response: 'owner response',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'owner-thread',
+      });
+      const context = withOuterCodeAct(createCodexContext());
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          ownerRuntimeJournal: {
+            append: vi.fn(() => {
+              throw new Error('disk full');
+            }),
+            recoveryBlock: vi.fn(() => ''),
+          },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const result = await agentLoop.run('owner request', {
+        sessionKey: 'owner:runtime',
+        source: 'telegram',
+        channelId: 'owner-chat',
+        ownerJournalPrompt: 'owner request',
+        ownerJournalTrust: 'owner',
+        agentContext: context,
+        sessionPolicyRole: context.role,
+      });
+
+      expect(result.response).toBe('owner response');
+      expect(result.ownerJournalProvenance).toBe('commit_failed');
     });
 
     it.each([

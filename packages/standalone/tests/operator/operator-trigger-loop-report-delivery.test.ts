@@ -4,7 +4,6 @@
  * pending-file cleanup ONLY on `delivered` (design Decisions 1-2).
  */
 
-import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +17,7 @@ import type {
 } from '../../src/agent/types.js';
 import type { PromptOptions } from '../../src/agent/model-runner.js';
 import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
+import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
@@ -41,11 +41,8 @@ import {
   type PendingReportDelivery,
   type PendingReportState,
 } from '../../src/operator/pending-report-store.js';
-import { compileOwnerReportContext } from '../../src/operator/report-context.js';
-import {
-  createPersonaReportAsk,
-  OPERATOR_REPORT_SESSION_KEY,
-} from '../../src/operator/report-run.js';
+import { createPersonaReportAsk } from '../../src/operator/report-run.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 
 const { codexPromptMock } = vi.hoisted(() => ({
   codexPromptMock: vi.fn(),
@@ -206,7 +203,7 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
       tool_manifest_version: null,
       output_schema_version: null,
       agent_id: 'operator_report',
-      instance_id: OPERATOR_REPORT_SESSION_KEY,
+      instance_id: OWNER_RUNTIME_SESSION_KEY,
       envelope_hash: null,
       parent_model_run_id: null,
       input_snapshot_ref: null,
@@ -248,8 +245,9 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
       'codex',
       privateConnectorPolicy
     );
-    expect(reportPolicy.agentContext.role.allowedTools).toEqual([]);
-    expect(reportPolicy.gatewayToolsPrompt).toBe('');
+    expect(reportPolicy.agentContext.role.allowedTools).toContain('task_list');
+    expect(reportPolicy.agentContext.role.allowedTools).toContain('changes_read');
+    expect(reportPolicy.gatewayToolsPrompt).toContain('task_list');
     const agentLoop = new AgentLoop(
       null,
       {
@@ -268,31 +266,21 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
       .mockReset()
       .mockImplementationOnce(
         async (prompt: string, _callbacks: unknown, options?: PromptOptions) => {
-          // A fresh store at model admission proves the canonical packet was durably published,
-          // rather than merely observed through the loop's in-memory object.
+          // The durable request stores intent and delivery identity, not a bulk evidence dump.
           const admittedState = new FilePendingReportStore(pendingPath).load();
           const admittedRequest = admittedState?.request;
           admittedDeliveryId = admittedRequest?.deliveryId;
           expect(admittedDeliveryId).toBe('operator-report:scheduled:2026-09-02:00');
-          expect(admittedRequest?.contextJson).toContain('mama.owner-report-context/v1');
-          const recomputedSha = createHash('sha256')
-            .update(admittedRequest!.contextJson!, 'utf8')
-            .digest('hex');
-          expect(admittedRequest?.contextSha256).toBe(recomputedSha);
+          expect(admittedRequest?.contextJson).toBeUndefined();
+          expect(admittedRequest?.contextSha256).toBeUndefined();
           expect(modelRunInputs).toHaveLength(1);
           expect(modelRunInputs[0]?.input_refs?.sourceMessageRef).toBe(
-            `owner-report-context:${recomputedSha}`
+            `owner-report:${admittedDeliveryId}`
           );
-          expect(JSON.parse(admittedRequest!.contextJson!)).not.toHaveProperty('readScope');
-          expect(admittedRequest?.contextJson).not.toMatch(
-            /"readScope"|"projectRefs"|"memoryScopes"|"rawConnectors"/
-          );
-          expect(admittedRequest?.contextJson).not.toContain('offline-project');
-
-          // The real report policy and AgentLoop seam expose no report tools or self-gather
-          // surface. A second provider call would also violate the one-turn full-report contract.
-          expect(options?.hostToolBridge?.tools).toEqual([]);
-          expect(prompt).not.toMatch(/changes_read|mama_recall|trello_query|context_compile/);
+          expect(options?.hostToolBridge?.tools.map((tool) => tool.name)).toEqual(['code_act']);
+          expect(prompt).toContain('Discover progressively');
+          expect(options?.systemPrompt).toContain('tool_search');
+          expect(options?.systemPrompt).not.toContain('declare function task_list');
           return {
             response: 'Grounded owner report',
             usage: { input_tokens: 10, output_tokens: 5 },
@@ -307,12 +295,12 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
     const reportAsk = createPersonaReportAsk({
       run: async (prompt, sourceMessageRef) => {
         const result = await agentLoop.runWithContent([{ type: 'text', text: prompt }], {
-          sessionKey: OPERATOR_REPORT_SESSION_KEY,
+          sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'operator',
           channelId: 'report',
           agentContext: reportPolicy.agentContext,
+          sessionPolicyRole: DEFAULT_ROLES.definitions.owner_console,
           gatewayToolsPrompt: reportPolicy.gatewayToolsPrompt,
-          freshSession: true,
           ...(sourceMessageRef ? { sourceMessageRef } : {}),
         });
         return result;
@@ -322,55 +310,6 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
         composedProvenance = provenance;
       },
     });
-    const compile = vi.fn(
-      async ({
-        readScope,
-        windowEvidence,
-        since,
-      }: Parameters<
-        NonNullable<
-          ConstructorParameters<typeof OperatorTriggerLoop>[0]['compileFullReportContext']
-        >
-      >[0]) =>
-        compileOwnerReportContext(
-          { readScope, windowEvidence, since },
-          {
-            listTaskPage: () => ({ tasks: [], total: 0, returned: 0, nextCursor: null }),
-            readClaims: async () => [],
-            readTrello: async () => ({
-              observedAt: '2026-09-02T00:00:00.000Z',
-              cacheAgeMs: 0,
-              complete: true,
-              truncated: false,
-              boards: [
-                { boardId: 'board-safe', board: 'Board', status: 'ok', rosterDegraded: false },
-              ],
-              columns: [],
-            }),
-            buildProvenanceLookup: async () => () => null,
-            correlate: () => ({
-              correlations: [],
-              coverage: {
-                total: 0,
-                matched: 0,
-                unmatched: 0,
-                ambiguous: 0,
-                historical_only: 0,
-                not_applicable: 0,
-              },
-            }),
-            readChanges: (_scope, input) => ({
-              success: true,
-              since: String(input.since),
-              total: 0,
-              returned: 0,
-              coverage: { attributed: 0, unattributed: 0 },
-              changes: [],
-            }),
-            now: () => Date.parse('2026-09-02T00:00:00.000Z'),
-          }
-        )
-    );
     const loop = new OperatorTriggerLoop({
       delta: new FakeDelta(),
       memory: fakeMem(),
@@ -378,7 +317,6 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
       askAgent: async () => '[]',
       reportAsk,
       fullReportProvenance: () => composedProvenance,
-      compileFullReportContext: compile,
       fullReportReadScope: {
         projectRefs: [{ kind: 'project', id: 'offline-project' }],
         memoryScopes: [{ kind: 'project', id: 'offline-project' }],
@@ -407,7 +345,6 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
     try {
       await loop.tick();
 
-      expect(compile).toHaveBeenCalledOnce();
       expect(codexPromptMock).toHaveBeenCalledOnce();
       expect(modelRunInputs).toHaveLength(1);
       expect(appendToolTrace).not.toHaveBeenCalled();

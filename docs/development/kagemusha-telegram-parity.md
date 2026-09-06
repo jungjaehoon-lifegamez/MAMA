@@ -4,6 +4,30 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## One MAMA owner-runtime candidate: 2026-09-06
+
+- **TG-03/TG-04:** authenticated owner channels, connector events, reports, workorders, cron,
+  heartbeat, and trigger maintenance now enter one `owner:runtime` model subject. Channel identity
+  remains delivery and authority metadata. The host `delegate` and `report_request` relays are
+  removed; MAMA directly invokes the selected backend's native subagents when it decides bounded
+  parallel work is useful, then reviews their evidence itself.
+- **TG-05:** a compatible backend thread receives no copied conversation, report body, or memory
+  bundle. Per-turn envelopes no longer churn the owner policy fingerprint. Actual thread loss
+  restores only the successful bounded owner-runtime journal: eight turns maximum, 600 prompt
+  characters and 900 response characters per turn, stored mode 0600 and injected once by the lazy
+  replacement path.
+- **TG-03/TG-05/TG-06:** the report packet compiler, owner-report inbox, automatic memory-agent
+  model, and per-kind worker model sessions are removed. Full-report requests use the ordinary
+  owner turn and progressive readers. Delivered report text is already known by the composing
+  owner subject and is marked consumed rather than copied into the next prompt. Exact delivery
+  reservation, retry, idempotency, and receipt enforcement remain host-owned.
+- **Evidence:** the `0.49.0` candidate passes standalone typecheck, lint, root build (2/2), root
+  tests (7/7), and standalone 409 files / 5,498 tests with seven existing skips. An independent
+  bounded review found and then verified fixes for legacy API session bypass, recovery stimulus
+  loss, recovery token-budget bypass, journal corruption, untrusted recovery data, and durability
+  propagation; its final result has no remaining P1/P2. PR/CI, release, clean installation, and a
+  real Telegram same-session canary remain pending.
+
 ## 0.48.4 wiki provenance retry reduction candidate: 2026-09-06
 
 - TG-03/TG-04/TG-06: live 0.48.3 proved the configured vault boundary: the 2026-09-05 daily,
@@ -154,9 +178,9 @@ scenario IDs from this document.
   registry and Code-Act HostBridge; genuinely new creates do not require it. Leaving a verified
   review clears its derived clock and anchor state, while legacy review rows without both verified
   anchor fields cannot acquire or load Temporal ownership.
-- **TG-03/TG-04/TG-05 report overhead:** the packet-only full-report path retains one fresh model
-  turn and its bounded packet audit. The retired report gather/write-history classifier, marker
-  dependency, and their tests were removed; digest-only earlier-text recovery remains separate.
+- **Historical TG-03/TG-04/TG-05 report overhead:** v0.40 retained one fresh packet-only model
+  turn. The One MAMA owner-runtime candidate above supersedes that architecture and removes the
+  separate report subject and copied report recovery.
 - **Evidence:** `temporal-work-context.test.ts`, `gateway-tool-executor.test.ts`,
   `tool-registry.test.ts`, `host-bridge.test.ts`, `task-ledger.test.ts`,
   `temporal-reconcile.test.ts`, `external-lifecycle-executor.test.ts`, `report-run.test.ts`,
@@ -290,13 +314,15 @@ scenario IDs from this document.
 
 ### Owner-event Board coalescing evidence: 2026-08-26
 
-- **TG-03/TG-04:** MAMA still decides whether to delegate Board work through
-  `workorder_request`; the host does not prescribe the model's tool sequence. The gateway derives
+- **Historical TG-03/TG-04:** MAMA decided whether to hand Board work to `workorder_request`; the
+  host did not prescribe the model's tool sequence. The One MAMA candidate now routes the stimulus
+  to the standing owner subject and reserves delegation for native subagents. The gateway derives
   owner-event batch identity only from host execution state, while direct owner requests keep the
   distinct manual forced-refresh contract. The optional legacy `dashboard-agent` persona setting
   does not disable the independent Stage-2 Board publisher/verifier runtime.
-- **TG-05:** each connector batch still receives one fresh, self-contained owner-event model run.
-  Coalescing begins only after MAMA chooses Board delegation: twenty exact batches persist twenty
+- **Historical TG-05:** each connector batch received one fresh, self-contained owner-event model
+  run. The One MAMA candidate supersedes this with the canonical owner session. Previously,
+  coalescing began only after MAMA chose Board work: twenty exact batches persisted twenty
   receipts but share one open non-force Board workorder.
 - **TG-06:** `owner_event_board_refresh_intents` atomically binds each retained inbox batch to its
   repair generation and shared workorder. A persisted acceptance ACKs the exact batch before a

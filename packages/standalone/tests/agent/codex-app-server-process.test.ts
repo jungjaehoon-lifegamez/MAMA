@@ -127,8 +127,8 @@ function fixtureThread(root: string): FixtureThread {
 const dynamicTools: HostToolBridge['tools'] = [
   {
     type: 'function',
-    name: 'report_request',
-    description: 'Create a report',
+    name: 'synthetic_lookup',
+    description: 'Run a synthetic lookup',
     inputSchema: {
       type: 'object',
       properties: { topic: { type: 'string' } },
@@ -138,7 +138,7 @@ const dynamicTools: HostToolBridge['tools'] = [
 ];
 
 function hostBridge(
-  execute: HostToolBridge['execute'] = async () => ({ content: 'report ready', isError: false })
+  execute: HostToolBridge['execute'] = async () => ({ content: 'lookup ready', isError: false })
 ): HostToolBridge {
   return { tools: dynamicTools, execute };
 }
@@ -254,7 +254,7 @@ rl.on('line', line => {
       ? {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'Write',arguments:{path:${JSON.stringify(join(root, 'auxiliary-output.txt'))},content:'written'}}
       : mode === 'auxiliary-bash'
       ? {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'Bash',arguments:{command:'pwd',workdir:${JSON.stringify(root)}}}
-      : {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'report_request',arguments:{topic:'status'}};
+      : {threadId:message.params.threadId,turnId:id,callId:'call-1',namespace:null,tool:'synthetic_lookup',arguments:{topic:'status'}};
     const requestTool = (requestId, params, callback) => { toolReplies.set(requestId, callback); send({jsonrpc:'2.0',id:requestId,method:'item/tool/call',params}); };
     let toolReplyCount = 0;
     const afterToolReply = () => { toolReplyCount += 1; const expected=['tool-duplicate','tool-duplicate-conflict','tool-serialized'].includes(mode) ? 2 : 1; if(toolReplyCount === expected) complete(); };
@@ -526,7 +526,7 @@ describe('Story: Codex app-server process', () => {
       runner.prompt('hi', undefined, {
         hostToolBridge: hostBridge(async (call) => {
           calls.push(call);
-          return { content: 'report ready', isError: false };
+          return { content: 'lookup ready', isError: false };
         }),
       })
     ).resolves.toMatchObject({ response: 'hello' });
@@ -535,7 +535,7 @@ describe('Story: Codex app-server process', () => {
     expect(calls).toEqual([
       expect.objectContaining({
         callId: 'call-1',
-        name: 'report_request',
+        name: 'synthetic_lookup',
         input: { topic: 'status' },
         signal: expect.any(AbortSignal),
       }),
@@ -549,7 +549,7 @@ describe('Story: Codex app-server process', () => {
       id: 710,
       result: {
         success: true,
-        contentItems: [{ type: 'inputText', text: 'report ready' }],
+        contentItems: [{ type: 'inputText', text: 'lookup ready' }],
       },
     });
   });
@@ -1498,7 +1498,7 @@ describe('Story: Codex app-server process', () => {
       })
     ).resolves.toMatchObject({ response: 'hello' });
 
-    expect(calls).toEqual(['report_request']);
+    expect(calls).toEqual(['synthetic_lookup']);
     expect(messages(item.capture)).toContainEqual({
       jsonrpc: '2.0',
       id: 710,

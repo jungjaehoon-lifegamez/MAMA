@@ -21,7 +21,6 @@ import express, { type Express } from 'express';
 import path from 'node:path';
 import http from 'node:http';
 
-import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
 import { logActivity } from '../../db/agent-store.js';
@@ -275,7 +274,6 @@ export interface RegisterApiRoutesParams {
   oauthManager: OAuthManager;
   mamaApi: MAMAApiShape;
   messageRouter: MessageRouter;
-  agentLoop: AgentLoop;
   toolExecutor: GatewayToolExecutor;
   discordGateway: DiscordGateway | null;
   slackGateway: SlackGateway | null;
@@ -318,7 +316,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     oauthManager: _oauthManager,
     mamaApi: _mamaApi,
     messageRouter,
-    agentLoop,
     toolExecutor,
     discordGateway,
     slackGateway,
@@ -1631,115 +1628,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   });
 
-  // ── Discord cron endpoint ─────────────────────────────────────────────
-  apiServer.app.post('/api/discord/cron', requireAuth, async (req, res) => {
-    try {
-      const { channelId, prompt } = req.body;
-      if (!channelId || !prompt) {
-        res.status(400).json({ error: 'channelId and prompt are required' });
-        return;
-      }
-      if (!discordGateway) {
-        res.status(503).json({ error: 'Discord gateway not connected' });
-        return;
-      }
-      console.log(`[Discord Cron] Executing: ${prompt.substring(0, 50)}...`);
-      const result = await agentLoop.run(prompt);
-      await discordGateway.sendMessage(channelId, result.response);
-      console.log(`[Discord Cron] Sent to Discord channel ${channelId}`);
-      res.json({ success: true, response: result.response.substring(0, 100) + '...' });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  // ── Report (heartbeat) endpoint ───────────────────────────────────────
-  apiServer.app.post('/api/report', requireAuth, async (req, res) => {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    const fs = await import('fs/promises');
-
-    try {
-      const { channelId, reportType = 'delta' } = req.body;
-      if (!channelId) {
-        res.status(400).json({ error: 'channelId is required' });
-        return;
-      }
-      if (!discordGateway) {
-        res.status(503).json({ error: 'Discord gateway not connected' });
-        return;
-      }
-
-      console.log(`[Heartbeat] Starting ${reportType} report...`);
-
-      // Get paths from config (with fallbacks)
-      const workspacePath =
-        config.workspace?.path?.replace('~', process.env.HOME || '') ||
-        `${process.env.HOME}/.mama/workspace`;
-      const collectScript =
-        config.integrations?.heartbeat?.collect_script?.replace('~', process.env.HOME || '') ||
-        `${workspacePath}/scripts/heartbeat-collect.sh`;
-      const dataFile =
-        config.integrations?.heartbeat?.data_file?.replace('~', process.env.HOME || '') ||
-        `${workspacePath}/data/heartbeat-report.json`;
-      const templateFile =
-        config.integrations?.heartbeat?.template_file?.replace('~', process.env.HOME || '') ||
-        `${workspacePath}/HEARTBEAT.md`;
-
-      // 1. Run heartbeat-collect.sh
-      console.log('[Heartbeat] Collecting data...');
-      await execAsync(`bash ${collectScript}`, {
-        timeout: 60000,
-        cwd: workspacePath,
+  // Legacy model-and-send endpoints are retired. They accepted an arbitrary
+  // destination without the delivery ledger, so retries could duplicate output.
+  for (const retiredPath of ['/api/discord/cron', '/api/report']) {
+    apiServer.app.post(retiredPath, requireAuth, (_req, res) => {
+      res.status(410).json({
+        error:
+          'Legacy model-and-send endpoint retired; use the owner runtime and receipted delivery',
       });
-
-      // 2. Read collected data (limit to 50KB to fit in prompt)
-      let jsonData = await fs.readFile(dataFile, 'utf-8');
-      if (jsonData.length > 50000) {
-        console.log(`[Heartbeat] JSON too large (${jsonData.length}), truncating to 50KB`);
-        jsonData = jsonData.substring(0, 50000) + '\n... (truncated)';
-      }
-      const heartbeatMd = await fs.readFile(templateFile, 'utf-8');
-
-      // 3. Generate report with Claude
-      console.log('[Heartbeat] Generating report...');
-      const prompt = `Here is the collected work data. Please write a ${reportType === 'full' ? 'comprehensive report' : 'delta report'} following the report format in HEARTBEAT.md.
-
-## HEARTBEAT.md (Report Format)
-${heartbeatMd}
-
-## Collected Data (JSON)
-${jsonData}
-
-${
-  reportType === 'full'
-    ? '📋 Write a comprehensive report. Include all project status.'
-    : '🔔 Write a delta report. If there are no new messages, respond with HEARTBEAT_OK only.'
-}
-
-Keep the report under 2000 characters as it will be sent to Discord.`;
-
-      const result = await agentLoop.run(prompt);
-      console.log(`[Heartbeat] Claude response length: ${result.response?.length || 0}`);
-      console.log(`[Heartbeat] Response preview: ${result.response?.substring(0, 100) || 'EMPTY'}`);
-
-      // 4. Send to Discord
-      if (!result.response || result.response.trim() === '') {
-        console.error('[Heartbeat] Empty response from Claude');
-        res.status(500).json({ error: 'Empty response from Claude' });
-        return;
-      }
-      console.log('[Heartbeat] Sending to Discord...');
-      await discordGateway.sendMessage(channelId, result.response);
-
-      console.log('[Heartbeat] Complete');
-      res.json({ success: true, reportType, response: result.response.substring(0, 200) + '...' });
-    } catch (error) {
-      console.error('[Heartbeat] Error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+    });
+  }
 
   // ── Screenshot endpoint ───────────────────────────────────────────────
   apiServer.app.post('/api/screenshot', requireAuth, async (req, res) => {

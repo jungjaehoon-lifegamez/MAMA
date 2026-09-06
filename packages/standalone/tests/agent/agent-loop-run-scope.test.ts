@@ -164,7 +164,7 @@ describe('Story OPS-0: per-run scope + operator global lane', () => {
         loop as unknown as { resolveGlobalLaneForSession(key: string): string | undefined }
       ).resolveGlobalLaneForSession.bind(loop);
 
-      expect(resolve('operator:report')).toBe('operator');
+      expect(resolve('operator:test')).toBe('operator');
       expect(resolve('operator:worker:board')).toBe('operator');
       expect(resolve('viewer:main')).toBe('viewer');
       expect(resolve('system:conductor-audit')).toBe('system');
@@ -183,7 +183,7 @@ describe('Story OPS-0: per-run scope + operator global lane', () => {
       const runA = loop.runWithContent([{ type: 'text', text: 'report work' }], {
         streamCallbacks: makeCallbacks('A', log),
         source: 'operator',
-        channelId: 'report',
+        channelId: 'scope-test',
       });
       await vi.waitFor(() => {
         expect(promptGate.pending.length).toBe(1);

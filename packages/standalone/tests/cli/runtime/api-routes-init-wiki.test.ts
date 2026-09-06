@@ -22,7 +22,6 @@ import { AgentEventBus } from '../../../src/multi-agent/agent-event-bus.js';
 import { TaskLedger } from '../../../src/operator/task-ledger.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
 import Database from '../../../src/sqlite.js';
-import type { AgentLoop } from '../../../src/agent/index.js';
 import type { OAuthManager } from '../../../src/auth/index.js';
 
 const emptyConnectorConfig: ConnectorConfigLoadResult = {
@@ -143,7 +142,10 @@ async function registerWikiRuntime(
     oauthManager: {} as OAuthManager,
     mamaApi: {} as MAMAApiShape,
     messageRouter: {} as MessageRouter,
-    agentLoop: {} as AgentLoop,
+    runOwnerStimulus: vi.fn(async () => ({
+      response: 'owner response',
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })),
     toolExecutor,
     discordGateway: null,
     slackGateway: null,

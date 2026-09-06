@@ -40,9 +40,12 @@ const ownerRole = DEFAULT_ROLES.definitions.owner_console;
 const turn = (kind: (typeof WORKORDER_KINDS)[number], scope: readonly string[] = ['trello']) =>
   buildTurnAgentPolicy(kind, 'gpt-test', 'codex', privatePolicy, scope, ownerRole);
 
-describe('report lane: instructions against the grant', () => {
-  it('TG-03/TG-04/TG-05 grants no rediscovery or mutation tools to packet-only reports', () => {
-    expect([...REPORT_GRANT]).toEqual([]);
+describe('owner runtime report stimulus: progressive discovery grant', () => {
+  it('TG-03/TG-04/TG-05 starts from bounded reads and has no relay tool', () => {
+    expect(REPORT_GRANT.has('task_list')).toBe(true);
+    expect(REPORT_GRANT.has('changes_read')).toBe(true);
+    expect(REPORT_GRANT.has('board_read')).toBe(true);
+    expect(REPORT_GRANT.has('report_request')).toBe(false);
   });
 });
 
@@ -73,7 +76,9 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
     const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
     const known = new Set(ToolRegistry.getAllTools().map((t) => t.name));
     for (const kind of WORKORDER_KINDS) {
-      const unknown = turn(kind).agentContext.role.allowedTools.filter((t) => !known.has(t));
+      const unknown = turn(kind).agentContext.role.allowedTools.filter(
+        (t) => t !== 'native_subagent' && !known.has(t)
+      );
       expect(unknown, `turn '${kind}' grants unknown tools`).toEqual([]);
     }
   });
@@ -161,6 +166,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
       'mama_provenance',
       'mama_recall',
       'mama_search',
+      'native_subagent',
       'schedule_upcoming',
       'task_list',
       'trello_card',
@@ -189,8 +195,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
     expect(grant('self-check')).toEqual([...common, 'issue_close', 'repair_request'].sort());
   });
 
-  // A registered tool nobody grants is the delegate failure mode: pin that the owner default
-  // grant and the Code-Act bridge both carry every Phase 3 tool.
+  // Pin that the owner default grant and Code-Act bridge carry every Phase 3 gateway tool.
   it('AC #9 (ONE-MAMA-P3) file_export, repair_request and issue_close are grantable and injectable', async () => {
     const { HostBridge } = await import('../../src/agent/code-act/host-bridge.js');
     const bridge = new Set(HostBridge.getToolRegistry().map((t) => t.name));

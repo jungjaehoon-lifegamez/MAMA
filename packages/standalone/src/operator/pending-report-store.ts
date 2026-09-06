@@ -44,9 +44,9 @@ export interface PendingReportRequest {
   acceptedAtIso: string;
   target: ReportCarryTarget;
   payloadIdentity: string;
-  /** Canonical redacted OwnerReportContextV1 JSON persisted before model admission. */
+  /** Legacy pre-One-MAMA packet, accepted only so an old pending request can be recovered. */
   contextJson?: string;
-  /** SHA-256 of the exact UTF-8 bytes in contextJson. */
+  /** Legacy packet checksum. New requests never write either context field. */
   contextSha256?: string;
 }
 
@@ -96,7 +96,10 @@ export interface PendingReportStore {
 }
 
 const MAX_PENDING_REPORT_BYTES = 8 * 1024 * 1024;
-const MAX_PENDING_CONTEXT_BYTES = 96 * 1024;
+// Legacy packets were admitted up to 512 KiB by the retired compiler. Keep old
+// requests loadable within the already-bounded 8 MiB state file; they are never
+// placed in a model prompt and disappear when the request becomes a delivery.
+const MAX_PENDING_CONTEXT_BYTES = MAX_PENDING_REPORT_BYTES;
 const MAX_CHANNELS = 48;
 const MAX_FIRES = 100;
 const MAX_RECALLED = 20;

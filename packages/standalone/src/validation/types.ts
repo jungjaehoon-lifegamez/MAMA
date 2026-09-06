@@ -2,7 +2,7 @@
  * Validation Session Domain Types + Metric Profiles
  *
  * Shared observable validation model for agent execution.
- * Every run path (delegate, agent_test, system_run, audit) feeds the same model.
+ * Every validation run path feeds the same model.
  */
 
 // ── Statuses ───────────────────────────────────────────────────────────────

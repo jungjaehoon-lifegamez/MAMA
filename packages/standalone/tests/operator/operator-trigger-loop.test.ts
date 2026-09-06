@@ -36,56 +36,9 @@ import {
   type PersistDeliveredInput,
 } from '../../src/operator/report-carry.js';
 import type { SituationReporterSnapshot } from '../../src/operator/situation-report.js';
-import { compileOwnerReportContext } from '../../src/operator/report-context.js';
 import type { AskAgent } from '../../src/operator/trigger-author.js';
 
 const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
-const TEST_REPORT_SCOPE = {
-  projectRefs: [{ kind: 'project' as const, id: 'test-project' }],
-  memoryScopes: [{ kind: 'project' as const, id: 'test-project' }],
-  rawConnectors: ['trello'],
-};
-
-const compileTestReportContext: NonNullable<
-  ConstructorParameters<typeof OperatorTriggerLoop>[0]['compileFullReportContext']
-> = async ({ readScope, windowEvidence, since }) =>
-  compileOwnerReportContext(
-    { readScope, windowEvidence, since },
-    {
-      listTaskPage: () => ({ tasks: [], total: 0, returned: 0, nextCursor: null }),
-      readClaims: async () => [],
-      readTrello: async () => ({
-        observedAt: '2026-09-02T00:00:00.000Z',
-        cacheAgeMs: 0,
-        complete: true,
-        truncated: false,
-        boards: [],
-        columns: [],
-      }),
-      buildProvenanceLookup: async () => () => null,
-      correlate: () => ({
-        correlations: [],
-        coverage: {
-          total: 0,
-          matched: 0,
-          unmatched: 0,
-          ambiguous: 0,
-          historical_only: 0,
-          not_applicable: 0,
-        },
-      }),
-      readChanges: (_scope, input) => ({
-        success: true,
-        since: String(input.since),
-        total: 0,
-        returned: 0,
-        coverage: { attributed: 0, unattributed: 0 },
-        changes: [],
-      }),
-      now: () => Date.parse('2026-09-02T00:00:00.000Z'),
-    }
-  );
-
 function packetReportAsk(ask: AskAgent): AskAgent & {
   full: (input: { prompt: string }) => Promise<string>;
 } {
@@ -186,8 +139,6 @@ describe('OperatorTriggerLoop', () => {
       registry: reg,
       askAgent: fallbackAsk, // author proposes nothing by default
       reportAsk: packetReportAsk(over.reportAsk ?? fallbackAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       config: {
         tickMs: 60_000,
@@ -1192,8 +1143,6 @@ describe('OperatorTriggerLoop', () => {
       const loop = makeLoop({
         askAgent,
         reportAsk: packetReportAsk(reportAsk),
-        compileFullReportContext: compileTestReportContext,
-        fullReportReadScope: TEST_REPORT_SCOPE,
         output: { send: vi.fn(async () => {}) },
         config: {
           tickMs: 100,
@@ -1426,8 +1375,6 @@ describe('Story OPS-1 / S1-T3: on-demand full report + scheduled suppression', (
           (over.askAgent as AskAgent | undefined) ??
           (async () => 'owner report')
       ),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       config: {
         tickMs: 60_000,
@@ -1576,8 +1523,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(localDb),
       askAgent: over.askAgent ?? (async () => '[]'),
       reportAsk: packetReportAsk(over.reportAsk ?? over.askAgent ?? (async () => 'owner report')),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       pendingReportStore: {
         load: () => pendingRef.current,
@@ -1597,9 +1542,9 @@ describe('TG-06: durable owner-report delivery identity', () => {
     });
   }
 
-  it('TG-05/TG-06 reuses byte-identical persisted packet after a crash during the model call', async () => {
+  it('TG-05/TG-06 reuses the same durable report stimulus after a model crash', async () => {
     const pendingRef: { current: PendingReportState | null } = { current: null };
-    const compile = vi.fn(compileTestReportContext);
+    const compile = vi.fn();
     const failingAsk = Object.assign(
       vi.fn(async () => 'unused'),
       {
@@ -1612,7 +1557,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       output: { send: vi.fn(async () => {}) },
       reportAsk: failingAsk,
       compileFullReportContext: compile,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       reportScheduler: {
         shouldFire: () => ({ fire: false, hourKey: '2026-09-02:09' }),
         markFired: vi.fn(),
@@ -1623,13 +1567,14 @@ describe('TG-06: durable owner-report delivery identity', () => {
 
     expect(first.startFullReport().accepted).toBe(true);
     await vi.waitFor(() => expect(failingAsk.full).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(pendingRef.current?.request?.contextJson).toBeTruthy());
-    const persistedJson = pendingRef.current!.request!.contextJson!;
-    const persistedSha = pendingRef.current!.request!.contextSha256!;
+    await vi.waitFor(() => expect(pendingRef.current?.request).toBeDefined());
+    const persistedDeliveryId = pendingRef.current!.request!.deliveryId;
+    expect(pendingRef.current!.request!.contextJson).toBeUndefined();
+    expect(pendingRef.current!.request!.contextSha256).toBeUndefined();
 
     const send = vi.fn(async () => {});
-    const recoveredFull = vi.fn(async (input: { contextSha256: string }) => {
-      expect(input.contextSha256).toBe(persistedSha);
+    const recoveredFull = vi.fn(async (input: { sourceMessageRef?: string }) => {
+      expect(input.sourceMessageRef).toBe(`owner-report:${persistedDeliveryId}`);
       return 'recovered packet report';
     });
     const recoveryAsk = Object.assign(
@@ -1640,12 +1585,10 @@ describe('TG-06: durable owner-report delivery identity', () => {
       output: { send },
       reportAsk: recoveryAsk,
       compileFullReportContext: compile,
-      fullReportReadScope: TEST_REPORT_SCOPE,
     });
     await recovered.tick();
 
-    expect(compile).toHaveBeenCalledOnce();
-    expect(persistedJson).toContain('mama.owner-report-context/v1');
+    expect(compile).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledWith('recovered packet report', expect.any(String));
   });
 
@@ -1972,8 +1915,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(reportAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: { send },
       reportScheduler: {
@@ -2222,8 +2163,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(reportAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: { send },
       reportScheduler: {
@@ -2299,8 +2238,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
         registry: new TriggerRegistry(new Database(':memory:')),
         askAgent: async () => '[]',
         reportAsk: packetReportAsk(reportAsk),
-        compileFullReportContext: compileTestReportContext,
-        fullReportReadScope: TEST_REPORT_SCOPE,
         review: async () => ({ action: 'kept' as const }),
         output: testReportOutput(send),
         reportScheduler: scheduler,
@@ -2362,8 +2299,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(reportAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: testReportOutput(send),
       reportScheduler: scheduler,
@@ -2415,8 +2350,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(reportAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: testReportOutput(send),
       reportScheduler: scheduler,
@@ -2484,8 +2417,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(reportAsk),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: testReportOutput(send),
       reportScheduler: scheduler,
@@ -2679,8 +2610,6 @@ describe('TG-06: durable owner-report delivery identity', () => {
       registry: new TriggerRegistry(new Database(':memory:')),
       askAgent: async () => '[]',
       reportAsk: packetReportAsk(async () => 'accepted report'),
-      compileFullReportContext: compileTestReportContext,
-      fullReportReadScope: TEST_REPORT_SCOPE,
       review: async () => ({ action: 'kept' as const }),
       output: {
         target: TEST_REPORT_TARGET,
@@ -2695,7 +2624,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
         load: () => durable,
         save: (state) => {
           saveCount += 1;
-          if (saveCount < 4) {
+          if (saveCount < 3) {
             durable = structuredClone(state);
             return;
           }

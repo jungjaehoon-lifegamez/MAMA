@@ -1658,98 +1658,19 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: POST /api/memory-agent/ingest - plugin-compat alias for audit-conversation
-    // Claude Code plugin posts hook events here; forward async with 202 accepted.
-    if (pathname === '/api/memory-agent/ingest' && req.method === 'POST') {
-      try {
-        const body =
-          (req as unknown as { body?: Record<string, unknown> }).body ?? (await readBody(req));
-        if (!Array.isArray(body.messages) || body.messages.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: true, message: 'messages must be a non-empty array' }));
-          return true;
-        }
-        if (!options.auditConversation) {
-          res.writeHead(501, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
-          return true;
-        }
-        // Cast to unknown[] first for safe per-element validation (user-supplied HTTP input)
-        const rawMessages = body.messages as Array<unknown>;
-        const messages = rawMessages.filter(
-          (m): m is { role: string; content: string } =>
-            m !== null &&
-            typeof m === 'object' &&
-            'role' in m &&
-            typeof (m as Record<string, unknown>).role === 'string' &&
-            'content' in m &&
-            typeof (m as Record<string, unknown>).content === 'string'
-        );
-        if (messages.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: true, message: 'No valid messages after filtering' }));
-          return true;
-        }
-        const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
-        const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
-        // Fire-and-forget so hook returns quickly
-        options
-          .auditConversation({ conversation, scopes })
-          .catch((err: Error) => logger.error('[MemoryAgent] ingest failed', err));
-        res.writeHead(202, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ accepted: true, queued: messages.length }));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: true, message }));
-      }
-      return true;
-    }
-
-    // Route: POST /api/mama/audit-conversation - ingest via memory agent (creates edges)
-    if (pathname === '/api/mama/audit-conversation' && req.method === 'POST') {
-      try {
-        // Express may have already parsed the body; use req.body if available
-        const body =
-          (req as unknown as { body?: Record<string, unknown> }).body ?? (await readBody(req));
-        if (!options.auditConversation) {
-          res.writeHead(501, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: true, message: 'Audit conversation not available' }));
-          return true;
-        }
-        const messages = (body.messages || []) as Array<{
-          role: 'user' | 'assistant';
-          content: string;
-        }>;
-        const conversation = messages.map((m) => `${m.role}: ${m.content}`).join('\n');
-        const scopes = (body.scopes || []) as Array<{ kind: string; id: string }>;
-        const candidates = body.candidates as
-          | Array<{ kind: string; topicHint?: string; confidence: number; summary: string }>
-          | undefined;
-        const ack = await options.auditConversation({ conversation, scopes, candidates });
-        if (!ack || (typeof ack === 'object' && (ack as Record<string, unknown>).error)) {
-          const errMsg =
-            (typeof ack === 'object' && (ack as Record<string, unknown>).message) ||
-            'Audit conversation failed';
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: String(errMsg) }));
-        } else if (
-          typeof ack === 'object' &&
-          (ack as Record<string, unknown>).status === 'failed'
-        ) {
-          const reason =
-            (ack as Record<string, unknown>).reason || 'Audit agent returned failed status';
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: String(reason), ack }));
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, ack }));
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: true, message }));
-      }
+    // Retired model-as-function endpoints fail explicitly. Conversation memory
+    // is handled by the standing owner through mama_save, not a hidden agent.
+    if (
+      (pathname === '/api/memory-agent/ingest' || pathname === '/api/mama/audit-conversation') &&
+      req.method === 'POST'
+    ) {
+      res.writeHead(410, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: true,
+          message: 'Separate memory-agent ingestion was retired; use the One MAMA owner runtime',
+        })
+      );
       return true;
     }
 

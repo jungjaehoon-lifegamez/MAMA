@@ -47,6 +47,7 @@ import {
 import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
 import { laneChannelId } from '../gateways/principal.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../operator/owner-runtime.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -137,23 +138,20 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
   enabledNames: [],
 });
 
-// Sources without an entry stay on their per-session lane. Owner-event work
-// deliberately uses `owner-event:<channelKey>` instead of the global operator
-// lane so separate connector conversations do not serialize behind Stage-2.
+// Sources without an entry stay on their per-session lane. Every owner stimulus
+// uses owner:runtime, so its session lane serializes chat, events, reports,
+// maintenance, and heartbeat before any global-lane choice is considered.
 export const SOURCE_GLOBAL_LANES: Record<string, string> = {
   viewer: 'viewer',
   system: 'system',
-  // Operator work (scheduled reports, briefed worker runs) serializes among
-  // itself but must not block owner chat on 'main': a 260s full report was
-  // measurably blocking chat replies before this lane existed. Safe only
-  // because per-run state is scoped (RunScope), not instance state.
+  // Non-owner trigger authoring/review still uses the operator global lane.
   operator: 'operator',
 };
 
 /**
  * Per-run mutable state threaded through a single runWithContentInternal
- * invocation. MUST stay run-local: with the operator global lane, a report or
- * worker run legally overlaps chat turns on the same AgentLoop instance.
+ * invocation. MUST stay run-local because public and internal non-owner runs
+ * can still overlap the serialized owner runtime.
  */
 interface RunScope extends TemporalCodeActBreakerState {
   streamCallbacks?: StreamCallbacks;
@@ -387,12 +385,6 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
     layers.push(buildMinimalContext(context));
   }
 
-  // Load backend-specific AGENTS.md (e.g., AGENTS.claude.md, AGENTS.codex.md)
-  const backendAgentsMd = loadBackendAgentsMd(context?.backend, verbose);
-  if (backendAgentsMd) {
-    layers.push(backendAgentsMd);
-  }
-
   // Load CLAUDE.md (base instructions)
   const claudeMd = loadSystemPrompt(verbose);
   layers.push(claudeMd);
@@ -545,6 +537,22 @@ function combineCodeActSessionPolicyFingerprint(
   });
 }
 
+function ownerRuntimeSessionPolicyFingerprint(
+  role: AgentContext['role'] | undefined,
+  model: string | undefined
+): string {
+  return JSON.stringify({
+    version: 1,
+    subject: OWNER_RUNTIME_SESSION_KEY,
+    model: model ?? null,
+    allowedTools: [...(role?.allowedTools ?? [])].sort(),
+    blockedTools: [...(role?.blockedTools ?? [])].sort(),
+    allowedPaths: [...(role?.allowedPaths ?? [])].sort(),
+    systemControl: role?.systemControl === true,
+    sensitiveAccess: role?.sensitiveAccess === true,
+  });
+}
+
 function roleAllowsOuterCodeAct(
   role: AgentContext['role'] | undefined,
   disallowedTools: readonly string[] | undefined
@@ -647,10 +655,12 @@ export class AgentLoop {
    *
    * Claude's persistent CLI cannot narrow native or MCP tools per turn, so a
    * public lane may run only when both surfaces were disabled at construction.
-   * Codex and Cline enforce their tool policies through different per-run or
-   * per-role boundaries and therefore report false here.
+   * Codex native multi-agent and Claude built-ins are construction-wide, so
+   * public lanes must use another tool-free runtime. Cline can gate spawn per role.
    */
   readonly childRuntimeToolCapable: boolean;
+  readonly probesDurableSession: boolean;
+  readonly ownerRecoveryJournalEnabled: boolean;
   private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
@@ -696,6 +706,7 @@ export class AgentLoop {
   private readonly clineNativePolicyConfigured: boolean;
   private readonly clineAllowSpawnAgent: boolean;
   private readonly clineAllowAgentTeams: boolean;
+  private readonly ownerRuntimeJournal: AgentLoopOptions['ownerRuntimeJournal'];
 
   constructor(
     _oauthManager: OAuthManager | null,
@@ -744,6 +755,8 @@ export class AgentLoop {
       options.clineNativeDisallowedTools !== undefined;
     this.clineAllowSpawnAgent = options.clineAllowSpawnAgent ?? false;
     this.clineAllowAgentTeams = options.clineAllowAgentTeams ?? false;
+    this.ownerRuntimeJournal = options.ownerRuntimeJournal;
+    this.ownerRecoveryJournalEnabled = this.ownerRuntimeJournal !== undefined;
 
     if (useGatewayMode && useMCPMode) {
       logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
@@ -807,6 +820,7 @@ export class AgentLoop {
     }
 
     const backend = options.backend ?? 'claude';
+    this.probesDurableSession = backend === 'codex';
 
     if (this.useCodeAct && options.systemPrompt) {
       promptLayers = [
@@ -818,12 +832,6 @@ export class AgentLoop {
           priority: 1,
         },
       ];
-    }
-
-    // Load backend-specific AGENTS.md (e.g., AGENTS.claude.md, AGENTS.codex.md)
-    const backendAgentsMd = loadBackendAgentsMd(backend);
-    if (backendAgentsMd) {
-      promptLayers.push({ name: 'backendAgents', content: backendAgentsMd, priority: 2 });
     }
 
     if (this.isGatewayMode) {
@@ -896,7 +904,7 @@ export class AgentLoop {
     // Choose backend (default: claude)
     this.backend = backend;
     this.childRuntimeToolCapable =
-      backend === 'claude' && (useMCPMode || options.builtinTools !== '');
+      backend === 'codex' || (backend === 'claude' && (useMCPMode || options.builtinTools !== ''));
 
     if (this.backend === 'codex') {
       // Codex app-server mode
@@ -1120,7 +1128,7 @@ export class AgentLoop {
   }
 
   /**
-   * Set validation service for agent_test / delegate validation flows.
+   * Set validation service for agent validation flows.
    */
   setValidationService(
     svc: import('../validation/session-service.js').ValidationSessionService
@@ -1162,16 +1170,6 @@ export class AgentLoop {
   }
 
   /**
-   * Set AgentProcessManager for delegate tool (multi-agent delegation)
-   */
-  setAgentProcessManager(
-    pm: import('../multi-agent/agent-process-manager.js').AgentProcessManager
-  ): void {
-    pm.setGatewayToolExecutor(this.mcpExecutor);
-    this.mcpExecutor.setAgentProcessManager(pm);
-  }
-
-  /**
    * Set AgentEventBus for agent_notices tool
    */
   setAgentEventBus(eventBus: import('../multi-agent/agent-event-bus.js').AgentEventBus): void {
@@ -1206,7 +1204,8 @@ export class AgentLoop {
       return this.laneManager.enqueueWithSession(
         sessionKey,
         () => this.runWithContentInternal(content, options),
-        globalLane
+        globalLane,
+        { priority: options?.lanePriority ?? 0 }
       );
     }
 
@@ -1236,7 +1235,8 @@ export class AgentLoop {
       return this.laneManager.enqueueWithSession(
         sessionKey,
         () => this.runWithContentInternal(content, options),
-        globalLane
+        globalLane,
+        { priority: options?.lanePriority ?? 0 }
       );
     }
 
@@ -1270,6 +1270,9 @@ export class AgentLoop {
       ...createTemporalCodeActBreakerState(),
     };
     const history: Message[] = [];
+    const ownerJournalPrompt =
+      options?.ownerJournalPrompt ??
+      content.map((block) => (block.type === 'text' ? block.text : `[${block.type}]`)).join('\n');
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     // Budget accounting is separate from totalUsage (a published field): it includes cache
     // creation and cache reads, which are the bulk of a re-sent context and the cost being
@@ -1349,27 +1352,50 @@ export class AgentLoop {
             ...CLINE_NATIVE_GUARD_BYPASS,
           ]),
         ];
-    const clineDelegationBlocked = clineRole?.blockedTools?.includes('delegate') ?? false;
-    const clineAllowSpawnAgent = this.clineAllowSpawnAgent && !clineDelegationBlocked;
-    const clineAllowAgentTeams = this.clineAllowAgentTeams && !clineDelegationBlocked;
+    const clineDelegationGranted =
+      clineRole?.allowedTools.some((pattern) => pattern === '*' || pattern === 'native_subagent') ??
+      false;
+    const clineDelegationBlocked =
+      clineRole?.blockedTools?.some(
+        (pattern) => pattern === '*' || pattern === 'native_subagent'
+      ) ?? false;
+    const clineAllowSpawnAgent =
+      this.clineAllowSpawnAgent && clineDelegationGranted && !clineDelegationBlocked;
+    const clineAllowAgentTeams =
+      this.clineAllowAgentTeams && clineDelegationGranted && !clineDelegationBlocked;
+    const ownerRuntime = channelKey === OWNER_RUNTIME_SESSION_KEY;
+    const sessionPolicyRole = ownerRuntime
+      ? (options?.sessionPolicyRole ?? options?.agentContext?.role)
+      : options?.agentContext?.role;
     const codeActPolicy = this.useCodeAct
       ? projectCodeActToolPolicy({
-          tier: runScope.tier,
-          roleName: options?.agentContext?.roleName,
-          role: options?.agentContext?.role,
+          tier: ownerRuntime ? 1 : runScope.tier,
+          roleName: ownerRuntime ? 'owner_console' : options?.agentContext?.roleName,
+          role: sessionPolicyRole,
           disallowedTools: this.disallowedTools,
-          envelopeDestinationKinds:
-            options?.envelope?.scope.allowed_destinations.map((destination) => destination.kind) ??
-            [],
-          envelopeRawConnectors: options?.envelope?.scope.raw_connectors ?? [],
+          ...(ownerRuntime
+            ? {}
+            : {
+                envelopeDestinationKinds:
+                  options?.envelope?.scope.allowed_destinations.map(
+                    (destination) => destination.kind
+                  ) ?? [],
+                envelopeRawConnectors: options?.envelope?.scope.raw_connectors ?? [],
+              }),
         })
       : undefined;
     const outerCodeActAllowed =
       this.useCodeAct && roleAllowsOuterCodeAct(options?.agentContext?.role, this.disallowedTools);
+    const ownerPolicyFingerprint = ownerRuntime
+      ? ownerRuntimeSessionPolicyFingerprint(sessionPolicyRole, options?.model)
+      : undefined;
     const effectiveSessionPolicyFingerprint =
       isDurableRuntime && codeActPolicy
-        ? combineCodeActSessionPolicyFingerprint(options?.sessionPolicyFingerprint, codeActPolicy)
-        : options?.sessionPolicyFingerprint;
+        ? combineCodeActSessionPolicyFingerprint(
+            ownerPolicyFingerprint ?? options?.sessionPolicyFingerprint,
+            codeActPolicy
+          )
+        : (ownerPolicyFingerprint ?? options?.sessionPolicyFingerprint);
     let resolvedCliSessionId: string | null = options?.cliSessionId ?? null;
 
     const sessionLabel = (isNew: boolean): string => {
@@ -1534,7 +1560,7 @@ export class AgentLoop {
       const prepareSystemPrompt = (
         requestedSystemPrompt: string | undefined,
         isResumingSession: boolean,
-        ownerReportHistoryPrompt: string = ''
+        includeOwnerRecovery = false
       ): string => {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
         let gatewayToolsPrompt = '';
@@ -1578,26 +1604,18 @@ export class AgentLoop {
             }
           }
         }
-        const baseWithOwnerReportHistory = ownerReportHistoryPrompt
-          ? `${baseSystemPrompt}\n\n${ownerReportHistoryPrompt}`
-          : baseSystemPrompt;
-        const fullPrompt = gatewayToolsPrompt
-          ? `${baseWithOwnerReportHistory}\n\n---\n\n${gatewayToolsPrompt}`
-          : baseWithOwnerReportHistory;
+        const ownerRecovery =
+          includeOwnerRecovery && ownerRuntime && this.ownerRuntimeJournal
+            ? this.ownerRuntimeJournal.recoveryBlock()
+            : '';
+        const joinLayers = (base: string, tools: string, recovery: string): string =>
+          [base, tools, recovery].filter(Boolean).join('\n\n---\n\n');
+        const fullPrompt = joinLayers(baseSystemPrompt, gatewayToolsPrompt, ownerRecovery);
 
         // Monitor and enforce prompt size
         const monitor = new PromptSizeMonitor();
         const runLayers: PromptLayer[] = [
           { name: 'systemPrompt', content: baseSystemPrompt, priority: 1 },
-          ...(ownerReportHistoryPrompt
-            ? [
-                {
-                  name: 'ownerReportHistory',
-                  content: ownerReportHistoryPrompt,
-                  priority: 3,
-                } as PromptLayer,
-              ]
-            : []),
           ...(gatewayToolsPrompt
             ? [
                 {
@@ -1613,6 +1631,9 @@ export class AgentLoop {
                 } as PromptLayer,
               ]
             : []),
+          ...(ownerRecovery
+            ? [{ name: 'ownerRecovery', content: ownerRecovery, priority: 3 } as PromptLayer]
+            : []),
         ];
         const checkResult = monitor.check(runLayers);
         if (checkResult.warning) {
@@ -1621,29 +1642,15 @@ export class AgentLoop {
 
         let effectivePrompt = fullPrompt;
         if (!checkResult.withinBudget) {
-          const boundedLayers = ownerReportHistoryPrompt
-            ? runLayers.map((layer) =>
-                layer.name === 'ownerReportHistory' ? { ...layer, content: '' } : layer
-              )
-            : runLayers;
-          const { layers: trimmed, result: enforceResult } = monitor.enforce(boundedLayers);
-          const truncatedLayers = [
-            ...(ownerReportHistoryPrompt ? ['ownerReportHistory'] : []),
-            ...enforceResult.truncatedLayers,
-          ];
+          const { layers: trimmed, result: enforceResult } = monitor.enforce(runLayers);
+          const truncatedLayers = enforceResult.truncatedLayers;
           if (truncatedLayers.length > 0) {
             console.warn(`[AgentLoop] Truncated layers: ${truncatedLayers.join(', ')}`);
           }
           const tBase = trimmed.find((l) => l.name === 'systemPrompt')?.content || baseSystemPrompt;
-          const tOwnerReportHistory =
-            trimmed.find((l) => l.name === 'ownerReportHistory')?.content || '';
           const tTools = trimmed.find((l) => l.name === 'gatewayTools')?.content || '';
-          const tBaseWithOwnerReportHistory = tOwnerReportHistory
-            ? `${tBase}\n\n${tOwnerReportHistory}`
-            : tBase;
-          effectivePrompt = tTools
-            ? `${tBaseWithOwnerReportHistory}\n\n---\n\n${tTools}`
-            : tBaseWithOwnerReportHistory;
+          const tRecovery = trimmed.find((l) => l.name === 'ownerRecovery')?.content || '';
+          effectivePrompt = joinLayers(tBase, tTools, tRecovery);
           logger.debug(
             `[AgentLoop] System prompt truncated: ${fullPrompt.length} → ${effectivePrompt.length} chars`
           );
@@ -1651,11 +1658,13 @@ export class AgentLoop {
 
         logger.debug(
           `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
-            `(base: ${baseSystemPrompt.length}, history: ${ownerReportHistoryPrompt.length}, ` +
-            `tools: ${gatewayToolsPrompt.length})`
+            `(base: ${baseSystemPrompt.length}, tools: ${gatewayToolsPrompt.length}, recovery: ${ownerRecovery.length})`
         );
         return effectivePrompt;
       };
+
+      const includeInitialOwnerRecovery =
+        ownerRuntime && sessionIsNew && options?.resumeSession !== true;
 
       let perCallSystemPrompt: string;
       if (isCline && this.isGatewayMode && this.useCodeAct && !sessionIsNew) {
@@ -1665,15 +1674,16 @@ export class AgentLoop {
         perCallSystemPrompt = options?.systemPrompt ?? this.defaultSystemPrompt;
       } else if (
         options?.systemPrompt ||
-        options?.ownerReportHistoryPrompt ||
         options?.gatewayToolsPrompt !== undefined ||
         (this.isGatewayMode && this.useCodeAct)
       ) {
         perCallSystemPrompt = prepareSystemPrompt(
           options?.systemPrompt,
           options?.resumeSession === true,
-          options?.ownerReportHistoryPrompt
+          includeInitialOwnerRecovery
         );
+      } else if (includeInitialOwnerRecovery) {
+        perCallSystemPrompt = prepareSystemPrompt(undefined, false, true);
       } else {
         perCallSystemPrompt = this.defaultSystemPrompt;
         console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
@@ -1690,11 +1700,7 @@ export class AgentLoop {
       const resumeInstructions =
         isDurableRuntime && freshSystemPromptBuilder
           ? async (): Promise<string> =>
-              prepareSystemPrompt(
-                await freshSystemPromptBuilder(),
-                false,
-                options?.freshSessionOwnerReportHistoryPrompt?.()
-              )
+              prepareSystemPrompt(await freshSystemPromptBuilder(), false, true)
           : undefined;
 
       // Reset StopContinuation state for this channel to prevent leaking
@@ -1905,7 +1911,7 @@ export class AgentLoop {
                 requestSystemPrompt = prepareSystemPrompt(
                   await options.freshSessionSystemPrompt(),
                   false,
-                  options.freshSessionOwnerReportHistoryPrompt?.()
+                  true
                 );
               }
             } catch (rebuildError) {
@@ -2064,7 +2070,7 @@ export class AgentLoop {
                 resetSystemPrompt = prepareSystemPrompt(
                   await options.freshSessionSystemPrompt(),
                   false,
-                  options.freshSessionOwnerReportHistoryPrompt?.()
+                  true
                 );
               }
 
@@ -2432,7 +2438,7 @@ export class AgentLoop {
       // Extract final text response
       const finalResponse = this.extractTextResponse(history);
 
-      const result = {
+      const result: AgentLoopResult = {
         ...(stoppedBy ? { stoppedBy } : {}),
         response: finalResponse,
         turns: turn,
@@ -2486,6 +2492,26 @@ export class AgentLoop {
         logger.error(
           `Model run ${ownedModelRunId} may remain uncommitted; provenance reported as commit_failed`
         );
+      }
+      if (ownerRuntime && this.ownerRuntimeJournal && finalResponse.trim()) {
+        try {
+          this.ownerRuntimeJournal.append({
+            trust: options?.ownerJournalTrust ?? 'untrusted',
+            source: options?.source ?? 'owner',
+            channelId: options?.channelId ?? OWNER_RUNTIME_SESSION_KEY,
+            prompt: ownerJournalPrompt,
+            response: finalResponse,
+            ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
+            committedAt: new Date().toISOString(),
+          });
+        } catch (journalError) {
+          result.ownerJournalProvenance = 'commit_failed';
+          logger.warn(
+            `Owner runtime journal append failed: ${
+              journalError instanceof Error ? journalError.message : String(journalError)
+            }`
+          );
+        }
       }
       return result;
     } catch (error) {
