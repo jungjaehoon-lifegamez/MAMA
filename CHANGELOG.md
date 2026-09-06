@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.49.2] - 2026-09-07
+
+### Fixed
+
+- Owner event turns no longer rebuild and inject prior same-channel observations, outcomes or
+  delivered notification bodies into the continuing owner conversation. Current deltas, matched
+  procedures and effect identities remain turn input; actual session replacement uses only the
+  shared bounded owner recovery journal. Historical inbox records remain available for audit.
+- Recovery is now triggered by actual backend missing/mismatched state, rather than a fresh
+  in-memory session pool. Compatible daemon restarts restore policy without replaying the
+  journal; Claude, Codex and Cline background replacements and retries still recover it once.
+- The streaming idle-timeout regression test uses a virtual parent clock with real subprocess
+  output, preserving timeout-refresh coverage without a 45ms CI scheduling race.
+
 ## mama-os [0.49.1] - 2026-09-07
 
 ### Fixed

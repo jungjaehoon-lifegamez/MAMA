@@ -1842,11 +1842,29 @@ describe('Story: Codex app-server process', () => {
     const item = fixture('progress-delayed');
     const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 2_000 });
     await runner.prompt('warm connection');
-
-    await expect(
-      runner.prompt('long but active', undefined, { requestTimeout: 45 })
-    ).resolves.toMatchObject({ response: 'ticktickticktickhello' });
-    await runner.stop();
+    // Keep real subprocess I/O, but advance the parent's idle clock on each received delta.
+    // A 45ms wall timeout with 25ms child ticks races CI scheduling; this still proves that
+    // cumulative activity exceeds the timeout and only a refreshed idle deadline survives.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let advancedMs = 0;
+    try {
+      await expect(
+        runner.prompt(
+          'long but active',
+          {
+            onDelta: () => {
+              vi.advanceTimersByTime(30);
+              advancedMs += 30;
+            },
+          },
+          { requestTimeout: 45 }
+        )
+      ).resolves.toMatchObject({ response: 'ticktickticktickhello' });
+      expect(advancedMs).toBeGreaterThan(45);
+    } finally {
+      vi.useRealTimers();
+      await runner.stop();
+    }
   });
 
   it('serializes overlapping turns for the same session on the shared app-server', async () => {

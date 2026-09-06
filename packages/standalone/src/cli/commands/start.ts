@@ -2595,13 +2595,6 @@ export async function runAgentLoop(
               ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
               skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
               ownerTelegramChatId: reportChatId,
-              priorContext: ownerEventInbox.readPriorContext({
-                currentBatchId: batch.id,
-                channelKey: batch.channelKey,
-                principalRole: ownerEventContext.roleName,
-                allowedRawConnectors: readScope.rawConnectors,
-                ownerTelegramChatId: reportChatId,
-              }),
             });
           },
           issueEnvelope: ownerEventIssueEnvelope,

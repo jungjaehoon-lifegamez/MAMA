@@ -162,3 +162,25 @@ the final candidate now fingerprints the effective model, with a production-shap
 passing regression. Root build and all seven root test tasks passed again after that correction.
 This candidate is installed from a local tarball; public release and inbound Telegram/native-
 subagent continuation are still unproven.
+
+## Follow-up completion audit: 0.49.2
+
+The channel/process audit confirmed one owner model subject, but found a remaining TG-05 breach:
+`start.ts` called `ownerEventInbox.readPriorContext` on every event and the prompt builder copied
+up to ten prior handled batches, including notification bodies, into a compatible continuation.
+That automatic replay was inherited from the retired fresh owner-event sessions. The 0.49.2
+change removes both the production read and the prompt's historical input/rendering. The inbox
+storage and explicit audit reads remain; only genuine backend replacement uses the shared owner
+journal. This is required before claiming the One MAMA goal complete.
+
+The restart audit also found eager journal reads based on an empty in-memory SessionPool and a
+compatible `thread/resume` policy callback that included recovery. Both now exclude history.
+Backend missing/mismatch preflight (including a fresh Claude background process) and actual
+replacement retries add the bounded journal exactly once, even without a caller prompt builder.
+Cross-backend regression tests distinguish compatible restart from genuine loss explicitly.
+
+0.49.2 local verification: root build 2/2 and root tests 7/7 passed; standalone completed 410
+files with 5,517 passing tests and seven existing skips. Root lint, typecheck, version/doc sync
+and diff checks passed. Independent review found no P1/P2 in event replay removal, actual-backend
+recovery gating, or the deterministic idle-timeout test. Publication/installation and the real
+Telegram follow-up remain separate completion evidence.
