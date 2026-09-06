@@ -4,6 +4,14 @@ This is the shared implementation and review artifact for Telegram owner-console
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.
 
+## 0.48.2 bounded historical task reads: 2026-09-06
+
+- TG-03/TG-05/TG-06: a live 2026-08-09 backfill exposed that `taskUpdatedSince` had no upper
+  bound and returned 221 later task rows. Wiki payloads now carry `taskUpdatedBefore` equal to
+  `range.end_ms`, and the progressive task facade enforces the half-open range on every page.
+  Legacy payloads without the upper bound fail closed. The interrupted broad backfill and queued
+  follow-ups were cancelled before another run could start; bounded runtime proof remains pending.
+
 ## 0.48.1 wiki continuity and task recalibration candidate: 2026-09-06
 
 - TG-03/TG-04: connector events remain evidence. `task_create` is host-blocked on every

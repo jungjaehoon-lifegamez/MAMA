@@ -32,6 +32,7 @@ const REQUIRED_RUNTIME_SECTIONS = [
   'task_list({view:"items"',
   // C1: updated_since is the canonical RFC3339 string, not the numeric start_ms.
   'updated_since: <the payload taskUpdatedSince string>',
+  'updated_before: <the payload taskUpdatedBefore string>',
   'nextCursor',
   'mama_search',
   // Daily journal behavior
@@ -83,6 +84,7 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
     const section = buildTurnKindSection('wiki');
     // The RFC 3339 string is required; the raw numeric epoch is called out as rejected.
     expect(section).toContain('updated_since: <the payload taskUpdatedSince string>');
+    expect(section).toContain('updated_before: <the payload taskUpdatedBefore string>');
     expect(section).toContain('RFC 3339');
     expect(section).not.toContain('updated_since: range.start_ms');
   });

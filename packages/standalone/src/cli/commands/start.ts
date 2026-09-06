@@ -2125,6 +2125,18 @@ export async function runAgentLoop(
         if (temporalContext) {
           runOptions.temporalWorkContext = temporalContext;
         }
+        if (wo.workKind === 'wiki') {
+          runOptions.wikiTaskRange = {
+            updatedSince:
+              typeof wo.payload.taskUpdatedSince === 'string'
+                ? wo.payload.taskUpdatedSince
+                : null,
+            updatedBefore:
+              typeof wo.payload.taskUpdatedBefore === 'string'
+                ? wo.payload.taskUpdatedBefore
+                : null,
+          };
+        }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
         // caller class with no issuer - without this, every worker tool call
