@@ -333,6 +333,7 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
     expect(seeded.ledger.getById(seeded.task.id)).toMatchObject({
       status: seeded.candidate.proposedStatus,
       latestEvent: seeded.candidate.evidenceSummary,
+      resolutionKind: 'completed_evidence',
       revision: seeded.candidate.taskRevision + 1,
     });
     expect(
@@ -575,6 +576,9 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
       );
 
       expect(updated.outcome).toBe('applied');
+      expect(seeded.ledger.getById(seeded.task.id)?.resolutionKind).toBe(
+        proposedStatus === 'done' ? 'completed_evidence' : null
+      );
       if (generation) {
         expect(
           seeded.ledger.getTemporalGeneration(generation.generation.generationKey)

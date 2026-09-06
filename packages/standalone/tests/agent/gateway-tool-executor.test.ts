@@ -688,7 +688,13 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           await expect(
             executor.execute(
               'task_create',
-              { title: 'duplicate delivery', status: 'done', latest_event: 'forged', ...source },
+              {
+                title: 'duplicate delivery',
+                completion_criteria: 'c',
+                status: 'done',
+                latest_event: 'forged',
+                ...source,
+              },
               {
                 executionSurface: 'model_tool',
                 workorderAttemptId: seeded.attempt.id,
@@ -723,7 +729,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           const result = await executor.execute(
             'code_act',
             {
-              code: `task_create({ title: 'duplicate delivery', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
+              code: `task_create({ title: 'duplicate delivery', completion_criteria: 'c', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
               allowedTools: ['task_create'],
             },
             {
@@ -761,6 +767,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           'task_create',
           {
             title: 'duplicate delivery',
+            completion_criteria: 'c',
             status: 'done',
             latest_event: 'confirmed',
             expected_revision: unrelated.revision,
@@ -800,6 +807,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
               'task_create',
               {
                 title: 'duplicate delivery',
+                completion_criteria: 'c',
                 status: 'done',
                 latest_event: 'confirmed',
                 ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }),
@@ -836,6 +844,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             'task_create',
             {
               title: 'duplicate delivery',
+              completion_criteria: 'c',
               status: 'done',
               latest_event: 'confirmed',
               expected_revision: unrelated.revision,

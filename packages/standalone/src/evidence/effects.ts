@@ -56,7 +56,8 @@ import { createHash } from 'node:crypto';
  * note. HONESTY: live writers today are the task kinds (task-ledger),
  * memory_write (gateway mama_save/mama_update receipt, v0.41.0), file_export
  * (operator/file-export.ts), repair_request and run_budget_stop (One MAMA
- * Phase 3). report_update/report_publish/wiki_write remain declared surface
+ * Phase 3). `task_reclassify` records as task_update; its payload's changed
+ * resolution_kind preserves that semantic subtype. report_update/report_publish/wiki_write remain declared surface
  * with zero recorders; coverage claims must say so.
  */
 export type EffectKind =

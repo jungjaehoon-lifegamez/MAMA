@@ -447,10 +447,10 @@ register({
 register({
   name: 'task_list',
   description:
-    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board, walk nextCursor to read it all; view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled.',
+    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled.',
   category: 'os_monitoring',
   params:
-    "view? (overview|items|detail, default items), status? (pending|in_progress|review|blocked|done|cancelled), include_terminal? (default true; false excludes done/cancelled unless status is explicit), channel?, search?, assignee?, priority? (high|normal|low), due_before?/due_after? (RFC 3339 + offset, exact due_at only), updated_since? (RFC 3339 + offset), order? ('deadline_priority'|'updated'), limit? (items, 1..50, default 25), cursor? (items, nextCursor from the previous page), ids? (detail, 1..4 distinct), text_offset?/text_limit? (detail, code points; default 1000, max 2000)",
+    "view? (overview|items|detail, default items), status? (pending|in_progress|review|blocked|done|cancelled), include_terminal? (default true; false excludes done/cancelled unless status is explicit), qualification? (qualified|legacy_unqualified), channel?, search?, assignee?, priority? (high|normal|low), due_before?/due_after? (RFC 3339 + offset, exact due_at only), updated_since? (RFC 3339 + offset), order? ('deadline_priority'|'updated'), limit? (items, 1..50, default 25), cursor? (items, nextCursor from the previous page), ids? (detail, 1..4 distinct), text_offset?/text_limit? (detail, code points; default 1000, max 2000)",
 });
 register({
   name: 'task_external_correlation',
@@ -506,28 +506,57 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board. Records and tasks are SEPARATE: only an owner conversation creates a task, and only for work with a concrete, finite completion condition. Connector observations, lessons, principles, aspirations ("열심히 살자") and open questions ("how should we manage X?") stay records/memory/decisions - do not create rows for them. `completion_criteria` is required, limited to 500 characters, and must name what would make this finished; a title alone is refused. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
-    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
+    'title (required), completion_criteria (required, concrete and finite), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
+});
+register({
+  name: 'task_reclassify',
+  description:
+    'Recorrect an EXISTING row on your task board with a named disposition, so a closed row says WHY it closed. completed_evidence: a current authoritative source explicitly reports completion. completed_no_issue: the work is finished - allowed only when the deadline/due_at has already passed and your check of every relevant source found no open issue. non_task_record: it was never a task, it is a record. non_task_memory: it was never a task and belongs in memory as a lesson/principle; this classification removes it from the active board but does not itself write memory, so use an available memory-write capability or leave the source for the curation turn. reopen: later feedback reopened the SAME row - allowed only from a terminal row, and it clears the stale deadline. Requires the exact revision you read, and a reason that is preserved as the row history.',
+  category: 'os_monitoring',
+  params:
+    'id (required), disposition (required: completed_evidence|completed_no_issue|non_task_record|non_task_memory|reopen), reason (required), expected_revision (required)',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: ['integer', 'string'] },
+      disposition: {
+        type: 'string',
+        enum: [
+          'completed_evidence',
+          'completed_no_issue',
+          'non_task_record',
+          'non_task_memory',
+          'reopen',
+        ],
+      },
+      reason: { type: 'string', minLength: 1, maxLength: 2000 },
+      expected_revision: { type: 'integer', minimum: 0 },
+    },
+    required: ['id', 'disposition', 'reason', 'expected_revision'],
+    additionalProperties: false,
+  },
 });
 register({
   name: 'task_update',
   description:
     'Update a work item on YOUR task board by id. Input `latest_event` sets the owner reason; ' +
     'the returned task DTO exposes it as response field `latestEvent`. Board workorder ' +
-    'lifecycle judgments carry the revision read by the model. A review transition also ' +
+    'lifecycle or completion-criteria judgments carry the revision read by the model and a reason. A review transition also ' +
     'carries the same-run packet and one exact selected raw submission anchor; the host ' +
     'verifies its source/timestamp and computes review timing. System workorder rows are ' +
     'host-managed and cannot be updated here.',
   category: 'os_monitoring',
   params:
-    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, expected_revision?, context_packet_id?, review_anchor_ref?',
+    'id (required), title?, completion_criteria? (non-empty, max 500; use it to qualify a legacy task), status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, expected_revision?, context_packet_id?, review_anchor_ref?',
   inputSchema: {
     type: 'object',
     properties: {
       id: { type: ['integer', 'string'] },
       title: { type: 'string' },
+      completion_criteria: { type: 'string', minLength: 1, maxLength: 500 },
       status: { type: 'string' },
       priority: { type: 'string' },
       assignee: { type: ['string', 'null'] },

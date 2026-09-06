@@ -263,7 +263,7 @@ function buildStableRolePolicyInstructions(
     privateConnectorPolicy.enabledPrivateConnectors.length > 0
       ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
       : '';
-  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update) is the tracker YOU maintain for the owner. Every external store remains separate evidence: name the store a fact came from, and decide the board's lifecycle from what the evidence shows rather than copying an external status.${privateStoreBoundary}${trelloBoundary}
+  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update/task_reclassify) is the tracker YOU maintain for the owner. Every external store remains separate evidence: name the store a fact came from, and decide the board's lifecycle from what the evidence shows rather than copying an external status. Create a task only when the owner is asking for finite work and supply a concrete completion_criteria. Lessons, memories, principles, aspirations, observations and open-ended management questions remain records/memory/decisions.${privateStoreBoundary}${trelloBoundary}
 - Answer status questions from artifacts first (board_read, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
   return includeOperatingDiscipline
     ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
@@ -404,6 +404,7 @@ const MEMBER_BLOCKED_TOOLS = [
   'webchat_send',
   'task_create',
   'task_update',
+  'task_reclassify',
   'report_request',
   'report_publish',
   'wiki_publish',

@@ -40,6 +40,7 @@ const PUBLIC_STATUSES = [
 ] as const;
 const PRIORITIES = ['high', 'normal', 'low'] as const;
 const ORDERS = ['deadline_priority', 'updated'] as const;
+const QUALIFICATIONS = ['qualified', 'legacy_unqualified'] as const;
 const VIEWS = ['overview', 'items', 'detail'] as const;
 type ViewName = (typeof VIEWS)[number];
 
@@ -74,6 +75,7 @@ interface NormalizedFilter {
   dueBeforeMs?: number;
   dueAfterMs?: number;
   updatedSinceMs?: number;
+  qualification?: (typeof QUALIFICATIONS)[number];
   order: (typeof ORDERS)[number];
 }
 
@@ -301,6 +303,11 @@ function compactItem(task: TaskRecord): Record<string, unknown> {
     sourceChannel: task.sourceChannel,
     sourceEventId: task.sourceEventId,
     temporal_state: task.temporalState,
+    // Records vs tasks: what would finish this row, and (once terminal) WHY it
+    // closed. Without both, a page of rows cannot be judged - completed work and
+    // an item that was never a task look identical.
+    completion_criteria: task.completionCriteria,
+    resolution_kind: task.resolutionKind,
   };
 }
 
@@ -390,6 +397,7 @@ function parseFilter(input: Record<string, unknown>): NormalizedFilter {
     dueBeforeMs: parseOptionalStrictTime(input.due_before, 'due_before'),
     dueAfterMs: parseOptionalStrictTime(input.due_after, 'due_after'),
     updatedSinceMs: parseOptionalStrictTime(input.updated_since, 'updated_since'),
+    qualification: parseQualification(input.qualification),
     order: parseOrder(input.order),
   };
 }
@@ -405,6 +413,7 @@ function toLedgerFilter(filter: NormalizedFilter): ListTasksPageFilter {
     dueBeforeMs: filter.dueBeforeMs,
     dueAfterMs: filter.dueAfterMs,
     updatedSinceMs: filter.updatedSinceMs,
+    qualification: filter.qualification,
     order: filter.order,
   };
 }
@@ -435,6 +444,10 @@ function boundTaskMatches(task: TaskRecord, filter: NormalizedFilter): boolean {
     return false;
   }
   if (filter.updatedSinceMs !== undefined && !(task.updatedAt >= filter.updatedSinceMs)) {
+    return false;
+  }
+  if (filter.qualification === 'qualified' && task.completionCriteria === null) return false;
+  if (filter.qualification === 'legacy_unqualified' && task.completionCriteria !== null) {
     return false;
   }
   return true;
@@ -470,6 +483,14 @@ function parseOrder(value: unknown): NormalizedFilter['order'] {
     throw new Error(`task_list order must be one of ${ORDERS.join('|')}.`);
   }
   return value as NormalizedFilter['order'];
+}
+
+function parseQualification(value: unknown): NormalizedFilter['qualification'] {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !(QUALIFICATIONS as readonly string[]).includes(value)) {
+    throw new Error(`task_list qualification must be one of ${QUALIFICATIONS.join('|')}.`);
+  }
+  return value as NormalizedFilter['qualification'];
 }
 
 function parseOptionalString(value: unknown, field: string): string | undefined {
@@ -561,6 +582,7 @@ function filterFingerprint(filter: NormalizedFilter): string {
     filter.dueBeforeMs ?? null,
     filter.dueAfterMs ?? null,
     filter.updatedSinceMs ?? null,
+    filter.qualification ?? null,
     filter.order,
   ]);
   return createHash('sha256').update(canonical).digest('base64url').slice(0, 22);

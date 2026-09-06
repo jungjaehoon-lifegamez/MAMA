@@ -57,6 +57,7 @@ const TEMPORAL_RECONCILE_INPUT_TYPE =
 const TASK_LIST_FILTERS =
   "status?: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled'," +
   'include_terminal?: boolean,channel?: string,search?: string,assignee?: string,' +
+  "qualification?: 'qualified' | 'legacy_unqualified'," +
   "priority?: 'high' | 'normal' | 'low',due_before?: string,due_after?: string," +
   "updated_since?: string,order?: 'deadline_priority' | 'updated'";
 const TASK_LIST_INPUT_TYPE =
@@ -760,7 +761,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board, walk nextCursor to read it all; view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled.',
+      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled.',
     params: [
       {
         name: 'view',
@@ -779,6 +780,11 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'search', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
       { name: 'priority', type: 'string', required: false },
+      {
+        name: 'qualification',
+        type: "'qualified' | 'legacy_unqualified'",
+        required: false,
+      },
       {
         name: 'due_before',
         type: 'string',
@@ -870,9 +876,16 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'task_create',
-    description: 'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts.',
+    description:
+      'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts. Records and tasks are SEPARATE: only real work with a concrete, finite completion condition becomes a row. Observations, lessons, principles, aspirations and open questions stay records/memory.',
     params: [
       { name: 'title', type: 'string', required: true },
+      {
+        name: 'completion_criteria',
+        type: 'string',
+        required: true,
+        description: 'Concrete, finite condition under which this is finished',
+      },
       { name: 'status', type: 'string', required: false },
       { name: 'priority', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
@@ -913,10 +926,16 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_update',
     description:
-      'Update a task-ledger item by id. Input latest_event sets the owner reason; the returned task uses latestEvent.',
+      'Update a task-ledger item by id. completion_criteria qualifies a real legacy task; a Board run supplies expected_revision and latest_event for that judgment. Input latest_event sets the owner reason; the returned task uses latestEvent.',
     params: [
       { name: 'id', type: 'number', required: true },
       { name: 'title', type: 'string', required: false },
+      {
+        name: 'completion_criteria',
+        type: 'string',
+        required: false,
+        description: 'Non-empty, max 500; qualifies a legacy task',
+      },
       { name: 'status', type: 'string', required: false },
       { name: 'priority', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
@@ -940,6 +959,24 @@ const TOOL_REGISTRY: ToolMeta[] = [
     ],
     returnType:
       '{ task: { latestEvent: string | null; due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
+    category: 'memory',
+  },
+  {
+    name: 'task_reclassify',
+    description:
+      'Recorrect an existing row with a named disposition so a closed row says WHY. completed_evidence uses an authoritative completion signal; completed_no_issue needs an already-past deadline plus a complete relevant-source check; non_task_record/non_task_memory mean it was never a task (classification does not itself write memory); reopen (terminal rows only) continues the SAME row after later feedback.',
+    params: [
+      { name: 'id', type: 'number', required: true },
+      {
+        name: 'disposition',
+        type: "'completed_evidence' | 'completed_no_issue' | 'non_task_record' | 'non_task_memory' | 'reopen'",
+        required: true,
+      },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+    ],
+    returnType:
+      '{ task: { status: string; resolutionKind: string | null; latestEvent: string | null; revision: number; [key: string]: unknown } }',
     category: 'memory',
   },
   {
@@ -1051,6 +1088,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // Native task ledger writes: reconcile runs maintain work items (M8).
   'task_create',
   'task_update',
+  'task_reclassify',
   'task_external_bind',
   'task_lifecycle_reconcile',
   'task_temporal_reconcile',

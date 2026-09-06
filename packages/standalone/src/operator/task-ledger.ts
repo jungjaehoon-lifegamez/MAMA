@@ -6,7 +6,8 @@
  * workorder state. Implements the pre-existing `TaskSource` interface
  * (operator-interfaces.ts) so the board projects one task model, not two.
  *
- * Reconcile runs create/update rows through the task_create/task_update gateway
+ * Owner conversations create rows through task_create. Reconcile runs update or
+ * reclassify existing rows through the task_update/task_reclassify gateway
  * tools; the pipeline board slot is a projection of `list({order:
  * 'deadline_priority'})`. The agent proposes task changes, while this ledger
  * enforces revisions, temporal ownership, idempotency, and atomic receipts.
@@ -23,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import { applyOperatorTaskExternalLifecycleMigration } from '../db/migrations/operator-task-external-lifecycle.js';
 import { applyOperatorTaskReviewLifecycleMigration } from '../db/migrations/operator-task-review-lifecycle.js';
+import { applyOperatorTaskClassificationMigration } from '../db/migrations/operator-task-classification.js';
 import {
   changeCoverage,
   ensureEffectLedger,
@@ -173,6 +175,49 @@ export interface TaskRecord extends OperatorTask {
   temporalState: TemporalState;
   reviewStartedAt: number | null;
   reviewAnchorEventId: string | null;
+  /**
+   * The concrete, finite condition under which this row is finished. What makes a
+   * row a TASK rather than a record; null on rows that predate the policy and on
+   * internal/system seeding.
+   */
+  completionCriteria: string | null;
+  /** Semantic terminal reason, set by task_reclassify; null while open. */
+  resolutionKind: TaskResolutionKind | null;
+}
+
+/**
+ * Why a row reached its terminal state. Without this the agent cannot tell
+ * completed work from an item that was never a task, which is how connector
+ * observations, principles and open questions accumulated as owner rows.
+ */
+export const TASK_RESOLUTION_KINDS = [
+  'completed_evidence',
+  'completed_no_issue',
+  'non_task_record',
+  'non_task_memory',
+] as const;
+export type TaskResolutionKind = (typeof TASK_RESOLUTION_KINDS)[number];
+
+/** The recorrection an agent may apply to an existing owner row. */
+export const TASK_RECLASSIFY_DISPOSITIONS = [
+  'completed_evidence',
+  'completed_no_issue',
+  'non_task_record',
+  'non_task_memory',
+  'reopen',
+] as const;
+export type TaskReclassifyDisposition = (typeof TASK_RECLASSIFY_DISPOSITIONS)[number];
+
+/** Upper bound on the preserved reason, matching latest_event's practical size. */
+export const TASK_RECLASSIFY_REASON_MAX_LENGTH = 2000;
+export const TASK_COMPLETION_CRITERIA_MAX_LENGTH = 500;
+
+export interface ReclassifyTaskInput {
+  disposition: TaskReclassifyDisposition;
+  /** Non-empty, bounded; preserved as the row's latest_event. */
+  reason: string;
+  /** Always required: a reclassification is a lifecycle judgment. */
+  expected_revision: number;
 }
 
 export interface TaskLedgerOptions {
@@ -327,6 +372,12 @@ export interface CreateTaskInput {
   confirmed?: boolean;
   /** Required only when a Board workorder uses a duplicate source key as an update. */
   expected_revision?: number;
+  /**
+   * The concrete, finite condition under which this row is finished. The PUBLIC
+   * task_create boundary requires it (gateway-tool-executor); the ledger keeps it
+   * optional so internal/system seeding stays backward compatible.
+   */
+  completion_criteria?: string;
 }
 
 export interface UpdateTaskInput {
@@ -340,6 +391,14 @@ export interface UpdateTaskInput {
   confirmed?: boolean;
   title?: string;
   expected_revision?: number;
+  /** Concrete finite exit condition; lets legacy rows become qualified tasks. */
+  completion_criteria?: string;
+  /**
+   * HOST-INTERNAL: written only by reclassify(). The public task_update surface
+   * rejects it (TASK_UPDATE_PUBLIC_FIELDS), so an agent cannot stamp a semantic
+   * terminal reason without going through the reclassification rules.
+   */
+  resolution_kind?: TaskResolutionKind | null;
 }
 
 export interface ListTasksFilter {
@@ -359,6 +418,8 @@ export interface ListTasksFilter {
   dueAfterMs?: number;
   /** updated_at at or after this epoch ms. */
   updatedSinceMs?: number;
+  /** Progressive migration filter for rows created before completion criteria existed. */
+  qualification?: 'qualified' | 'legacy_unqualified';
   limit?: number;
   /** 'deadline_priority' = deadline asc NULLS LAST, then high>normal>low, then id. */
   order?: 'deadline_priority' | 'updated';
@@ -472,6 +533,8 @@ interface TaskRow {
   last_temporal_attempt_id: number | null;
   review_started_at: number | null;
   review_anchor_event_id: string | null;
+  completion_criteria: string | null;
+  resolution_kind: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -502,6 +565,23 @@ function assertIsoDate(value: string, field: string): void {
   if (!isRoundTrip) {
     throw new Error(`${field} must be an ISO date (YYYY-MM-DD), got: ${value}`);
   }
+}
+
+function normalizeCompletionCriteria(
+  value: string | undefined,
+  operation: 'task_create' | 'task_update'
+): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${operation}: completion_criteria must be a non-empty string`);
+  }
+  const normalized = value.trim();
+  if (normalized.length > TASK_COMPLETION_CRITERIA_MAX_LENGTH) {
+    throw new Error(
+      `${operation}: completion_criteria must be at most ${TASK_COMPLETION_CRITERIA_MAX_LENGTH} characters`
+    );
+  }
+  return normalized;
 }
 
 function rowToRecord(row: TaskRow, now: number, timeZone: string): TaskRecord {
@@ -539,6 +619,8 @@ function rowToRecord(row: TaskRow, now: number, timeZone: string): TaskRecord {
     ),
     reviewStartedAt: row.review_started_at,
     reviewAnchorEventId: row.review_anchor_event_id,
+    completionCriteria: row.completion_criteria ?? null,
+    resolutionKind: (row.resolution_kind ?? null) as TaskResolutionKind | null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -619,6 +701,8 @@ export class TaskLedger implements TaskSource {
         last_temporal_attempt_id INTEGER,
         review_started_at INTEGER,
         review_anchor_event_id TEXT,
+        completion_criteria TEXT,
+        resolution_kind TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL`;
 
@@ -695,6 +779,7 @@ export class TaskLedger implements TaskSource {
       applyOperatorTaskTemporalMigration(this.db);
       applyOperatorTaskExternalLifecycleMigration(this.db);
       applyOperatorTaskReviewLifecycleMigration(this.db);
+      applyOperatorTaskClassificationMigration(this.db);
 
       // Old-predicate unique index (no terminal exclusion) -> swap in place.
       const idxRow = this.db
@@ -788,6 +873,11 @@ export class TaskLedger implements TaskSource {
     if (filter.updatedSinceMs !== undefined) {
       where.push('updated_at >= ?');
       params.push(filter.updatedSinceMs);
+    }
+    if (filter.qualification === 'qualified') {
+      where.push('completion_criteria IS NOT NULL');
+    } else if (filter.qualification === 'legacy_unqualified') {
+      where.push('completion_criteria IS NULL');
     }
     return { where, params };
   }
@@ -1444,9 +1534,18 @@ export class TaskLedger implements TaskSource {
         if (superseded) {
           outcome = 'superseded';
         } else if (input.decision === 'apply') {
+          const terminalEvidence =
+            candidate.proposedStatus === 'done' || candidate.proposedStatus === 'cancelled';
           const transitioned = this.transitionTaskInTransaction(
             candidate.taskId,
-            { status: candidate.proposedStatus, latest_event: candidate.evidenceSummary },
+            {
+              status: candidate.proposedStatus,
+              latest_event: candidate.evidenceSummary,
+              // This candidate is a host-issued current authoritative lifecycle
+              // observation. Preserve its semantic completion, or clear an earlier
+              // terminal classification when later feedback reopens the same row.
+              resolution_kind: terminalEvidence ? 'completed_evidence' : null,
+            },
             origin,
             true
           );
@@ -1772,6 +1871,12 @@ export class TaskLedger implements TaskSource {
     }
     const normalizedDeadline = exactDue?.deadline ?? input.deadline ?? null;
     const initialTemporalEpoch = normalizedDeadline !== null ? 1 : 0;
+    // Optional HERE on purpose: the PUBLIC task_create boundary requires it, while
+    // internal/system seeding and legacy callers stay backward compatible.
+    const normalizedCompletionCriteria = normalizeCompletionCriteria(
+      input.completion_criteria,
+      'task_create'
+    );
     const now = this.now();
 
     if (input.source_channel && input.source_event_id) {
@@ -1797,6 +1902,9 @@ export class TaskLedger implements TaskSource {
             ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
             ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
             ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
+            ...(normalizedCompletionCriteria !== null
+              ? { completion_criteria: normalizedCompletionCriteria }
+              : {}),
             ...(input.expected_revision !== undefined
               ? { expected_revision: input.expected_revision }
               : {}),
@@ -1826,8 +1934,8 @@ export class TaskLedger implements TaskSource {
           `INSERT INTO operator_tasks
            (title, status, priority, assignee, deadline, due_at, deadline_offset_minutes,
             revision, temporal_epoch, source_channel, source_event_id, latest_event,
-            auto_created, confirmed, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+            auto_created, confirmed, completion_criteria, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.title.trim(),
@@ -1843,6 +1951,7 @@ export class TaskLedger implements TaskSource {
           input.latest_event ?? null,
           1,
           input.confirmed ? 1 : 0,
+          normalizedCompletionCriteria,
           now,
           now
         );
@@ -1887,6 +1996,7 @@ export class TaskLedger implements TaskSource {
           source_event_id: input.source_event_id ?? null,
           latest_event: input.latest_event ?? null,
           confirmed: input.confirmed ? 1 : 0,
+          completion_criteria: normalizedCompletionCriteria,
         },
         atMs: now,
       });
@@ -1956,6 +2066,132 @@ export class TaskLedger implements TaskSource {
   }
 
   /**
+   * Recorrect an existing owner row with a NAMED disposition.
+   *
+   * Records and tasks are separate. Without a semantic terminal reason the agent
+   * could not distinguish completed work from an item that was never a task, so
+   * connector observations, principles, lessons and open questions accumulated as
+   * owner rows and could only be "closed" as if they had been done.
+   *
+   * Every path requires the exact current revision, a non-empty bounded reason
+   * preserved as `latest_event`, an OWNER row, and the same candidate/workorder
+   * authority checks as task_update (TG-03/TG-04/TG-06) - a terminal or foreign
+   * board attempt cannot mutate an unrelated row. The whole transition, its
+   * `resolution_kind` and its effect receipt commit as ONE transaction.
+   */
+  reclassify(id: number, input: ReclassifyTaskInput, origin: ChangeOrigin = {}): TaskRecord {
+    const disposition = input?.disposition;
+    if (!TASK_RECLASSIFY_DISPOSITIONS.includes(disposition)) {
+      throw new Error(
+        `task_reclassify: disposition must be one of ${TASK_RECLASSIFY_DISPOSITIONS.join('|')}, got: ${String(disposition)}`
+      );
+    }
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+    if (reason.length === 0) {
+      throw new Error('task_reclassify: reason must be a non-empty string');
+    }
+    if (reason.length > TASK_RECLASSIFY_REASON_MAX_LENGTH) {
+      throw new Error(
+        `task_reclassify: reason must be at most ${TASK_RECLASSIFY_REASON_MAX_LENGTH} characters`
+      );
+    }
+    if (!Number.isSafeInteger(input.expected_revision) || input.expected_revision < 0) {
+      throw new Error('task_reclassify: expected_revision must be a non-negative integer');
+    }
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
+        | TaskRow
+        | undefined;
+      if (!existing) throw new Error(`task_reclassify: no task with id ${id}`);
+      if (existing.kind === 'system') {
+        throw new Error(`task_reclassify: task ${id} is a system workorder row (owner rows only)`);
+      }
+      if (input.expected_revision !== existing.revision) {
+        throw new Error(
+          `task_reclassify: expected revision ${input.expected_revision}, current ${existing.revision}`
+        );
+      }
+
+      const patch = this.buildReclassifyPatch(existing, disposition, reason);
+      // Same primitive as task_update: candidate guard, board-attempt liveness,
+      // revision-checked UPDATE, effect receipt, temporal generation supersession.
+      const record = this.transitionTaskInTransaction(id, patch, origin);
+      this.db.exec('COMMIT');
+      return record;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private buildReclassifyPatch(
+    existing: TaskRow,
+    disposition: TaskReclassifyDisposition,
+    reason: string
+  ): UpdateTaskInput {
+    const base: UpdateTaskInput = {
+      latest_event: reason,
+      expected_revision: existing.revision,
+    };
+    if (disposition === 'reopen') {
+      if (existing.status !== 'done' && existing.status !== 'cancelled') {
+        throw new Error(
+          `task_reclassify: reopen requires a terminal owner row, task is '${existing.status}'`
+        );
+      }
+      // A reopened row must not inherit a deadline that already passed: it would
+      // read as overdue the moment it reopens. A still-future deadline is kept.
+      const stale = this.isDeadlineInThePast(existing);
+      return {
+        ...base,
+        status: 'pending',
+        resolution_kind: null,
+        ...(stale ? { deadline: null, due_at: null } : {}),
+      };
+    }
+    if (existing.status === 'done' || existing.status === 'cancelled') {
+      throw new Error(
+        `task_reclassify: ${disposition} requires an active owner row, task is '${existing.status}'`
+      );
+    }
+    if (disposition === 'completed_evidence') {
+      return { ...base, status: 'done', resolution_kind: 'completed_evidence' };
+    }
+    if (disposition === 'completed_no_issue') {
+      // Owner policy: a PAST deadline plus a complete relevant-source check with no
+      // issue is enough. Without a passed deadline there is nothing to conclude from.
+      if (!this.isDeadlineInThePast(existing)) {
+        throw new Error(
+          'task_reclassify: completed_no_issue requires a deadline or due_at already in the past'
+        );
+      }
+      return { ...base, status: 'done', resolution_kind: 'completed_no_issue' };
+    }
+    // non_task_record / non_task_memory: this was never a task. Cancelled, not done,
+    // so accounting never reads it as finished work.
+    return { ...base, status: 'cancelled', resolution_kind: disposition };
+  }
+
+  /** True when the row carries a deadline/due_at that has already passed. */
+  private isDeadlineInThePast(existing: TaskRow): boolean {
+    const state = deriveTemporalState(
+      {
+        // Terminal rows derive 'closed', which would hide a genuinely past deadline;
+        // ask the temporal question about the CLOCK fields only.
+        status: 'pending',
+        dueAt: existing.due_at,
+        deadlineIso: existing.deadline,
+        deadlineOffsetMinutes: existing.deadline_offset_minutes,
+      },
+      this.now(),
+      this.timeZone
+    );
+    return state === 'exact_overdue' || state === 'date_overdue';
+  }
+
+  /**
    * The one mutation primitive for owner-task state. Callers own the outer
    * transaction so lifecycle receipts, effects, generation ownership, and the
    * row revision can commit or roll back as one unit.
@@ -1983,7 +2219,8 @@ export class TaskLedger implements TaskSource {
     const hasLifecyclePatch =
       Object.prototype.hasOwnProperty.call(patch, 'status') ||
       Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
-      Object.prototype.hasOwnProperty.call(patch, 'latest_event');
+      Object.prototype.hasOwnProperty.call(patch, 'latest_event') ||
+      Object.prototype.hasOwnProperty.call(patch, 'completion_criteria');
     const isBoardWorkorderLifecycleJudgment =
       revisionAttempt?.workKind === 'board' && hasLifecyclePatch;
     if (isBoardWorkorderLifecycleJudgment && revisionAttempt.status !== 'in_progress') {
@@ -2046,6 +2283,8 @@ export class TaskLedger implements TaskSource {
       last_temporal_attempt_id: existing.last_temporal_attempt_id,
       review_started_at: existing.review_started_at,
       review_anchor_event_id: existing.review_anchor_event_id,
+      completion_criteria: existing.completion_criteria,
+      resolution_kind: existing.resolution_kind,
     };
     if (patch.title !== undefined) next.title = patch.title.trim();
     if (patch.status !== undefined) next.status = patch.status;
@@ -2053,6 +2292,14 @@ export class TaskLedger implements TaskSource {
     if (patch.assignee !== undefined) next.assignee = patch.assignee;
     if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
     if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+    if (patch.completion_criteria !== undefined) {
+      next.completion_criteria = normalizeCompletionCriteria(
+        patch.completion_criteria,
+        'task_update'
+      );
+    }
+    // Host-internal (reclassify only); the public task_update surface rejects it.
+    if (patch.resolution_kind !== undefined) next.resolution_kind = patch.resolution_kind;
 
     const leavingVerifiedReview =
       existing.status === 'review' &&
@@ -2127,6 +2374,18 @@ export class TaskLedger implements TaskSource {
       (existing.status === 'done' || existing.status === 'cancelled') &&
       next.status !== 'done' &&
       next.status !== 'cancelled';
+    if (terminalToOpen && existing.resolution_kind !== null && patch.resolution_kind !== null) {
+      throw new Error('task_update: a classified terminal row must reopen through task_reclassify');
+    }
+    if (
+      patch.status !== undefined &&
+      next.status !== existing.status &&
+      patch.resolution_kind === undefined
+    ) {
+      // A generic status change has no semantic reclassification authority. Clear an
+      // old terminal meaning rather than rendering contradictory status/reason pairs.
+      next.resolution_kind = null;
+    }
     const openToTerminal =
       existing.status !== 'done' &&
       existing.status !== 'cancelled' &&
@@ -2156,6 +2415,8 @@ export class TaskLedger implements TaskSource {
       'last_temporal_attempt_id',
       'review_started_at',
       'review_anchor_event_id',
+      'completion_criteria',
+      'resolution_kind',
     ] as const;
     const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
     if (changedColumns.length === 0) {

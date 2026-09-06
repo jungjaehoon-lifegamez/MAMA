@@ -4,7 +4,7 @@
  * Ports Kagemusha's taskboard reconcile mechanism (agent-awareness.ts
  * buildTaskboardReconcilePrompt / runTaskboardReconcile): when a channel delta
  * arrives, the AGENT judges which board slots are affected and MUST either act
- * (partial report_publish / task_create / task_update) or record a
+ * (partial report_publish / task_update / task_reclassify) or record a
  * contract_no_update note. The system only debounces, budgets, and serializes;
  * every judgment is the agent's (agent-first).
  *
