@@ -44,17 +44,7 @@ import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
 import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 import type { OwnerEventActivation } from './owner-event-inbox.js';
-import {
-  serializeOwnerReportContext,
-  type OwnerReportContextV1,
-  type OwnerReportReadScope,
-  type ReportWindowEvidence,
-} from './report-context.js';
 import type { FullReportRunInput } from './report-run.js';
-
-export function assertReportContextUsable(context: OwnerReportContextV1): void {
-  serializeOwnerReportContext(context);
-}
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -119,15 +109,6 @@ export interface TriggerLoopDeps {
   reportTarget?: ReportCarryTarget;
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
-  /** Host-owned one-shot compiler. Required for full reports; never exposed to the model. */
-  compileFullReportContext?: (input: {
-    occurrence: PendingReportOccurrence;
-    readScope: OwnerReportReadScope;
-    windowEvidence: ReportWindowEvidence;
-    since: string;
-  }) => Promise<OwnerReportContextV1>;
-  /** Detached authority used for every read in one compiled report packet. */
-  fullReportReadScope?: OwnerReportReadScope;
   /**
    * Durable MAMA owner-agent event feed. Matched trigger contracts travel with
    * the source batch before the connector cursor advances.
@@ -487,46 +468,17 @@ export class OperatorTriggerLoop {
     }
     this.assertPendingRequestBinding(request);
     const reportAsk = this.deps.reportAsk;
-    const compile = this.deps.compileFullReportContext;
-    const readScope = this.deps.fullReportReadScope;
-    if (!reportAsk?.full || !compile || !readScope) {
-      throw new Error('Full owner report packet runtime is unavailable');
-    }
-    if (!request.contextJson || !request.contextSha256) {
-      const since =
-        this.deps.reportScheduler?.loadLastSuccess() ??
-        new Date(Date.parse(request.acceptedAtIso) - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const context = await compile({
-        occurrence: request.occurrence,
-        readScope,
-        windowEvidence: this.fullReporter.buildWindowEvidence(since, request.acceptedAtIso),
-        since,
-      });
-      assertReportContextUsable(context);
-      const contextJson = serializeOwnerReportContext(context);
-      const contextSha256 = createHash('sha256').update(contextJson).digest('hex');
-      this.pendingRequest = {
-        ...request,
-        contextJson,
-        contextSha256,
-        payloadIdentity: pendingReportRequestPayloadIdentity({ ...request, contextSha256 }),
-      };
-      if (!this.persistPendingReports()) return false;
-    }
-    const boundRequest = this.pendingRequest;
-    if (!boundRequest?.contextJson || !boundRequest.contextSha256) {
-      throw new Error('Full owner report context was not persisted');
-    }
-    const context = JSON.parse(boundRequest.contextJson) as OwnerReportContextV1;
-    assertReportContextUsable(context);
-    if (serializeOwnerReportContext(context) !== boundRequest.contextJson) {
-      throw new Error('Pending owner report context is not canonical');
+    if (!reportAsk?.full) {
+      throw new Error('Owner runtime report capability is unavailable');
     }
     const prepared = await this.fullReporter.prepareReport(
-      (prompt) => reportAsk.full!({ prompt, context, contextSha256: boundRequest.contextSha256! }),
+      (prompt) =>
+        reportAsk.full!({
+          prompt,
+          sourceMessageRef: `owner-report:${request.deliveryId}`,
+        }),
       request.mode,
-      request.deliveryId,
-      context
+      request.deliveryId
     );
     if (!prepared) {
       this.pendingRequest = undefined;

@@ -38,6 +38,8 @@ describe('Story: Codex home config generation', () => {
       const first = buildMAMACodexAppServerConfig();
 
       expect(first).toBe(buildMAMACodexAppServerConfig());
+      expect(first).toContain('multi_agent = true');
+      expect(first).not.toContain('multi_agent = false');
       expect(first).toContain('approval_policy = "on-request"');
       expect(first).toContain('shell_tool = false');
       expect(first).not.toContain('skip_git_repo_check');

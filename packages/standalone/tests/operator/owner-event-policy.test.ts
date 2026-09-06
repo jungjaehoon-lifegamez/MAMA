@@ -63,7 +63,6 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
         'member_scope_grant',
         'member_scope_revoke',
         'console_brief_update',
-        'report_request',
         'obsidian',
         'drive_translate_conti',
       ]) {

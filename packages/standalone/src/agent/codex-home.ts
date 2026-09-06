@@ -429,7 +429,9 @@ export function buildMAMACodexAppServerConfig(effort?: string | null): string {
     'enabled = false',
     '',
     '[features]',
-    'multi_agent = false',
+    // The owner agent may create native Codex subagents when it decides a goal
+    // needs parallel or specialized work. Channels never create agents.
+    'multi_agent = true',
     'plugins = false',
     'apps = false',
     'tool_search = false',

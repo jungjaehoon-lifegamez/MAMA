@@ -26,7 +26,7 @@ function createRunner(response = 'mock result'): IModelRunner {
   };
 }
 
-describe('TG-06: CronWorker backend isolation', () => {
+describe('TG-06: CronWorker owner-runtime scheduling', () => {
   let emitter: EventEmitter;
   let runner: IModelRunner;
   let runnerFactory: ReturnType<typeof vi.fn>;
@@ -49,23 +49,8 @@ describe('TG-06: CronWorker backend isolation', () => {
       'do something',
       undefined,
       expect.objectContaining({
-        sessionKey: 'system:cron',
+        sessionKey: 'owner:runtime',
       })
-    );
-  });
-
-  it('passes a backend-correct Cline tool catalog in the per-turn system prompt', async () => {
-    worker = new CronWorker({
-      emitter,
-      runnerFactory,
-      systemPrompt:
-        'Available tools: run_commands, read_files, apply_patch/editor, search_codebase.',
-    });
-    await worker.execute('inspect');
-    expect(runner.prompt).toHaveBeenCalledWith(
-      'inspect',
-      undefined,
-      expect.objectContaining({ systemPrompt: expect.stringContaining('run_commands') })
     );
   });
 

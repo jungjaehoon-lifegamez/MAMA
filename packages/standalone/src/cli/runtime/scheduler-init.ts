@@ -21,12 +21,10 @@ import { EventEmitter } from 'node:events';
 
 import type { MAMAConfig } from '../config/types.js';
 import { CronScheduler, CronWorker, TokenKeepAlive } from '../../scheduler/index.js';
-import { cronSystemPromptForBackend } from '../../scheduler/cron-worker.js';
 import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
+import type { AgentLoopOptions } from '../../agent/types.js';
 import { DiscordGateway } from '../../gateways/index.js';
 import type { AgentLoop } from '../../agent/index.js';
-import { createBackendModelRunner } from '../../agent/backend-model-runner-factory.js';
-import type { BackendModelRunnerFactories } from '../../agent/backend-model-runner-factory.js';
 import type { IModelRunner } from '../../agent/model-runner.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
 
@@ -64,34 +62,22 @@ export function shouldStartClaudeTokenKeepAlive(config: MAMAConfig): boolean {
   return config.agent.backend === 'claude';
 }
 
-export function createCronBackendRunner(
-  config: MAMAConfig,
-  factories?: BackendModelRunnerFactories
-): IModelRunner {
-  return createBackendModelRunner(
-    config,
-    {
-      sessionId: 'system-cron',
-      systemPrompt: cronSystemPromptForBackend(config.agent.backend),
-      allowedTools: ['Bash', 'Read', 'Write', 'Glob', 'Grep'],
-    },
-    factories
-  );
-}
-
 /**
  * Initialize cron scheduler with a dedicated CronWorker and EventEmitter.
  *
  * Creates the scheduler, wires the execute callback to CronWorker,
  * and loads cron jobs from config.scheduling.jobs.
  */
-export function initCronScheduler(config: MAMAConfig): CronSchedulerResult {
-  // Initialize cron scheduler with dedicated CronWorker (isolated from OS agent)
+export function initCronScheduler(
+  config: MAMAConfig,
+  runnerFactory: () => IModelRunner
+): CronSchedulerResult {
+  // CronWorker owns timing/events only. Production supplies an adapter to the
+  // standing owner runtime instead of creating another model identity.
   const cronEmitter = new EventEmitter();
   const cronWorker = new CronWorker({
     emitter: cronEmitter,
-    systemPrompt: cronSystemPromptForBackend(config.agent.backend),
-    runnerFactory: () => createCronBackendRunner(config),
+    runnerFactory,
   });
   const scheduler = new CronScheduler();
 
@@ -159,7 +145,8 @@ export function initHeartbeat(
   agentLoop: AgentLoop,
   discordGateway: DiscordGateway | null,
   scheduler: CronScheduler,
-  healthCheckService: HealthCheckService
+  healthCheckService: HealthCheckService,
+  runOptionsFactory?: () => Promise<AgentLoopOptions> | AgentLoopOptions
 ): HeartbeatResult {
   // Initialize heartbeat scheduler
   const heartbeatConfig = config.heartbeat || {};
@@ -175,7 +162,8 @@ export function initHeartbeat(
       ? async (channelId, message) => {
           await discordGateway!.sendMessage(channelId, message);
         }
-      : undefined
+      : undefined,
+    runOptionsFactory
   );
 
   // Wire scheduler and heartbeat into health check service

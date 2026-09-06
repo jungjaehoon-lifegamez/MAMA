@@ -24,11 +24,19 @@ import {
   type ArtifactProvenance,
   type ReportCarryTarget,
 } from './report-carry.js';
-import {
-  serializeOwnerReportContext,
-  type OwnerReportContextV1,
-  type ReportWindowEvidence,
-} from './report-context.js';
+
+export interface ReportWindowEvidence {
+  start: string;
+  end: string;
+  channelCount: number;
+  messageCount: number;
+  channels: Array<{
+    label: string;
+    count: number;
+    excerpts: Array<{ authorLabel: string; text: string; observedAt: string | null }>;
+  }>;
+  triggerActivity: Array<{ kind: string; count: number; topics: string[] }>;
+}
 
 export interface FireActivity {
   triggerId: string;
@@ -281,7 +289,7 @@ export class SituationReporter {
     return this.windowTotal > 0 || this.fireAgg.size > 0 || this.authored > 0;
   }
 
-  /** Host-authored bounded evidence for OwnerReportContextV1; raw channel and trigger IDs stay out. */
+  /** Bounded lead-list evidence; raw channel and trigger IDs stay out. */
   windowEvidence(start: string, end: string): ReportWindowEvidence {
     const startMs = Date.parse(start);
     const endMs = Date.parse(end);
@@ -411,18 +419,13 @@ export class SituationReporter {
   async prepareReport(
     askAgent: AskAgent,
     mode: ReportMode,
-    deliveryId?: string,
-    context?: OwnerReportContextV1
+    deliveryId?: string
   ): Promise<PreparedSituationReport | null> {
     // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
     if (mode !== 'full' && !this.hasActivity()) return null;
 
-    const raw = (
-      await askAgent(
-        mode === 'full' ? this.buildPrompt('full', context!) : this.buildPrompt('digest')
-      )
-    ).trim();
+    const raw = (await askAgent(this.buildPrompt(mode))).trim();
     if (raw === '' || /^NOTHING\b/i.test(raw)) {
       if (mode === 'full') {
         throw new Error('Full owner report returned no content');
@@ -562,10 +565,9 @@ export class SituationReporter {
   async report(
     askAgent: AskAgent,
     output: Pick<OutputSink, 'send'>,
-    mode: ReportMode,
-    context?: OwnerReportContextV1
+    mode: ReportMode
   ): Promise<boolean> {
-    const prepared = await this.prepareReport(askAgent, mode, undefined, context);
+    const prepared = await this.prepareReport(askAgent, mode);
     if (!prepared) {
       return false;
     }
@@ -582,32 +584,8 @@ export class SituationReporter {
     this.eventKeys.clear();
   }
 
-  buildPrompt(mode: 'full', context: OwnerReportContextV1): string;
-  buildPrompt(mode: 'digest'): string;
-  /** Public for testability. Explicit full reports consume one packet; digests retain M2 framing. */
-  buildPrompt(mode: ReportMode, context?: OwnerReportContextV1): string {
-    if (mode === 'full' && context === undefined) {
-      throw new Error('Owner report context is required for a full report');
-    }
-    if (mode === 'full' && context !== undefined) {
-      const serialized = serializeOwnerReportContext(context);
-      return [
-        'You are the operator agent. Write the scheduled full situation report for the owner.',
-        'Use the single canonical evidence packet below as the only factual report input.',
-        'Explain what changed, what is open, what needs judgment, and state which source categories are incomplete.',
-        'Exhaust and cross-check all available packet evidence before asking the owner; never ask the owner to verify a mapping or fact the packet resolves.',
-        'Ask the owner only for a genuinely normative approval, priority, taste, or permission decision that MAMA cannot make.',
-        'For every task affected by missing, partial, ambiguous, or conflicting evidence, state the unchanged current status from the packet and its next bounded check or retry; independent evidence may explain it but never makes fact-finding an owner task.',
-        'If access or credentials truly block further authorized evidence collection, request only that specific owner intervention.',
-        'Every owner request must name the evidence checked, exact residual uncertainty, recommendation, options including no change when valid, and the impact of each choice.',
-        'Do not infer task completion from absence in an incomplete source or from an absent Trello card; an exactly correlated live card remains valid evidence even when other lists are truncated.',
-        'Never reproduce the packet JSON. Never emit internal IDs, tool syntax, or lifecycle metadata.',
-        'Use plain language without markdown tables and answer in the owner language visible in the packet.',
-        'Use these sections when non-empty, with the section titles written in the owner language: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
-        '',
-        wrapUntrustedContent('owner-report-context', serialized),
-      ].join('\n');
-    }
+  /** Public for testability. Full reports discover evidence progressively. */
+  buildPrompt(mode: ReportMode): string {
     const channels = [...this.windowByChannel.entries()].sort((a, b) => b[1].count - a[1].count);
     const shown = channels.slice(0, MAX_CHANNELS_IN_PROMPT);
     const windowLines = shown.map(
@@ -629,13 +607,25 @@ export class SituationReporter {
       ([topic, content]) => `- ${topic}: ${content}`
     );
 
-    const framing = [
-      'You are the operator agent. Write a SHORT proactive digest for your owner about the',
-      'situation below - what happened, what recurred, and what the owner may want to look at.',
-      '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
-      'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
-      '(duplicates, bot chatter) with nothing the owner could act on.',
-    ];
+    const framing =
+      mode === 'full'
+        ? [
+            'You are MAMA, the accountable owner agent. Produce the scheduled full situation report.',
+            'This is another turn in your durable owner conversation, not a separate report persona.',
+            'Discover progressively: read compact overview/count/freshness views first, then selected pages or details only when they can change your judgment.',
+            'Cover material changes, open work, operational failures, decisions that truly require the owner, and your next actions. Full means complete decision coverage, not every row.',
+            'Use the bounded connector window below as a lead list, not as complete truth. State unavailable or partial coverage plainly.',
+            'Take authorized reversible actions before reporting. Do not hand work back to the owner when you can complete it.',
+            'Write plain, scannable language in the owner language. Never expose tool syntax, internal ids, lifecycle metadata, or raw data dumps.',
+            'Use these sections when non-empty: Key situation, Action required, Decisions needed, Pipeline, Next actions.',
+          ]
+        : [
+            'You are the operator agent. Write a SHORT proactive digest for your owner about the',
+            'situation below - what happened, what recurred, and what the owner may want to look at.',
+            '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
+            'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
+            '(duplicates, bot chatter) with nothing the owner could act on.',
+          ];
 
     return [
       ...framing,

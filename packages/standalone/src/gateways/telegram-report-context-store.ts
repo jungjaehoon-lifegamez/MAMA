@@ -1,41 +1,6 @@
-/**
- * TG-05/TG-06: Telegram owner-report context inbox store.
- *
- * The messenger SQLite database is the single report-context authority for
- * owner-report delivery events and turn-consumption receipts
- * (docs/development/telegram-outbound-context-inbox-design.md, Decision 4).
- */
+/** TG-05/TG-06: durable Telegram owner-report delivery ledger. */
 
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, renameSync } from 'node:fs';
 import type { SQLiteDatabase } from '../sqlite.js';
-import type { ReportCarryV2 } from '../operator/report-carry.js';
-import { wrapUntrustedContent } from '../utils/untrusted-content.js';
-
-/**
- * TG-05 Slice K (design Decision 8): the EXACT legacy V2 prefix algorithm,
- * including the UTF-16 `slice(0, 700)` truncation (a surrogate split at the
- * boundary is preserved, not repaired). report-carry.ts deliberately does NOT
- * export its builder (legacy-export cull, pinned by report-carry.test.ts), so
- * this replica is pinned byte-for-byte against the public peek() surface by a
- * differential test instead.
- */
-const LEGACY_CARRY_SUMMARY_MAX_CHARS = 700;
-
-function legacyReportCarryPrefix(record: ReportCarryV2): string {
-  const summary =
-    record.text.length > LEGACY_CARRY_SUMMARY_MAX_CHARS
-      ? `${record.text.slice(0, LEGACY_CARRY_SUMMARY_MAX_CHARS)}\n[... truncated - full text was delivered to the owner channel]`
-      : record.text;
-  return (
-    `[Operator context] The last FULL situation report was delivered at ${record.deliveredAt}.\n` +
-    'If the owner asks for a report or current status, reference/refresh THIS instead of ' +
-    `reconstructing state from memory. Content:\n${wrapUntrustedContent(
-      'operator-report-carry',
-      summary
-    )}\n---\n`
-  );
-}
 
 export type ReportContextEventState =
   | 'prepared_retryable'
@@ -74,13 +39,6 @@ export interface ReportContextEventDetail extends ReportContextEvent {
 
 export interface TelegramReportContextStoreOptions {
   nowIso?: () => string;
-  /**
-   * TG-05 Slice K (design Decision 8): when set, the constructor solely
-   * migrates the legacy V2 carry file (last-full-report.json) into the
-   * event/legacy-restoration tables and renames the source `.migrated`.
-   * No component reads or writes V2 afterward.
-   */
-  legacyCarryPath?: string;
   /** Design Decision 5 live capacity (prepared-or-unconsumed) per target. */
   liveRowCapPerTarget?: number;
   liveByteCapPerTarget?: number;
@@ -108,27 +66,6 @@ function targetIdentity(target: ReportContextTarget): string {
   return JSON.stringify([target.source, target.channelId]);
 }
 
-function isLegacyCarryV2(value: unknown): value is ReportCarryV2 {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  const target = record.target as Record<string, unknown> | undefined;
-  const provenance = record.provenance as Record<string, unknown> | undefined;
-  return (
-    record.version === 2 &&
-    typeof record.deliveryId === 'string' &&
-    record.deliveryId.length > 0 &&
-    typeof target === 'object' &&
-    target !== null &&
-    target.source === 'telegram' &&
-    typeof target.channelId === 'string' &&
-    typeof record.deliveredAt === 'string' &&
-    typeof record.text === 'string' &&
-    typeof provenance === 'object' &&
-    provenance !== null &&
-    (record.consumedAt === undefined || typeof record.consumedAt === 'string')
-  );
-}
-
 export class TelegramReportContextStore {
   private readonly nowIso: () => string;
   private readonly liveRowCap: number;
@@ -146,125 +83,6 @@ export class TelegramReportContextStore {
     this.retainedRowCap = options.retainedRowCapPerTarget ?? DEFAULT_RETAINED_ROW_CAP;
     this.retainedByteCap = options.retainedByteCapPerTarget ?? DEFAULT_RETAINED_BYTE_CAP;
     this.runMigration();
-    if (options.legacyCarryPath) {
-      this.migrateLegacyCarry(options.legacyCarryPath);
-    }
-  }
-
-  /**
-   * TG-05 Slice K: migrate the legacy V2 carry file. Unconsumed -> a
-   * delivered-pending event (even past the old 24h TTL); consumed -> a
-   * target-scoped legacy restoration record carrying the EXACT old prefix
-   * bytes. Transactionally insert/verify, commit, then atomically rename the
-   * source `.migrated`. Invalid files are quarantined and never injected.
-   */
-  private migrateLegacyCarry(path: string): void {
-    if (!existsSync(path)) {
-      return;
-    }
-    let record: ReportCarryV2;
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      if (!isLegacyCarryV2(parsed)) {
-        throw new Error('not a V2 report carry record');
-      }
-      record = parsed;
-    } catch {
-      renameSync(path, `${path}.quarantined-${Date.now()}`);
-      return;
-    }
-
-    const provenanceTuple =
-      record.provenance.status === 'available'
-        ? ['available', record.provenance.modelRunId]
-        : ['unavailable', record.provenance.reason];
-    const payloadIdentity = createHash('sha256')
-      .update(
-        JSON.stringify([
-          'legacy-report-carry-v2',
-          record.deliveryId,
-          record.target.source,
-          record.target.channelId,
-          record.deliveredAt,
-          record.text,
-          provenanceTuple,
-        ]),
-        'utf8'
-      )
-      .digest('hex');
-
-    this.db.transaction(() => {
-      if (record.consumedAt) {
-        const existing = this.db
-          .prepare(
-            'SELECT payload_identity FROM telegram_report_legacy_restorations WHERE delivery_id = ?'
-          )
-          .get(record.deliveryId) as { payload_identity: string } | undefined;
-        if (existing) {
-          if (existing.payload_identity !== payloadIdentity) {
-            throw new Error(
-              `Legacy carry ${record.deliveryId} identity conflict during migration replay`
-            );
-          }
-          return;
-        }
-        const restorationText = legacyReportCarryPrefix(record);
-        this.db
-          .prepare(
-            `INSERT INTO telegram_report_legacy_restorations
-               (delivery_id, target, channel_key, delivered_at, consumed_at,
-                restoration_text, legacy_projection_hash, payload_identity)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            record.deliveryId,
-            targetIdentity(record.target),
-            record.consumingChannelKey ?? null,
-            record.deliveredAt,
-            record.consumedAt,
-            // JSON-encoded: the legacy UTF-16 slice(0,700) can split a
-            // surrogate pair, and a lone surrogate does not survive SQLite's
-            // UTF-8 TEXT round-trip. JSON escapes it losslessly.
-            JSON.stringify(restorationText),
-            createHash('sha256').update(restorationText, 'utf8').digest('hex'),
-            payloadIdentity
-          );
-        return;
-      }
-
-      const existing = this.db
-        .prepare(
-          'SELECT payload_identity FROM telegram_report_context_events WHERE delivery_id = ?'
-        )
-        .get(record.deliveryId) as { payload_identity: string } | undefined;
-      if (existing) {
-        if (existing.payload_identity !== payloadIdentity) {
-          throw new Error(
-            `Legacy carry ${record.deliveryId} identity conflict during migration replay`
-          );
-        }
-        return;
-      }
-      this.db
-        .prepare(
-          `INSERT INTO telegram_report_context_events
-             (delivery_id, target, mode, occurrence, provenance, text, payload_identity,
-              state, disposition, created_at, delivered_at)
-           VALUES (?, ?, 'full', ?, ?, ?, ?, 'delivered', 'pending', ?, ?)`
-        )
-        .run(
-          record.deliveryId,
-          targetIdentity(record.target),
-          JSON.stringify({ kind: 'legacy_v2' }),
-          JSON.stringify(record.provenance),
-          record.text,
-          payloadIdentity,
-          this.nowIso(),
-          record.deliveredAt
-        );
-    })();
-
-    renameSync(path, `${path}.migrated`);
   }
 
   /**
@@ -350,18 +168,22 @@ export class TelegramReportContextStore {
   }
 
   /**
-   * Atomically transition a confirmed send to `delivered`. Idempotent: an
-   * already-delivered row keeps its original delivery time so crash-recovery
-   * replays converge instead of rewriting history.
+   * Atomically transition a confirmed send to delivered and consumed by the
+   * standing owner runtime. The same runtime composed the report, so carrying
+   * its full body into the next owner message would duplicate live context.
    */
   markDelivered(deliveryId: string, deliveredAtIso: string): void {
     const updated = this.db
       .prepare(
         `UPDATE telegram_report_context_events
-         SET state = 'delivered', disposition = 'pending', delivered_at = ?
-         WHERE delivery_id = ? AND state = 'prepared_retryable'`
+         SET state = 'delivered', disposition = 'consumed_turn',
+             delivered_at = COALESCE(delivered_at, ?),
+             consumed_by_ref = 'owner:runtime', consumed_at = COALESCE(consumed_at, ?)
+         WHERE delivery_id = ?
+           AND (state = 'prepared_retryable'
+                OR (state = 'delivered' AND disposition = 'pending'))`
       )
-      .run(deliveredAtIso, deliveryId);
+      .run(deliveredAtIso, deliveredAtIso, deliveryId);
     if (updated.changes > 0) {
       return;
     }
@@ -457,120 +279,6 @@ export class TelegramReportContextStore {
     }
   }
 
-  /**
-   * Delivered reports not yet consumed by an owner turn, for one exact
-   * target, oldest first. This is the pending-projection source; one chat can
-   * never read another target's reports.
-   */
-  listDeliveredPending(target: ReportContextTarget): Array<{
-    seq: number;
-    deliveryId: string;
-    mode: 'digest' | 'full';
-    deliveredAtIso: string;
-    text: string;
-  }> {
-    const rows = this.db
-      .prepare(
-        `SELECT seq, delivery_id, mode, delivered_at, text
-         FROM telegram_report_context_events
-         WHERE target = ? AND state = 'delivered' AND disposition = 'pending'
-         ORDER BY seq ASC`
-      )
-      .all(targetIdentity(target)) as Array<{
-      seq: number;
-      delivery_id: string;
-      mode: 'digest' | 'full';
-      delivered_at: string;
-      text: string;
-    }>;
-    return rows.map((row) => ({
-      seq: row.seq,
-      deliveryId: row.delivery_id,
-      mode: row.mode,
-      deliveredAtIso: row.delivered_at,
-      text: row.text,
-    }));
-  }
-
-  /**
-   * Committed receipts for the given source-message references, in the input
-   * order. Only text-bearing receipts are returned; a compacted receipt no
-   * longer restores.
-   */
-  listReceiptsByRefs(refs: string[]): Array<{
-    sourceMessageRef: string;
-    deliveryIds: string[];
-    projectionText: string;
-    committedAtIso: string;
-  }> {
-    const lookup = this.db.prepare(
-      `SELECT source_message_ref, delivery_ids, projection_text, committed_at
-       FROM telegram_report_context_receipts WHERE source_message_ref = ?`
-    );
-    const results: Array<{
-      sourceMessageRef: string;
-      deliveryIds: string[];
-      projectionText: string;
-      committedAtIso: string;
-    }> = [];
-    for (const ref of refs) {
-      const row = lookup.get(ref) as
-        | {
-            source_message_ref: string;
-            delivery_ids: string;
-            projection_text: string | null;
-            committed_at: string;
-          }
-        | undefined;
-      if (!row || row.projection_text === null) {
-        continue;
-      }
-      results.push({
-        sourceMessageRef: row.source_message_ref,
-        deliveryIds: JSON.parse(row.delivery_ids) as string[],
-        projectionText: row.projection_text,
-        committedAtIso: row.committed_at,
-      });
-    }
-    return results;
-  }
-
-  /**
-   * Legacy V2 restorations for one target, eligible for fresh-session history
-   * (30 days after consumption, design Decision 8). Restoration text is
-   * JSON-decoded back to the exact legacy prefix string.
-   */
-  listLegacyRestorations(
-    target: ReportContextTarget,
-    nowIso: string
-  ): Array<{
-    deliveryId: string;
-    consumedAtIso: string;
-    deliveredAtIso: string;
-    restorationText: string;
-  }> {
-    const cutoff = new Date(new Date(nowIso).getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const rows = this.db
-      .prepare(
-        `SELECT delivery_id, consumed_at, delivered_at, restoration_text
-         FROM telegram_report_legacy_restorations
-         WHERE target = ? AND consumed_at >= ? AND restoration_text IS NOT NULL
-         ORDER BY consumed_at ASC, delivery_id ASC`
-      )
-      .all(targetIdentity(target), cutoff) as Array<{
-      delivery_id: string;
-      consumed_at: string;
-      delivered_at: string;
-      restoration_text: string;
-    }>;
-    return rows.map((row) => ({
-      deliveryId: row.delivery_id,
-      consumedAtIso: row.consumed_at,
-      deliveredAtIso: row.delivered_at,
-      restorationText: JSON.parse(row.restoration_text) as string,
-    }));
-  }
-
   private compactRetained(target: ReportContextTarget): void {
     const compactOldestConsumed = this.db.prepare(
       `UPDATE telegram_report_context_events
@@ -616,32 +324,6 @@ export class TelegramReportContextStore {
           'unseen reports must be consumed or explicitly archived before new ones are accepted'
       );
     }
-  }
-
-  /**
-   * Design Decision 5: explicit two-step operator action (token flow lives at
-   * the API layer). Archives ONLY already-delivered pending rows up to and
-   * including `throughSeq`, records the audit fields, and removes them from
-   * pending projection and live capacity. Never Telegram cancellation.
-   */
-  archiveDelivered(
-    target: ReportContextTarget,
-    throughSeq: number,
-    actor: string,
-    reason: string,
-    nowIso: string
-  ): string[] {
-    const rows = this.db
-      .prepare(
-        `UPDATE telegram_report_context_events
-         SET disposition = 'operator_archived', archived_by = ?, archived_reason = ?, archived_at = ?
-         WHERE target = ? AND state = 'delivered' AND disposition = 'pending' AND seq <= ?
-         RETURNING delivery_id`
-      )
-      .all(actor, reason, nowIso, targetIdentity(target), throughSeq) as Array<{
-      delivery_id: string;
-    }>;
-    return rows.map((row) => row.delivery_id);
   }
 
   /** Live usage for the status surface; warn at 80% of either bound. */
@@ -867,29 +549,6 @@ export class TelegramReportContextStore {
       CREATE INDEX IF NOT EXISTS idx_report_context_events_target_state
         ON telegram_report_context_events(target, state);
 
-      CREATE TABLE IF NOT EXISTS telegram_report_legacy_restorations (
-        delivery_id TEXT PRIMARY KEY,
-        target TEXT NOT NULL,
-        channel_key TEXT,
-        delivered_at TEXT NOT NULL,
-        consumed_at TEXT NOT NULL,
-        restoration_text TEXT,
-        legacy_projection_hash TEXT NOT NULL,
-        payload_identity TEXT NOT NULL,
-        source_message_ref TEXT,
-        session_id TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS telegram_report_context_receipts (
-        source_message_ref TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        delivery_ids TEXT NOT NULL,
-        projection_version TEXT NOT NULL,
-        projection_text TEXT,
-        projection_hash TEXT NOT NULL,
-        final_response_sha256 TEXT NOT NULL,
-        committed_at TEXT NOT NULL
-      );
     `);
   }
 }

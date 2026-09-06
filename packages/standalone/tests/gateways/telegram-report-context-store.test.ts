@@ -23,16 +23,13 @@ describe('TelegramReportContextStore', () => {
   });
 
   describe('migration', () => {
-    it('creates the report context event and receipt tables', () => {
+    it('creates the report delivery event table', () => {
       const tables = db
         .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('telegram_report_context_events', 'telegram_report_context_receipts') ORDER BY name"
+          "SELECT name FROM sqlite_master WHERE type='table' AND name = 'telegram_report_context_events'"
         )
         .all() as Array<{ name: string }>;
-      expect(tables.map((t) => t.name)).toEqual([
-        'telegram_report_context_events',
-        'telegram_report_context_receipts',
-      ]);
+      expect(tables.map((t) => t.name)).toEqual(['telegram_report_context_events']);
     });
   });
 
@@ -68,19 +65,27 @@ describe('TelegramReportContextStore', () => {
   });
 
   describe('markDelivered()', () => {
-    it('transitions prepared_retryable to delivered with a pending context disposition', () => {
+    it('transitions a confirmed report to delivered and already known by owner runtime', () => {
       store.reserve(artifact({ deliveryId: 'd-1' }));
 
       store.markDelivered('d-1', '2026-08-06T10:15:00.000Z');
 
       const row = db
         .prepare(
-          'SELECT state, disposition, delivered_at FROM telegram_report_context_events WHERE delivery_id = ?'
+          'SELECT state, disposition, delivered_at, consumed_by_ref, consumed_at FROM telegram_report_context_events WHERE delivery_id = ?'
         )
-        .get('d-1') as { state: string; disposition: string; delivered_at: string };
+        .get('d-1') as {
+        state: string;
+        disposition: string;
+        delivered_at: string;
+        consumed_by_ref: string;
+        consumed_at: string;
+      };
       expect(row.state).toBe('delivered');
-      expect(row.disposition).toBe('pending');
+      expect(row.disposition).toBe('consumed_turn');
       expect(row.delivered_at).toBe('2026-08-06T10:15:00.000Z');
+      expect(row.consumed_by_ref).toBe('owner:runtime');
+      expect(row.consumed_at).toBe('2026-08-06T10:15:00.000Z');
     });
 
     it('is idempotent and keeps the original delivery time', () => {

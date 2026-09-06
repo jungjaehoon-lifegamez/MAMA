@@ -33,6 +33,8 @@ export interface QueueEntry<T> {
   enqueuedAt: number;
   /** Threshold for warning about long wait times */
   warnAfterMs: number;
+  /** Higher values run first among queued entries; equal values remain FIFO. */
+  priority: number;
   /** Optional callback when wait time exceeds threshold */
   onWait?: (waitedMs: number, queueLength: number) => void;
 }
@@ -57,6 +59,8 @@ export interface EnqueueOptions {
   warnAfterMs?: number;
   /** Callback when wait exceeds threshold */
   onWait?: (waitedMs: number, queueLength: number) => void;
+  /** Higher values run before lower-priority queued work. */
+  priority?: number;
 }
 
 /**

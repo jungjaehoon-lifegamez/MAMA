@@ -21,11 +21,13 @@ export const budgetStopSink: {
   current: null,
 };
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { MAMAConfig } from '../config/types.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
+import { FileOwnerRuntimeJournal } from '../../operator/owner-runtime-journal.js';
 import type { GatewayToolExecutor } from '../../agent/index.js';
 import type {
   AgentLoopOptions,
@@ -165,16 +167,7 @@ export function initMainAgentLoop(
   // Codex and Cline inject code_act through their native runtimes, so it stays
   // the default for those backends.
   // An explicit per-agent useCodeAct in config still wins in both directions.
-  const useCodeAct =
-    options?.osAgentMode === true
-      ? false
-      : (osAgentUseCodeAct ?? legacyConductorUseCodeAct ?? runtimeBackend !== 'claude');
-
-  // OS Agent mode: block sub-agent-specific tools to force delegation.
-  // The OS agent must use delegate() instead of doing sub-agent work directly.
-  const osAgentDisallowed = options?.osAgentMode
-    ? ['report_publish', 'wiki_publish', 'obsidian', 'code_act', 'mcp__code-act__code_act']
-    : undefined;
+  const useCodeAct = osAgentUseCodeAct ?? legacyConductorUseCodeAct ?? runtimeBackend !== 'claude';
 
   const agentLoop = new AgentLoop(
     oauthManager,
@@ -194,7 +187,6 @@ export function initMainAgentLoop(
       codexEffort: config.agent.effort,
       useCodeAct,
       toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
-      disallowedTools: osAgentDisallowed,
       // Gateway tools are the ONLY tool surface for the daemon persona
       // (owner decision D2, 2026-07-16). MAMA_PERSONA_NATIVE_TOOLS=1 re-enables.
       // NOTE: consumed only by the claude PersistentCLIAdapter branch - on a
@@ -203,7 +195,13 @@ export function initMainAgentLoop(
         process.env.MAMA_PERSONA_NATIVE_TOOLS === '1' ||
         process.env.MAMA_PERSONA_NATIVE_TOOLS?.toLowerCase() === 'true'
           ? undefined
-          : '',
+          : runtimeBackend === 'claude'
+            ? 'Agent'
+            : '',
+      // Native Cline subagents are available only on turns whose role does not
+      // block delegation. The per-turn role remains the authority boundary.
+      clineAllowSpawnAgent: true,
+      clineAllowAgentTeams: true,
       // Root fix (2026-07-16): share the boot-wired executor so every dependency
       // wiring reaches the persona lane by construction (no second private twin).
       executor: toolExecutor,
@@ -217,6 +215,9 @@ export function initMainAgentLoop(
       // Security is enforced at the API/network layer (auth-middleware), not Claude CLI permissions.
       dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
       sessionKey: 'default', // Will be updated per message
+      ownerRuntimeJournal: new FileOwnerRuntimeJournal(
+        join(homedir(), '.mama', 'operator', 'owner-runtime-journal.json')
+      ),
       systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
       // Per-run reasoning collection moved to per-call options (review M2:
       // shared closure state contaminated overlapping operator/chat runs).
@@ -352,7 +353,16 @@ export function initMainAgentLoop(
         autoRecallUsed
       );
       const response = `${header}\n${result.response}`;
-      return { response };
+      return {
+        response,
+        ...(result.modelRunId === undefined ? {} : { modelRunId: result.modelRunId }),
+        ...(result.modelRunProvenance === undefined
+          ? {}
+          : { modelRunProvenance: result.modelRunProvenance }),
+        ...(result.ownerJournalProvenance === undefined
+          ? {}
+          : { ownerJournalProvenance: result.ownerJournalProvenance }),
+      };
     },
     runWithContent: async (content: GatewayContentBlock[], options?: AgentLoopOptions) => {
       // Per-call reasoning state (review M2).
@@ -403,6 +413,13 @@ export function initMainAgentLoop(
       return {
         response,
         totalUsage: result.totalUsage,
+        ...(result.modelRunId === undefined ? {} : { modelRunId: result.modelRunId }),
+        ...(result.modelRunProvenance === undefined
+          ? {}
+          : { modelRunProvenance: result.modelRunProvenance }),
+        ...(result.ownerJournalProvenance === undefined
+          ? {}
+          : { ownerJournalProvenance: result.ownerJournalProvenance }),
         ...(result.stoppedBy ? { stoppedBy: result.stoppedBy } : {}),
       };
     },

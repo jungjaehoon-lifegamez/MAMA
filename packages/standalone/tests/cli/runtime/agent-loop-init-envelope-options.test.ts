@@ -222,11 +222,11 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
         expected: false,
       },
       {
-        label: 'viewer delegated operator path',
+        label: 'viewer accountable owner path',
         agentId: 'os-agent',
         configured: true,
         osAgentMode: true,
-        expected: false,
+        expected: true,
       },
     ])('$label resolves to $expected', ({ agentId, configured, osAgentMode, expected }) => {
       const config = createConfig();

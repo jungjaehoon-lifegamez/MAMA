@@ -780,11 +780,7 @@ describe('HostBridge', () => {
         type: 'number',
         required: false,
       });
-      expect(registry.get('report_request')).toMatchObject({
-        params: [],
-        returnType: '{ message: string }',
-        category: 'os',
-      });
+      expect(registry.get('report_request')).toBeUndefined();
     });
 
     it('TG-03/TG-04 advertises the canonical four-slot report vocabulary', () => {

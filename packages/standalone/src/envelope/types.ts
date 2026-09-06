@@ -10,7 +10,6 @@ export type EnvelopeSource =
   | 'discord'
   | 'viewer'
   | 'cron'
-  | 'delegate'
   | 'watch';
 
 export interface ProjectRef {

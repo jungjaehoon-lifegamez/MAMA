@@ -130,12 +130,6 @@ export interface MAMARuntime {
   /** Cross-platform message router */
   messageRouter: MessageRouter;
 
-  /**
-   * Memory agent loop for async fact extraction.
-   * Null until the memory persona is loaded successfully.
-   */
-  memoryAgentLoop: AgentLoop | null;
-
   // ── Gateways ──────────────────────────────────────────────────────────────
 
   /** Discord gateway instance (null if Discord not configured/enabled) */

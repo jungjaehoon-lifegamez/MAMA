@@ -150,7 +150,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
     expect(runOptions).toMatchObject({
       actorId: 'mama-owner',
-      sessionKey: 'owner-event:chatwork:C1',
+      sessionKey: 'owner:runtime',
       sourceMessageRef: 'owner-event:1',
       causeEventIds: ['evt-feedback'],
       ownerEventEffects: {
@@ -162,6 +162,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       },
       envelope,
     });
+    expect(runOptions).not.toHaveProperty('freshSession');
     expect(registry.getById('feedback-trigger')?.stats).toEqual({
       fired: 1,
       succeeded: 1,
