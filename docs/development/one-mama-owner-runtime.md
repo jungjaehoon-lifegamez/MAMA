@@ -193,3 +193,21 @@ subagent used a full-history fork; 0.49.2 adds stable guidance to prefer bounded
 no history fork when sufficient. This guidance is part of the owner policy fingerprint so each
 backend adopts the genuine policy change once. A subsequent compatible restart must not replay
 history. Public 0.49.2 installation remains the final runtime gate.
+
+## Final default-path correction: 0.49.3
+
+A post-merge review found one remaining TG-04/TG-05 default-path omission: Claude with Code-Act
+turned off could start from a background stimulus without the standing native-subagent policy.
+The default owner branch now prepares the policy even without a caller-supplied prompt. Non-owner
+defaults and compatible Cline continuation keep their existing behavior. This does not introduce
+another session, historical context read, model call, or tool-count limit.
+
+Public 0.49.2 installation and an authenticated live Trello overview succeeded (ten boards).
+The first restart-continuity probe committed without tools and acknowledged a random value in
+owner thread `01a077a2-2a8d-72c0-9123-8aa1fca066bd`. After a compatible 0.49.2 restart, a second probe returned that value exactly without receiving
+it again, using tools, or adding a recovery block; the backend thread was unchanged. Final public
+0.49.3 release/install remains pending, distinct from this observed continuity result.
+
+Post-publication installation and runtime receipts are recorded in the
+[0.49.3 release audit](https://github.com/jungjaehoon-lifegamez/MAMA/releases/tag/v0.49.3), so the
+release gate is closed by observed evidence after publication rather than another version bump.

@@ -32,7 +32,10 @@ import type {
 } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import { createPersonaReportAsk } from '../../src/operator/report-run.js';
-import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
+import {
+  OWNER_RUNTIME_SESSION_KEY,
+  OWNER_SUBAGENT_INSTRUCTIONS,
+} from '../../src/operator/owner-runtime.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
@@ -3887,6 +3890,51 @@ Skills provide additional tools.
       expect(fingerprints[0]).toBe(fingerprints[1]);
       expect(fingerprints[0]).not.toContain('telegram-channel-policy');
       expect(fingerprints[0]).not.toContain('operator-report-policy');
+    });
+
+    it('TG-05 prepares the default Claude policy for the first background owner stimulus', async () => {
+      const ownerContext = {
+        ...createChatBotContext(),
+        roleName: 'owner_console',
+        role: DEFAULT_ROLES.definitions.owner_console,
+      };
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'default owner policy', useCodeAct: false },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('background owner event', {
+        sessionKey: OWNER_RUNTIME_SESSION_KEY,
+        source: 'operator',
+        channelId: 'owner-event',
+        agentContext: ownerContext,
+        sessionPolicyRole: DEFAULT_ROLES.definitions.owner_console,
+      });
+
+      const delivered = persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt;
+      expect(delivered).toContain('default owner policy');
+      expect(delivered).toContain(OWNER_SUBAGENT_INSTRUCTIONS);
+    });
+
+    it('TG-05 leaves a default initial non-owner Claude policy unchanged', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'default member policy', useCodeAct: false },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('background member event', {
+        source: 'operator',
+        channelId: 'member-event',
+        agentContext: createChatBotContext(),
+      });
+
+      const delivered = persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt;
+      expect(delivered).toContain('default member policy');
+      expect(delivered).not.toContain(OWNER_SUBAGENT_INSTRUCTIONS);
     });
 
     it.each(['claude', 'codex', 'cline'] as const)(

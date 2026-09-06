@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.49.3] - 2026-09-07
+
+### Fixed
+
+- Default owner turns now include native-subagent guidance even without a per-call system prompt
+  or Code-Act mode. A background-first Claude owner session receives the same standing policy
+  as an interactive owner turn; compatible sessions still avoid historical replay.
+
 ## mama-os [0.49.2] - 2026-09-07
 
 ### Fixed
