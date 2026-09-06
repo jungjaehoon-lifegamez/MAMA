@@ -14,9 +14,8 @@ import {
 import { join, dirname, basename, posix, relative } from 'path';
 import type { WikiPage } from './types.js';
 import { normalizeWikiPagePath } from './path-safety.js';
-import { readWikiPageVersion } from './wiki-read.js';
+import { readWikiPageVersion, WIKI_HUMAN_MARKER } from './wiki-read.js';
 
-const HUMAN_MARKER = '<!-- human -->';
 const FRONTMATTER_LIST_UNSAFE_PATTERN = /[\r\n]/;
 
 function frontmatterScalar(value: string, field: string): string {
@@ -174,7 +173,7 @@ export class ObsidianWriter {
       cleanContent = cleanContent.slice(titlePrefix.length).trimStart();
     }
 
-    const incomingMarkerIdx = cleanContent.indexOf(HUMAN_MARKER);
+    const incomingMarkerIdx = cleanContent.indexOf(WIKI_HUMAN_MARKER);
     if (incomingMarkerIdx !== -1) {
       cleanContent = cleanContent.slice(0, incomingMarkerIdx).trimEnd();
     }
@@ -182,7 +181,7 @@ export class ObsidianWriter {
     let humanSection = '';
     if (existsSync(filePath)) {
       const existing = readFileSync(filePath, 'utf8');
-      const markerIdx = existing.indexOf(HUMAN_MARKER);
+      const markerIdx = existing.indexOf(WIKI_HUMAN_MARKER);
       if (markerIdx !== -1) {
         humanSection = existing.slice(markerIdx);
       }

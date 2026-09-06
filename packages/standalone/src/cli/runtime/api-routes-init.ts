@@ -940,6 +940,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     toolExecutor.setWikiPublisher((pages) => {
       const scheduledPages = pages.every((page) => page.expectedContentVersion !== undefined);
       if (scheduledPages) {
+        // Home.md is the v5 index and is part of the staged page set. Legacy index.md/log.md
+        // writes stay on the generic path so a scheduled publish has one rollback boundary.
         obsWriter.writePagesAtomically(pages);
       } else {
         for (const page of pages) {
