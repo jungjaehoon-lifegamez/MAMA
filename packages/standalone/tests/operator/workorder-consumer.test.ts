@@ -1135,6 +1135,35 @@ describe('transient upstream model errors are named, not anonymous digests', () 
         'exactly one successful task_temporal_reconcile'
       );
     });
+
+    it('gives the wiki turn the explicit continuity contract', () => {
+      const wiki = buildTurnKindSection('wiki');
+      // The typed input fields the host supplies.
+      expect(wiki).toContain('ownerDate');
+      expect(wiki).toContain('range');
+      expect(wiki).toContain('start_ms');
+      expect(wiki).toContain('end_ms');
+      expect(wiki).toContain('sourceWatermark');
+      expect(wiki).toContain('connectors');
+      // The batchId-as-watermark bug is explicitly rejected.
+      expect(wiki).toContain('batchId');
+      expect(wiki.toLowerCase()).toContain('not a watermark');
+      expect(wiki.toLowerCase()).toMatch(/never infer/);
+      // All three source classes, read progressively.
+      expect(wiki).toContain('context_compile');
+      expect(wiki).toContain('task_list({view:"items"');
+      expect(wiki).toContain('updated_since');
+      expect(wiki).toContain('nextCursor');
+      expect(wiki).toContain('mama_search');
+      // Memory is supplementary, never the authoritative last-30 gate.
+      expect(wiki.toLowerCase()).toContain('supplementary');
+      expect(wiki.toLowerCase()).toContain('authoritative');
+      // Coverage stated honestly; MAMA activity cannot substitute for sources.
+      expect(wiki.toLowerCase()).toContain('cannot substitute');
+      // The daily page keeps exact-date identity and the no-update contract.
+      expect(wiki).toContain('daily/');
+      expect(wiki).toContain('contract_no_update');
+    });
   });
 
   describe('One MAMA: host-rendered pipeline slot', () => {

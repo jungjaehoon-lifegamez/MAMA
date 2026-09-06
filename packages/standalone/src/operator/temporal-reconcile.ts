@@ -61,7 +61,7 @@ function retainBestCandidates(
     .slice(0, limit);
 }
 
-function dateInIanaZone(epochMs: number, timeZone: string): string {
+export function dateInIanaZone(epochMs: number, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
     calendar: 'gregory',

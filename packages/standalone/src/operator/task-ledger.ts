@@ -2375,6 +2375,57 @@ export class TaskLedger implements TaskSource {
   }
 
   /**
+   * The newest COMPLETED wiki run - the baseline the wiki daily-continuity
+   * planner gates against (wiki-continuity.ts). Only `status='done'` rows count.
+   *
+   * `ownerDate`/`sourceWatermark` are read straight from the completed run's
+   * payload and are null for a LEGACY row (one enqueued before the continuity
+   * fields existed): the planner treats a null-field baseline as "no baseline"
+   * and re-runs from the owner day's start rather than fabricating a boundary.
+   */
+  lastCompletedWikiRun(): {
+    ownerDate: string | null;
+    sourceWatermark: string | null;
+    coveredThroughMs: number | null;
+    completedAt: number;
+  } | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.ownerDate') AS owner_date,
+                json_extract(payload, '$.sourceWatermark') AS source_watermark,
+                json_extract(payload, '$.range.end_ms') AS covered_through_ms,
+                updated_at
+           FROM operator_tasks
+          WHERE kind = 'system' AND source_channel = ? AND status = 'done'
+          ORDER BY id DESC LIMIT 1`
+      )
+      .get(`${WORKORDER_CHANNEL_PREFIX}wiki`) as
+      | {
+          owner_date: unknown;
+          source_watermark: unknown;
+          covered_through_ms: unknown;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      ownerDate:
+        typeof row.owner_date === 'string' && row.owner_date.length > 0 ? row.owner_date : null,
+      sourceWatermark:
+        typeof row.source_watermark === 'string' && row.source_watermark.length > 0
+          ? row.source_watermark
+          : null,
+      // The prior run's range.end_ms - where the next same-day run resumes.
+      // Null for a legacy row with no range; never fabricated.
+      coveredThroughMs:
+        typeof row.covered_through_ms === 'number' && Number.isFinite(row.covered_through_ms)
+          ? row.covered_through_ms
+          : null,
+      completedAt: row.updated_at,
+    };
+  }
+
+  /**
    * Board-input term for the NATIVE owner task ledger - the pipeline slot's
    * projection source. Reuses payloadHash(): it already digests exactly the
    * owner-row fields the pipeline slot renders, so a status or assignee edit

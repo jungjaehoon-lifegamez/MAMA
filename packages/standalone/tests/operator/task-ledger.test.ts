@@ -621,6 +621,86 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.lastCompletedBoardFullRun()?.watermark).toBeNull();
     });
 
+    it('reports the newest DONE wiki run as the continuity baseline', () => {
+      expect(ledger.lastCompletedWikiRun()).toBeNull();
+
+      const older = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:1-boot',
+        input: {
+          batchId: '1-boot',
+          events: ['boot'],
+          ownerDate: '2026-09-04',
+          range: { start_ms: 100, end_ms: 200 },
+          sourceWatermark: 'w1:old',
+          connectors: ['slack'],
+        },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(older.id);
+      const first = ledger.lastCompletedWikiRun();
+      expect(first?.ownerDate).toBe('2026-09-04');
+      expect(first?.sourceWatermark).toBe('w1:old');
+      // coveredThroughMs is the prior run's range.end_ms - where the next
+      // same-day run resumes.
+      expect(first?.coveredThroughMs).toBe(200);
+      expect(first?.completedAt).toBeGreaterThan(0);
+
+      const newer = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:2-hourly',
+        input: {
+          batchId: '2-hourly',
+          events: ['hourly'],
+          ownerDate: '2026-09-05',
+          range: { start_ms: 300, end_ms: 400 },
+          sourceWatermark: 'w1:new',
+          connectors: ['slack'],
+        },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(newer.id);
+      const latest = ledger.lastCompletedWikiRun();
+      expect(latest?.ownerDate).toBe('2026-09-05');
+      expect(latest?.sourceWatermark).toBe('w1:new');
+      expect(latest?.coveredThroughMs).toBe(400);
+    });
+
+    it('ignores open and failed wiki rows and does not fabricate legacy fields', () => {
+      // A pending/in_progress/failed wiki row is not a successful baseline.
+      const failed = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:1-boot',
+        input: {
+          batchId: '1-boot',
+          events: ['boot'],
+          ownerDate: '2026-09-05',
+          range: { start_ms: 1, end_ms: 2 },
+          sourceWatermark: 'w1:x',
+          connectors: [],
+        },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.failWorkOrder(failed.id, 'boom');
+      expect(ledger.lastCompletedWikiRun()).toBeNull();
+
+      // A legacy payload (no continuity fields) returns null typed fields
+      // rather than fabricating them.
+      const legacy = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:2-legacy',
+        input: { batchId: '2-legacy', events: ['boot'] },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(legacy.id);
+      const baseline = ledger.lastCompletedWikiRun();
+      expect(baseline).not.toBeNull();
+      expect(baseline?.ownerDate).toBeNull();
+      expect(baseline?.sourceWatermark).toBeNull();
+      expect(baseline?.coveredThroughMs).toBeNull();
+      expect(baseline?.completedAt).toBeGreaterThan(0);
+    });
+
     it('moves the owner-task term on create, update, and status transitions', () => {
       const empty = ledger.ownerTaskTerm();
       expect(empty.length).toBeGreaterThan(0);

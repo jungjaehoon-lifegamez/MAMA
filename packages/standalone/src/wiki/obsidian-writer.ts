@@ -52,6 +52,18 @@ function titleWordOverlap(a: string, b: string): number {
 }
 
 /**
+ * A daily journal page (`daily/YYYY-MM-DD.md`). Its identity is the exact
+ * normalized path, never a fuzzy title match: date tokens overlap above the
+ * title threshold (2026-08-09 vs 2026-09-04 share "2026" and "09"), which once
+ * stored a 2026-09-04 note into daily/2026-08-09.md.
+ */
+const DAILY_PAGE_PATTERN = /^daily\/\d{4}-\d{2}-\d{2}\.md$/;
+
+function isDailyPagePath(normalizedPath: string): boolean {
+  return DAILY_PAGE_PATTERN.test(normalizedPath);
+}
+
+/**
  * Normalize a page path for dedup: lowercase, strip accents, collapse separators.
  * "Project-Name.md" and "project-name.md" won't match by slug alone,
  * so we also do title-based matching in findExistingPage().
@@ -134,8 +146,10 @@ export class ObsidianWriter {
 
   writePage(page: WikiPage): string {
     const safePage = { ...page, path: normalizeWikiPagePath(page.path) };
-    // Dedup: check if a similar page already exists in the same directory
-    const existingPath = this.findExistingPage(safePage);
+    // Dedup: check if a similar page already exists in the same directory. A
+    // daily journal page has identity by exact normalized path only - fuzzy
+    // title/slug matching must never fold one date onto another.
+    const existingPath = isDailyPagePath(safePage.path) ? null : this.findExistingPage(safePage);
     const effectivePath = existingPath || safePage.path;
 
     const filePath = join(this.wikiPath, effectivePath);
