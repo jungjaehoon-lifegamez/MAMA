@@ -1255,6 +1255,19 @@ export class AgentLoop {
       throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
+    // Queue wait consumes no execution authority. Never renew a signed envelope implicitly:
+    // only a host-supplied issuer can prepare the current grant after both lane waits.
+    if (options?.prepareEnvelope) {
+      options = {
+        ...options,
+        envelope: await options.prepareEnvelope(),
+        prepareEnvelope: undefined,
+      };
+      if (this.stopped) {
+        throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
+      }
+    }
+
     if (options?.agentContext) {
       options = {
         ...options,
@@ -1782,7 +1795,7 @@ export class AgentLoop {
         // Codex/Cline: resumeSession controls durable session reset/continuation.
         let shouldResume = isDurableRuntime
           ? turn > 1 || (options?.freshSession === true ? false : (options?.resumeSession ?? true))
-          : !sessionIsNew || turn > 1;
+          : !sessionIsNew || turn > 1 || (ownerRuntime && options?.resumeSession === true);
         let requestSystemPrompt = perCallSystemPrompt;
         let provisionalDurableSessionId: string | undefined;
         // All three backends preserve context and receive only the new user message.

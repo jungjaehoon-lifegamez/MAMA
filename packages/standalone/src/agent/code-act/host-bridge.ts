@@ -783,7 +783,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled unless status is explicit.',
+      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; due_bucket filters that same missing/overdue/upcoming/closed partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, temporal observation time, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled unless status is explicit.',
     params: [
       {
         name: 'view',
@@ -802,6 +802,12 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'search', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
       { name: 'priority', type: 'string', required: false },
+      {
+        name: 'due_bucket',
+        type: "'missing' | 'overdue' | 'upcoming' | 'closed'",
+        required: false,
+        description: 'Derived due partition; date_due is upcoming',
+      },
       {
         name: 'qualification',
         type: "'qualified' | 'legacy_unqualified'",

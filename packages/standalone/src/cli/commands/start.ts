@@ -1682,16 +1682,18 @@ export async function runAgentLoop(
     });
   };
   const runOwnerStimulus: OwnerRuntimeRunner = async (content, channelId) => {
-    const envelope = await issueOwnerRuntimeEnvelope(channelId, 600);
-    if (!envelope)
-      throw new Error(`Owner runtime stimulus ${channelId} requires envelope authority`);
     return await agentLoop.run(content, {
       sessionKey: OWNER_RUNTIME_SESSION_KEY,
       source: 'operator',
       channelId,
       agentContext: backgroundOwnerContext,
       sessionPolicyRole: ownerRole,
-      envelope,
+      prepareEnvelope: async () => {
+        const envelope = await issueOwnerRuntimeEnvelope(channelId, 600);
+        if (!envelope)
+          throw new Error(`Owner runtime stimulus ${channelId} requires envelope authority`);
+        return envelope;
+      },
       requestTimeoutMs: 600_000,
     });
   };
@@ -1756,11 +1758,10 @@ export async function runAgentLoop(
     scheduler,
     healthCheckService,
     async () => {
-      const envelope = await issueOwnerRuntimeEnvelope('heartbeat', 300);
       return {
         agentContext: backgroundOwnerContext,
         sessionPolicyRole: ownerRole,
-        ...(envelope ? { envelope } : {}),
+        prepareEnvelope: () => issueOwnerRuntimeEnvelope('heartbeat', 300),
       };
     }
   );
@@ -2185,20 +2186,22 @@ export async function runAgentLoop(
             Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
             1800
           );
-          runOptions.envelope = await envelopeBootstrap.envelopeAuthority.buildAndPersist({
-            agent_id: 'mama-owner',
-            instance_id: randomUUID(),
-            // 'watch' = daemon-internal issuing source (closed EnvelopeSource
-            // union; enforcement authorizes on scope, never on source).
-            source: 'watch',
-            channel_id: `worker:${wo.workKind}`,
-            trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
-            // Identity scopes only - the read mirror is enforcement-layer.
-            scope: workOrderScope,
-            tier: 2,
-            budget: { wall_seconds: wallSeconds },
-            expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
-          });
+          const workOrderEnvelopeAuthority = envelopeBootstrap.envelopeAuthority;
+          runOptions.prepareEnvelope = () =>
+            workOrderEnvelopeAuthority.buildAndPersist({
+              agent_id: 'mama-owner',
+              instance_id: randomUUID(),
+              // 'watch' = daemon-internal issuing source (closed EnvelopeSource
+              // union; enforcement authorizes on scope, never on source).
+              source: 'watch',
+              channel_id: `worker:${wo.workKind}`,
+              trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
+              // Identity scopes only - the read mirror is enforcement-layer.
+              scope: workOrderScope,
+              tier: 2,
+              budget: { wall_seconds: wallSeconds },
+              expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+            });
         }
         return Object.keys(runOptions).length > 0 ? runOptions : undefined;
       },
@@ -2375,15 +2378,17 @@ export async function runAgentLoop(
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
       const ownerMaintenanceAsk = async (prompt: string): Promise<string> => {
-        const envelope = await issueOwnerRuntimeEnvelope('trigger-maintenance', 600);
-        if (!envelope) throw new Error('Owner maintenance requires envelope authority');
         const result = await agentLoop.run(prompt, {
           sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'operator',
           channelId: 'trigger-maintenance',
           agentContext: backgroundOwnerContext,
           sessionPolicyRole: ownerRole,
-          envelope,
+          prepareEnvelope: async () => {
+            const envelope = await issueOwnerRuntimeEnvelope('trigger-maintenance', 600);
+            if (!envelope) throw new Error('Owner maintenance requires envelope authority');
+            return envelope;
+          },
           requestTimeoutMs: 600_000,
         });
         return result.response;
@@ -2409,8 +2414,6 @@ export async function runAgentLoop(
               privateConnectorPolicy,
               ownerRole
             );
-            const envelope = await issueOwnerRuntimeEnvelope('report', 600);
-            if (!envelope) throw new Error('Owner report requires envelope authority');
             const result = await agentLoop.runWithContent(
               [{ type: 'text' as const, text: prompt }],
               {
@@ -2422,7 +2425,11 @@ export async function runAgentLoop(
                 agentContext: reportAgentPolicy.agentContext,
                 sessionPolicyRole: ownerRole,
                 gatewayToolsPrompt: reportAgentPolicy.gatewayToolsPrompt,
-                envelope,
+                prepareEnvelope: async () => {
+                  const envelope = await issueOwnerRuntimeEnvelope('report', 600);
+                  if (!envelope) throw new Error('Owner report requires envelope authority');
+                  return envelope;
+                },
                 requestTimeoutMs: 600_000,
                 ownerJournalPrompt: sourceMessageRef
                   ? `Report stimulus: ${sourceMessageRef}`

@@ -109,6 +109,8 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       runner: {
         run: async (_prompt, options) => {
           runOptions = options;
+          expect(options).not.toHaveProperty('envelope');
+          expect(await options.prepareEnvelope()).toBe(envelope);
           return {
             response: 'recorded and delivered',
             history: [
@@ -160,7 +162,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
           drive_upload: 'drive-upload',
         },
       },
-      envelope,
+      prepareEnvelope: expect.any(Function),
     });
     expect(runOptions).not.toHaveProperty('freshSession');
     expect(registry.getById('feedback-trigger')?.stats).toEqual({
