@@ -32,6 +32,22 @@ scenario IDs from this document.
   start script; a live daemon Code-Act overview returned ten boards successfully. PR/CI and the
   0.49.1 installed canary remain separate gates.
 
+Installed local-candidate observation (2026-09-07): daemon Code-Act returned ten Trello boards,
+124 active tasks and a matching upcoming subset of 19 (five rows requested/returned). One
+on-demand report committed in 380 seconds using 28 outer calls (27 successful, one failed),
+compared with the earlier 612 seconds / 41 calls. Task-list calls fell from 26 to seven, with
+zero whole-board pagination loops in the observed report. Receipt 547 confirms one delivered
+attempt, consumed by owner:runtime. These are different live windows, not a controlled benchmark.
+The remaining failure was explicitly unsupported scoped checkpoint search, not Trello.
+
+The changed tool contract triggered one expected policy replacement. The replacement's initial
+session metadata contains one owner recovery block. Inspection also found that omitted background
+model options and explicitly identical Telegram model options generated different fingerprints;
+the final candidate now fingerprints the effective model, with a production-shaped failing-then-
+passing regression. Root build and all seven root test tasks passed again after that correction.
+This candidate is installed from a local tarball; public release and inbound Telegram/native-
+subagent continuation are still unproven.
+
 ## One MAMA owner-runtime candidate: 2026-09-06
 
 - **TG-03/TG-04:** authenticated owner channels, connector events, reports, workorders, cron,

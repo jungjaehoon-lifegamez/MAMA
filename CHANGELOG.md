@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
   prevents the model call; the existing scoped grants and effect receipts remain enforced.
 - The boot client forwards durable-session and recovery-journal capabilities to MessageRouter,
   avoiding duplicate history preparation when a persisted owner thread survives daemon restart.
+- Owner policy fingerprints use the effective model. An omitted background model and an
+  explicitly identical Telegram model no longer replace the same owner thread on channel changes.
 - Task overview and item queries accept matching due buckets for missing, overdue, upcoming and
   closed work. Date-only deadlines keep their calendar semantics, and cursor pages preserve the
   same temporal observation time. MAMA can narrow its evidence without repeatedly reading the

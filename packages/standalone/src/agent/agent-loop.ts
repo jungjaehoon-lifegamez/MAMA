@@ -1400,7 +1400,7 @@ export class AgentLoop {
     const outerCodeActAllowed =
       this.useCodeAct && roleAllowsOuterCodeAct(options?.agentContext?.role, this.disallowedTools);
     const ownerPolicyFingerprint = ownerRuntime
-      ? ownerRuntimeSessionPolicyFingerprint(sessionPolicyRole, options?.model)
+      ? ownerRuntimeSessionPolicyFingerprint(sessionPolicyRole, options?.model ?? this.model)
       : undefined;
     const effectiveSessionPolicyFingerprint =
       isDurableRuntime && codeActPolicy
