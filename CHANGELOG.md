@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.49.0] - 2026-09-06
+
+### Changed
+
+- Authenticated owner messages, reports, connector events, workorders, cron, heartbeat, and
+  trigger maintenance now share one durable `owner:runtime` subject and priority queue. Channel
+  IDs select reply and authority context without creating another agent.
+- MAMA performs ordinary work directly and may invoke the selected model runtime's native
+  subagents for bounded parallel work. The host `delegate` and `report_request` relays, separate
+  report/worker personas, and automatic post-turn memory agent were removed.
+- Owner context is loaded progressively. Compatible sessions receive no history reinjection;
+  actual thread loss restores only eight bounded successful stimuli through the normal prompt
+  budget and an explicit untrusted-data boundary.
+
+### Fixed
+
+- Scheduled work can no longer initialize the shared owner thread with a worker or cron identity.
+  Per-turn envelopes narrow current effects while the stable owner role/model policy preserves
+  conversation continuity across Telegram, Slack, Discord, and Chatwork.
+- Report bodies are no longer copied into the next owner prompt. Confirmed report delivery is
+  immediately recorded as known by the composing owner runtime while exact reservation, retry,
+  and transport receipts remain durable.
+- Corrupt recovery journals are quarantined instead of overwritten, and journal commit failures
+  propagate through chat, report, and maintenance result boundaries.
+- Legacy unreceipted model-and-send HTTP endpoints now return `410 Gone` instead of generating and
+  sending duplicate-prone Discord output.
+
 ## mama-os [0.48.4] - 2026-09-06
 
 ### Fixed
