@@ -184,3 +184,12 @@ files with 5,517 passing tests and seven existing skips. Root lint, typecheck, v
 and diff checks passed. Independent review found no P1/P2 in event replay removal, actual-backend
 recovery gating, or the deterministic idle-timeout test. Publication/installation and the real
 Telegram follow-up remain separate completion evidence.
+
+Telegram native-subagent proof was observed on installed 0.49.1: owner model run
+`mr_3748a2b333034ea9aa57d2b81659fb7d` handled the actual incoming request, invoked native
+`spawn_agent` then `wait_agent` on the same owner thread, and returned analysis plus MAMA's own
+judgment. The Telegram message ledger confirms delivered, with no uncertain delivery. The
+subagent used a full-history fork; 0.49.2 adds stable guidance to prefer bounded evidence and
+no history fork when sufficient. This guidance is part of the owner policy fingerprint so each
+backend adopts the genuine policy change once. A subsequent compatible restart must not replay
+history. Public 0.49.2 installation remains the final runtime gate.

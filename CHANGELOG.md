@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 - Recovery is now triggered by actual backend missing/mismatched state, rather than a fresh
   in-memory session pool. Compatible daemon restarts restore policy without replaying the
   journal; Claude, Codex and Cline background replacements and retries still recover it once.
+- Standing owner guidance prefers bounded native-subagent context and no history fork when
+  sufficient, while keeping task selection, delegation and final judgment with MAMA.
 - The streaming idle-timeout regression test uses a virtual parent clock with real subprocess
   output, preserving timeout-refresh coverage without a 45ms CI scheduling race.
 

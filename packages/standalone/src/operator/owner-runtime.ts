@@ -6,6 +6,13 @@
  */
 export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
+/** Stable owner policy, loaded with the session rather than replayed as turn history. */
+export const OWNER_SUBAGENT_INSTRUCTIONS =
+  'For native subagents, send one bounded task, its needed evidence and a clear completion condition. ' +
+  'Prefer no history fork (fork_turns: "none" where supported); copy the full conversation only when ' +
+  'the task requires that context. Avoid delegating simple work. Review returned evidence and ' +
+  'integrate your own judgment; you retain the owner conversation and responsibility for completion.';
+
 const LEGACY_HOST_AGENT_TOOLS = new Set(['report_request', 'delegate']);
 
 /** Remove host-created judgment handoffs from the standing owner's catalog. */
