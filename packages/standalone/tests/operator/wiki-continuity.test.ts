@@ -357,5 +357,8 @@ describe('evaluateWikiContinuity', () => {
     expect(decision.payload?.taskUpdatedSince).toBe(new Date(start).toISOString());
     expect(Date.parse(decision.payload!.taskUpdatedSince)).toBe(start);
     expect(decision.payload?.taskUpdatedSince).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(decision.payload?.taskUpdatedBefore).toBe(
+      new Date(decision.payload!.range.end_ms).toISOString()
+    );
   });
 });

@@ -422,6 +422,8 @@ export interface ListTasksFilter {
   dueAfterMs?: number;
   /** updated_at at or after this epoch ms. */
   updatedSinceMs?: number;
+  /** updated_at strictly before this epoch ms. */
+  updatedBeforeMs?: number;
   /** Progressive migration filter for rows created before completion criteria existed. */
   qualification?: 'qualified' | 'legacy_unqualified';
   limit?: number;
@@ -877,6 +879,10 @@ export class TaskLedger implements TaskSource {
     if (filter.updatedSinceMs !== undefined) {
       where.push('updated_at >= ?');
       params.push(filter.updatedSinceMs);
+    }
+    if (filter.updatedBeforeMs !== undefined) {
+      where.push('updated_at < ?');
+      params.push(filter.updatedBeforeMs);
     }
     if (filter.qualification === 'qualified') {
       where.push('completion_criteria IS NOT NULL');

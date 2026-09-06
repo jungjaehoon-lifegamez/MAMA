@@ -576,6 +576,7 @@ export function buildAgentToolExecutionContext(
       options.modelRunId === undefined &&
       options.workorderAttemptId === undefined &&
       options.temporalWorkContext === undefined &&
+      options.wikiTaskRange === undefined &&
       options.ownerEventEffects === undefined)
   ) {
     return null;
@@ -617,6 +618,9 @@ export function buildAgentToolExecutionContext(
   }
   if (options.temporalWorkContext !== undefined) {
     context.temporalWorkContext = options.temporalWorkContext;
+  }
+  if (options.wikiTaskRange !== undefined) {
+    context.wikiTaskRange = options.wikiTaskRange;
   }
   return context;
 }

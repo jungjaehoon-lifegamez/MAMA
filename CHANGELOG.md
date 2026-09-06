@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.48.2] - 2026-09-06
+
+### Fixed
+
+- Wiki task movement now uses the same half-open range as connector evidence. The host supplies
+  exact RFC 3339 `updated_since` and `updated_before` values bound to `range.start_ms` and
+  `range.end_ms`; backfills no longer read every task updated after the historical date.
+- Missing upper bounds are treated as legacy input and cannot read sources or publish. Task-list
+  cursors bind the upper bound with the rest of the query, preventing mixed-range continuation.
+
 ## mama-os [0.48.1] - 2026-09-06
 
 ### Fixed

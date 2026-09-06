@@ -8,6 +8,7 @@
  * Temporal work context.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { TaskLedger, type TaskRecord } from '../../src/operator/task-ledger.js';
 import { runTaskListView } from '../../src/operator/task-list-views.js';
 import Database from '../../src/sqlite.js';
@@ -100,6 +101,34 @@ describe('TG-05/TG-06 AC #1: task_list items view', () => {
     expect(() => items(ledger, { status: 'in_progress', cursor: first.nextCursor })).toThrow(
       /different query/i
     );
+  });
+
+  it('accepts a pre-0.48.2 cursor for the same unbounded query', () => {
+    const first = items(ledger);
+    const cursor = JSON.parse(
+      Buffer.from(first.nextCursor!, 'base64url').toString('utf8')
+    ) as Record<string, unknown>;
+    cursor.fp = createHash('sha256')
+      .update(
+        JSON.stringify([
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          'deadline_priority',
+        ])
+      )
+      .digest('base64url')
+      .slice(0, 22);
+    expect(() =>
+      items(ledger, { cursor: Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url') })
+    ).not.toThrow();
   });
 
   it('rejects a malformed cursor', () => {

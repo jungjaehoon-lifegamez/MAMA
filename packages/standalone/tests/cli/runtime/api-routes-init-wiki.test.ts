@@ -159,6 +159,7 @@ function expectTypedWikiPayload(payload: Record<string, unknown>, trigger: strin
   expect(range.start_ms).toBeLessThanOrEqual(range.end_ms);
   // C1: task_list.updated_since needs a canonical RFC3339 string for start_ms.
   expect(payload.taskUpdatedSince).toBe(new Date(range.start_ms).toISOString());
+  expect(payload.taskUpdatedBefore).toBe(new Date(range.end_ms).toISOString());
   expect(typeof payload.sourceWatermark).toBe('string');
   expect(payload.connectors).toEqual(RAW_CONNECTOR_SCOPE);
   expect(payload.events).toEqual([trigger]);

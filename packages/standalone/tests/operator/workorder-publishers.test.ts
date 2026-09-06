@@ -400,6 +400,7 @@ describe('Story S2-T2: publisher contracts', () => {
         ownerDate: '2026-09-05',
         range: { start_ms: 1000, end_ms: 2000 },
         taskUpdatedSince: new Date(1000).toISOString(),
+        taskUpdatedBefore: new Date(2000).toISOString(),
         sourceWatermark: 'w1:c:slack=10',
         connectors: ['slack', 'chatwork'],
         noUpdateScope: 'wiki:2026-09-05:abc123',
@@ -429,6 +430,15 @@ describe('Story S2-T2: publisher contracts', () => {
       expect(() =>
         validateWorkOrderPayload('wiki', { ...good, taskUpdatedSince: new Date(999).toISOString() })
       ).toThrow(/taskUpdatedSince/);
+      expect(() =>
+        validateWorkOrderPayload('wiki', { ...good, taskUpdatedBefore: 'not-a-date' })
+      ).toThrow(/taskUpdatedBefore/);
+      expect(() =>
+        validateWorkOrderPayload('wiki', {
+          ...good,
+          taskUpdatedBefore: new Date(2001).toISOString(),
+        })
+      ).toThrow(/taskUpdatedBefore/);
       // malformed owner date rejected loudly.
       expect(() => validateWorkOrderPayload('wiki', { ...good, ownerDate: '2026-9-5' })).toThrow(
         /owner date/i
@@ -460,6 +470,7 @@ describe('Story S2-T2: publisher contracts', () => {
         ownerDate: '2026-09-05',
         range: { start_ms: 1000, end_ms: 2000 },
         taskUpdatedSince: new Date(1000).toISOString(),
+        taskUpdatedBefore: new Date(2000).toISOString(),
         sourceWatermark: 'w1:c:slack=10',
         connectors: ['slack'],
         noUpdateScope: 'wiki:2026-09-05:abc123',
@@ -476,6 +487,7 @@ describe('Story S2-T2: publisher contracts', () => {
         'ownerDate',
         'range',
         'taskUpdatedSince',
+        'taskUpdatedBefore',
         'sourceWatermark',
         'connectors',
         'noUpdateScope',

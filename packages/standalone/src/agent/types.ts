@@ -196,6 +196,12 @@ export interface OwnerEventEffectAuthority {
   }>;
 }
 
+/** Host-issued half-open task range for one wiki workorder. Nulls mean legacy/unbound. */
+export interface WikiTaskRangeAuthority {
+  updatedSince: string | null;
+  updatedBefore: string | null;
+}
+
 /** Host-derived origin for an owner workorder request; never accepted from model input. */
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;
@@ -212,6 +218,8 @@ export type GatewayToolExecutionContext = {
   workorderAttemptId?: number;
   /** Host-built temporal authority; never accepted from tool input or fallback state. */
   temporalWorkContext?: TemporalWorkContext;
+  /** Wiki task reads must match this exact host-issued range. */
+  wikiTaskRange?: WikiTaskRangeAuthority;
   /**
    * The delta batch this run was handed. Host-supplied; never accepted from tool input.
    *
@@ -1063,6 +1071,8 @@ export interface AgentLoopOptions {
   workorderAttemptId?: number;
   /** Host-built temporal authority for one claimed temporal workorder. */
   temporalWorkContext?: TemporalWorkContext;
+  /** Host-issued task range for a wiki workorder, including legacy-unbound state. */
+  wikiTaskRange?: WikiTaskRangeAuthority;
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
   /** Host-issued semantic action identities for one durable owner-event batch. */
