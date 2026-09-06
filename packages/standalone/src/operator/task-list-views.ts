@@ -75,6 +75,7 @@ interface NormalizedFilter {
   dueBeforeMs?: number;
   dueAfterMs?: number;
   updatedSinceMs?: number;
+  updatedBeforeMs?: number;
   qualification?: (typeof QUALIFICATIONS)[number];
   order: (typeof ORDERS)[number];
 }
@@ -397,6 +398,7 @@ function parseFilter(input: Record<string, unknown>): NormalizedFilter {
     dueBeforeMs: parseOptionalStrictTime(input.due_before, 'due_before'),
     dueAfterMs: parseOptionalStrictTime(input.due_after, 'due_after'),
     updatedSinceMs: parseOptionalStrictTime(input.updated_since, 'updated_since'),
+    updatedBeforeMs: parseOptionalStrictTime(input.updated_before, 'updated_before'),
     qualification: parseQualification(input.qualification),
     order: parseOrder(input.order),
   };
@@ -413,6 +415,7 @@ function toLedgerFilter(filter: NormalizedFilter): ListTasksPageFilter {
     dueBeforeMs: filter.dueBeforeMs,
     dueAfterMs: filter.dueAfterMs,
     updatedSinceMs: filter.updatedSinceMs,
+    updatedBeforeMs: filter.updatedBeforeMs,
     qualification: filter.qualification,
     order: filter.order,
   };
@@ -444,6 +447,9 @@ function boundTaskMatches(task: TaskRecord, filter: NormalizedFilter): boolean {
     return false;
   }
   if (filter.updatedSinceMs !== undefined && !(task.updatedAt >= filter.updatedSinceMs)) {
+    return false;
+  }
+  if (filter.updatedBeforeMs !== undefined && !(task.updatedAt < filter.updatedBeforeMs)) {
     return false;
   }
   if (filter.qualification === 'qualified' && task.completionCriteria === null) return false;
@@ -582,6 +588,7 @@ function filterFingerprint(filter: NormalizedFilter): string {
     filter.dueBeforeMs ?? null,
     filter.dueAfterMs ?? null,
     filter.updatedSinceMs ?? null,
+    filter.updatedBeforeMs ?? null,
     filter.qualification ?? null,
     filter.order,
   ]);
