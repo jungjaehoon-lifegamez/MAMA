@@ -276,6 +276,7 @@ type ActiveGatewayExecutionContext = {
   gatewayCallId?: string;
   workorderAttemptId?: number;
   temporalWorkContext?: TemporalWorkContext;
+  wikiTaskRange?: GatewayToolExecutionContext['wikiTaskRange'];
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
   ownerEventEffects?: GatewayToolExecutionContext['ownerEventEffects'];
@@ -903,6 +904,7 @@ export class GatewayToolExecutor {
       gatewayCallId: executionContext?.gatewayCallId,
       workorderAttemptId: executionContext?.workorderAttemptId,
       temporalWorkContext: executionContext?.temporalWorkContext,
+      wikiTaskRange: executionContext?.wikiTaskRange,
       causeEventIds: executionContext?.causeEventIds,
       ownerEventEffects: executionContext?.ownerEventEffects,
       signal: executionContext?.signal,
@@ -950,6 +952,7 @@ export class GatewayToolExecutor {
       workorderAttemptId: active.workorderAttemptId,
       // Never merged from fallback - temporal authority belongs to one claimed run only.
       temporalWorkContext: active.temporalWorkContext,
+      wikiTaskRange: active.wikiTaskRange,
       causeEventIds: active.causeEventIds,
       ownerEventEffects: active.ownerEventEffects,
       signal: active.signal,
@@ -3625,6 +3628,33 @@ export class GatewayToolExecutor {
           // generic missing. Fetch it here so an unavailable bound task stays the same
           // superseded signal it was before the progressive views.
           const temporalContext = this.getExecutionState().temporalWorkContext;
+          const wikiTaskRange = this.getExecutionState().wikiTaskRange;
+          if (wikiTaskRange) {
+            const taskInput =
+              input !== null && typeof input === 'object' && !Array.isArray(input)
+                ? (input as Record<string, unknown>)
+                : {};
+            if (wikiTaskRange.updatedSince === null || wikiTaskRange.updatedBefore === null) {
+              throw new AgentError(
+                'Wiki task_list is unavailable for legacy input without a host-issued range',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            if (
+              (taskInput.view !== undefined && taskInput.view !== 'items') ||
+              taskInput.updated_since !== wikiTaskRange.updatedSince ||
+              taskInput.updated_before !== wikiTaskRange.updatedBefore
+            ) {
+              throw new AgentError(
+                'Wiki task_list requires view items and the exact host-issued updated_since/updated_before range',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
           let boundTask: import('../operator/task-ledger.js').TaskRecord | undefined;
           if (temporalContext) {
             const found = this.taskLedger.getById(temporalContext.taskId);
