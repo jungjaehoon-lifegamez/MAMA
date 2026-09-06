@@ -198,8 +198,13 @@ export interface OwnerEventEffectAuthority {
 
 /** Host-issued half-open task range for one wiki workorder. Nulls mean legacy/unbound. */
 export interface WikiTaskRangeAuthority {
+  ownerDate: string | null;
+  rangeStartMs: number | null;
+  rangeEndMs: number | null;
+  connectors: readonly string[] | null;
   updatedSince: string | null;
   updatedBefore: string | null;
+  noUpdateScope: string | null;
 }
 
 /** Host-derived origin for an owner workorder request; never accepted from model input. */
@@ -843,6 +848,7 @@ export type GatewayToolName =
   | 'member_scope_revoke'
   | 'member_scope_list'
   // Wiki compilation
+  | 'wiki_read'
   | 'wiki_publish'
   // Obsidian vault management via CLI
   | 'obsidian'

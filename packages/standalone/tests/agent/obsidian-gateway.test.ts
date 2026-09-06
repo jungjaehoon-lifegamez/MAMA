@@ -1,63 +1,51 @@
 import { describe, it, expect } from 'vitest';
+import { buildObsidianCliArgs, parseObsidianVaultPath } from '../../src/agent/obsidian-cli-args.js';
 
-/**
- * Build CLI arguments for the obsidian gateway tool.
- * Extracted here for unit testing -- same logic used in GatewayToolExecutor.executeObsidian():
- * command first, then vault=<name> when a vault is configured (otherwise the CLI
- * would target whatever vault the owner has focused), then key=value pairs.
- */
-function buildObsidianArgs(
-  command: string,
-  args?: Record<string, string>,
-  vaultName?: string | null
-): string[] {
-  const cliArgs = [command];
-  if (vaultName) {
-    cliArgs.push(`vault=${vaultName}`);
-  }
-  for (const [key, value] of Object.entries(args || {})) {
-    if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
-      cliArgs.push(key);
-    } else {
-      cliArgs.push(`${key}=${value}`);
-    }
-  }
-  return cliArgs;
-}
-
-describe('obsidian gateway tool', () => {
-  describe('argument building', () => {
+describe('Story WIKI-VB: obsidian gateway tool', () => {
+  describe('AC #1: configured-vault argument building', () => {
+    it('parses the actual path reported by the selected vault preflight', () => {
+      expect(
+        parseObsidianVaultPath(
+          'name\tmama-operator\npath\t/Users/test/obsidian-vault/mama-operator\nfiles\t10'
+        )
+      ).toBe('/Users/test/obsidian-vault/mama-operator');
+      expect(() => parseObsidianVaultPath('name\tfinance')).toThrow(/did not report/);
+    });
     it('builds search command with query and limit', () => {
-      const args = buildObsidianArgs('search', { query: 'KMS billing', limit: '5' });
+      const args = buildObsidianCliArgs('search', { query: 'KMS billing', limit: '5' }, null);
       expect(args).toEqual(['search', 'query=KMS billing', 'limit=5']);
     });
 
     it('pins the configured vault so writes never land in the focused vault', () => {
-      const args = buildObsidianArgs(
+      const args = buildObsidianCliArgs(
         'append',
         { path: 'daily/2026-07-10.md', content: 'entry' },
         'mama-operator'
       );
       expect(args).toEqual([
-        'append',
         'vault=mama-operator',
+        'append',
         'path=daily/2026-07-10.md',
         'content=entry',
       ]);
     });
 
     it('omits vault targeting when no vault name is configured', () => {
-      const args = buildObsidianArgs('tags', undefined, null);
+      const args = buildObsidianCliArgs('tags', undefined, null);
       expect(args).toEqual(['tags']);
     });
 
     it('builds create command with silent flag', () => {
       // Nested creates must use path= (the CLI rejects "/" in name=).
-      const args = buildObsidianArgs('create', {
-        path: 'lessons/process/new-page.md',
-        content: '# New Page',
-        silent: 'true',
-      });
+      const args = buildObsidianCliArgs(
+        'create',
+        {
+          path: 'lessons/process/new-page.md',
+          content: '# New Page',
+          silent: 'true',
+        },
+        null
+      );
       expect(args).toEqual([
         'create',
         'path=lessons/process/new-page.md',
@@ -67,11 +55,15 @@ describe('obsidian gateway tool', () => {
     });
 
     it('builds property:set command', () => {
-      const args = buildObsidianArgs('property:set', {
-        file: 'lessons/clients/KMS',
-        name: 'last_verified',
-        value: '2026-07-10',
-      });
+      const args = buildObsidianCliArgs(
+        'property:set',
+        {
+          file: 'lessons/clients/KMS',
+          name: 'last_verified',
+          value: '2026-07-10',
+        },
+        null
+      );
       expect(args).toEqual([
         'property:set',
         'file=lessons/clients/KMS',
@@ -81,30 +73,38 @@ describe('obsidian gateway tool', () => {
     });
 
     it('builds move command', () => {
-      const args = buildObsidianArgs('move', {
-        file: 'old-name',
-        to: 'lessons/process/new-name',
-      });
+      const args = buildObsidianCliArgs(
+        'move',
+        {
+          file: 'old-name',
+          to: 'lessons/process/new-name',
+        },
+        null
+      );
       expect(args).toEqual(['move', 'file=old-name', 'to=lessons/process/new-name']);
     });
 
     it('handles empty args', () => {
-      const args = buildObsidianArgs('tags');
+      const args = buildObsidianCliArgs('tags', undefined, null);
       expect(args).toEqual(['tags']);
     });
 
     it('handles overwrite boolean flag', () => {
-      const args = buildObsidianArgs('create', {
-        name: 'test',
-        content: 'body',
-        overwrite: 'true',
-      });
+      const args = buildObsidianCliArgs(
+        'create',
+        {
+          name: 'test',
+          content: 'body',
+          overwrite: 'true',
+        },
+        null
+      );
       expect(args).toContain('overwrite');
       expect(args).not.toContain('overwrite=true');
     });
   });
 
-  describe('error handling', () => {
+  describe('AC #2: fail-closed error handling', () => {
     it('returns error when vault path not configured', () => {
       const result = { success: false, error: 'Wiki vault path not configured' };
       expect(result.success).toBe(false);

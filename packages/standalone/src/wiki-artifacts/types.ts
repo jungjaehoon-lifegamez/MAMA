@@ -34,6 +34,8 @@ export interface WikiArtifactRecord {
 
 export interface WikiPublishPageInput {
   path: string;
+  /** Scheduled wiki CAS token from wiki_read. Ignored for non-workorder callers. */
+  expectedContentVersion?: string | null;
   title: string;
   type?: string;
   content: string;
@@ -44,6 +46,8 @@ export interface WikiPublishPageInput {
 
 export type SourceLinkedWikiPage = WikiPage & {
   sourceRefs: string[];
+  /** Present only after a scheduled wiki CAS check; locks the publisher to the exact path. */
+  expectedContentVersion?: string | null;
 };
 
 export type WikiPagePublisher = (pages: SourceLinkedWikiPage[]) => void;

@@ -57,15 +57,15 @@ describe('HostBridge', () => {
       expect(t2Names).not.toContain('Bash');
     });
 
-    it('tier 2 exposes the wiki write path (obsidian CLI + wiki_publish fallback)', () => {
-      // The wiki agent runs at tier 2 with useCodeAct; without obsidian in the
-      // sandbox every run silently degrades to the wiki_publish fallback.
+    it('projects the bounded wiki read and write primitives at their correct tiers', () => {
       const bridge = new HostBridge(makeExecutor());
       const t2Names = bridge.getAvailableFunctions(2).map((f) => f.name);
       expect(t2Names).toContain('obsidian');
+      expect(t2Names).toContain('wiki_read');
       expect(t2Names).toContain('wiki_publish');
       const t3Names = bridge.getAvailableFunctions(3).map((f) => f.name);
       expect(t3Names).not.toContain('obsidian');
+      expect(t3Names).toContain('wiki_read');
       expect(t3Names).not.toContain('wiki_publish');
     });
 

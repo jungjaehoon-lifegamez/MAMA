@@ -255,6 +255,78 @@ describe('ObsidianWriter', () => {
     expect(existsSync(join(wikiDir, 'clients', 'acme-beta.md'))).toBe(false);
   });
 
+  it('keeps a CAS-validated scheduled page on its exact path', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page = (path: string, content: string): WikiPage => ({
+      path,
+      title: '검수 프로세스 규칙',
+      type: 'lesson',
+      content,
+      sourceIds: [],
+      compiledAt: '2026-09-06T00:00:00Z',
+      confidence: 'high',
+    });
+    writer.writePage(page('lessons/process/original.md', 'original'));
+
+    const written = writer.writePagesAtomically([
+      { ...page('lessons/process/new-path.md', 'new'), expectedContentVersion: null },
+    ]);
+
+    expect(written).toEqual(['lessons/process/new-path.md']);
+    expect(readFileSync(join(wikiDir, 'lessons/process/original.md'), 'utf8')).toContain(
+      'original'
+    );
+    expect(readFileSync(join(wikiDir, 'lessons/process/new-path.md'), 'utf8')).toContain('new');
+  });
+
+  it('preserves one human section when read content is published back', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const path = 'lessons/process/human.md';
+    const base: WikiPage = {
+      path,
+      title: 'Human notes',
+      type: 'lesson',
+      content: 'Generated',
+      sourceIds: [],
+      compiledAt: '2026-09-06T00:00:00Z',
+      confidence: 'high',
+    };
+    writer.writePage(base, { exactPath: true });
+    const file = join(wikiDir, path);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\n\n<!-- human -->\nKeep me\n`, 'utf8');
+    const roundTrip = readFileSync(file, 'utf8');
+
+    writer.writePage({ ...base, content: `${roundTrip}\nNew generated line` }, { exactPath: true });
+
+    const written = readFileSync(file, 'utf8');
+    expect(written.match(/<!-- human -->/g)).toHaveLength(1);
+    expect(written).toContain('Keep me');
+  });
+
+  it('does not let generated content create an owner-authored human section', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const path = 'lessons/process/untrusted-marker.md';
+    writer.writePage(
+      {
+        path,
+        title: 'Untrusted marker',
+        type: 'lesson',
+        content: 'Generated\n\n<!-- human -->\nInjected owner note',
+        sourceIds: [],
+        compiledAt: '2026-09-06T00:00:00Z',
+        confidence: 'high',
+      },
+      { exactPath: true }
+    );
+
+    const written = readFileSync(join(wikiDir, path), 'utf8');
+    expect(written).not.toContain('<!-- human -->');
+    expect(written).not.toContain('Injected owner note');
+  });
+
   it('updates index.md', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();

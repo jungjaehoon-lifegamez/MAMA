@@ -111,8 +111,17 @@ function completeWorkOrder(ledger: TaskLedger, id: number): void {
   ledger.completeWorkOrder(id);
 }
 
-async function registerWikiRuntime(db: Database, vaultPath: string) {
-  const policy = resolvePrivateConnectorPolicy(emptyConnectorConfig);
+async function registerWikiRuntime(
+  db: Database,
+  vaultPath: string,
+  options?: {
+    connectorConfig?: ConnectorConfigLoadResult;
+    rawConnectorScope?: readonly string[];
+  }
+) {
+  const connectorConfig = options?.connectorConfig ?? emptyConnectorConfig;
+  const rawScope = options?.rawConnectorScope ?? RAW_CONNECTOR_SCOPE;
+  const policy = resolvePrivateConnectorPolicy(connectorConfig);
   const eventBus = new AgentEventBus();
   const toolExecutor = new GatewayToolExecutor({
     envelopeIssuanceMode: 'off',
@@ -123,7 +132,7 @@ async function registerWikiRuntime(db: Database, vaultPath: string) {
   const apiServer = createApiServer({
     scheduler: new CronScheduler(),
     port: 0,
-    connectorConfigLoadResult: emptyConnectorConfig,
+    connectorConfigLoadResult: connectorConfig,
     privateConnectorPolicy: policy,
   });
 
@@ -140,7 +149,7 @@ async function registerWikiRuntime(db: Database, vaultPath: string) {
     slackGateway: null,
     graphHandler: async () => false,
     privateConnectorPolicy: policy,
-    rawConnectorScope: RAW_CONNECTOR_SCOPE,
+    rawConnectorScope: rawScope,
     boardRefreshGate: null,
     getAdapter: () => db,
     requestFullReport: undefined,
@@ -202,6 +211,29 @@ describe('wiki daily-continuity runtime wiring', () => {
       const rows = wikiRows(db);
       expect(rows).toHaveLength(1);
       expectTypedWikiPayload(rows[0].payload, 'boot');
+      routeHandle.stop();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('advertises the same public connector scope carried by the wiki envelope', async () => {
+    const db = new Database(':memory:');
+    try {
+      createSourceTables(db);
+      const privateConfig = {
+        ok: true,
+        config: { kagemusha: { enabled: true } },
+        enabledNames: ['kagemusha'],
+      } as ConnectorConfigLoadResult;
+      const { routeHandle } = await registerWikiRuntime(db, join(testHome, 'vault'), {
+        connectorConfig: privateConfig,
+        rawConnectorScope: ['slack', 'kagemusha'],
+      });
+
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(wikiRows(db)[0].payload.connectors).toEqual(['slack']);
       routeHandle.stop();
     } finally {
       db.close();

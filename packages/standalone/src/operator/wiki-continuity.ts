@@ -136,6 +136,15 @@ export interface WikiContinuityInput {
   requestedOwnerDate?: string;
 }
 
+/** Public wiki runs never receive connectors classified as private. */
+export function publicWikiConnectorScope(
+  connectors: readonly string[],
+  privateConnectors: readonly string[]
+): string[] {
+  const privateSet = new Set(privateConnectors);
+  return [...new Set(connectors)].filter((connector) => !privateSet.has(connector));
+}
+
 /** The owner-local calendar date for an instant, in the owner IANA zone. */
 export function ownerDateForInstant(nowMs: number, timeZone: string): string {
   return dateInIanaZone(nowMs, timeZone);

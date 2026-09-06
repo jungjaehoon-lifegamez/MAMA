@@ -183,7 +183,7 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
     for (const kind of WORKORDER_KINDS) {
       expect(grant(kind), `${kind} may not create tasks`).not.toContain('task_create');
     }
-    expect(grant('wiki')).toEqual([...common, 'obsidian', 'wiki_publish'].sort());
+    expect(grant('wiki')).toEqual([...common, 'wiki_read', 'wiki_publish'].sort());
     expect(grant('memory-curation')).toEqual([...common, 'mama_save', 'mama_update'].sort());
     expect(grant('temporal')).toEqual([...common, 'task_temporal_reconcile'].sort());
     expect(grant('self-check')).toEqual([...common, 'issue_close', 'repair_request'].sort());
@@ -217,8 +217,9 @@ describe('Story ONE-MAMA-P1 Task 5: one agent policy for scheduled turns', () =>
       expect.arrayContaining(['task_temporal_reconcile', 'context_compile', 'task_list'])
     );
     expect(turn('wiki').agentContext.role.allowedTools).toEqual(
-      expect.arrayContaining(['wiki_publish', 'obsidian', 'contract_no_update'])
+      expect.arrayContaining(['wiki_read', 'wiki_publish', 'contract_no_update'])
     );
+    expect(turn('wiki').agentContext.role.allowedTools).not.toContain('obsidian');
     expect(turn('memory-curation').agentContext.role.allowedTools).toEqual(
       expect.arrayContaining(['mama_save', 'mama_update', 'contract_no_update'])
     );

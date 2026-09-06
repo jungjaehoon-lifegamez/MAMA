@@ -11,6 +11,7 @@ import {
   parseStrictOwnerDate,
   composeWikiSourceWatermark,
   evaluateWikiContinuity,
+  publicWikiConnectorScope,
   WIKI_WATERMARK_MAX_LENGTH,
   type WikiBaseline,
   type WikiContinuityInput,
@@ -25,6 +26,17 @@ const SEOUL_DAY = {
   start: Date.parse('2026-09-04T15:00:00Z'),
   end: Date.parse('2026-09-05T15:00:00Z'),
 };
+
+describe('public wiki connector scope', () => {
+  it('deduplicates public connectors and removes every private connector', () => {
+    expect(
+      publicWikiConnectorScope(
+        ['slack', 'kagemusha', 'trello', 'slack'],
+        ['kagemusha', 'private-chat']
+      )
+    ).toEqual(['slack', 'trello']);
+  });
+});
 
 function baseInput(overrides: Partial<WikiContinuityInput> = {}): WikiContinuityInput {
   return {
