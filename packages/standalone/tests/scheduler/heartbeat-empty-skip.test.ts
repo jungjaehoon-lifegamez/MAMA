@@ -2,8 +2,8 @@
  * An empty HEARTBEAT.md must never wake the model. One accumulated heartbeat
  * thread burned 13.4M tokens over 9 days (2026-08-06..15) answering 290
  * "[HEARTBEAT POLL] ... (none)" turns with "HEARTBEAT_OK". Emptiness is a
- * host-side fact - the scheduler checks the file itself, and when there IS
- * work it runs a stateless fresh session instead of resuming a durable thread.
+ * host-side fact. When there is work, it becomes a stimulus for the same
+ * durable owner runtime.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
@@ -54,12 +54,17 @@ describe('HeartbeatScheduler empty-file skip', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('runs a stateless fresh session when HEARTBEAT.md has tasks', async () => {
+  it('routes HEARTBEAT.md work to the one durable owner runtime', async () => {
     writeFileSync(join(home, '.mama', 'HEARTBEAT.md'), '- check the deploy\n');
     await scheduler().triggerNow();
     expect(run).toHaveBeenCalledTimes(1);
     const [prompt, options] = run.mock.calls[0];
     expect(String(prompt)).toContain('check the deploy');
-    expect(options).toMatchObject({ freshSession: true });
+    expect(options).toMatchObject({
+      sessionKey: 'owner:runtime',
+      source: 'operator',
+      channelId: 'heartbeat',
+    });
+    expect(options).not.toHaveProperty('freshSession');
   });
 });

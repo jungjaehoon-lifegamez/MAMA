@@ -1,7 +1,7 @@
 /**
- * TG-05 Slice J core: live/retained bounds, operator_archived, tombstone GC
- * (design Decisions 4-5). Prepared and pending-context records are never
- * automatically compacted; only consumed exact data is.
+ * Report delivery ledger: live/retained bounds and tombstone GC. Prepared
+ * records are never automatically compacted; delivered reports are already
+ * known by the standing owner runtime and become compactable.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -87,10 +87,9 @@ describe('TelegramReportContextStore capacity core', () => {
     expect(pendingRow.text).toBe('report d-5');
   });
 
-  it('never compacts prepared or pending-context records', () => {
+  it('never compacts prepared records', () => {
     reserveOne('d-prepared');
-    reserveOne('d-pending');
-    store.markDelivered('d-pending', NOW);
+    reserveOne('d-2');
     reserveOne('d-3');
 
     expect(() => reserveOne('d-4')).toThrow(/capacity_full/);
@@ -100,29 +99,6 @@ describe('TelegramReportContextStore capacity core', () => {
     expect(rows).toEqual([]);
   });
 
-  it('archives only already-delivered pending rows through a sequence with an audit record', () => {
-    reserveOne('d-1');
-    reserveOne('d-2');
-    store.markDelivered('d-1', NOW);
-    const seq1 = store.getEvent('d-1')?.seq as number;
-
-    const archived = store.archiveDelivered(OWNER_TARGET, seq1, 'owner', 'stale backlog', NOW);
-
-    expect(archived).toEqual(['d-1']);
-    const row = db
-      .prepare(
-        'SELECT disposition, archived_by, archived_reason, archived_at FROM telegram_report_context_events WHERE delivery_id = ?'
-      )
-      .get('d-1') as Record<string, string>;
-    expect(row.disposition).toBe('operator_archived');
-    expect(row.archived_by).toBe('owner');
-    expect(row.archived_reason).toBe('stale backlog');
-    // Undelivered rows are untouched.
-    expect(store.getEvent('d-2')?.state).toBe('prepared_retryable');
-    // Archived rows leave the pending projection.
-    expect(store.listDeliveredPending(OWNER_TARGET)).toEqual([]);
-  });
-
   it('reports live usage for the status surface', () => {
     reserveOne('d-1');
     store.markDelivered('d-1', NOW);
@@ -130,7 +106,7 @@ describe('TelegramReportContextStore capacity core', () => {
 
     const usage = store.liveUsage(OWNER_TARGET);
 
-    expect(usage.rows).toBe(2);
+    expect(usage.rows).toBe(1);
     expect(usage.rowCap).toBe(3);
     expect(usage.bytes).toBeGreaterThan(0);
     expect(usage.warn).toBe(false);

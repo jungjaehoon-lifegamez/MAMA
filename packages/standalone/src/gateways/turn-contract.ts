@@ -63,6 +63,11 @@ export interface CompletedTurn extends TurnOutcomeBase {
   sourceTurnId: string;
   /** Canonical reference to the message that started it. */
   sourceMessageRef: string;
+  /** The response was delivered but bounded crash recovery could not be persisted. */
+  recoveryProvenance?: {
+    status: 'unavailable';
+    reason: 'journal_commit_failed';
+  };
 }
 
 /** A turn answered without a model run - the caller must not look for run identity. */
@@ -92,9 +97,8 @@ export type ProcessingResult = CompletedTurn | BlockedTurn | DivertedTurn;
  * resume decision and the per-channel lock are held together; splitting any of them
  * across this boundary would leave one lock with two owners.
  *
- * Known exception, stated rather than discovered later: scheduled operator reports do
- * not pass through here. They run their own lane against a forced fresh session, so two
- * session models exist today.
+ * Scheduled stimuli enter the same owner-runtime lane through their scheduler boundary;
+ * channel identity remains delivery metadata rather than model-session identity.
  */
 export interface TurnProcessor {
   processTurn(message: NormalizedMessage, options?: ProcessOptions): Promise<ProcessingResult>;

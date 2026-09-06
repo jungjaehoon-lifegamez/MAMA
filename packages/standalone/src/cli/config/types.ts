@@ -110,7 +110,14 @@ export const DEFAULT_ROLES: RolesConfig = {
         'Read',
         'discord_send',
       ],
-      blockedTools: ['Bash', 'Write', 'save_integration_token', 'mama_save', 'mama_update'],
+      blockedTools: [
+        'Bash',
+        'Write',
+        'save_integration_token',
+        'mama_save',
+        'mama_update',
+        'native_subagent',
+      ],
       allowedPaths: ['~/.mama/workspace/**'],
       systemControl: false,
       sensitiveAccess: false,
@@ -138,7 +145,7 @@ export const DEFAULT_ROLES: RolesConfig = {
     // Owner console: granted ONLY when the telegram inbound is verified-owner
     // (allowed_chats locked AND the message is a 1:1 DM from an allowlisted
     // chat). Read/query surface is wide and Drive mutations are constrained to
-    // the private workspace; Bash/Write, system control, and delegation stay blocked.
+    // the private workspace. Native subagents remain under MAMA's judgment.
     owner_console: {
       model: 'claude-sonnet-5',
       maxTurns: 10,
@@ -178,7 +185,6 @@ export const DEFAULT_ROLES: RolesConfig = {
         'member_scope_revoke',
         'member_scope_list',
         'audit_findings_read',
-        'report_request',
         'console_brief_update',
         'mama_save',
         'mama_update',
@@ -189,8 +195,9 @@ export const DEFAULT_ROLES: RolesConfig = {
         'Bash',
         'Write',
         'code_act',
+        'native_subagent',
       ],
-      blockedTools: ['save_integration_token', 'delegate'],
+      blockedTools: ['save_integration_token'],
       allowedPaths: ['~/.mama/workspace/**'],
       systemControl: false,
       sensitiveAccess: false,

@@ -30,6 +30,7 @@ describe('agentLoopClient wrapper preserves run usage', () => {
     // 0.43.0: the wrapper also dropped stoppedBy, so a budget-stopped run
     // reported as a clean completion (board#4416 live).
     expect(wrapper).toMatch(/stoppedBy: result\.stoppedBy/);
+    expect(wrapper).toContain('ownerJournalProvenance: result.ownerJournalProvenance');
   });
 });
 

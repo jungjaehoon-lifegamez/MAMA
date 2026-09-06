@@ -24,7 +24,6 @@ import {
 } from '../../src/operator/workorder-consumer.js';
 import { buildTemporalWorkOrderHook } from '../../src/operator/workorder-hooks.js';
 import type { WorkerRunnerOptions } from '../../src/operator/worker-run.js';
-import { buildWorkerSystemPrompt } from '../../src/operator/worker-run.js';
 import {
   buildTurnAgentPolicy,
   temporalTaskBinding,
@@ -190,7 +189,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
           workorderAttemptId: workOrder.id,
           temporalWorkContext,
           agentContext: policy.agentContext,
-          systemPrompt: buildWorkerSystemPrompt(policy.gatewayToolsPrompt, 'codex', 'temporal'),
+          gatewayToolsPrompt: policy.gatewayToolsPrompt,
           envelope: envelopeAuthority.buildAndPersist({
             agent_id: 'workorder-temporal',
             instance_id: `temporal-attempt-${workOrder.id}`,

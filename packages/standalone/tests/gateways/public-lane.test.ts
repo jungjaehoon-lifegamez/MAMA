@@ -340,7 +340,7 @@ describe('Task 7: safe public lane', () => {
     expect(sandbox.getRegisteredFunctions()).not.toContain('mama_search');
   });
 
-  it('keeps the Telegram owner prompt, memory hook, and full tool role unchanged', async () => {
+  it('keeps the Telegram owner prompt and full tool role without a second memory model', async () => {
     const calls: CapturedCall[] = [];
     const mamaApi = poisonMamaApi();
     const router = new MessageRouter(sessionStore, captureLoop(calls), mamaApi, {
@@ -377,7 +377,7 @@ describe('Task 7: safe public lane', () => {
     expect(calls[0]?.prompt).toContain('OWNER PROFILE BASELINE');
     expect(enhance).toHaveBeenCalledOnce();
     expect(mamaApi.recallMemory).toHaveBeenCalledOnce();
-    expect(triggerMemoryAgent).toHaveBeenCalledOnce();
+    expect(triggerMemoryAgent).not.toHaveBeenCalled();
   });
 
   it('routes a mentioned Telegram group non-owner through the gateway to public_lane', async () => {

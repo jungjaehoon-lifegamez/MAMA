@@ -1,7 +1,9 @@
 import type { AgentContext } from '../agent/types.js';
+import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { OwnerEventBatch, OwnerEventInbox } from './owner-event-inbox.js';
 import { buildOwnerEventEffectAuthority } from './owner-event-effects.js';
+import { OWNER_RUNTIME_SESSION_KEY } from './owner-runtime.js';
 import {
   classifyOwnerEventOutcome,
   type OwnerEventHistoryMessage,
@@ -18,11 +20,12 @@ interface OwnerEventRunner {
       source: 'owner-event';
       actorId: 'mama-owner';
       channelId: string;
-      freshSession: true;
+      sessionPolicyRole: RoleConfig;
       agentContext: AgentContext;
       envelope: Envelope;
       causeEventIds: readonly string[];
       sourceMessageRef: string;
+      ownerJournalPrompt: string;
       ownerEventEffects: ReturnType<typeof buildOwnerEventEffectAuthority>;
     }
   ): Promise<{ response: string; history: OwnerEventHistoryMessage[]; stoppedBy?: 'budget' }>;
@@ -32,9 +35,9 @@ export interface OwnerEventLoopDeps {
   inbox: OwnerEventInbox;
   runner: OwnerEventRunner;
   agentContext: AgentContext;
-  buildPrompt: (batch: OwnerEventBatch, packet: string | null) => Promise<string> | string;
-  /** Host-compiled channel packet (serialized); null or a throw means "no packet". */
-  compilePacket?: (batch: OwnerEventBatch) => Promise<string | null>;
+  /** Stable owner capability catalog; execution remains narrowed by agentContext + envelope. */
+  ownerRuntimeRole?: RoleConfig;
+  buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
@@ -59,9 +62,8 @@ export async function closeOwnerEventBeforeDatabase(
  * The background event turn of the MAMA owner agent.
  *
  * This is deliberately not a planning persona. It consumes the same durable
- * external events, runs the owner's current MAMA policy as a stateless fresh
- * run per batch (each prompt is self-contained; resuming the per-channel
- * thread only replayed the whole growing history on every batch), and ACKs
+ * external events, submits each bounded event stimulus to the same durable
+ * owner runtime used by direct owner conversation, and ACKs
  * only a receipted action, delegation, or exact no-update.
  */
 export class OwnerEventLoop {
@@ -97,35 +99,19 @@ export class OwnerEventLoop {
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
 
       try {
-        let packet: string | null = null;
-        if (this.deps.compilePacket) {
-          try {
-            packet = await this.deps.compilePacket(batch);
-          } catch (error) {
-            // The delta itself is the minimum evidence; receipts still gate completion.
-            this.deps.log(
-              `[owner-event] packet compile failed for batch ${batch.id}: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-          }
-        }
-        const prompt = await this.deps.buildPrompt(batch, packet);
+        const prompt = await this.deps.buildPrompt(batch);
         const envelope = await this.deps.issueEnvelope(batch);
         const result = await this.deps.runner.run(prompt, {
-          sessionKey: `owner-event:${batch.channelKey}`,
+          sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'owner-event',
           actorId: 'mama-owner',
           channelId: batch.channelKey,
-          // Stateless lane (owner decision 2026-07-16: session context is a cache,
-          // not persistence). Resuming the per-channel thread replayed the whole
-          // growing history on every batch - each turn's prompt is already
-          // self-contained (brief + activations + completion contract + delta).
-          freshSession: true,
           agentContext: this.deps.agentContext,
+          sessionPolicyRole: this.deps.ownerRuntimeRole ?? this.deps.agentContext.role,
           envelope,
           causeEventIds: batch.eventIds,
           sourceMessageRef: `owner-event:${batch.id}`,
+          ownerJournalPrompt: batch.lines.join('\n'),
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
         const classified = classifyOwnerEventOutcome({

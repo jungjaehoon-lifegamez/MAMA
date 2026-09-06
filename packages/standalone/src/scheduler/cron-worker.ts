@@ -1,19 +1,9 @@
 import { EventEmitter } from 'events';
 import type { IModelRunner } from '../agent/model-runner.js';
-
-export function cronSystemPromptForBackend(backend: IModelRunner['backendType']): string {
-  const tools =
-    backend === 'cline'
-      ? 'run_commands, read_files, apply_patch/editor, search_codebase'
-      : 'Bash, Read, Write, Glob, Grep';
-  return `You are a cron job executor. Execute the given task and return the result.
-Available tools: ${tools}.
-Be concise. Return only the result.`;
-}
+import { OWNER_RUNTIME_SESSION_KEY } from '../operator/owner-runtime.js';
 
 export interface CronWorkerOptions {
   emitter: EventEmitter;
-  systemPrompt?: string;
   runnerFactory: () => IModelRunner;
 }
 
@@ -42,7 +32,6 @@ export interface CronFailedEvent {
 export class CronWorker {
   private runner: IModelRunner | null = null;
   private readonly emitter: EventEmitter;
-  private readonly systemPrompt: string;
   private readonly runnerFactory: () => IModelRunner;
   private executionQueue: Promise<void> = Promise.resolve();
   private accepting = true;
@@ -50,7 +39,6 @@ export class CronWorker {
 
   constructor(options: CronWorkerOptions) {
     this.emitter = options.emitter;
-    this.systemPrompt = options.systemPrompt ?? cronSystemPromptForBackend('claude');
     this.runnerFactory = options.runnerFactory;
   }
 
@@ -87,9 +75,8 @@ export class CronWorker {
     try {
       const runner = this.ensureRunner();
       const result = await runner.prompt(prompt, undefined, {
-        sessionKey: 'system:cron',
+        sessionKey: OWNER_RUNTIME_SESSION_KEY,
         resumeSession: true,
-        systemPrompt: this.systemPrompt,
       });
       const duration = Date.now() - startTime;
 

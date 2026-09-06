@@ -10,6 +10,7 @@
  */
 
 import type { RoleConfig } from '../cli/config/types.js';
+import type { OwnerRuntimeJournalPort } from '../operator/owner-runtime-journal.js';
 import type { Envelope } from '../envelope/types.js';
 import type { MemberEffectiveScope } from '../gateways/member-effective-scope.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
@@ -244,7 +245,7 @@ export type GatewayToolExecutionContext = {
   channelGrantSnapshot?: Readonly<Record<string, readonly string[]>>;
   /** Member reads and bounded transport must never fall back to the live owner grant. */
   memberScopeRequired?: boolean;
-  /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
+  /** Per-call gateway tool blocks. */
   disallowedGatewayTools?: string[];
 };
 
@@ -828,11 +829,8 @@ export type GatewayToolName =
   | 'webchat_send'
   // Code-Act sandbox
   | 'code_act'
-  // Multi-Agent delegation
-  | 'delegate'
   // Report slots
   | 'report_publish'
-  | 'report_request'
   | 'board_read'
   | 'audit_findings_read'
   | 'console_brief_update'
@@ -1012,6 +1010,12 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
+  /** Construction-time durable recovery journal for the one owner subject. */
+  ownerRuntimeJournal?: OwnerRuntimeJournalPort;
+  /** Raw owner stimulus stored for recovery instead of prefixed model input. */
+  ownerJournalPrompt?: string;
+  /** Whether the recovery stimulus came directly from the authenticated owner. */
+  ownerJournalTrust?: 'owner' | 'untrusted';
   /**
    * Backend to use for CLI execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
@@ -1021,14 +1025,10 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex' | 'cline';
   /** System prompt for Claude */
   systemPrompt?: string;
-  /** Exact owner-report receipt history, kept separate so budgeting can drop it whole. */
-  ownerReportHistoryPrompt?: string;
   /** Exact policy-keyed Gateway Tools catalog for this run (Claude non-Code-Act only). */
   gatewayToolsPrompt?: string;
   /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
   freshSessionSystemPrompt?: () => Promise<string>;
-  /** Lazily rebuild owner-report receipt history for the same replacement session. */
-  freshSessionOwnerReportHistoryPrompt?: () => string;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
   /** One host-derived, detached authority snapshot for the admitted member turn. */
@@ -1058,6 +1058,8 @@ export interface AgentLoopOptions {
   onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
   /** Session key for lane-based concurrency (e.g., "discord:channel:user") */
   sessionKey?: string;
+  /** Queue priority within one durable session. Owner-authored turns use a higher value. */
+  lanePriority?: number;
   /** Enable lane-based concurrency (default: false for backward compatibility) */
   useLanes?: boolean;
   /** Disable auto-recall memory injection (for skill execution) */
@@ -1073,6 +1075,11 @@ export interface AgentLoopOptions {
    * Provides platform, role, and permission information
    */
   agentContext?: AgentContext;
+  /**
+   * Stable capability catalog attached to a durable reasoning subject. Per-turn
+   * agentContext still narrows execution; it must not rotate the model thread.
+   */
+  sessionPolicyRole?: RoleConfig;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
   /** Host-built temporal authority for one claimed temporal workorder. */
@@ -1318,6 +1325,8 @@ export interface AgentLoopResult {
    * to commit, which leaves an orphaned record and needs repair.
    */
   modelRunProvenance?: ModelRunProvenance;
+  /** The answer exists, but its bounded recovery record could not be committed. */
+  ownerJournalProvenance?: 'commit_failed';
 }
 
 // ============================================================================

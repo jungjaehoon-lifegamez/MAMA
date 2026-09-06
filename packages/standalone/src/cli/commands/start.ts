@@ -44,7 +44,6 @@ import type {
 import type { MamaApiClient } from '../../gateways/context-injector.js';
 import type { MessageRouterConfig } from '../../gateways/types.js';
 import { TelegramReportContextStore } from '../../gateways/telegram-report-context-store.js';
-import { OwnerReportInbox } from '../../gateways/owner-report-inbox.js';
 import {
   ReportDeliveryCoordinator,
   type ReportDeliveryPort,
@@ -83,7 +82,7 @@ import { startDaemon } from '../runtime/daemon.js';
 import { initMetrics } from '../runtime/metrics-init.js';
 import { initMamaCore } from '../runtime/mama-core-init.js';
 import { initMainAgentLoop } from '../runtime/agent-loop-init.js';
-import { initMemoryAgent } from '../runtime/memory-agent-init.js';
+import type { IModelRunner } from '../../agent/model-runner.js';
 import { initGateways, type PrincipalResolver } from '../runtime/gateway-init.js';
 import { wireGateways } from '../runtime/gateway-wiring.js';
 import { initCronScheduler, initHeartbeat } from '../runtime/scheduler-init.js';
@@ -117,18 +116,12 @@ import {
 import * as mamaCore from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import type { ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
-import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import {
-  compileChannelPacket,
-  compileOwnerReportContext,
-  serializeOwnerReportContext,
-  type OwnerReportContextDeps,
-  type OwnerReportReadScope,
-} from '../../operator/report-context.js';
-import { readChanges } from '../../operator/changes-projection.js';
-import { correlateTasksWithExternalItems } from '../../operator/external-correlation.js';
-import { buildProvenanceLookup } from '../../operator/provenance-lookup.js';
-import { getTrelloKanban } from '../../connectors/trello/query-tools.js';
+  OWNER_RUNTIME_SESSION_KEY,
+  projectOwnerRuntimeRole,
+  type OwnerRuntimeReadScope,
+  type OwnerRuntimeRunner,
+} from '../../operator/owner-runtime.js';
 import {
   ensureConsoleBrief,
   loadConsoleBrief,
@@ -642,7 +635,6 @@ export const ADMINISTRATION_TOOLS: ReadonlySet<string> = new Set([
   'member_scope_grant',
   'member_scope_revoke',
   'console_brief_update',
-  'report_request',
 ]);
 
 /**
@@ -771,15 +763,23 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
   ]),
 };
 
-/**
- * Packet-only reports receive no gateway tools. The host compiles current bounded authorities
- * before model admission; the model spends one turn judging and narrating that packet.
- */
+/** Progressive evidence primitives for a scheduled owner-runtime report turn. */
 export const OPERATOR_REPORT_TOOL_POLICY = {
-  roleName: 'operator-report',
-  // TG-03/TG-04/TG-05: the model judges one host-compiled packet. It does not rediscover
-  // current state or mutate another projection during report composition.
-  allowedTools: [],
+  roleName: 'owner_console',
+  allowedTools: [
+    'code_act',
+    'task_list',
+    'changes_read',
+    'board_read',
+    'audit_findings_read',
+    'schedule_upcoming',
+    'context_compile',
+    'mama_recall',
+    'mama_provenance',
+    'trello_search',
+    'trello_card',
+    'trello_kanban',
+  ],
 } as const satisfies WorkOrderToolPolicy;
 
 export interface WorkOrderAgentPolicy {
@@ -824,30 +824,43 @@ function buildProjectedLanePrompt(
 }
 
 /**
- * Build the deliberately tool-free role for one packet-only report turn.
+ * Build the execution role for one progressive report stimulus. The durable
+ * session catalog comes from the full owner role; this role narrows effects.
  */
 export function buildOperatorReportAgentPolicy(
   model: string,
   backend: RuntimeBackend,
-  privateConnectorPolicy: PrivateConnectorPolicy
+  privateConnectorPolicy: PrivateConnectorPolicy,
+  ownerRole: RoleConfig = DEFAULT_ROLES.definitions.owner_console
 ): WorkOrderAgentPolicy {
   const requiredPrivatePolicy = requirePrivateConnectorPolicy(privateConnectorPolicy);
-  const blockedTools: string[] = [];
-  const allowedTools: string[] = [];
-  const projectedRole: RoleConfig = {
-    allowedTools,
-    blockedTools,
-    allowedPaths: [],
-    systemControl: false,
-    sensitiveAccess: false,
-  };
+  const blockedSet = new Set<string>([
+    ...ADMINISTRATION_TOOLS,
+    ...SCHEDULED_TURN_BLOCKED_TOOLS,
+    ...(ownerRole.blockedTools ?? []),
+  ]);
+  const projectedRole = requiredPrivatePolicy.projectRole('owner_console', {
+    ...ownerRole,
+    model,
+    allowedTools: uniqueToolList([
+      ...ownerRole.allowedTools,
+      ...OPERATOR_REPORT_TOOL_POLICY.allowedTools,
+    ]).filter((tool) => !blockedSet.has(tool)),
+    blockedTools: [...blockedSet],
+    allowedPaths: [...(ownerRole.allowedPaths ?? [])],
+  });
+  const blockedTools = [...new Set([...(projectedRole.blockedTools ?? []), ...blockedSet])];
+  const innerTools = uniqueToolList(projectedRole.allowedTools).filter(
+    (tool) => tool !== 'code_act' && !blockedSet.has(tool)
+  );
+  const allowedTools = uniqueToolList(['code_act', ...innerTools]);
   const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
-    roleName: OPERATOR_REPORT_TOOL_POLICY.roleName,
+    roleName: ONE_AGENT_TURN_POLICY.roleName,
     role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
-      sessionId: OPERATOR_REPORT_SESSION_KEY,
+      sessionId: OWNER_RUNTIME_SESSION_KEY,
       channelId: 'report',
       startedAt: new Date(),
     },
@@ -858,7 +871,11 @@ export function buildOperatorReportAgentPolicy(
   };
   return {
     agentContext,
-    gatewayToolsPrompt: '',
+    gatewayToolsPrompt: buildProjectedLanePrompt(
+      innerTools,
+      'owner_console',
+      requiredPrivatePolicy
+    ),
     briefProjectionPolicy: requiredPrivatePolicy,
   };
 }
@@ -918,7 +935,7 @@ export function buildTurnAgentPolicy(
     roleName: ONE_AGENT_TURN_POLICY.roleName,
     role: { ...projectedRole, allowedTools, blockedTools, model },
     session: {
-      sessionId: `operator:worker:${kind}`,
+      sessionId: OWNER_RUNTIME_SESSION_KEY,
       channelId: `worker:${kind}`,
       startedAt: new Date(),
     },
@@ -1021,14 +1038,6 @@ export function failCodeActParentModelRun(
 export interface StartOptions {
   /** Run in foreground (not as daemon) */
   foreground?: boolean;
-}
-
-export function buildSystemAgentProcessDefaults(config: {
-  multi_agent?: { dangerouslySkipPermissions?: boolean };
-}): { dangerouslySkipPermissions: boolean } {
-  return {
-    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
-  };
 }
 
 export function resolveOwnerEventTerminalReceipt(
@@ -1164,7 +1173,7 @@ async function printStartOnboardingStatus(): Promise<void> {
  * Phase  1: Foundation (config, db, oauth, metrics)
  * Phase  2: Session + Tool + Agent Loop
  * Phase  3: MAMA Core API
- * Phase  4: Memory Agent + MessageRouter
+ * Phase  4: MessageRouter
  * Phase  5: Graph Handler + Embedding
  * Phase  6: Cron Scheduler
  * Phase  7: Gateways
@@ -1187,8 +1196,9 @@ export async function runAgentLoop(
   const { connectorConfigLoadResult, privateConnectorPolicy } =
     resolveRuntimeConnectorBootstrap(loadConnectorConfig());
   // ONE owner role for every model turn: chat, event, and scheduled.
-  const ownerRole =
-    config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console;
+  const ownerRole = projectOwnerRuntimeRole(
+    config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console
+  );
   const temporalPolicy =
     temporalStartup.temporalFlag === 'on'
       ? buildTurnAgentPolicy(
@@ -1255,15 +1265,9 @@ export async function runAgentLoop(
   // ── Phase 2: Session + Tool + Agent Loop ──────────────────────────────────
 
   const sessionStore = new SessionStore(db);
-  // TG-05/TG-06: the messenger SQLite database is the single owner-report
-  // context authority. One store instance on the SAME connection as
-  // SessionStore, so turn finalization and report consumption share one
-  // transaction (design Decision 4/6).
-  const reportContextStore = new TelegramReportContextStore(db, {
-    // TG-05 Slice K: one-time V2 carry migration; the file is renamed
-    // `.migrated` after commit and no component reads or writes V2 afterward.
-    legacyCarryPath: expandPath('~/.mama/operator/last-full-report.json'),
-  });
+  // TG-05/TG-06: durable report delivery ledger. Conversation continuity is
+  // owned by the standing owner runtime, so this store never injects reports.
+  const reportContextStore = new TelegramReportContextStore(db);
 
   // Establish one canonical private workspace for gateway files, OCR, Drive,
   // Telegram media, and the persona runtime. An explicit environment override
@@ -1354,26 +1358,17 @@ export async function runAgentLoop(
     memberGrantReader: principalRegistry,
     dependencies: {
       privateConnectorPolicy,
-      // TG-05 (design Decision 8): the V2 carry reader is NOT wired - the
-      // boot-time migration owns last-full-report.json, and no component
-      // reads or writes V2 afterward. Wiring FileReportCarryStore here would
-      // couple two owners to one file behind an implicit construction order.
-      ownerReportInbox: new OwnerReportInbox(reportContextStore),
+      // Report delivery is receipted by the delivery ledger. Conversation
+      // recovery belongs only to the owner-runtime journal.
     },
   });
   messageRouter.setSessionsDb(db);
 
   // validationService wired after creation (Phase 5 below)
 
-  const { memoryAgentLoop } = await initMemoryAgent(
-    oauthManager,
-    config,
-    mamaApi,
-    mamaApiClient,
-    messageRouter,
-    agentLoopBackend,
-    toolExecutor
-  );
+  // One MAMA: memory judgment stays in the owner turn through mama_save and
+  // deterministic owner-policy observation. Do not boot a second model identity
+  // that re-reads every conversation after the owner agent has answered.
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
@@ -1384,7 +1379,6 @@ export async function runAgentLoop(
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
-    auditConversation: (job) => messageRouter.auditConversation(job),
     sessionsDb: db,
     uiCommandQueue,
   };
@@ -1655,7 +1649,74 @@ export async function runAgentLoop(
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
 
-  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config);
+  const backgroundOwnerContext = buildOwnerEventAgentContext({
+    backend: runtimeBackend,
+    model: config.agent.model,
+    ownerRole,
+    privateConnectorPolicy,
+  });
+  const issueOwnerRuntimeEnvelope = async (channelId: string, wallSeconds: number) => {
+    if (!envelopeBootstrap.envelopeAuthority || envelopeBootstrap.metadata.issuance === 'off') {
+      return undefined;
+    }
+    const projectId = resolveReactiveProjectRoot(config, process.env);
+    return envelopeBootstrap.envelopeAuthority.buildAndPersist({
+      agent_id: 'mama-owner',
+      instance_id: randomUUID(),
+      source: 'cron',
+      channel_id: channelId,
+      trigger_context: { user_text: `<owner runtime ${channelId} stimulus>` },
+      scope: {
+        project_refs: [{ kind: 'project', id: projectId }],
+        raw_connectors: [
+          ...privateConnectorPolicy.projectRawConnectors('owner_console', codeActRawConnectors),
+        ],
+        memory_scopes: uniqueMemoryScopes(
+          deriveMemoryScopes({ source: 'operator', channelId, projectId })
+        ),
+        allowed_destinations: [],
+      },
+      tier: 1,
+      budget: { wall_seconds: wallSeconds },
+      expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+    });
+  };
+  const runOwnerStimulus: OwnerRuntimeRunner = async (content, channelId) => {
+    const envelope = await issueOwnerRuntimeEnvelope(channelId, 600);
+    if (!envelope)
+      throw new Error(`Owner runtime stimulus ${channelId} requires envelope authority`);
+    return await agentLoop.run(content, {
+      sessionKey: OWNER_RUNTIME_SESSION_KEY,
+      source: 'operator',
+      channelId,
+      agentContext: backgroundOwnerContext,
+      sessionPolicyRole: ownerRole,
+      envelope,
+      requestTimeoutMs: 600_000,
+    });
+  };
+  const cronOwnerRunner: IModelRunner = {
+    backendType: runtimeBackend,
+    prompt: async (content) => {
+      const result = await runOwnerStimulus(content, 'cron');
+      return {
+        response: result.response,
+        usage: result.totalUsage,
+        session_id: OWNER_RUNTIME_SESSION_KEY,
+      };
+    },
+    setSessionId: () => {},
+    setSystemPrompt: () => {},
+    isHealthy: () => true,
+    getMetrics: () => ({
+      requestCount: 0,
+      failureCount: 0,
+      avgLatencyMs: 0,
+      lastRequestAt: null,
+    }),
+    stop: () => {},
+  };
+  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config, () => cronOwnerRunner);
 
   // ── Phase 7: Gateways ────────────────────────────────────────────────────
 
@@ -1686,53 +1747,6 @@ export async function runAgentLoop(
     cronEmitter,
   });
 
-  // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
-  // If no Discord/Slack handler wired the delegate tool, create standalone
-  // DelegationManager + AgentProcessManager so delegate() works from any path
-  // (Viewer, Telegram, iMessage, Terminal).
-  const fallbackMultiAgentConfig = config.multi_agent;
-  const hasSystemRunAgents = Boolean(
-    fallbackMultiAgentConfig?.agents?.['dashboard-agent'] ||
-    fallbackMultiAgentConfig?.agents?.['wiki-agent']
-  );
-  if (
-    fallbackMultiAgentConfig &&
-    !toolExecutor.getAgentProcessManager() &&
-    (fallbackMultiAgentConfig.enabled || hasSystemRunAgents)
-  ) {
-    const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
-    const pm = new AgentProcessManager(
-      fallbackMultiAgentConfig,
-      buildSystemAgentProcessDefaults(config),
-      {
-        backend: runtimeBackend,
-        model: config.agent.model,
-        effort: config.agent.effort,
-        clineCwd: workspaceRoot,
-        clineCommand: process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command,
-        clineProvider: config.agent.cline_provider,
-        clineDataDir: config.agent.cline_data_dir,
-        privateConnectorPolicy,
-      }
-    );
-    toolExecutor.setAgentProcessManager(pm);
-    agentLoop.setAgentProcessManager(pm);
-
-    graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
-      const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
-      pm.updateConfig(nextConfig);
-    };
-    graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
-      pm.reloadPersona(agentId);
-    };
-
-    // The delegate wiring was here. Over the full log history it was wired ZERO times and
-    // its only runtime trace was one call refused by role permission. The process manager
-    // above stays: that one IS wired on every boot (113 so far) and runs the dashboard and
-    // wiki agents.
-    console.log('[start] ✓ System agent process manager wired');
-  }
-
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
 
   const { heartbeatScheduler, tokenKeepAlive, healthWarningInterval } = initHeartbeat(
@@ -1740,7 +1754,15 @@ export async function runAgentLoop(
     agentLoop,
     discordGateway,
     scheduler,
-    healthCheckService
+    healthCheckService,
+    async () => {
+      const envelope = await issueOwnerRuntimeEnvelope('heartbeat', 300);
+      return {
+        agentContext: backgroundOwnerContext,
+        sessionPolicyRole: ownerRole,
+        ...(envelope ? { envelope } : {}),
+      };
+    }
   );
 
   // M2.4 freshness: the connector sink nudges the trigger loop when a poll indexes new rows. The
@@ -2088,11 +2110,6 @@ export async function runAgentLoop(
           privateConnectorPolicy,
         });
 
-        // Worker prompt selects the provider's supported tool path: Claude's
-        // text gateway or Codex's injected native host tools. Both avoid the
-        // spawn-default code-act path, where per-run envelope/capture overrides
-        // cannot reach (shadow-gate §8.2).
-        const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
         const workOrderPolicy = buildTurnAgentPolicy(
           wo.workKind,
           config.agent.model,
@@ -2103,12 +2120,9 @@ export async function runAgentLoop(
         );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
-            systemPrompt: buildWorkerSystemPrompt(
-              workOrderPolicy.gatewayToolsPrompt,
-              runtimeBackend,
-              wo.workKind
-            ),
+            gatewayToolsPrompt: workOrderPolicy.gatewayToolsPrompt,
             agentContext: workOrderPolicy.agentContext,
+            sessionPolicyRole: ownerRole,
             workOrderBriefProjectionPolicy: workOrderPolicy.briefProjectionPolicy,
           },
           wo.id
@@ -2280,7 +2294,6 @@ export async function runAgentLoop(
   const { isOperatorTriggerLoopEnabled, resolveOperatorReportChatId } =
     await import('../../operator/runtime-config.js');
   if (isOperatorTriggerLoopEnabled(process.env)) {
-    let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
     // DB permission, registry constructor) must not abort the whole daemon before Phase
     // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
@@ -2290,7 +2303,6 @@ export async function runAgentLoop(
       const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
       const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
       const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
-      const { createTriggerAgentRuntime } = await import('../../operator/trigger-author.js');
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
@@ -2310,10 +2322,9 @@ export async function runAgentLoop(
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = resolveOperatorReportChatId(process.env, config.telegram?.allowed_chats);
-      // TG-05/TG-06 (design Decision 1): ONE production boundary for all
-      // owner-report modes. The legacy OutputSink + V2 carry writer are out of
-      // production assembly; the SQLite report-context store owns carry and
-      // the coordinator owns every Telegram send.
+      // TG-05/TG-06: one durable production boundary for every report mode.
+      // The delivery ledger reserves exact output and the coordinator owns
+      // every Telegram send; no report text is copied into another model.
       let reportDelivery: ReportDeliveryPort | undefined;
       const reportTarget =
         reportChatId && telegramGateway
@@ -2350,55 +2361,32 @@ export async function runAgentLoop(
       );
       // Constructed whenever the report SINK exists, even with no scheduled
       // hours (empty hours -> shouldFire never fires): on-demand reports
-      // (report_request) need the persistent anchor state to load and advance
-      // the delta window regardless of the scheduled leg (review PR#153).
+      // API-triggered reports need the persistent anchor state regardless of
+      // whether scheduled hours are configured.
       const reportScheduler = reportDelivery
         ? new ReportScheduler(
             fullReportHours,
             new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
           )
         : undefined;
-      const triggerAgentRuntime = createTriggerAgentRuntime(runtimeBackend, {
-        model: config.agent.model,
-        cwd: workspaceRoot,
-        command:
-          runtimeBackend === 'cline'
-            ? (process.env.MAMA_CLINE_COMMAND ?? config.agent.cline_command)
-            : process.env.MAMA_CODEX_COMMAND,
-        provider: config.agent.cline_provider,
-        dataDir: config.agent.cline_data_dir,
-        effort: config.agent.effort,
-      });
-      stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();
       const ownerEventEnvelopeAuthority = envelopeBootstrap.envelopeAuthority;
       const ownerEventExecution = resolveOwnerEventExecution({
         issuance: envelopeBootstrap.metadata.issuance,
         hasAuthority: ownerEventEnvelopeAuthority !== undefined,
       });
-      // Scope-independent packet readers, shared by the report leg and the event turn.
-      const reportContextDeps: OwnerReportContextDeps = {
-        readOperationalIssues: () =>
-          listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
-            issueId: issue.issueId,
-            surface: issue.surface,
-            severity: issue.severity,
-            summary: `${issue.signature}: ${issue.lastError ?? ''}`.slice(0, 300),
-            occurrences: issue.occurrences,
-            firstSeenAt: new Date(issue.firstSeenAt).toISOString(),
-          })),
-        listTaskPage: (input) => taskLedger.listPage(input),
-        readClaims: (scope) =>
-          mamaCore.queryRelevantTruth({ query: '', scopes: scope.memoryScopes }),
-        readTrello: async (scope) => {
-          if (!scope.rawConnectors.includes('trello')) {
-            throw new Error('Trello is outside the owner-report read scope');
-          }
-          return getTrelloKanban({ maxCardsPerList: 100 });
-        },
-        buildProvenanceLookup,
-        correlate: correlateTasksWithExternalItems,
-        readChanges: (_scope, input, nowMs) => readChanges(taskLedger, input, nowMs),
-        now: Date.now,
+      const ownerMaintenanceAsk = async (prompt: string): Promise<string> => {
+        const envelope = await issueOwnerRuntimeEnvelope('trigger-maintenance', 600);
+        if (!envelope) throw new Error('Owner maintenance requires envelope authority');
+        const result = await agentLoop.run(prompt, {
+          sessionKey: OWNER_RUNTIME_SESSION_KEY,
+          source: 'operator',
+          channelId: 'trigger-maintenance',
+          agentContext: backgroundOwnerContext,
+          sessionPolicyRole: ownerRole,
+          envelope,
+          requestTimeoutMs: 600_000,
+        });
+        return result.response;
       };
       const triggerLoop = new OperatorTriggerLoop({
         backend: runtimeBackend,
@@ -2409,37 +2397,36 @@ export async function runAgentLoop(
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
         ...(ownerEventExecution.enabled ? { ownerEventInbox } : {}),
-        askAgent: triggerAgentRuntime.askAuthor,
-        // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
-        // session lanes) instead of the bare CLI - report tone comes from generation inputs.
-        // JSON tasks (authoring/review) use a provider-specific, tool-free runtime.
-        // Full reports run in one fresh, tool-free persona turn. Current state is compiled and
-        // persisted by the host before this call; digest composition remains on the same persona.
+        askAgent: ownerMaintenanceAsk,
+        // TG-03/TG-04/TG-05: a report is another stimulus for the standing
+        // owner subject. It keeps the same backend thread and progressive tool
+        // catalog while the current envelope narrows effects for this delivery.
         reportAsk: createPersonaReportAsk({
           run: async (prompt, sourceMessageRef) => {
             const reportAgentPolicy = buildOperatorReportAgentPolicy(
               config.agent.model,
               runtimeBackend,
-              privateConnectorPolicy
+              privateConnectorPolicy,
+              ownerRole
             );
+            const envelope = await issueOwnerRuntimeEnvelope('report', 600);
+            if (!envelope) throw new Error('Owner report requires envelope authority');
             const result = await agentLoop.runWithContent(
               [{ type: 'text' as const, text: prompt }],
               {
-                sessionKey: OPERATOR_REPORT_SESSION_KEY,
+                sessionKey: OWNER_RUNTIME_SESSION_KEY,
                 source: 'operator',
                 channelId: 'report',
-                // Without a role the Code-Act branch strips the gateway catalog and
-                // injects nothing back, so the report agent gets ZERO tools and cannot
-                // gather no matter what the prompt instructs (roleAllowsOuterCodeAct
-                // fails closed on an absent role - agent-loop.ts). Same built-in
-                // least-privilege treatment the Stage-2 workers get.
+                // The current report role narrows effect authority; the stable
+                // sessionPolicyRole keeps the owner thread compatible.
                 agentContext: reportAgentPolicy.agentContext,
+                sessionPolicyRole: ownerRole,
                 gatewayToolsPrompt: reportAgentPolicy.gatewayToolsPrompt,
-                // Stateless report lane: each run starts on a fresh session so the
-                // continuous session no longer accumulates every run's gather dumps
-                // (measured 146s -> 521s growth over 3 days). Continuity comes from
-                // the storage layer (self-gather + mama_recall + report store).
-                freshSession: true,
+                envelope,
+                requestTimeoutMs: 600_000,
+                ownerJournalPrompt: sourceMessageRef
+                  ? `Report stimulus: ${sourceMessageRef}`
+                  : prompt,
                 ...(sourceMessageRef ? { sourceMessageRef } : {}),
               }
             );
@@ -2454,35 +2441,28 @@ export async function runAgentLoop(
               ...(result.modelRunProvenance === undefined
                 ? {}
                 : { modelRunProvenance: result.modelRunProvenance }),
+              ...(result.ownerJournalProvenance === undefined
+                ? {}
+                : { ownerJournalProvenance: result.ownerJournalProvenance }),
             };
           },
           log: (line: string) => console.log(line),
           onRunProvenance: (provenance) => {
             lastReportProvenance = provenance;
           },
+          onRecoveryFailure: () => {
+            recordIssue({
+              surface: 'delivery',
+              signature: 'journal_commit_failed',
+              severity: 'error',
+              error: 'Report completed but owner runtime recovery journal did not persist',
+            });
+          },
         }),
-        review: (trigger, context) =>
-          reviewTriggerCLI(trigger, context, triggerAgentRuntime.askReview),
+        review: (trigger, context) => reviewTriggerCLI(trigger, context, ownerMaintenanceAsk),
         reportDelivery,
         reportTarget,
         reportScheduler,
-        fullReportReadScope: (() => {
-          const projectId = resolveReactiveProjectRoot(config, process.env);
-          return {
-            projectRefs: [{ kind: 'project' as const, id: projectId }],
-            memoryScopes: uniqueMemoryScopes(
-              deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId })
-            ),
-            rawConnectors: [
-              ...privateConnectorPolicy.projectRawConnectors(
-                'operator-report',
-                codeActRawConnectors
-              ),
-            ],
-          };
-        })(),
-        compileFullReportContext: async ({ readScope, windowEvidence, since }) =>
-          compileOwnerReportContext({ readScope, windowEvidence, since }, reportContextDeps),
         // TG-06: composition supplies provenance immediately to the prepared
         // delivery; this callback receives that durable artifact only after send success.
         fullReportProvenance: () => lastReportProvenance,
@@ -2531,15 +2511,11 @@ export async function runAgentLoop(
       }
       const stopTriggerLoop = triggerLoop.start();
       stopOwnerEventRuntime = async () => {
-        await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()]);
+        await stopTriggerLoop();
       };
       // M2.4: point the connector sink's forwarder at this loop now that it exists.
       triggerLoopNudge.current = () => triggerLoop.nudge();
       triggerLoopFullReport.current = () => triggerLoop.startFullReport();
-      // S1-T3: owner-intent forwarder - report_request routes to the SAME
-      // report machinery (fresh session, delta anchor, consume semantics).
-      toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
-
       if (ownerEventExecution.enabled && ownerEventEnvelopeAuthority) {
         // MAMA itself owns connector events. This is the same AgentLoop and
         // owner operating policy as the owner console, on a durable per-channel
@@ -2555,7 +2531,7 @@ export async function runAgentLoop(
         // packet are both built from it, so they can never disagree.
         const ownerEventReadScope = (
           batch: import('../../operator/owner-event-inbox.js').OwnerEventBatch
-        ): OwnerReportReadScope => {
+        ): OwnerRuntimeReadScope => {
           const projectId = resolveReactiveProjectRoot(config, process.env);
           return {
             projectRefs: [{ kind: 'project' as const, id: projectId }],
@@ -2599,23 +2575,11 @@ export async function runAgentLoop(
           inbox: ownerEventInbox,
           runner: agentLoop,
           agentContext: ownerEventContext,
-          compilePacket: async (batch) =>
-            serializeOwnerReportContext(
-              await compileChannelPacket(
-                {
-                  readScope: ownerEventReadScope(batch),
-                  channelKey: batch.channelKey,
-                  eventIds: batch.eventIds,
-                  since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                },
-                reportContextDeps
-              )
-            ),
-          buildPrompt: async (batch, packet) => {
+          ownerRuntimeRole: ownerRole,
+          buildPrompt: async (batch) => {
             const readScope = ownerEventReadScope(batch);
             return buildOwnerEventPrompt({
               batch,
-              packet,
               learning: await buildLearningBlockFor(
                 'event',
                 readScope.memoryScopes,
@@ -2682,7 +2646,7 @@ export async function runAgentLoop(
           // Let an in-flight effect reach its durable ACK before the shared
           // operator DB closes.
           if (ownerEventTickPromise) await ownerEventTickPromise;
-          await Promise.all([stopTriggerLoop(), triggerAgentRuntime.stop()]);
+          await stopTriggerLoop();
         };
       } else {
         const reason = ownerEventExecution.enabled
@@ -2694,7 +2658,6 @@ export async function runAgentLoop(
     } catch (error) {
       await stopOwnerEventRuntime?.().catch(() => {});
       stopOwnerEventRuntime = null;
-      await stopTriggerAgentRuntime?.().catch(() => {});
       console.error(
         '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
         error
@@ -2712,13 +2675,13 @@ export async function runAgentLoop(
     healthCheckService,
     rawStore: rawStoreForApi,
     enabledConnectors: enabledConnectorNames,
-    agentLoop,
     getAdapter,
     envelopeMetadata: envelopeBootstrap.metadata,
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
     contextCompileService,
     connectorConfigLoadResult,
     privateConnectorPolicy,
+    runOwnerStimulus,
   });
 
   const apiRoutesHandle = await registerApiRoutes({
@@ -2729,7 +2692,6 @@ export async function runAgentLoop(
     mamaApi,
     messageRouter,
     reportContextStore,
-    agentLoop,
     toolExecutor,
     discordGateway,
     slackGateway,
@@ -2782,7 +2744,6 @@ export async function runAgentLoop(
     gateways,
     pluginLoader,
     agentLoop,
-    memoryAgentLoop,
     stopExtraction,
     sessionStore,
     db,

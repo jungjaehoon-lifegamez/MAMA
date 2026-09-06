@@ -9,6 +9,8 @@ import { minimatch } from 'minimatch';
 import { RoleConfig, RolesConfig, DEFAULT_ROLES } from '../cli/config/types.js';
 import type { PrincipalContext } from '../gateways/principal.js';
 
+const OWNER_CONSOLE_CONNECTOR_SOURCES = new Set(['telegram', 'discord', 'slack', 'chatwork']);
+
 /**
  * Options for RoleManager initialization
  */
@@ -85,9 +87,13 @@ export class RoleManager {
       return { roleName: 'public_lane', role: publicRole };
     }
 
-    // A host principal can be console-eligible, but owner_console is a
-    // Telegram-only surface. Viewer/mobile/system retain their static mapping.
-    if (normalizedSource === 'telegram' && principal?.consoleEligible === true) {
+    // A verified direct owner channel is one owner-console surface regardless
+    // of transport. Viewer/mobile/system retain their static mappings.
+    if (
+      OWNER_CONSOLE_CONNECTOR_SOURCES.has(normalizedSource) &&
+      principal?.class === 'owner' &&
+      principal.consoleEligible === true
+    ) {
       const ownerRole = this.rolesConfig.definitions['owner_console'];
       if (ownerRole) {
         return { roleName: 'owner_console', role: ownerRole };

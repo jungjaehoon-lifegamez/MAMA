@@ -59,8 +59,7 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
     );
     expect(prompt).toContain('[stripped-end-marker]');
   });
-  it('appends the host-compiled channel packet after the delta, fenced as untrusted', () => {
-    const packet = '{"schemaVersion":"mama.owner-report-context/v1","tasks":[]}';
+  it('starts from the delta and directs progressive discovery without a bulk packet', () => {
     const prompt = buildOwnerEventPrompt({
       batch: {
         id: 42,
@@ -73,30 +72,11 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
         createdAt: 0,
       },
       ownerBrief: 'brief',
-      packet,
     });
-    expect(prompt).toContain('## Channel packet');
-    expect(prompt).toContain(packet);
-    expect(prompt.indexOf('- card moved')).toBeLessThan(prompt.indexOf('## Channel packet'));
-    expect(prompt.indexOf('## Channel packet')).toBeLessThan(
-      prompt.indexOf('source=owner-event-packet')
-    );
-    expect(
-      buildOwnerEventPrompt({
-        batch: {
-          id: 43,
-          channelKey: 'trello:board',
-          eventIds: [],
-          lines: [],
-          activations: [],
-          status: 'claimed',
-          attempts: 0,
-          createdAt: 0,
-        },
-        ownerBrief: 'brief',
-        packet: null,
-      })
-    ).not.toContain('## Channel packet');
+    expect(prompt).toContain('overview and counts first');
+    expect(prompt).toContain('## Current connector delta');
+    expect(prompt).not.toContain('## Channel packet');
+    expect(prompt).not.toContain('owner-event-packet');
   });
   it('ONE-MAMA-P2 Task 1 AC #7: places owner policy and lessons after the brief, above external data', () => {
     const prompt = buildOwnerEventPrompt({

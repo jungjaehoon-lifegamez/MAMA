@@ -209,10 +209,10 @@ own agent lanes call. The authoritative catalog is
 before assuming a tool exists. Added in v0.29: `changes_read` (what the system durably
 changed), `mama_provenance` (what a memory rests on), `task_external_correlation`.
 
-**A tool being in the registry does not make it callable.** `delegate` is registered and is not
-dispatchable — its executor was deleted with the multi-agent delegation path. Grant lists are
-guarded by `tests/cli/lane-wiring.test.ts`, which pins that every lane's instructions, grants
-and run-audit classification agree.
+The retired host `delegate` and `report_request` relays are absent from the registry and executor.
+The standing owner uses the selected model runtime's native subagent facility when extra workers
+are useful. Grant lists are guarded by `tests/cli/lane-wiring.test.ts`, which pins that every
+lane's instructions, grants, and run-audit classification agree.
 
 ## Release & Deployment
 
@@ -341,8 +341,9 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   or an exact no-update receipt; a `telegram_send` alone is a retry unless the final message
   begins with `[decision]` (host-detected, counted as `unresolved_reason` on the inbox row).
   Delegation (`workorder_request`) no longer exists. Each event turn starts from a host-compiled
-  channel packet (`compileChannelPacket`) under the same read scope as its envelope.
-- **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`
+  exact connector delta under the same read scope as its envelope; the standing
+  owner runtime discovers any additional evidence progressively through bounded tools.
+- **Artifact hub tools:** `board_read`, `audit_findings_read`; direct owner report requests stay in the current conversation.
   (fire-and-forget into the real report machinery). `workorder_request`/`workorder_status` were
   deleted in v0.41.0 (One MAMA): scheduled work is host-published, never agent-delegated.
 - **Capabilities and self-diagnosis (v0.43.0, One MAMA Phase 3):** `file_export` writes a csv/md

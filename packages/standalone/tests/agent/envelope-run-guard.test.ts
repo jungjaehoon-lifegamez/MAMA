@@ -49,7 +49,7 @@ describe('Story BOUNDARY-4: envelope run guard', () => {
       await expect(
         makeLoop().runWithContent([{ type: 'text', text: 'gather' }], {
           source: 'operator',
-          channelId: 'report',
+          channelId: 'expiry-test',
           modelRunId: 'test-run',
           envelope: expiredEnvelope as never,
         })

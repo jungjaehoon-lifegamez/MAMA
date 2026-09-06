@@ -93,7 +93,6 @@ import {
 } from './mama-tool-handlers.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, getConfig } from '../cli/config/config-manager.js';
-import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { logActivity } from '../db/agent-store.js';
@@ -293,7 +292,7 @@ type ActiveGatewayExecutionContext = {
   channelGrantSnapshot?: ChannelGrantSnapshot;
   /** Fail closed instead of falling back to owner/global grant authority. */
   memberScopeRequired?: boolean;
-  /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
+  /** Per-call gateway tool blocks. */
   disallowedGatewayTools?: string[];
 };
 
@@ -389,7 +388,6 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'context_compile',
   'mama_update',
   'report_publish',
-  'report_request',
   'wiki_publish',
   'obsidian',
   'task_create',
@@ -814,8 +812,6 @@ export class GatewayToolExecutor {
     GatewayToolExecutorOptions['temporalContextPacketLookup']
   >;
   private currentContext: AgentContext | null = null;
-  private memoryAgentProcessManager: AgentProcessManager | null = null;
-  private agentProcessManager: AgentProcessManager | null = null;
   private currentAgentId: string = '';
   private currentSource: string = '';
   private currentChannelId: string = '';
@@ -823,7 +819,6 @@ export class GatewayToolExecutor {
   private reportPublisher:
     | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
     | null = null;
-  private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
   /** Host-injected: failures become operational issues (observability/operational-issues.ts). */
   private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
   /** Host-injected: issue lifecycle + owner notice for the self-check turn's tools. */
@@ -892,17 +887,6 @@ export class GatewayToolExecutor {
   setValidationService(
     _svc: import('../validation/session-service.js').ValidationSessionService
   ): void {}
-  setMemoryAgent(processManager: AgentProcessManager): void {
-    this.memoryAgentProcessManager = processManager;
-  }
-  setAgentProcessManager(pm: AgentProcessManager): void {
-    this.agentProcessManager = pm;
-  }
-  /** Get AgentProcessManager (for cron/event triggers that need direct process access) */
-  getAgentProcessManager(): AgentProcessManager | null {
-    return this.agentProcessManager;
-  }
-
   private normalizeExecutionContext(
     executionContext?: Partial<GatewayExecutionContext>
   ): ActiveGatewayExecutionContext {
@@ -1135,10 +1119,6 @@ export class GatewayToolExecutor {
   ): void {
     this.reportPublisher = fn;
   }
-  /** Forwarder hook for on-demand full reports (plan v6 S1-T3). */
-  setReportRequestHandler(fn: () => { accepted: boolean; reason?: string }): void {
-    this.reportRequestHandler = fn;
-  }
   /** Read seam for the owner board slots (plan v6 S1-T4 artifact hub). */
   setReportReader(fn: () => Record<string, { html: string; updatedAt?: string | null }>): void {
     this.reportReader = fn;
@@ -1152,13 +1132,6 @@ export class GatewayToolExecutor {
   setPrincipalRepository(repository: PrincipalRepository): void {
     this.principalRepository = repository;
   }
-
-  /** Check if a memory agent is available for routing memory writes. */
-  hasMemoryAgent(): boolean {
-    return this.memoryAgentProcessManager !== null;
-  }
-
-  /** Check if delegate tool support is available (multi-agent wired). */
 
   constructor(options: PrivateAwareGatewayToolExecutorOptions = {}) {
     this.channelGrantProvider = options.channelGrantProvider ?? liveBoundaryChannels;
@@ -3160,37 +3133,6 @@ export class GatewayToolExecutor {
             };
           }
           throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
-        }
-        case 'report_request': {
-          // Owner intent -> the REAL report machinery. Fire-and-forget: the
-          // report runs on the operator lane and is delivered by the owner
-          // leg; awaiting ~260s here would block the chat turn (and the plan
-          // bans nested awaited lane runs).
-          if (!this.reportRequestHandler) {
-            return {
-              success: false,
-              code: 'report_leg_disabled',
-              error:
-                'Full-report machinery is not enabled (trigger loop off or report channel unset). ' +
-                'The scheduled report legs are inactive on this deployment.',
-            };
-          }
-          const started = this.reportRequestHandler();
-          if (!started.accepted) {
-            return {
-              success: false,
-              code: `report_${started.reason ?? 'unavailable'}`,
-              error:
-                started.reason === 'busy'
-                  ? 'The operator lane is busy (a report or tick is in progress). Retry shortly.'
-                  : 'Report machinery unavailable (no output sink).',
-            };
-          }
-          return {
-            success: true,
-            message:
-              'Full report started. It will be generated fresh (delta-anchored) and delivered to the owner channel - tell the owner it is on its way; do not fabricate its contents.',
-          };
         }
         case 'console_brief_update': {
           const { appendConsoleBriefLesson } = await import('../operator/console-brief.js');

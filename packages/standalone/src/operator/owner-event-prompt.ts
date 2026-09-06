@@ -11,8 +11,6 @@ export interface OwnerEventPromptInput {
   ownerBrief: string;
   skillContent?: string | null;
   ownerTelegramChatId?: string | null;
-  /** Serialized OwnerReportContextV1 for this channel, compiled by the host. */
-  packet?: string | null;
   /** Rendered <policy>/<lessons> block from learning-context.ts; owner-authored, trusted region. */
   learning?: string | null;
   /** Host-verified, bounded prior terminal records for this exact channel. */
@@ -120,6 +118,7 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     '',
     '## Completion contract',
     '- Start from this exact connector delta. Do not run a general status report or cross-check unrelated sources.',
+    '- If more evidence can change the judgment, discover it progressively: overview and counts first, then only selected pages or details.',
     '- Widen evidence only when a matched procedure or the selected durable effect requires it.',
     '- Use a change or delivery tool only when the current evidence calls for that real effect.',
     '- Do not create a task, memory, or Telegram message merely to complete this batch.',
@@ -154,13 +153,5 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     '## Current connector delta',
     UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
     wrapUntrustedContent(`owner-event:${input.batch.channelKey}`, input.batch.lines.join('\n')),
-    ...(input.packet
-      ? [
-          '',
-          '## Channel packet (host-compiled recent ledger and evidence for this batch. A starting point, not the board: call task_list() and the live tools yourself whenever the judgment needs more than it shows)',
-          // Host-compiled, but it carries verbatim connector-derived task titles.
-          wrapUntrustedContent('owner-event-packet', input.packet),
-        ]
-      : []),
   ].join('\n');
 }

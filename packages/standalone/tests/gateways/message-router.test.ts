@@ -3,7 +3,6 @@
  */
 
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
@@ -39,7 +38,6 @@ import {
   consoleBriefPath,
   projectConsoleBriefForPrompt,
 } from '../../src/operator/console-brief.js';
-import { FileReportCarryStore, type ReportCarryPort } from '../../src/operator/report-carry.js';
 import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 
 const originalHome = process.env.HOME;
@@ -139,6 +137,7 @@ describe('MessageRouter', () => {
   ];
 
   beforeEach(() => {
+    getSessionPool().invalidateSession('owner:runtime');
     db = new Database(':memory:');
     sessionStore = new SessionStore(db);
     const agentLoop = createMockAgentLoop(() => 'Agent response');
@@ -151,6 +150,95 @@ describe('MessageRouter', () => {
   });
 
   describe('process()', () => {
+    it('TG-05 routes every authenticated owner channel through one durable runtime', async () => {
+      const runOptions: AgentLoopOptions[] = [];
+      const agentLoop = {
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: 'owner response' };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      await processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'owner-telegram',
+        userId: 'owner',
+        text: 'first owner input',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:owner',
+          consoleEligible: true,
+        },
+      });
+      await processFixtureMessage(customRouter, {
+        source: 'slack',
+        channelId: 'owner-slack',
+        userId: 'owner',
+        text: 'second owner input',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'slack:workspace:owner',
+          consoleEligible: true,
+        },
+      });
+
+      expect(runOptions.map((options) => options.sessionKey)).toEqual([
+        'owner:runtime',
+        'owner:runtime',
+      ]);
+      expect(runOptions.map((options) => options.channelId)).toEqual([
+        'owner-telegram',
+        'owner-slack',
+      ]);
+      expect(runOptions.map((options) => options.ownerJournalPrompt)).toEqual([
+        'first owner input',
+        'second owner input',
+      ]);
+      expect(getSessionPool().listSessions().has('owner:runtime')).toBe(true);
+    });
+
+    it('TG-05 exposes a failed owner recovery commit on the completed turn', async () => {
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          childRuntimeToolCapable: false,
+          run: vi.fn(async () => ({
+            response: 'owner response',
+            ownerJournalProvenance: 'commit_failed' as const,
+          })),
+        },
+        createMockMamaApi(mockDecisions)
+      );
+
+      const result = await processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'owner-journal-failure',
+        userId: 'owner',
+        text: 'keep this request',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:owner',
+          consoleEligible: true,
+        },
+      });
+
+      expect(result.outcome).toBe('completed');
+      if (result.outcome === 'completed') {
+        expect(result.recoveryProvenance).toEqual({
+          status: 'unavailable',
+          reason: 'journal_commit_failed',
+        });
+      }
+    });
+
     it('serializes overlapping messages from the same channel in FIFO order', async () => {
       let releaseFirst!: () => void;
       const firstBlocked = new Promise<void>((resolve) => {
@@ -622,7 +710,7 @@ describe('MessageRouter', () => {
       const run = vi.fn().mockResolvedValue({ response: 'Response' });
       const customRouter = new MessageRouter(
         sessionStore,
-        { run },
+        { run, childRuntimeToolCapable: false, probesDurableSession: true },
         createMockMamaApi(mockDecisions),
         { backend: 'codex' }
       );
@@ -634,13 +722,16 @@ describe('MessageRouter', () => {
         text: 'Continue after restart',
       });
 
-      expect(run).toHaveBeenCalledWith(
-        expect.any(String),
+      const options = run.mock.calls[0]?.[1];
+      expect(options).toEqual(
         expect.objectContaining({
-          systemPrompt: expect.any(String),
+          systemPrompt: expect.stringContaining('[Role:'),
           resumeSession: true,
+          freshSessionSystemPrompt: expect.any(Function),
         })
       );
+      expect(options.systemPrompt).not.toContain('Previous Conversation');
+      expect(await options.freshSessionSystemPrompt()).toContain('## Instructions');
     });
 
     it('keeps the stable policy fingerprint on resumed sessions', async () => {
@@ -1891,262 +1982,6 @@ describe('MessageRouter', () => {
       expect(receivedOptionsHistory[1].systemPrompt).not.toContain('Response 1');
     });
 
-    it('should not parse JSON facts and save them directly in the router', async () => {
-      const agentLoop = createMockAgentLoop(() =>
-        'Agent response that is long enough to trigger memory audit.'.repeat(4)
-      );
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-
-      const sendMessage = vi.fn().mockResolvedValue({ response: 'saved via tools' });
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      const saveSpy = vi.fn();
-      customRouter['mamaApi'].save = saveSpy;
-
-      await processFixtureMessage(customRouter, {
-        source: 'discord',
-        channelId: 'channel-autosave',
-        userId: 'user-456',
-        text: 'We decided to use pnpm in this project, keep answers concise, avoid long explanations, and continue using this workspace-specific convention for all follow-up implementation tasks.',
-      });
-
-      await vi.waitFor(() => {
-        expect(sendMessage).toHaveBeenCalled();
-      });
-      expect(sendMessage.mock.calls[0][1]).toMatchObject({
-        sourceTurnId: expect.stringMatching(/^generated:/),
-        sourceMessageRef: expect.stringMatching(/^discord:channel-autosave:generated:/),
-      });
-      expect(saveSpy).not.toHaveBeenCalled();
-    });
-
-    it('should record explicit audit acknowledgements from the memory agent', async () => {
-      const agentLoop = createMockAgentLoop(() => 'Agent response');
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage: vi.fn().mockResolvedValue({
-            response: 'DONE',
-            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved via tools' },
-          }),
-        }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'discord',
-        channelId: 'channel-audit-ack',
-        userId: 'user-456',
-        text: 'We decided to use pnpm in this repository, keep responses concise, avoid unnecessary explanation, and preserve this rule as active project memory for follow-up coding tasks.',
-      });
-
-      await vi.waitFor(() => {
-        const stats = customRouter.getMemoryAgentStats();
-        expect(stats.turnsObserved).toBe(1);
-        expect(stats.acksApplied).toBe(1);
-      });
-    });
-
-    it('should send save confirmation to originating channel when audit ack is applied', async () => {
-      const agentLoop = createMockAgentLoop(() =>
-        'Agent response that is long enough to trigger memory audit.'.repeat(4)
-      );
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-
-      const mockSendMessage = vi.fn().mockResolvedValue(undefined);
-      customRouter.setGatewayRegistry({ sendMessage: mockSendMessage });
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage: vi.fn().mockResolvedValue({
-            response: 'saved via tools',
-            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved db rule' },
-          }),
-        }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'telegram',
-        channelId: '5551000001',
-        userId: '5551000001',
-        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
-      });
-
-      await vi.waitFor(() => {
-        expect(mockSendMessage).toHaveBeenCalledWith(
-          'telegram',
-          '5551000001',
-          expect.stringContaining('Memory saved')
-        );
-      });
-    });
-
-    it('should update channel summary when an audit ack is applied', async () => {
-      const agentLoop = createMockAgentLoop(() =>
-        'Agent response that is long enough to trigger memory audit.'.repeat(4)
-      );
-      const mamaApi = createMockMamaApi(mockDecisions);
-      mamaApi.upsertChannelSummary = vi.fn().mockResolvedValue(undefined);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage: vi.fn().mockResolvedValue({
-            response: 'saved via tools',
-            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved sqlite rule' },
-          }),
-        }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'telegram',
-        channelId: '5551000001',
-        userId: '5551000001',
-        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
-      });
-
-      await vi.waitFor(() => {
-        expect(mamaApi.upsertChannelSummary).toHaveBeenCalledWith(
-          expect.objectContaining({
-            channelKey: 'telegram:5551000001',
-          })
-        );
-      });
-    });
-
-    it('should pass the real channel scope to the memory audit job', async () => {
-      const agentLoop = createMockAgentLoop(() =>
-        'Agent response that is long enough to trigger memory audit.'.repeat(4)
-      );
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-      const sendMessage = vi.fn().mockResolvedValue({
-        response: 'skip',
-        ack: { status: 'skipped', action: 'no_op', event_ids: [], reason: 'nothing new' },
-      });
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage,
-        }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'telegram',
-        channelId: '5551000001',
-        userId: '5551000001',
-        text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 데이터베이스로 사용하자. 이건 기억해 둬.',
-      });
-
-      await vi.waitFor(() => {
-        expect(sendMessage).toHaveBeenCalled();
-      });
-
-      const prompt = sendMessage.mock.calls[0]?.[0] as string;
-      expect(prompt).toContain('channel:telegram:5551000001');
-      expect(prompt).toContain('user:5551000001');
-      expect(prompt).toContain('Candidates:');
-      expect(prompt).toContain('kind=decision');
-    });
-
-    it('should not invoke the memory agent when no durable save candidate exists', async () => {
-      const agentLoop = createMockAgentLoop(() =>
-        '도움이 되었길 바랍니다! 필요하면 더 말씀해 주세요.'.repeat(4)
-      );
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-      const sendMessage = vi.fn().mockResolvedValue({
-        response: 'skip',
-        ack: { status: 'skipped', action: 'no_op', event_ids: [], reason: 'nothing new' },
-      });
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({
-          sendMessage,
-        }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'telegram',
-        channelId: '5551000001',
-        userId: '5551000001',
-        text: '고마워',
-      });
-
-      await vi.waitFor(() => {
-        expect(customRouter.getMemoryAgentStats().turnsObserved).toBe(0);
-      });
-      expect(sendMessage).not.toHaveBeenCalled();
-    });
-
-    it('should still invoke the memory agent for short but explicit decision candidates', async () => {
-      const agentLoop = createMockAgentLoop(() => '알겠습니다.');
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-      const sendMessage = vi.fn().mockResolvedValue({
-        response: 'DONE',
-        ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved' },
-      });
-
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-      await processFixtureMessage(customRouter, {
-        source: 'telegram',
-        channelId: '5551000001',
-        userId: '5551000001',
-        text: '앞으로 SQLite를 기본 DB로 쓰자. 기억해.',
-      });
-
-      await vi.waitFor(() => {
-        expect(sendMessage).toHaveBeenCalled();
-      });
-    });
-
-    describe('Story M2.2: Memory agent model-run parentage', () => {
-      describe('Acceptance Criteria', () => {
-        it('should pass the main model run id as the memory-agent parent model run id', async () => {
-          const agentLoop = {
-            async run(): Promise<{ response: string; modelRunId: string }> {
-              return { response: 'Saved.', modelRunId: 'mr_main_turn' };
-            },
-          };
-          const mamaApi = createMockMamaApi(mockDecisions);
-          const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-          const sendMessage = vi.fn().mockResolvedValue({
-            response: 'DONE',
-            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved' },
-          });
-
-          customRouter.setMemoryAgent({
-            getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
-          } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
-
-          await processFixtureMessage(customRouter, {
-            source: 'telegram',
-            channelId: '5551000001',
-            userId: '5551000001',
-            text: 'Use SQLite as the default database going forward. Remember this.',
-          });
-
-          await vi.waitFor(() => {
-            expect(sendMessage).toHaveBeenCalled();
-          });
-          expect(sendMessage.mock.calls[0][1]).toEqual(
-            expect.objectContaining({
-              parentModelRunId: 'mr_main_turn',
-            })
-          );
-        });
-      });
-    });
-
     it('should only drain notices that were present at peek time', async () => {
       const mamaApi = createMockMamaApi(mockDecisions);
       const agentLoop = {
@@ -2298,628 +2133,6 @@ describe('MessageRouter', () => {
       const result = await agentLoop.run('Hello');
       expect(result.response).toBe('Echo: Hello');
     });
-  });
-});
-
-describe('Story TG-05/TG-06: target-scoped owner report carry', () => {
-  it('does not expose or consume owner report carry on the public lane', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const reportCarry: ReportCarryPort = {
-      peek: vi.fn(() => ({ deliveryId: 'delivery-public-lane', prefix: 'report context' })),
-      acknowledge: vi.fn(() => true),
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust(['report-lane-channel']);
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop(() => 'response'),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'report-lane-channel',
-        userId: 'external-synthetic',
-        text: 'consume report',
-        metadata: { chatType: 'private' },
-        principal: {
-          class: 'external',
-          lane: 'public',
-          canonicalId: 'telegram:global:external-synthetic',
-          consoleEligible: false,
-        },
-      });
-
-      expect(reportCarry.peek).not.toHaveBeenCalled();
-      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('injects the report once into a verified owner continuation and acknowledges only after persistence', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    const target = { source: 'telegram', channelId: 'owner-chat' } as const;
-    carry.persistDelivered({
-      deliveryId: 'delivery-a',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'the owner report',
-      provenance: { status: 'available', modelRunId: 'report-run-a' },
-    });
-    const prompts: string[] = [];
-    const options: AgentLoopOptions[] = [];
-    const agentLoop = {
-      async run(prompt: string, runOptions?: AgentLoopOptions): Promise<{ response: string }> {
-        prompts.push(prompt);
-        if (runOptions) {
-          options.push(runOptions);
-        }
-        return { response: 'owner response' };
-      },
-    };
-
-    resetRoleManager();
-    getRoleManager().setTelegramTrust(['owner-chat']);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'owner-chat',
-        userId: 'owner',
-        text: 'first',
-        metadata: { chatType: 'private' },
-      });
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'owner-chat',
-        userId: 'owner',
-        text: 'second',
-        metadata: { chatType: 'private' },
-      });
-
-      expect(prompts[0]).toContain('operator-report-carry');
-      expect(prompts[1]).not.toContain('operator-report-carry');
-      expect(options[1]?.resumeSession).toBe(true);
-      expect(options[1]?.systemPrompt).not.toContain('## Instructions');
-      expect(carry.peek(target)).toBeNull();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('leaves carry available after a model failure', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'model-failure-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-model-failure',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'retry this report',
-      provenance: { status: 'available', modelRunId: 'report-run-model-failure' },
-    });
-    const prompts: string[] = [];
-    let attempts = 0;
-    const agentLoop = {
-      async run(prompt: string): Promise<{ response: string }> {
-        prompts.push(prompt);
-        attempts += 1;
-        if (attempts === 1) {
-          throw new Error('synthetic model failure');
-        }
-        return { response: 'recovered' };
-      },
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      const message: NormalizedMessage = {
-        source: 'telegram',
-        channelId: target.channelId,
-        userId: 'owner',
-        text: 'continue',
-        metadata: { chatType: 'private' },
-      };
-      await expect(processFixtureMessage(router, message)).rejects.toThrow(
-        'synthetic model failure'
-      );
-      await processFixtureMessage(router, message);
-
-      expect(prompts).toHaveLength(2);
-      expect(prompts[0]).toContain('operator-report-carry');
-      expect(prompts[1]).toContain('operator-report-carry');
-      expect(carry.peek(target)).toBeNull();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('leaves carry available when final assistant persistence fails', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'persistence-failure-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-persistence-failure',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'persist this report',
-      provenance: { status: 'available', modelRunId: 'report-run-persistence-failure' },
-    });
-    const flush = vi.spyOn(sessionStore, 'flushStreamingResponse').mockReturnValue(false);
-    const append = vi.spyOn(sessionStore, 'appendMessage').mockReturnValue(false);
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop(() => 'response'),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await expect(
-        processFixtureMessage(router, {
-          source: 'telegram',
-          channelId: target.channelId,
-          userId: 'owner',
-          text: 'persist',
-          metadata: { chatType: 'private' },
-        })
-      ).rejects.toThrow('Unable to persist final assistant response');
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-persistence-failure');
-    } finally {
-      flush.mockRestore();
-      append.mockRestore();
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('leaves carry available when final assistant persistence throws', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'persistence-throw-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-persistence-throw',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'throw while persisting',
-      provenance: { status: 'available', modelRunId: 'report-run-persistence-throw' },
-    });
-    const originalAppend = sessionStore.appendMessage.bind(sessionStore);
-    const flush = vi.spyOn(sessionStore, 'flushStreamingResponse').mockReturnValue(false);
-    const append = vi
-      .spyOn(sessionStore, 'appendMessage')
-      .mockImplementation((sessionId, message) => {
-        if (message.role === 'assistant') {
-          throw new Error('synthetic final persistence failure');
-        }
-        return originalAppend(sessionId, message);
-      });
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop(() => 'response'),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await expect(
-        processFixtureMessage(router, {
-          source: 'telegram',
-          channelId: target.channelId,
-          userId: 'owner',
-          text: 'persist',
-          metadata: { chatType: 'private' },
-        })
-      ).rejects.toThrow('synthetic final persistence failure');
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-persistence-throw');
-    } finally {
-      flush.mockRestore();
-      append.mockRestore();
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('does not consume a target-scoped carry for an unverified or different Telegram turn', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'verified-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-gated',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'private report',
-      provenance: { status: 'available', modelRunId: 'report-run-gated' },
-    });
-    const prompts: string[] = [];
-    const agentLoop = createMockAgentLoop((prompt) => {
-      prompts.push(prompt);
-      return 'response';
-    });
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'other-chat',
-        userId: 'other',
-        text: 'untrusted',
-        metadata: { chatType: 'private' },
-      });
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: target.channelId,
-        userId: 'owner',
-        text: 'group owner',
-        metadata: { chatType: 'group' },
-      });
-
-      expect(prompts.every((prompt) => !prompt.includes('operator-report-carry'))).toBe(true);
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-gated');
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('does not peek carry before Telegram owner-console verification', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const reportCarry: ReportCarryPort = {
-      peek: vi.fn(() => ({ deliveryId: 'must-not-read', prefix: 'must-not-read' })),
-      acknowledge: vi.fn(() => true),
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust(['trusted-owner']);
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop(() => 'response'),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'other-chat',
-        userId: 'other',
-        text: 'untrusted',
-        metadata: { chatType: 'private' },
-      });
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: 'trusted-owner',
-        userId: 'owner',
-        text: 'group turn',
-        metadata: { chatType: 'group' },
-      });
-
-      expect(reportCarry.peek).not.toHaveBeenCalled();
-      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('preserves a concurrently delivered report when acknowledgement uses a stale delivery id', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'concurrent-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-a',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'report A',
-      provenance: { status: 'available', modelRunId: 'report-run-a' },
-    });
-    const agentLoop = {
-      async run(): Promise<{ response: string }> {
-        carry.persistDelivered({
-          deliveryId: 'delivery-b',
-          target,
-          deliveredAt: new Date().toISOString(),
-          text: 'report B',
-          provenance: { status: 'available', modelRunId: 'report-run-b' },
-        });
-        return { response: 'response' };
-      },
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: target.channelId,
-        userId: 'owner',
-        text: 'use report A',
-        metadata: { chatType: 'private' },
-      });
-
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-b');
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('injects carry through the multimodal effective user message', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'multimodal-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-multimodal',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'multimodal report',
-      provenance: { status: 'available', modelRunId: 'report-run-multimodal' },
-    });
-    const received: ContentBlock[][] = [];
-    const agentLoop = {
-      async run(): Promise<{ response: string }> {
-        throw new Error('text path must not run');
-      },
-      async runWithContent(blocks: ContentBlock[]): Promise<{ response: string }> {
-        received.push(blocks);
-        return { response: 'multimodal response' };
-      },
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry: carry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'telegram',
-        channelId: target.channelId,
-        userId: 'owner',
-        text: 'caption',
-        metadata: { chatType: 'private' },
-        contentBlocks: [{ type: 'text', text: 'caption' }],
-      });
-
-      expect(received[0]?.[0]).toMatchObject({
-        type: 'text',
-        text: expect.stringContaining('operator-report-carry'),
-      });
-      expect(carry.peek(target)).toBeNull();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('logs acknowledgement failure without failing a persisted owner turn', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'ack-failure-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-ack-failure',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'ack failure report',
-      provenance: { status: 'available', modelRunId: 'report-run-ack-failure' },
-    });
-    const reportCarry: ReportCarryPort = {
-      peek: carry.peek.bind(carry),
-      acknowledge: () => {
-        throw new Error('synthetic acknowledgement failure');
-      },
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([target.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop(() => 'response'),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry }
-    );
-
-    try {
-      await expect(
-        processFixtureMessage(router, {
-          source: 'telegram',
-          channelId: target.channelId,
-          userId: 'owner',
-          text: 'ack',
-          metadata: { chatType: 'private' },
-        })
-      ).resolves.toMatchObject({ outcome: 'completed' });
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-ack-failure');
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('acknowledges the immutable target captured before an agent mutates the message', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const originalTarget = { source: 'telegram', channelId: 'immutable-owner' } as const;
-    const mutatedTarget = { source: 'telegram', channelId: 'mutated-owner' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-immutable',
-      target: originalTarget,
-      deliveredAt: new Date().toISOString(),
-      text: 'original report',
-      provenance: { status: 'available', modelRunId: 'report-run-immutable' },
-    });
-    const reportCarry: ReportCarryPort = {
-      peek: carry.peek.bind(carry),
-      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
-    };
-    const message: NormalizedMessage = {
-      source: 'telegram',
-      channelId: originalTarget.channelId,
-      userId: 'owner',
-      text: 'use original report',
-      metadata: { chatType: 'private' },
-    };
-    const agentLoop = {
-      async run(): Promise<{ response: string }> {
-        message.source = 'discord';
-        message.channelId = mutatedTarget.channelId;
-        return { response: 'response' };
-      },
-    };
-    resetRoleManager();
-    getRoleManager().setTelegramTrust([originalTarget.channelId]);
-    const router = new MessageRouter(
-      sessionStore,
-      agentLoop,
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry }
-    );
-
-    try {
-      await processFixtureMessage(router, message);
-
-      expect(reportCarry.acknowledge).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deliveryId: 'delivery-immutable',
-          target: originalTarget,
-          consumingChannelKey: 'telegram:immutable-owner',
-        })
-      );
-      expect(carry.peek(originalTarget)).toBeNull();
-      expect(carry.peek(mutatedTarget)).toBeNull();
-    } finally {
-      resetRoleManager();
-      sessionStore.close();
-    }
-  });
-
-  it('does not peek, prefix, acknowledge, or consume Telegram carry on a Discord turn', async () => {
-    const db = new Database(':memory:');
-    const sessionStore = new SessionStore(db);
-    const target = { source: 'telegram', channelId: 'telegram-owner-only' } as const;
-    const carry = new FileReportCarryStore(join(testMamaHome, 'operator', `${randomUUID()}.json`));
-    carry.persistDelivered({
-      deliveryId: 'delivery-non-telegram',
-      target,
-      deliveredAt: new Date().toISOString(),
-      text: 'Telegram-only report',
-      provenance: { status: 'available', modelRunId: 'report-run-non-telegram' },
-    });
-    const reportCarry: ReportCarryPort = {
-      peek: vi.fn(carry.peek.bind(carry)),
-      acknowledge: vi.fn(carry.acknowledge.bind(carry)),
-    };
-    const prompts: string[] = [];
-    const router = new MessageRouter(
-      sessionStore,
-      createMockAgentLoop((prompt) => {
-        prompts.push(prompt);
-        return 'response';
-      }),
-      createMockMamaApi([]),
-      {},
-      undefined,
-      undefined,
-      { reportCarry }
-    );
-
-    try {
-      await processFixtureMessage(router, {
-        source: 'discord',
-        channelId: 'discord-owner',
-        userId: 'owner',
-        text: 'discord request',
-      });
-
-      expect(reportCarry.peek).not.toHaveBeenCalled();
-      expect(reportCarry.acknowledge).not.toHaveBeenCalled();
-      expect(prompts[0]).not.toContain('operator-report-carry');
-      expect(carry.peek(target)?.deliveryId).toBe('delivery-non-telegram');
-    } finally {
-      sessionStore.close();
-    }
   });
 });
 

@@ -21,7 +21,6 @@ import type { ReportStore } from '../../../src/api/report-handler.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
 import Database from '../../../src/sqlite.js';
-import type { AgentLoop } from '../../../src/agent/index.js';
 import type { OAuthManager } from '../../../src/auth/index.js';
 
 const enabledConnectorConfig: ConnectorConfigLoadResult = {
@@ -136,7 +135,10 @@ async function registerReconcileRuntime(input: {
     oauthManager: {} as OAuthManager,
     mamaApi: {} as MAMAApiShape,
     messageRouter: {} as MessageRouter,
-    agentLoop: {} as AgentLoop,
+    runOwnerStimulus: vi.fn(async () => ({
+      response: 'owner response',
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })),
     toolExecutor,
     discordGateway: null,
     slackGateway: null,
@@ -172,6 +174,31 @@ it('accepts one authenticated on-demand owner report through the existing trigge
     db.close();
   }
 });
+
+it.each(['/api/discord/cron', '/api/report'])(
+  'returns 410 for the unreceipted legacy model-and-send route %s',
+  async (route) => {
+    const db = new Database(':memory:');
+    initAgentTables(db);
+    createBoardInputTables(db);
+    const runtime = await registerReconcileRuntime({
+      db,
+      connectorConfigLoadResult: enabledConnectorConfig,
+    });
+
+    try {
+      const response = await request(runtime.apiServer.app).post(route).send({
+        channelId: 'synthetic-channel',
+        prompt: 'synthetic prompt',
+      });
+      expect(response.status).toBe(410);
+      expect(response.body.error).toMatch(/retired/i);
+    } finally {
+      runtime.routeHandle.stop();
+      db.close();
+    }
+  }
+);
 
 it.each([
   { reason: 'busy' as const, status: 409 },
@@ -276,7 +303,10 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
     oauthManager: {} as OAuthManager,
     mamaApi: {} as MAMAApiShape,
     messageRouter: {} as MessageRouter,
-    agentLoop: {} as AgentLoop,
+    runOwnerStimulus: vi.fn(async () => ({
+      response: 'owner response',
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })),
     toolExecutor,
     discordGateway: null,
     slackGateway: null,

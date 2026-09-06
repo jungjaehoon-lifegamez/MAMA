@@ -15,10 +15,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
-import { ClineCLIAdapter } from '../agent/cline-cli-adapter.js';
-import type { CodexRuntimeProcessOptions } from '../multi-agent/runtime-process.js';
-import type { IModelRunner } from '../agent/model-runner.js';
 import type { OperatorChannelEvent } from './operator-interfaces.js';
 import type { CreateTriggerInput, TriggerRecord } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
@@ -47,51 +43,12 @@ export interface AuthorOptions {
   note?: string;
 }
 
-type TriggerCodexRunner = Pick<IModelRunner, 'prompt' | 'stop'>;
-type TriggerClineRunner = Pick<IModelRunner, 'prompt' | 'stop'>;
-
-export interface TriggerAgentRuntimeOptions {
-  model?: string;
-  cwd?: string;
-  command?: string;
-  requestTimeout?: number;
-  provider?: string;
-  dataDir?: string;
-  /** Managed Codex `model_reasoning_effort`; the claude lane keeps TRIGGER_AUTHOR_EFFORT. */
-  effort?: string;
-}
-
-export interface TriggerAgentRuntime {
-  askAuthor: AskAgent;
-  askReview: AskAgent;
-  stop(): Promise<void>;
-}
-
-export interface TriggerAgentRuntimeDependencies {
-  askClaude?: AskAgent;
-  createClaudeAsk?: (options: { model?: string; signal?: AbortSignal }) => AskAgent;
-  createCodexRuntime?: (options: CodexRuntimeProcessOptions) => TriggerCodexRunner;
-  createClineRuntime?: (options: {
-    command?: string;
-    provider?: string;
-    model?: string;
-    systemPrompt?: string;
-    cwd?: string;
-    dataDir?: string;
-    requestTimeout?: number;
-  }) => TriggerClineRunner;
-}
-
 export type ClaudeCliExecutor = (
   file: string,
   args: string[],
   options: { maxBuffer: number; signal?: AbortSignal }
 ) => Promise<{ stdout: string }>;
 
-const TRIGGER_CODEX_SYSTEM_PROMPT =
-  'Return only the requested JSON value, with no prose or code fences.';
-const TRIGGER_AUTHOR_SESSION_KEY = 'operator:trigger-author';
-const TRIGGER_REVIEW_SESSION_KEY = 'operator:trigger-review';
 const AUTHOR_EVENT_CHARS = 500;
 const AUTHOR_EVENT_SECTION_CHARS = 10_000;
 const AUTHOR_TRIGGER_SUMMARY_CHARS = 300;
@@ -357,137 +314,6 @@ export function createAskAgentCLI(
 
 /** Real agent: the local claude CLI (CLI-over-API). Preserved for eval compatibility. */
 export const askAgentCLI: AskAgent = createAskAgentCLI();
-
-/**
- * Provider boundary for trigger authoring and review.
- *
- * Claude keeps an isolated JSON-only CLI path. Codex shares one app-server
- * connection, but every structured task starts a fresh, isolated, read-only
- * session and advertises no host tools.
- */
-export function createTriggerAgentRuntime(
-  backend: 'claude' | 'codex' | 'cline',
-  options: TriggerAgentRuntimeOptions = {},
-  dependencies: TriggerAgentRuntimeDependencies = {}
-): TriggerAgentRuntime {
-  if (backend === 'claude') {
-    const controller = new AbortController();
-    const createClaudeAsk =
-      dependencies.createClaudeAsk ??
-      ((runtimeOptions: { model?: string; signal?: AbortSignal }) =>
-        createAskAgentCLI(executeClaudeCLI, runtimeOptions));
-    const askClaude =
-      dependencies.askClaude ??
-      createClaudeAsk({ model: options.model, signal: controller.signal });
-    const activeCalls = new Set<Promise<string>>();
-    let stopped = false;
-    let stopPromise: Promise<void> | undefined;
-    const askTracked: AskAgent = (prompt) => {
-      if (stopped) return Promise.reject(new Error('Claude trigger runtime has stopped'));
-      let call: Promise<string>;
-      try {
-        call = askClaude(prompt);
-      } catch (error) {
-        call = Promise.reject(error);
-      }
-      activeCalls.add(call);
-      return call.finally(() => {
-        activeCalls.delete(call);
-      });
-    };
-    return {
-      askAuthor: askTracked,
-      askReview: askTracked,
-      stop: () => {
-        stopPromise ??= Promise.resolve().then(async () => {
-          stopped = true;
-          controller.abort();
-          await Promise.allSettled([...activeCalls]);
-        });
-        return stopPromise;
-      },
-    };
-  }
-
-  if (backend === 'cline') {
-    const createClineRuntime =
-      dependencies.createClineRuntime ?? ((runtimeOptions) => new ClineCLIAdapter(runtimeOptions));
-    const runner = createClineRuntime({
-      command: options.command,
-      provider: options.provider ?? 'cline',
-      model: options.model,
-      systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
-      cwd: options.cwd,
-      dataDir: options.dataDir,
-      requestTimeout: options.requestTimeout,
-    });
-    const askInSession =
-      (sessionKey: string): AskAgent =>
-      async (prompt) => {
-        const result = await runner.prompt(prompt, undefined, {
-          sessionKey,
-          resumeSession: false,
-          systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
-        });
-        if (typeof result.response !== 'string') {
-          throw new Error('Cline trigger agent did not return a text result');
-        }
-        return result.response;
-      };
-    let stopPromise: Promise<void> | undefined;
-    return {
-      askAuthor: askInSession(TRIGGER_AUTHOR_SESSION_KEY),
-      askReview: askInSession(TRIGGER_REVIEW_SESSION_KEY),
-      stop: () => {
-        stopPromise ??= Promise.resolve().then(async () => {
-          await runner.stop();
-        });
-        return stopPromise;
-      },
-    };
-  }
-
-  const createCodexRuntime =
-    dependencies.createCodexRuntime ??
-    ((runtimeOptions) => new CodexRuntimeProcess(runtimeOptions));
-  const runner = createCodexRuntime({
-    defaultSessionKey: TRIGGER_AUTHOR_SESSION_KEY,
-    model: options.model,
-    systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
-    cwd: options.cwd,
-    sandbox: 'read-only',
-    requestTimeout: options.requestTimeout,
-    command: options.command,
-    // Shared managed config.toml: this runner writes it too, so it must agree
-    // with every other Codex process or they flip each other's effort.
-    effort: options.effort,
-  });
-  const askInSession =
-    (sessionKey: string): AskAgent =>
-    async (prompt) => {
-      const result = await runner.prompt(prompt, undefined, {
-        sessionKey,
-        resumeSession: false,
-        systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
-      });
-      if (typeof result.response !== 'string') {
-        throw new Error('Codex trigger agent did not return a text result');
-      }
-      return result.response;
-    };
-  let stopPromise: Promise<void> | undefined;
-
-  return {
-    askAuthor: askInSession(TRIGGER_AUTHOR_SESSION_KEY),
-    askReview: askInSession(TRIGGER_REVIEW_SESSION_KEY),
-    stop: () => {
-      stopPromise ??= Promise.resolve().then(async () => {
-        await runner.stop();
-      });
-      return stopPromise;
-    },
-  };
-}
 
 /**
  * A run that outlives this has stopped being a 30-minute background pass.

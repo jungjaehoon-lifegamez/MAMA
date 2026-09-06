@@ -25,8 +25,6 @@ const OWNER_EVENT_BLOCKED_TOOLS = new Set([
   // an event turn is driven by UNTRUSTED connector content; letting it rewrite the
   // one operating brief is a prompt-injection amplifier. Brief edits stay on chat.
   'console_brief_update',
-  // fire-and-forget into another model turn = a second judgment surface
-  'report_request',
   // the workspace shell and file writer are owner-conversation tools: an event turn is
   // driven by untrusted connector text, and a shell would make that text a command
   'Bash',

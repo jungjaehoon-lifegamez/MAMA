@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SessionPool, setSessionPool } from '../../src/agent/session-pool.js';
 
 interface SyntheticTelegramMessage {
   message_id: number;
@@ -284,6 +285,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  setSessionPool(new SessionPool());
   vi.clearAllMocks();
   telegramSeams.handlers.clear();
   slackSeams.handlers.clear();
@@ -306,6 +308,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setSessionPool(new SessionPool());
   resetRoleManager();
 });
 

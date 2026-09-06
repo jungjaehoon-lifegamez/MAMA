@@ -515,12 +515,12 @@ describe('ClineCLIAdapter Hub persistence', () => {
     const { adapter, client } = createHarness();
 
     await adapter.prompt('first', undefined, {
-      sessionKey: 'operator:report',
+      sessionKey: 'test:resume',
       sessionId: 'transient-1',
       resumeSession: false,
     });
     await adapter.prompt('second', undefined, {
-      sessionKey: 'operator:report',
+      sessionKey: 'test:resume',
       sessionId: 'transient-2',
       resumeSession: false,
     });
