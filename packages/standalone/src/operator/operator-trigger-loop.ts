@@ -487,11 +487,12 @@ export class OperatorTriggerLoop {
     const delivered = await this.deliverPendingReport(true);
     let recovered = delivered !== null;
     if (this.pendingRequest) {
+      // Capture the mode before preparePendingRequest() clears the pending request; a recovered
+      // digest request also reaches this path, so a hardcoded "full" would misreport it.
+      const mode = this.pendingRequest.mode;
       const sent = await this.preparePendingRequest();
       recovered = true;
-      this.deps.log(
-        `[trigger-loop] recovered on-demand full report ${this.reportOutcomeLabel(sent)}`
-      );
+      this.deps.log(`[trigger-loop] recovered ${mode} report ${this.reportOutcomeLabel(sent)}`);
     }
     return recovered;
   }

@@ -5889,15 +5889,25 @@ export class GatewayToolExecutor {
           const metaEnd = metadata.end ?? metadata.endTime ?? metadata.end_time;
           const allDay = metadata.allDay === true;
           const timeZone = typeof metadata.timeZone === 'string' ? metadata.timeZone : 'UTC';
+          // Contain a bad all-day date to this row: startOfTaskDate throws on an unresolvable value,
+          // and inside flatMap that would abort the whole schedule_upcoming read and clear scheduleDb.
+          // NaN lets the finite-number guard below skip only this row.
+          const dayStart = (value: string): number => {
+            try {
+              return startOfTaskDate(value, null, timeZone);
+            } catch {
+              return Number.NaN;
+            }
+          };
           const startMs =
             allDay && typeof metaStart === 'string'
-              ? startOfTaskDate(metaStart, null, timeZone)
+              ? dayStart(metaStart)
               : typeof metaStart === 'string' || typeof metaStart === 'number'
                 ? new Date(metaStart).getTime()
                 : row.timestamp;
           const endMs =
             allDay && typeof metaEnd === 'string'
-              ? startOfTaskDate(metaEnd, null, timeZone)
+              ? dayStart(metaEnd)
               : typeof metaEnd === 'string' || typeof metaEnd === 'number'
                 ? new Date(metaEnd).getTime()
                 : startMs;
