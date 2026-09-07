@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-core [2.4.0] - 2026-09-08
+
+### Added
+
+- `getRawHistory` returns a connector-scoped, chronological, cursor-paged change history for one
+  entity, under the same connector/scope visibility as raw search. `connector_event_index` gains a
+  `source_entity_id` column (migration 067, additive and backfilled) to make revisions queryable
+  by entity.
+
+## mama-os [0.51.0] - 2026-09-08
+
+### Added
+
+- Raw change-history read path: `GET /api/agent/raw/:rawId/revisions` exposes an entity's stored
+  revisions beside search/detail/window, with the same worker-envelope visibility.
+
+### Changed
+
+- `RawStore.save` distinguishes real change from re-delivery/re-observation: a re-listed immutable
+  version and an `observedAt`-only re-poll no longer create new revisions, while a genuine
+  A→B→A is preserved and last-seen is still advanced.
+
+### Fixed
+
+- `schedule_upcoming` contains a bad all-day calendar row to that row instead of aborting the whole
+  read and clearing the schedule DB.
+- The calendar connector shell-escapes the `gws --params` argument so an upstream value cannot
+  inject a command. Recovered report logging reports the actual digest/full mode.
+
 ## mama-os [0.50.0] - 2026-09-07
 
 ### Changed
