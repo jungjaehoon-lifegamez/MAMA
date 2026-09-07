@@ -67,19 +67,9 @@ import {
   parseStrictOwnerDate,
   publicWikiConnectorScope,
 } from '../../operator/wiki-continuity.js';
-import type {
-  TaskLedger,
-  WorkOrderKind,
-  WorkOrderRecord,
-  TaskPriority,
-} from '../../operator/task-ledger.js';
+import type { WorkOrderKind, WorkOrderRecord, TaskPriority } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
-import type { ExternalLifecycleCandidateSet } from '../../operator/external-lifecycle.js';
-import {
-  buildExternalLifecycleCandidateSet,
-  classifyKagemushaObservation,
-  type RawExternalObservation,
-} from '../../operator/external-lifecycle-candidates.js';
+import { buildReconcileExternalLifecycleCandidates } from '../../operator/external-lifecycle-discovery.js';
 import {
   dispatchSecurityAlertDirect,
   hasSecurityAlertSender,
@@ -114,106 +104,12 @@ export interface KagemushaTaskQueryInput {
 export type KagemushaTaskQuery = (input: KagemushaTaskQueryInput) => TaskInfo[];
 export type KagemushaTaskQueryLoader = () => Promise<KagemushaTaskQuery>;
 
-type ConnectorEventAdapter = {
-  prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] };
-};
-
-const MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS = 100;
-
 /**
- * Construct the only lifecycle authority a reconcile work order may carry.
- * Connector rows are parsed one by one: malformed/private-unsupported evidence
- * becomes bounded diagnostics, while a database failure deliberately throws so
- * the scheduler retains its unconsumed batch for retry.
+ * The reconcile candidate builder now lives in operator/external-lifecycle-discovery.ts
+ * so the gateway's owner-run read and this scheduler share one implementation.
+ * Re-exported for existing importers.
  */
-export function buildReconcileExternalLifecycleCandidates(input: {
-  eventIds: readonly string[];
-  getAdapter: () => ConnectorEventAdapter;
-  ledger: TaskLedger;
-  privateConnectorPolicy: PrivateConnectorPolicy;
-  rawConnectorScope: readonly string[];
-}): ExternalLifecycleCandidateSet {
-  const eventIds = [...new Set(input.eventIds)];
-  if (eventIds.length === 0) {
-    return Object.freeze({
-      bindingCandidates: Object.freeze([]),
-      lifecycleCandidates: Object.freeze([]),
-      diagnostics: Object.freeze([]),
-    });
-  }
-  const placeholders = eventIds.map(() => '?').join(',');
-  const rows = input
-    .getAdapter()
-    .prepare(
-      `SELECT event_index_id, source_connector, source_type, source_id, channel, content_hash,
-            source_timestamp_ms, operator_ingest_seq, operator_observation_seq, metadata_json
-       FROM connector_event_index WHERE event_index_id IN (${placeholders})`
-    )
-    .all(...eventIds) as RawExternalObservation[];
-
-  // This is intentionally limited to the boot-owned private capability and
-  // the same raw connector scope projected into worker envelopes. Do not
-  // discover connector state here: a reconcile run must not widen authority
-  // after startup, especially from a historical connector row.
-  const mayProjectKagemushaLifecycle =
-    input.privateConnectorPolicy.isEnabled('kagemusha') &&
-    input.rawConnectorScope.includes('kagemusha');
-  const observations = [] as NonNullable<
-    ReturnType<typeof classifyKagemushaObservation>['observation']
-  >[];
-  const diagnostics: NonNullable<ReturnType<typeof classifyKagemushaObservation>['diagnostic']>[] =
-    [];
-  const invalidEventIds = new Set<string>();
-  const suppressedEventIds = new Set<string>();
-  for (const row of rows) {
-    if (row.source_connector === 'kagemusha' && !mayProjectKagemushaLifecycle) {
-      // Do not emit diagnostics for a denied private row: even a bounded
-      // diagnostic is an unnecessary cross-boundary signal in a generic board
-      // workorder. The scheduler consumes its matching private partition.
-      if (typeof row.event_index_id === 'string') {
-        suppressedEventIds.add(row.event_index_id);
-      }
-      continue;
-    }
-    const classified = classifyKagemushaObservation(row);
-    if (classified.observation) {
-      observations.push(classified.observation);
-    } else if (classified.diagnostic) {
-      diagnostics.push(classified.diagnostic);
-      invalidEventIds.add(classified.diagnostic.eventId);
-    }
-  }
-  const candidateEventIds = eventIds.filter(
-    (eventId) => !invalidEventIds.has(eventId) && !suppressedEventIds.has(eventId)
-  );
-  const support = input.ledger.getExternalLifecycleCandidateSupport(
-    candidateEventIds,
-    observations.map((observation) => observation.externalSourceId)
-  );
-  const unreceipted = buildExternalLifecycleCandidateSet({
-    eventIds: candidateEventIds,
-    observations,
-    ...support,
-    receiptedCandidateIds: new Set(),
-  });
-  const receiptedCandidateIds = input.ledger.getReceiptedExternalCandidateIds([
-    ...unreceipted.bindingCandidates.map((candidate) => candidate.candidateId),
-    ...unreceipted.lifecycleCandidates.map((candidate) => candidate.candidateId),
-  ]);
-  const built = buildExternalLifecycleCandidateSet({
-    eventIds: candidateEventIds,
-    observations,
-    ...support,
-    receiptedCandidateIds,
-  });
-  return Object.freeze({
-    bindingCandidates: built.bindingCandidates,
-    lifecycleCandidates: built.lifecycleCandidates,
-    diagnostics: Object.freeze(
-      [...diagnostics, ...built.diagnostics].slice(0, MAX_RECONCILE_LIFECYCLE_DIAGNOSTICS)
-    ),
-  });
-}
+export { buildReconcileExternalLifecycleCandidates };
 
 function queryString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -515,10 +411,13 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // instead of re-deriving state from memory copies.
     toolExecutor.setReportReader(() => {
       const slots = apiServer.reportStore.getAll();
-      const projected: Record<string, { html: string; updatedAt?: string | null }> = {};
+      const projected: import('../../operator/board-read-views.js').BoardSlots = {};
       for (const [name, slot] of Object.entries(slots)) {
         projected[name] = {
           html: slot.html,
+          basisRevision: slot.basisRevision,
+          currentBasisRevision: slot.currentBasisRevision,
+          freshness: slot.freshness,
           updatedAt: Number.isFinite(slot.updatedAt)
             ? new Date(slot.updatedAt).toISOString()
             : null,

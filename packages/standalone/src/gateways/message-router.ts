@@ -51,6 +51,7 @@ import {
   UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
   wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
+import { buildTelegramFormattingSuffix } from './telegram-text-entities.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
@@ -1126,10 +1127,16 @@ This protects your credentials from being exposed in chat logs.`;
         agentContext.role.allowedTools,
         agentContext.roleName === 'owner_console'
       );
+      // Task G: Telegram sender styling rides directly after the body as data
+      // on BOTH model paths and in the persisted user turn. '' when absent, so
+      // plain messages and non-Telegram sources are byte-identical to before.
+      const formattingSuffix = buildTelegramFormattingSuffix(message);
       // Save user message immediately for crash/refresh resilience.
       this.sessionStore.appendMessage(session.id, {
         role: 'user',
-        content: [message.text, mediaInstructions].filter(Boolean).join('\n\n'),
+        content: [`${message.text}${formattingSuffix}`, mediaInstructions]
+          .filter(Boolean)
+          .join('\n\n'),
         timestamp: Date.now(),
       });
 
@@ -1343,7 +1350,10 @@ This protects your credentials from being exposed in chat logs.`;
           sourceTurnId,
           sourceMessageRef,
           ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY
-            ? { ownerJournalPrompt: message.text, ownerJournalTrust: 'owner' as const }
+            ? {
+                ownerJournalPrompt: `${message.text}${formattingSuffix}`,
+                ownerJournalTrust: 'owner' as const,
+              }
             : {}),
           // The owner's message is what caused whatever this turn changes, and the router
           // knows it BEFORE the agent runs - the same shape as a reconcile work order
@@ -1485,7 +1495,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}`;
+          const effectiveMessageText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1531,7 +1541,7 @@ This protects your credentials from being exposed in chat logs.`;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}`;
+          const effectiveText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;

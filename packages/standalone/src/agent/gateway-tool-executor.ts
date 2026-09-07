@@ -108,6 +108,7 @@ import {
   assertAllowedWikiWorkorderPath,
   assertWikiWorkorderPublish,
   readWikiPages,
+  normalizeWikiRelativePath,
 } from '../wiki/wiki-read.js';
 import type {
   TemporalEvidenceAttestation,
@@ -115,7 +116,14 @@ import type {
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
 import { runTaskListView, serializeTaskToolRecord } from '../operator/task-list-views.js';
-import { readBoardView } from '../operator/board-read-views.js';
+import { readBoardView, type BoardSlots } from '../operator/board-read-views.js';
+import type { OwnerActionContext } from '../operator/owner-action-effects.js';
+import {
+  OwnerActionEffectLedger,
+  canonicalOwnerActionJson,
+} from '../operator/owner-action-effects.js';
+import type { ExternalCandidateSource } from '../operator/external-lifecycle.js';
+import { attestOwnerExternalLifecycleCandidates } from '../operator/external-lifecycle-discovery.js';
 import {
   liveBoundaryChannels,
   narrowGrantToEnvelope,
@@ -129,7 +137,7 @@ import {
 } from '../connectors/private-connector-policy.js';
 import { getMemberCandidateStore } from '../gateways/member-candidate-store.js';
 import type { TelegramOutboundDeliveryReceipt } from '../gateways/telegram.js';
-import type { ReportPublishResult } from '../api/report-handler.js';
+import type { ReportPublishResult, ReportUpdateOptions } from '../api/report-handler.js';
 import {
   buildOwnerEventTelegramIntent,
   isOwnerEventTelegramIntentV1,
@@ -146,7 +154,13 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 
 type PrivateAwareGatewayToolExecutorOptions = GatewayToolExecutorOptions & {
   privateConnectorPolicy?: PrivateConnectorPolicy;
+  driveGwsRunner?: import('./drive-tools.js').DriveGwsRunner;
+  connectorEventAdapter?: import('../operator/external-lifecycle-discovery.js').ConnectorEventAdapter;
 };
+type OwnerEffectLedgerPort = Pick<
+  import('../operator/owner-event-effects.js').OwnerEventEffectLedger,
+  'begin' | 'inspect' | 'confirm' | 'markUnknown'
+>;
 
 function isReportPublishResult(
   value: void | readonly string[] | ReportPublishResult
@@ -174,7 +188,8 @@ function temporalIdentifierRef(value: string): string {
 function temporalPacketRawSourcesWithinBoundSource(
   context: TemporalWorkContext,
   sourceRefs: readonly unknown[],
-  reviewWindow?: { startMs: number; endMs: number }
+  reviewWindow?: { startMs: number; endMs: number },
+  additionalVisible: (ref: Record<string, unknown>) => boolean = () => false
 ): boolean {
   const rawRefs = sourceRefs.filter(
     (value): value is Record<string, unknown> =>
@@ -186,7 +201,12 @@ function temporalPacketRawSourcesWithinBoundSource(
   if (!context.sourceChannel) {
     return rawRefs.length === 0;
   }
+  const channelMatches = (ref: Record<string, unknown>): boolean =>
+    typeof ref.connector === 'string' &&
+    typeof ref.channel_id === 'string' &&
+    temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel;
   const anchorMatches = (ref: Record<string, unknown>): boolean =>
+    channelMatches(ref) &&
     Boolean(
       context.sourceEventId &&
       [ref.raw_id, ref.source_id].some(
@@ -194,40 +214,33 @@ function temporalPacketRawSourcesWithinBoundSource(
           typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
       )
     );
-  const allWithinBoundChannel = rawRefs.every((ref) => {
-    const eventMatches = reviewWindow !== undefined || !context.sourceEventId || anchorMatches(ref);
-    const channelMatches =
-      !context.sourceChannel ||
-      (typeof ref.connector === 'string' &&
-        typeof ref.channel_id === 'string' &&
-        temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel);
-    return eventMatches && channelMatches;
-  });
   return (
-    allWithinBoundChannel &&
-    (reviewWindow === undefined || rawRefs.some((ref) => anchorMatches(ref)))
+    rawRefs.every(
+      (ref) =>
+        (channelMatches(ref) &&
+          (reviewWindow !== undefined || !context.sourceEventId || anchorMatches(ref))) ||
+        additionalVisible(ref)
+    ) &&
+    ((rawRefs.length === 0 && reviewWindow === undefined) ||
+      !context.sourceEventId ||
+      rawRefs.some(anchorMatches))
   );
 }
 
 function temporalPacketReferencesBoundSource(
   context: TemporalWorkContext,
   sourceRefs: readonly unknown[],
-  reviewWindow?: { startMs: number; endMs: number }
+  reviewWindow?: { startMs: number; endMs: number },
+  additionalVisible?: (ref: Record<string, unknown>) => boolean
 ): boolean {
-  const hasRawReference = sourceRefs.some(
-    (value) =>
-      typeof value === 'object' &&
-      value !== null &&
-      !Array.isArray(value) &&
-      (value as Record<string, unknown>).kind === 'raw'
+  const hasRaw = sourceRefs.some(
+    (ref) =>
+      typeof ref === 'object' && ref !== null && (ref as Record<string, unknown>).kind === 'raw'
   );
-  if (context.sourceEventId || context.sourceChannel) {
-    return (
-      hasRawReference &&
-      temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow)
-    );
-  }
-  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow);
+  return (
+    (!(context.sourceEventId || context.sourceChannel) || hasRaw) &&
+    temporalPacketRawSourcesWithinBoundSource(context, sourceRefs, reviewWindow, additionalVisible)
+  );
 }
 
 function temporalPacketHasExactReviewWindow(
@@ -426,6 +439,7 @@ const TASK_UPDATE_PUBLIC_FIELD_SET = new Set<string>(TASK_UPDATE_PUBLIC_FIELDS);
  */
 const TASK_CREATE_PUBLIC_FIELDS = [
   'title',
+  'creation_key',
   'completion_criteria',
   'status',
   'priority',
@@ -801,6 +815,7 @@ export class GatewayToolExecutor {
   private telegramGateway: TelegramGatewayInterface | null = null;
   private roleManager: RoleManager;
   private readonly privateConnectorPolicy: PrivateConnectorPolicy;
+  private readonly connectorEventAdapter: PrivateAwareGatewayToolExecutorOptions['connectorEventAdapter'];
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly channelGrantProvider: () => Record<string, readonly string[]>;
@@ -817,7 +832,10 @@ export class GatewayToolExecutor {
   private currentChannelId: string = '';
   private disallowedGatewayTools: Set<string> = new Set();
   private reportPublisher:
-    | ((slots: Record<string, string>) => void | readonly string[] | ReportPublishResult)
+    | ((
+        slots: Record<string, string>,
+        options?: ReportUpdateOptions
+      ) => void | readonly string[] | ReportPublishResult)
     | null = null;
   /** Host-injected: failures become operational issues (observability/operational-issues.ts). */
   private operationalIssueSink: ((input: RecordIssueInput) => void) | null = null;
@@ -828,8 +846,7 @@ export class GatewayToolExecutor {
     notifyOwner: (line: string) => Promise<void>;
     repairRoot: () => string;
   } | null = null;
-  private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
-    null;
+  private reportReader: (() => BoardSlots) | null = null;
   private wikiPublisher: WikiPagePublisher | null = null;
   private wikiPublishAdapter: WikiPublishAdapter | null = null;
   private obsidianVaultPath: string | null = null;
@@ -857,6 +874,123 @@ export class GatewayToolExecutor {
   private ownerEventEffectLedger:
     | import('../operator/owner-event-effects.js').OwnerEventEffectLedger
     | null = null;
+  private ownerActionEffectLedger: OwnerActionEffectLedger | null = null;
+  createNativeEffectObserver(
+    state: GatewayToolExecutionContext | null
+  ): import('./native-effect-observer.js').NativeEffectObserver | undefined {
+    const ledger = this.ownerActionEffectLedger;
+    if (!ledger || !state?.envelope || !state.modelRunId || state.memberScopeRequired) {
+      return undefined;
+    }
+    const attempt =
+      state.workorderAttemptId === undefined
+        ? null
+        : this.taskLedger?.getWorkOrderById(state.workorderAttemptId);
+    const occurrenceKey = attempt ? `workorder:${attempt.idempotencyKey}` : state.sourceMessageRef;
+    if (!occurrenceKey) {
+      throw new Error('Native effect observation needs an owner occurrence');
+    }
+    const context: OwnerActionContext = {
+      ownerScope: state.agentContext?.principalId ?? 'owner:runtime',
+      occurrenceKey,
+      modelRunId: state.modelRunId,
+      envelopeHash: state.envelope.envelope_hash,
+      ...(attempt ? { workOrderAttemptId: attempt.id } : {}),
+    };
+    if (ledger.hasUnsafeReplayEffects(occurrenceKey)) {
+      throw new AgentError(
+        'Owner occurrence needs effect reconciliation before replay',
+        'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        undefined,
+        false
+      );
+    }
+    const admissionKey = `native-run:${createHash('sha256').update(context.modelRunId).digest('hex')}`;
+    ledger.begin(context, admissionKey, 'native_run', { admitted: true });
+    let sequence = 0;
+    const pending = new Map<string, { key: string; name: string }>();
+    return {
+      started: (name, input) => {
+        const id =
+          typeof input.nativeToolUseId === 'string'
+            ? input.nativeToolUseId
+            : `observed:${++sequence}`;
+        const key = `native:${createHash('sha256').update(`${context.modelRunId}:${id}`).digest('hex')}`;
+        const reservation = ledger.begin(context, key, 'native_tool', { toolName: name });
+        if (reservation.state !== 'execute') {
+          throw new AgentError(
+            'Native effect already observed',
+            'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+            undefined,
+            false
+          );
+        }
+        pending.set(id, { key, name });
+      },
+      settled: (name, id, isError) => {
+        const match = pending.get(id) ?? [...pending.values()].find((entry) => entry.name === name);
+        if (!match) {
+          // Completion may be the first provider observation after reconnect.
+          const key = `native:${createHash('sha256').update(`${context.modelRunId}:${id}`).digest('hex')}`;
+          ledger.begin(context, key, 'native_tool', { toolName: name });
+          ledger.markUnknown(
+            context,
+            key,
+            'native_tool',
+            'completion observed without matching start'
+          );
+          return;
+        }
+        if (isError) {
+          ledger.markUnknown(context, match.key, 'native_tool', 'native tool reported failure');
+        } else {
+          ledger.confirm(context, match.key, 'native_tool', { success: true });
+        }
+        for (const [pendingId, entry] of pending) {
+          if (entry === match) {
+            pending.delete(pendingId);
+          }
+        }
+      },
+      finished: () => {
+        if (pending.size > 0) {
+          throw new AgentError(
+            'Native effects did not settle before final response',
+            'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+            undefined,
+            false
+          );
+        }
+        ledger.confirm(context, admissionKey, 'native_run', { completed: true });
+      },
+      interrupted: () => {
+        ledger.markUnknown(
+          context,
+          admissionKey,
+          'native_run',
+          'native turn did not finish cleanly'
+        );
+        for (const { key } of pending.values()) {
+          ledger.markUnknown(context, key, 'native_tool', 'native run interrupted');
+        }
+      },
+    };
+  }
+  setOwnerActionEffectLedger(ledger: OwnerActionEffectLedger): void {
+    this.ownerActionEffectLedger = ledger;
+  }
+  private ownerEffectPort(context: OwnerActionContext): OwnerEffectLedgerPort {
+    const ledger = this.ownerActionEffectLedger;
+    if (!ledger) {
+      throw new Error('Owner action effect ledger is not configured');
+    }
+    return {
+      begin: (_batch, key, kind, intent) => ledger.begin(context, key, kind, intent),
+      inspect: (_batch, key, kind) => ledger.inspect(context, key, kind),
+      confirm: (_batch, key, kind, result) => ledger.confirm(context, key, kind, result),
+      markUnknown: (_batch, key, kind, error) => ledger.markUnknown(context, key, kind, error),
+    };
+  }
   setTaskLedger(ledger: import('../operator/task-ledger.js').TaskLedger): void {
     this.taskLedger = ledger;
   }
@@ -1115,12 +1249,15 @@ export class GatewayToolExecutor {
   }
 
   setReportPublisher(
-    fn: (slots: Record<string, string>) => void | readonly string[] | ReportPublishResult
+    fn: (
+      slots: Record<string, string>,
+      options?: ReportUpdateOptions
+    ) => void | readonly string[] | ReportPublishResult
   ): void {
     this.reportPublisher = fn;
   }
   /** Read seam for the owner board slots (plan v6 S1-T4 artifact hub). */
-  setReportReader(fn: () => Record<string, { html: string; updatedAt?: string | null }>): void {
+  setReportReader(fn: () => BoardSlots): void {
     this.reportReader = fn;
   }
   setWikiPublisher(fn: WikiPagePublisher): void {
@@ -1138,7 +1275,10 @@ export class GatewayToolExecutor {
     const privateWorkspaceRoot = resolve(
       process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace')
     );
-    this.driveTools = new DriveToolService({ workspaceRoot: privateWorkspaceRoot });
+    this.driveTools = new DriveToolService({
+      workspaceRoot: privateWorkspaceRoot,
+      runGws: options.driveGwsRunner,
+    });
     this.imageTranslationTools = new ImageTranslationToolService({
       workspaceRoot: privateWorkspaceRoot,
     });
@@ -1168,6 +1308,7 @@ export class GatewayToolExecutor {
     );
     this.privateConnectorPolicy =
       options.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
+    this.connectorEventAdapter = options.connectorEventAdapter;
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
@@ -1885,6 +2026,94 @@ export class GatewayToolExecutor {
     return modelRunId;
   }
 
+  private async requireOwnerActionContext(): Promise<OwnerActionContext> {
+    const state = this.getExecutionState();
+    const envelope = state.envelope;
+    if (!envelope || !state.modelRunId || state.memberScopeRequired) {
+      throw new AgentError(
+        'Owner action requires the current authenticated owner envelope and model run',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+    const api = await this.initializeMAMAApi();
+    const run = await api.getModelRun?.(state.modelRunId);
+    if (!run || run.status !== 'running' || run.envelope_hash !== envelope.envelope_hash) {
+      throw new Error('Owner action model run is no longer current for this envelope');
+    }
+    const attempt =
+      state.workorderAttemptId === undefined
+        ? null
+        : this.taskLedger?.getWorkOrderById(state.workorderAttemptId);
+    if (
+      state.workorderAttemptId !== undefined &&
+      (!attempt ||
+        attempt.status !== 'in_progress' ||
+        run.input_refs?.workorderAttemptId !== attempt.id)
+    ) {
+      throw new Error('Owner action workorder attempt is no longer active');
+    }
+    const occurrenceKey = attempt ? `workorder:${attempt.idempotencyKey}` : state.sourceMessageRef;
+    if (!occurrenceKey) {
+      throw new Error('Owner action is missing its host-issued occurrence identity');
+    }
+    return {
+      ownerScope: state.agentContext?.principalId ?? 'owner:runtime',
+      occurrenceKey,
+      modelRunId: state.modelRunId,
+      envelopeHash: envelope.envelope_hash,
+      ...(attempt ? { workOrderAttemptId: attempt.id } : {}),
+    };
+  }
+
+  private temporalCorroborationVisible = (ref: Record<string, unknown>): boolean => {
+    if (typeof ref.connector !== 'string' || typeof ref.channel_id !== 'string') {
+      return false;
+    }
+    return this.currentOwnerPartitionVisibility()({
+      connector: ref.connector,
+      channel: ref.channel_id,
+    });
+  };
+
+  private currentOwnerPartitionVisibility(): (partition: {
+    connector: string;
+    channel: string;
+  }) => boolean {
+    const state = this.getExecutionState();
+    if (!state.envelope || state.memberScopeRequired) {
+      throw new Error('Owner source visibility requires an owner envelope');
+    }
+    const channels = narrowGrantToEnvelope(snapshotChannelGrant(this.channelGrantProvider), {
+      connectors: state.envelope.scope.raw_connectors,
+      scopes: state.envelope.scope.memory_scopes,
+    });
+    return ({ connector, channel }) => channels[connector]?.includes(channel) === true;
+  }
+
+  private async externalCandidateSource(candidateId: string): Promise<ExternalCandidateSource> {
+    const attemptId = this.getExecutionState().workorderAttemptId;
+    if (
+      attemptId !== undefined &&
+      this.taskLedger?.getWorkOrderById(attemptId)?.workKind === 'board'
+    ) {
+      await this.requireExternalLifecycleModelRun(attemptId);
+      if (this.getExecutionState().envelope) {
+        const context = await this.requireOwnerActionContext();
+        if (
+          this.taskLedger
+            .listOwnerActionCandidates(context)
+            .some((candidate) => candidate.candidateId === candidateId)
+        ) {
+          return { kind: 'owner_run', context };
+        }
+      }
+      return { kind: 'board', attemptId };
+    }
+    return { kind: 'owner_run', context: await this.requireOwnerActionContext() };
+  }
+
   private async beginTraceIfNeeded(
     ctx: ActiveGatewayExecutionContext,
     gatewayCallId: string
@@ -2591,12 +2820,22 @@ export class GatewayToolExecutor {
         case 'Bash':
           return await this.executeBash(input as { command: string; workdir?: string });
         case 'discord_send':
-          return await this.executeDiscordSend(
-            input as { channel_id: string; message?: string; image_path?: string }
+          return await this.executeOwnerWorkspaceEffect(
+            'discord_send',
+            input as Record<string, unknown>,
+            () =>
+              this.executeDiscordSend(
+                input as { channel_id: string; message?: string; image_path?: string }
+              )
           );
         case 'slack_send':
-          return await this.executeSlackSend(
-            input as { channel_id: string; message?: string; file_path?: string }
+          return await this.executeOwnerWorkspaceEffect(
+            'slack_send',
+            input as Record<string, unknown>,
+            () =>
+              this.executeSlackSend(
+                input as { channel_id: string; message?: string; file_path?: string }
+              )
           );
         case 'telegram_send':
           return await this.executeTelegramSend(
@@ -2853,17 +3092,38 @@ export class GatewayToolExecutor {
           const uploadInput = input as DriveUploadInput;
           const state = this.getExecutionState();
           const sourceMessageRef = state.sourceMessageRef;
-          if (!sourceMessageRef?.startsWith('owner-event:')) {
+          const legacyOwnerEvent = sourceMessageRef?.startsWith('owner-event:') === true;
+          if (!legacyOwnerEvent && !this.ownerActionEffectLedger) {
             return {
               success: true,
               result: asUntrustedDriveEvidence(await this.driveTools.upload(uploadInput)),
             };
           }
 
-          const effect = this.requireOwnerEventEffect(uploadInput.effect_key, 'drive_upload');
-          const ledger = this.requireOwnerEventEffectLedger();
-          const occurrence = `${sourceMessageRef}:drive:${effect.actionKey}`;
+          const requestSha256 = createHash('sha256')
+            .update(
+              JSON.stringify([
+                uploadInput.localPath,
+                uploadInput.folderId,
+                uploadInput.fileName ?? null,
+                uploadInput.destinationCapability ?? null,
+              ])
+            )
+            .digest('hex');
+          const context = legacyOwnerEvent ? null : await this.requireOwnerActionContext();
+          const effect = legacyOwnerEvent
+            ? this.requireOwnerEventEffect(uploadInput.effect_key, 'drive_upload')
+            : { batchId: 0, actionKey: `drive:${uploadInput.effect_key ?? requestSha256}` };
+          const ledger = context
+            ? this.ownerEffectPort(context)
+            : this.requireOwnerEventEffectLedger();
+          const occurrence = context
+            ? `${context.ownerScope}:${context.occurrenceKey}:drive:${effect.actionKey}`
+            : `${sourceMessageRef}:drive:${effect.actionKey}`;
           let reservation = ledger.inspect(effect.batchId, effect.actionKey, 'drive_upload');
+          if (context && reservation && reservation.intent.requestSha256 !== requestSha256) {
+            throw new Error('Drive action key was already reserved for a different upload request');
+          }
           if (reservation?.state === 'confirmed') {
             if (!reservation.result) {
               throw new Error('Confirmed Drive upload is missing its durable result');
@@ -2877,6 +3137,7 @@ export class GatewayToolExecutor {
             reservation = ledger.begin(effect.batchId, effect.actionKey, 'drive_upload', {
               folderId: preparation.prepared.folderId,
               fileName: preparation.prepared.fileName,
+              ...(context ? { requestSha256 } : {}),
             });
             if (reservation.state === 'confirmed') {
               if (!reservation.result) {
@@ -2934,8 +3195,10 @@ export class GatewayToolExecutor {
         case 'os_get_config':
           return await this.executeGetConfig(input as GetConfigInput);
         case 'webchat_send':
-          return await this.executeWebchatSend(
-            input as { message?: string; file_path?: string } // session_id omitted: all files use shared outbound dir
+          return await this.executeOwnerWorkspaceEffect(
+            'webchat_send',
+            input as Record<string, unknown>,
+            () => this.executeWebchatSend(input as { message?: string; file_path?: string })
           );
         // Code-Act sandbox execution
         case 'code_act':
@@ -3086,23 +3349,28 @@ export class GatewayToolExecutor {
               false
             );
           }
-          if (this.getExecutionState().temporalWorkContext) {
-            const slotNames = Object.keys(slotsInput);
-            if (
-              slotNames.length !== 1 ||
-              slotNames[0] !== 'pipeline' ||
-              typeof slotsInput.pipeline !== 'string'
-            ) {
-              throw new AgentError(
-                'Temporal report_publish accepts exactly the host-derived pipeline slot',
-                'TOOL_ERROR',
-                undefined,
-                false
-              );
-            }
+          const basisRevision = (input as { basis_revision?: unknown }).basis_revision;
+          if (
+            basisRevision !== undefined &&
+            basisRevision !== null &&
+            (typeof basisRevision !== 'string' ||
+              !basisRevision.trim() ||
+              basisRevision !== basisRevision.trim())
+          ) {
+            throw new AgentError(
+              'report_publish basis_revision must be a canonical task basis from board_read',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
           }
           if (this.reportPublisher) {
-            const publication = this.reportPublisher(slotsInput);
+            const publication =
+              basisRevision === undefined
+                ? this.reportPublisher(slotsInput)
+                : this.reportPublisher(slotsInput, {
+                    basisRevision: basisRevision as string | null,
+                  });
             // Backward compatibility: older injected publishers return void
             // or the exact changed slot array. Production distinguishes slots
             // accepted as present from slots whose HTML actually changed.
@@ -3483,18 +3751,28 @@ export class GatewayToolExecutor {
         }
         case 'wiki_read': {
           const wikiAuthority = this.getExecutionState().wikiTaskRange;
-          if (!wikiAuthority || wikiAuthority.ownerDate === null) {
-            throw new AgentError(
-              'wiki_read requires a host-issued wiki workorder ownerDate',
-              'WORKORDER_SUPERSEDED',
-              undefined,
-              false
-            );
-          }
           if (!this.obsidianVaultPath) {
             throw new AgentError('Wiki vault path not configured', 'TOOL_ERROR', undefined, false);
           }
           try {
+            if (!wikiAuthority) {
+              const readInput = input as {
+                paths?: unknown;
+                content_offset?: unknown;
+                content_limit?: unknown;
+                content_versions?: Record<string, string | null>;
+              };
+              return {
+                success: true,
+                ...readWikiPages({
+                  root: this.obsidianVaultPath,
+                  paths: readInput.paths,
+                  contentOffset: readInput.content_offset,
+                  contentLimit: readInput.content_limit,
+                  contentVersions: readInput.content_versions,
+                }),
+              } as GatewayToolResult;
+            }
             const attemptId = this.getExecutionState().workorderAttemptId;
             if (!Number.isSafeInteger(attemptId) || (attemptId as number) < 1) {
               throw new Error('wiki_read requires a host-issued workorder attempt');
@@ -3510,7 +3788,7 @@ export class GatewayToolExecutor {
             }
             const paths = Array.isArray(readInput.paths) ? readInput.paths : [];
             for (const rawPath of paths) {
-              const path = assertAllowedWikiWorkorderPath(rawPath, wikiAuthority.ownerDate);
+              const path = normalizeWikiRelativePath(rawPath);
               const key = this.wikiReadCoverageKey(attemptId as number, path);
               const prior = this.wikiReadCoverage.get(key);
               if ((requestedOffset as number) === 0) {
@@ -3523,10 +3801,19 @@ export class GatewayToolExecutor {
             }
             const result = readWikiPages({
               root: this.obsidianVaultPath,
-              ownerDate: wikiAuthority.ownerDate,
               paths: readInput.paths,
               contentOffset: readInput.content_offset,
               contentLimit: readInput.content_limit,
+              contentVersions: Object.fromEntries(
+                paths.map((rawPath) => {
+                  const path = normalizeWikiRelativePath(rawPath);
+                  return [
+                    path,
+                    this.wikiReadCoverage.get(this.wikiReadCoverageKey(attemptId as number, path))
+                      ?.contentVersion ?? null,
+                  ];
+                })
+              ),
             });
             for (const page of result.pages) {
               const key = this.wikiReadCoverageKey(attemptId as number, page.path);
@@ -3885,19 +4172,36 @@ export class GatewayToolExecutor {
             };
           }
         }
+        case 'task_external_candidates': {
+          if (!this.taskLedger) {
+            throw new Error('Task ledger not configured');
+          }
+          const raw = input as { event_ids?: unknown };
+          if (
+            !Array.isArray(raw.event_ids) ||
+            raw.event_ids.length < 1 ||
+            raw.event_ids.length > 20 ||
+            raw.event_ids.some((id) => typeof id !== 'string' || !id.trim() || id !== id.trim())
+          ) {
+            throw new Error('task_external_candidates requires 1-20 observed event_ids');
+          }
+          const context = await this.requireOwnerActionContext();
+          const adapter = this.connectorEventAdapter ?? (await getContextPacketLookupAdapter());
+          const result = attestOwnerExternalLifecycleCandidates({
+            eventIds: raw.event_ids as string[],
+            context,
+            ledger: this.taskLedger,
+            getAdapter: () =>
+              adapter as unknown as import('../operator/external-lifecycle-discovery.js').ConnectorEventAdapter,
+            privateConnectorPolicy: this.privateConnectorPolicy,
+            rawConnectorScope: this.getExecutionState().envelope!.scope.raw_connectors,
+            isPartitionVisible: this.currentOwnerPartitionVisibility(),
+          });
+          return { success: true, ...result } as GatewayToolResult;
+        }
         case 'task_external_bind': {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
-          }
-          const state = this.getExecutionState();
-          const attemptId = state.workorderAttemptId;
-          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
-            throw new AgentError(
-              'task_external_bind requires a trusted claimed board attempt',
-              'WORKORDER_SUPERSEDED',
-              undefined,
-              false
-            );
           }
           try {
             validateExternalLifecycleDecision('binding', input);
@@ -3909,11 +4213,17 @@ export class GatewayToolExecutor {
               false
             );
           }
-          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
+          const source = await this.externalCandidateSource(input.candidate_id);
+          const attemptId =
+            source.kind === 'board' ? source.attemptId : source.context.workOrderAttemptId;
+          const modelRunId =
+            source.kind === 'owner_run'
+              ? source.context.modelRunId
+              : this.getExecutionState().modelRunId!;
           let candidate;
           try {
-            candidate = this.taskLedger.loadBoardCandidate(
-              attemptId,
+            candidate = this.taskLedger.loadExternalCandidate(
+              source,
               input.candidate_id,
               'binding'
             );
@@ -3927,8 +4237,19 @@ export class GatewayToolExecutor {
               false
             );
           }
+          if (
+            this.getExecutionState().envelope &&
+            !this.currentOwnerPartitionVisibility()({
+              connector: candidate.connector,
+              channel: candidate.channelPartition,
+            })
+          ) {
+            throw new Error(
+              'External candidate source is no longer visible under the current owner grant'
+            );
+          }
           const receipt = this.taskLedger.applyExternalBindingDecision(
-            attemptId,
+            source,
             input as ExternalBindingToolInput,
             {
               runId: modelRunId,
@@ -3949,16 +4270,6 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
-          const state = this.getExecutionState();
-          const attemptId = state.workorderAttemptId;
-          if (attemptId === undefined || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
-            throw new AgentError(
-              'task_lifecycle_reconcile requires a trusted claimed board attempt',
-              'WORKORDER_SUPERSEDED',
-              undefined,
-              false
-            );
-          }
           try {
             validateExternalLifecycleDecision('lifecycle', input);
           } catch (error) {
@@ -3969,11 +4280,17 @@ export class GatewayToolExecutor {
               false
             );
           }
-          const modelRunId = await this.requireExternalLifecycleModelRun(attemptId);
+          const source = await this.externalCandidateSource(input.candidate_id);
+          const attemptId =
+            source.kind === 'board' ? source.attemptId : source.context.workOrderAttemptId;
+          const modelRunId =
+            source.kind === 'owner_run'
+              ? source.context.modelRunId
+              : this.getExecutionState().modelRunId!;
           let candidate;
           try {
-            candidate = this.taskLedger.loadBoardCandidate(
-              attemptId,
+            candidate = this.taskLedger.loadExternalCandidate(
+              source,
               input.candidate_id,
               'lifecycle'
             );
@@ -3987,8 +4304,19 @@ export class GatewayToolExecutor {
               false
             );
           }
+          if (
+            this.getExecutionState().envelope &&
+            !this.currentOwnerPartitionVisibility()({
+              connector: candidate.connector,
+              channel: candidate.channelPartition,
+            })
+          ) {
+            throw new Error(
+              'External candidate source is no longer visible under the current owner grant'
+            );
+          }
           const receipt = this.taskLedger.applyExternalLifecycleDecision(
-            attemptId,
+            source,
             input as ExternalLifecycleReconcileToolInput,
             {
               runId: modelRunId,
@@ -4044,23 +4372,45 @@ export class GatewayToolExecutor {
               false
             );
           }
-          return {
-            success: true,
-            task: serializeTaskToolRecord(
-              // The run id comes from trusted execution state, never from the tool call:
-              // an agent that can name its own run in the effect ledger can sign someone
-              // else's work with it.
-              this.taskLedger.create(input as never, {
-                runId: this.getExecutionState().modelRunId ?? null,
-                workOrderAttemptId: this.getExecutionState().workorderAttemptId,
-                requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
-                causeEventIds: this.getExecutionState().causeEventIds,
-                causeKind:
-                  this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
-              })
-            ),
-          };
+          const { creation_key: creationKey, ...taskInput } = rawTaskCreate;
+          const create = () =>
+            this.taskLedger!.create(taskInput as never, {
+              runId: this.getExecutionState().modelRunId ?? null,
+              workOrderAttemptId: this.getExecutionState().workorderAttemptId,
+              requiresExpectedRevision: this.getExecutionState().workorderAttemptId !== undefined,
+              causeEventIds: this.getExecutionState().causeEventIds,
+              causeKind: this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
+            });
+          if (this.ownerActionEffectLedger) {
+            if (
+              typeof creationKey !== 'string' ||
+              !creationKey.trim() ||
+              creationKey.length > 200
+            ) {
+              throw new AgentError(
+                'task_create requires creation_key: a stable name for this logical task within the occurrence; reuse it on retry.',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+            const context = await this.requireOwnerActionContext();
+            const receipt = this.ownerActionEffectLedger.atomic(
+              context,
+              `task:${creationKey}`,
+              'task_create',
+              taskInput,
+              () => ({ taskId: create().id })
+            );
+            const task = this.taskLedger.getById(Number(receipt.taskId));
+            if (!task) {
+              throw new Error('Created task receipt references a missing task');
+            }
+            return { success: true, task: serializeTaskToolRecord(task) };
+          }
+          return { success: true, task: serializeTaskToolRecord(create()) };
         }
+
         case 'task_reclassify': {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
@@ -4159,14 +4509,6 @@ export class GatewayToolExecutor {
             );
           }
           if (Object.prototype.hasOwnProperty.call(rawTaskUpdate, 'completion_criteria')) {
-            if (this.getExecutionState().source === 'owner-event') {
-              throw new AgentError(
-                'task_update completion_criteria is unavailable on owner-event turns; full Board maintenance or the owner conversation owns qualification',
-                'TOOL_ERROR',
-                undefined,
-                false
-              );
-            }
             const criteria = rawTaskUpdate.completion_criteria;
             if (
               typeof criteria !== 'string' ||
@@ -4248,6 +4590,15 @@ export class GatewayToolExecutor {
             const selectedRaw = parsed.selected_evidence?.find(
               (item) => item.ref?.kind === 'raw' && item.ref.raw_id === reviewAnchorRef
             )?.ref;
+            if (!selectedRaw) {
+              return {
+                success: false,
+                code: 'review_anchor_not_selected',
+                error: 'The review anchor is not raw evidence selected in this context packet.',
+                next_action:
+                  'Read relevant raw evidence progressively and use a context packet that selects its actual raw_id. Do not guess an event ID or retry the same packet.',
+              } as GatewayToolResult;
+            }
             const task = this.taskLedger.getById(id);
             const connector = selectedRaw?.connector;
             const channelId = selectedRaw?.channel_id;
@@ -4255,18 +4606,34 @@ export class GatewayToolExecutor {
               typeof connector === 'string' && typeof channelId === 'string'
                 ? `${connector}:${channelId}`
                 : null;
-            if (!task || !sourceChannel || task.sourceChannel !== sourceChannel) {
+            if (!task || !sourceChannel) {
               throw new AgentError(
-                'task_update review anchor is outside the task source boundary',
+                'task_update review anchor has no verified source identity',
                 'TOOL_ERROR',
                 undefined,
                 false
               );
             }
-            const adapter =
-              (await getContextPacketLookupAdapter()) as ContextPacketLookupAdapter & {
-                prepare(sql: string): { get(...params: unknown[]): unknown };
-              };
+            const visible = this.currentOwnerPartitionVisibility();
+            const taskSourceSeparator = task.sourceChannel?.indexOf(':') ?? -1;
+            if (
+              !visible({ connector: connector as string, channel: channelId as string }) ||
+              (task.sourceChannel &&
+                (taskSourceSeparator < 1 ||
+                  !visible({
+                    connector: task.sourceChannel.slice(0, taskSourceSeparator),
+                    channel: task.sourceChannel.slice(taskSourceSeparator + 1),
+                  })))
+            ) {
+              return {
+                success: false,
+                code: 'review_source_not_authorized',
+                error:
+                  'Current owner grants do not authorize the task source and review evidence source.',
+              } as GatewayToolResult;
+            }
+            const adapter = (this.connectorEventAdapter ??
+              (await getContextPacketLookupAdapter())) as unknown as import('../operator/external-lifecycle-discovery.js').ConnectorEventAdapter;
             const anchor = adapter
               .prepare(
                 `SELECT source_connector, channel,
@@ -4275,7 +4642,7 @@ export class GatewayToolExecutor {
                   WHERE event_index_id = ?
                   LIMIT 1`
               )
-              .get(reviewAnchorRef) as
+              .all(reviewAnchorRef)[0] as
               | { source_connector: unknown; channel: unknown; source_timestamp_ms: unknown }
               | undefined;
             if (
@@ -4417,8 +4784,18 @@ export class GatewayToolExecutor {
             (effectInput.outcome === 'deferred'
               ? Array.isArray(packet.source_refs) &&
                 packet.source_refs.length > 0 &&
-                !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow)
-              : !temporalPacketReferencesBoundSource(context, packet.source_refs, reviewWindow))
+                !temporalPacketReferencesBoundSource(
+                  context,
+                  packet.source_refs,
+                  reviewWindow,
+                  this.temporalCorroborationVisible
+                )
+              : !temporalPacketReferencesBoundSource(
+                  context,
+                  packet.source_refs,
+                  reviewWindow,
+                  this.temporalCorroborationVisible
+                ))
           ) {
             throw new AgentError(
               'task_temporal_reconcile context packet is not bound to the active task source',
@@ -4592,6 +4969,82 @@ export class GatewayToolExecutor {
     }
   }
 
+  private async executeOwnerWorkspaceEffect(
+    kind: 'Write' | 'Bash' | 'discord_send' | 'slack_send' | 'webchat_send' | 'obsidian',
+    intent: Record<string, unknown>,
+    execute: () => Promise<{
+      success: boolean;
+      output?: string;
+      error?: string;
+      effectStarted?: false;
+    }>
+  ): Promise<{ success: boolean; output?: string; error?: string; effectStarted?: false }> {
+    const ledger = this.ownerActionEffectLedger;
+    if (!ledger) {
+      try {
+        const { effectStarted: _notStarted, ...result } = await execute();
+        return result;
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    const context = await this.requireOwnerActionContext();
+    const digest = createHash('sha256').update(canonicalOwnerActionJson(intent)).digest('hex');
+    const actionKey = `${kind}:${digest}`;
+    const reserved = ledger.begin(context, actionKey, kind, { inputSha256: digest });
+    if (reserved.state === 'confirmed') {
+      return {
+        success: true,
+        output:
+          'This exact action already completed in this occurrence; it was not executed again.',
+      };
+    }
+    if (reserved.state !== 'execute') {
+      throw new AgentError(
+        'Prior workspace effect needs reconciliation before replay',
+        'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        undefined,
+        false
+      );
+    }
+    try {
+      const result = await execute();
+      if (!result.success && result.effectStarted === false) {
+        ledger.releaseUnstarted(context, actionKey, kind);
+        const { effectStarted: _notStarted, ...failure } = result;
+        return failure;
+      }
+      if (!result.success) {
+        throw new Error('Workspace effect returned failure; partial effects may exist');
+      }
+      ledger.confirm(context, actionKey, kind, { success: true });
+      return result;
+    } catch (error) {
+      // A spawn failure proves the child never ran. A nonzero exit does NOT:
+      // a command may write data before exiting with an error.
+      const spawnError = error as { code?: unknown; syscall?: unknown };
+      if (
+        (kind === 'Bash' || kind === 'obsidian') &&
+        spawnError.code === 'ENOENT' &&
+        typeof spawnError.syscall === 'string' &&
+        spawnError.syscall.startsWith('spawn')
+      ) {
+        ledger.releaseUnstarted(context, actionKey, kind);
+        return {
+          success: false,
+          error: 'Executable or working directory is unavailable; no process started.',
+        };
+      }
+      ledger.markUnknown(context, actionKey, kind, 'workspace effect did not settle successfully');
+      throw new AgentError(
+        'Workspace effect outcome requires reconciliation',
+        'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        error instanceof Error ? error : undefined,
+        false
+      );
+    }
+  }
+
   /**
    * Execute Write tool - Write content to a file
    * Checks path permissions based on current AgentContext
@@ -4629,14 +5082,16 @@ export class GatewayToolExecutor {
       }
     }
 
-    try {
-      const dir = dirname(expandedPath);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(expandedPath, content, 'utf-8');
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Failed to write file: ${err}` };
-    }
+    return this.executeOwnerWorkspaceEffect(
+      'Write',
+      { path: resolve(expandedPath), content },
+      async () => {
+        const dir = dirname(expandedPath);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(expandedPath, content, 'utf-8');
+        return { success: true };
+      }
+    );
   }
 
   /**
@@ -4767,36 +5222,25 @@ export class GatewayToolExecutor {
       }
     }
 
-    // Handle restart: deferred restart (agent survives to respond, service restarts after 3s)
-    const restartPattern = /systemctl\s+--user\s+restart\s+mama-os/i;
-    if (restartPattern.test(command)) {
-      const child = spawn('bash', ['-c', 'sleep 3 && systemctl --user restart mama-os'], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
-      return {
-        success: true,
-        output: 'mama-os restart will execute in 3 seconds. Current session will be terminated.',
-      };
-    }
-
-    try {
+    return this.executeOwnerWorkspaceEffect('Bash', { command, cwd: resolve(cwd) }, async () => {
+      // A deferred restart is still a non-replayable shell effect.
+      const restartPattern = /systemctl\s+--user\s+restart\s+mama-os/i;
+      if (restartPattern.test(command)) {
+        const child = spawn('bash', ['-c', 'sleep 3 && systemctl --user restart mama-os'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+        return { success: true, output: 'mama-os restart will execute in 3 seconds.' };
+      }
       const output = execSync(command, {
-        cwd: workdir || process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'),
+        cwd,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 60000,
       });
       return { success: true, output };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
-      return {
-        success: false,
-        error: `Command failed: ${err.message}`,
-        output: err.stdout || err.stderr,
-      };
-    }
+    });
   }
 
   /**
@@ -4808,15 +5252,15 @@ export class GatewayToolExecutor {
     message?: string;
     image_path?: string;
     file_path?: string;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; effectStarted?: false }> {
     const { channel_id, message, image_path, file_path } = input;
 
     if (!channel_id) {
-      return { success: false, error: 'channel_id is required' };
+      return { success: false, effectStarted: false, error: 'channel_id is required' };
     }
 
     if (!this.discordGateway) {
-      return { success: false, error: 'Discord gateway not configured' };
+      return { success: false, effectStarted: false, error: 'Discord gateway not configured' };
     }
 
     try {
@@ -4828,7 +5272,11 @@ export class GatewayToolExecutor {
       } else if (message) {
         await this.discordGateway.sendMessage(channel_id, message);
       } else {
-        return { success: false, error: 'Either message, file_path, or image_path is required' };
+        return {
+          success: false,
+          effectStarted: false,
+          error: 'Either message, file_path, or image_path is required',
+        };
       }
 
       return { success: true };
@@ -4844,15 +5292,15 @@ export class GatewayToolExecutor {
     channel_id: string;
     message?: string;
     file_path?: string;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; effectStarted?: false }> {
     const { channel_id, message, file_path } = input;
 
     if (!channel_id) {
-      return { success: false, error: 'channel_id is required' };
+      return { success: false, effectStarted: false, error: 'channel_id is required' };
     }
 
     if (!this.slackGateway) {
-      return { success: false, error: 'Slack gateway not configured' };
+      return { success: false, effectStarted: false, error: 'Slack gateway not configured' };
     }
 
     try {
@@ -4861,7 +5309,11 @@ export class GatewayToolExecutor {
       } else if (message) {
         await this.slackGateway.sendMessage(channel_id, message);
       } else {
-        return { success: false, error: 'Either message or file_path is required' };
+        return {
+          success: false,
+          effectStarted: false,
+          error: 'Either message or file_path is required',
+        };
       }
 
       return { success: true };
@@ -4891,10 +5343,10 @@ export class GatewayToolExecutor {
     }
 
     const sourceMessageRef = this.getExecutionState().sourceMessageRef;
-    const ownerEvent = sourceMessageRef?.startsWith('owner-event:') === true;
+    const legacyOwnerEvent = sourceMessageRef?.startsWith('owner-event:') === true;
+    const ownerEvent = legacyOwnerEvent || this.ownerActionEffectLedger !== null;
     let ownerEffect: { batchId: number; actionKey: string } | null = null;
-    let ownerLedger: import('../operator/owner-event-effects.js').OwnerEventEffectLedger | null =
-      null;
+    let ownerLedger: OwnerEffectLedgerPort | null = null;
     let ownerIntent: OwnerEventTelegramIntentV1 | null = null;
     let idempotencyKey: string | undefined;
     // TG-06 owner-event delivery state:
@@ -4902,9 +5354,26 @@ export class GatewayToolExecutor {
     //                      `-> error/missing receipt -> unknown -> reconcile-only
     try {
       if (ownerEvent) {
-        ownerEffect = this.requireOwnerEventEffect(delivery_key, 'telegram_send');
-        ownerLedger = this.requireOwnerEventEffectLedger();
-        idempotencyKey = `${sourceMessageRef}:telegram:${delivery_key}`;
+        if (legacyOwnerEvent) {
+          ownerEffect = this.requireOwnerEventEffect(delivery_key, 'telegram_send');
+          ownerLedger = this.requireOwnerEventEffectLedger();
+          idempotencyKey = `${sourceMessageRef}:telegram:${delivery_key}`;
+        } else {
+          const context = await this.requireOwnerActionContext();
+          const identity = [
+            sourceMessageRef ?? context.occurrenceKey,
+            chat_id,
+            message ?? null,
+            file_path ?? null,
+            sticker_emotion ?? null,
+          ];
+          if (delivery_key !== undefined) {
+            identity.push(delivery_key);
+          }
+          idempotencyKey = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+          ownerEffect = { batchId: 0, actionKey: `telegram:${delivery_key ?? idempotencyKey}` };
+          ownerLedger = this.ownerEffectPort(context);
+        }
         const existing = ownerLedger.inspect(
           ownerEffect.batchId,
           ownerEffect.actionKey,
@@ -4939,9 +5408,25 @@ export class GatewayToolExecutor {
         );
         if (reservation.state === 'confirmed') return { success: true };
         if (reservation.state === 'reconcile') {
+          const variants: OwnerEventTelegramVariant[] =
+            ownerIntent.variant === 'image' ? ['image', 'file'] : [ownerIntent.variant];
+          for (const variant of variants) {
+            const receipt = this.telegramGateway.readOutboundDeliveryReceipt?.(
+              idempotencyKey,
+              variant
+            );
+            if (isExactTelegramDeliveryReceipt(receipt, idempotencyKey, variant)) {
+              ownerLedger.confirm(ownerEffect.batchId, ownerEffect.actionKey, 'telegram_send', {
+                version: 1,
+                ...receipt,
+              });
+              return { success: true };
+            }
+          }
           return {
             success: false,
-            error: 'owner-event Telegram effect is reconcile-only; automatic replay is disabled',
+            error:
+              'Telegram delivery outcome is unconfirmed; reconcile the existing delivery before sending again.',
           };
         }
       }
@@ -5223,19 +5708,25 @@ export class GatewayToolExecutor {
    *
    * Note: session_id removed - all files route to shared outbound dir
    */
-  private async executeWebchatSend(input: {
+  private async executeWebchatSend(input: { message?: string; file_path?: string }): Promise<{
+    success: boolean;
     message?: string;
-    file_path?: string;
-  }): Promise<{ success: boolean; message?: string; outbound_path?: string; error?: string }> {
+    outbound_path?: string;
+    error?: string;
+    effectStarted?: false;
+  }> {
     const { message, file_path } = input;
 
     if (!message && !file_path) {
-      return { success: false, error: 'Either message or file_path is required' };
+      return {
+        success: false,
+        effectStarted: false,
+        error: 'Either message or file_path is required',
+      };
     }
 
     try {
       const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
-      mkdirSync(outboundDir, { recursive: true });
 
       if (file_path) {
         // Expand ~ to home directory
@@ -5247,7 +5738,7 @@ export class GatewayToolExecutor {
         // Check path permission based on role
         const pathPermission = this.checkPathPermission(expandedPath);
         if (!pathPermission.allowed) {
-          return { success: false, error: pathPermission.error };
+          return { success: false, effectStarted: false, error: pathPermission.error };
         }
 
         // Fallback security for contexts without path restrictions:
@@ -5261,19 +5752,21 @@ export class GatewayToolExecutor {
           if (rel.startsWith('..') || isAbsolute(rel)) {
             return {
               success: false,
+              effectStarted: false,
               error: `Access denied: Can only copy files from ${mamaDir}`,
             };
           }
         }
 
         if (!existsSync(expandedPath)) {
-          return { success: false, error: `File not found: ${expandedPath}` };
+          return { success: false, effectStarted: false, error: `File not found: ${expandedPath}` };
         }
 
         // Copy file to outbound directory with timestamp prefix
         const baseName = basename(expandedPath) || 'file';
         const outName = `${Date.now()}_${baseName}`;
         const outPath = join(outboundDir, outName);
+        mkdirSync(outboundDir, { recursive: true });
         copyFileSync(expandedPath, outPath);
 
         const viewerPath = `~/.mama/workspace/media/outbound/${outName}`;
@@ -5436,27 +5929,49 @@ export class GatewayToolExecutor {
       );
     }
 
-    try {
+    const invoke = async () => {
       const { stdout } = await execFileAsync('obsidian', cliArgs, {
         timeout: 15000,
         encoding: 'utf-8',
         maxBuffer: 1024 * 1024,
       });
-      return {
-        success: true,
-        data: { output: stdout.trim() },
-      } as GatewayToolResult;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('not enabled') || msg.includes('ENOENT') || msg.includes('not running')) {
-        return {
-          success: false,
-          error: 'Obsidian CLI unavailable (app not running). Use wiki_publish fallback.',
-        } as GatewayToolResult;
+      return { success: true, output: stdout.trim() };
+    };
+    const readCommands = new Set([
+      'read',
+      'daily:read',
+      'search',
+      'search:context',
+      'files',
+      'folders',
+      'vault',
+      'vaults',
+      'links',
+      'backlinks',
+      'properties',
+      'property:read',
+      'aliases',
+      'tags',
+    ]);
+    try {
+      const result = readCommands.has(command)
+        ? await invoke()
+        : await this.executeOwnerWorkspaceEffect(
+            'obsidian',
+            { command, args: args ?? {}, vault: this.obsidianVaultPath },
+            invoke
+          );
+      return result.success
+        ? ({ success: true, data: { output: result.output } } as GatewayToolResult)
+        : (result as GatewayToolResult);
+    } catch (error) {
+      if (error instanceof AgentError) {
+        throw error;
       }
       return {
         success: false,
-        error: `Obsidian CLI error: ${msg.substring(0, 500)}`,
+        error:
+          'Obsidian CLI unavailable or command failed; inspect the configured vault before retrying.',
       } as GatewayToolResult;
     }
   }
@@ -5878,7 +6393,10 @@ export class GatewayToolExecutor {
       // prefix and causeEventIds: the agent never restates what the host knows.
       if (temporalContext && this.taskLedger) {
         const boundTask = this.taskLedger.getById(temporalContext.taskId);
-        const rawChannel = boundTask?.sourceChannel ?? null;
+        const rawChannel =
+          (boundTask?.status === 'review'
+            ? (boundTask.reviewAnchorSourceChannel ?? boundTask.sourceChannel)
+            : boundTask?.sourceChannel) ?? null;
         // Trimmed: a whitespace-only event id is truthy but fails ref
         // normalization downstream - which would fail the WHOLE compile,
         // exactly what "strictly additive" forbids.
@@ -5956,7 +6474,8 @@ export class GatewayToolExecutor {
         !temporalPacketRawSourcesWithinBoundSource(
           temporalContext,
           result.packet.source_refs,
-          reviewWindow
+          reviewWindow,
+          this.temporalCorroborationVisible
         )
       ) {
         throw new Error('context_compile packet exceeds the active temporal task source');

@@ -11,6 +11,7 @@
  */
 
 import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { NativeEffectReplayBoundary, type NativeEffectObserver } from './native-effect-observer.js';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
@@ -712,9 +713,17 @@ export class AgentLoop {
   private readonly clineAllowAgentTeams: boolean;
   private readonly ownerRuntimeJournal: AgentLoopOptions['ownerRuntimeJournal'];
 
+  private readonly createNativeEffectObserver?: (
+    context: GatewayToolExecutionContext | null
+  ) => NativeEffectObserver | undefined;
+
   constructor(
     _oauthManager: OAuthManager | null,
-    options: AgentLoopOptions = {},
+    options: AgentLoopOptions & {
+      createNativeEffectObserver?: (
+        context: GatewayToolExecutionContext | null
+      ) => NativeEffectObserver | undefined;
+    } = {},
     _clientOptions?: ClaudeClientOptions,
     executorOptions?: GatewayToolExecutorOptions
   ) {
@@ -996,6 +1005,7 @@ export class AgentLoop {
     this.model = options.model!;
     this.onTurn = options.onTurn;
     this.onToolUse = options.onToolUse;
+    this.createNativeEffectObserver = options.createNativeEffectObserver;
     this.onTokenUsage = options.onTokenUsage;
     this.runTokenBudget =
       options.runTokenBudget && options.runTokenBudget > 0 ? options.runTokenBudget : 0;
@@ -1300,6 +1310,7 @@ export class AgentLoop {
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
     let ownedModelRunId: string | null = null;
     let ownedModelRunCommitted = false;
+    let nativeEffects = new NativeEffectReplayBoundary();
     const pendingBackgroundTasks: Promise<unknown>[] = [];
     const backgroundTasks: BackgroundTaskRegistry = {
       register(task: Promise<unknown>): void {
@@ -1465,6 +1476,10 @@ export class AgentLoop {
           backgroundTasks
         );
       }
+
+      nativeEffects = new NativeEffectReplayBoundary(
+        this.createNativeEffectObserver?.(toolExecutionContext)
+      );
 
       let nativeToolCallCount = 0;
       let nativeConsecutiveToolCalls = 0;
@@ -1777,9 +1792,11 @@ export class AgentLoop {
             ext?.onDelta?.(text);
           },
           onToolUse: (name: string, input: Record<string, unknown>) => {
+            nativeEffects.started(name, input);
             ext?.onToolUse?.(name, input);
           },
           onToolComplete: (name: string, toolUseId: string, isError: boolean) => {
+            nativeEffects.settled(name, toolUseId, isError);
             ext?.onToolComplete?.(name, toolUseId, isError);
           },
           onFinal: (finalResponse: PromptFinalResponse) => {
@@ -2054,11 +2071,16 @@ export class AgentLoop {
             'text content blocks must be non-empty'
           );
 
-          if (
+          const canRecoverSession =
             (isCodex && isCodexPolicyMismatch) ||
             (!isCodex &&
-              (isSessionNotFound || isSessionInUse || isPromptTooLong || isCorruptTranscript))
-          ) {
+              (isSessionNotFound || isSessionInUse || isPromptTooLong || isCorruptTranscript));
+          const nativeFailure = nativeEffects.failure(error, canRecoverSession);
+          if (nativeFailure !== error) {
+            throw nativeFailure;
+          }
+
+          if (canRecoverSession) {
             const reason = isCodexPolicyMismatch
               ? 'policy mismatch'
               : isSessionNotFound
@@ -2535,6 +2557,12 @@ export class AgentLoop {
           );
         }
       }
+      if (stoppedBy) {
+        // Budget interruption is returned structurally; keep admission uncertain.
+        nativeEffects.failure(new Error('Native run stopped by token budget'));
+      } else {
+        nativeEffects.finished();
+      }
       return result;
     } catch (error) {
       if (ownedModelRunId && !ownedModelRunCommitted) {
@@ -2549,7 +2577,7 @@ export class AgentLoop {
           );
         }
       }
-      throw error;
+      throw nativeEffects.failure(error);
     } finally {
       // Always release session lock, even on error
       // BUT only if we own the session (not passed by caller)

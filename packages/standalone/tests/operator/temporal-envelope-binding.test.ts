@@ -70,27 +70,27 @@ describe('workorder envelope scope', () => {
     privateConnectorPolicy: PRIVATE_POLICY,
   };
 
-  it('binds a temporal run to its task connector and channel', () => {
+  it('keeps owner-granted connectors while recording the temporal task channel', () => {
     const scope = workOrderEnvelopeScope({
       ...base,
       workKind: 'temporal',
       temporalBinding: { connector: 'chat', channel: 'C001' },
     });
 
-    expect(scope.raw_connectors).toEqual(['chat']);
-    expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'chat:C001' });
+    expect(scope.raw_connectors).toEqual(['chat', 'board']);
+    expect(scope.memory_scopes).not.toContainEqual({ kind: 'channel', id: 'chat:C001' });
   });
 
   // The check requires ZERO raw refs when the task names no channel, so the grant has to
   // be empty rather than merely narrow - "narrow" would still admit a ref.
-  it('gives a temporal run with no task channel no connector at all', () => {
+  it('keeps owner-granted connectors when a temporal task has no channel metadata', () => {
     const scope = workOrderEnvelopeScope({
       ...base,
       workKind: 'temporal',
       temporalBinding: null,
     });
 
-    expect(scope.raw_connectors).toEqual([]);
+    expect(scope.raw_connectors).toEqual(['chat', 'board']);
   });
 
   it('binds a board reconcile to the channel it judges, and nothing else', () => {
@@ -100,7 +100,7 @@ describe('workorder envelope scope', () => {
       temporalBinding: null,
       reconcileChannelKey: 'chat:C001',
     });
-    expect(reconcile.memory_scopes).toContainEqual({ kind: 'channel', id: 'chat:C001' });
+    expect(reconcile.memory_scopes).not.toContainEqual({ kind: 'channel', id: 'chat:C001' });
     expect(reconcile.memory_scopes).toContainEqual({
       kind: 'channel',
       id: 'operator:worker:board',
@@ -131,7 +131,7 @@ describe('workorder envelope scope', () => {
     expect(scope.memory_scopes).toContainEqual({ kind: 'channel', id: 'operator:worker:board' });
   });
 
-  it('TG-05/TG-06 removes Kagemusha from a generic wiki lane', () => {
+  it('TG-04 keeps owner-granted Kagemusha readable in a wiki stimulus', () => {
     const scope = workOrderEnvelopeScope({
       ...base,
       laneConnectors: ['trello', 'kagemusha'],
@@ -139,7 +139,7 @@ describe('workorder envelope scope', () => {
       temporalBinding: null,
     });
 
-    expect(scope.raw_connectors).toEqual(['trello']);
+    expect(scope.raw_connectors).toEqual(['trello', 'kagemusha']);
   });
 
   it.each(['board', 'memory-curation'] as const)(
@@ -160,7 +160,7 @@ describe('workorder envelope scope', () => {
 describe('the grant that scope produces', () => {
   // The property the packet check depends on: a bound temporal envelope can only read one
   // channel, so the packet cannot contain a ref the check would refuse.
-  it('narrows to exactly the task channel', () => {
+  it('preserves the owner grant while retaining task-channel selection metadata', () => {
     const scope = workOrderEnvelopeScope({
       projectId: '/w/project',
       laneConnectors: ['chat', 'board'],
@@ -174,7 +174,7 @@ describe('the grant that scope produces', () => {
         connectors: scope.raw_connectors,
         scopes: scope.memory_scopes,
       })
-    ).toEqual({ chat: ['C001'] });
+    ).toEqual({ chat: ['C001', 'C002'], board: ['b-1'] });
   });
 
   // The regression. A lane-wide envelope carries only `channel:operator:worker:temporal`,
@@ -200,7 +200,7 @@ describe('the grant that scope produces', () => {
 
   // A task bound to a channel the owner never configured reads nothing, rather than
   // falling back to the connector's other channels.
-  it('reads nothing when the task channel is not configured', () => {
+  it('keeps current grants without granting an unconfigured task channel', () => {
     const scope = workOrderEnvelopeScope({
       projectId: '/w/project',
       laneConnectors: ['chat'],
@@ -214,6 +214,6 @@ describe('the grant that scope produces', () => {
         connectors: scope.raw_connectors,
         scopes: scope.memory_scopes,
       })
-    ).toEqual({ chat: [] });
+    ).toEqual({ chat: ['C001', 'C002'] });
   });
 });

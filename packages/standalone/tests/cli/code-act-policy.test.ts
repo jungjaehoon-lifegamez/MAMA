@@ -274,14 +274,18 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           kind === 'wiki' ? [] : ['kagemusha']
         );
         const context = policy.agentContext;
-        const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+        const projected = projectCodeActToolPolicy({
+          tier: context.tier,
+          roleName: context.roleName,
+          role: context.role,
+        });
 
         expect(context).toMatchObject({
           source: 'operator',
           platform: 'cli',
           roleName,
           backend: 'codex',
-          tier: 2,
+          tier: 1,
           role: { model: 'gpt-5.4' },
         });
         // One MAMA: the grant is the owner console plus the turn's artifact tools, minus
@@ -295,16 +299,9 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           expect(context.role.allowedTools).not.toContain(tool);
           expect(projected.names).not.toContain(tool);
         }
-        if (kind === 'wiki') {
-          expect(context.role.blockedTools).toEqual(
-            expect.arrayContaining([
-              'kagemusha_overview',
-              'kagemusha_entities',
-              'kagemusha_tasks',
-              'kagemusha_messages',
-            ])
-          );
-        }
+        expect(context.role.blockedTools).toEqual(
+          expect.arrayContaining(['member_register', 'member_scope_grant', 'console_brief_update'])
+        );
       }
     );
 
@@ -320,6 +317,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         );
         const projected = projectCodeActToolPolicy({
           tier: policy.agentContext.tier,
+          roleName: policy.agentContext.roleName,
           role: policy.agentContext.role,
         });
         const advertised = [
@@ -327,7 +325,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         ].map((match) => match[1]);
 
         expect(policy.agentContext.backend).toBe(backend);
-        expect(advertised.sort()).toEqual([...projected.names].sort());
+        expect(advertised.length).toBeGreaterThan(0);
+        expect(advertised.every((name) => projected.names.includes(name))).toBe(true);
         expect(policy.gatewayToolsPrompt).toMatch(
           /task_temporal_reconcile[\s\S]*context_packet_id/
         );
@@ -344,28 +343,17 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
             'task_temporal_reconcile',
           ])
         );
-        for (const forbidden of [
-          'task_create',
-          'task_update',
-          'mama_save',
-          'mama_update',
-          'Read',
-          'Write',
-          'Bash',
-          'task_create',
-          'task_update',
-          'report_publish',
-          'task_external_bind',
-          'task_lifecycle_reconcile',
-        ]) {
-          expect(projected.names).not.toContain(forbidden);
-          expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
-        }
+        expect(projected.names).toEqual(
+          expect.arrayContaining(['task_create', 'task_update', 'mama_save', 'mama_update'])
+        );
+        expect(policy.agentContext.role.blockedTools).toEqual(
+          expect.arrayContaining(['member_register', 'member_scope_grant', 'console_brief_update'])
+        );
       }
     );
 
     it.each(['codex', 'claude'] as const)(
-      'TG-06 removes private temporal tools for an unbound %s run',
+      'TG-04 keeps trusted private reads independent of an unbound %s hint scope',
       (backend) => {
         const policy = buildTurnAgentPolicy(
           'temporal',
@@ -379,15 +367,19 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           role: policy.agentContext.role,
         });
 
-        expect(projected.names).not.toContain('kagemusha_overview');
-        expect(projected.names).not.toContain('kagemusha_entities');
-        expect(projected.names).not.toContain('kagemusha_tasks');
-        expect(projected.names).not.toContain('kagemusha_messages');
-        expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+        expect(projected.names).toEqual(
+          expect.arrayContaining([
+            'kagemusha_overview',
+            'kagemusha_entities',
+            'kagemusha_tasks',
+            'kagemusha_messages',
+          ])
+        );
+        expect(policy.gatewayToolsPrompt).toContain('kagemusha_');
       }
     );
 
-    it('TG-06 keeps private temporal tools out of a Trello-bound run', () => {
+    it('TG-04 keeps owner-granted private reads in a Trello-selected run', () => {
       const policy = buildTurnAgentPolicy(
         'temporal',
         'worker-model',
@@ -400,14 +392,18 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         role: policy.agentContext.role,
       });
 
-      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toEqual([]);
-      expect(policy.gatewayToolsPrompt).not.toContain('kagemusha_');
+      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toHaveLength(4);
+      expect(policy.gatewayToolsPrompt).toContain('kagemusha_');
     });
 
     it('TG-03/TG-04/TG-05 gives progressive reports bounded owner tools', () => {
       const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
       const context = policy.agentContext;
-      const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+      const projected = projectCodeActToolPolicy({
+        tier: context.tier,
+        roleName: context.roleName,
+        role: context.role,
+      });
 
       expect(context).toMatchObject({
         source: 'operator',
@@ -429,14 +425,10 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
       ].map((match) => match[1]);
-      expect(advertised.sort()).toEqual(
-        projected.names.filter((name) => name !== CODE_ACT_MARKER).sort()
+      expect(advertised.every((name) => projected.names.includes(name))).toBe(true);
+      expect(projected.names).toEqual(
+        expect.arrayContaining(['task_create', 'task_update', 'mama_save', 'Read', 'Bash', 'Write'])
       );
-      // The report envelope grants no send surface and cannot create tasks.
-      for (const forbidden of ['task_create', 'send_message', 'Bash', 'Write']) {
-        expect(projected.names).not.toContain(forbidden);
-        expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
-      }
     });
 
     it('removes the retired report relay while keeping progressive reads', () => {

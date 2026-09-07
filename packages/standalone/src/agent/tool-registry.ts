@@ -107,10 +107,10 @@ register({
 register({
   name: 'report_publish',
   description:
-    'Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.',
+    'Publish dashboard analysis as HTML. pipeline is a managed live task projection; change tasks instead. Supply the task basis actually used for analysis; omission means its basis is unknown.',
   category: 'os_monitoring',
   params:
-    'slots: { briefing?: html, action_required?: html, decisions?: html, pipeline?: html } -- partial maps allowed; only the given slots are updated',
+    'slots: { briefing?: html, action_required?: html, decisions?: html }, basis_revision? (currentBasisRevision observed through board_read when reading the analysis evidence; do not fetch a newer basis only to label old analysis current)',
 });
 register({
   name: 'board_read',
@@ -261,7 +261,8 @@ register({
   description:
     'Read up to 20 host-bound MAMA wiki pages by exact relative path with content versions.',
   category: 'os_monitoring',
-  params: 'paths: string[], content_offset?, content_limit?',
+  params:
+    'paths: string[] (configured MAMA wiki root), content_offset?, content_limit?, content_versions? (path to prior contentVersion; required for continuation)',
   inputSchema: {
     type: 'object',
     properties: {
@@ -273,6 +274,7 @@ register({
       },
       content_offset: { type: 'number', minimum: 0 },
       content_limit: { type: 'number', minimum: 1, maximum: 20000 },
+      content_versions: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
     },
     required: ['paths'],
     additionalProperties: false,
@@ -501,9 +503,16 @@ register({
   params: '(none)',
 });
 register({
+  name: 'task_external_candidates',
+  description:
+    'Discover and attest external task candidates from 1-20 observed event IDs under the current owner grant. Read relevant source events first; never invent IDs. Returns candidateId, taskRevision and evidence for bind/reconcile decisions.',
+  category: 'os_monitoring',
+  params: 'event_ids: string[] (1-20 actual connector event IDs)',
+});
+register({
   name: 'task_external_bind',
   description:
-    'Record bind or decline for one host-issued external-task binding candidate. Candidate identity and task authority are recovered from this claimed board run; do not supply task or event identifiers.',
+    'Record bind or decline for one host-issued external-task binding candidate. Candidate identity and task authority are recovered from the current owner run or its compatible Board attempt; do not supply task or event identifiers.',
   category: 'os_monitoring',
   params: 'candidate_id, decision (bind|decline), reason, expected_revision',
   inputSchema: {
@@ -521,7 +530,7 @@ register({
 register({
   name: 'task_lifecycle_reconcile',
   description:
-    'Apply or retain one host-issued external lifecycle candidate. Candidate identity, task, event, and proposed lifecycle state are recovered from this claimed board run.',
+    'Apply or retain one host-issued external lifecycle candidate. Candidate identity, task, event, and proposed lifecycle state are recovered from the current owner run or its compatible Board attempt.',
   category: 'os_monitoring',
   params: 'candidate_id, decision (apply|retain), reason, expected_revision',
   inputSchema: {
@@ -547,15 +556,15 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item on YOUR task board. Records and tasks are SEPARATE: only an owner conversation creates a task, and only for work with a concrete, finite completion condition. Connector observations, lessons, principles, aspirations ("열심히 살자") and open questions ("how should we manage X?") stay records/memory/decisions - do not create rows for them. `completion_criteria` is required, limited to 500 characters, and must name what would make this finished; a title alone is refused. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board. Records and tasks are SEPARATE: create a task only for authorized work with a concrete, finite completion condition, regardless of the input source. Connector observations, lessons, principles, aspirations ("\uc5f4\uc2ec\ud788 \uc0b4\uc790") and open questions ("how should we manage X?") stay records/memory/decisions - do not create rows for them. `creation_key` is a required stable logical task name within this occurrence; reuse it on retries and choose distinct keys for distinct tasks. `completion_criteria` is required, limited to 500 characters, and must name what would make this finished; a title alone is refused. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
-    'title (required), completion_criteria (required, concrete and finite), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
+    'title (required), creation_key (required, stable across retries), completion_criteria (required, concrete and finite), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
 });
 register({
   name: 'task_reclassify',
   description:
-    'Recorrect an EXISTING row on your task board with a named disposition, so a closed row says WHY it closed. completed_evidence: a current authoritative source explicitly reports completion. completed_no_issue: the work is finished - allowed only when the deadline/due_at has already passed and your check of every relevant source found no open issue. non_task_record: it was never a task, it is a record. non_task_memory: it was never a task and belongs in memory as a lesson/principle; this classification removes it from the active board but does not itself write memory, so use an available memory-write capability or leave the source for the curation turn. reopen: later feedback reopened the SAME row - allowed only from a terminal row, and it clears the stale deadline. Requires the exact revision you read and a preserved reason. Board runs can target only host-issued candidate IDs; owner-event runs stay inside their causal source channel.',
+    'Recorrect an EXISTING row on your task board with a named disposition, so a closed row says WHY it closed. completed_evidence: a current authoritative source explicitly reports completion. completed_no_issue: the work is finished - allowed only when the deadline/due_at has already passed and your check of every relevant source found no open issue. non_task_record: it was never a task, it is a record. non_task_memory: it was never a task and belongs in memory as a lesson/principle; this classification removes it from the active board but does not itself write memory, so use an available memory-write capability or leave the source for the curation turn. reopen: later feedback reopened the SAME row - allowed only from a terminal row, and it clears the stale deadline. Requires the exact revision you read and a preserved reason. Current owner grants and the exact task revision remain required across input sources.',
   category: 'os_monitoring',
   params:
     'id (required), disposition (required: completed_evidence|completed_no_issue|non_task_record|non_task_memory|reopen), reason (required), expected_revision (required)',

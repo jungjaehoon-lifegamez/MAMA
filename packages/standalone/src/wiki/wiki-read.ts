@@ -125,10 +125,11 @@ export function readWikiPageVersion(root: string, normalizedPath: string): strin
 
 export function readWikiPages(input: {
   root: string;
-  ownerDate: string;
+  ownerDate?: string;
   paths: unknown;
   contentOffset?: unknown;
   contentLimit?: unknown;
+  contentVersions?: Record<string, string | null>;
 }): WikiReadResult {
   if (!Array.isArray(input.paths) || input.paths.length === 0) {
     throw new Error('wiki_read requires a non-empty paths array');
@@ -155,13 +156,19 @@ export function readWikiPages(input: {
   let totalChars = 0;
   let truncatedAny = false;
   for (const raw of input.paths) {
-    const normalized = assertAllowedWikiWorkorderPath(raw, input.ownerDate);
+    const normalized =
+      input.ownerDate === undefined
+        ? normalizeWikiRelativePath(raw)
+        : assertAllowedWikiWorkorderPath(raw, input.ownerDate);
     if (seen.has(normalized)) {
       continue;
     }
     seen.add(normalized);
     const real = resolveInsideRoot(input.root, normalized);
     if (real === null) {
+      if ((contentOffset as number) > 0 && input.ownerDate === undefined) {
+        throw new Error(`wiki_read page ${normalized} disappeared; restart from offset 0`);
+      }
       pages.push({
         path: normalized,
         exists: false,
@@ -175,6 +182,16 @@ export function readWikiPages(input: {
       continue;
     }
     const full = readFileSync(real, 'utf-8');
+    const contentVersion = wikiContentVersion(full);
+    if (
+      (contentOffset as number) > 0 &&
+      input.ownerDate === undefined &&
+      input.contentVersions?.[normalized] !== contentVersion
+    ) {
+      throw new Error(
+        `wiki_read page ${normalized} requires its unchanged content_versions entry; restart from offset 0`
+      );
+    }
     const offset = Math.min(contentOffset as number, full.length);
     const remaining = Math.max(0, WIKI_READ_MAX_TOTAL_CHARS - totalChars);
     const limit = Math.min(contentLimit as number, remaining);
@@ -190,7 +207,7 @@ export function readWikiPages(input: {
       content,
       // The version always hashes the FULL file so a truncated read still names the exact
       // bytes a later publish must expect.
-      contentVersion: wikiContentVersion(full),
+      contentVersion,
       totalContentChars: full.length,
       contentOffset: offset,
       nextContentOffset,

@@ -235,7 +235,6 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
   describe('Acceptance Criteria #5: revision and source-bound authority', () => {
     it('requires revision and reason when a Board run qualifies a legacy task', () => {
       const task = ledger.create({ title: 'real legacy work' });
-      const unrelated = ledger.create({ title: 'unrelated legacy work' });
       const board = ledger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: 'board:qualify:1',
@@ -267,17 +266,173 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
           origin
         ).completionCriteria
       ).toBe('artifact delivered');
+    });
+
+    it('qualifies a discovered owner row outside the scheduler hint page (owner authority)', () => {
+      // reclassificationCandidates is a host SELECTION hint for bounded reading,
+      // not the owner's authorization. A row MAMA discovered through paged
+      // reads is still the owner's row: the current revision and a plain
+      // reason remain required, the hint page does not.
+      const hinted = ledger.create({ title: 'hinted legacy work' });
+      const discovered = ledger.create({ title: 'discovered legacy work' });
+      const board = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:qualify:outside-hints',
+        input: {
+          mode: 'full',
+          reclassificationCandidates: [{ taskId: hinted.id, taskRevision: hinted.revision }],
+        },
+      });
+      ledger.claimNextWorkOrder();
+      const origin = { workOrderAttemptId: board.id, requiresExpectedRevision: true };
+      expect(
+        ledger.update(
+          discovered.id,
+          {
+            completion_criteria: 'discovered artifact delivered',
+            expected_revision: discovered.revision,
+            latest_event: 'paged read showed this is finite delivery work',
+          },
+          origin
+        ).completionCriteria
+      ).toBe('discovered artifact delivered');
+      // CAS is untouched by the wider selection: a stale read still fails.
       expect(() =>
         ledger.update(
-          unrelated.id,
+          discovered.id,
           {
-            completion_criteria: 'unrelated artifact delivered',
-            expected_revision: unrelated.revision,
-            latest_event: 'connector text named another task',
+            completion_criteria: 'rewritten from a stale read',
+            expected_revision: discovered.revision,
+            latest_event: 'stale',
           },
           origin
         )
-      ).toThrow(/outside this host-issued qualification candidate set/i);
+      ).toThrow(/revision/i);
+    });
+
+    it('qualifies and reclassifies under a non-Board active attempt with the same CAS rules', () => {
+      // The work kind selects scheduling metadata, not owner authority. A live
+      // non-Board attempt is validated for currency exactly like a Board one.
+      const legacy = ledger.create({ title: 'legacy row seen during wiki work' });
+      const record = ledger.create({ title: 'record-shaped row seen during wiki work' });
+      const wiki = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:owner-decision',
+        input: { batchId: 'b-1', events: ['boot'] },
+      });
+      ledger.claimNextWorkOrder();
+      const origin = { workOrderAttemptId: wiki.id, requiresExpectedRevision: true };
+      expect(() =>
+        ledger.update(legacy.id, { completion_criteria: 'artifact delivered' }, origin)
+      ).toThrow(/expected_revision/);
+      expect(
+        ledger.update(
+          legacy.id,
+          {
+            completion_criteria: 'artifact delivered',
+            expected_revision: legacy.revision,
+            latest_event: 'finite delivery work',
+          },
+          origin
+        ).completionCriteria
+      ).toBe('artifact delivered');
+      expect(
+        ledger.reclassify(
+          record.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'an open question, not a task',
+            expected_revision: record.revision,
+          },
+          origin
+        ).status
+      ).toBe('cancelled');
+    });
+
+    it('refuses a terminal non-Board attempt exactly like a terminal Board attempt', () => {
+      const task = ledger.create({ title: 'x', completion_criteria: 'y' });
+      const wiki = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:stale-attempt',
+        input: { batchId: 'b-2', events: ['boot'] },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(wiki.id);
+      const origin = { workOrderAttemptId: wiki.id, requiresExpectedRevision: true };
+      expect(() =>
+        ledger.reclassify(
+          task.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'stale wiki attempt',
+            expected_revision: task.revision,
+          },
+          origin
+        )
+      ).toThrow(/no longer active/i);
+      expect(() =>
+        ledger.update(
+          task.id,
+          {
+            completion_criteria: 'late rewrite',
+            expected_revision: task.revision,
+            latest_event: 'stale wiki attempt',
+          },
+          origin
+        )
+      ).toThrow(/no longer active/i);
+      expect(ledger.getById(task.id)?.revision).toBe(task.revision);
+    });
+
+    it.each(['board', 'wiki'] as const)(
+      'refuses a NON-lifecycle direct update (title/priority/assignee) under a terminal %s attempt',
+      (workKind) => {
+        // A retained attempt context outlives its workorder. Liveness is not a
+        // property of the patch shape: a title rewrite carried by a stale
+        // attempt is as stale as a status change carried by one.
+        const task = ledger.create({ title: 'original', completion_criteria: 'y' });
+        const attempt = ledger.enqueueWorkOrder({
+          workKind,
+          idempotencyKey: `${workKind}:stale-content-attempt`,
+          input:
+            workKind === 'board' ? { mode: 'full' } : { batchId: 'b-content', events: ['boot'] },
+        });
+        ledger.claimNextWorkOrder();
+        ledger.completeWorkOrder(attempt.id);
+        const origin = { workOrderAttemptId: attempt.id, requiresExpectedRevision: true };
+        for (const patch of [
+          { title: 'late rename' },
+          { priority: 'high' as const },
+          { assignee: 'someone' },
+        ]) {
+          expect(() => ledger.update(task.id, patch, origin)).toThrow(
+            new RegExp(`${workKind} workorder ${attempt.id} is no longer active`)
+          );
+        }
+        expect(ledger.getById(task.id)).toMatchObject({
+          title: 'original',
+          priority: 'normal',
+          revision: task.revision,
+        });
+        // The same patch without a carried attempt (an ordinary owner turn)
+        // still works: liveness is about the attempt, not the owner.
+        expect(ledger.update(task.id, { title: 'owner rename' }).title).toBe('owner rename');
+      }
+    );
+
+    it('refuses an attempt id that does not exist', () => {
+      const task = ledger.create({ title: 'x', completion_criteria: 'y' });
+      expect(() =>
+        ledger.reclassify(
+          task.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'phantom attempt',
+            expected_revision: task.revision,
+          },
+          { workOrderAttemptId: 999_999, requiresExpectedRevision: true }
+        )
+      ).toThrow(/no longer active/i);
     });
 
     it('requires the exact current revision', () => {
@@ -360,45 +515,66 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
       ).toThrow(/no longer active/i);
     });
 
-    it('allows only host-issued Board reclassification candidates (TG-04/TG-06)', () => {
-      const allowed = ledger.create({ title: 'allowed legacy row' });
-      const unrelated = ledger.create({ title: 'unrelated row' });
+    it('treats Board reclassification candidates as hints, not owner authorization (TG-04/TG-06)', () => {
+      const hinted = ledger.create({ title: 'hinted legacy row' });
+      const discovered = ledger.create({ title: 'row discovered through paged reads' });
       const board = ledger.enqueueWorkOrder({
         workKind: 'board',
-        idempotencyKey: 'board:full:candidate-bound',
+        idempotencyKey: 'board:full:candidate-hints',
         input: {
           mode: 'full',
-          reclassificationCandidates: [{ taskId: allowed.id, taskRevision: allowed.revision }],
+          reclassificationCandidates: [{ taskId: hinted.id, taskRevision: hinted.revision }],
         },
       });
       ledger.claimNextWorkOrder();
+      const system = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:not-an-owner-row',
+        input: { batchId: 'b-3', events: ['boot'] },
+      });
       const origin = { workOrderAttemptId: board.id, requiresExpectedRevision: true };
 
       expect(
         ledger.reclassify(
-          allowed.id,
+          hinted.id,
           {
             disposition: 'non_task_record',
             reason: 'host-issued candidate is a record',
-            expected_revision: allowed.revision,
+            expected_revision: hinted.revision,
           },
           origin
         ).status
       ).toBe('cancelled');
-      expect(() =>
+      expect(
         ledger.reclassify(
-          unrelated.id,
+          discovered.id,
           {
             disposition: 'non_task_record',
-            reason: 'connector text named another row',
-            expected_revision: unrelated.revision,
+            reason: 'a row outside the hint page is still the owner row it always was',
+            expected_revision: discovered.revision,
+          },
+          origin
+        ).status
+      ).toBe('cancelled');
+      // Wider selection does not widen ownership: a system workorder row is
+      // still not an owner task, whatever attempt is carried.
+      expect(() =>
+        ledger.reclassify(
+          system.id,
+          {
+            disposition: 'non_task_record',
+            reason: 'not an owner row',
+            expected_revision: 0,
           },
           origin
         )
-      ).toThrow(/outside this host-issued Board candidate set/i);
+      ).toThrow(/system|owner/i);
     });
 
-    it('keeps owner-event reclassification inside its causal source channel (TG-03/TG-06)', () => {
+    it('lets an owner-event decision reach a task from another visible channel (TG-03/TG-06)', () => {
+      // Which channel an inbox batch arrived on is host SELECTION context. The
+      // owner's grant, checked at the gateway, decides visibility; the ledger
+      // keeps requiring a real causal batch so provenance stays attributable.
       const inbox = new OwnerEventInbox(db, () => NOW);
       inbox.enqueue({
         channelKey: 'slack:C001',
@@ -413,7 +589,7 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
       });
       const otherChannel = ledger.create({
         title: 'other channel',
-        source_channel: 'slack:C999',
+        source_channel: 'chatwork:room-9',
         source_event_id: 'evt-other',
       });
       const origin = {
@@ -433,17 +609,69 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
           origin
         ).status
       ).toBe('cancelled');
-      expect(() =>
-        ledger.reclassify(
-          otherChannel.id,
-          {
-            disposition: 'non_task_record',
-            reason: 'unrelated channel',
-            expected_revision: otherChannel.revision,
-          },
-          origin
-        )
-      ).toThrow(/outside this owner-event source channel/i);
+      const crossed = ledger.reclassify(
+        otherChannel.id,
+        {
+          disposition: 'non_task_record',
+          reason: 'the slack thread confirms the chatwork item was only a question',
+          expected_revision: otherChannel.revision,
+        },
+        origin
+      );
+      expect(crossed.status).toBe('cancelled');
+      // Provenance is retained: the effect rests on the real inbox batch.
+      const receipt = listEffects(adapter()).find(
+        (effect) => effect.targetId === String(otherChannel.id)
+      );
+      expect(receipt?.sourceEventIds).toEqual(['evt-current']);
+    });
+
+    it('still refuses an owner-event decision with no causal events', () => {
+      const task = ledger.create({ title: 'x', completion_criteria: 'y' });
+      for (const causeEventIds of [undefined, [], ['   ']]) {
+        expect(() =>
+          ledger.reclassify(
+            task.id,
+            {
+              disposition: 'non_task_record',
+              reason: 'no cause',
+              expected_revision: task.revision,
+            },
+            { causeEventIds, causeKind: 'owner_message', reclassificationCauseBound: true }
+          )
+        ).toThrow(/causal events/i);
+      }
+      expect(ledger.getById(task.id)?.revision).toBe(task.revision);
+    });
+
+    it('still refuses a fabricated causal event that no inbox batch carried', () => {
+      const inbox = new OwnerEventInbox(db, () => NOW);
+      inbox.enqueue({
+        channelKey: 'slack:C001',
+        eventIds: ['evt-current'],
+        lines: ['current feedback'],
+        activations: [],
+      });
+      const task = ledger.create({
+        title: 'x',
+        completion_criteria: 'y',
+        source_channel: 'slack:C001',
+        source_event_id: 'evt-old',
+      });
+      for (const causeEventIds of [['evt-forged'], ['evt-current', 'evt-forged']]) {
+        expect(() =>
+          ledger.reclassify(
+            task.id,
+            {
+              disposition: 'non_task_record',
+              reason: 'connector text invented an event',
+              expected_revision: task.revision,
+            },
+            { causeEventIds, causeKind: 'owner_message', reclassificationCauseBound: true }
+          )
+        ).toThrow(/causal event/i);
+      }
+      expect(ledger.getById(task.id)?.status).toBe('pending');
     });
 
     it('records one atomic effect receipt for the reclassification', () => {
@@ -483,5 +711,42 @@ describe('Story TASK-RECAL-1: task completion criteria and reclassification', ()
       expect(after.revision).toBe(task.revision);
       expect(after.resolutionKind).toBeNull();
     });
+  });
+
+  it('coalesces owner-task notifications after commit and emits nothing for rollback', async () => {
+    const notifications: string[] = [];
+    const observedDb = new Database(':memory:');
+    const observed = new TaskLedger(observedDb, {
+      now: () => NOW,
+      timeZone: 'Asia/Seoul',
+      onOwnerTaskChangeCommitted: (generation) => notifications.push(generation),
+    });
+    const task = observed.create({ title: 'first', completion_criteria: 'finite result' });
+    observed.update(task.id, { title: 'second' });
+    expect(notifications).toEqual([]);
+    await Promise.resolve();
+    expect(notifications).toEqual([observed.readGeneration()]);
+
+    const stableGeneration = observed.readGeneration();
+    expect(() =>
+      observed.reclassify(task.id, {
+        disposition: 'completed_no_issue',
+        reason: 'must roll back without a past deadline',
+        expected_revision: observed.getById(task.id)!.revision,
+      })
+    ).toThrow(/deadline|due/i);
+    await Promise.resolve();
+    expect(observed.readGeneration()).toBe(stableGeneration);
+    expect(notifications).toHaveLength(1);
+
+    const current = observed.getById(task.id)!;
+    observed.reclassify(task.id, {
+      disposition: 'non_task_record',
+      reason: 'record rather than finite work',
+      expected_revision: current.revision,
+    });
+    await Promise.resolve();
+    expect(notifications).toEqual([stableGeneration, observed.readGeneration()]);
+    observedDb.close();
   });
 });

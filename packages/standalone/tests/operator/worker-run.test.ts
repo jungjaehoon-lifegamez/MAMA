@@ -271,8 +271,8 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
   });
 
   it.each([
-    { backend: 'claude' as const, rawConnectors: [], privateVisible: false },
-    { backend: 'codex' as const, rawConnectors: [], privateVisible: false },
+    { backend: 'claude' as const, rawConnectors: [], privateVisible: true },
+    { backend: 'codex' as const, rawConnectors: [], privateVisible: true },
     { backend: 'claude' as const, rawConnectors: ['kagemusha'], privateVisible: true },
     { backend: 'codex' as const, rawConnectors: ['kagemusha'], privateVisible: true },
   ])(
@@ -340,7 +340,7 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
       const value = JSON.parse(String(authorization.message)).value as Record<string, string>;
       expect(Object.values(value)).toEqual(
         Array.from({ length: PRIVATE_TOOLS.length }, () =>
-          privateVisible ? 'function' : 'undefined'
+          rawConnectors.includes('kagemusha') ? 'function' : 'undefined'
         )
       );
     }

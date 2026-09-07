@@ -40,6 +40,8 @@ export interface OwnerEventLoopDeps {
   buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
+  hasUnsafeReplayEffects?: (batch: OwnerEventBatch) => boolean;
+  hasUnsettledEffects?: (batch: OwnerEventBatch) => boolean;
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
   recordTriggerOutcome?: (triggerId: string, outcome: 'succeeded' | 'failed') => void;
   onDead?: (message: string) => void | Promise<void>;
@@ -90,11 +92,19 @@ export class OwnerEventLoop {
       const batch = this.deps.inbox.claimNext();
       if (!batch) break;
       const scope = `owner-event:${batch.id}`;
+      if (this.deps.hasUnsettledEffects?.(batch)) {
+        await this.quarantineEffects(batch);
+        return 'failed';
+      }
       const recoveredBeforeRun = this.deps.getTerminalReceipt?.(batch) ?? null;
       if (recoveredBeforeRun) {
         this.ackTerminalReceipt(batch, recoveredBeforeRun, 'recovered before model run');
         processed += 1;
         continue;
+      }
+      if (this.deps.hasUnsafeReplayEffects?.(batch)) {
+        await this.quarantineEffects(batch);
+        return 'failed';
       }
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
 
@@ -113,6 +123,10 @@ export class OwnerEventLoop {
           ownerJournalPrompt: batch.lines.join('\n'),
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
+        if (this.deps.hasUnsettledEffects?.(batch)) {
+          await this.quarantineEffects(batch);
+          return 'failed';
+        }
         const classified = classifyOwnerEventOutcome({
           history: result.history,
           noUpdateRecorded: this.deps.getNoUpdateMaxId(scope) > noUpdateBefore,
@@ -124,11 +138,19 @@ export class OwnerEventLoop {
             ? { status: 'retry' as const, tools: [], reason: 'run stopped on its token budget' }
             : classified;
         if (outcome.status === 'retry') {
+          if (this.deps.hasUnsettledEffects?.(batch)) {
+            await this.quarantineEffects(batch);
+            return 'failed';
+          }
           const recoveredAfterRun = this.deps.getTerminalReceipt?.(batch) ?? null;
           if (recoveredAfterRun) {
             this.ackTerminalReceipt(batch, recoveredAfterRun, 'recovered after model run');
             processed += 1;
             continue;
+          }
+          if (this.deps.hasUnsafeReplayEffects?.(batch)) {
+            await this.quarantineEffects(batch);
+            return 'failed';
           }
           const retry = this.deps.inbox.retry(batch.id, outcome.reason);
           if (retry === 'dead') {
@@ -159,11 +181,19 @@ export class OwnerEventLoop {
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        if (this.deps.hasUnsettledEffects?.(batch)) {
+          await this.quarantineEffects(batch);
+          return 'failed';
+        }
         const recoveredAfterError = this.deps.getTerminalReceipt?.(batch) ?? null;
         if (recoveredAfterError) {
           this.ackTerminalReceipt(batch, recoveredAfterError, 'recovered after runner error');
           processed += 1;
           continue;
+        }
+        if (this.deps.hasUnsafeReplayEffects?.(batch)) {
+          await this.quarantineEffects(batch);
+          return 'failed';
         }
         const retry = this.deps.inbox.retry(batch.id, reason);
         if (retry === 'dead') {
@@ -182,6 +212,13 @@ export class OwnerEventLoop {
       );
     }
     return processed > 0 ? 'processed' : 'idle';
+  }
+
+  private async quarantineEffects(batch: OwnerEventBatch): Promise<void> {
+    const reason = 'Owner effect requires reconciliation; automatic replay suppressed';
+    this.deps.inbox.quarantine(batch.id, reason);
+    this.recordTriggerOutcomes(batch, 'failed');
+    await this.notifyDead(batch, reason);
   }
 
   private recordTriggerOutcomes(batch: OwnerEventBatch, outcome: 'succeeded' | 'failed'): void {

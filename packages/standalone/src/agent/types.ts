@@ -766,10 +766,18 @@ export interface MemberScopeListInput {
   principal_id: string;
 }
 
+export interface WikiReadInput {
+  paths: string[];
+  content_limit?: number;
+  content_offset?: number;
+  content_versions?: Record<string, string | null>;
+}
+
 /**
  * Union type for all MCP tool inputs
  */
 export type GatewayToolInput =
+  | WikiReadInput
   | SaveInput
   | SearchInput
   | RecallInput
@@ -862,6 +870,7 @@ export type GatewayToolName =
   | 'task_list'
   | 'task_external_correlation'
   | 'task_external_bind'
+  | 'task_external_candidates'
   | 'task_lifecycle_reconcile'
   | 'changes_read'
   | 'task_create'

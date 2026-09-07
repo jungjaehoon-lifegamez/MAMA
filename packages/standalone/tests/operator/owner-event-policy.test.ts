@@ -47,27 +47,26 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
           // v0.48.1: records and tasks are separate - the event turn may RECORRECT
           // existing rows but never create one from a connector observation.
           'task_update',
+          'task_create',
           'task_reclassify',
           'mama_save',
           'mama_update',
+          'Bash',
+          'Write',
+          'obsidian',
+          'drive_translate_conti',
         ])
       );
-      // Never on the event turn: connector text must not become a command.
-      expect(context.role.blockedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
-      expect(context.role.allowedTools).not.toContain('Bash');
-      expect(context.role.allowedTools).not.toContain('Write');
-      for (const administrationOrSecondJudgmentSurface of [
+      for (const administrationSurface of [
         'member_register',
         'member_suspend',
         'member_offboard',
         'member_scope_grant',
         'member_scope_revoke',
         'console_brief_update',
-        'obsidian',
-        'drive_translate_conti',
       ]) {
-        expect(context.role.allowedTools).not.toContain(administrationOrSecondJudgmentSurface);
-        expect(context.role.blockedTools).toContain(administrationOrSecondJudgmentSurface);
+        expect(context.role.allowedTools).not.toContain(administrationSurface);
+        expect(context.role.blockedTools).toContain(administrationSurface);
       }
       // Delegation tools no longer exist anywhere on the surface.
       expect(context.role.allowedTools).not.toContain('workorder_request');

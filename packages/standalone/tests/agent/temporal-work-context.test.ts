@@ -13,6 +13,8 @@ import type { TemporalWorkContext } from '../../src/operator/temporal-effect.js'
 import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { createCodeActExecutor } from '../../src/cli/runtime/code-act-executor.js';
+import { workOrderEnvelopeScope } from '../../src/cli/commands/start.js';
+import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 describe('Story A2 Task 7: trusted temporal work context', () => {
@@ -707,7 +709,17 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       anchor: 'present',
       expectedSuccess: true,
     },
+    {
+      name: 'accepts currently granted cross-channel corroboration',
+      anchor: 'corroboration',
+      expectedSuccess: true,
+    },
     { name: 'rejects a missing anchor', anchor: 'missing', expectedSuccess: false },
+    {
+      name: 'seeds the verified review channel when the task originated elsewhere',
+      anchor: 'cross_channel',
+      expectedSuccess: true,
+    },
     { name: 'rejects a wrong-channel anchor', anchor: 'wrong_channel', expectedSuccess: false },
     { name: 'rejects an out-of-range anchor', anchor: 'out_of_range', expectedSuccess: false },
   ] as const)(
@@ -725,7 +737,8 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         initAgentTables(reviewDb);
         const created = reviewLedger.create({
           title: 'submitted review work',
-          source_channel: 'trello:synthetic-board',
+          source_channel:
+            anchor === 'cross_channel' ? 'trello:original-board' : 'trello:synthetic-board',
           source_event_id: 'original-card',
         });
         const review = reviewLedger.update(
@@ -749,7 +762,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
           temporalEpoch: review.temporalEpoch,
           occurrenceKey,
           checkAt: now,
-          sourceChannel: review.sourceChannel,
+          sourceChannel: review.reviewAnchorSourceChannel ?? review.sourceChannel,
           sourceEventId: review.reviewAnchorEventId,
         });
         const reviewContext = reviewLedger.loadTemporalWorkContext(
@@ -784,7 +797,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         insertEvent.run(
           'event-index-later-feedback',
           'later-feedback',
-          'synthetic-board',
+          anchor === 'corroboration' ? 'wrong-board' : 'synthetic-board',
           'Feedback',
           'Please revise the final paragraph',
           feedbackAt,
@@ -796,6 +809,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
 
         let compileSequence = 0;
         const reviewExecutor = new GatewayToolExecutor({
+          channelGrantProvider: () => ({ trello: ['synthetic-board', 'wrong-board'] }),
           contextCompileService: createContextCompileService({
             memoryAdapter: adapter,
             now: () => now,
@@ -814,12 +828,17 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
           envelope: makeSignedEnvelope({
             agent_id: 'workorder-temporal',
             instance_id: 'review-real-compile',
-            scope: {
-              project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
-              raw_connectors: ['trello'],
-              memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
-              allowed_destinations: [],
-            },
+            scope: workOrderEnvelopeScope({
+              workKind: 'temporal',
+              projectId: '/workspace/project-a',
+              laneConnectors: ['trello'],
+              temporalBinding: { connector: 'trello', channel: 'synthetic-board' },
+              privateConnectorPolicy: resolvePrivateConnectorPolicy({
+                ok: true,
+                config: {},
+                enabledNames: [],
+              }),
+            }),
           }),
           channelGrantSnapshot: { trello: ['synthetic-board', 'wrong-board'] },
           agentContext: {
@@ -863,7 +882,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
               expect.objectContaining({
                 kind: 'raw',
                 raw_id: 'event-index-later-feedback',
-                channel_id: 'synthetic-board',
+                channel_id: anchor === 'corroboration' ? 'wrong-board' : 'synthetic-board',
               }),
             ])
           );

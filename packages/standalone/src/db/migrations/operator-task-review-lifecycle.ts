@@ -13,4 +13,7 @@ export function applyOperatorTaskReviewLifecycleMigration(db: SQLiteDatabase): v
   if (!columns.has('review_anchor_event_id')) {
     db.exec('ALTER TABLE operator_tasks ADD COLUMN review_anchor_event_id TEXT');
   }
+  if (!columns.has('review_anchor_source_channel')) {
+    db.exec('ALTER TABLE operator_tasks ADD COLUMN review_anchor_source_channel TEXT');
+  }
 }

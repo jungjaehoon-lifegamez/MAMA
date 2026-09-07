@@ -753,8 +753,9 @@ describe('AgentLoop', () => {
         await ask('compose the owner report');
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
-        expect(effectivePrompt).toContain('**changes_read**');
-        expect(effectivePrompt).not.toContain('**drive_download**');
+        expect(reportPolicy.agentContext.role.allowedTools).toEqual(
+          expect.arrayContaining(['changes_read', 'drive_download'])
+        );
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
         ).toHaveLength(1);
@@ -766,7 +767,9 @@ describe('AgentLoop', () => {
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(effectivePrompt.includes('**kagemusha_tasks**')).toBe(enabled);
+        expect(reportPolicy.agentContext.role.allowedTools.includes('kagemusha_tasks')).toBe(
+          enabled
+        );
       }
     );
 
@@ -4719,6 +4722,54 @@ Skills provide additional tools.
       expect(result.response).toBe('Recovered on a fresh Codex thread');
       expect(persistentPromptMock).toHaveBeenCalledTimes(2);
     });
+
+    it.each([
+      'No conversation found with session ID missing',
+      'Session ID is already in use',
+      'Prompt is too long',
+      'text content blocks must be non-empty',
+    ])(
+      'TG-05/06 preserves trusted pre-execution session recovery with native observation: %s',
+      async (message) => {
+        const events: string[] = [];
+        persistentPromptMock.mockRejectedValueOnce(new Error(message)).mockResolvedValueOnce({
+          response: 'recovered',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: 'base prompt',
+            createNativeEffectObserver: () => ({
+              started: () => {
+                events.push('started');
+              },
+              settled: () => {
+                events.push('settled');
+              },
+              interrupted: () => {
+                events.push('unknown');
+              },
+              finished: () => {
+                events.push('finished');
+              },
+            }),
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const result = await agentLoop.run('Continue', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: createChatBotContext(),
+          resumeSession: true,
+        });
+        expect(result.response).toContain('recovered');
+        expect(persistentPromptMock).toHaveBeenCalledTimes(2);
+        expect(events).toEqual(['finished']);
+      }
+    );
 
     it('TG-05 replaces an overflowing Cline session with one fully rehydrated session', async () => {
       const delivered: Array<{ resume: boolean; prompt: string }> = [];

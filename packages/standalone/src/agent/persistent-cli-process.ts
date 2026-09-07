@@ -894,7 +894,12 @@ export class PersistentClaudeProcess extends EventEmitter {
       toolUseFingerprint: fingerprint,
     });
     this.toolUseBlocks.push(toolUse);
-    this.currentCallbacks?.onToolUse?.(toolUse.name, toolUse.input);
+    // Callback-only metadata pairs overlapping native calls by provider identity;
+    // preserve the original tool input and exchange fingerprint unchanged.
+    this.currentCallbacks?.onToolUse?.(toolUse.name, {
+      ...toolUse.input,
+      nativeToolUseId: toolUse.id,
+    });
     persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
     return true;
   }
