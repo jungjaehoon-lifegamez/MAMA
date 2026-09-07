@@ -32,9 +32,13 @@ async function main(): Promise<void> {
   if (mode === 'baseline' && !existsSync(fixturePath)) {
     const day = new Date().toISOString().slice(0, 10);
     const midnight = Date.parse(day + 'T00:00:00Z');
+    const created = new Date(midnight);
+    // Land the deadline in the NEXT calendar month (mid-month), so a month-end creation date does
+    // not skip a month the way a fixed +35d offset would (e.g. Jan 30 -> March).
+    const nextMonth = new Date(Date.UTC(created.getUTCFullYear(), created.getUTCMonth() + 1, 15));
     const fixture: Fixture = {
       asOf: new Date().toISOString(),
-      nativeDeadline: new Date(midnight + 35 * 86400000).toISOString().slice(0, 10),
+      nativeDeadline: nextMonth.toISOString().slice(0, 10),
       start: new Date(midnight - 86400000).toISOString(),
       end: new Date(midnight + 86400000).toISOString(),
       summary:
@@ -84,7 +88,20 @@ async function main(): Promise<void> {
   process.env.MAMA_DB_PATH = join(root, 'core.db');
   process.env.MAMA_FORCE_TIER_3 = 'true';
   const installed = '/opt/homebrew/lib/node_modules/@jungjaehoon/mama-os/dist';
-  // Baseline is the already verified installed 0.50.0 artifact; candidate imports source.
+  // Baseline is the already verified installed 0.50.0 artifact; candidate imports source. Verify the
+  // installed version so a global-package upgrade cannot silently make "baseline" a different build.
+  if (mode === 'baseline') {
+    const installedPkg = JSON.parse(
+      readFileSync(join(installed, '..', 'package.json'), 'utf8')
+    ) as {
+      version?: string;
+    };
+    if (installedPkg.version !== '0.50.0') {
+      throw new Error(
+        `Baseline requires installed @jungjaehoon/mama-os 0.50.0; found ${installedPkg.version ?? 'unknown'}.`
+      );
+    }
+  }
   const Loop: typeof CandidateLoop =
     mode === 'baseline' ? require(installed + '/agent/agent-loop.js').AgentLoop : CandidateLoop;
   const Executor: typeof CandidateExecutor =

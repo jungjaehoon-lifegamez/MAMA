@@ -126,7 +126,12 @@ export class CalendarConnector implements IConnector {
           maxResults: 50,
           ...(pageToken ? { pageToken } : {}),
         });
-        const result = execGws(`calendar events list --params '${params}'`) as CalendarEventList;
+        // Escape single quotes so an upstream-controlled value inside the JSON (e.g. a pageToken)
+        // cannot close the shell single-quoted argument and inject a command.
+        const safeParams = params.replace(/'/g, `'\\''`);
+        const result = execGws(
+          `calendar events list --params '${safeParams}'`
+        ) as CalendarEventList;
 
         for (const ev of result.items ?? []) {
           const start = this.getEventTime(ev);

@@ -52,14 +52,34 @@ async function main(): Promise<void> {
   const fixtureFile = JSON.parse(fixtureBytes) as FixtureFile;
   const baselinePath = join(outputRoot, 'baseline-guidance.txt');
   await privateDirectory(outputRoot);
-  const currentGuidance = new SituationReporter()
-    .buildPrompt('full')
-    .replace(/^Current local time:.*$/m, 'Use the fixture asOf as the sole report clock.');
+  const buildGuidance = (Reporter: typeof SituationReporter): string =>
+    new Reporter()
+      .buildPrompt('full')
+      .replace(/^Current local time:.*$/m, 'Use the fixture asOf as the sole report clock.');
+  // Candidate guidance comes from THIS source tree; baseline must come from the prior release, or
+  // the two are identical and a guidance regression is invisible. Capture the baseline from the
+  // installed package (version-verified), never from the candidate checkout.
+  const currentGuidance = buildGuidance(SituationReporter);
   if (mode === 'baseline') {
-    await writeFile(baselinePath, currentGuidance, { mode: 0o600, flag: 'wx' }).catch(
+    const installed = '/opt/homebrew/lib/node_modules/@jungjaehoon/mama-os';
+    const installedPkg = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    if (installedPkg.version !== '0.50.0') {
+      throw new Error(
+        `Baseline requires installed @jungjaehoon/mama-os 0.50.0; found ${installedPkg.version ?? 'unknown'}.`
+      );
+    }
+    const InstalledReporter = (
+      require(join(installed, 'dist/operator/situation-report.js')) as {
+        SituationReporter: typeof SituationReporter;
+      }
+    ).SituationReporter;
+    const baselineGuidanceSource = buildGuidance(InstalledReporter);
+    await writeFile(baselinePath, baselineGuidanceSource, { mode: 0o600, flag: 'wx' }).catch(
       async (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EEXIST') throw error;
-        if ((await readFile(baselinePath, 'utf8')) !== currentGuidance)
+        if ((await readFile(baselinePath, 'utf8')) !== baselineGuidanceSource)
           throw new Error('Baseline guidance changed; use a new output directory');
       }
     );
