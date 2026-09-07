@@ -14,6 +14,67 @@ describe('owner workspace effect replay', () => {
   afterEach(() =>
     roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))
   );
+  it.each(['discord_send', 'slack_send', 'webchat_send'] as const)(
+    'TG-06 releases a proven preflight failure for %s',
+    async (tool) => {
+      const db = new Database(':memory:');
+      try {
+        const envelope = makeSignedEnvelope();
+        const ledger = new OwnerActionEffectLedger(db);
+        const executor = new GatewayToolExecutor({
+          mamaApi: {
+            appendToolTrace: async () => ({}),
+            getModelRun: async () => ({ status: 'running', envelope_hash: envelope.envelope_hash }),
+          } as never,
+        });
+        executor.setOwnerActionEffectLedger(ledger);
+        const context = {
+          envelope,
+          modelRunId: 'mr-preflight',
+          sourceMessageRef: 'message:preflight',
+        };
+        const input = tool === 'webchat_send' ? {} : { channel_id: 'test' };
+        expect(await executor.execute(tool, input as never, context)).toMatchObject({
+          success: false,
+        });
+        expect(await executor.execute(tool, input as never, context)).toMatchObject({
+          success: false,
+        });
+        expect(ledger.hasUnsafeReplayEffects(context.sourceMessageRef)).toBe(false);
+        expect(db.prepare('SELECT count(*) n FROM owner_action_effects').get()).toEqual({ n: 0 });
+      } finally {
+        db.close();
+      }
+    }
+  );
+
+  it('TG-06 releases a shell reservation only when the process could not start', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-effect-'));
+    roots.push(root);
+    const db = new Database(':memory:');
+    try {
+      const envelope = makeSignedEnvelope();
+      const ledger = new OwnerActionEffectLedger(db);
+      const executor = new GatewayToolExecutor({
+        mamaApi: {
+          appendToolTrace: async () => ({}),
+          getModelRun: async () => ({ status: 'running', envelope_hash: envelope.envelope_hash }),
+        } as never,
+      });
+      executor.setOwnerActionEffectLedger(ledger);
+      expect(
+        await executor.execute(
+          'Bash',
+          { command: 'printf x', workdir: join(root, 'missing') },
+          { envelope, modelRunId: 'mr-no-spawn', sourceMessageRef: 'message:no-spawn' }
+        )
+      ).toMatchObject({ success: false });
+      expect(ledger.hasUnsafeReplayEffects('message:no-spawn')).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it('TG-05 persists admission before native notifications and refuses an unsettled final response', () => {
     const db = new Database(':memory:');
     try {

@@ -63,7 +63,9 @@ interface StoredRow {
  * a stored intent is exactly what was compared.
  */
 export function canonicalizeOwnerActionValue(value: unknown, path = '$'): unknown {
-  if (value === null) return null;
+  if (value === null) {
+    return null;
+  }
   switch (typeof value) {
     case 'string':
     case 'boolean':
@@ -212,7 +214,9 @@ export class OwnerActionEffectLedger {
         return { state: 'execute', intent: JSON.parse(canonical) as Record<string, unknown> };
       }
       const row = this.loadRow(verified, key);
-      if (!row) throw new Error('owner action effect reservation disappeared');
+      if (!row) {
+        throw new Error('owner action effect reservation disappeared');
+      }
       this.assertKind(row, key, kind);
       if (row.intent_json !== canonical) {
         throw new Error(
@@ -233,7 +237,9 @@ export class OwnerActionEffectLedger {
     const key = requireIdentity(actionKey, 'actionKey');
     const kind = requireIdentity(effectKind, 'effectKind');
     const row = this.loadRow(verified, key);
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
     this.assertKind(row, key, kind);
     return this.project(row);
   }
@@ -260,7 +266,9 @@ export class OwnerActionEffectLedger {
       }
       this.assertKind(row, key, kind);
       if (row.status === 'confirmed') {
-        if (row.result_json === canonicalResult) return;
+        if (row.result_json === canonicalResult) {
+          return;
+        }
         throw new Error(
           `owner action ${key} already holds a confirmed receipt; a different result cannot replace it`
         );
@@ -339,6 +347,26 @@ export class OwnerActionEffectLedger {
    * Returns action identity, kind, state and the originating run only - no
    * intent bodies. `nextCursor` is set when more rows exist.
    */
+  releaseUnstarted(context: OwnerActionContext, actionKey: string, effectKind: string): void {
+    const verified = verifyContext(context);
+    const result = this.db
+      .prepare(
+        `DELETE FROM ${OWNER_ACTION_EFFECTS_TABLE}
+      WHERE owner_scope = ? AND occurrence_key = ? AND action_key = ? AND effect_kind = ?
+        AND status = 'transmitting' AND origin_model_run_id = ?`
+      )
+      .run(
+        verified.ownerScope,
+        verified.occurrenceKey,
+        requireIdentity(actionKey, 'actionKey'),
+        requireIdentity(effectKind, 'effectKind'),
+        verified.modelRunId
+      );
+    if (result.changes !== 1) {
+      throw new Error('Only the current unstarted reservation can be released');
+    }
+  }
+
   atomic(
     context: OwnerActionContext,
     key: string,
@@ -348,9 +376,12 @@ export class OwnerActionEffectLedger {
   ): Record<string, unknown> {
     return this.db.transaction(() => {
       const reservation = this.begin(context, key, kind, intent);
-      if (reservation.state === 'confirmed' && reservation.result) return reservation.result;
-      if (reservation.state !== 'execute')
+      if (reservation.state === 'confirmed' && reservation.result) {
+        return reservation.result;
+      }
+      if (reservation.state !== 'execute') {
         throw new Error('Owner action is awaiting reconciliation');
+      }
       const result = perform();
       this.confirm(context, key, kind, result);
       return result;
@@ -481,7 +512,9 @@ function clampPage(
   field: 'limit' | 'offset',
   allowZero = false
 ): number {
-  if (value === undefined) return fallback;
+  if (value === undefined) {
+    return fallback;
+  }
   if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) {
     throw new Error(
       `owner action pending ${field} must be a ${allowZero ? 'non-negative' : 'positive'} integer`

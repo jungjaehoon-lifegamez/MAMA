@@ -92,7 +92,9 @@ function setOf(
 describe('Story B2: owner-run external candidate attestation and receipts (TG-04/TG-06)', () => {
   const databases: SQLiteDatabase[] = [];
   afterEach(() => {
-    while (databases.length > 0) databases.pop()!.close();
+    while (databases.length > 0) {
+      databases.pop()!.close();
+    }
   });
 
   function fresh(onOwnerTaskChangeCommitted?: (generation: string) => void) {

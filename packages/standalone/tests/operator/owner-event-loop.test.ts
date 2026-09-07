@@ -597,7 +597,9 @@ describe('TG-05/TG-06 owner-event native replay quarantine', () => {
             'native_run',
             {}
           );
-        if (phase === 'before-admission') reserve();
+        if (phase === 'before-admission') {
+          reserve();
+        }
         let calls = 0;
         const loop = new OwnerEventLoop({
           inbox,
@@ -612,8 +614,9 @@ describe('TG-05/TG-06 owner-event native replay quarantine', () => {
             run: async () => {
               calls++;
               reserve();
-              if (phase === 'acted-budget')
+              if (phase === 'acted-budget') {
                 return { ...result(deliveredHistory), stoppedBy: 'budget' as const };
+              }
               throw new Error('native transport disconnected');
             },
           },

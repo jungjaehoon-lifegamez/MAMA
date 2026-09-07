@@ -118,7 +118,10 @@ import { readChanges, type ChangesReadInput } from '../operator/changes-projecti
 import { runTaskListView, serializeTaskToolRecord } from '../operator/task-list-views.js';
 import { readBoardView, type BoardSlots } from '../operator/board-read-views.js';
 import type { OwnerActionContext } from '../operator/owner-action-effects.js';
-import { OwnerActionEffectLedger } from '../operator/owner-action-effects.js';
+import {
+  OwnerActionEffectLedger,
+  canonicalOwnerActionJson,
+} from '../operator/owner-action-effects.js';
 import type { ExternalCandidateSource } from '../operator/external-lifecycle.js';
 import { attestOwnerExternalLifecycleCandidates } from '../operator/external-lifecycle-discovery.js';
 import {
@@ -195,7 +198,9 @@ function temporalPacketRawSourcesWithinBoundSource(
       !Array.isArray(value) &&
       (value as Record<string, unknown>).kind === 'raw'
   );
-  if (!context.sourceChannel) return rawRefs.length === 0;
+  if (!context.sourceChannel) {
+    return rawRefs.length === 0;
+  }
   const channelMatches = (ref: Record<string, unknown>): boolean =>
     typeof ref.connector === 'string' &&
     typeof ref.channel_id === 'string' &&
@@ -874,14 +879,17 @@ export class GatewayToolExecutor {
     state: GatewayToolExecutionContext | null
   ): import('./native-effect-observer.js').NativeEffectObserver | undefined {
     const ledger = this.ownerActionEffectLedger;
-    if (!ledger || !state?.envelope || !state.modelRunId || state.memberScopeRequired)
+    if (!ledger || !state?.envelope || !state.modelRunId || state.memberScopeRequired) {
       return undefined;
+    }
     const attempt =
       state.workorderAttemptId === undefined
         ? null
         : this.taskLedger?.getWorkOrderById(state.workorderAttemptId);
     const occurrenceKey = attempt ? `workorder:${attempt.idempotencyKey}` : state.sourceMessageRef;
-    if (!occurrenceKey) throw new Error('Native effect observation needs an owner occurrence');
+    if (!occurrenceKey) {
+      throw new Error('Native effect observation needs an owner occurrence');
+    }
     const context: OwnerActionContext = {
       ownerScope: state.agentContext?.principalId ?? 'owner:runtime',
       occurrenceKey,
@@ -889,13 +897,14 @@ export class GatewayToolExecutor {
       envelopeHash: state.envelope.envelope_hash,
       ...(attempt ? { workOrderAttemptId: attempt.id } : {}),
     };
-    if (ledger.hasUnsafeReplayEffects(occurrenceKey))
+    if (ledger.hasUnsafeReplayEffects(occurrenceKey)) {
       throw new AgentError(
         'Owner occurrence needs effect reconciliation before replay',
         'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
         undefined,
         false
       );
+    }
     const admissionKey = `native-run:${createHash('sha256').update(context.modelRunId).digest('hex')}`;
     ledger.begin(context, admissionKey, 'native_run', { admitted: true });
     let sequence = 0;
@@ -908,13 +917,14 @@ export class GatewayToolExecutor {
             : `observed:${++sequence}`;
         const key = `native:${createHash('sha256').update(`${context.modelRunId}:${id}`).digest('hex')}`;
         const reservation = ledger.begin(context, key, 'native_tool', { toolName: name });
-        if (reservation.state !== 'execute')
+        if (reservation.state !== 'execute') {
           throw new AgentError(
             'Native effect already observed',
             'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
             undefined,
             false
           );
+        }
         pending.set(id, { key, name });
       },
       settled: (name, id, isError) => {
@@ -931,19 +941,26 @@ export class GatewayToolExecutor {
           );
           return;
         }
-        if (isError)
+        if (isError) {
           ledger.markUnknown(context, match.key, 'native_tool', 'native tool reported failure');
-        else ledger.confirm(context, match.key, 'native_tool', { success: true });
-        for (const [pendingId, entry] of pending) if (entry === match) pending.delete(pendingId);
+        } else {
+          ledger.confirm(context, match.key, 'native_tool', { success: true });
+        }
+        for (const [pendingId, entry] of pending) {
+          if (entry === match) {
+            pending.delete(pendingId);
+          }
+        }
       },
       finished: () => {
-        if (pending.size > 0)
+        if (pending.size > 0) {
           throw new AgentError(
             'Native effects did not settle before final response',
             'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
             undefined,
             false
           );
+        }
         ledger.confirm(context, admissionKey, 'native_run', { completed: true });
       },
       interrupted: () => {
@@ -953,8 +970,9 @@ export class GatewayToolExecutor {
           'native_run',
           'native turn did not finish cleanly'
         );
-        for (const { key } of pending.values())
+        for (const { key } of pending.values()) {
           ledger.markUnknown(context, key, 'native_tool', 'native run interrupted');
+        }
       },
     };
   }
@@ -963,7 +981,9 @@ export class GatewayToolExecutor {
   }
   private ownerEffectPort(context: OwnerActionContext): OwnerEffectLedgerPort {
     const ledger = this.ownerActionEffectLedger;
-    if (!ledger) throw new Error('Owner action effect ledger is not configured');
+    if (!ledger) {
+      throw new Error('Owner action effect ledger is not configured');
+    }
     return {
       begin: (_batch, key, kind, intent) => ledger.begin(context, key, kind, intent),
       inspect: (_batch, key, kind) => ledger.inspect(context, key, kind),
@@ -2035,8 +2055,9 @@ export class GatewayToolExecutor {
       throw new Error('Owner action workorder attempt is no longer active');
     }
     const occurrenceKey = attempt ? `workorder:${attempt.idempotencyKey}` : state.sourceMessageRef;
-    if (!occurrenceKey)
+    if (!occurrenceKey) {
       throw new Error('Owner action is missing its host-issued occurrence identity');
+    }
     return {
       ownerScope: state.agentContext?.principalId ?? 'owner:runtime',
       occurrenceKey,
@@ -2047,7 +2068,9 @@ export class GatewayToolExecutor {
   }
 
   private temporalCorroborationVisible = (ref: Record<string, unknown>): boolean => {
-    if (typeof ref.connector !== 'string' || typeof ref.channel_id !== 'string') return false;
+    if (typeof ref.connector !== 'string' || typeof ref.channel_id !== 'string') {
+      return false;
+    }
     return this.currentOwnerPartitionVisibility()({
       connector: ref.connector,
       channel: ref.channel_id,
@@ -2059,8 +2082,9 @@ export class GatewayToolExecutor {
     channel: string;
   }) => boolean {
     const state = this.getExecutionState();
-    if (!state.envelope || state.memberScopeRequired)
+    if (!state.envelope || state.memberScopeRequired) {
       throw new Error('Owner source visibility requires an owner envelope');
+    }
     const channels = narrowGrantToEnvelope(snapshotChannelGrant(this.channelGrantProvider), {
       connectors: state.envelope.scope.raw_connectors,
       scopes: state.envelope.scope.memory_scopes,
@@ -4149,7 +4173,9 @@ export class GatewayToolExecutor {
           }
         }
         case 'task_external_candidates': {
-          if (!this.taskLedger) throw new Error('Task ledger not configured');
+          if (!this.taskLedger) {
+            throw new Error('Task ledger not configured');
+          }
           const raw = input as { event_ids?: unknown };
           if (
             !Array.isArray(raw.event_ids) ||
@@ -4377,7 +4403,9 @@ export class GatewayToolExecutor {
               () => ({ taskId: create().id })
             );
             const task = this.taskLedger.getById(Number(receipt.taskId));
-            if (!task) throw new Error('Created task receipt references a missing task');
+            if (!task) {
+              throw new Error('Created task receipt references a missing task');
+            }
             return { success: true, task: serializeTaskToolRecord(task) };
           }
           return { success: true, task: serializeTaskToolRecord(create()) };
@@ -4944,18 +4972,24 @@ export class GatewayToolExecutor {
   private async executeOwnerWorkspaceEffect(
     kind: 'Write' | 'Bash' | 'discord_send' | 'slack_send' | 'webchat_send' | 'obsidian',
     intent: Record<string, unknown>,
-    execute: () => Promise<{ success: boolean; output?: string; error?: string }>
-  ): Promise<{ success: boolean; output?: string; error?: string }> {
+    execute: () => Promise<{
+      success: boolean;
+      output?: string;
+      error?: string;
+      effectStarted?: false;
+    }>
+  ): Promise<{ success: boolean; output?: string; error?: string; effectStarted?: false }> {
     const ledger = this.ownerActionEffectLedger;
     if (!ledger) {
       try {
-        return await execute();
+        const { effectStarted: _notStarted, ...result } = await execute();
+        return result;
       } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
     }
     const context = await this.requireOwnerActionContext();
-    const digest = createHash('sha256').update(JSON.stringify(intent)).digest('hex');
+    const digest = createHash('sha256').update(canonicalOwnerActionJson(intent)).digest('hex');
     const actionKey = `${kind}:${digest}`;
     const reserved = ledger.begin(context, actionKey, kind, { inputSha256: digest });
     if (reserved.state === 'confirmed') {
@@ -4975,11 +5009,32 @@ export class GatewayToolExecutor {
     }
     try {
       const result = await execute();
-      if (!result.success)
+      if (!result.success && result.effectStarted === false) {
+        ledger.releaseUnstarted(context, actionKey, kind);
+        const { effectStarted: _notStarted, ...failure } = result;
+        return failure;
+      }
+      if (!result.success) {
         throw new Error('Workspace effect returned failure; partial effects may exist');
+      }
       ledger.confirm(context, actionKey, kind, { success: true });
       return result;
     } catch (error) {
+      // A spawn failure proves the child never ran. A nonzero exit does NOT:
+      // a command may write data before exiting with an error.
+      const spawnError = error as { code?: unknown; syscall?: unknown };
+      if (
+        (kind === 'Bash' || kind === 'obsidian') &&
+        spawnError.code === 'ENOENT' &&
+        typeof spawnError.syscall === 'string' &&
+        spawnError.syscall.startsWith('spawn')
+      ) {
+        ledger.releaseUnstarted(context, actionKey, kind);
+        return {
+          success: false,
+          error: 'Executable or working directory is unavailable; no process started.',
+        };
+      }
       ledger.markUnknown(context, actionKey, kind, 'workspace effect did not settle successfully');
       throw new AgentError(
         'Workspace effect outcome requires reconciliation',
@@ -5197,15 +5252,15 @@ export class GatewayToolExecutor {
     message?: string;
     image_path?: string;
     file_path?: string;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; effectStarted?: false }> {
     const { channel_id, message, image_path, file_path } = input;
 
     if (!channel_id) {
-      return { success: false, error: 'channel_id is required' };
+      return { success: false, effectStarted: false, error: 'channel_id is required' };
     }
 
     if (!this.discordGateway) {
-      return { success: false, error: 'Discord gateway not configured' };
+      return { success: false, effectStarted: false, error: 'Discord gateway not configured' };
     }
 
     try {
@@ -5217,7 +5272,11 @@ export class GatewayToolExecutor {
       } else if (message) {
         await this.discordGateway.sendMessage(channel_id, message);
       } else {
-        return { success: false, error: 'Either message, file_path, or image_path is required' };
+        return {
+          success: false,
+          effectStarted: false,
+          error: 'Either message, file_path, or image_path is required',
+        };
       }
 
       return { success: true };
@@ -5233,15 +5292,15 @@ export class GatewayToolExecutor {
     channel_id: string;
     message?: string;
     file_path?: string;
-  }): Promise<{ success: boolean; error?: string }> {
+  }): Promise<{ success: boolean; error?: string; effectStarted?: false }> {
     const { channel_id, message, file_path } = input;
 
     if (!channel_id) {
-      return { success: false, error: 'channel_id is required' };
+      return { success: false, effectStarted: false, error: 'channel_id is required' };
     }
 
     if (!this.slackGateway) {
-      return { success: false, error: 'Slack gateway not configured' };
+      return { success: false, effectStarted: false, error: 'Slack gateway not configured' };
     }
 
     try {
@@ -5250,7 +5309,11 @@ export class GatewayToolExecutor {
       } else if (message) {
         await this.slackGateway.sendMessage(channel_id, message);
       } else {
-        return { success: false, error: 'Either message or file_path is required' };
+        return {
+          success: false,
+          effectStarted: false,
+          error: 'Either message or file_path is required',
+        };
       }
 
       return { success: true };
@@ -5304,7 +5367,9 @@ export class GatewayToolExecutor {
             file_path ?? null,
             sticker_emotion ?? null,
           ];
-          if (delivery_key !== undefined) identity.push(delivery_key);
+          if (delivery_key !== undefined) {
+            identity.push(delivery_key);
+          }
           idempotencyKey = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
           ownerEffect = { batchId: 0, actionKey: `telegram:${delivery_key ?? idempotencyKey}` };
           ownerLedger = this.ownerEffectPort(context);
@@ -5643,19 +5708,25 @@ export class GatewayToolExecutor {
    *
    * Note: session_id removed - all files route to shared outbound dir
    */
-  private async executeWebchatSend(input: {
+  private async executeWebchatSend(input: { message?: string; file_path?: string }): Promise<{
+    success: boolean;
     message?: string;
-    file_path?: string;
-  }): Promise<{ success: boolean; message?: string; outbound_path?: string; error?: string }> {
+    outbound_path?: string;
+    error?: string;
+    effectStarted?: false;
+  }> {
     const { message, file_path } = input;
 
     if (!message && !file_path) {
-      return { success: false, error: 'Either message or file_path is required' };
+      return {
+        success: false,
+        effectStarted: false,
+        error: 'Either message or file_path is required',
+      };
     }
 
     try {
       const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
-      mkdirSync(outboundDir, { recursive: true });
 
       if (file_path) {
         // Expand ~ to home directory
@@ -5667,7 +5738,7 @@ export class GatewayToolExecutor {
         // Check path permission based on role
         const pathPermission = this.checkPathPermission(expandedPath);
         if (!pathPermission.allowed) {
-          return { success: false, error: pathPermission.error };
+          return { success: false, effectStarted: false, error: pathPermission.error };
         }
 
         // Fallback security for contexts without path restrictions:
@@ -5681,19 +5752,21 @@ export class GatewayToolExecutor {
           if (rel.startsWith('..') || isAbsolute(rel)) {
             return {
               success: false,
+              effectStarted: false,
               error: `Access denied: Can only copy files from ${mamaDir}`,
             };
           }
         }
 
         if (!existsSync(expandedPath)) {
-          return { success: false, error: `File not found: ${expandedPath}` };
+          return { success: false, effectStarted: false, error: `File not found: ${expandedPath}` };
         }
 
         // Copy file to outbound directory with timestamp prefix
         const baseName = basename(expandedPath) || 'file';
         const outName = `${Date.now()}_${baseName}`;
         const outPath = join(outboundDir, outName);
+        mkdirSync(outboundDir, { recursive: true });
         copyFileSync(expandedPath, outPath);
 
         const viewerPath = `~/.mama/workspace/media/outbound/${outName}`;
@@ -5892,7 +5965,9 @@ export class GatewayToolExecutor {
         ? ({ success: true, data: { output: result.output } } as GatewayToolResult)
         : (result as GatewayToolResult);
     } catch (error) {
-      if (error instanceof AgentError) throw error;
+      if (error instanceof AgentError) {
+        throw error;
+      }
       return {
         success: false,
         error:

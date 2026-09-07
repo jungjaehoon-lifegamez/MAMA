@@ -1973,7 +1973,9 @@ export async function runAgentLoop(
       }),
       publishPipelineSlot: () => {
         const refresh = refreshTaskBoard.current;
-        if (!refresh) throw new Error('task board projection is not bound yet');
+        if (!refresh) {
+          throw new Error('task board projection is not bound yet');
+        }
         refresh();
       },
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),

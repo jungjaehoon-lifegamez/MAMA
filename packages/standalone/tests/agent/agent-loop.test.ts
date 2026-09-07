@@ -4723,6 +4723,54 @@ Skills provide additional tools.
       expect(persistentPromptMock).toHaveBeenCalledTimes(2);
     });
 
+    it.each([
+      'No conversation found with session ID missing',
+      'Session ID is already in use',
+      'Prompt is too long',
+      'text content blocks must be non-empty',
+    ])(
+      'TG-05/06 preserves trusted pre-execution session recovery with native observation: %s',
+      async (message) => {
+        const events: string[] = [];
+        persistentPromptMock.mockRejectedValueOnce(new Error(message)).mockResolvedValueOnce({
+          response: 'recovered',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {
+            backend: 'claude',
+            systemPrompt: 'base prompt',
+            createNativeEffectObserver: () => ({
+              started: () => {
+                events.push('started');
+              },
+              settled: () => {
+                events.push('settled');
+              },
+              interrupted: () => {
+                events.push('unknown');
+              },
+              finished: () => {
+                events.push('finished');
+              },
+            }),
+          },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const result = await agentLoop.run('Continue', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: createChatBotContext(),
+          resumeSession: true,
+        });
+        expect(result.response).toContain('recovered');
+        expect(persistentPromptMock).toHaveBeenCalledTimes(2);
+        expect(events).toEqual(['finished']);
+      }
+    );
+
     it('TG-05 replaces an overflowing Cline session with one fully rehydrated session', async () => {
       const delivered: Array<{ resume: boolean; prompt: string }> = [];
       const freshSessionSystemPrompt = vi.fn().mockResolvedValue('full current Cline owner policy');

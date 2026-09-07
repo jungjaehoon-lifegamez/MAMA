@@ -1285,10 +1285,16 @@ export class CodexAppServerProcess {
     // TG-03/04/05/06: these notifications observe native effects; they are not
     // pre-execution hooks. Dynamic/MCP calls retain their existing host bridge.
     if (method === 'item/started' || method === 'item/completed') {
-      if (typeof data.turnId !== 'string' || data.turnId !== turn.turnId) return;
+      if (typeof data.turnId !== 'string' || data.turnId !== turn.turnId) {
+        return;
+      }
       const item = object(data.item);
-      if (!item || typeof item.id !== 'string' || typeof item.type !== 'string') return;
-      if (!['commandExecution', 'fileChange', 'collabAgentToolCall'].includes(item.type)) return;
+      if (!item || typeof item.id !== 'string' || typeof item.type !== 'string') {
+        return;
+      }
+      if (!['commandExecution', 'fileChange', 'collabAgentToolCall'].includes(item.type)) {
+        return;
+      }
       this.refreshTurnIdleTimeout(turn);
       try {
         let observed = turn.nativeItems.get(item.id);

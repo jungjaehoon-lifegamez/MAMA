@@ -573,7 +573,9 @@ describe('Story B2: owner action candidate migration rebuilds the NOT NULL attem
         reopened.close();
       }
     } finally {
-      if (fixture.db.open) fixture.db.close();
+      if (fixture.db.open) {
+        fixture.db.close();
+      }
       rmSync(directory, { recursive: true, force: true });
     }
   });

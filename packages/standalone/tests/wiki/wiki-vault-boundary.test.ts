@@ -71,7 +71,7 @@ describe('TG-03/TG-04 scheduled wiki turn uses owner business authority', () => 
 });
 
 describe('TG-06 wiki_read is bounded to the configured root', () => {
-  it('TG-04 reads historical wiki pages without a workorder and pins continuation versions', async () => {
+  it('TG-06 AC #1 reads historical wiki pages without a workorder and pins continuation versions', async () => {
     const root = vault();
     mkdirSync(join(root, 'daily'), { recursive: true });
     writeFileSync(join(root, 'daily/2020-01-01.md'), 'historical evidence');
@@ -93,7 +93,7 @@ describe('TG-06 wiki_read is bounded to the configured root', () => {
         paths: ['daily/2020-01-01.md'],
         content_offset: 4,
         content_versions: { 'daily/2020-01-01.md': wikiContentVersion('historical evidence') },
-      } as never)
+      })
     ).resolves.toMatchObject({ success: true, pages: [{ content: 'orical evidence' }] });
     await expect(executor.execute('wiki_read', { paths: ['../foreign.md'] })).rejects.toThrow();
   });

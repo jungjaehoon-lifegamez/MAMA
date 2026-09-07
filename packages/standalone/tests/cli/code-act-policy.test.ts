@@ -325,6 +325,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         ].map((match) => match[1]);
 
         expect(policy.agentContext.backend).toBe(backend);
+        expect(advertised.length).toBeGreaterThan(0);
         expect(advertised.every((name) => projected.names.includes(name))).toBe(true);
         expect(policy.gatewayToolsPrompt).toMatch(
           /task_temporal_reconcile[\s\S]*context_packet_id/

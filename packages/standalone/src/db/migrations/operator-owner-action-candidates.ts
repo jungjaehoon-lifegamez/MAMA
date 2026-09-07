@@ -216,7 +216,9 @@ function swapPreparedTables(db: SQLiteDatabase, prepared: readonly PreparedRebui
   for (const { spec, sequence } of prepared) {
     const scratch = `${spec.table}__owner_action_rebuild`;
     db.exec(`ALTER TABLE ${scratch} RENAME TO ${spec.table};`);
-    if (!spec.autoincrement || sequence === null) continue;
+    if (!spec.autoincrement || sequence === null) {
+      continue;
+    }
     const current = db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = ?`).get(spec.table) as
       | { seq: number }
       | undefined;
@@ -242,7 +244,9 @@ export function applyOperatorOwnerActionCandidatesMigration(db: SQLiteDatabase):
     // current column, so a partial prior migration cannot lose owner-run data.
     if (selected.some((spec) => spec.table === 'operator_external_task_bindings')) {
       for (const child of REBUILDS.slice(1)) {
-        if (tableExists(db, child.table) && !selected.includes(child)) selected.push(child);
+        if (tableExists(db, child.table) && !selected.includes(child)) {
+          selected.push(child);
+        }
       }
     }
     const bindingParentRebuilt = selected.some(

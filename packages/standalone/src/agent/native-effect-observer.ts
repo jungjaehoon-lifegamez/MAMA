@@ -37,14 +37,18 @@ export class NativeEffectReplayBoundary {
   constructor(private readonly observer?: NativeEffectObserver) {}
 
   started(name: string, input: Record<string, unknown>): void {
-    if (!NATIVE_EFFECT_NAMES.has(name.toLowerCase())) return;
+    if (!NATIVE_EFFECT_NAMES.has(name.toLowerCase())) {
+      return;
+    }
     // Latch before persistence: an observer failure must also prevent retry.
     this.observed = true;
     this.observer?.started(name, input);
   }
 
   settled(name: string, toolUseId: string, isError: boolean): void {
-    if (!NATIVE_EFFECT_NAMES.has(name.toLowerCase())) return;
+    if (!NATIVE_EFFECT_NAMES.has(name.toLowerCase())) {
+      return;
+    }
     this.observed = true;
     this.observer?.settled(name, toolUseId, isError);
   }
@@ -53,19 +57,15 @@ export class NativeEffectReplayBoundary {
     this.observer?.finished?.();
   }
 
-  failure(error: unknown, allowMissingSessionRecovery = false): unknown {
-    // A missing-session rejection is conclusive before turn admission. Only the
-    // one-time recovery caller may use this exception; terminal failures settle
-    // the admission marker as unknown even when no item notification arrived.
-    if (
-      allowMissingSessionRecovery &&
-      !this.observed &&
-      error instanceof Error &&
-      error.message.includes('No conversation found with session ID')
-    ) {
+  failure(error: unknown, allowPreExecutionRecovery = false): unknown {
+    // Only AgentLoop's trusted recoverable-session predicate may permit a reset.
+    // Once a native effect is observed, even a session error cannot allow replay.
+    if (allowPreExecutionRecovery && !this.observed) {
       return error;
     }
-    if (!this.observed && !this.observer) return error;
+    if (!this.observed && !this.observer) {
+      return error;
+    }
     try {
       this.observer?.interrupted();
     } catch {

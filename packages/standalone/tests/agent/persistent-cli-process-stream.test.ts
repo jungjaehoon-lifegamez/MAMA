@@ -517,3 +517,44 @@ describe('Story S3/TG-03/TG-06: Claude completed MCP exchange stream contract', 
     });
   });
 });
+
+it('TG-05/06 retains provider identities for overlapping same-name native tools completed in reverse order', async () => {
+  const firstInput = { command: 'first', nativeToolUseId: 'untrusted-input-id' };
+  const secondInput = { command: 'second' };
+  const pending = new Map<string, string>();
+  const completed: string[] = [];
+  const { result } = await drivePrompt(
+    [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'native-first', name: 'Bash', input: firstInput },
+            { type: 'tool_use', id: 'native-second', name: 'Bash', input: secondInput },
+          ],
+        },
+      },
+      userToolResult('native-second'),
+      userToolResult('native-first'),
+      successResult(),
+    ],
+    {
+      onToolUse: (_name, input) => {
+        pending.set(String(input.nativeToolUseId), String(input.command));
+      },
+      onToolComplete: (_name, id) => {
+        completed.push(`${id}:${pending.get(id)}`);
+        pending.delete(id);
+      },
+    }
+  );
+  expect(completed).toEqual(['native-second:second', 'native-first:first']);
+  expect(pending.size).toBe(0);
+  expect(result.completedToolExchanges?.map(({ toolUse }) => toolUse.input)).toEqual([
+    secondInput,
+    firstInput,
+  ]);
+  expect(firstInput.nativeToolUseId).toBe('untrusted-input-id');
+  expect(secondInput).toEqual({ command: 'second' });
+});
