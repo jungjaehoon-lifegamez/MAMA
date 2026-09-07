@@ -1,5 +1,37 @@
 # Kagemusha → MAMA Telegram parity contract
 
+## 0.50.0 owner-action authority candidate (local, 2026-09-07)
+
+- **TG-03/TG-04:** ordinary work uses current owner grants across input paths; external
+  candidate application keeps host attestation, exact current visibility and revision checks.
+  Temporal corroboration uses the same grant while retaining its required task/anchor/window.
+- **TG-05/TG-06:** task creation is occurrence/key-bound with an atomic receipt. Workspace
+  and outbound effects reserve before execution; unknown outcomes prohibit automatic replay.
+  Native backend notifications are observations rather than pre-execution hooks. A durable
+  admission marker precedes the native run, so a crash before notification is also uncertain.
+  Confirmed shell/native work is not replayed after a later failure. Owner-event and workorder
+  recovery both quarantine unsafe occurrences; this does not claim arbitrary shell idempotency.
+- **TG-04/TG-06:** ledger task facts refresh on commit and reads, and authored analysis reports
+  current/stale/unknown basis without a second model turn. Telegram entity offsets remain in
+  the original UTF-16 text frame through input and recovery.
+- Independent review cleared the authority, task creation, uncertain-effect, and recovery
+  findings. Root tests passed across seven workspace tasks; standalone passed 5,627 tests,
+  with seven existing skips. The final consumer/owner-event/native observation group passed
+  94 tests. Root build, typecheck, and lint passed. The built Board UI was checked in a browser
+  with synthetic current/stale/unknown data and working collapse controls.
+- PR CI, public release, installed runtime, and actual post-install Telegram receipt evidence
+  remain separate gates, to be recorded after they occur.
+
+## Owner authority continuation: review source seed (local, 2026-09-07)
+
+- **TG-03/TG-04/TG-06:** Temporal context compilation now seeds the persisted verified
+  review-anchor channel, with the original task channel retained as the legacy fallback.
+  This preserves cross-channel review evidence through the follow-up compile path.
+- A real SQLite/compiler regression reproduced the incorrect original-channel seed as
+  `context_compile_input_invalid`, then passed after correction. The four focused Temporal
+  and owner-effect suites passed 84 tests; standalone typecheck passed. This is local code
+  evidence only. General effect execution integration and release/live gates remain pending.
+
 This is the shared implementation and review artifact for Telegram owner-console parity. It is a
 contract, not background reading: every related change and review finding must cite one or more
 scenario IDs from this document.

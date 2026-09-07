@@ -5,9 +5,13 @@ import type { SQLiteDatabase } from '../../sqlite.js';
  * transaction. It intentionally does not infer bindings from legacy task
  * provenance: only a receipted, candidate-bound decision can create one.
  */
-export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS operator_external_task_bindings (
+/**
+ * Current column shapes (Task B2). A Board attempt id is optional audit
+ * metadata: rows may instead carry a verified origin run, owner scope and
+ * envelope (CHECK). Legacy NOT NULL tables are rebuilt to this shape by
+ * `applyOperatorOwnerActionCandidatesMigration`, which runs after this one.
+ */
+export const EXTERNAL_TASK_BINDINGS_COLUMNS_SQL = `
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
       task_id INTEGER NOT NULL REFERENCES operator_tasks(id),
@@ -15,21 +19,32 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
       source_type TEXT NOT NULL CHECK (source_type = 'kanban_card'),
       external_source_id TEXT NOT NULL,
       last_observation_seq INTEGER NOT NULL CHECK (last_observation_seq >= 1),
-      created_by_attempt_id INTEGER NOT NULL REFERENCES operator_tasks(id),
+      created_by_attempt_id INTEGER REFERENCES operator_tasks(id),
+      created_by_run_id TEXT,
+      created_by_owner_scope TEXT,
+      created_by_envelope_hash TEXT,
       active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
+      updated_at INTEGER NOT NULL,
+      CHECK (
+        created_by_attempt_id IS NOT NULL
+        OR (created_by_run_id IS NOT NULL
+            AND created_by_owner_scope IS NOT NULL
+            AND created_by_envelope_hash IS NOT NULL)
+      )`;
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_external_binding_active_task
-      ON operator_external_task_bindings(task_id) WHERE active = 1;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_external_binding_active_external
-      ON operator_external_task_bindings(connector, source_type, external_source_id) WHERE active = 1;
+const RECEIPT_ORIGIN_CHECK_SQL = `
+      CHECK (
+        workorder_attempt_id IS NOT NULL
+        OR (origin_run_id IS NOT NULL
+            AND origin_owner_scope IS NOT NULL
+            AND origin_envelope_hash IS NOT NULL)
+      )`;
 
-    CREATE TABLE IF NOT EXISTS operator_external_binding_receipts (
+export const EXTERNAL_BINDING_RECEIPTS_COLUMNS_SQL = `
       candidate_id TEXT PRIMARY KEY,
       decision TEXT NOT NULL CHECK (decision IN ('bind','decline')),
-      workorder_attempt_id INTEGER NOT NULL REFERENCES operator_tasks(id),
+      workorder_attempt_id INTEGER REFERENCES operator_tasks(id),
       task_id INTEGER NOT NULL REFERENCES operator_tasks(id),
       event_id TEXT NOT NULL,
       connector TEXT NOT NULL CHECK (connector = 'kagemusha'),
@@ -46,15 +61,14 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
       binding_id INTEGER REFERENCES operator_external_task_bindings(id),
       origin_run_id TEXT,
       origin_cause_event_ids TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_operator_external_binding_receipts_attempt
-      ON operator_external_binding_receipts(workorder_attempt_id, candidate_id);
+      origin_owner_scope TEXT,
+      origin_envelope_hash TEXT,
+      created_at INTEGER NOT NULL,${RECEIPT_ORIGIN_CHECK_SQL}`;
 
-    CREATE TABLE IF NOT EXISTS operator_external_lifecycle_receipts (
+export const EXTERNAL_LIFECYCLE_RECEIPTS_COLUMNS_SQL = `
       candidate_id TEXT PRIMARY KEY,
       decision TEXT NOT NULL CHECK (decision IN ('apply','retain')),
-      workorder_attempt_id INTEGER NOT NULL REFERENCES operator_tasks(id),
+      workorder_attempt_id INTEGER REFERENCES operator_tasks(id),
       task_id INTEGER NOT NULL REFERENCES operator_tasks(id),
       event_id TEXT NOT NULL,
       connector TEXT NOT NULL CHECK (connector = 'kagemusha'),
@@ -73,7 +87,26 @@ export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase):
       reason TEXT NOT NULL,
       origin_run_id TEXT,
       origin_cause_event_ids TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      origin_owner_scope TEXT,
+      origin_envelope_hash TEXT,
+      created_at INTEGER NOT NULL,${RECEIPT_ORIGIN_CHECK_SQL}`;
+
+export function applyOperatorTaskExternalLifecycleMigration(db: SQLiteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operator_external_task_bindings (${EXTERNAL_TASK_BINDINGS_COLUMNS_SQL}
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_external_binding_active_task
+      ON operator_external_task_bindings(task_id) WHERE active = 1;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_external_binding_active_external
+      ON operator_external_task_bindings(connector, source_type, external_source_id) WHERE active = 1;
+
+    CREATE TABLE IF NOT EXISTS operator_external_binding_receipts (${EXTERNAL_BINDING_RECEIPTS_COLUMNS_SQL}
+    );
+    CREATE INDEX IF NOT EXISTS idx_operator_external_binding_receipts_attempt
+      ON operator_external_binding_receipts(workorder_attempt_id, candidate_id);
+
+    CREATE TABLE IF NOT EXISTS operator_external_lifecycle_receipts (${EXTERNAL_LIFECYCLE_RECEIPTS_COLUMNS_SQL}
     );
     CREATE INDEX IF NOT EXISTS idx_operator_external_lifecycle_receipts_attempt
       ON operator_external_lifecycle_receipts(workorder_attempt_id, candidate_id);

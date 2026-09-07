@@ -27,6 +27,10 @@ import { getMemoryLogger } from '../memory/memory-logger.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { buildContentBlocks, detectImageType } from './attachment-utils.js';
 import {
+  captureTelegramTextFormatting,
+  selectTelegramTextEntities,
+} from './telegram-text-entities.js';
+import {
   downloadTelegramMedia,
   pruneTelegramMediaRoot,
   type TelegramMediaDownloadRequest,
@@ -498,8 +502,17 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
 
-    const selectedText = msg.text ?? msg.caption ?? '';
-    const selectedEntities = msg.text !== undefined ? msg.entities : msg.caption_entities;
+    // Task G: text pairs with `entities`, caption with `caption_entities`. The
+    // selected field is the ORIGINAL reference frame for every entity offset
+    // (UTF-16 code units); later host adjustments never rewrite it.
+    const {
+      field: selectedField,
+      text: selectedText,
+      entities: selectedEntities,
+    } = selectTelegramTextEntities(msg);
+    const telegramFormatting = msg.sticker
+      ? undefined
+      : captureTelegramTextFormatting(selectedField, selectedText, selectedEntities);
 
     // Group chat filtering
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
@@ -725,6 +738,11 @@ export class TelegramGateway extends BaseGateway {
         // when the GATEWAY wrapped them - sender-typed markers are not a
         // security boundary (forgeable in-band data).
         untrustedWrapped: isForwarded,
+        // Sender styling as data. Offsets stay bound to originalText, so the
+        // mention removal / placeholder / wrapper applied to `text` above
+        // cannot shift them. A forwarded body's formatting is fenced by the
+        // router under the same untrustedWrapped flag.
+        ...(telegramFormatting ? { telegramFormatting } : {}),
       },
     };
 

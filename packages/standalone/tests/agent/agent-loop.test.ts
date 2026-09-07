@@ -753,8 +753,9 @@ describe('AgentLoop', () => {
         await ask('compose the owner report');
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
-        expect(effectivePrompt).toContain('**changes_read**');
-        expect(effectivePrompt).not.toContain('**drive_download**');
+        expect(reportPolicy.agentContext.role.allowedTools).toEqual(
+          expect.arrayContaining(['changes_read', 'drive_download'])
+        );
         expect(
           effectivePrompt.match(/<!-- MAMA_GENERATED_GATEWAY_TOOLS_START -->/g) ?? []
         ).toHaveLength(1);
@@ -766,7 +767,9 @@ describe('AgentLoop', () => {
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(effectivePrompt.includes('**kagemusha_tasks**')).toBe(enabled);
+        expect(reportPolicy.agentContext.role.allowedTools.includes('kagemusha_tasks')).toBe(
+          enabled
+        );
       }
     );
 

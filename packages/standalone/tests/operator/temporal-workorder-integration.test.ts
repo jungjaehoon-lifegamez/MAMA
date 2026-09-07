@@ -329,8 +329,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     expect(observedTemporalCatalogs[0], JSON.stringify(events)).toBeDefined();
     expect(observedTemporalPrompts[0], JSON.stringify(events)).toBeDefined();
     for (const toolName of KAGEMUSHA_TOOLS) {
-      expect(observedTemporalCatalogs[0]).not.toContain(toolName);
-      expect(observedTemporalPrompts[0]).not.toContain(toolName);
+      expect(observedTemporalCatalogs[0]).toContain(toolName);
     }
 
     const attemptId = runs[0]!;

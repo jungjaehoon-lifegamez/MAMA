@@ -95,11 +95,9 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { resolveRuntimeConnectorBootstrap } from '../runtime/connector-bootstrap.js';
 import {
-  resolvePrivateConnectorPolicy,
   type ConnectorCapabilitySurface,
   type PrivateConnectorPolicy,
 } from '../../connectors/private-connector-policy.js';
-import { publicWikiConnectorScope } from '../../operator/wiki-continuity.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
@@ -141,6 +139,7 @@ import {
 import { resolveRepairRoot } from '../../operator/repair-request.js';
 import { budgetStopSink } from '../runtime/agent-loop-init.js';
 import { selfCheckKey } from '../../operator/workorder-publishers.js';
+import { OwnerActionEffectLedger } from '../../operator/owner-action-effects.js';
 import { OwnerEventEffectLedger } from '../../operator/owner-event-effects.js';
 import {
   OwnerEventLoop,
@@ -188,12 +187,6 @@ export function workOrderActivityDetails(
   return event.briefHash ? { brief_hash: event.briefHash } : undefined;
 }
 type RuntimeBackend = 'claude' | 'codex' | 'cline';
-const DISABLED_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
-  ok: true,
-  config: {},
-  enabledNames: [],
-});
-
 export interface MemberScopeGrantReader {
   listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
 }
@@ -532,22 +525,10 @@ export function workOrderEnvelopeScope(input: {
   memory_scopes: MemoryScopeRef[];
   allowed_destinations: never[];
 } {
-  const isTemporal = input.workKind === 'temporal';
-  // One principal for every turn; what differs per kind is WHICH connectors the run
-  // may read, and that is data: a recheck reads its task's connector or nothing, a
-  // wiki turn reads no PRIVATE connector (personal channels never feed public pages),
-  // the board and curation turns keep the lane's configured connectors.
+  // The trusted owner grant decides readable connectors. Work kind and temporal binding
+  // remain selection and receipt metadata; neither attenuates ordinary read authority.
   const surface: ConnectorCapabilitySurface = ONE_AGENT_TURN_POLICY.roleName;
-  const candidateConnectors = isTemporal
-    ? input.temporalBinding
-      ? [input.temporalBinding.connector]
-      : []
-    : input.workKind === 'wiki'
-      ? publicWikiConnectorScope(
-          input.laneConnectors,
-          input.privateConnectorPolicy.enabledPrivateConnectors
-        )
-      : input.laneConnectors;
+  const candidateConnectors = input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
     // A temporal run reads its task's connector or nothing. Every other lane keeps the
@@ -567,29 +548,26 @@ export function workOrderEnvelopeScope(input: {
       // mama_save's write binding, so issuing the mirror here re-opened
       // per-channel raw isolation and bound every saved memory to every
       // granted channel (PR #217 review, blocking #2/#3).
-      ...(input.temporalBinding
-        ? [
-            {
-              kind: 'channel' as const,
-              id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
-            },
-          ]
-        : []),
-      // Same rule for a board reconcile: the run is bound to the channel whose delta it
-      // judges, and connector memories are scoped by the canonical channel key.
-      ...(input.workKind === 'board' && input.reconcileChannelKey
-        ? [{ kind: 'channel' as const, id: input.reconcileChannelKey }]
-        : []),
     ],
     allowed_destinations: [],
   };
 }
 
 export function temporalTaskBinding(
-  ledger: { getById: (id: number) => { sourceChannel?: string | null } | null },
+  ledger: {
+    getById: (id: number) => {
+      sourceChannel?: string | null;
+      status?: string;
+      reviewAnchorSourceChannel?: string | null;
+    } | null;
+  },
   taskId: number
 ): { connector: string; channel: string } | null {
-  const sourceChannel = ledger.getById(taskId)?.sourceChannel;
+  const task = ledger.getById(taskId);
+  const sourceChannel =
+    task?.status === 'review'
+      ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
+      : task?.sourceChannel;
   if (typeof sourceChannel !== 'string') return null;
   const separator = sourceChannel.indexOf(':');
   if (separator <= 0 || separator === sourceChannel.length - 1) return null;
@@ -667,37 +645,7 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
  * that is advertised but never injected is a hallucinated-call generator. Member data and
  * workspace file reads are owner-conversation material with no use in a scheduled turn.
  */
-export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
-  // Records and tasks are SEPARATE (owner policy). An unattended turn reads connector
-  // evidence, and connector observations, principles and open questions are records -
-  // letting a scheduled turn mint owner rows is what filled the board with non-tasks.
-  // Only an owner CONVERSATION creates a task; unattended turns recorrect with
-  // task_reclassify instead.
-  'task_create',
-  // workspace file reads, the shell and the file writer are owner-conversation tools;
-  // no unattended turn section instructs one
-  'Read',
-  'Bash',
-  'Write',
-  // every outbound channel, not only Telegram: the grant is derived from the owner's
-  // (editable) role config, so a send tool added there must still never run unattended
-  'telegram_send',
-  'discord_send',
-  'slack_send',
-  'webchat_send',
-  'drive_upload',
-  'drive_list_drives',
-  'drive_browse',
-  'drive_find_folder',
-  'drive_download',
-  'ocr_image',
-  'create_fb_overlay',
-  'translate_conti',
-  'drive_translate_conti',
-  'member_candidates',
-  'member_list',
-  'member_scope_list',
-]);
+export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = ADMINISTRATION_TOOLS;
 
 /**
  * Per-turn-kind blocked lists, projected by the HOST. One principal and one brief do
@@ -706,61 +654,11 @@ export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
  * artifact. Each entry names the artifact it protects.
  */
 export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>> = {
-  // board writes judgment slots and recorrects existing task lifecycle through
-  // task_update/task_reclassify; it does not create rows, touch memory, or touch the
-  // vault (obsidian is the wiki lane's write path)
-  board: new Set([
-    'wiki_publish',
-    'obsidian',
-    'mama_save',
-    'mama_update',
-    'task_temporal_reconcile',
-  ]),
-  // wiki writes pages; the ledger, the board and memory are not its artifact
-  wiki: new Set([
-    'report_publish',
-    'mama_save',
-    'mama_update',
-    'task_create',
-    'task_update',
-    'task_reclassify',
-    'task_temporal_reconcile',
-    'obsidian',
-  ]),
-  // curation writes memory; nothing else
-  'memory-curation': new Set([
-    'report_publish',
-    'wiki_publish',
-    'task_create',
-    'task_update',
-    'task_reclassify',
-    'task_temporal_reconcile',
-    'obsidian',
-  ]),
-  // recheck resolves ONE task through task_temporal_reconcile; generic mutation is out
-  // self-check triages the system's own failures; it files repair requests and closes
-  // issues, and touches nothing the owner or another turn owns
-  'self-check': new Set([
-    'report_publish',
-    'wiki_publish',
-    'mama_save',
-    'mama_update',
-    'task_create',
-    'task_update',
-    'task_reclassify',
-    'task_temporal_reconcile',
-    'obsidian',
-  ]),
-  temporal: new Set([
-    'report_publish',
-    'wiki_publish',
-    'mama_save',
-    'mama_update',
-    'task_create',
-    'task_update',
-    'task_reclassify',
-    'obsidian',
-  ]),
+  board: new Set(),
+  wiki: new Set(),
+  'memory-curation': new Set(),
+  'self-check': new Set(),
+  temporal: new Set(),
 };
 
 /** Progressive evidence primitives for a scheduled owner-runtime report turn. */
@@ -903,18 +801,12 @@ export function buildTurnAgentPolicy(
   }
   // Same downgrade the event turn applies: a run with no private binding advertises
   // no private connector tools and gets the disabled brief projection.
-  const scopedSurface: ConnectorCapabilitySurface =
-    requiredPrivatePolicy.enabledPrivateConnectors.some((name) => rawConnectorScope.includes(name))
-      ? ONE_AGENT_TURN_POLICY.roleName
-      : 'multi-agent-generic';
+  const scopedSurface: ConnectorCapabilitySurface = ONE_AGENT_TURN_POLICY.roleName;
   const blockedSet = new Set<string>([
     ...ADMINISTRATION_TOOLS,
     ...SCHEDULED_TURN_BLOCKED_TOOLS,
     ...kindBlocked,
     ...(ownerRole.blockedTools ?? []),
-    // Shape rule on top of the named lists: the role config is owner-editable, so a
-    // send or upload tool that appears there tomorrow is still never unattended.
-    ...ownerRole.allowedTools.filter((tool) => isOutboundToolName(tool)),
   ]);
   const projectedRole = buildProjectedLaneRole(
     scopedSurface,
@@ -941,16 +833,13 @@ export function buildTurnAgentPolicy(
     },
     capabilities: allowedTools,
     limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
-    tier: 2,
+    tier: 1,
     backend,
   };
   return {
     agentContext,
     gatewayToolsPrompt: buildProjectedLanePrompt(innerTools, scopedSurface, requiredPrivatePolicy),
-    briefProjectionPolicy:
-      scopedSurface === 'multi-agent-generic'
-        ? DISABLED_PRIVATE_CONNECTOR_POLICY
-        : requiredPrivatePolicy,
+    briefProjectionPolicy: requiredPrivatePolicy,
   };
 }
 
@@ -1044,6 +933,7 @@ export function resolveOwnerEventTerminalReceipt(
   batch: OwnerEventBatch,
   deps: {
     ownerEventEffectLedger: Pick<OwnerEventEffectLedger, 'confirmedKinds'>;
+    ownerActionEffectLedger?: Pick<OwnerActionEffectLedger, 'confirmedKindsForOccurrence'>;
     taskLedger: Pick<TaskLedger, 'maxNoUpdateId' | 'effectsCausedBy'>;
   }
 ): OwnerEventTerminalReceipt | null {
@@ -1058,7 +948,9 @@ export function resolveOwnerEventTerminalReceipt(
   const confirmedEffects = deps.ownerEventEffectLedger
     .confirmedKinds(batch.id)
     .filter((kind) => kind !== 'telegram_send');
-  const durable = [...new Set([...ledgerEffects, ...confirmedEffects])];
+  const genericEffects =
+    deps.ownerActionEffectLedger?.confirmedKindsForOccurrence(`owner-event:${batch.id}`) ?? [];
+  const durable = [...new Set([...ledgerEffects, ...confirmedEffects, ...genericEffects])];
   if (durable.length > 0) {
     return { status: 'acted', tools: durable, ownerDecisionRequested: false };
   }
@@ -1686,6 +1578,7 @@ export async function runAgentLoop(
       sessionKey: OWNER_RUNTIME_SESSION_KEY,
       source: 'operator',
       channelId,
+      sourceMessageRef: `owner-stimulus:${channelId}:${randomUUID()}`,
       agentContext: backgroundOwnerContext,
       sessionPolicyRole: ownerRole,
       prepareEnvelope: async () => {
@@ -1781,8 +1674,11 @@ export async function runAgentLoop(
   mkdirSync(dirname(operatorDbPath), { recursive: true });
   const operatorDb = new Database(operatorDbPath);
   let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
+  const refreshTaskBoard: { current: (() => void) | null } = { current: null };
   try {
-    taskLedger = new TaskLedger(operatorDb);
+    taskLedger = new TaskLedger(operatorDb, {
+      onOwnerTaskChangeCommitted: () => refreshTaskBoard.current?.(),
+    });
     toolExecutor.setTaskLedger(taskLedger);
   } catch (err) {
     // Fail loud, but do not leak the handle on a failed boot.
@@ -1801,6 +1697,8 @@ export async function runAgentLoop(
   const boardRefreshGate = new BoardRefreshGate({ initialGeneration: Date.now() });
   const ownerEventEffectLedger = new OwnerEventEffectLedger(operatorDb);
   toolExecutor.setOwnerEventEffectLedger(ownerEventEffectLedger);
+  const ownerActionEffectLedger = new OwnerActionEffectLedger(operatorDb);
+  toolExecutor.setOwnerActionEffectLedger(ownerActionEffectLedger);
   let stopOwnerEventRuntime: (() => Promise<void>) | null = null;
   // S2: leg cadence watchdog - its OWN timer, deliberately outside the
   // trigger loop (a watchdog inside the thing it watches dies with it).
@@ -1952,9 +1850,6 @@ export async function runAgentLoop(
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
   const boardRepairNudge: { current: (() => void) | null } = { current: null };
-  const pipelineSlotPublisher: { current: ((slots: Record<string, string>) => unknown) | null } = {
-    current: null,
-  };
   const learningBlockRef: {
     current: ((turn: string, scopes: MemoryScopeRef[], query: string) => Promise<string>) | null;
   } = { current: null };
@@ -2030,6 +1925,10 @@ export async function runAgentLoop(
       },
     };
     workOrderConsumer = new WorkOrderConsumer({
+      hasUnsettledEffects: (wo) =>
+        ownerActionEffectLedger.hasUnsettledEffects(`workorder:${wo.idempotencyKey}`),
+      hasUnsafeReplayEffects: (wo) =>
+        ownerActionEffectLedger.hasUnsafeReplayEffects(`workorder:${wo.idempotencyKey}`),
       ledger: taskLedger,
       runner: workerRunner,
       loadOwnerBrief: () => loadConsoleBrief(),
@@ -2073,13 +1972,9 @@ export async function runAgentLoop(
         noUpdateScope: `self-check:${new Date().toLocaleDateString('sv-SE')}`,
       }),
       publishPipelineSlot: () => {
-        const publish = pipelineSlotPublisher.current;
-        if (!publish) throw new Error('pipeline slot publisher is not bound yet');
-        const page = taskLedger.listPage({
-          includeTerminal: false,
-          order: 'deadline_priority',
-        });
-        publish({ pipeline: renderPipelineSlot(page.tasks, Date.now(), page.total) });
+        const refresh = refreshTaskBoard.current;
+        if (!refresh) throw new Error('task board projection is not bound yet');
+        refresh();
       },
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
@@ -2128,19 +2023,8 @@ export async function runAgentLoop(
           },
           wo.id
         );
-        // A temporal run is bound to ONE task on ONE channel, and the packet check
-        // (temporalPacketRawSourcesWithinBoundSource) enforces exactly that: every raw ref
-        // must match the task's connector:channel or the reconcile is refused.
-        //
-        // While raw reads returned nothing that check was vacuous. Once the channel grant
-        // makes them return rows it stops being vacuous, and a lane-wide envelope hands
-        // the compile every configured channel of every granted connector - so every
-        // raw-backed temporal run would fail a check it cannot satisfy. The envelope has
-        // to say what the run is actually bound to.
-        //
-        // A task with no source channel gets no connector at all, which is the same answer
-        // from the other direction: the check requires zero raw refs for those, so the
-        // grant must be empty rather than merely narrow.
+        // Temporal identity and the required review anchor remain host-bound. Additional
+        // corroboration is selected by the owner and checked against current exact grants.
         // A reconcile carries the channel's delta batch. Handing it to the run makes every
         // durable change the run produces rest on it WITHOUT the agent restating anything -
         // the system knew the batch before the run began. This is the whole difference
@@ -2599,9 +2483,14 @@ export async function runAgentLoop(
           },
           issueEnvelope: ownerEventIssueEnvelope,
           getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+          hasUnsafeReplayEffects: (batch) =>
+            ownerActionEffectLedger.hasUnsafeReplayEffects(`owner-event:${batch.id}`),
+          hasUnsettledEffects: (batch) =>
+            ownerActionEffectLedger.hasUnsettledEffects(`owner-event:${batch.id}`),
           getTerminalReceipt: (batch) =>
             resolveOwnerEventTerminalReceipt(batch, {
               ownerEventEffectLedger,
+              ownerActionEffectLedger,
               taskLedger,
             }),
           recordTriggerOutcome: (triggerId, outcome) =>
@@ -2712,11 +2601,21 @@ export async function runAgentLoop(
   });
   boardRepairNudge.current = apiRoutesHandle.requestBoardRepair;
   {
-    const { createReportPublisher } = await import('../../api/report-handler.js');
-    pipelineSlotPublisher.current = createReportPublisher(
-      apiServer.reportStore,
-      apiServer.reportSseClients
+    const { broadcastReportUpdate } = await import('../../api/report-handler.js');
+    apiServer.reportStore.setTaskProjectionProvider(
+      () =>
+        operatorDb.transaction(() => {
+          const page = taskLedger.listPage({ includeTerminal: false, order: 'deadline_priority' });
+          return {
+            basisRevision: taskLedger.readGeneration(),
+            html: renderPipelineSlot(page.tasks, Date.now(), page.total),
+          };
+        })(),
+      (slots) => broadcastReportUpdate(apiServer.reportSseClients, { slots })
     );
+    refreshTaskBoard.current = () => {
+      apiServer.reportStore.refreshTaskProjection();
+    };
   }
   gateways.push({ stop: async () => apiRoutesHandle.stop() });
 

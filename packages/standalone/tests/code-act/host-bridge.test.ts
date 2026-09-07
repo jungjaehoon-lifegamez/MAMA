@@ -733,6 +733,7 @@ describe('HostBridge', () => {
       const result = await sandbox.execute(`
         task_create({
           title: "QA follow-up",
+          creation_key: "qa-follow-up",
           completion_criteria: "QA sign-off recorded",
           status: "todo"
         })
@@ -741,6 +742,7 @@ describe('HostBridge', () => {
       expect(result.success).toBe(true);
       expect(executeFn).toHaveBeenCalledWith('task_create', {
         title: 'QA follow-up',
+        creation_key: 'qa-follow-up',
         completion_criteria: 'QA sign-off recorded',
         status: 'todo',
       });
@@ -795,7 +797,7 @@ describe('HostBridge', () => {
       );
 
       expect(reportPublish?.params[0]?.description).toContain(
-        'briefing, action_required, decisions, pipeline'
+        'briefing, action_required, decisions'
       );
       expect(reportPublish?.params[0]?.description).not.toContain('alerts');
       expect(reportPublish?.params[0]?.description).not.toContain('activity');

@@ -3,39 +3,15 @@ import type { AgentContext } from '../agent/types.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import type { PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 
-/**
- * One MAMA (2026-09-04): the event turn holds the owner console grant minus the
- * entries below, each with the reason it is not "minus nothing". Existing ledger
- * rows and memory remain maintainable, but task_create is blocked because connector
- * observations are evidence and only an owner conversation may create finite work.
- */
+/** Input source is observation metadata, not ordinary business authority. */
 const OWNER_EVENT_BLOCKED_TOOLS = new Set([
-  // Records and tasks are SEPARATE (owner policy, v0.48.1). An event turn is driven by
-  // connector OBSERVATIONS - evidence, not work items. Creating a native row from one is
-  // what turned records, principles and open questions into owner tasks. The turn keeps
-  // task_update/task_reclassify so it can still recorrect and reopen the source-bound
-  // rows that already exist; only an owner CONVERSATION may create.
-  'task_create',
-  // administration: owner-authored chat only
+  // Membership, scope and standing-policy administration require an interactive owner.
   'member_register',
   'member_suspend',
   'member_offboard',
   'member_scope_grant',
   'member_scope_revoke',
-  // an event turn is driven by UNTRUSTED connector content; letting it rewrite the
-  // one operating brief is a prompt-injection amplifier. Brief edits stay on chat.
   'console_brief_update',
-  // the workspace shell and file writer are owner-conversation tools: an event turn is
-  // driven by untrusted connector text, and a shell would make that text a command
-  'Bash',
-  'Write',
-  // not in the completion set (owner-event-outcome.ts) and not receipted anywhere the
-  // crash-recovery resolver can read: `obsidian` covers reads as well as writes, and
-  // drive_translate_conti uploads outside the owner-event effect ledger, so a retry
-  // would upload again. Granting a durable-looking tool that can never complete the
-  // turn only repeats its side effect until the batch dies.
-  'obsidian',
-  'drive_translate_conti',
 ]);
 
 export function resolveOwnerEventExecution(input: {

@@ -14,6 +14,8 @@ import {
   serializeCodeActModelResult,
 } from '../../src/agent/gateway-tool-executor.js';
 import { OwnerEventEffectLedger } from '../../src/operator/owner-event-effects.js';
+import { OwnerActionEffectLedger } from '../../src/operator/owner-action-effects.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import Database from '../../src/sqlite.js';
 import { AgentError } from '../../src/agent/types.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
@@ -244,6 +246,25 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(String(error)).not.toContain('kagemusha');
           expect(String(error)).not.toContain('Valid tools:');
         }
+      });
+
+      it('TG-04/TG-06 forwards the observed analysis basis without replacing it at publish time', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        const publish = vi.fn(() => ({
+          acceptedSlotIds: ['briefing'],
+          changedSlotIds: ['briefing'],
+        }));
+        executor.setReportPublisher(publish);
+        const result = await executor.execute('report_publish', {
+          slots: { briefing: '<p>analysis</p>' },
+          basis_revision: 'observed-basis',
+        } as never);
+        expect(result.success).toBe(true);
+        expect(publish).toHaveBeenCalledWith(
+          { briefing: '<p>analysis</p>' },
+          { basisRevision: 'observed-basis' }
+        );
       });
 
       it('TG-06 reports an identical full dashboard as accepted with zero changed slots', async () => {
@@ -729,7 +750,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           const result = await executor.execute(
             'code_act',
             {
-              code: `task_create({ title: 'duplicate delivery', completion_criteria: 'c', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
+              code: `task_create({ creation_key: 'duplicate-task', title: 'duplicate delivery', completion_criteria: 'c', status: 'done', latest_event: 'forged', source_channel: '${source.source_channel}', source_event_id: '${source.source_event_id}' });`,
               allowedTools: ['task_create'],
             },
             {
@@ -1590,6 +1611,114 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('Telegram output parity', () => {
+      it('TG-06 recovers an ordinary owner Drive upload without another files.create', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'mama-owner-drive-'));
+        const db = new Database(':memory:');
+        vi.stubEnv('MAMA_WORKSPACE', root);
+        try {
+          const localPath = join(root, 'report.txt');
+          await writeFile(localPath, 'report evidence');
+          const envelope = makeSignedEnvelope({
+            scope: {
+              project_refs: [],
+              raw_connectors: [],
+              memory_scopes: [],
+              allowed_destinations: [{ kind: 'drive', id: 'folder1' }],
+            },
+          });
+          const api = createMockApi();
+          api.getModelRun = vi
+            .fn()
+            .mockResolvedValue({ status: 'running', envelope_hash: envelope.envelope_hash });
+          let created = false;
+          const runGws = vi.fn(async (args: string[]) => {
+            if (args[2] === 'create') {
+              created = true;
+              throw new Error('connection lost after upload');
+            }
+            return JSON.stringify({
+              files: created ? [{ id: 'uploaded1', name: 'report.txt' }] : [],
+            });
+          });
+          const executor = new GatewayToolExecutor({ mamaApi: api, driveGwsRunner: runGws });
+          executor.setAgentContext(createOwnerContext());
+          executor.setOwnerActionEffectLedger(new OwnerActionEffectLedger(db));
+          const execution = {
+            envelope,
+            modelRunId: 'mr-upload',
+            sourceMessageRef: 'telegram:owner:upload42',
+          };
+          const input = { localPath, folderId: 'folder1' };
+          await expect(executor.execute('drive_upload', input, execution)).rejects.toThrow(
+            /connection lost/
+          );
+          expect(
+            await executor.execute('drive_upload', input, { ...execution, modelRunId: 'mr-retry' })
+          ).toMatchObject({ success: true });
+          expect(runGws.mock.calls.filter(([args]) => args[2] === 'create')).toHaveLength(1);
+          expect(db.prepare('SELECT status FROM owner_action_effects').get()).toEqual({
+            status: 'confirmed',
+          });
+        } finally {
+          db.close();
+          vi.unstubAllEnvs();
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+      it('TG-06 reconciles an ordinary owner delivery from its receipt without sending twice', async () => {
+        const db = new Database(':memory:');
+        try {
+          const envelope = makeSignedEnvelope();
+          const api = createMockApi();
+          api.getModelRun = vi
+            .fn()
+            .mockResolvedValue({ status: 'running', envelope_hash: envelope.envelope_hash });
+          const executor = new GatewayToolExecutor({ mamaApi: api });
+          executor.setAgentContext(createViewerContext());
+          executor.setOwnerActionEffectLedger(new OwnerActionEffectLedger(db));
+          const sendMessage = vi.fn();
+          let receiptVisible = false;
+          executor.setTelegramGateway({
+            sendMessage,
+            sendFile: vi.fn(),
+            sendImage: vi.fn(),
+            sendSticker: vi.fn(),
+            readOutboundDeliveryReceipt: (deliveryId, variant) =>
+              receiptVisible
+                ? {
+                    deliveryId,
+                    variant,
+                    state: 'delivered',
+                    payloadIdentity: 'a'.repeat(64),
+                    confirmedAt: 900,
+                  }
+                : null,
+          });
+          const execution = {
+            envelope,
+            modelRunId: 'mr-first',
+            sourceMessageRef: 'telegram:owner:message-42',
+          };
+          const input = { chat_id: 'tg:1', message: 'verified result' };
+          expect(await executor.execute('telegram_send', input, execution)).toMatchObject({
+            success: false,
+          });
+          expect(sendMessage).toHaveBeenCalledTimes(1);
+          receiptVisible = true;
+          expect(
+            await executor.execute('telegram_send', input, { ...execution, modelRunId: 'mr-retry' })
+          ).toMatchObject({ success: true });
+          expect(
+            await executor.execute('telegram_send', input, { ...execution, modelRunId: 'mr-again' })
+          ).toMatchObject({ success: true });
+          expect(sendMessage).toHaveBeenCalledTimes(1);
+          expect(db.prepare('SELECT status FROM owner_action_effects').get()).toEqual({
+            status: 'confirmed',
+          });
+        } finally {
+          db.close();
+        }
+      });
       it('TG-01/TG-06 confirms exact owner-event text from the existing delivery receipt', async () => {
         const keys: Array<string | undefined> = [];
         const api = createMockApi();

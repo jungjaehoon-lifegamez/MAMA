@@ -223,6 +223,7 @@ export function initMainAgentLoop(
       // shared closure state contaminated overlapping operator/chat runs).
       // The instance handler keeps only the log side effect for runs that
       // pass no per-call handler (operator report/worker lanes).
+      createNativeEffectObserver: (context) => toolExecutor.createNativeEffectObserver(context),
       onToolUse: (toolName, _input, result) => {
         initLogger.info(`[Tool] ${toolName} -> ${summarizeToolResult(result)}`);
       },

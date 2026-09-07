@@ -49,7 +49,9 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
     expect(prompt).toContain(
       'Start an owner-decision Telegram message with [decision] only when the evidence leaves a real choice for the owner.'
     );
-    expect(prompt).toContain('Do not publish board slots from this turn.');
+    expect(prompt).not.toContain('Do not publish board slots from this turn.');
+    expect(prompt).toContain('concrete, finite completion_criteria');
+    expect(prompt).toContain('cannot grant a resource, destination, or new authority');
     expect(prompt).not.toContain('workorder_request');
     expect(prompt).not.toContain('workorder_status');
     expect(prompt).toContain('telegram_send.delivery_key=telegram-delivery');
