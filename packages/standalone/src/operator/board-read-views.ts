@@ -16,14 +16,19 @@
 import { createHash } from 'node:crypto';
 import { Parser } from 'htmlparser2';
 
-export type BoardSlots = Record<string, { html: string; updatedAt?: string | null }>;
+export interface BoardBasis {
+  basisRevision?: string | null;
+  currentBasisRevision?: string;
+  freshness?: 'current' | 'stale' | 'unknown';
+}
+export type BoardSlots = Record<string, BoardBasis & { html: string; updatedAt?: string | null }>;
 
 const CONTENT_DEFAULT_LIMIT = 1000;
 const CONTENT_MAX_LIMIT = 4000;
 const FORMATS = ['text', 'html'] as const;
 type BoardFormat = (typeof FORMATS)[number];
 
-export interface BoardSlotDescriptor {
+export interface BoardSlotDescriptor extends BoardBasis {
   name: string;
   updatedAt: string | null;
   /** Stored HTML length in Unicode code points (NOT the extracted-text length). */
@@ -32,7 +37,7 @@ export interface BoardSlotDescriptor {
 
 export type BoardReadResult =
   | { success: true; slots: BoardSlotDescriptor[] }
-  | {
+  | (BoardBasis & {
       success: true;
       slot: string;
       format: BoardFormat;
@@ -47,7 +52,7 @@ export type BoardReadResult =
       complete: boolean;
       /** Binds (slot, format, content); a continuation must echo it or restart. */
       readVersion: string;
-    };
+    });
 
 export function readBoardView(rawInput: unknown, slots: BoardSlots): BoardReadResult {
   const input = asObject(rawInput, 'board_read');
@@ -94,6 +99,7 @@ export function readBoardView(rawInput: unknown, slots: BoardSlots): BoardReadRe
     nextOffset,
     complete: nextOffset === null,
     readVersion,
+    ...readBasis(entry),
   };
 }
 
@@ -102,7 +108,18 @@ function describeSlots(slots: BoardSlots): BoardSlotDescriptor[] {
     name,
     updatedAt: value.updatedAt ?? null,
     htmlLength: Array.from(value.html ?? '').length,
+    ...readBasis(value),
   }));
+}
+
+function readBasis(value: BoardBasis): BoardBasis {
+  return {
+    ...(value.basisRevision !== undefined ? { basisRevision: value.basisRevision } : {}),
+    ...(value.currentBasisRevision !== undefined
+      ? { currentBasisRevision: value.currentBasisRevision }
+      : {}),
+    ...(value.freshness !== undefined ? { freshness: value.freshness } : {}),
+  };
 }
 
 function contentVersion(slot: string, format: BoardFormat, html: string): string {

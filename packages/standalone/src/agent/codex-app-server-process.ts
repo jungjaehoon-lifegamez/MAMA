@@ -119,6 +119,9 @@ interface PendingTurn {
   abortError?: Error;
   settledTerminalError?: HostToolTerminalError;
   onDelta?: (text: string) => void;
+  onToolUse?: PromptCallbacks['onToolUse'];
+  onToolComplete?: PromptCallbacks['onToolComplete'];
+  nativeItems: Map<string, { name: string; completed: boolean }>;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
 }
@@ -1046,6 +1049,9 @@ export class CodexAppServerProcess {
         abortController,
         intentionalStop: false,
         onDelta: callbacks?.onDelta,
+        onToolUse: callbacks?.onToolUse,
+        onToolComplete: callbacks?.onToolComplete,
+        nativeItems: new Map(),
         resolve: resolveTurn,
         reject: rejectTurn,
       };
@@ -1274,6 +1280,40 @@ export class CodexAppServerProcess {
       return;
     }
     if (eventTurnId && eventTurnId !== turn.turnId) {
+      return;
+    }
+    // TG-03/04/05/06: these notifications observe native effects; they are not
+    // pre-execution hooks. Dynamic/MCP calls retain their existing host bridge.
+    if (method === 'item/started' || method === 'item/completed') {
+      if (typeof data.turnId !== 'string' || data.turnId !== turn.turnId) {
+        return;
+      }
+      const item = object(data.item);
+      if (!item || typeof item.id !== 'string' || typeof item.type !== 'string') {
+        return;
+      }
+      if (!['commandExecution', 'fileChange', 'collabAgentToolCall'].includes(item.type)) {
+        return;
+      }
+      this.refreshTurnIdleTimeout(turn);
+      try {
+        let observed = turn.nativeItems.get(item.id);
+        if (!observed) {
+          observed = { name: item.type, completed: false };
+          turn.nativeItems.set(item.id, observed);
+          // Persist bounded identity only: command bodies and file diffs can contain secrets.
+          turn.onToolUse?.(item.type, { nativeToolUseId: item.id });
+        }
+        if (method === 'item/completed' && !observed.completed) {
+          observed.completed = true;
+          const isError =
+            item.status !== 'completed' ||
+            (typeof item.exitCode === 'number' && item.exitCode !== 0);
+          turn.onToolComplete?.(observed.name, item.id, isError);
+        }
+      } catch (error: unknown) {
+        this.failTurn(turn.threadId, this.toError(error));
+      }
       return;
     }
     if (method === 'item/agentMessage/delta') {

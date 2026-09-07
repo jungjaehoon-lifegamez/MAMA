@@ -164,7 +164,10 @@ function candidateForTask(
       temporalEpoch: task.temporalEpoch,
       occurrenceKey,
       checkAt,
-      sourceChannel: task.sourceChannel,
+      sourceChannel:
+        task.status === 'review'
+          ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
+          : task.sourceChannel,
       sourceEventId:
         task.status === 'review' && task.reviewAnchorEventId
           ? task.reviewAnchorEventId
@@ -187,7 +190,10 @@ function candidateForTask(
     temporalEpoch: task.temporalEpoch,
     occurrenceKey,
     checkAt,
-    sourceChannel: task.sourceChannel,
+    sourceChannel:
+      task.status === 'review'
+        ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
+        : task.sourceChannel,
     sourceEventId:
       task.status === 'review' && task.reviewAnchorEventId
         ? task.reviewAnchorEventId

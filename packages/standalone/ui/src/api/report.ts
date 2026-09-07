@@ -3,6 +3,9 @@ export interface ReportSlot {
   html: string;
   priority: number;
   updatedAt: number;
+  basisRevision?: string | null;
+  currentBasisRevision?: string;
+  freshness?: 'current' | 'stale' | 'unknown';
 }
 
 export const SLOT_ORDER = ['briefing', 'action_required', 'decisions', 'pipeline'] as const;
@@ -14,7 +17,7 @@ export type SlotRecord = Record<string, ReportSlot>;
  *
  * Wire shapes from src/api/report-handler.ts:
  *  - bulk:    { slots: ReportSlot[] }  (full snapshot -- replaces the record)
- *  - single:  { slot, html, priority } (no updatedAt -- stamped client-side)
+ *  - legacy single: { slot, html, priority } (no updatedAt -- stamped client-side)
  *  - removal: { deleted: slotId }
  */
 export function mergeReportEvent(prev: SlotRecord, data: unknown): SlotRecord {

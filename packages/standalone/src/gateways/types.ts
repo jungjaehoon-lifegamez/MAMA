@@ -3,6 +3,9 @@
  */
 
 import type { PrincipalContext } from './principal.js';
+import type { TelegramTextFormatting } from './telegram-text-entities.js';
+
+export type { TelegramTextFormatting, TelegramTextEntity } from './telegram-text-entities.js';
 
 /**
  * Supported messenger platforms
@@ -91,6 +94,12 @@ export interface MessageMetadata {
   /** Set by the gateway when IT wrapped third-party (forwarded) content in
    *  untrusted markers - the only provenance downstream trusts for stripping. */
   untrustedWrapped?: boolean;
+  /**
+   * Telegram sender styling (entities / caption_entities) captured against the
+   * ORIGINAL field text in UTF-16 code units. Data only: it never changes the
+   * body, the sender's authority, or the trust of forwarded content.
+   */
+  telegramFormatting?: TelegramTextFormatting;
   /** Channel history context (OpenClaw-style) */
   historyContext?: string;
   /** Session ID (for WebSocket/viewer) */

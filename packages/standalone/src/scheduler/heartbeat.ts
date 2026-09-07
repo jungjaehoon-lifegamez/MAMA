@@ -170,6 +170,7 @@ Response format:
         sessionKey: OWNER_RUNTIME_SESSION_KEY,
         source: 'operator',
         channelId: 'heartbeat',
+        sourceMessageRef: `heartbeat:${Date.now()}`,
       });
       const response = result.response.trim();
 

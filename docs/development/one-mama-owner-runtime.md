@@ -211,3 +211,46 @@ it again, using tools, or adding a recovery block; the backend thread was unchan
 Post-publication installation and runtime receipts are recorded in the
 [0.49.3 release audit](https://github.com/jungjaehoon-lifegamez/MAMA/releases/tag/v0.49.3), so the
 release gate is closed by observed evidence after publication rather than another version bump.
+
+## Reopened architecture completion: input-independent owner actions (2026-09-07)
+
+The 0.49.3 session/runtime continuity evidence is valid, but the broader completion claim was
+incorrect. The 0.49.3 baseline still had source/work-kind business restrictions: scheduled reads and task creation,
+per-kind memory/task/wiki ownership, event qualification and cross-channel correction vetoes,
+host-selected Board candidates, Board-only external lifecycle application, and workorder-only wiki
+reads. Baseline tests deliberately preserved several of these restrictions.
+
+The selected correction reuses the one owner session and queue. Ordinary business tools and
+readable resources derive from the authenticated owner's grant; input source and maintenance kind
+provide procedure, scheduling and recovery context rather than a second business permission tier.
+The owner chooses targets and evaluates relevance across authorized sources. The host still checks
+principal/resource/destination grants, finite task criteria, exact evidence identity/timestamps,
+revisions, immutable receipts, leases and bounded recovery. Explicit-authority administration is not
+made unattended by this change.
+
+Board candidate pages become discovery hints, not a ceiling on the owner's targets. External
+binding/lifecycle actions gain current-run host-attested candidates while retaining legacy workorder
+receipts and replay safety. Wiki reading is separated from job-specific publishing coverage.
+Selected-raw absence is reported distinctly from unauthorized evidence; CodeAct and registry
+contracts must describe the same rules. No new planner, fixed tool order, tool-count cutoff, or
+historical prompt replay is introduced.
+
+Completion now requires TG-03/TG-04/TG-05/TG-06 cross-entry action parity under equal grants, negative
+isolation/forgery/staleness tests, independent review, full CI, release/public installation and
+separately observed runtime/action/delivery proof.
+
+### 0.50.0 candidate verification
+
+The implementation and independent review are complete. Cross-entry policy, candidate migration,
+real SQLite context compilation, task creation receipts, Board freshness and Telegram entity tests
+cover the changed contracts. Task creation requires a stable `creation_key` within the host-issued
+occurrence; same-key payload conflicts fail without another task row.
+
+Workspace and outbound effects reserve before execution. Native turns reserve an admission marker
+before the backend is called and settle it only after clean completion; notification callbacks are
+observations, not pre-execution permission hooks. Missing or uncertain effects quarantine both
+workorders and owner events before a success ACK or automatic replay. A new owner message can
+inspect and reconcile the state; arbitrary shell commands are not claimed to be idempotent.
+
+Local root tests/build/typecheck/lint passed, with final consumer follow-up regression evidence in
+the parity artifact. PR CI, public release/install and post-install delivery remain distinct gates.

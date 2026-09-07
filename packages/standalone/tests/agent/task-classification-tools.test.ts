@@ -16,6 +16,7 @@ import Database from '../../src/sqlite.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 const NOW = Date.parse('2026-09-07T04:00:00Z');
 
@@ -30,6 +31,112 @@ function makeExecutor(): { executor: GatewayToolExecutor; ledger: TaskLedger } {
 }
 
 describe('Story TASK-RECAL-2: public task tool boundary', () => {
+  it('TG-04 authorizes both source partitions and preserves the actual cross-channel review anchor', async () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db, { now: () => NOW });
+      const task = ledger.create({
+        title: 'verify delivery',
+        completion_criteria: 'delivery accepted',
+        source_channel: 'slack:request',
+      });
+      db.exec(
+        'CREATE TABLE connector_event_index(event_index_id TEXT, source_connector TEXT, channel TEXT, event_datetime INTEGER, source_timestamp_ms INTEGER)'
+      );
+      db.prepare('INSERT INTO connector_event_index VALUES (?, ?, ?, ?, ?)').run(
+        'delivery-anchor',
+        'slack',
+        'delivery',
+        NOW,
+        NOW
+      );
+      let channels = ['request'];
+      const executor = new GatewayToolExecutor({
+        connectorEventAdapter: db,
+        channelGrantProvider: () => ({ slack: channels }),
+        mamaApi: { appendToolTrace: async () => undefined } as never,
+        temporalContextPacketLookup: async () =>
+          ({
+            packet_id: 'ctxp-cross-source',
+            packet_json: JSON.stringify({
+              selected_evidence: [
+                {
+                  ref: {
+                    kind: 'raw',
+                    raw_id: 'delivery-anchor',
+                    connector: 'slack',
+                    channel_id: 'delivery',
+                  },
+                },
+              ],
+            }),
+          }) as never,
+      });
+      executor.setTaskLedger(ledger);
+      const envelope = makeSignedEnvelope({
+        scope: {
+          project_refs: [],
+          raw_connectors: ['slack'],
+          memory_scopes: [],
+          allowed_destinations: [],
+        },
+      });
+      const execution = { envelope, modelRunId: 'mr-cross-source' };
+      const input = {
+        id: task.id,
+        status: 'review',
+        expected_revision: task.revision,
+        latest_event: 'delivery submitted',
+        context_packet_id: 'ctxp-cross-source',
+        review_anchor_ref: 'delivery-anchor',
+      };
+      expect(await executor.execute('task_update', input as never, execution)).toMatchObject({
+        success: false,
+        code: 'review_source_not_authorized',
+      });
+      channels = ['request', 'delivery'];
+      expect(await executor.execute('task_update', input as never, execution)).toMatchObject({
+        success: true,
+      });
+      expect(ledger.getById(task.id)).toMatchObject({
+        sourceChannel: 'slack:request',
+        reviewAnchorSourceChannel: 'slack:delivery',
+        reviewAnchorEventId: 'delivery-anchor',
+      });
+    } finally {
+      db.close();
+    }
+  });
+  it('TG-04 distinguishes unselected review evidence from a source authorization failure', async () => {
+    const { ledger } = makeExecutor();
+    const task = ledger.create({
+      title: 'verify outcome',
+      completion_criteria: 'source confirms outcome',
+    });
+    const executor = new GatewayToolExecutor({
+      mamaApi: { appendToolTrace: async () => undefined } as never,
+      temporalContextPacketLookup: async () =>
+        ({
+          packet_id: 'ctxp-no-raw',
+          packet_json: JSON.stringify({ selected_evidence: [] }),
+        }) as never,
+    });
+    executor.setTaskLedger(ledger);
+    const result = await executor.execute(
+      'task_update',
+      {
+        id: task.id,
+        status: 'review',
+        expected_revision: task.revision,
+        latest_event: 'checking result',
+        context_packet_id: 'ctxp-no-raw',
+        review_anchor_ref: 'guessed-id',
+      } as never,
+      { envelope: makeSignedEnvelope(), modelRunId: 'mr-review' }
+    );
+    expect(result).toMatchObject({ success: false, code: 'review_anchor_not_selected' });
+    expect(ledger.getById(task.id)?.revision).toBe(task.revision);
+  });
   let executor: GatewayToolExecutor;
   let ledger: TaskLedger;
 
@@ -206,7 +313,7 @@ describe('Story TASK-RECAL-2: public task tool boundary', () => {
       expect(result.error).toContain('not configured');
     });
 
-    it('binds an owner-event executor call to its causal source channel (TG-03/TG-06)', async () => {
+    it('allows owner-event qualification and reclassification across causal channels (TG-03/TG-06)', async () => {
       const db = new Database(':memory:');
       const boundLedger = new TaskLedger(db, { now: () => NOW, timeZone: 'Asia/Seoul' });
       const inbox = new OwnerEventInbox(db, () => NOW);
@@ -235,11 +342,11 @@ describe('Story TASK-RECAL-2: public task tool boundary', () => {
             id: unrelated.id,
             completion_criteria: 'unrelated task is complete',
             expected_revision: unrelated.revision,
-            latest_event: 'untrusted delta named another task',
+            latest_event: 'owner agent reviewed a related task',
           },
           context
         )
-      ).rejects.toThrow(/unavailable on owner-event turns/i);
+      ).resolves.toMatchObject({ success: true });
 
       await expect(
         boundExecutor.execute(
@@ -247,12 +354,12 @@ describe('Story TASK-RECAL-2: public task tool boundary', () => {
           {
             id: unrelated.id,
             disposition: 'non_task_record',
-            reason: 'untrusted delta named another task',
-            expected_revision: unrelated.revision,
+            reason: 'owner agent reviewed this related record',
+            expected_revision: boundLedger.getById(unrelated.id)!.revision,
           },
           context
         )
-      ).rejects.toThrow(/outside this owner-event source channel/i);
+      ).resolves.toMatchObject({ success: true });
       const allowed = (await boundExecutor.execute(
         'task_reclassify',
         {

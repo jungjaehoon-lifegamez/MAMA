@@ -26,6 +26,11 @@ import { applyOperatorTaskExternalLifecycleMigration } from '../db/migrations/op
 import { applyOperatorTaskReviewLifecycleMigration } from '../db/migrations/operator-task-review-lifecycle.js';
 import { applyOperatorTaskClassificationMigration } from '../db/migrations/operator-task-classification.js';
 import {
+  applyOperatorOwnerActionCandidatesMigration,
+  OWNER_ACTION_CANDIDATES_TABLE,
+} from '../db/migrations/operator-owner-action-candidates.js';
+import type { OwnerActionContext } from './owner-action-effects.js';
+import {
   changeCoverage,
   ensureEffectLedger,
   isUsableCause,
@@ -60,10 +65,17 @@ import type {
   BindingCandidate,
   CandidateTaskSnapshot,
   ExistingExternalBindingSnapshot,
+  ExternalCandidateSource,
+  ExternalLifecycleCandidateSet,
   LifecycleCandidate,
+  OwnerAttestedCandidateSummary,
   TaskHintLookup,
 } from './external-lifecycle.js';
-import { validateExternalLifecycleDecision } from './external-lifecycle-candidates.js';
+import {
+  canonicalExternalLifecycleCandidateJson,
+  parseHostBuiltExternalLifecycleCandidate,
+  validateExternalLifecycleDecision,
+} from './external-lifecycle-candidates.js';
 import { DEFAULT_PROMOTION_INTERVAL_MS, validateWorkOrderPayload } from './workorder-publishers.js';
 
 /** listPage() only: a page size large enough to be the whole board, so the limit+1
@@ -177,6 +189,7 @@ export interface TaskRecord extends OperatorTask {
   temporalState: TemporalState;
   reviewStartedAt: number | null;
   reviewAnchorEventId: string | null;
+  reviewAnchorSourceChannel?: string | null;
   /**
    * The concrete, finite condition under which this row is finished. What makes a
    * row a TASK rather than a record; null on rows that predate the policy and on
@@ -225,6 +238,7 @@ export interface ReclassifyTaskInput {
 export interface TaskLedgerOptions {
   now?: () => number;
   timeZone?: string;
+  onOwnerTaskChangeCommitted?: (generation: string) => void;
 }
 
 /**
@@ -239,9 +253,13 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
-   * Host-issued board work-order attempt. This is deliberately separate from
-   * agent-authored update input: it lets the ledger enforce candidate-scoped
-   * mutation rules for direct and nested gateway execution alike.
+   * Host-issued work-order attempt (any kind). This is deliberately separate
+   * from agent-authored update input: it lets the ledger verify that a carried
+   * attempt is still current for direct and nested gateway execution alike, and
+   * keeps receipted external binding/lifecycle decisions candidate-scoped. A
+   * scheduler's reclassificationCandidates page is a bounded-read SELECTION
+   * hint, not the owner's authorization: an ordinary owner decision on a row
+   * discovered outside that page is still the owner's decision.
    */
   workOrderAttemptId?: number;
   /** Direct task_update ABI guard; internal receipted lifecycle primitives validate separately. */
@@ -262,7 +280,14 @@ export interface ChangeOrigin {
    * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
    */
   causeEventIds?: readonly string[];
-  /** Owner-event task reclassification stays within the exact causal channel. */
+  /**
+   * Owner-event task reclassification must rest on real causal events: every
+   * id in causeEventIds has to be carried by a durable owner-event inbox batch,
+   * so the effect receipt's provenance is host-attested rather than invented
+   * from connector text. Which channel the batch arrived on is host selection
+   * context, not the owner's authorization; visibility of the target row is the
+   * authenticated gateway's boundary.
+   */
   reclassificationCauseBound?: boolean;
   /** Internal marker: a duplicate-source task_create is using update semantics. */
   taskCreateUpsert?: boolean;
@@ -284,13 +309,33 @@ export interface ExternalTaskBinding {
   sourceType: 'kanban_card';
   externalSourceId: string;
   lastObservationSeq: number;
-  createdByAttemptId: number;
+  /** Board attempt that bound it, or null when a verified owner run did. */
+  createdByAttemptId: number | null;
+  createdByRunId: string | null;
+  createdByOwnerScope: string | null;
+  createdAt: number;
+}
+
+/**
+ * Trusted identity a receipt was settled under. Exactly one of the two
+ * families is required at the storage layer: a Board attempt id, or an owner
+ * run with its scope and envelope. A Board attempt id may still accompany an
+ * owner run as audit metadata.
+ */
+interface ExternalReceiptOrigin {
+  attemptId: number | null;
+  runId: string | null;
+  ownerScope: string | null;
+  envelopeHash: string | null;
 }
 
 export interface ExternalBindingReceipt {
   kind: 'binding';
   candidateId: string;
-  workOrderAttemptId: number;
+  /** Null when the decision was settled by a verified owner run (Task B2). */
+  workOrderAttemptId: number | null;
+  originRunId: string | null;
+  originOwnerScope: string | null;
   taskId: number;
   outcome: 'bound' | 'declined' | 'superseded';
   reason: string;
@@ -300,7 +345,10 @@ export interface ExternalBindingReceipt {
 export interface ExternalLifecycleReceipt {
   kind: 'lifecycle';
   candidateId: string;
-  workOrderAttemptId: number;
+  /** Null when the decision was settled by a verified owner run (Task B2). */
+  workOrderAttemptId: number | null;
+  originRunId: string | null;
+  originOwnerScope: string | null;
   taskId: number;
   outcome: 'applied' | 'retained' | 'superseded';
   reason: string;
@@ -545,6 +593,7 @@ interface TaskRow {
   last_temporal_attempt_id: number | null;
   review_started_at: number | null;
   review_anchor_event_id: string | null;
+  review_anchor_source_channel: string | null;
   completion_criteria: string | null;
   resolution_kind: string | null;
   created_at: number;
@@ -557,6 +606,69 @@ function isoToEpochMs(iso: string | null): number | null {
   if (!iso) return null;
   const ms = Date.parse(`${iso}T00:00:00Z`);
   return Number.isNaN(ms) ? null : ms;
+}
+
+interface ExternalBindingRow {
+  id: number;
+  revision: number;
+  task_id: number;
+  connector: 'kagemusha';
+  source_type: 'kanban_card';
+  external_source_id: string;
+  last_observation_seq: number;
+  created_by_attempt_id: number | null;
+  created_by_run_id: string | null;
+  created_by_owner_scope: string | null;
+  created_at: number;
+}
+
+interface VerifiedOwnerActionContext {
+  ownerScope: string;
+  occurrenceKey: string;
+  modelRunId: string;
+  envelopeHash: string;
+  workOrderAttemptId: number | null;
+}
+
+const OWNER_ACTION_IDENTITY_MAX_LENGTH = 512;
+
+function requireOwnerActionIdentity(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`owner action ${field} must be a non-blank string`);
+  }
+  if (value.trim().length === 0 || value.trim() !== value) {
+    throw new Error(`owner action ${field} must be a non-blank string without surrounding space`);
+  }
+  if (value.length > OWNER_ACTION_IDENTITY_MAX_LENGTH) {
+    throw new Error(
+      `owner action ${field} must be at most ${OWNER_ACTION_IDENTITY_MAX_LENGTH} characters`
+    );
+  }
+  return value;
+}
+
+/**
+ * Same identity rules as OwnerActionEffectLedger: every field is a trusted
+ * host identity, never model text. Checked before any storage is touched.
+ */
+function requireOwnerActionContext(context: OwnerActionContext): VerifiedOwnerActionContext {
+  if (context === null || typeof context !== 'object') {
+    throw new Error('owner action context is required');
+  }
+  const workOrderAttemptId = context.workOrderAttemptId;
+  if (
+    workOrderAttemptId !== undefined &&
+    (!Number.isSafeInteger(workOrderAttemptId) || workOrderAttemptId <= 0)
+  ) {
+    throw new Error('owner action workOrderAttemptId must be a positive integer when present');
+  }
+  return {
+    ownerScope: requireOwnerActionIdentity(context.ownerScope, 'ownerScope'),
+    occurrenceKey: requireOwnerActionIdentity(context.occurrenceKey, 'occurrenceKey'),
+    modelRunId: requireOwnerActionIdentity(context.modelRunId, 'modelRunId'),
+    envelopeHash: requireOwnerActionIdentity(context.envelopeHash, 'envelopeHash'),
+    workOrderAttemptId: workOrderAttemptId ?? null,
+  };
 }
 
 function assertEnum(value: string, allowed: readonly string[], field: string): void {
@@ -631,6 +743,7 @@ function rowToRecord(row: TaskRow, now: number, timeZone: string): TaskRecord {
     ),
     reviewStartedAt: row.review_started_at,
     reviewAnchorEventId: row.review_anchor_event_id,
+    reviewAnchorSourceChannel: row.review_anchor_source_channel ?? null,
     completionCriteria: row.completion_criteria ?? null,
     resolutionKind: (row.resolution_kind ?? null) as TaskResolutionKind | null,
     createdAt: row.created_at,
@@ -642,11 +755,15 @@ export class TaskLedger implements TaskSource {
   private db: SQLiteDatabase;
   private now: () => number;
   private timeZone: string;
+  private onOwnerTaskChangeCommitted?: (generation: string) => void;
+  private pendingOwnerTaskGeneration: string | null = null;
+  private ownerTaskNotificationScheduled = false;
 
   constructor(db: SQLiteDatabase, options: TaskLedgerOptions = {}) {
     this.db = db;
     this.now = options.now ?? Date.now;
     this.timeZone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    this.onOwnerTaskChangeCommitted = options.onOwnerTaskChangeCommitted;
     // Validate the injected or boot-resolved zone once, before reads depend on it.
     new Intl.DateTimeFormat('en-US', { timeZone: this.timeZone }).format(0);
     this.runMigration();
@@ -721,6 +838,7 @@ export class TaskLedger implements TaskSource {
         last_temporal_attempt_id INTEGER,
         review_started_at INTEGER,
         review_anchor_event_id TEXT,
+        review_anchor_source_channel TEXT,
         completion_criteria TEXT,
         resolution_kind TEXT,
         created_at INTEGER NOT NULL,
@@ -798,6 +916,7 @@ export class TaskLedger implements TaskSource {
 
       applyOperatorTaskTemporalMigration(this.db);
       applyOperatorTaskExternalLifecycleMigration(this.db);
+      applyOperatorOwnerActionCandidatesMigration(this.db);
       applyOperatorTaskReviewLifecycleMigration(this.db);
       applyOperatorTaskClassificationMigration(this.db);
 
@@ -1101,6 +1220,39 @@ export class TaskLedger implements TaskSource {
       .slice(0, 22);
   }
 
+  private notifyOwnerTaskCommit(previousGeneration: string | null): void {
+    if (!this.onOwnerTaskChangeCommitted) {
+      return;
+    }
+    const generation = this.readGeneration();
+    if (generation === previousGeneration) {
+      return;
+    }
+    this.pendingOwnerTaskGeneration = generation;
+    if (this.ownerTaskNotificationScheduled) {
+      return;
+    }
+    this.ownerTaskNotificationScheduled = true;
+    queueMicrotask(() => this.flushOwnerTaskNotification());
+  }
+
+  private flushOwnerTaskNotification(): void {
+    this.ownerTaskNotificationScheduled = false;
+    const expected = this.pendingOwnerTaskGeneration;
+    this.pendingOwnerTaskGeneration = null;
+    if (!expected || !this.onOwnerTaskChangeCommitted) {
+      return;
+    }
+    const current = this.readGeneration();
+    if (current !== expected) {
+      this.pendingOwnerTaskGeneration = current;
+      this.ownerTaskNotificationScheduled = true;
+      queueMicrotask(() => this.flushOwnerTaskNotification());
+      return;
+    }
+    this.onOwnerTaskChangeCommitted(current);
+  }
+
   /**
    * Aggregate counts over the same owner predicate `listPage` filters by. Facets
    * come from SQL GROUP BY (each partitions total); due buckets are computed in
@@ -1212,22 +1364,12 @@ export class TaskLedger implements TaskSource {
     const row = this.db
       .prepare(
         `SELECT id, revision, task_id, connector, source_type, external_source_id,
-                last_observation_seq, created_by_attempt_id
+                last_observation_seq, created_by_attempt_id, created_by_run_id,
+                created_by_owner_scope, created_at
          FROM operator_external_task_bindings
          WHERE task_id = ? AND active = 1`
       )
-      .get(taskId) as
-      | {
-          id: number;
-          revision: number;
-          task_id: number;
-          connector: 'kagemusha';
-          source_type: 'kanban_card';
-          external_source_id: string;
-          last_observation_seq: number;
-          created_by_attempt_id: number;
-        }
-      | undefined;
+      .get(taskId) as ExternalBindingRow | undefined;
     return row ? this.externalBindingFromRow(row) : null;
   }
 
@@ -1404,7 +1546,342 @@ export class TaskLedger implements TaskSource {
     if (all.length === 0) {
       return { disposition: 'none' };
     }
+    // Receipts are global by candidate id, so a decision settled by an owner
+    // run is seen here exactly like one settled by this attempt.
+    return this.candidateReceiptDisposition(all);
+  }
 
+  /**
+   * Resolve one candidate decision's authority (Task B2).
+   *
+   * A plain attempt id is the legacy Board wrapper. A discriminated source is
+   * either that same Board path or a verified owner run whose host-attested
+   * snapshot must match the caller's scope, run and envelope exactly. Both
+   * return the SAME decision inputs; the receipt records which one settled it.
+   */
+  private resolveExternalCandidateAuthority(
+    source: number | ExternalCandidateSource,
+    kind: 'binding' | 'lifecycle',
+    origin: ChangeOrigin
+  ): {
+    source: ExternalCandidateSource;
+    receiptOrigin: ExternalReceiptOrigin;
+    load: (candidateId: string) => {
+      candidate: BindingCandidate | LifecycleCandidate;
+      snapshotAt: number;
+    };
+  } {
+    const resolved: ExternalCandidateSource =
+      typeof source === 'number' ? { kind: 'board', attemptId: source } : source;
+    const label = kind === 'binding' ? 'external binding' : 'external lifecycle';
+    if (resolved.kind === 'board') {
+      const attemptId = resolved.attemptId;
+      if (origin.workOrderAttemptId !== attemptId) {
+        throw new Error(`${label} decision requires trusted attempt origin ${attemptId}`);
+      }
+      return {
+        source: resolved,
+        receiptOrigin: {
+          attemptId,
+          runId: origin.runId ?? null,
+          ownerScope: null,
+          envelopeHash: null,
+        },
+        load: (candidateId) => {
+          const attempt = this.getWorkOrderById(attemptId);
+          return {
+            candidate: this.loadBoardCandidate(attemptId, candidateId, kind),
+            snapshotAt: attempt?.createdAt ?? 0,
+          };
+        },
+      };
+    }
+    const context = requireOwnerActionContext(resolved.context);
+    if (origin.runId !== context.modelRunId) {
+      throw new Error(`${label} decision requires trusted owner run origin ${context.modelRunId}`);
+    }
+    if ((origin.workOrderAttemptId ?? null) !== context.workOrderAttemptId) {
+      throw new Error(
+        `${label} decision attempt ${String(origin.workOrderAttemptId)} does not match the attesting owner run`
+      );
+    }
+    if (context.workOrderAttemptId !== null) {
+      this.assertWorkOrderAttemptActive(label, context.workOrderAttemptId);
+    }
+    return {
+      source: resolved,
+      receiptOrigin: {
+        attemptId: context.workOrderAttemptId,
+        runId: context.modelRunId,
+        ownerScope: context.ownerScope,
+        envelopeHash: context.envelopeHash,
+      },
+      load: (candidateId) => {
+        const attested = this.loadOwnerAttestedCandidate(context, candidateId, kind);
+        return { candidate: attested.candidate, snapshotAt: attested.attestedAt };
+      },
+    };
+  }
+
+  /** Same contract as loadBoardCandidate, for either authority source. */
+  loadExternalCandidate(
+    source: number | ExternalCandidateSource,
+    candidateId: string,
+    kind: 'binding' | 'lifecycle'
+  ): BindingCandidate | LifecycleCandidate {
+    const resolved: ExternalCandidateSource =
+      typeof source === 'number' ? { kind: 'board', attemptId: source } : source;
+    return resolved.kind === 'board'
+      ? this.loadBoardCandidate(resolved.attemptId, candidateId, kind)
+      : this.loadOwnerActionCandidate(resolved.context, candidateId, kind);
+  }
+
+  /**
+   * Persist host-built candidate snapshots under a verified owner run.
+   *
+   * Every snapshot is re-validated as host-built (exact shape, Kagemusha
+   * mapping, fixed evidence summary, content-derived id) before it is stored;
+   * model-authored bytes never enter this table. Rows are immutable. The same
+   * run attesting the same candidate again with identical bytes is a no-op;
+   * different bytes under the same id are a conflict, not a second row.
+   */
+  attestOwnerActionCandidates(
+    context: OwnerActionContext,
+    candidates: Pick<ExternalLifecycleCandidateSet, 'bindingCandidates' | 'lifecycleCandidates'>
+  ): { attested: number; alreadyAttested: number } {
+    const verified = requireOwnerActionContext(context);
+    const prepared = [
+      ...candidates.bindingCandidates.map((candidate) =>
+        parseHostBuiltExternalLifecycleCandidate('binding', candidate)
+      ),
+      ...candidates.lifecycleCandidates.map((candidate) =>
+        parseHostBuiltExternalLifecycleCandidate('lifecycle', candidate)
+      ),
+    ].map((candidate) => {
+      const json = canonicalExternalLifecycleCandidateJson(candidate);
+      return { candidate, json, sha256: createHash('sha256').update(json).digest('hex') };
+    });
+    let attested = 0;
+    let alreadyAttested = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const entry of prepared) {
+        const existing = this.db
+          .prepare(
+            `SELECT owner_scope, envelope_hash, occurrence_key, workorder_attempt_id,
+                    candidate_kind, candidate_sha256
+               FROM ${OWNER_ACTION_CANDIDATES_TABLE}
+              WHERE model_run_id = ? AND candidate_id = ?`
+          )
+          .get(verified.modelRunId, entry.candidate.candidateId) as
+          | {
+              owner_scope: string;
+              envelope_hash: string;
+              occurrence_key: string;
+              workorder_attempt_id: number | null;
+              candidate_kind: string;
+              candidate_sha256: string;
+            }
+          | undefined;
+        if (existing) {
+          if (
+            existing.owner_scope !== verified.ownerScope ||
+            existing.envelope_hash !== verified.envelopeHash ||
+            existing.occurrence_key !== verified.occurrenceKey ||
+            existing.workorder_attempt_id !== verified.workOrderAttemptId ||
+            existing.candidate_kind !== entry.candidate.kind ||
+            existing.candidate_sha256 !== entry.sha256
+          ) {
+            throw new Error(
+              `owner action candidate ${entry.candidate.candidateId} attestation conflict: run ${verified.modelRunId} already holds a snapshot that differs`
+            );
+          }
+          alreadyAttested += 1;
+          continue;
+        }
+        const task = this.getRowById(entry.candidate.taskId);
+        if (!task || task.kind !== 'owner') {
+          throw new Error(
+            `owner action candidate ${entry.candidate.candidateId} references no owner task`
+          );
+        }
+        this.db
+          .prepare(
+            `INSERT INTO ${OWNER_ACTION_CANDIDATES_TABLE}
+               (model_run_id, candidate_id, owner_scope, envelope_hash, occurrence_key,
+                workorder_attempt_id, candidate_kind, task_id, event_id, candidate_json,
+                candidate_sha256, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            verified.modelRunId,
+            entry.candidate.candidateId,
+            verified.ownerScope,
+            verified.envelopeHash,
+            verified.occurrenceKey,
+            verified.workOrderAttemptId,
+            entry.candidate.kind,
+            entry.candidate.taskId,
+            entry.candidate.eventId,
+            entry.json,
+            entry.sha256,
+            this.now()
+          );
+        attested += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return { attested, alreadyAttested };
+  }
+
+  /** Bounded, intent-free listing of what one owner run attested. */
+  listOwnerActionCandidates(context: OwnerActionContext): OwnerAttestedCandidateSummary[] {
+    const verified = requireOwnerActionContext(context);
+    return (
+      this.db
+        .prepare(
+          `SELECT candidate_id, candidate_kind, task_id, event_id
+             FROM ${OWNER_ACTION_CANDIDATES_TABLE}
+            WHERE model_run_id = ? AND owner_scope = ? AND envelope_hash = ?
+              AND occurrence_key = ? AND workorder_attempt_id IS ?
+            ORDER BY created_at ASC, candidate_kind ASC, candidate_id ASC`
+        )
+        .all(
+          verified.modelRunId,
+          verified.ownerScope,
+          verified.envelopeHash,
+          verified.occurrenceKey,
+          verified.workOrderAttemptId
+        ) as Array<{
+        candidate_id: string;
+        candidate_kind: 'binding' | 'lifecycle';
+        task_id: number;
+        event_id: string;
+      }>
+    ).map((row) => ({
+      candidateId: row.candidate_id,
+      kind: row.candidate_kind,
+      taskId: row.task_id,
+      eventId: row.event_id,
+    }));
+  }
+
+  /**
+   * Receipt view of one owner run's attested candidates, in the same shape as
+   * inspectBoardCandidateAttempt so recovery can treat both sources alike.
+   */
+  inspectOwnerActionCandidateRun(context: OwnerActionContext): BoardCandidateAttemptState {
+    const all = this.listOwnerActionCandidates(context);
+    if (all.length === 0) {
+      return { disposition: 'none' };
+    }
+    return this.candidateReceiptDisposition(all);
+  }
+
+  loadOwnerActionCandidate(
+    context: OwnerActionContext,
+    candidateId: string,
+    kind: 'binding' | 'lifecycle'
+  ): BindingCandidate | LifecycleCandidate {
+    return this.loadOwnerAttestedCandidate(requireOwnerActionContext(context), candidateId, kind)
+      .candidate;
+  }
+
+  /**
+   * Recover a candidate only from the attestation the exact owner run made.
+   * Stored bytes are revalidated: sha256 over the canonical JSON, exact shape,
+   * and the content-derived candidate id must all still agree.
+   */
+  private loadOwnerAttestedCandidate(
+    context: VerifiedOwnerActionContext,
+    candidateId: string,
+    kind: 'binding' | 'lifecycle'
+  ): { candidate: BindingCandidate | LifecycleCandidate; attestedAt: number } {
+    const row = this.db
+      .prepare(
+        `SELECT owner_scope, envelope_hash, occurrence_key, workorder_attempt_id,
+                candidate_kind, task_id, event_id, candidate_json, candidate_sha256, created_at
+           FROM ${OWNER_ACTION_CANDIDATES_TABLE}
+          WHERE model_run_id = ? AND candidate_id = ?`
+      )
+      .get(context.modelRunId, candidateId) as
+      | {
+          owner_scope: string;
+          envelope_hash: string;
+          occurrence_key: string;
+          workorder_attempt_id: number | null;
+          candidate_kind: string;
+          task_id: number;
+          event_id: string;
+          candidate_json: string;
+          candidate_sha256: string;
+          created_at: number;
+        }
+      | undefined;
+    if (!row) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} is not attested for owner run ${context.modelRunId}`
+      );
+    }
+    if (row.owner_scope !== context.ownerScope) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} was attested under a different owner scope`
+      );
+    }
+    if (row.envelope_hash !== context.envelopeHash) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} was attested under a different envelope`
+      );
+    }
+    if (row.occurrence_key !== context.occurrenceKey) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} was attested under a different occurrence`
+      );
+    }
+    if (row.workorder_attempt_id !== context.workOrderAttemptId) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} was attested under a different workorder attempt`
+      );
+    }
+    if (row.candidate_kind !== kind) {
+      throw new Error(
+        `external lifecycle candidate ${candidateId} has the wrong kind (attested as ${row.candidate_kind})`
+      );
+    }
+    const digest = createHash('sha256').update(row.candidate_json).digest('hex');
+    if (digest !== row.candidate_sha256) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} failed attestation integrity (sha256 mismatch)`
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.candidate_json);
+    } catch {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} failed attestation integrity (unreadable)`
+      );
+    }
+    const candidate = parseHostBuiltExternalLifecycleCandidate(kind, parsed);
+    if (
+      candidate.candidateId !== candidateId ||
+      candidate.taskId !== row.task_id ||
+      candidate.eventId !== row.event_id ||
+      canonicalExternalLifecycleCandidateJson(candidate) !== row.candidate_json
+    ) {
+      throw new Error(
+        `external lifecycle ${kind} candidate ${candidateId} failed attestation integrity (identity mismatch)`
+      );
+    }
+    return { candidate, attestedAt: row.created_at };
+  }
+
+  private candidateReceiptDisposition(
+    all: ReadonlyArray<{ candidateId: string; kind: 'binding' | 'lifecycle' }>
+  ): BoardCandidateAttemptState {
     const outcomes: string[] = [];
     const missingCandidateIds: string[] = [];
     for (const candidate of all) {
@@ -1430,7 +1907,7 @@ export class TaskLedger implements TaskSource {
   }
 
   applyExternalBindingDecision(
-    attemptId: number,
+    source: number | ExternalCandidateSource,
     input: {
       candidate_id: string;
       decision: 'bind' | 'decline';
@@ -1440,13 +1917,12 @@ export class TaskLedger implements TaskSource {
     origin: ChangeOrigin
   ): ExternalBindingReceipt {
     validateExternalLifecycleDecision('binding', input);
-    if (origin.workOrderAttemptId !== attemptId) {
-      throw new Error(`external binding decision requires trusted attempt origin ${attemptId}`);
-    }
+    const authority = this.resolveExternalCandidateAuthority(source, 'binding', origin);
+    const receiptOrigin = authority.receiptOrigin;
     let receipt: ExternalBindingReceipt | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const candidate = this.loadBoardCandidate(attemptId, input.candidate_id, 'binding');
+      const { candidate } = authority.load(input.candidate_id);
       if (candidate.kind !== 'binding') {
         throw new Error(`external lifecycle candidate ${input.candidate_id} has the wrong kind`);
       }
@@ -1506,8 +1982,9 @@ export class TaskLedger implements TaskSource {
             .prepare(
               `INSERT INTO operator_external_task_bindings
                  (task_id, connector, source_type, external_source_id, last_observation_seq,
-                  created_by_attempt_id, active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`
+                  created_by_attempt_id, created_by_run_id, created_by_owner_scope,
+                  created_by_envelope_hash, active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
             )
             .run(
               candidate.taskId,
@@ -1515,17 +1992,22 @@ export class TaskLedger implements TaskSource {
               candidate.sourceType,
               candidate.externalSourceId,
               candidate.operatorObservationSeq,
-              attemptId,
+              receiptOrigin.attemptId,
+              receiptOrigin.runId,
+              receiptOrigin.ownerScope,
+              receiptOrigin.envelopeHash,
               now,
               now
             );
           bindingId = Number(inserted.lastInsertRowid);
         }
-        this.insertBindingReceipt(candidate, attemptId, input, outcome, bindingId, origin);
+        this.insertBindingReceipt(candidate, receiptOrigin, input, outcome, bindingId, origin);
         receipt = {
           kind: 'binding',
           candidateId: candidate.candidateId,
-          workOrderAttemptId: attemptId,
+          workOrderAttemptId: receiptOrigin.attemptId,
+          originRunId: receiptOrigin.runId,
+          originOwnerScope: receiptOrigin.ownerScope,
           taskId: candidate.taskId,
           outcome,
           reason: input.reason,
@@ -1541,7 +2023,7 @@ export class TaskLedger implements TaskSource {
   }
 
   applyExternalLifecycleDecision(
-    attemptId: number,
+    source: number | ExternalCandidateSource,
     input: {
       candidate_id: string;
       decision: 'apply' | 'retain';
@@ -1551,13 +2033,13 @@ export class TaskLedger implements TaskSource {
     origin: ChangeOrigin
   ): ExternalLifecycleReceipt {
     validateExternalLifecycleDecision('lifecycle', input);
-    if (origin.workOrderAttemptId !== attemptId) {
-      throw new Error(`external lifecycle decision requires trusted attempt origin ${attemptId}`);
-    }
+    const authority = this.resolveExternalCandidateAuthority(source, 'lifecycle', origin);
+    const receiptOrigin = authority.receiptOrigin;
     let receipt: ExternalLifecycleReceipt | null = null;
+    const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const candidate = this.loadBoardCandidate(attemptId, input.candidate_id, 'lifecycle');
+      const { candidate, snapshotAt } = authority.load(input.candidate_id);
       if (candidate.kind !== 'lifecycle') {
         throw new Error(`external lifecycle candidate ${input.candidate_id} has the wrong kind`);
       }
@@ -1589,13 +2071,21 @@ export class TaskLedger implements TaskSource {
             `external lifecycle candidate ${candidate.candidateId} has no active binding`
           );
         }
+        // A binding that came into being after this candidate's snapshot cannot
+        // be the binding the snapshot described. Board attempts keep the exact
+        // legacy ordering rule; when either side lacks an attempt id (owner-run
+        // decisions), the ledger clock decides.
+        const bindingPostdatesSnapshot =
+          authority.source.kind === 'board' && binding.createdByAttemptId !== null
+            ? binding.createdByAttemptId >= authority.source.attemptId
+            : binding.createdAt > snapshotAt;
         const superseded =
           binding.id !== candidate.bindingId ||
           binding.revision !== candidate.bindingRevision ||
           binding.connector !== candidate.connector ||
           binding.sourceType !== candidate.sourceType ||
           binding.externalSourceId !== candidate.externalSourceId ||
-          binding.createdByAttemptId >= attemptId ||
+          bindingPostdatesSnapshot ||
           task.revision !== candidate.taskRevision ||
           candidate.operatorObservationSeq <= binding.lastObservationSeq;
         const taskRevisionBefore = task.revision;
@@ -1646,7 +2136,7 @@ export class TaskLedger implements TaskSource {
         }
         this.insertLifecycleReceipt(
           candidate,
-          attemptId,
+          receiptOrigin,
           input,
           outcome,
           taskRevisionBefore,
@@ -1656,7 +2146,9 @@ export class TaskLedger implements TaskSource {
         receipt = {
           kind: 'lifecycle',
           candidateId: candidate.candidateId,
-          workOrderAttemptId: attemptId,
+          workOrderAttemptId: receiptOrigin.attemptId,
+          originRunId: receiptOrigin.runId,
+          originOwnerScope: receiptOrigin.ownerScope,
           taskId: candidate.taskId,
           outcome,
           reason: input.reason,
@@ -1669,6 +2161,7 @@ export class TaskLedger implements TaskSource {
       this.db.exec('ROLLBACK');
       throw error;
     }
+    this.notifyOwnerTaskCommit(previousGeneration);
     return receipt!;
   }
 
@@ -1677,13 +2170,16 @@ export class TaskLedger implements TaskSource {
   ): ExternalBindingReceipt | ExternalLifecycleReceipt | null {
     const binding = this.db
       .prepare(
-        `SELECT candidate_id, workorder_attempt_id, task_id, outcome, reason, binding_id
+        `SELECT candidate_id, workorder_attempt_id, origin_run_id, origin_owner_scope, task_id,
+                outcome, reason, binding_id
          FROM operator_external_binding_receipts WHERE candidate_id = ?`
       )
       .get(candidateId) as
       | {
           candidate_id: string;
-          workorder_attempt_id: number;
+          workorder_attempt_id: number | null;
+          origin_run_id: string | null;
+          origin_owner_scope: string | null;
           task_id: number;
           outcome: ExternalBindingReceipt['outcome'];
           reason: string;
@@ -1692,14 +2188,16 @@ export class TaskLedger implements TaskSource {
       | undefined;
     const lifecycle = this.db
       .prepare(
-        `SELECT candidate_id, workorder_attempt_id, task_id, outcome, reason,
-                task_revision_before, task_revision_after
+        `SELECT candidate_id, workorder_attempt_id, origin_run_id, origin_owner_scope, task_id,
+                outcome, reason, task_revision_before, task_revision_after
          FROM operator_external_lifecycle_receipts WHERE candidate_id = ?`
       )
       .get(candidateId) as
       | {
           candidate_id: string;
-          workorder_attempt_id: number;
+          workorder_attempt_id: number | null;
+          origin_run_id: string | null;
+          origin_owner_scope: string | null;
           task_id: number;
           outcome: ExternalLifecycleReceipt['outcome'];
           reason: string;
@@ -1734,6 +2232,8 @@ export class TaskLedger implements TaskSource {
         kind: 'binding',
         candidateId: binding.candidate_id,
         workOrderAttemptId: binding.workorder_attempt_id,
+        originRunId: binding.origin_run_id,
+        originOwnerScope: binding.origin_owner_scope,
         taskId: binding.task_id,
         outcome: binding.outcome,
         reason: binding.reason,
@@ -1745,6 +2245,8 @@ export class TaskLedger implements TaskSource {
           kind: 'lifecycle',
           candidateId: lifecycle.candidate_id,
           workOrderAttemptId: lifecycle.workorder_attempt_id,
+          originRunId: lifecycle.origin_run_id,
+          originOwnerScope: lifecycle.origin_owner_scope,
           taskId: lifecycle.task_id,
           outcome: lifecycle.outcome,
           reason: lifecycle.reason,
@@ -1754,16 +2256,7 @@ export class TaskLedger implements TaskSource {
       : null;
   }
 
-  private externalBindingFromRow(row: {
-    id: number;
-    revision: number;
-    task_id: number;
-    connector: 'kagemusha';
-    source_type: 'kanban_card';
-    external_source_id: string;
-    last_observation_seq: number;
-    created_by_attempt_id: number;
-  }): ExternalTaskBinding {
+  private externalBindingFromRow(row: ExternalBindingRow): ExternalTaskBinding {
     return {
       id: row.id,
       revision: row.revision,
@@ -1773,6 +2266,9 @@ export class TaskLedger implements TaskSource {
       externalSourceId: row.external_source_id,
       lastObservationSeq: row.last_observation_seq,
       createdByAttemptId: row.created_by_attempt_id,
+      createdByRunId: row.created_by_run_id,
+      createdByOwnerScope: row.created_by_owner_scope,
+      createdAt: row.created_at,
     };
   }
 
@@ -1798,7 +2294,7 @@ export class TaskLedger implements TaskSource {
 
   private insertBindingReceipt(
     candidate: BindingCandidate,
-    attemptId: number,
+    receiptOrigin: ExternalReceiptOrigin,
     input: { decision: 'bind' | 'decline'; reason: string },
     outcome: ExternalBindingReceipt['outcome'],
     bindingId: number | undefined,
@@ -1810,13 +2306,14 @@ export class TaskLedger implements TaskSource {
            (candidate_id, decision, workorder_attempt_id, task_id, event_id, connector, source_type,
             external_source_id, channel_partition, content_sha256, source_timestamp_ms,
             operator_ingest_seq, operator_observation_seq, task_revision, outcome, reason, binding_id,
-            origin_run_id, origin_cause_event_ids, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            origin_run_id, origin_cause_event_ids, origin_owner_scope, origin_envelope_hash,
+            created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         candidate.candidateId,
         input.decision,
-        attemptId,
+        receiptOrigin.attemptId,
         candidate.taskId,
         candidate.eventId,
         candidate.connector,
@@ -1831,8 +2328,10 @@ export class TaskLedger implements TaskSource {
         outcome,
         input.reason,
         bindingId ?? null,
-        origin.runId ?? null,
+        receiptOrigin.runId,
         JSON.stringify(origin.causeEventIds ?? []),
+        receiptOrigin.ownerScope,
+        receiptOrigin.envelopeHash,
         this.now()
       );
   }
@@ -1859,7 +2358,7 @@ export class TaskLedger implements TaskSource {
 
   private insertLifecycleReceipt(
     candidate: LifecycleCandidate,
-    attemptId: number,
+    receiptOrigin: ExternalReceiptOrigin,
     input: { decision: 'apply' | 'retain'; reason: string },
     outcome: ExternalLifecycleReceipt['outcome'],
     taskRevisionBefore: number,
@@ -1873,13 +2372,13 @@ export class TaskLedger implements TaskSource {
             external_source_id, channel_partition, content_sha256, source_timestamp_ms,
             operator_ingest_seq, operator_observation_seq, binding_id, binding_revision,
             task_revision_before, task_revision_after, outcome, reason, origin_run_id,
-            origin_cause_event_ids, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            origin_cause_event_ids, origin_owner_scope, origin_envelope_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         candidate.candidateId,
         input.decision,
-        attemptId,
+        receiptOrigin.attemptId,
         candidate.taskId,
         candidate.eventId,
         candidate.connector,
@@ -1896,8 +2395,10 @@ export class TaskLedger implements TaskSource {
         taskRevisionAfter,
         outcome,
         input.reason,
-        origin.runId ?? null,
+        receiptOrigin.runId,
         JSON.stringify(origin.causeEventIds ?? []),
+        receiptOrigin.ownerScope,
+        receiptOrigin.envelopeHash,
         this.now()
       );
   }
@@ -1998,8 +2499,8 @@ export class TaskLedger implements TaskSource {
     }
 
     let createdId = 0;
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
+    const write = this.db.transaction(() => {
       const result = this.db
         .prepare(
           `INSERT INTO operator_tasks
@@ -2071,11 +2572,9 @@ export class TaskLedger implements TaskSource {
         },
         atMs: now,
       });
-      this.db.exec('COMMIT');
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    }, 'immediate');
+    write();
+    this.notifyOwnerTaskCommit(previousGeneration);
     const created = this.getById(createdId);
     if (!created) throw new Error('task_create: inserted row could not be read back');
     return created;
@@ -2125,15 +2624,13 @@ export class TaskLedger implements TaskSource {
 
   update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
     this.validateTaskUpdatePatch(patch);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const task = this.transitionTaskInTransaction(id, patch, origin);
-      this.db.exec('COMMIT');
-      return task;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
+    const updated = this.db.transaction(
+      () => this.transitionTaskInTransaction(id, patch, origin),
+      'immediate'
+    )();
+    this.notifyOwnerTaskCommit(previousGeneration);
+    return updated;
   }
 
   /**
@@ -2145,9 +2642,12 @@ export class TaskLedger implements TaskSource {
    * owner rows and could only be "closed" as if they had been done.
    *
    * Every path requires the exact current revision, a non-empty bounded reason
-   * preserved as `latest_event`, an OWNER row, and the same candidate/workorder
-   * authority checks as task_update (TG-03/TG-04/TG-06) - a terminal or foreign
-   * board attempt cannot mutate an unrelated row. The whole transition, its
+   * preserved as `latest_event`, an OWNER row, and the same workorder-attempt
+   * currency and causal-provenance checks as task_update (TG-03/TG-04/TG-06) -
+   * a terminal attempt of any kind cannot mutate a row, and an owner-event
+   * decision cannot rest on a fabricated cause. Scheduler hint pages and the
+   * causal batch's channel select what the host READS; they do not narrow the
+   * authenticated owner's decisions. The whole transition, its
    * `resolution_kind` and its effect receipt commit as ONE transaction.
    */
   reclassify(id: number, input: ReclassifyTaskInput, origin: ChangeOrigin = {}): TaskRecord {
@@ -2170,6 +2670,8 @@ export class TaskLedger implements TaskSource {
       throw new Error('task_reclassify: expected_revision must be a non-negative integer');
     }
 
+    const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
+    let record: TaskRecord;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
@@ -2184,42 +2686,28 @@ export class TaskLedger implements TaskSource {
           `task_reclassify: expected revision ${input.expected_revision}, current ${existing.revision}`
         );
       }
-      this.assertTaskReclassificationAuthorized(existing, origin);
+      this.assertTaskReclassificationAuthorized(origin);
 
       const patch = this.buildReclassifyPatch(existing, disposition, reason);
       // Same primitive as task_update: candidate guard, board-attempt liveness,
       // revision-checked UPDATE, effect receipt, temporal generation supersession.
-      const record = this.transitionTaskInTransaction(id, patch, origin);
+      record = this.transitionTaskInTransaction(id, patch, origin);
       this.db.exec('COMMIT');
-      return record;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
+    this.notifyOwnerTaskCommit(previousGeneration);
+    return record;
   }
 
-  private assertTaskReclassificationAuthorized(existing: TaskRow, origin: ChangeOrigin): void {
+  private assertTaskReclassificationAuthorized(origin: ChangeOrigin): void {
     if (origin.workOrderAttemptId !== undefined) {
-      const attempt = this.getWorkOrderById(origin.workOrderAttemptId);
-      if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
-        throw new Error(
-          `task_reclassify: Board workorder ${String(origin.workOrderAttemptId)} is no longer active`
-        );
-      }
-      const { attempts: _attempts, ...payload } = attempt.payload;
-      validateWorkOrderPayload('board', payload);
-      const candidates = Array.isArray(payload.reclassificationCandidates)
-        ? (payload.reclassificationCandidates as Array<{
-            taskId: number;
-            taskRevision: number;
-          }>)
-        : [];
-      const candidate = candidates.find((item) => item.taskId === existing.id);
-      if (!candidate || candidate.taskRevision !== existing.revision) {
-        throw new Error(
-          `task_reclassify: task ${existing.id} is outside this host-issued Board candidate set`
-        );
-      }
+      // A carried attempt must be CURRENT. Its kind is scheduling metadata: a
+      // wiki or temporal run that discovers a record-shaped owner row may
+      // reclassify it under the same CAS rules as a Board run. Its candidate
+      // page is a bounded-read hint, so a row outside the page is not refused.
+      this.assertWorkOrderAttemptActive('task_reclassify', origin.workOrderAttemptId);
     }
 
     if (origin.reclassificationCauseBound) {
@@ -2227,24 +2715,54 @@ export class TaskLedger implements TaskSource {
       if (eventIds.length === 0) {
         throw new Error('task_reclassify: owner-event reclassification requires causal events');
       }
-      if (existing.source_event_id && eventIds.includes(existing.source_event_id)) return;
-      const placeholders = eventIds.map(() => '?').join(',');
-      const channels = this.db
-        .prepare(
-          `SELECT DISTINCT inbox.channel_key
-             FROM owner_event_inbox AS inbox, json_each(inbox.event_ids_json) AS event
-            WHERE event.value IN (${placeholders})`
-        )
-        .all(...eventIds) as Array<{ channel_key: string }>;
-      if (
-        existing.source_channel === null ||
-        !channels.some((row) => row.channel_key === existing.source_channel)
-      ) {
+      // Provenance: every cause must be an event a durable inbox batch actually
+      // carried. The batch's channel is not compared with the task's source -
+      // cross-source relevance is MAMA's judgment under the owner's grant.
+      const unknown = this.findCausalEventsWithoutInboxBatch(eventIds);
+      if (unknown.length > 0) {
         throw new Error(
-          `task_reclassify: task ${existing.id} is outside this owner-event source channel`
+          `task_reclassify: causal event(s) ${unknown.join(', ')} were not carried by any owner-event inbox batch`
         );
       }
     }
+  }
+
+  /**
+   * A retained attempt context outlives its workorder: a late direct or nested
+   * tool call can still carry it after the row reached a terminal status. Any
+   * lifecycle judgment made under a carried attempt requires that attempt to be
+   * the claimed, in-progress one, whatever its work kind.
+   */
+  private assertWorkOrderAttemptActive(
+    tool: 'task_update' | 'task_reclassify' | 'external binding' | 'external lifecycle',
+    attemptId: number
+  ): WorkOrderRecord {
+    const attempt = this.getWorkOrderById(attemptId);
+    if (!attempt) {
+      throw new Error(`${tool}: workorder ${String(attemptId)} is no longer active (missing)`);
+    }
+    if (attempt.status !== 'in_progress') {
+      throw new Error(
+        `${tool}: ${attempt.workKind} workorder ${String(attemptId)} is no longer active (${attempt.status})`
+      );
+    }
+    return attempt;
+  }
+
+  private findCausalEventsWithoutInboxBatch(eventIds: readonly string[]): string[] {
+    const placeholders = eventIds.map(() => '?').join(',');
+    const known = new Set(
+      (
+        this.db
+          .prepare(
+            `SELECT DISTINCT event.value AS event_id
+               FROM owner_event_inbox AS inbox, json_each(inbox.event_ids_json) AS event
+              WHERE event.value IN (${placeholders})`
+          )
+          .all(...eventIds) as Array<{ event_id: string }>
+      ).map((row) => row.event_id)
+    );
+    return eventIds.filter((eventId) => !known.has(eventId));
   }
 
   private buildReclassifyPatch(
@@ -2339,23 +2857,23 @@ export class TaskLedger implements TaskSource {
     if (existing.kind === 'system') {
       throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
     }
-    const revisionAttempt = origin.requiresExpectedRevision
-      ? this.getWorkOrderById(origin.workOrderAttemptId ?? -1)
-      : null;
     const hasLifecyclePatch =
       Object.prototype.hasOwnProperty.call(patch, 'status') ||
       Object.prototype.hasOwnProperty.call(patch, 'due_at') ||
       Object.prototype.hasOwnProperty.call(patch, 'latest_event') ||
       Object.prototype.hasOwnProperty.call(patch, 'completion_criteria');
-    const isBoardWorkorderLifecycleJudgment =
-      revisionAttempt?.workKind === 'board' && hasLifecyclePatch;
-    if (isBoardWorkorderLifecycleJudgment && revisionAttempt.status !== 'in_progress') {
-      throw new Error(
-        `task_update: board workorder ${revisionAttempt.id} is no longer active (${revisionAttempt.status})`
-      );
+    // Direct-ABI mutation under a carried attempt: the attempt must be current
+    // for EVERY patch shape (a stale attempt renaming a task is as stale as one
+    // closing it). Work kind is scheduling metadata, not owner authority.
+    // Internal receipted primitives (external lifecycle apply) do not set the
+    // direct-ABI guard and validate their own claimed attempt separately.
+    const isCarriedDirectMutation =
+      origin.requiresExpectedRevision === true && origin.workOrderAttemptId !== undefined;
+    if (isCarriedDirectMutation) {
+      this.assertWorkOrderAttemptActive('task_update', origin.workOrderAttemptId!);
     }
-    const isWorkorderLifecycleJudgment =
-      isBoardWorkorderLifecycleJudgment && revisionAttempt.status === 'in_progress';
+    // A lifecycle judgment additionally proves the revision actually read plus a reason.
+    const isWorkorderLifecycleJudgment = isCarriedDirectMutation && hasLifecyclePatch;
     if (isWorkorderLifecycleJudgment) {
       if (!Number.isSafeInteger(patch.expected_revision) || patch.expected_revision! < 0) {
         throw new Error('task_update: lifecycle workorder requires expected_revision');
@@ -2409,6 +2927,7 @@ export class TaskLedger implements TaskSource {
       last_temporal_attempt_id: existing.last_temporal_attempt_id,
       review_started_at: existing.review_started_at,
       review_anchor_event_id: existing.review_anchor_event_id,
+      review_anchor_source_channel: existing.review_anchor_source_channel,
       completion_criteria: existing.completion_criteria,
       resolution_kind: existing.resolution_kind,
     };
@@ -2437,6 +2956,7 @@ export class TaskLedger implements TaskSource {
     if (leavingVerifiedReview) {
       next.review_started_at = null;
       next.review_anchor_event_id = null;
+      next.review_anchor_source_channel = null;
       next.due_at = null;
       next.deadline = null;
       next.deadline_offset_minutes = null;
@@ -2462,14 +2982,15 @@ export class TaskLedger implements TaskSource {
       if (!evidence) {
         throw new Error('task_update: review requires host-verified submission evidence');
       }
-      if (existing.source_channel !== evidence.sourceChannel) {
-        throw new Error('task_update: review evidence is outside the task source boundary');
+      if (!evidence.sourceChannel.trim()) {
+        throw new Error('task_update: review evidence source is required');
       }
       if (!Number.isSafeInteger(evidence.sourceTimestampMs) || evidence.sourceTimestampMs < 0) {
         throw new Error('task_update: review evidence timestamp is invalid');
       }
       next.review_started_at = evidence.sourceTimestampMs;
       next.review_anchor_event_id = evidence.eventIndexId;
+      next.review_anchor_source_channel = evidence.sourceChannel;
       next.due_at = evidence.sourceTimestampMs + 14 * 24 * 60 * 60 * 1000;
       next.deadline = new Date(next.due_at as number).toISOString().slice(0, 10);
       next.deadline_offset_minutes = 0;
@@ -2541,6 +3062,7 @@ export class TaskLedger implements TaskSource {
       'last_temporal_attempt_id',
       'review_started_at',
       'review_anchor_event_id',
+      'review_anchor_source_channel',
       'completion_criteria',
       'resolution_kind',
     ] as const;
@@ -2602,34 +3124,18 @@ export class TaskLedger implements TaskSource {
     // candidate payload must remain authoritative in that case. Decision
     // application still calls loadBoardCandidate(), which requires a claimed
     // in-progress attempt.
+    //
+    // The payload's reclassificationCandidates page is NOT consulted here: it is
+    // the scheduler's bounded-read hint, and qualifying a legacy row the owner
+    // discovered outside that page is an ordinary owner decision guarded by
+    // attempt currency, expected_revision and a plain reason (see
+    // transitionTaskInTransaction). Only host-attested external binding /
+    // lifecycle candidates keep their receipted-decision-only rule below.
     if (!attempt || attempt.workKind !== 'board') {
       return;
     }
     const { attempts: _attempts, ...payload } = attempt.payload;
     validateWorkOrderPayload('board', payload);
-    if (
-      Object.prototype.hasOwnProperty.call(patch, 'completion_criteria') &&
-      !origin.taskCreateUpsert
-    ) {
-      const reclassificationCandidates = Array.isArray(payload.reclassificationCandidates)
-        ? (payload.reclassificationCandidates as Array<{
-            taskId: number;
-            taskRevision: number;
-          }>)
-        : [];
-      const qualificationCandidate = reclassificationCandidates.find(
-        (candidate) => candidate.taskId === taskId
-      );
-      if (
-        !qualificationCandidate ||
-        (patch.expected_revision !== undefined &&
-          qualificationCandidate.taskRevision !== patch.expected_revision)
-      ) {
-        throw new Error(
-          `task_update: task ${taskId} is outside this host-issued qualification candidate set`
-        );
-      }
-    }
     if (payload.mode !== 'reconcile' || !payload.candidates) {
       return;
     }
@@ -2981,7 +3487,11 @@ export class TaskLedger implements TaskSource {
           throw new Error(`temporal generation: task occurrence no longer matches enqueue input`);
         }
         if (
-          this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannelRef ||
+          this.temporalSourceIdentifierRef(
+            task.status === 'review'
+              ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
+              : task.sourceChannel
+          ) !== sourceChannelRef ||
           this.temporalSourceIdentifierRef(
             task.status === 'review' && task.reviewAnchorEventId
               ? task.reviewAnchorEventId
@@ -3462,6 +3972,7 @@ export class TaskLedger implements TaskSource {
       throw new Error('temporal effect requires a valid host evidence attestation');
     }
     let receipt: TemporalEffectReceipt | null = null;
+    const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const context = this.assertTemporalWorkContextActive(suppliedContext);
@@ -3489,6 +4000,7 @@ export class TaskLedger implements TaskSource {
         last_temporal_attempt_id: context.attemptId,
         review_started_at: existing.review_started_at,
         review_anchor_event_id: existing.review_anchor_event_id,
+        review_anchor_source_channel: existing.review_anchor_source_channel,
       };
       const auditParts = [`reason=${input.reason.trim()}`];
       if (input.outcome === 'final_no_update') {
@@ -3506,6 +4018,7 @@ export class TaskLedger implements TaskSource {
           // as the task_update path clears them. A later reopen re-verifies.
           next.review_started_at = null;
           next.review_anchor_event_id = null;
+          next.review_anchor_source_channel = null;
           if (
             existing.review_started_at !== null &&
             !Object.prototype.hasOwnProperty.call(input, 'due_at')
@@ -3554,6 +4067,7 @@ export class TaskLedger implements TaskSource {
         'last_temporal_attempt_id',
         'review_started_at',
         'review_anchor_event_id',
+        'review_anchor_source_channel',
       ] as const;
       const changedFields = persistedColumns.filter((column) => next[column] !== existing[column]);
       const afterRevision = existing.revision + 1;
@@ -3670,6 +4184,7 @@ export class TaskLedger implements TaskSource {
       this.db.exec('ROLLBACK');
       throw error;
     }
+    this.notifyOwnerTaskCommit(previousGeneration);
     if (!receipt) throw new Error(`temporal effect produced no receipt`);
     return receipt;
   }
@@ -4125,7 +4640,11 @@ export class TaskLedger implements TaskSource {
     if (
       task.temporalEpoch !== temporalEpoch ||
       occurrenceKeyForTask(task) !== occurrenceKey ||
-      this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannel ||
+      this.temporalSourceIdentifierRef(
+        task.status === 'review'
+          ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
+          : task.sourceChannel
+      ) !== sourceChannel ||
       this.temporalSourceIdentifierRef(
         task.status === 'review' && task.reviewAnchorEventId
           ? task.reviewAnchorEventId
@@ -4426,7 +4945,7 @@ export class TaskLedger implements TaskSource {
     });
   }
 
-  private getWorkOrderById(id: number): WorkOrderRecord | null {
+  getWorkOrderById(id: number): WorkOrderRecord | null {
     const row = this.db
       .prepare(`SELECT * FROM operator_tasks WHERE id = ? AND kind = 'system'`)
       .get(id) as TaskRow | undefined;
