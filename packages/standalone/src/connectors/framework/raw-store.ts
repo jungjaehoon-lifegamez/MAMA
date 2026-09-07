@@ -332,7 +332,9 @@ export class RawStore {
           insert.run(
             sourceId,
             originSourceId,
-            item.sourceEntityId ?? item.sourceId,
+            // source_entity_id must equal origin_source_id so every revision of one entity shares a
+            // key; using item.sourceId here would orphan a revision from a legacy/derived origin.
+            originSourceId,
             revisionHash,
             item.source,
             item.channel,

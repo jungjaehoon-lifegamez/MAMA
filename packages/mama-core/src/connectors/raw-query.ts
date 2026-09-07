@@ -434,22 +434,40 @@ export interface RawHistoryInput {
   cursor?: string;
 }
 
-function resolveEntityIdForRawId(
+interface EntityAnchor {
+  entityId: string;
+  connector: string;
+}
+
+// The entity a raw event belongs to, plus its connector. source_entity_id is unique only WITHIN a
+// connector, so history must carry the connector too or two connectors sharing an id would merge.
+function resolveEntityAnchor(
   adapter: RawQueryAdapter,
   rawId: string,
   visibility: Pick<RawSearchInput, 'connectors' | 'scopes'>
-): string | null {
+): EntityAnchor | null {
   const clauses = ['e.event_index_id = ?'];
   const params: unknown[] = [rawId];
   appendFilters(clauses, params, { query: '*', ...visibility });
   const row = adapter
     .prepare(
-      `SELECT source_entity_id FROM connector_event_index e WHERE ${clauses.join(' AND ')} LIMIT 1`
+      `SELECT source_entity_id, source_connector FROM connector_event_index e WHERE ${clauses.join(
+        ' AND '
+      )} LIMIT 1`
     )
-    .get(...params) as { source_entity_id: string | null } | undefined;
-  return row && typeof row.source_entity_id === 'string' && row.source_entity_id.length > 0
-    ? row.source_entity_id
+    .get(...params) as { source_entity_id: string | null; source_connector: string } | undefined;
+  return row &&
+    typeof row.source_entity_id === 'string' &&
+    row.source_entity_id.length > 0 &&
+    typeof row.source_connector === 'string' &&
+    row.source_connector.length > 0
+    ? { entityId: row.source_entity_id, connector: row.source_connector }
     : null;
+}
+
+function singleConnector(connectors: string[] | undefined): string | null {
+  const normalized = normalizeConnectors(connectors);
+  return normalized.length === 1 ? normalized[0]! : null;
 }
 
 function encodeHistoryCursor(row: { source_timestamp_ms: number; event_index_id: string }): string {
@@ -488,15 +506,23 @@ function decodeHistoryCursor(cursor: string | undefined): RawHistoryCursor | nul
  * cursor-paged. Rows with a NULL source_entity_id (no revision grouping) never match an entity query.
  */
 export function getRawHistory(adapter: RawQueryAdapter, input: RawHistoryInput): RawSearchResult {
-  let entityId = input.entityId?.trim() ?? '';
-  if (entityId.length === 0 && input.rawId && input.rawId.trim().length > 0) {
-    entityId =
-      resolveEntityIdForRawId(adapter, input.rawId.trim(), {
-        connectors: input.connectors,
-        scopes: input.scopes,
-      }) ?? '';
-  }
-  if (entityId.length === 0) {
+  // Revision identity is connector-scoped. The rawId path takes the anchor's own connector; the
+  // entityId path requires the caller to name exactly one connector, since an entity id alone is
+  // ambiguous across connectors.
+  const trimmedEntityId = input.entityId?.trim() ?? '';
+  const anchor: EntityAnchor | null =
+    trimmedEntityId.length > 0
+      ? (() => {
+          const connector = singleConnector(input.connectors);
+          return connector ? { entityId: trimmedEntityId, connector } : null;
+        })()
+      : input.rawId && input.rawId.trim().length > 0
+        ? resolveEntityAnchor(adapter, input.rawId.trim(), {
+            connectors: input.connectors,
+            scopes: input.scopes,
+          })
+        : null;
+  if (!anchor) {
     return { hits: [], next_cursor: null };
   }
   const limit = normalizeLimit(input.limit);
@@ -505,10 +531,10 @@ export function getRawHistory(adapter: RawQueryAdapter, input: RawHistoryInput):
   }
 
   const clauses = ['e.source_entity_id = ?'];
-  const params: unknown[] = [entityId];
+  const params: unknown[] = [anchor.entityId];
   appendFilters(clauses, params, {
     query: '*',
-    connectors: input.connectors,
+    connectors: [anchor.connector],
     scopes: input.scopes,
     fromMs: input.fromMs,
     toMs: input.toMs,
