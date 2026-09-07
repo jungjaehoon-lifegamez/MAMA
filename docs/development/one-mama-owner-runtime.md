@@ -215,10 +215,10 @@ release gate is closed by observed evidence after publication rather than anothe
 ## Reopened architecture completion: input-independent owner actions (2026-09-07)
 
 The 0.49.3 session/runtime continuity evidence is valid, but the broader completion claim was
-incorrect. Source/work-kind business restrictions remain active: scheduled reads and task creation,
+incorrect. The 0.49.3 baseline still had source/work-kind business restrictions: scheduled reads and task creation,
 per-kind memory/task/wiki ownership, event qualification and cross-channel correction vetoes,
 host-selected Board candidates, Board-only external lifecycle application, and workorder-only wiki
-reads. Existing tests deliberately preserve several of these restrictions.
+reads. Baseline tests deliberately preserved several of these restrictions.
 
 The selected correction reuses the one owner session and queue. Ordinary business tools and
 readable resources derive from the authenticated owner's grant; input source and maintenance kind
@@ -237,6 +237,20 @@ historical prompt replay is introduced.
 
 Completion now requires TG-03/TG-04/TG-05/TG-06 cross-entry action parity under equal grants, negative
 isolation/forgery/staleness tests, independent review, full CI, release/public installation and
-separately observed runtime/action/delivery proof. The local execution plan is
-`.superpowers/plans/2026-09-07-owner-action-authority.md`; its review decisions are owned by the
-orchestrator as explicitly requested by the user. Implementation and final completion are pending.
+separately observed runtime/action/delivery proof.
+
+### 0.50.0 candidate verification
+
+The implementation and independent review are complete. Cross-entry policy, candidate migration,
+real SQLite context compilation, task creation receipts, Board freshness and Telegram entity tests
+cover the changed contracts. Task creation requires a stable `creation_key` within the host-issued
+occurrence; same-key payload conflicts fail without another task row.
+
+Workspace and outbound effects reserve before execution. Native turns reserve an admission marker
+before the backend is called and settle it only after clean completion; notification callbacks are
+observations, not pre-execution permission hooks. Missing or uncertain effects quarantine both
+workorders and owner events before a success ACK or automatic replay. A new owner message can
+inspect and reconcile the state; arbitrary shell commands are not claimed to be idempotent.
+
+Local root tests/build/typecheck/lint passed, with final consumer follow-up regression evidence in
+the parity artifact. PR CI, public release/install and post-install delivery remain distinct gates.
