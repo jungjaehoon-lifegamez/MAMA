@@ -9,12 +9,14 @@ import { createHash } from 'node:crypto';
 import { join } from 'path';
 
 import Database from '../../sqlite.js';
+import { applyRawItemRevisionsMigration } from '../../db/migrations/raw-item-revisions.js';
 import type { NormalizedItem } from './types.js';
 
 interface ConnectorEventIndexInput {
   source_connector: string;
   source_type: string;
   source_id: string;
+  source_entity_id: string;
   source_locator: string;
   channel: string;
   author: string;
@@ -33,6 +35,9 @@ interface ConnectorEventIndexInput {
 interface RawRow {
   id: number;
   source_id: string;
+  origin_source_id: string;
+  source_entity_id: string;
+  revision_hash: string | null;
   source: string;
   channel: string;
   author: string;
@@ -104,17 +109,49 @@ function ensureRawItemsProvenanceColumns(db: Database): void {
   }
 }
 
+// Reserved observation-bookkeeping metadata keys: keys a collector stamps on every poll to record
+// WHEN it looked, never WHAT changed. They are excluded from the identity hash so a re-poll of
+// unchanged content is one version, while genuine content/metadata changes still produce a new
+// revision. Full metadata (including these) is preserved on the stored row and in the index; only
+// the identity/revision hash ignores them. `metadata.observedAt` is a codebase-wide convention for
+// observation-time (calendar, trello/kagemusha query-tools) - treat it as reserved and do not put a
+// semantic datum under this name. This is intentionally a small central set, not a per-connector
+// declaration: only calendar relies on it today, so a collector-declared mechanism would be
+// speculative generality. Introduce that mechanism when a second connector needs a DIFFERENT key.
+const OBSERVATION_METADATA_KEYS = new Set(['observedAt']);
+
+function contentIdentityMetadata(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | null {
+  if (!metadata) return null;
+  const entries = Object.entries(metadata).filter(([key]) => !OBSERVATION_METADATA_KEYS.has(key));
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
 function canonicalizeRawContent(item: NormalizedItem): string {
-  return JSON.stringify({
-    source: item.source,
-    sourceId: item.sourceId,
-    channel: item.channel,
-    author: item.author,
-    content: item.content,
-    timestamp: item.timestamp.getTime(),
-    type: item.type,
-    metadata: item.metadata ?? null,
-  });
+  return JSON.stringify(
+    {
+      source: item.source,
+      sourceId: item.sourceId,
+      channel: item.channel,
+      author: item.author,
+      content: item.content,
+      timestamp: item.timestamp.getTime(),
+      type: item.type,
+      metadata: contentIdentityMetadata(item.metadata),
+    },
+    (_key, value: unknown) => {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const object = value as Record<string, unknown>;
+        return Object.fromEntries(
+          Object.keys(object)
+            .sort()
+            .map((key) => [key, object[key]])
+        );
+      }
+      return value;
+    }
+  );
 }
 
 function normalizeContentHash(item: NormalizedItem): string {
@@ -135,6 +172,7 @@ export function mapNormalizedItemsToConnectorEventIndexInputs(
     source_connector: connectorName,
     source_type: item.type,
     source_id: item.sourceId,
+    source_entity_id: item.sourceEntityId ?? item.sourceId,
     source_locator: `${connectorName}:${item.channel}:${item.sourceId}`,
     channel: item.channel,
     author: item.author,
@@ -146,7 +184,7 @@ export function mapNormalizedItemsToConnectorEventIndexInputs(
     project_id: item.projectId ?? null,
     memory_scope_kind: item.memoryScopeKind ?? null,
     memory_scope_id: item.memoryScopeId ?? null,
-    metadata: item.metadata ?? null,
+    metadata: { ...item.metadata, sourceEntityId: item.sourceEntityId ?? item.sourceId },
     content_hash: Buffer.from(normalizeContentHash(item), 'hex'),
   }));
 }
@@ -168,6 +206,7 @@ export class RawStore {
     const db = new Database(join(dir, 'raw.db'));
     db.exec(SCHEMA);
     ensureRawItemsProvenanceColumns(db);
+    applyRawItemRevisionsMigration(db);
     this.dbs.set(connectorName, db);
     return db;
   }
@@ -180,6 +219,7 @@ export class RawStore {
     return {
       source: row.source,
       sourceId: row.source_id,
+      sourceEntityId: row.source_entity_id,
       channel: row.channel,
       author: row.author,
       content: row.content,
@@ -196,52 +236,166 @@ export class RawStore {
     };
   }
 
-  save(connectorName: string, items: NormalizedItem[]): void {
-    if (items.length === 0) return;
+  /**
+   * Atomically persist a batch and return the stored row for each input (1:1). The returned rows carry
+   * the corrected sourceId/sourceEntityId so the store and the index share one locator; an unchanged
+   * re-poll or a re-listed immutable version returns the existing row instead of forging a new one.
+   */
+  save(connectorName: string, items: NormalizedItem[]): NormalizedItem[] {
+    if (items.length === 0) return [];
     const db = this.getDb(connectorName);
-    const stmt = db.prepare(`
-      INSERT INTO raw_items
-        (
-          source_id, source, channel, author, content, timestamp, type, metadata, content_hash,
-          source_cursor, tenant_id, project_id, memory_scope_kind, memory_scope_id
-        )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_id) DO UPDATE SET
-        content_hash = excluded.content_hash,
-        source_cursor = COALESCE(excluded.source_cursor, raw_items.source_cursor),
-        tenant_id = COALESCE(excluded.tenant_id, raw_items.tenant_id),
-        project_id = COALESCE(excluded.project_id, raw_items.project_id),
-        memory_scope_kind = COALESCE(excluded.memory_scope_kind, raw_items.memory_scope_kind),
-        memory_scope_id = COALESCE(excluded.memory_scope_id, raw_items.memory_scope_id)
+    const find = db.prepare('SELECT * FROM raw_items WHERE source_id = ?');
+    const findRevision = db.prepare(
+      'SELECT * FROM raw_items WHERE origin_source_id = ? ORDER BY id DESC LIMIT 1'
+    );
+    const insert = db.prepare(`
+      INSERT INTO raw_items (
+        source_id, origin_source_id, source_entity_id, revision_hash,
+        source, channel, author, content, timestamp, type, metadata, content_hash,
+        source_cursor, tenant_id, project_id, memory_scope_kind, memory_scope_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const existingStmt = db.prepare('SELECT * FROM raw_items WHERE source_id = ? LIMIT 1');
-    for (const item of items) {
-      const existing = existingStmt.get(item.sourceId) as RawRow | undefined;
-      const contentHash = existing
-        ? existing.content_hash && CONTENT_HASH_PATTERN.test(existing.content_hash)
-          ? existing.content_hash
-          : normalizeContentHash({
-              ...this.mapRawRowToNormalizedItem(existing),
-              contentHash: undefined,
-            })
-        : normalizeContentHash(item);
-      stmt.run(
-        item.sourceId,
-        item.source,
-        item.channel,
-        item.author,
-        item.content,
-        item.timestamp.getTime(),
-        item.type,
-        item.metadata !== undefined ? JSON.stringify(item.metadata) : null,
-        contentHash,
-        item.sourceCursor ?? null,
-        item.tenantId ?? null,
-        item.projectId ?? null,
-        item.memoryScopeKind ?? null,
-        item.memoryScopeId ?? null
-      );
+    const updateProvenance = db.prepare(`
+      UPDATE raw_items SET revision_hash = ?, source_entity_id = ?,
+        content_hash = COALESCE(content_hash, ?),
+        source_cursor = COALESCE(?, source_cursor), tenant_id = COALESCE(?, tenant_id),
+        project_id = COALESCE(?, project_id), memory_scope_kind = COALESCE(?, memory_scope_kind),
+        memory_scope_id = COALESCE(?, memory_scope_id)
+      WHERE source_id = ?
+    `);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const saved: NormalizedItem[] = [];
+      for (const item of items) {
+        const contentHash = normalizeContentHash(item);
+        const original = find.get(item.sourceId) as RawRow | undefined;
+        const originSourceId = item.sourceEntityId ?? original?.origin_source_id ?? item.sourceId;
+        const revisionHash = createHash('sha256')
+          .update(canonicalizeRawContent({ ...item, sourceId: originSourceId }))
+          .digest('hex');
+        // Redelivery of an already-stored immutable version address. When an upstream re-lists its
+        // version history (calendar `${eventId}:${hash}`, a file version id), the exact sourceId is a
+        // versioned address distinct from the entity base (source_id !== origin_source_id) with matching
+        // content. Re-inserting it would forge a change. The mutable base row (source_id === origin) is
+        // never treated this way, so a genuine A->B->A on one locator is still recorded.
+        if (
+          original &&
+          original.revision_hash === revisionHash &&
+          original.source_id !== originSourceId
+        ) {
+          // Same immutable version re-listed: do not forge a new observation, but advance last-seen
+          // provenance (source_cursor / scope) so a re-poll still records that we looked - a missing
+          // poll must stay distinguishable from an unchanged one.
+          updateProvenance.run(
+            revisionHash,
+            item.sourceEntityId ?? original.source_entity_id,
+            contentHash,
+            item.sourceCursor ?? null,
+            item.tenantId ?? null,
+            item.projectId ?? null,
+            item.memoryScopeKind ?? null,
+            item.memoryScopeId ?? null,
+            original.source_id
+          );
+          const refreshed = find.get(original.source_id) as RawRow | undefined;
+          if (!refreshed) throw new Error('Persisted raw revision is missing');
+          saved.push(this.mapRawRowToNormalizedItem(refreshed));
+          continue;
+        }
+        // Existing locators are immutable. A legacy row receives its own hash, never the incoming body's hash.
+        if (original && (!original.revision_hash || original.origin_source_id !== originSourceId)) {
+          const originalItem = this.mapRawRowToNormalizedItem(original);
+          const hash = createHash('sha256')
+            .update(canonicalizeRawContent({ ...originalItem, sourceId: originSourceId }))
+            .digest('hex');
+          db.prepare(
+            'UPDATE raw_items SET revision_hash = ?, content_hash = COALESCE(content_hash, ?), origin_source_id = ?, source_entity_id = ? WHERE source_id = ?'
+          ).run(
+            hash,
+            normalizeContentHash(originalItem),
+            originSourceId,
+            originSourceId,
+            original.source_id
+          );
+        }
+        const latest = findRevision.get(originSourceId) as RawRow | undefined;
+        const matching = latest?.revision_hash === revisionHash ? latest : undefined;
+        const nextId = (
+          db.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS next FROM raw_items').get() as {
+            next: number;
+          }
+        ).next;
+        const sourceId =
+          matching?.source_id ??
+          (original ? `${originSourceId}:revision:${revisionHash}:${nextId}` : item.sourceId);
+        if (!matching) {
+          insert.run(
+            sourceId,
+            originSourceId,
+            item.sourceEntityId ?? item.sourceId,
+            revisionHash,
+            item.source,
+            item.channel,
+            item.author,
+            item.content,
+            item.timestamp.getTime(),
+            item.type,
+            item.metadata === undefined ? null : JSON.stringify(item.metadata),
+            contentHash,
+            item.sourceCursor ?? null,
+            item.tenantId ?? null,
+            item.projectId ?? null,
+            item.memoryScopeKind ?? null,
+            item.memoryScopeId ?? null
+          );
+        } else {
+          updateProvenance.run(
+            revisionHash,
+            item.sourceEntityId ?? matching.source_entity_id,
+            contentHash,
+            item.sourceCursor ?? null,
+            item.tenantId ?? null,
+            item.projectId ?? null,
+            item.memoryScopeKind ?? null,
+            item.memoryScopeId ?? null,
+            sourceId
+          );
+        }
+        const persisted = find.get(sourceId) as RawRow | undefined;
+        if (!persisted) throw new Error('Persisted raw revision is missing');
+        saved.push(this.mapRawRowToNormalizedItem(persisted));
+      }
+      db.exec('COMMIT');
+      return saved;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
     }
+  }
+
+  /** Stable, bounded traversal of an entity's stored revisions. Cursor is the last row ID. */
+  getRevisions(
+    connectorName: string,
+    entityId: string,
+    options: { limit?: number; cursor?: number } = {}
+  ): {
+    items: NormalizedItem[];
+    nextCursor: number | null;
+  } {
+    const limit = Math.min(100, Math.max(1, Math.floor(options.limit ?? 20)));
+    const cursor = options.cursor ?? 0;
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isFinite(limit)) {
+      throw new Error('Invalid raw revision pagination');
+    }
+    const rows = this.getDb(connectorName)
+      .prepare(
+        'SELECT * FROM raw_items WHERE source_entity_id = ? AND id > ? ORDER BY id ASC LIMIT ?'
+      )
+      .all(entityId, cursor, limit + 1) as RawRow[];
+    return {
+      items: rows.slice(0, limit).map((row) => this.mapRawRowToNormalizedItem(row)),
+      nextCursor: rows.length > limit ? rows[limit - 1]!.id : null,
+    };
   }
 
   query(connectorName: string, since: Date): NormalizedItem[] {

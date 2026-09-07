@@ -394,7 +394,7 @@ describe('Phase 2b Task 5b connector member E2E', () => {
     const dbPath = join(tempDir, 'principals.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 65);
+    applyMigrationsThrough(migrationDb, 67);
     migrationDb.close();
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as DatabaseAdapter;
     adapter.connect();

@@ -296,6 +296,7 @@ export class TrelloConnector implements IConnector {
               items.push({
                 source: 'trello',
                 sourceId: `${boardId}:${card.id}:${Date.now()}`,
+                sourceEntityId: `${boardId}:${card.id}`,
                 channel: channelName,
                 author: 'trello',
                 content,

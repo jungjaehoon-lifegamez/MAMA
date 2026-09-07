@@ -5,7 +5,10 @@
 
 export interface NormalizedItem {
   source: string;
+  /** Immutable stored observation locator; collectors may initially supply the upstream ID. */
   sourceId: string;
+  /** Stable upstream entity across revisions (page, event, file, card). */
+  sourceEntityId?: string;
   channel: string;
   author: string;
   content: string;
@@ -25,6 +28,12 @@ export interface NormalizedItem {
     | 'spreadsheet_row'
     | 'kanban_card'
     | 'file_change';
+  /**
+   * Arbitrary structured facts. Reserved key: `observedAt` means observation-time bookkeeping and is
+   * excluded from the stored content-identity/revision hash (a re-poll that only moves observedAt is
+   * not a new version). Do NOT put a semantic datum under `observedAt`; use `sourceCursor` or another
+   * field for last-seen values that must be tracked.
+   */
   metadata?: Record<string, unknown>;
 }
 

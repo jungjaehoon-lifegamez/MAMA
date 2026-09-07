@@ -1324,7 +1324,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('TG-01 serializes the exact external report delivery ID behind an active same-chat turn', async () => {
+  it('TG-01/TG-06 delivers the exact external report while same-chat model work is active', async () => {
     let releaseTurn!: () => void;
     const blocked = new Promise<void>((resolve) => {
       releaseTurn = resolve;
@@ -1344,7 +1344,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const deliveryId = 'operator-report:scheduled:2026-08-02:09';
     const report = gateway.sendSystemMessage('7777', 'scheduled report', deliveryId);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'scheduled report');
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'scheduled report');
 
     releaseTurn();
     await Promise.all([turn, report]);
@@ -1413,7 +1413,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('does not let a detached report inherit a stale active-turn queue bypass', async () => {
+  it('TG-01 allows a detached report during unrelated same-chat model work', async () => {
     let releaseReport!: () => void;
     const reportReady = new Promise<void>((resolve) => {
       releaseReport = resolve;
@@ -1449,7 +1449,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
     releaseReport();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'detached report');
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'detached report');
 
     releaseSecond();
     await Promise.all([second, detachedReport]);
@@ -1499,6 +1499,42 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
     expect(mockApi.sendMessage.mock.calls.flat().join('\n')).not.toContain('interrupted');
     await gateway.stop();
+  });
+
+  it('TG-01/TG-06 does not recover a live ready response ahead of its pending streaming edit', async () => {
+    let releaseEdit!: () => void;
+    let releaseModel!: () => void;
+    const editGate = new Promise<void>((resolve) => {
+      releaseEdit = resolve;
+    });
+    const modelGate = new Promise<void>((resolve) => {
+      releaseModel = resolve;
+    });
+    mockApi.editMessageText.mockImplementationOnce(async () => editGate);
+    mockMessageRouter.processTurn.mockImplementationOnce(async (_message, options) => {
+      options?.onStream?.onDelta?.('partial');
+      await modelGate;
+      return { response: 'single final response', duration: 1 };
+    });
+    const gateway = await makeGateway();
+    const turn = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 7777, 150),
+      text: 'stream and finish',
+    });
+    await vi.waitFor(() => expect(mockApi.editMessageText).toHaveBeenCalled(), { timeout: 1500 });
+    releaseModel();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const recovery = (
+      gateway as unknown as { recoverPendingInboundDeliveries(): Promise<void> }
+    ).recoverPendingInboundDeliveries();
+    releaseEdit();
+    await Promise.all([turn, recovery]);
+    expect(
+      mockApi.sendMessage.mock.calls.filter(([, text]) => text === 'single final response')
+    ).toHaveLength(0);
+    expect(
+      mockApi.editMessageText.mock.calls.filter(([, , text]) => text === 'single final response')
+    ).toHaveLength(1);
   });
 
   it('revalidates a ready response after the live presenter finishes delivery', async () => {

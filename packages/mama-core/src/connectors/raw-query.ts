@@ -4,6 +4,7 @@ import { mapConnectorEventIndexRecord } from './event-index.js';
 import type {
   ConnectorEventIndexRecord,
   RawSearchHit,
+  RawDocument,
   RawSearchInput,
   RawSearchResult,
   RawSearchScopeFilter,
@@ -287,7 +288,7 @@ export function getRawById(
   adapter: RawQueryAdapter,
   rawId: string,
   visibility: Pick<RawSearchInput, 'connectors' | 'scopes'>
-): RawSearchHit | null {
+): RawDocument | null {
   const params: unknown[] = [rawId];
   const clauses = ['e.event_index_id = ?'];
   appendFilters(clauses, params, { query: '*', ...visibility });
@@ -302,7 +303,7 @@ export function getRawById(
     )
     .get(...params) as RawSearchRow | undefined;
 
-  return row ? toRawHit(row) : null;
+  return row ? { ...toRawHit(row), content: String(row.content) } : null;
 }
 
 export function getRawWindow(
@@ -409,6 +410,142 @@ function afterWindowRows(
       `
     )
     .all(...params, limit) as RawSearchRow[];
+}
+
+interface RawHistoryCursor {
+  timestampMs: number;
+  rawId: string;
+}
+
+export interface RawHistoryInput {
+  /** The entity whose revisions to read. Provide this OR `rawId`. */
+  entityId?: string;
+  /**
+   * A raw event id (event_index_id) to anchor on: its entity is resolved under the SAME
+   * visibility, then that entity's revisions are returned. An anchor the caller may not see
+   * resolves to nothing, so a rawId cannot widen what the caller can read.
+   */
+  rawId?: string;
+  connectors?: string[];
+  scopes?: RawSearchScopeFilter[];
+  fromMs?: number;
+  toMs?: number;
+  limit?: number;
+  cursor?: string;
+}
+
+function resolveEntityIdForRawId(
+  adapter: RawQueryAdapter,
+  rawId: string,
+  visibility: Pick<RawSearchInput, 'connectors' | 'scopes'>
+): string | null {
+  const clauses = ['e.event_index_id = ?'];
+  const params: unknown[] = [rawId];
+  appendFilters(clauses, params, { query: '*', ...visibility });
+  const row = adapter
+    .prepare(
+      `SELECT source_entity_id FROM connector_event_index e WHERE ${clauses.join(' AND ')} LIMIT 1`
+    )
+    .get(...params) as { source_entity_id: string | null } | undefined;
+  return row && typeof row.source_entity_id === 'string' && row.source_entity_id.length > 0
+    ? row.source_entity_id
+    : null;
+}
+
+function encodeHistoryCursor(row: { source_timestamp_ms: number; event_index_id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ timestampMs: row.source_timestamp_ms, rawId: row.event_index_id }),
+    'utf8'
+  ).toString('base64url');
+}
+
+function decodeHistoryCursor(cursor: string | undefined): RawHistoryCursor | null {
+  if (!cursor) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8')
+    ) as Partial<RawHistoryCursor>;
+    if (
+      typeof parsed.timestampMs !== 'number' ||
+      !Number.isFinite(parsed.timestampMs) ||
+      typeof parsed.rawId !== 'string' ||
+      parsed.rawId.length === 0
+    ) {
+      throw new Error('invalid shape');
+    }
+    return { timestampMs: parsed.timestampMs, rawId: parsed.rawId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid raw history cursor: ${message}`);
+  }
+}
+
+/**
+ * Chronological change history of one upstream entity (rows sharing source_entity_id), bounded by
+ * the SAME connector/scope visibility as search - a citation must not out-read reading. Oldest first,
+ * cursor-paged. Rows with a NULL source_entity_id (no revision grouping) never match an entity query.
+ */
+export function getRawHistory(adapter: RawQueryAdapter, input: RawHistoryInput): RawSearchResult {
+  let entityId = input.entityId?.trim() ?? '';
+  if (entityId.length === 0 && input.rawId && input.rawId.trim().length > 0) {
+    entityId =
+      resolveEntityIdForRawId(adapter, input.rawId.trim(), {
+        connectors: input.connectors,
+        scopes: input.scopes,
+      }) ?? '';
+  }
+  if (entityId.length === 0) {
+    return { hits: [], next_cursor: null };
+  }
+  const limit = normalizeLimit(input.limit);
+  if (limit === 0) {
+    return { hits: [], next_cursor: null };
+  }
+
+  const clauses = ['e.source_entity_id = ?'];
+  const params: unknown[] = [entityId];
+  appendFilters(clauses, params, {
+    query: '*',
+    connectors: input.connectors,
+    scopes: input.scopes,
+    fromMs: input.fromMs,
+    toMs: input.toMs,
+  });
+
+  const cursor = decodeHistoryCursor(input.cursor);
+  if (cursor) {
+    clauses.push(
+      '(e.source_timestamp_ms > ? OR (e.source_timestamp_ms = ? AND e.event_index_id > ?))'
+    );
+    params.push(cursor.timestampMs, cursor.timestampMs, cursor.rawId);
+  }
+
+  const rows = adapter
+    .prepare(
+      `
+        SELECT e.*, 0 AS rank
+        FROM connector_event_index e
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY e.source_timestamp_ms ASC, e.event_index_id ASC
+        LIMIT ?
+      `
+    )
+    .all(...params, limit + 1) as RawSearchRow[];
+
+  const pageRows = rows.slice(0, limit);
+  const nextRow = rows.length > limit ? pageRows[pageRows.length - 1] : undefined;
+
+  return {
+    hits: pageRows.map(toRawHit),
+    next_cursor: nextRow
+      ? encodeHistoryCursor({
+          source_timestamp_ms: Number(nextRow.source_timestamp_ms),
+          event_index_id: String(nextRow.event_index_id),
+        })
+      : null,
+  };
 }
 
 export type {

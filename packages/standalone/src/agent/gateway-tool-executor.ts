@@ -116,6 +116,7 @@ import type {
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
 import { runTaskListView, serializeTaskToolRecord } from '../operator/task-list-views.js';
+import { startOfTaskDate } from '../operator/temporal-reconcile.js';
 import { readBoardView, type BoardSlots } from '../operator/board-read-views.js';
 import type { OwnerActionContext } from '../operator/owner-action-effects.js';
 import {
@@ -4816,7 +4817,7 @@ export class GatewayToolExecutor {
           };
         }
         case 'schedule_upcoming': {
-          return this.executeScheduleUpcoming(input as { days?: number });
+          return this.executeScheduleUpcoming(input as { days?: number; cursor?: string });
         }
         case 'contract_no_update': {
           if (!this.taskLedger) {
@@ -5793,13 +5794,11 @@ export class GatewayToolExecutor {
 
   /**
    * schedule_upcoming (M8 P4): read the calendar connector's raw store and
-   * return events in [now, now+days] plus a compact text digest. Lazy readonly
-   * open (operator-handler pattern); prefers metadata JSON start when present.
-   * v1 limits (documented in the tool description): no recurrence expansion,
-   * no cancellation tracking.
+   * return intervals overlapping [now, now+days] plus a compact text digest.
+   * Reads a bounded page from the local snapshot and never calls the upstream API.
    */
   private scheduleDb: import('../sqlite.js').SQLiteDatabase | null = null;
-  private executeScheduleUpcoming(input: { days?: number }): GatewayToolResult {
+  private executeScheduleUpcoming(input: { days?: number; cursor?: string }): GatewayToolResult {
     const rawDays = Number(input.days);
     const days = Number.isFinite(rawDays) ? Math.max(1, Math.min(60, Math.floor(rawDays))) : 14;
     const dbPath =
@@ -5816,25 +5815,206 @@ export class GatewayToolExecutor {
       this.scheduleDb = new SqliteDatabase(dbPath);
       this.scheduleDb.prepare('PRAGMA busy_timeout = 5000').get();
     }
-    const now = Date.now();
+    let offset = 0;
+    let now = Date.now();
+    let cursorReadVersion: string | undefined;
+    if (input.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')) as {
+          offset?: unknown;
+          days?: unknown;
+          now?: unknown;
+          readVersion?: unknown;
+        };
+        if (
+          !Number.isInteger(decoded.offset) ||
+          typeof decoded.offset !== 'number' ||
+          decoded.offset < 1 ||
+          decoded.days !== days ||
+          typeof decoded.now !== 'number' ||
+          typeof decoded.readVersion !== 'string'
+        ) {
+          throw new Error('invalid fields');
+        }
+        offset = decoded.offset;
+        now = decoded.now;
+        cursorReadVersion = decoded.readVersion;
+      } catch {
+        return { success: false, error: 'Invalid schedule cursor; restart from page one' };
+      }
+    }
     const until = now + days * 86_400_000;
-    let rows: Array<{
+    type ScheduleRow = {
+      id: number;
       source_id: string;
       channel: string;
       content: string;
       timestamp: number;
       metadata: string | null;
-    }>;
+      source_cursor: string | null;
+      created_at: number;
+    };
     try {
-      rows = this.scheduleDb
-        .prepare(
-          `SELECT source_id, channel, content, timestamp, metadata
-           FROM raw_items
-           WHERE timestamp >= ? AND timestamp <= ?
-           ORDER BY timestamp ASC
-           LIMIT 50`
-        )
-        .all(now, until) as typeof rows;
+      const readSnapshot = this.scheduleDb.transaction(() => {
+        const latestRows = this.scheduleDb!.prepare(
+          `WITH ranked AS (
+               SELECT id, source_id, channel, content, timestamp, metadata, source_cursor, created_at,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY COALESCE(json_extract(metadata, '$.eventId'), source_id)
+                        ORDER BY CASE
+                                   WHEN json_extract(metadata, '$.eventId') IS NOT NULL THEN 1
+                                   ELSE 0
+                                 END DESC,
+                                 COALESCE((julianday(source_cursor) - 2440587.5) * 86400000,
+                                          (julianday(json_extract(metadata, '$.observedAt')) - 2440587.5) * 86400000,
+                                          created_at) DESC,
+                                 id DESC
+                      ) AS observation_rank
+               FROM raw_items
+               WHERE source = 'calendar'
+             )
+             SELECT id, source_id, channel, content, timestamp, metadata, source_cursor, created_at
+             FROM ranked
+             WHERE observation_rank = 1`
+        ).all() as ScheduleRow[];
+
+        const selected = latestRows.flatMap((row) => {
+          let metadata: Record<string, unknown> = {};
+          try {
+            metadata = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : {};
+          } catch {
+            metadata = {};
+          }
+          const metaStart = metadata.start ?? metadata.startTime ?? metadata.start_time;
+          const metaEnd = metadata.end ?? metadata.endTime ?? metadata.end_time;
+          const allDay = metadata.allDay === true;
+          const timeZone = typeof metadata.timeZone === 'string' ? metadata.timeZone : 'UTC';
+          const startMs =
+            allDay && typeof metaStart === 'string'
+              ? startOfTaskDate(metaStart, null, timeZone)
+              : typeof metaStart === 'string' || typeof metaStart === 'number'
+                ? new Date(metaStart).getTime()
+                : row.timestamp;
+          const endMs =
+            allDay && typeof metaEnd === 'string'
+              ? startOfTaskDate(metaEnd, null, timeZone)
+              : typeof metaEnd === 'string' || typeof metaEnd === 'number'
+                ? new Date(metaEnd).getTime()
+                : startMs;
+          if (
+            metadata.status === 'cancelled' ||
+            !Number.isFinite(startMs) ||
+            !Number.isFinite(endMs) ||
+            startMs > until ||
+            endMs <= now
+          ) {
+            return [];
+          }
+          const eventId = typeof metadata.eventId === 'string' ? metadata.eventId : row.source_id;
+          const observedAt =
+            typeof row.source_cursor === 'string' && Number.isFinite(Date.parse(row.source_cursor))
+              ? row.source_cursor
+              : typeof metadata.observedAt === 'string' &&
+                  Number.isFinite(Date.parse(metadata.observedAt))
+                ? metadata.observedAt
+                : null;
+          const event = {
+            sourceId: eventId,
+            title:
+              typeof metadata.summary === 'string'
+                ? metadata.summary.slice(0, 120)
+                : ((row.content ?? '').split('\n')[0]?.slice(0, 120) ?? ''),
+            start: new Date(Number.isFinite(startMs) ? startMs : row.timestamp).toISOString(),
+            end: typeof metaEnd === 'string' ? metaEnd : null,
+            status: typeof metadata.status === 'string' ? metadata.status : 'unknown',
+            channel: row.channel,
+            ...(allDay && typeof metaStart === 'string' && typeof metaEnd === 'string'
+              ? {
+                  allDay: true,
+                  startDate: metaStart,
+                  endDateExclusive: metaEnd,
+                  timeZone,
+                }
+              : {}),
+          };
+          return [{ row, event, observedAt, startMs }];
+        });
+        selected.sort(
+          (left, right) =>
+            left.startMs - right.startMs || left.event.sourceId.localeCompare(right.event.sourceId)
+        );
+        const readVersion = createHash('sha256')
+          .update(
+            JSON.stringify(
+              selected.map(({ row, event }) => ({
+                id: row.id,
+                sourceId: row.source_id,
+                content: row.content,
+                metadata: row.metadata,
+                sourceCursor: row.source_cursor,
+                timestamp: row.timestamp,
+                event,
+              }))
+            )
+          )
+          .digest('hex');
+        const observedTimes = selected
+          .map(({ observedAt }) => (observedAt === null ? Number.NaN : Date.parse(observedAt)))
+          .filter(Number.isFinite);
+        const insertedTimes = selected.map(({ row }) => row.created_at).filter(Number.isFinite);
+        return {
+          total: selected.length,
+          rows: selected.slice(offset, offset + 50),
+          readVersion,
+          observedAt: observedTimes.length > 0 ? Math.max(...observedTimes) : null,
+          insertedAt: insertedTimes.length > 0 ? Math.max(...insertedTimes) : null,
+        };
+      })();
+      if (cursorReadVersion && cursorReadVersion !== readSnapshot.readVersion) {
+        return { success: false, error: 'Schedule snapshot changed; restart from page one' };
+      }
+      const events = readSnapshot.rows.map(({ event }) => event);
+      const nextOffset = offset + events.length;
+      const nextCursor =
+        nextOffset < readSnapshot.total
+          ? Buffer.from(
+              JSON.stringify({
+                offset: nextOffset,
+                days,
+                now,
+                readVersion: readSnapshot.readVersion,
+              }),
+              'utf8'
+            ).toString('base64url')
+          : null;
+      const text =
+        events.length === 0
+          ? `(no calendar events in the next ${days} days)`
+          : events
+              .map((event) => `- ${event.start.slice(0, 16)} ${event.title} (${event.channel})`)
+              .join('\n');
+      return {
+        success: true,
+        events,
+        text,
+        total: readSnapshot.total,
+        returned: events.length,
+        nextCursor,
+        observedAt:
+          readSnapshot.observedAt === null ? null : new Date(readSnapshot.observedAt).toISOString(),
+        insertedAt:
+          readSnapshot.insertedAt === null ? null : new Date(readSnapshot.insertedAt).toISOString(),
+        cacheAgeMs:
+          readSnapshot.observedAt === null
+            ? null
+            : Math.max(0, Date.now() - readSnapshot.observedAt),
+        readVersion: readSnapshot.readVersion,
+        coverage: {
+          complete: nextCursor === null,
+          source: 'local_snapshot',
+          upstreamComplete: 'unknown',
+        },
+      } as GatewayToolResult;
     } catch (err) {
       // Corrupt/locked store or missing table: fail closed with a readable
       // error and drop the cached handle so the next call can retry fresh.
@@ -5844,29 +6024,6 @@ export class GatewayToolExecutor {
         error: `Calendar raw store unreadable: ${err instanceof Error ? err.message : String(err)}`,
       } as GatewayToolResult;
     }
-    const events = rows.map((row) => {
-      let start = row.timestamp;
-      try {
-        const meta = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : null;
-        const metaStart = meta?.start ?? meta?.startTime ?? meta?.start_time;
-        if (typeof metaStart === 'string' || typeof metaStart === 'number') {
-          const parsed = new Date(metaStart).getTime();
-          if (Number.isFinite(parsed)) start = parsed;
-        }
-      } catch {
-        /* metadata is best-effort */
-      }
-      return {
-        title: (row.content ?? '').split('\n')[0]?.slice(0, 120) ?? '',
-        start: new Date(start).toISOString(),
-        channel: row.channel,
-      };
-    });
-    const text =
-      events.length === 0
-        ? `(no calendar events in the next ${days} days)`
-        : events.map((e) => `- ${e.start.slice(0, 16)} ${e.title} (${e.channel})`).join('\n');
-    return { success: true, events, text } as GatewayToolResult;
   }
 
   /**
