@@ -87,6 +87,12 @@ function SlotRenderer({
           <span className="truncate text-sm font-semibold text-text">
             {formatSlotLabel(slot.slotId)}
           </span>
+          {slot.freshness === 'stale' && (
+            <span className="text-xs text-text-secondary">Tasks changed since analysis</span>
+          )}
+          {slot.freshness === 'unknown' && (
+            <span className="text-xs text-text-secondary">Analysis basis unknown</span>
+          )}
         </span>
         <span
           className={`flex-shrink-0 text-[10px] font-medium rounded-full px-2 py-0.5 ${getFreshnessClass(now, slot.updatedAt)}`}

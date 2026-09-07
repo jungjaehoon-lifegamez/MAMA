@@ -862,6 +862,7 @@ export type GatewayToolName =
   | 'task_list'
   | 'task_external_correlation'
   | 'task_external_bind'
+  | 'task_external_candidates'
   | 'task_lifecycle_reconcile'
   | 'changes_read'
   | 'task_create'

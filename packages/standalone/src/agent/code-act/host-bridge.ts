@@ -200,14 +200,21 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'report_publish',
     description:
-      'Update dashboard report slots with HTML. Each slot is a section you write as HTML. Write analysis, not data listing.',
+      'Publish dashboard analysis as HTML. pipeline is a managed live task projection; update tasks instead. An omitted analysis basis is unknown.',
     params: [
       {
         name: 'slots',
         type: 'Record<string, string>',
         required: true,
         description:
-          'Object mapping slot IDs to HTML strings. Keys: briefing, action_required, decisions, pipeline. Values: your analysis as styled HTML.',
+          'Object mapping analysis slot IDs to HTML: briefing, action_required, decisions.',
+      },
+      {
+        name: 'basis_revision',
+        type: 'string',
+        required: false,
+        description:
+          'currentBasisRevision observed through board_read when reading the evidence used for this analysis. Do not fetch a newer basis only to relabel older analysis.',
       },
     ],
     returnType: '{ success: boolean; message: string }',
@@ -387,7 +394,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
         name: 'paths',
         type: 'string[]',
         required: true,
-        description: 'One to 20 exact paths under Home.md, the bound daily page, or lessons/.',
+        description: 'One to 20 exact Markdown paths under the configured MAMA wiki root.',
       },
       {
         name: 'content_offset',
@@ -400,6 +407,13 @@ const TOOL_REGISTRY: ToolMeta[] = [
         type: 'number',
         required: false,
         description: 'Characters per page, 1-20000 (default 20000).',
+      },
+      {
+        name: 'content_versions',
+        type: 'Record<string, string | null>',
+        required: false,
+        description:
+          'Echo each path contentVersion when content_offset > 0. A changed page must restart at offset 0.',
       },
     ],
     returnType:
@@ -883,29 +897,45 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'task_external_candidates',
+    description:
+      'Discover host-attested external task candidates from selected source event IDs under the current owner grant. Returns candidateId and taskRevision; decide bind/decline or apply/retain from the returned evidence.',
+    params: [
+      {
+        name: 'event_ids',
+        type: 'string[]',
+        required: true,
+        description: '1-20 actual observed connector event IDs; do not guess.',
+      },
+    ],
+    returnType:
+      '{ candidates: { bindingCandidates: Array<Record<string, unknown>>; lifecycleCandidates: Array<Record<string, unknown>>; diagnostics: Array<Record<string, unknown>> }; attested: number; alreadyAttested: number }',
+    category: 'memory',
+  },
+  {
     name: 'task_external_bind',
     description:
-      'Record bind or decline for one host-issued external-task binding candidate. Authority is recovered from the claimed board run.',
+      'Record bind or decline for one host-issued external-task binding candidate. Authority is recovered from the current owner run or its compatible Board attempt.',
     params: [
       { name: 'candidate_id', type: 'string', required: true },
       { name: 'decision', type: "'bind' | 'decline'", required: true },
       { name: 'reason', type: 'string', required: true },
       { name: 'expected_revision', type: 'number', required: true },
     ],
-    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number|null;outcome:string}}',
     category: 'memory',
   },
   {
     name: 'task_lifecycle_reconcile',
     description:
-      'Apply or retain one host-issued lifecycle candidate. Task, event, and proposed state are recovered from the claimed board run.',
+      'Apply or retain one host-issued lifecycle candidate. Task, event, and proposed state are recovered from the current owner run or its compatible Board attempt.',
     params: [
       { name: 'candidate_id', type: 'string', required: true },
       { name: 'decision', type: "'apply' | 'retain'", required: true },
       { name: 'reason', type: 'string', required: true },
       { name: 'expected_revision', type: 'number', required: true },
     ],
-    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number|null;outcome:string}}',
     category: 'memory',
   },
   {
@@ -913,6 +943,12 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description:
       'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts. Records and tasks are SEPARATE: only real work with a concrete, finite completion condition becomes a row. Observations, lessons, principles, aspirations and open questions stay records/memory.',
     params: [
+      {
+        name: 'creation_key',
+        type: 'string',
+        required: true,
+        description: 'Stable logical task name within this occurrence; reuse on retry',
+      },
       { name: 'title', type: 'string', required: true },
       {
         name: 'completion_criteria',

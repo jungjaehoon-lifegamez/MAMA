@@ -1,8 +1,8 @@
 /**
  * ReportStore implementation that survives daemon restarts.
  *
- * Owns its Map directly (rather than wrapping createReportStore) so restored
- * slots keep their original updatedAt verbatim. Writes are debounced 250ms to
+ * Seeds the shared store with saved slots so their original updatedAt and
+ * analysis basis survive verbatim. Writes are debounced 250ms to
  * coalesce publish bursts into one snapshot.
  *
  * filePath is injection-only: the production path is resolved solely at the
@@ -13,7 +13,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ReportSlot, ReportStore } from './report-handler.js';
+import { createReportStore, type ReportSlot, type ReportStore } from './report-handler.js';
 
 const WRITE_DEBOUNCE_MS = 250;
 
@@ -32,14 +32,12 @@ function installExitHook(): void {
 }
 
 export function createPersistentReportStore(opts: { filePath: string }): ReportStore {
-  const slots = new Map<string, ReportSlot>();
+  let snapshot: Record<string, ReportSlot> = {};
 
   if (existsSync(opts.filePath)) {
     try {
       const parsed = JSON.parse(readFileSync(opts.filePath, 'utf-8')) as Record<string, ReportSlot>;
-      for (const [id, slot] of Object.entries(parsed)) {
-        slots.set(id, slot);
-      }
+      snapshot = parsed;
     } catch (err) {
       // fail loud, start empty -- a corrupt snapshot must never take the board down
       console.warn(`[Report] corrupt slot snapshot at ${opts.filePath}, starting empty:`, err);
@@ -50,7 +48,7 @@ export function createPersistentReportStore(opts: { filePath: string }): ReportS
   const writeSnapshot = (): void => {
     try {
       mkdirSync(dirname(opts.filePath), { recursive: true });
-      writeFileSync(opts.filePath, JSON.stringify(Object.fromEntries(slots)), 'utf-8');
+      writeFileSync(opts.filePath, JSON.stringify(snapshot), 'utf-8');
     } catch (err) {
       console.warn(`[Report] failed to persist slots to ${opts.filePath}:`, err);
     }
@@ -75,21 +73,11 @@ export function createPersistentReportStore(opts: { filePath: string }): ReportS
     writeTimer.unref?.();
   };
 
-  return {
-    get: (slotId) => {
-      const slot = slots.get(slotId);
-      return slot ? { ...slot } : undefined;
-    },
-    update(slotId, html, priority) {
-      slots.set(slotId, { slotId, html, priority, updatedAt: Date.now() });
+  return createReportStore({
+    initialSlots: snapshot,
+    onChange(next) {
+      snapshot = next;
       scheduleWrite();
     },
-    delete(slotId) {
-      slots.delete(slotId);
-      scheduleWrite();
-    },
-    getAll: () => Object.fromEntries(Array.from(slots, ([slotId, slot]) => [slotId, { ...slot }])),
-    getAllSorted: () =>
-      Array.from(slots.values(), (slot) => ({ ...slot })).sort((a, b) => a.priority - b.priority),
-  };
+  });
 }

@@ -33,6 +33,12 @@ export const LEDGER_EFFECT_TOOLS = new Set([
   'mama_save',
   'mama_update',
   'drive_upload',
+  'wiki_publish',
+  'report_publish',
+  'task_external_bind',
+  'task_lifecycle_reconcile',
+  'Write',
+  'Bash',
 ]);
 const NOTIFY_TOOLS = new Set(['telegram_send']);
 

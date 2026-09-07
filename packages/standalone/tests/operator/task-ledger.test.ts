@@ -10,6 +10,7 @@ import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { promotionKey } from '../../src/operator/workorder-publishers.js';
+import { selectTemporalCandidates } from '../../src/operator/temporal-reconcile.js';
 
 describe('TaskLedger', () => {
   let db: SQLiteDatabase;
@@ -164,13 +165,25 @@ describe('TaskLedger', () => {
         contextPacketSha256: 'a'.repeat(64),
         eventIndexId: 'event-index-1',
         sourceTimestampMs: submittedAt,
-        sourceChannel: 'slack:C001',
+        sourceChannel: 'slack:C002',
       },
     });
 
     expect(review.reviewStartedAt).toBe(submittedAt);
     expect(review.reviewAnchorEventId).toBe('event-index-1');
+    expect(review.reviewAnchorSourceChannel).toBe('slack:C002');
+    expect(review.sourceChannel).toBe('slack:C001');
     expect(review.dueAt).toBe(submittedAt + 14 * 24 * 60 * 60 * 1000);
+    const candidates = selectTemporalCandidates([review], new Set(), {
+      now: review.dueAt!,
+      timeZone: 'Asia/Seoul',
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      sourceChannel: 'slack:C002',
+      sourceEventId: 'event-index-1',
+    });
+    expect(() => ledger.enqueueTemporalGeneration(candidates[0])).not.toThrow();
 
     const reopened = ledger.update(review.id, {
       status: 'in_progress',
@@ -179,6 +192,7 @@ describe('TaskLedger', () => {
     expect(reopened).toMatchObject({
       status: 'in_progress',
       reviewStartedAt: null,
+      reviewAnchorSourceChannel: null,
       reviewAnchorEventId: null,
       dueAt: null,
       deadlineIso: null,

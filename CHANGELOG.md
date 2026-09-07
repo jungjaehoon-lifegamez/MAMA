@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.50.0] - 2026-09-07
+
+### Changed
+
+- The authenticated owner can create finite tasks, select source evidence, and perform ordinary
+  work from chat, events, reports, and scheduled turns under the same current grants.
+- External task candidates can be discovered and applied from the active owner run without a
+  separate Board job, while preserving revision checks and existing binding receipts.
+- Task creation uses a stable `creation_key` within each occurrence to prevent duplicate tasks
+  on retries and reject changes to an already-used creation intent.
+
+### Fixed
+
+- Board task facts refresh from the ledger on changes and reads. Authored analysis retains its
+  timestamp and shows whether its task basis is current, stale, or unknown.
+- Cross-channel review evidence retains its verified source through later Temporal checks.
+  Additional corroboration remains limited to the owner's current exact channel grants.
+- Telegram messages and captions preserve formatting entities, UTF-16 offsets, and original
+  text through owner input and bounded recovery.
+- Interrupted shell, native-tool, and outbound effects retain durable receipts or an explicit
+  uncertain state. Uncertain occurrences stop automatic replay instead of duplicating effects.
+- Wiki reads work outside a scheduled Wiki job while retaining configured-vault containment
+  and scheduled publication version/range checks.
+
 ## mama-os [0.49.3] - 2026-09-07
 
 ### Fixed

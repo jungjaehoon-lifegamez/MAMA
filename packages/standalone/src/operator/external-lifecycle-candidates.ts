@@ -252,6 +252,188 @@ export function externalLifecycleCandidateId(
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
 }
 
+const OBSERVATION_KEYS = [
+  'eventId',
+  'connector',
+  'sourceType',
+  'externalSourceId',
+  'channelPartition',
+  'contentSha256',
+  'sourceTimestampMs',
+  'operatorIngestSeq',
+  'operatorObservationSeq',
+  'observedStatus',
+  'evidenceSummary',
+] as const;
+const BINDING_CANDIDATE_KEYS = [
+  ...OBSERVATION_KEYS,
+  'kind',
+  'candidateId',
+  'taskId',
+  'taskRevision',
+];
+const LIFECYCLE_CANDIDATE_KEYS = [
+  ...BINDING_CANDIDATE_KEYS,
+  'bindingId',
+  'bindingRevision',
+  'proposedStatus',
+];
+
+/**
+ * Canonical bytes for one host-built candidate: sorted keys, no extras. The
+ * attestation store keeps exactly these bytes and their sha256.
+ */
+export function canonicalExternalLifecycleCandidateJson(
+  candidate: BindingCandidate | LifecycleCandidate
+): string {
+  const keys = candidate.kind === 'binding' ? BINDING_CANDIDATE_KEYS : LIFECYCLE_CANDIDATE_KEYS;
+  const ordered: Record<string, unknown> = {};
+  for (const key of [...keys].sort()) {
+    ordered[key] = (candidate as unknown as Record<string, unknown>)[key];
+  }
+  return JSON.stringify(ordered);
+}
+
+/**
+ * Strictly re-validate a candidate that came from storage or from a caller.
+ *
+ * Bytes are not a capability because they sit in a database: the exact key
+ * set, every field type, the Kagemusha status mapping, the fixed evidence
+ * summary and the content-derived candidate id are all recomputed. A
+ * model-authored or edited snapshot fails here before any decision runs.
+ */
+export function parseHostBuiltExternalLifecycleCandidate(
+  kind: 'binding' | 'lifecycle',
+  value: unknown
+): BindingCandidate | LifecycleCandidate {
+  if (!isPlainObject(value)) {
+    throw new Error(`external lifecycle ${kind} candidate must be an object`);
+  }
+  const keys = kind === 'binding' ? BINDING_CANDIDATE_KEYS : LIFECYCLE_CANDIDATE_KEYS;
+  if (!exactKeys(value, keys)) {
+    throw new Error(`external lifecycle ${kind} candidate has unknown or missing fields`);
+  }
+  if (value.kind !== kind) {
+    throw new Error(`external lifecycle candidate has the wrong kind (expected ${kind})`);
+  }
+  if (
+    value.connector !== 'kagemusha' ||
+    value.sourceType !== 'kanban_card' ||
+    !isBoundedString(value.eventId) ||
+    !isBoundedString(value.externalSourceId) ||
+    !isBoundedString(value.channelPartition) ||
+    typeof value.contentSha256 !== 'string' ||
+    !HEX_SHA256.test(value.contentSha256) ||
+    value.contentSha256 !== value.contentSha256.toLowerCase() ||
+    !isIsoRenderableTimestamp(value.sourceTimestampMs) ||
+    !isPositiveSafeInteger(value.operatorIngestSeq) ||
+    !isPositiveSafeInteger(value.operatorObservationSeq) ||
+    !isBoundedString(value.observedStatus) ||
+    typeof value.candidateId !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.candidateId) ||
+    !isPositiveSafeInteger(value.taskId) ||
+    !Number.isSafeInteger(value.taskRevision) ||
+    (value.taskRevision as number) < 0
+  ) {
+    throw new Error(`external lifecycle ${kind} candidate has malformed host fields`);
+  }
+  const taskId = parseKagemushaExternalSourceId(value.externalSourceId);
+  if (taskId === null || !mapKagemushaLifecycle(value.observedStatus)) {
+    throw new Error(`external lifecycle ${kind} candidate has malformed source identity`);
+  }
+  const evidenceSummary = kagemushaEvidenceSummary(
+    taskId,
+    value.observedStatus,
+    value.sourceTimestampMs
+  );
+  if (evidenceSummary === null || value.evidenceSummary !== evidenceSummary) {
+    throw new Error(`external lifecycle ${kind} candidate evidence summary is not host-derived`);
+  }
+  const observation: ExternalObservationSnapshot = {
+    eventId: value.eventId,
+    connector: 'kagemusha',
+    sourceType: 'kanban_card',
+    externalSourceId: value.externalSourceId,
+    channelPartition: value.channelPartition,
+    contentSha256: value.contentSha256,
+    sourceTimestampMs: value.sourceTimestampMs,
+    operatorIngestSeq: value.operatorIngestSeq,
+    operatorObservationSeq: value.operatorObservationSeq,
+    observedStatus: value.observedStatus,
+    evidenceSummary,
+  };
+  let candidate: BindingCandidate | LifecycleCandidate;
+  if (kind === 'binding') {
+    candidate = Object.freeze({
+      ...observation,
+      kind: 'binding',
+      candidateId: value.candidateId,
+      taskId: value.taskId,
+      taskRevision: value.taskRevision as number,
+    });
+  } else {
+    if (
+      !isPositiveSafeInteger(value.bindingId) ||
+      !isPositiveSafeInteger(value.bindingRevision) ||
+      typeof value.proposedStatus !== 'string' ||
+      !(EXTERNAL_LIFECYCLE_STATUS_SET as ReadonlySet<string>).has(value.proposedStatus) ||
+      mapKagemushaLifecycle(value.observedStatus) !== value.proposedStatus
+    ) {
+      throw new Error('external lifecycle candidate has malformed binding or status fields');
+    }
+    candidate = Object.freeze({
+      ...observation,
+      kind: 'lifecycle',
+      candidateId: value.candidateId,
+      taskId: value.taskId,
+      taskRevision: value.taskRevision as number,
+      bindingId: value.bindingId,
+      bindingRevision: value.bindingRevision,
+      proposedStatus: value.proposedStatus as ExternalLifecycleStatus,
+    });
+  }
+  const expectedId = externalLifecycleCandidateId(
+    candidate.kind === 'binding'
+      ? {
+          kind: 'binding',
+          eventId: candidate.eventId,
+          externalSourceId: candidate.externalSourceId,
+          channelPartition: candidate.channelPartition,
+          contentSha256: candidate.contentSha256,
+          operatorObservationSeq: candidate.operatorObservationSeq,
+          taskId: candidate.taskId,
+          taskRevision: candidate.taskRevision,
+        }
+      : {
+          kind: 'lifecycle',
+          eventId: candidate.eventId,
+          externalSourceId: candidate.externalSourceId,
+          channelPartition: candidate.channelPartition,
+          contentSha256: candidate.contentSha256,
+          operatorObservationSeq: candidate.operatorObservationSeq,
+          taskId: candidate.taskId,
+          taskRevision: candidate.taskRevision,
+          bindingId: candidate.bindingId,
+          bindingRevision: candidate.bindingRevision,
+          proposedStatus: candidate.proposedStatus,
+        }
+  );
+  if (expectedId !== candidate.candidateId) {
+    throw new Error(
+      `external lifecycle ${kind} candidate id does not derive from its content (not host-built)`
+    );
+  }
+  return candidate;
+}
+
+const EXTERNAL_LIFECYCLE_STATUS_SET: ReadonlySet<ExternalLifecycleStatus> = new Set([
+  'pending',
+  'in_progress',
+  'review',
+  'done',
+  'cancelled',
+]);
+
 export function buildExternalLifecycleCandidateSet(input: {
   eventIds: readonly string[];
   observations: readonly ExternalObservationSnapshot[];

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { OwnerActionEffectLedger } from '../../src/operator/owner-action-effects.js';
 import { OwnerEventInbox } from '../../src/operator/owner-event-inbox.js';
 import {
   OwnerEventLoop,
@@ -572,4 +573,59 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     });
     expect(await acted.tick()).toBe('processed');
   });
+});
+
+describe('TG-05/TG-06 owner-event native replay quarantine', () => {
+  it.each(['before-admission', 'after-native-effect', 'acted-budget'] as const)(
+    'parks an unsettled occurrence %s',
+    async (phase) => {
+      const db = new Database(':memory:');
+      try {
+        const inbox = new OwnerEventInbox(db);
+        const effects = new OwnerActionEffectLedger(db);
+        const id = inbox.enqueue(batch())!;
+        const key = `owner-event:${id}`;
+        const reserve = () =>
+          effects.begin(
+            {
+              ownerScope: 'owner:runtime',
+              occurrenceKey: key,
+              modelRunId: 'mr-native',
+              envelopeHash: 'hash',
+            },
+            'native-admission',
+            'native_run',
+            {}
+          );
+        if (phase === 'before-admission') reserve();
+        let calls = 0;
+        const loop = new OwnerEventLoop({
+          inbox,
+          agentContext: ownerContext,
+          issueEnvelope: issueTestEnvelope,
+          buildPrompt: async () => 'test',
+          getNoUpdateMaxId: () => 0,
+          log: () => {},
+          hasUnsafeReplayEffects: () => effects.hasUnsafeReplayEffects(key),
+          hasUnsettledEffects: () => effects.hasUnsettledEffects(key),
+          runner: {
+            run: async () => {
+              calls++;
+              reserve();
+              if (phase === 'acted-budget')
+                return { ...result(deliveredHistory), stoppedBy: 'budget' as const };
+              throw new Error('native transport disconnected');
+            },
+          },
+        });
+        expect(await loop.tick()).toBe('failed');
+        expect(calls).toBe(phase === 'before-admission' ? 0 : 1);
+        expect(inbox.depth()).toMatchObject({ dead: 1, pending: 0 });
+        await loop.tick();
+        expect(calls).toBe(phase === 'before-admission' ? 0 : 1);
+      } finally {
+        db.close();
+      }
+    }
+  );
 });

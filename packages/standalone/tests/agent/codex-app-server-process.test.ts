@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { NativeEffectReplayBoundary } from '../../src/agent/native-effect-observer.js';
 import { CodexAppServerProcess } from '../../src/agent/codex-app-server-process.js';
 import { HostToolTerminalError } from '../../src/agent/model-runner.js';
 import type {
@@ -260,6 +261,18 @@ rl.on('line', line => {
     const afterToolReply = () => { toolReplyCount += 1; const expected=['tool-duplicate','tool-duplicate-conflict','tool-serialized'].includes(mode) ? 2 : 1; if(toolReplyCount === expected) complete(); };
     if (earlyTool) requestTool(requestBase,toolParams,afterToolReply);
     send({jsonrpc:'2.0',id:message.id,result:{turn:mode==='bad-turn-schema'?{id}:fullTurn(id)}});
+    if (mode.startsWith('native-effects')) {
+      const nativeEvent = (method, type, itemId, turnId=id) => send({jsonrpc:'2.0',method,params:{threadId:message.params.threadId,turnId,item:{id:itemId,type,status:'completed',exitCode:0}}});
+      nativeEvent('item/started','commandExecution','stale','prior-turn');
+      nativeEvent('item/started','mcpToolCall','mcp');
+      nativeEvent('item/started','commandExecution','native-1');
+      nativeEvent('item/started','commandExecution','native-1');
+      if (mode !== 'native-effects-pending') {
+        nativeEvent('item/completed','commandExecution','native-1');
+        nativeEvent('item/completed','commandExecution','native-1');
+        nativeEvent('item/completed','fileChange','native-2');
+      }
+    }
     if (mode === 'malformed') return process.stdout.write('{bad json\\n');
     send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,delta:'missing'}});
     send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:'prior-turn',delta:'prior'}});
@@ -289,7 +302,7 @@ rl.on('line', line => {
     send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1},total:{inputTokens:3+8*useq,outputTokens:2+6*useq,cachedInputTokens:1+3*useq}}}});
     send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2},total:{inputTokens:8+8*useq,outputTokens:6+6*useq,cachedInputTokens:3+3*useq}}}});
     }
-    const status=mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed';
+    const status=['failed','native-effects-failed','native-effects-pending'].includes(mode) ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed';
     const error=status==='failed'?{message:'turn boom',codexErrorInfo:null,additionalDetails:null}:null;
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,status,error)}});
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}});
@@ -2409,3 +2422,51 @@ describe('Story: Codex app-server process', () => {
     await runner.stop();
   });
 });
+
+it('TG-03/04/05/06 observes exact-turn native effects once without duplicating MCP calls', async () => {
+  const testFixture = fixture('native-effects');
+  const runtime = new CodexAppServerProcess(testFixture.options);
+  const events: string[] = [];
+  try {
+    await runtime.prompt('test', {
+      onToolUse: (name, input) => events.push(`start:${name}:${input.nativeToolUseId}`),
+      onToolComplete: (name, id, isError) => events.push(`end:${name}:${id}:${isError}`),
+    });
+    expect(events).toEqual([
+      'start:commandExecution:native-1',
+      'end:commandExecution:native-1:false',
+      'start:fileChange:native-2',
+      'end:fileChange:native-2:false',
+    ]);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+it.each(['native-effects-failed', 'native-effects-pending'])(
+  'TG-05/06 promotes %s transport failure to non-replayable native outcome',
+  async (mode) => {
+    const testFixture = fixture(mode);
+    const runtime = new CodexRuntimeProcess(testFixture.options);
+    const boundary = new NativeEffectReplayBoundary();
+    try {
+      const execution = runtime
+        .prompt('test', {
+          onToolUse: (name, input) => boundary.started(name, input),
+          onToolComplete: (name, id, isError) => boundary.settled(name, id, isError),
+        })
+        .catch((error: unknown) => {
+          throw boundary.failure(error);
+        });
+      await expect(execution).rejects.toMatchObject({
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+      });
+      expect(
+        messages(testFixture.capture).filter((message) => message.method === 'turn/start')
+      ).toHaveLength(1);
+    } finally {
+      await runtime.stop();
+    }
+  }
+);

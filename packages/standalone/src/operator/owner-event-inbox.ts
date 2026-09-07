@@ -415,6 +415,15 @@ export class OwnerEventInbox {
    * the resulting status so the caller can be LOUD about a dead batch - a
    * permanent loss must never be silent.
    */
+  quarantine(id: number, reason: string): void {
+    this.db
+      .prepare(
+        `UPDATE owner_event_inbox SET status = 'dead', last_error = ?, claimed_at = NULL
+      WHERE id = ? AND status IN ('claimed', 'pending')`
+      )
+      .run(reason.slice(0, 500), id);
+  }
+
   retry(id: number, error: string): 'pending' | 'dead' | 'noop' {
     const result = this.stmtRetry.run(error.slice(0, 500), this.now(), id);
     if (result.changes !== 1) {

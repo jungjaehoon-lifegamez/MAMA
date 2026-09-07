@@ -61,17 +61,42 @@ describe('TG-03 obsidian vault selector precedes the command', () => {
   });
 });
 
-describe('TG-03 scheduled wiki turn holds wiki_read, never obsidian', () => {
-  it('grants wiki_read and blocks obsidian by name', () => {
+describe('TG-03/TG-04 scheduled wiki turn uses owner business authority', () => {
+  it('grants the specialized reader without blocking the owner-granted vault tool by kind', () => {
     expect(TURN_KIND_REQUIRED_TOOLS.wiki).toContain('wiki_read');
-    expect(TURN_KIND_BLOCKED_TOOLS.wiki.has('obsidian')).toBe(true);
-    expect(WIKI_TURN_CONTRACT_TEXT).toContain('never use obsidian');
+    expect(TURN_KIND_BLOCKED_TOOLS.wiki.has('obsidian')).toBe(false);
     expect(WIKI_TURN_CONTRACT_TEXT).toContain('wiki_read');
     expect(WIKI_TURN_CONTRACT_TEXT).toContain('expectedContentVersion');
   });
 });
 
 describe('TG-06 wiki_read is bounded to the configured root', () => {
+  it('TG-04 reads historical wiki pages without a workorder and pins continuation versions', async () => {
+    const root = vault();
+    mkdirSync(join(root, 'daily'), { recursive: true });
+    writeFileSync(join(root, 'daily/2020-01-01.md'), 'historical evidence');
+    const executor = new GatewayToolExecutor();
+    executor.setObsidianVaultPath(root, 'mama-operator');
+    const first = await executor.execute('wiki_read', {
+      paths: ['daily/2020-01-01.md'],
+      content_limit: 4,
+    });
+    expect(first).toMatchObject({ success: true, pages: [{ content: 'hist' }] });
+    await expect(
+      executor.execute('wiki_read', {
+        paths: ['daily/2020-01-01.md'],
+        content_offset: 4,
+      })
+    ).rejects.toThrow(/content_versions/);
+    await expect(
+      executor.execute('wiki_read', {
+        paths: ['daily/2020-01-01.md'],
+        content_offset: 4,
+        content_versions: { 'daily/2020-01-01.md': wikiContentVersion('historical evidence') },
+      } as never)
+    ).resolves.toMatchObject({ success: true, pages: [{ content: 'orical evidence' }] });
+    await expect(executor.execute('wiki_read', { paths: ['../foreign.md'] })).rejects.toThrow();
+  });
   it('returns exact paths, versions for existing pages and null for missing ones', () => {
     const root = vault();
     const result = readWikiPages({

@@ -88,6 +88,30 @@ export interface ExistingExternalBindingSnapshot {
   readonly lastObservationSeq: number;
 }
 
+/**
+ * Where a candidate decision's authority comes from (Task B2).
+ *
+ * `board`: the legacy path - the candidate lives in the payload of a claimed,
+ * in-progress Board attempt. `owner_run`: the host attested the candidate
+ * snapshot under an authenticated owner scope, model run and signed envelope
+ * (see TaskLedger.attestOwnerActionCandidates). Both resolve to the SAME
+ * receipted CAS decision; neither may carry model-authored candidate bytes.
+ */
+export type ExternalCandidateSource =
+  | { readonly kind: 'board'; readonly attemptId: number }
+  | {
+      readonly kind: 'owner_run';
+      readonly context: import('./owner-action-effects.js').OwnerActionContext;
+    };
+
+/** Bounded, intent-free view of one attested owner-run candidate. */
+export interface OwnerAttestedCandidateSummary {
+  readonly candidateId: string;
+  readonly kind: 'binding' | 'lifecycle';
+  readonly taskId: number;
+  readonly eventId: string;
+}
+
 export interface BindingCandidateIdentityInput {
   readonly kind: 'binding';
   readonly eventId: string;

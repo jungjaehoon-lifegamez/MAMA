@@ -46,8 +46,12 @@ export default class Database {
     return this.db.pragma(sql, options);
   }
 
-  transaction<T extends (...args: never[]) => unknown>(fn: T): T {
-    return this.db.transaction(fn) as unknown as T;
+  transaction<T extends (...args: never[]) => unknown>(
+    fn: T,
+    mode: 'deferred' | 'immediate' = 'deferred'
+  ): T {
+    const transaction = this.db.transaction(fn);
+    return (mode === 'immediate' ? transaction.immediate : transaction) as unknown as T;
   }
 
   close(): void {

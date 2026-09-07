@@ -59,13 +59,19 @@ describe('Story EL4: terminal board attempts retain lifecycle guard context (TG-
       expect(seeded.ledger.getById(seeded.candidate.taskId)?.revision).toBe(
         seeded.candidate.taskRevision
       );
+      // A terminal attempt carries no authority for ANY direct mutation, not only
+      // lifecycle fields: a late rename under a stale attempt is refused too.
       await expect(
         executor.execute(
           'task_update',
           { id: seeded.candidate.taskId, title: 'late title', priority: 'high' },
           context
         )
-      ).resolves.toMatchObject({ success: true, task: { title: 'late title', priority: 'high' } });
+      ).rejects.toThrow(/board workorder.*no longer active/i);
+      expect(seeded.ledger.getById(seeded.candidate.taskId)).toMatchObject({
+        title: 'native task',
+        priority: 'normal',
+      });
       const unrelated = seeded.ledger.create({ title: 'unrelated native task' });
       await expect(
         executor.execute('task_update', { id: unrelated.id, status: 'done' }, context)

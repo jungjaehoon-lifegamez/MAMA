@@ -26,7 +26,11 @@ at `localhost:3847`.
 ## The product is work you hand off in a message
 
 Today, the owner-first runtime reads connected sources, performs bounded background work, and
-delivers an evidence-linked briefing without being asked:
+delivers an evidence-linked briefing without being asked. The same owner grants
+apply across chat and background inputs. Task facts on the board update from the ledger;
+older authored analysis is marked when its basis changes.
+
+For example:
 
 ```text
 ■ Briefing — Wed 08:00
