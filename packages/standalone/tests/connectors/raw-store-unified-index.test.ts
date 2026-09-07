@@ -75,6 +75,38 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
   });
 
   describe('AC #1: PollingScheduler can index saved raw rows into the unified index', () => {
+    it('TG-03/TG-05 indexes both revisions using the exact persisted source locators', async () => {
+      let incoming = makeItem({ content: 'revisionsearch original' });
+      const connector = makeConnector('slack', []);
+      connector.poll = async () => [incoming];
+      const registry = new ConnectorRegistry();
+      registry.register('slack', connector);
+      const scheduler = new PollingScheduler(rawStore, tmpDir, {
+        rawIndexSink: async (name, items) => {
+          const stored = rawStore.query(name, new Date(0));
+          for (const item of items) {
+            expect(stored.find((row) => row.sourceId === item.sourceId)).toEqual(item);
+          }
+          for (const row of mapNormalizedItemsToConnectorEventIndexInputs(name, items)) {
+            upsertConnectorEventIndex(getAdapter(), row);
+          }
+        },
+      });
+      await scheduler.pollAll(registry, { slack: { C123: { role: 'hub' } } }, async () => {});
+      incoming = { ...incoming, content: 'revisionsearch changed' };
+      await scheduler.pollAll(registry, { slack: { C123: { role: 'hub' } } }, async () => {});
+      await scheduler.pollAll(registry, { slack: { C123: { role: 'hub' } } }, async () => {});
+      expect(rawStore.query('slack', new Date(0))).toHaveLength(2);
+      const rows = getAdapter()
+        .prepare('SELECT source_id, content FROM connector_event_index ORDER BY source_id')
+        .all();
+      expect(rows).toEqual(
+        rawStore
+          .query('slack', new Date(0))
+          .map((item) => ({ source_id: item.sourceId, content: item.content }))
+      );
+    });
+
     it('maps NormalizedItem provenance fields and indexes after RawStore.save succeeds', async () => {
       const scheduler = new PollingScheduler(rawStore, tmpDir, {
         rawIndexSink: async (connectorName, items) => {
@@ -102,7 +134,7 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
         author_label: 'alice',
         source_ref: 'slack:C123:msg-1',
       });
-      expect(hits[0]?.metadata).toEqual({ thread: 'T1' });
+      expect(hits[0]?.metadata).toEqual({ thread: 'T1', sourceEntityId: 'msg-1' });
       expect(scheduler.getLastPollTime('slack')).toBeInstanceOf(Date);
     });
   });

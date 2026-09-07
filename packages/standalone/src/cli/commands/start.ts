@@ -2293,7 +2293,7 @@ export async function runAgentLoop(
         // owner subject. It keeps the same backend thread and progressive tool
         // catalog while the current envelope narrows effects for this delivery.
         reportAsk: createPersonaReportAsk({
-          run: async (prompt, sourceMessageRef) => {
+          run: async (prompt, sourceMessageRef, reportOptions) => {
             const reportAgentPolicy = buildOperatorReportAgentPolicy(
               config.agent.model,
               runtimeBackend,
@@ -2306,6 +2306,7 @@ export async function runAgentLoop(
                 sessionKey: OWNER_RUNTIME_SESSION_KEY,
                 source: 'operator',
                 channelId: 'report',
+                lanePriority: reportOptions.lanePriority,
                 // The current report role narrows effect authority; the stable
                 // sessionPolicyRole keeps the owner thread compatible.
                 agentContext: reportAgentPolicy.agentContext,
@@ -2317,10 +2318,8 @@ export async function runAgentLoop(
                   return envelope;
                 },
                 requestTimeoutMs: 600_000,
-                ownerJournalPrompt: sourceMessageRef
-                  ? `Report stimulus: ${sourceMessageRef}`
-                  : prompt,
-                ...(sourceMessageRef ? { sourceMessageRef } : {}),
+                ownerJournalPrompt: `Report stimulus: ${sourceMessageRef}`,
+                sourceMessageRef,
               }
             );
             return {

@@ -68,6 +68,7 @@ function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
 function seedRaw(overrides: {
   connector?: string;
   sourceId: string;
+  entityId?: string;
   channel?: string;
   content?: string;
   timestampMs: number;
@@ -77,6 +78,7 @@ function seedRaw(overrides: {
     source_connector: overrides.connector ?? 'slack',
     source_type: 'message',
     source_id: overrides.sourceId,
+    source_entity_id: overrides.entityId ?? overrides.sourceId,
     source_locator: `${overrides.connector ?? 'slack'}:${overrides.channel ?? 'general'}:${overrides.sourceId}`,
     channel: overrides.channel ?? 'general',
     author: 'alice',
@@ -386,6 +388,54 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
       expect(
         windowResponse.body.items.map((item: { source_id: string }) => item.source_id)
       ).toEqual(['before', 'target', 'after']);
+    });
+  });
+
+  describe('AC: /:rawId/revisions returns the entity change history, envelope-scoped', () => {
+    it('returns the anchor entity revisions oldest-first and excludes out-of-scope revisions', async () => {
+      const t = Date.parse('2026-09-07T00:00:00.000Z');
+      seedRaw({ sourceId: 'doc:v1', entityId: 'doc', content: 'rawapi v1', timestampMs: t });
+      const anchor = seedRaw({
+        sourceId: 'doc:v2',
+        entityId: 'doc',
+        content: 'rawapi v2',
+        timestampMs: t + 1000,
+      });
+      seedRaw({
+        sourceId: 'doc:v3',
+        entityId: 'doc',
+        content: 'rawapi v3',
+        timestampMs: t + 2000,
+        scopeId: 'beta',
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get(`/api/agent/raw/${anchor}/revisions`)
+      );
+      expect(response.status).toBe(200);
+      expect(response.body.hits.map((h: { source_id: string }) => h.source_id)).toEqual([
+        'doc:v1',
+        'doc:v2',
+      ]);
+    });
+
+    it('returns no revisions for an anchor the envelope cannot see', async () => {
+      const t = Date.parse('2026-09-07T00:00:00.000Z');
+      const hidden = seedRaw({
+        sourceId: 'sec:v1',
+        entityId: 'sec',
+        content: 'rawapi secret',
+        timestampMs: t,
+        scopeId: 'beta',
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get(`/api/agent/raw/${hidden}/revisions`)
+      );
+      expect(response.status).toBe(200);
+      expect(response.body.hits).toEqual([]);
     });
   });
 

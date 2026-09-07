@@ -34,6 +34,8 @@ export interface UpsertConnectorEventIndexInput {
   source_connector: string;
   source_type: string;
   source_id: string;
+  /** Stable upstream entity across revisions; enables grant-bounded change-history reads. */
+  source_entity_id?: string | null;
   source_locator?: string | null;
   channel?: string | null;
   author?: string | null;
@@ -110,6 +112,11 @@ export interface RawSearchHit {
   score: number;
   source_ref: string | null;
   metadata: Record<string, unknown>;
+}
+
+/** Explicit detail access includes the complete source; search results remain bounded previews. */
+export interface RawDocument extends RawSearchHit {
+  content: string;
 }
 
 export interface RawSearchResult {

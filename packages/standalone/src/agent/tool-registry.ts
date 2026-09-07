@@ -648,9 +648,9 @@ register({
 register({
   name: 'schedule_upcoming',
   description:
-    'Upcoming schedule from the calendar connector raw store: events within the next N days plus a one-line-per-event text digest. v1 limits: no recurrence expansion, no cancellation tracking; all-day events surface by date.',
+    'Read the calendar connector local snapshot progressively. Returns ongoing and future intervals, excludes ended and cancelled occurrences, and preserves all-day date ranges with their exclusive end and timezone. Walk nextCursor for whole-situation coverage; coverage distinguishes page completion from unknown upstream snapshot completeness. This reader never calls the calendar API.',
   category: 'os_monitoring',
-  params: 'days? (default 14, max 60)',
+  params: 'days? (default 14, max 60), cursor?',
 });
 register({
   name: 'contract_no_update',

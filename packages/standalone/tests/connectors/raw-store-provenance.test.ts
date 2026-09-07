@@ -103,7 +103,7 @@ describe('Story M2.3: RawStore provenance persistence', () => {
       );
     });
 
-    it('upgrades a legacy raw_items row and updates provenance on source_id conflict', () => {
+    it('preserves legacy evidence and binds new provenance to the new revision', () => {
       const connectorDir = join(tempDir, 'slack');
       mkdirSync(connectorDir, { recursive: true });
       const dbPath = join(connectorDir, 'raw.db');
@@ -139,11 +139,18 @@ describe('Story M2.3: RawStore provenance persistence', () => {
       const upgraded = rawRow(dbPath, 'slack-msg-1');
       expect(upgraded.content).toBe('legacy content');
       expect(upgraded.content_hash).toMatch(/^[a-f0-9]{64}$/);
-      expect(upgraded.source_cursor).toBe('cursor-updated');
-      expect(upgraded.tenant_id).toBe('tenant-alpha');
-      expect(upgraded.project_id).toBe('project-a');
-      expect(upgraded.memory_scope_kind).toBe('project');
-      expect(upgraded.memory_scope_id).toBe('scope-project-a');
+      expect(upgraded.source_cursor).toBeNull();
+      expect(upgraded.project_id).toBeNull();
+      const revisions = store.getRevisions('slack', 'slack-msg-1');
+      expect(revisions.items).toHaveLength(2);
+      expect(revisions.items[1]).toMatchObject({
+        content: 'updated content',
+        sourceCursor: 'cursor-updated',
+        tenantId: 'tenant-alpha',
+        projectId: 'project-a',
+        memoryScopeKind: 'project',
+        memoryScopeId: 'scope-project-a',
+      });
     });
 
     it('backfills legacy rows without inventing unknown scope values', () => {

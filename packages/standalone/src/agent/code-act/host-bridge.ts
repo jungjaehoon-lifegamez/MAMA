@@ -977,10 +977,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'schedule_upcoming',
-    description: 'Upcoming calendar events (next N days) + one-line-per-event text digest.',
-    params: [{ name: 'days', type: 'number', required: false }],
+    description:
+      'Read ongoing and future calendar intervals from the local connector snapshot. Progressive: walk nextCursor before a whole-situation claim; coverage.complete describes local page traversal while upstreamComplete remains unknown. Cancelled occurrences are excluded and all-day dates retain their exclusive end and timezone. No fresh calendar API call occurs.',
+    params: [
+      { name: 'days', type: 'number', required: false },
+      { name: 'cursor', type: 'string', required: false },
+    ],
     returnType:
-      '{ events: Array<{ title: string; start: string; channel: string }>; text: string }',
+      "{ events: Array<{ sourceId: string; title: string; start: string; end: string | null; status: string; channel: string; allDay?: true; startDate?: string; endDateExclusive?: string; timeZone?: string }>; text: string; total: number; returned: number; nextCursor: string | null; observedAt: string | null; insertedAt: string | null; cacheAgeMs: number | null; readVersion: string; coverage: { complete: boolean; source: 'local_snapshot'; upstreamComplete: 'unknown' } }",
     category: 'memory',
   },
   {

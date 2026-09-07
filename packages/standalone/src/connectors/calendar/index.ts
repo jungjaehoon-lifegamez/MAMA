@@ -5,6 +5,7 @@
  */
 
 import { execSync } from 'child_process';
+import { createHash } from 'node:crypto';
 
 import type {
   AuthRequirement,
@@ -22,10 +23,12 @@ interface CalendarEvent {
   start?: {
     dateTime?: string;
     date?: string;
+    timeZone?: string;
   };
   end?: {
     dateTime?: string;
     date?: string;
+    timeZone?: string;
   };
   organizer?: {
     email?: string;
@@ -36,7 +39,11 @@ interface CalendarEvent {
 
 interface CalendarEventList {
   items?: CalendarEvent[];
+  nextPageToken?: string;
+  timeZone?: string;
 }
+
+const MAX_EVENT_LIST_PAGES = 20;
 
 export class CalendarConnector implements IConnector {
   readonly name = 'calendar';
@@ -103,59 +110,92 @@ export class CalendarConnector implements IConnector {
 
   async poll(since: Date): Promise<NormalizedItem[]> {
     const items: NormalizedItem[] = [];
-    let hadError = false;
 
     try {
       const timeMin = since.toISOString();
-      const params = JSON.stringify({
-        calendarId: 'primary',
-        timeMin,
-        singleEvents: true,
-        orderBy: 'startTime',
-        maxResults: 50,
-      });
-      const result = execGws(`calendar events list --params '${params}'`) as CalendarEventList;
+      const observedAt = new Date().toISOString();
+      let pageToken: string | undefined;
+      const visitedPageTokens = new Set<string>();
+      for (let page = 0; page < MAX_EVENT_LIST_PAGES; page += 1) {
+        const params = JSON.stringify({
+          calendarId: 'primary',
+          timeMin,
+          singleEvents: true,
+          showDeleted: true,
+          orderBy: 'startTime',
+          maxResults: 50,
+          ...(pageToken ? { pageToken } : {}),
+        });
+        // Escape single quotes so an upstream-controlled value inside the JSON (e.g. a pageToken)
+        // cannot close the shell single-quoted argument and inject a command.
+        const safeParams = params.replace(/'/g, `'\\''`);
+        const result = execGws(
+          `calendar events list --params '${safeParams}'`
+        ) as CalendarEventList;
 
-      const events = result.items ?? [];
-
-      for (const ev of events) {
-        const start = this.getEventTime(ev);
-        const end = this.getEventEndTime(ev);
-        const summary = ev.summary ?? '(No title)';
-        const description = ev.description ?? '';
-        const organizer = ev.organizer?.displayName ?? ev.organizer?.email ?? 'unknown';
-
-        // Determine timestamp from start time
-        const startMs = start ? new Date(start).getTime() : Date.now();
-        const timestamp = new Date(startMs);
-
-        items.push({
-          source: 'calendar',
-          sourceId: ev.id,
-          channel: 'calendar',
-          author: organizer,
-          content: `${summary} | ${start} ~ ${end}\n${description}`,
-          timestamp,
-          type: 'event',
-          metadata: {
+        for (const ev of result.items ?? []) {
+          const start = this.getEventTime(ev);
+          const end = this.getEventEndTime(ev);
+          const summary = ev.summary ?? '(No title)';
+          const description = ev.description ?? '';
+          const organizer = ev.organizer?.displayName ?? ev.organizer?.email ?? 'unknown';
+          const allDay = ev.start?.date !== undefined;
+          const startMs = start ? new Date(start).getTime() : Date.now();
+          const timeZone = ev.start?.timeZone ?? result.timeZone ?? 'UTC';
+          const observation = {
+            eventId: ev.id,
             summary,
+            description,
             start,
             end,
             status: ev.status,
             organizer: ev.organizer,
-          },
-        });
+            allDay,
+            endExclusive: allDay,
+            timeZone,
+          };
+          const version = createHash('sha256')
+            .update(JSON.stringify(observation))
+            .digest('hex')
+            .slice(0, 24);
+
+          items.push({
+            source: 'calendar',
+            sourceId: `${ev.id}:${version}`,
+            sourceEntityId: ev.id,
+            channel: 'calendar',
+            author: organizer,
+            content: `${summary} | ${start} ~ ${end}\n${description}`,
+            timestamp: new Date(startMs),
+            type: 'event',
+            sourceCursor: observedAt,
+            metadata: {
+              ...observation,
+              observedAt,
+            },
+          });
+        }
+
+        if (!result.nextPageToken) {
+          this.lastPollTime = new Date();
+          this.lastPollCount = items.length;
+          this.lastError = undefined;
+          return items;
+        }
+        if (visitedPageTokens.has(result.nextPageToken)) {
+          throw new Error('Calendar returned a repeated upstream page token');
+        }
+        visitedPageTokens.add(result.nextPageToken);
+        pageToken = result.nextPageToken;
       }
+      throw new Error(
+        `Calendar page cap (${MAX_EVENT_LIST_PAGES}) reached; upstream snapshot is incomplete`
+      );
     } catch (err) {
-      hadError = true;
       this.lastError = err instanceof Error ? err.message : String(err);
+      this.lastPollTime = new Date();
+      this.lastPollCount = 0;
+      throw err instanceof Error ? err : new Error(String(err));
     }
-
-    this.lastPollTime = new Date();
-    this.lastPollCount = items.length;
-    // lastError was set in catch blocks; clear only if no error occurred this pass
-    if (!hadError) this.lastError = undefined;
-
-    return items;
   }
 }

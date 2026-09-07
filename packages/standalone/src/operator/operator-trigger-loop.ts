@@ -44,7 +44,7 @@ import type { ReportMode } from './situation-report.js';
 import { getLegCadence } from './leg-cadence.js';
 import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 import type { OwnerEventActivation } from './owner-event-inbox.js';
-import type { FullReportRunInput } from './report-run.js';
+import type { PersonaReportAsk } from './report-run.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -88,9 +88,9 @@ export interface TriggerLoopDeps {
    * Agent for REPORT composition (M2.2). Bind this to the daemon's persona AgentLoop
    * (SOUL.md system prompt, pinned model, session continuity) - tone/quality come from the
    * generation inputs, and reports deserve the persona path while JSON tasks stay on the
-   * isolated CLI. Absent -> reports use askAgent (explicit config choice, not a failure fallback).
+   * isolated CLI. Reports require this explicit owner composition capability; authoring is not a fallback.
    */
-  reportAsk?: AskAgent & { full?: (input: FullReportRunInput) => Promise<string> };
+  reportAsk?: PersonaReportAsk;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /**
@@ -409,7 +409,6 @@ export class OperatorTriggerLoop {
   }
 
   private async prepareAndDeliverReport(
-    askAgent: AskAgent,
     mode: ReportMode,
     occurrence: PendingReportOccurrence
   ): Promise<boolean> {
@@ -421,43 +420,23 @@ export class OperatorTriggerLoop {
     }
     const target = this.requireOutputTarget();
     const deliveryId = this.deliveryIdFor(occurrence);
-    if (mode === 'full') {
-      const request = {
-        mode: 'full' as const,
-        deliveryId,
-        occurrence,
-        acceptedAtIso: occurrence.firedAtIso ?? new Date().toISOString(),
-        target,
-      };
-      this.pendingRequest = {
-        ...request,
-        payloadIdentity: pendingReportRequestPayloadIdentity(request),
-      };
-      if (!this.persistPendingReports()) return false;
-      return this.preparePendingRequest();
-    }
-    const prepared = await this.digest.prepareReport(askAgent, mode, deliveryId);
-    if (!prepared) {
-      this.persistPendingReports();
-      return false;
-    }
-    const delivery = {
-      ...prepared,
+    const request = {
+      mode,
       deliveryId,
       occurrence,
+      acceptedAtIso: occurrence.firedAtIso ?? new Date().toISOString(),
       target,
     };
-    this.pendingDelivery = {
-      ...delivery,
-      payloadIdentity: pendingReportDeliveryPayloadIdentity(delivery),
+    this.pendingRequest = {
+      ...request,
+      payloadIdentity: pendingReportRequestPayloadIdentity(request),
     };
-    // Persist the exact owner-visible text and operation identity before the
-    // first external send. A restart replays this record, never a regeneration.
-    if (!this.persistPendingReports()) {
-      return false;
-    }
-    await this.deliverPendingReport(false);
-    return true;
+    if (!this.persistPendingReports()) return false;
+    return this.preparePendingRequest();
+  }
+
+  private reportOutcomeLabel(delivered: boolean): string {
+    return delivered ? 'SENT' : this.pendingDelivery ? 'pending delivery' : 'not delivered';
   }
 
   private async preparePendingRequest(): Promise<boolean> {
@@ -468,14 +447,15 @@ export class OperatorTriggerLoop {
     }
     this.assertPendingRequestBinding(request);
     const reportAsk = this.deps.reportAsk;
-    if (!reportAsk?.full) {
+    if (!reportAsk?.compose) {
       throw new Error('Owner runtime report capability is unavailable');
     }
-    const prepared = await this.fullReporter.prepareReport(
+    const prepared = await this.reporterFor(request.mode).prepareReport(
       (prompt) =>
-        reportAsk.full!({
+        reportAsk.compose({
           prompt,
           sourceMessageRef: `owner-report:${request.deliveryId}`,
+          requestKind: request.occurrence.kind,
         }),
       request.mode,
       request.deliveryId
@@ -499,8 +479,7 @@ export class OperatorTriggerLoop {
     if (!this.persistPendingReports()) {
       return false;
     }
-    await this.deliverPendingReport(false);
-    return true;
+    return (await this.deliverPendingReport(false)) !== null;
   }
 
   private async recoverPendingReportWork(): Promise<boolean> {
@@ -508,11 +487,12 @@ export class OperatorTriggerLoop {
     const delivered = await this.deliverPendingReport(true);
     let recovered = delivered !== null;
     if (this.pendingRequest) {
+      // Capture the mode before preparePendingRequest() clears the pending request; a recovered
+      // digest request also reaches this path, so a hardcoded "full" would misreport it.
+      const mode = this.pendingRequest.mode;
       const sent = await this.preparePendingRequest();
       recovered = true;
-      this.deps.log(
-        `[trigger-loop] recovered on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
-      );
+      this.deps.log(`[trigger-loop] recovered ${mode} report ${this.reportOutcomeLabel(sent)}`);
     }
     return recovered;
   }
@@ -773,7 +753,6 @@ export class OperatorTriggerLoop {
     // 5. Situational digest (M1.5 cadence, M2 window-aware): the agent composes it from the
     //    window + fire activity + recalled memory; the sink delivers it. Agent may reply NOTHING.
     if (this.stopping) return result(events.length);
-    const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (
       !this.isPendingReportWorkBlocked() &&
@@ -783,9 +762,9 @@ export class OperatorTriggerLoop {
       tick % reportEvery === 0 &&
       this.digest.hasActivity()
     ) {
-      reported = await this.prepareAndDeliverReport(reportAsk, 'digest', { kind: 'digest' });
+      reported = await this.prepareAndDeliverReport('digest', { kind: 'digest' });
       if (this.stopping) return result(events.length);
-      log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
+      log(`[trigger-loop] tick ${tick}: owner digest ${this.reportOutcomeLabel(reported)}`);
     }
 
     // 6. Scheduled full report (M2): fires at configured LOCAL hours - even on a completely
@@ -825,14 +804,14 @@ export class OperatorTriggerLoop {
           // leave a gap (messages arriving while the run executes fall after the gather
           // but before a completion-time anchor). Overlap is tolerable; gaps are not.
           const firedAtIso = new Date().toISOString();
-          fullReported = await this.prepareAndDeliverReport(reportAsk, 'full', {
+          fullReported = await this.prepareAndDeliverReport('full', {
             kind: 'scheduled_full',
             hourKey,
             firedAtIso,
           });
           if (this.stopping) return result(events.length);
           log(
-            `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
+            `[trigger-loop] tick ${tick}: full report ${this.reportOutcomeLabel(fullReported)} (${hourKey})`
           );
         }
       }
@@ -918,9 +897,7 @@ export class OperatorTriggerLoop {
     }
     this.launchRun(
       this.preparePendingRequest().then((sent) => {
-        this.deps.log(
-          `[trigger-loop] on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
-        );
+        this.deps.log(`[trigger-loop] on-demand full report ${this.reportOutcomeLabel(sent)}`);
       }),
       'on-demand full report FAILED'
     );

@@ -218,7 +218,9 @@ export class TelegramGateway extends BaseGateway {
   private readonly fetchImpl?: TelegramMediaDownloadRequest['fetchImpl'];
   private readonly messageLedger: TelegramMessageLedger;
   private readonly chatTails = new Map<string, Promise<void>>();
-  private readonly activeChat = new AsyncLocalStorage<string>();
+  private readonly inboundTails = new Map<string, Promise<void>>();
+  private readonly activeInboundMessages = new Set<string>();
+  private readonly activeChat = new AsyncLocalStorage<{ key: string; active: boolean }>();
 
   // Telegram update dedup
   private recentMessageIds = new Map<string, number>();
@@ -457,7 +459,14 @@ export class TelegramGateway extends BaseGateway {
     }
 
     const laneKey = laneChannelId(chatId, principal.lane);
-    await this.runInChatQueue(laneKey, () => this.processMessage(msg, messageKey, principal));
+    await this.runInQueue(this.inboundTails, laneKey, async () => {
+      this.activeInboundMessages.add(messageKey);
+      try {
+        await this.processMessage(msg, messageKey, principal);
+      } finally {
+        this.activeInboundMessages.delete(messageKey);
+      }
+    });
   }
 
   private async runInChatQueue<T>(
@@ -465,21 +474,39 @@ export class TelegramGateway extends BaseGateway {
     work: () => Promise<T>,
     allowReentrant = false
   ): Promise<T> {
-    if (allowReentrant && this.activeChat.getStore() === chatKey) return work();
-    const previous = this.chatTails.get(chatKey);
+    const active = this.activeChat.getStore();
+    if (allowReentrant && active?.active && active.key === chatKey) return work();
+    return this.runInQueue(this.chatTails, chatKey, async () => {
+      const lease = { key: chatKey, active: true };
+      try {
+        return await this.activeChat.run(lease, work);
+      } finally {
+        // Async work inherited from a completed send cannot bypass a later batch.
+        lease.active = false;
+      }
+    });
+  }
+
+  /** Inbound ordering and outbound atomic batches have separate lifetimes. */
+  private async runInQueue<T>(
+    tails: Map<string, Promise<void>>,
+    key: string,
+    work: () => Promise<T>
+  ): Promise<T> {
+    const previous = tails.get(key);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const currentTail = (previous ?? Promise.resolve()).catch(() => {}).then(() => gate);
-    this.chatTails.set(chatKey, currentTail);
+    tails.set(key, currentTail);
 
     try {
       if (previous) await previous.catch(() => {});
-      return await this.activeChat.run(chatKey, work);
+      return await work();
     } finally {
       release();
-      if (this.chatTails.get(chatKey) === currentTail) this.chatTails.delete(chatKey);
+      if (tails.get(key) === currentTail) tails.delete(key);
     }
   }
 
@@ -1065,6 +1092,9 @@ export class TelegramGateway extends BaseGateway {
       const chatId = snapshot.key.slice(0, separator);
       await this.runInChatQueue(chatId, async () => {
         const entry = this.messageLedger.get(snapshot.key);
+        // The live presenter owns ready as well as processing until it settles.
+        // Recovery must not jump ahead while that presenter drains a streaming edit.
+        if (this.activeInboundMessages.has(snapshot.key)) return;
         if (!entry || entry.state === 'delivered') return;
         if (entry.state === 'processing' && this.messageLedger.isOwnedByCurrentProcess(entry)) {
           return;
@@ -1103,19 +1133,32 @@ export class TelegramGateway extends BaseGateway {
     return new TelegramResponsePresenter(
       {
         send: async (content) => {
-          const sent = await api.sendMessage(chatId, content);
+          const sent = await this.runInChatQueue(
+            String(chatId),
+            () => api.sendMessage(chatId, content),
+            true
+          );
           onInitialSend?.(sent.message_id);
           return String(sent.message_id);
         },
         edit: async (handle, content) => {
-          await api.editMessageText(chatId, Number(handle), content);
+          await this.runInChatQueue(
+            String(chatId),
+            () => api.editMessageText(chatId, Number(handle), content),
+            true
+          );
         },
         delete: async (handle) => {
-          await api.deleteMessage(chatId, Number(handle));
+          await this.runInChatQueue(
+            String(chatId),
+            () => api.deleteMessage(chatId, Number(handle)),
+            true
+          );
         },
       },
       {
         resumeFromChunk,
+        withDelivery: (send) => this.runInChatQueue(String(chatId), send, true),
         onChunkProgress: (nextIndex, uncertain) => {
           if (this.messageLedger.get(messageKey)?.state === 'ready') {
             this.messageLedger.markDeliveryProgress(messageKey, nextIndex, uncertain);

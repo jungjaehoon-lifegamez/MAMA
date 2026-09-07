@@ -38,7 +38,7 @@ export interface PendingReportDelivery extends PreparedSituationReport {
 }
 
 export interface PendingReportRequest {
-  mode: 'full';
+  mode: 'digest' | 'full';
   deliveryId: string;
   occurrence: PendingReportOccurrence;
   acceptedAtIso: string;
@@ -122,7 +122,7 @@ const SAFE_SNAPSHOT_CHANNEL_LABELS = new Set([
 ]);
 
 interface PendingReportRequestIdentityInput {
-  mode: 'full';
+  mode: 'digest' | 'full';
   deliveryId: string;
   occurrence: PendingReportOccurrence;
   acceptedAtIso: string;
@@ -260,17 +260,21 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
   const record = value as Record<string, unknown>;
   if (
     !(
-      record.mode === 'full' &&
+      (record.mode === 'full' || record.mode === 'digest') &&
       isNonEmptyBoundedString(record.deliveryId, 512) &&
       isNonEmptyBoundedString(record.acceptedAtIso, 64) &&
       Number.isFinite(Date.parse(record.acceptedAtIso)) &&
-      isFullOccurrence(record.occurrence) &&
+      (record.mode === 'full'
+        ? isFullOccurrence(record.occurrence)
+        : isDigestOccurrence(record.occurrence)) &&
       isReportTarget(record.target) &&
       isSha256Identity(record.payloadIdentity)
     )
   ) {
     return false;
   }
+  const occurrence = record.occurrence;
+  if (!isFullOccurrence(occurrence) && !isDigestOccurrence(occurrence)) return false;
   const hasContextJson = record.contextJson !== undefined;
   const hasContextSha256 = record.contextSha256 !== undefined;
   if (hasContextJson !== hasContextSha256) {
@@ -303,10 +307,10 @@ function isPendingRequest(value: unknown): value is PendingReportRequest {
   return (
     record.payloadIdentity ===
     pendingReportRequestPayloadIdentity({
-      mode: 'full',
+      mode: record.mode,
       deliveryId: record.deliveryId,
       acceptedAtIso: record.acceptedAtIso,
-      occurrence: record.occurrence,
+      occurrence,
       target: record.target,
       ...(typeof record.contextSha256 === 'string' ? { contextSha256: record.contextSha256 } : {}),
     })
@@ -375,7 +379,7 @@ function isPendingDelivery(value: unknown): value is PendingReportDelivery {
   );
 }
 
-function isDigestOccurrence(value: unknown): boolean {
+function isDigestOccurrence(value: unknown): value is PendingReportOccurrence {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }

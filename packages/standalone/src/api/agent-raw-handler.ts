@@ -33,12 +33,24 @@ interface RawQueryModule {
     adapter: RawQueryAdapter,
     rawId: string,
     visibility: Pick<RawSearchInput, 'connectors' | 'scopes'>
-  ) => RawSearchHit | null;
+  ) => RawDocument | null;
   getRawWindow: (
     adapter: RawQueryAdapter,
     rawId: string,
     input: Pick<RawSearchInput, 'connectors' | 'scopes'> & { before?: number; after?: number }
   ) => { target: RawSearchHit; items: RawSearchHit[] } | null;
+  getRawHistory: (adapter: RawQueryAdapter, input: RawHistoryInput) => RawSearchResult;
+}
+
+interface RawHistoryInput {
+  entityId?: string;
+  rawId?: string;
+  connectors?: string[];
+  scopes?: MemoryScope[];
+  fromMs?: number;
+  toMs?: number;
+  limit?: number;
+  cursor?: string;
 }
 
 interface RawSearchInput {
@@ -62,6 +74,10 @@ interface RawSearchHit {
   score: number;
   source_ref: string | null;
   metadata: Record<string, unknown>;
+}
+
+interface RawDocument extends RawSearchHit {
+  content: string;
 }
 
 interface RawSearchResult {
@@ -118,6 +134,21 @@ export function createAgentRawRouter(options: AgentRawRouterOptions): Router {
         return undefined;
       }
       return result;
+    });
+  });
+
+  router.get('/:rawId/revisions', async (req, res) => {
+    await handleRawRequest(req, res, options, async (rawQuery, visibility) => {
+      // The change history of the anchor's upstream entity, oldest first, bounded by the SAME
+      // envelope visibility as detail/window. An anchor the envelope cannot see resolves to no
+      // entity, so this route can never surface revisions the reader would refuse.
+      return rawQuery.getRawHistory(options.memoryDb, {
+        rawId: req.params.rawId,
+        connectors: visibility.connectors,
+        scopes: visibility.scopes,
+        limit: parseBoundedInteger(req.query.limit, 'limit'),
+        cursor: firstString(req.query.cursor),
+      });
     });
   });
 

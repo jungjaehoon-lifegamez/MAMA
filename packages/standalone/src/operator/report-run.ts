@@ -1,5 +1,4 @@
 /** Owner-runtime report composition and provenance binding. */
-import type { AskAgent } from './trigger-author.js';
 import type { ArtifactProvenance } from './report-carry.js';
 
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:
@@ -12,7 +11,7 @@ export interface ReportHistoryMessage {
 export interface PersonaReportRunResult {
   response: string;
   history: ReadonlyArray<ReportHistoryMessage>;
-  /** Model iterations consumed by this run. Full reports require exactly one. */
+  /** Model iterations consumed by this run, including progressive tool rounds. */
   turns?: number;
   /** The run that produced this text. Absent when the backend records no run. */
   modelRunId?: string | null;
@@ -20,15 +19,23 @@ export interface PersonaReportRunResult {
   modelRunProvenance?: string;
   ownerJournalProvenance?: 'commit_failed';
 }
+export interface PersonaReportRunOptions {
+  lanePriority: number;
+}
 export interface PersonaReportRunner {
-  (prompt: string, sourceMessageRef?: string): Promise<PersonaReportRunResult>;
+  (
+    prompt: string,
+    sourceMessageRef: string,
+    options: PersonaReportRunOptions
+  ): Promise<PersonaReportRunResult>;
 }
-export interface FullReportRunInput {
+export interface ReportRunInput {
+  requestKind: 'digest' | 'scheduled_full' | 'on_demand_full';
   prompt: string;
-  sourceMessageRef?: string;
+  sourceMessageRef: string;
 }
-export interface PersonaReportAsk extends AskAgent {
-  full(input: FullReportRunInput): Promise<string>;
+export interface PersonaReportAsk {
+  compose(input: ReportRunInput): Promise<string>;
 }
 export interface PersonaReportAskDeps {
   run: PersonaReportRunner;
@@ -49,9 +56,12 @@ export interface PersonaReportAskDeps {
  * owner subject, retain model-run provenance, and fail on an empty final body.
  */
 export function createPersonaReportAsk(deps: PersonaReportAskDeps): PersonaReportAsk {
-  const execute = async (prompt: string, fullInput?: FullReportRunInput): Promise<string> => {
-    const result = await deps.run(prompt, fullInput?.sourceMessageRef);
-    const { response, history } = result;
+  const execute = async (input: ReportRunInput): Promise<string> => {
+    const { prompt } = input;
+    const result = await deps.run(prompt, input.sourceMessageRef, {
+      lanePriority: input.requestKind === 'on_demand_full' ? 100 : 0,
+    });
+    const { response } = result;
     deps.onRunProvenance?.(
       result.modelRunId
         ? { status: 'available', modelRunId: result.modelRunId }
@@ -64,51 +74,11 @@ export function createPersonaReportAsk(deps: PersonaReportAskDeps): PersonaRepor
     if (result.ownerJournalProvenance === 'commit_failed') {
       deps.onRecoveryFailure?.();
     }
-    let reportText = (response ?? '').trim();
-    if (reportText === '' && !fullInput) {
-      // Text-gateway multi-turn runs return only the LAST assistant segment
-      // (agent-loop extractTextResponse), and after a closing tool round that
-      // segment is often empty - the composed report body lives in an EARLIER
-      // assistant turn (live incident 2026-07-27: gather+save succeeded, the
-      // cadence then died on 'empty report response'). Recover the last
-      // non-empty assistant text from history (its text blocks are already
-      // stripped of tool_call JSON by the gateway parser) and stay loud.
-      reportText = lastAssistantText(history);
-      if (reportText !== '') {
-        deps.log('[trigger-loop] report body recovered from an earlier assistant turn');
-      }
-    }
+    const reportText = (response ?? '').trim();
     if (reportText === '') {
       throw new Error('persona agent returned an empty report response');
     }
     return reportText;
   };
-  const ask = (async (prompt: string): Promise<string> => execute(prompt)) as PersonaReportAsk;
-  ask.full = async (input: FullReportRunInput): Promise<string> => execute(input.prompt, input);
-  return ask;
-}
-
-/** Last non-empty assistant TEXT across the run history (structural walk; text
- *  blocks on the gateway path carry prose only - tool_call JSON is parsed out
- *  before history assembly, agent-loop.ts removeToolCallBlocks). */
-export function lastAssistantText(history: ReadonlyArray<ReportHistoryMessage>): string {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const message = history[i];
-    if (!message || message.role !== 'assistant') continue;
-    const { content } = message;
-    let text = '';
-    if (typeof content === 'string') {
-      text = content;
-    } else if (Array.isArray(content)) {
-      text = content
-        .map((block) => {
-          const b = block as { type?: unknown; text?: unknown };
-          return b?.type === 'text' && typeof b.text === 'string' ? b.text : '';
-        })
-        .filter((part) => part !== '')
-        .join('\n');
-    }
-    if (text.trim() !== '') return text.trim();
-  }
-  return '';
+  return { compose: execute };
 }

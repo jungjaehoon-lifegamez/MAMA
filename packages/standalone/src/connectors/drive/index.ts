@@ -248,6 +248,7 @@ export class DriveConnector implements IConnector {
         items.push({
           source: 'drive',
           sourceId: `${change.fileId}:${change.time}`,
+          sourceEntityId: change.fileId,
           channel: channelName,
           author,
           content: `modified: ${file.name} (${file.mimeType})`,
