@@ -36,11 +36,28 @@ afterEach(() => {
   for (const database of databases.splice(0)) {
     database.close();
   }
-  for (const directory of directories.splice(0))
+  for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 describe('Story TG-04/TG-06: owner action receipts independent of input path', () => {
+  it('AC: only the originating run can release a transmitting no-effect reservation', () => {
+    const { ledger } = open();
+    ledger.begin(context, 'preflight', 'slack_send', intent);
+    expect(() => ledger.releaseUnstarted(retry, 'preflight', 'slack_send')).toThrow(
+      /current unstarted/
+    );
+    ledger.releaseUnstarted(context, 'preflight', 'slack_send');
+    expect(ledger.inspect(context, 'preflight', 'slack_send')).toBeNull();
+    expect(ledger.begin(retry, 'preflight', 'slack_send', intent).state).toBe('execute');
+    ledger.confirm(retry, 'preflight', 'slack_send', { messageId: 'confirmed' });
+    expect(() => ledger.releaseUnstarted(retry, 'preflight', 'slack_send')).toThrow(
+      /current unstarted/
+    );
+    expect(ledger.inspect(context, 'preflight', 'slack_send')?.state).toBe('confirmed');
+  });
+
   it('settles an identical receipt while another connection is committing it', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'owner-effect-race-'));
     directories.push(directory);

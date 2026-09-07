@@ -14,7 +14,7 @@ import {
   TELEGRAM_FORMATTING_HEADER,
 } from '../../src/gateways/telegram-text-entities.js';
 
-describe('selectTelegramTextEntities', () => {
+describe('Story TG-04 Task G: AC #1 select original Telegram text and caption entities', () => {
   it('pairs text with entities and caption with caption_entities', () => {
     const textSelection = selectTelegramTextEntities({
       text: 'HELLO',
@@ -43,7 +43,7 @@ describe('selectTelegramTextEntities', () => {
   });
 });
 
-describe('captureTelegramTextFormatting', () => {
+describe('Story TG-04 Task G: AC #2 preserve exact UTF-16 formatting spans', () => {
   it('keeps the exact original body including trailing double spaces and newline', () => {
     const original = 'HELLO  \nhello';
     const formatting = captureTelegramTextFormatting('text', original, [
@@ -110,7 +110,7 @@ describe('captureTelegramTextFormatting', () => {
   });
 });
 
-describe('renderTelegramFormattingForModel', () => {
+describe('Story TG-05 Task G: AC #3 render formatting as untrusted model data', () => {
   it('renders the bold span as data with UTF-16 offsets and never as Markdown', () => {
     const body = 'HELLO  \nhello';
     const formatting = captureTelegramTextFormatting('text', body, [

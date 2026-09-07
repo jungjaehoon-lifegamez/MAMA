@@ -72,12 +72,16 @@ export function createReportStore(
         ? 'current'
         : 'stale';
   const refreshTaskProjection = (): boolean => {
-    if (!projectionProvider || refreshing) return false;
+    if (!projectionProvider || refreshing) {
+      return false;
+    }
     refreshing = true;
     try {
       const projection = projectionProvider();
       assertBasis(projection.basisRevision);
-      if (typeof projection.html !== 'string') throw new Error('Task projection HTML is required');
+      if (typeof projection.html !== 'string') {
+        throw new Error('Task projection HTML is required');
+      }
       currentBasis = projection.basisRevision;
       let didChange = false;
       const pipeline = slots.get('pipeline');
@@ -100,7 +104,9 @@ export function createReportStore(
         didChange = true;
       }
       for (const [id, slot] of slots) {
-        if (id === 'pipeline') continue;
+        if (id === 'pipeline') {
+          continue;
+        }
         const basis = slot.basisRevision ?? null;
         const state = freshness(basis);
         if (
@@ -143,8 +149,9 @@ export function createReportStore(
       if (projectionProvider && slotId === 'pipeline') {
         throw new Error('pipeline is a managed task projection; update the task ledger instead');
       }
-      if (updateOptions?.basisRevision !== null && updateOptions?.basisRevision !== undefined)
+      if (updateOptions?.basisRevision !== null && updateOptions?.basisRevision !== undefined) {
         assertBasis(updateOptions.basisRevision);
+      }
       const basis = updateOptions?.basisRevision ?? null;
       slots.set(slotId, {
         slotId,
@@ -164,6 +171,9 @@ export function createReportStore(
     },
 
     delete(slotId: string): void {
+      if (projectionProvider && slotId === 'pipeline') {
+        throw new Error('pipeline is a managed task projection; update the task ledger instead');
+      }
       slots.delete(slotId);
       changed();
     },

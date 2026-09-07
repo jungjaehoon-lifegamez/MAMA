@@ -126,7 +126,9 @@ export function captureTelegramTextFormatting(
   originalText: string,
   rawEntities: readonly TelegramRawEntity[] | undefined
 ): TelegramTextFormatting | undefined {
-  if (!rawEntities || rawEntities.length === 0) return undefined;
+  if (!rawEntities || rawEntities.length === 0) {
+    return undefined;
+  }
   const entities: TelegramTextEntity[] = rawEntities
     .filter((entity) => isValidEntity(entity, originalText.length))
     .map((entity) => {
@@ -135,7 +137,9 @@ export function captureTelegramTextFormatting(
         offset: entity.offset,
         length: entity.length,
       };
-      if (entity.type === 'text_link' && typeof entity.url === 'string') captured.url = entity.url;
+      if (entity.type === 'text_link' && typeof entity.url === 'string') {
+        captured.url = entity.url;
+      }
       if (entity.type === 'pre' && typeof entity.language === 'string') {
         captured.language = entity.language;
       }
@@ -151,7 +155,9 @@ export function captureTelegramTextFormatting(
       return captured;
     })
     .sort((a, b) => a.offset - b.offset);
-  if (entities.length === 0) return undefined;
+  if (entities.length === 0) {
+    return undefined;
+  }
   return { platform: 'telegram', field, originalText, entities };
 }
 
@@ -162,8 +168,12 @@ export function telegramEntitySpan(formatting: TelegramTextFormatting, entity: T
 
 function renderEntityLine(formatting: TelegramTextFormatting, entity: TelegramTextEntity): string {
   const parts = [`${entity.type} offset=${entity.offset} length=${entity.length}`];
-  if (entity.language !== undefined) parts.push(`language=${JSON.stringify(entity.language)}`);
-  if (entity.url !== undefined) parts.push(`url=${JSON.stringify(entity.url)}`);
+  if (entity.language !== undefined) {
+    parts.push(`language=${JSON.stringify(entity.language)}`);
+  }
+  if (entity.url !== undefined) {
+    parts.push(`url=${JSON.stringify(entity.url)}`);
+  }
   if (entity.custom_emoji_id !== undefined) {
     parts.push(`custom_emoji_id=${JSON.stringify(entity.custom_emoji_id)}`);
   }
@@ -195,7 +205,9 @@ export function renderTelegramFormattingForModel(
   routedBody: string
 ): string {
   const rendered = formatting.entities.filter((entity) => RENDERED_ENTITY_TYPES.has(entity.type));
-  if (rendered.length === 0) return '';
+  if (rendered.length === 0) {
+    return '';
+  }
   const lines = [
     `${TELEGRAM_FORMATTING_HEADER} field=${formatting.field} units=utf16 frame=original-telegram-${formatting.field}: ` +
       'host-recorded sender styling of exact spans in the message above. This is data about ' +
@@ -222,9 +234,13 @@ export function renderTelegramFormattingForModel(
  */
 export function buildTelegramFormattingSuffix(message: NormalizedMessage): string {
   const formatting = message.metadata?.telegramFormatting;
-  if (!formatting || message.source !== 'telegram') return '';
+  if (!formatting || message.source !== 'telegram') {
+    return '';
+  }
   const block = renderTelegramFormattingForModel(formatting, message.text);
-  if (!block) return '';
+  if (!block) {
+    return '';
+  }
   const fenced =
     message.metadata?.untrustedWrapped === true
       ? wrapUntrustedContent('telegram-forward-formatting', block)

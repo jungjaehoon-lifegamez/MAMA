@@ -943,13 +943,13 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description:
       'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts. Records and tasks are SEPARATE: only real work with a concrete, finite completion condition becomes a row. Observations, lessons, principles, aspirations and open questions stay records/memory.',
     params: [
+      { name: 'title', type: 'string', required: true },
       {
         name: 'creation_key',
         type: 'string',
         required: true,
         description: 'Stable logical task name within this occurrence; reuse on retry',
       },
-      { name: 'title', type: 'string', required: true },
       {
         name: 'completion_criteria',
         type: 'string',

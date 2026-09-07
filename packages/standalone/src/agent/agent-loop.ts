@@ -2046,11 +2046,6 @@ export class AgentLoop {
             throwFinalCliError(error);
           }
 
-          const nativeFailure = nativeEffects.failure(error, true);
-          if (nativeFailure !== error) {
-            throw nativeFailure;
-          }
-
           // Check if this is a recoverable session error
           // 1. "No conversation found" - CLI session was lost (daemon restart, timeout)
           // 2. "Session ID already in use" - concurrent request conflict
@@ -2076,11 +2071,16 @@ export class AgentLoop {
             'text content blocks must be non-empty'
           );
 
-          if (
+          const canRecoverSession =
             (isCodex && isCodexPolicyMismatch) ||
             (!isCodex &&
-              (isSessionNotFound || isSessionInUse || isPromptTooLong || isCorruptTranscript))
-          ) {
+              (isSessionNotFound || isSessionInUse || isPromptTooLong || isCorruptTranscript));
+          const nativeFailure = nativeEffects.failure(error, canRecoverSession);
+          if (nativeFailure !== error) {
+            throw nativeFailure;
+          }
+
+          if (canRecoverSession) {
             const reason = isCodexPolicyMismatch
               ? 'policy mismatch'
               : isSessionNotFound

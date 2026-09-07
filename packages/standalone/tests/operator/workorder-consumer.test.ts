@@ -85,7 +85,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         envelopeHash: 'hash',
       };
       const record = () => effects.begin(identity, 'shell', 'Bash', { commandSha256: 'test' });
-      if (phase === 'before-run') record();
+      if (phase === 'before-run') {
+        record();
+      }
       ctx.deps.hasUnsettledEffects = (wo) =>
         effects.hasUnsettledEffects(`workorder:${wo.idempotencyKey}`);
       ctx.deps.hasUnsafeReplayEffects = (wo) =>
@@ -94,7 +96,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         runWithContent: async () => {
           runs++;
           record();
-          if (phase === 'returned-unsettled') return { response: 'claimed success' };
+          if (phase === 'returned-unsettled') {
+            return { response: 'claimed success' };
+          }
           throw new Error('transport failed');
         },
       };

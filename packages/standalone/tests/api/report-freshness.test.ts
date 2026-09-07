@@ -75,6 +75,16 @@ function createTask() {
 }
 
 describe('Story TG-04/TG-06: current board facts without a Board model turn', () => {
+  it('TG-06 rejects deletion of the managed pipeline without a deletion event', () => {
+    createTask();
+    const { store, refresh } = projectedStore();
+    const before = store.get('pipeline');
+    const notifications = refresh.mock.calls.length;
+    expect(() => store.delete('pipeline')).toThrow(/managed task projection/);
+    expect(store.get('pipeline')).toEqual(before);
+    expect(refresh.mock.calls.length).toBe(notifications);
+  });
+
   it('publishes the same authored basis and timestamp through PUT, SSE and GET', async () => {
     createTask();
     const { store } = projectedStore();
@@ -89,7 +99,9 @@ describe('Story TG-04/TG-06: current board facts without a Board model turn', ()
     servers.push(server);
     await once(server, 'listening');
     const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('test server has no port');
+    if (!address || typeof address === 'string') {
+      throw new Error('test server has no port');
+    }
     const base = `http://127.0.0.1:${address.port}/report`;
     const response = await fetch(`${base}/slots/briefing`, {
       method: 'PUT',
@@ -113,7 +125,9 @@ describe('Story TG-04/TG-06: current board facts without a Board model turn', ()
     servers.push(server);
     await once(server, 'listening');
     const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('test server has no port');
+    if (!address || typeof address === 'string') {
+      throw new Error('test server has no port');
+    }
     ledger.update(task.id, {
       status: 'blocked',
       expected_revision: task.revision,

@@ -721,6 +721,22 @@ describe('HostBridge', () => {
       expect(result.value).toEqual({ count: 2, first: 'auth' });
     });
 
+    it('TG-04 preserves the documented title, creation key, criteria positional order', async () => {
+      const executeFn = vi.fn().mockResolvedValue({ success: true });
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, 1);
+      const result = await sandbox.execute(
+        "task_create('Report', 'report-key', 'Report delivered')"
+      );
+      expect(result.success).toBe(true);
+      expect(executeFn).toHaveBeenCalledWith('task_create', {
+        title: 'Report',
+        creation_key: 'report-key',
+        completion_criteria: 'Report delivered',
+      });
+    });
+
     it('passes object-argument tool calls through to the executor', async () => {
       const executeFn = vi.fn().mockResolvedValue({
         success: true,

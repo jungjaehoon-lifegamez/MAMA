@@ -19,7 +19,9 @@ describe('TG-03/04/05/06 native effect replay boundary', () => {
         },
       });
       boundary.started('Bash', { command: 'some non-idempotent command' });
-      if (settled) boundary.settled('Bash', 'call-1', false);
+      if (settled) {
+        boundary.settled('Bash', 'call-1', false);
+      }
       const failure = boundary.failure(new Error('context window exceeded'));
       expect(failure).toBeInstanceOf(AgentError);
       expect(failure).toMatchObject({
@@ -77,16 +79,22 @@ describe('TG-05/06 durable native admission marker', () => {
 
   it('marks a terminal transport failure unknown before any item notification', () => {
     const { events, boundary } = trackedBoundary();
-    expect(boundary.failure(new Error('socket closed'), true)).toMatchObject({
+    expect(boundary.failure(new Error('socket closed'), false)).toMatchObject({
       code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
       retryable: false,
     });
     expect(events).toEqual(['unknown']);
   });
 
-  it('allows conclusive missing-session recovery then confirms a clean run', () => {
+  it.each([
+    'No conversation found with session ID missing',
+    'Session ID is already in use',
+    'Prompt is too long',
+    'text content blocks must be non-empty',
+    'Codex app-server thread policy mismatch; reset the session explicitly',
+  ])('allows trusted pre-execution recovery for %s then confirms a clean run', (message) => {
     const { events, boundary } = trackedBoundary();
-    const missing = new Error('No conversation found with session ID missing');
+    const missing = new Error(message);
     expect(boundary.failure(missing, true)).toBe(missing);
     expect(events).toEqual([]);
     boundary.finished();

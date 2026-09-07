@@ -1221,11 +1221,17 @@ export class TaskLedger implements TaskSource {
   }
 
   private notifyOwnerTaskCommit(previousGeneration: string | null): void {
-    if (!this.onOwnerTaskChangeCommitted) return;
+    if (!this.onOwnerTaskChangeCommitted) {
+      return;
+    }
     const generation = this.readGeneration();
-    if (generation === previousGeneration) return;
+    if (generation === previousGeneration) {
+      return;
+    }
     this.pendingOwnerTaskGeneration = generation;
-    if (this.ownerTaskNotificationScheduled) return;
+    if (this.ownerTaskNotificationScheduled) {
+      return;
+    }
     this.ownerTaskNotificationScheduled = true;
     queueMicrotask(() => this.flushOwnerTaskNotification());
   }
@@ -1234,7 +1240,9 @@ export class TaskLedger implements TaskSource {
     this.ownerTaskNotificationScheduled = false;
     const expected = this.pendingOwnerTaskGeneration;
     this.pendingOwnerTaskGeneration = null;
-    if (!expected || !this.onOwnerTaskChangeCommitted) return;
+    if (!expected || !this.onOwnerTaskChangeCommitted) {
+      return;
+    }
     const current = this.readGeneration();
     if (current !== expected) {
       this.pendingOwnerTaskGeneration = current;
@@ -1767,7 +1775,9 @@ export class TaskLedger implements TaskSource {
    */
   inspectOwnerActionCandidateRun(context: OwnerActionContext): BoardCandidateAttemptState {
     const all = this.listOwnerActionCandidates(context);
-    if (all.length === 0) return { disposition: 'none' };
+    if (all.length === 0) {
+      return { disposition: 'none' };
+    }
     return this.candidateReceiptDisposition(all);
   }
 
@@ -2661,6 +2671,7 @@ export class TaskLedger implements TaskSource {
     }
 
     const previousGeneration = this.onOwnerTaskChangeCommitted ? this.readGeneration() : null;
+    let record: TaskRecord;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
@@ -2680,14 +2691,14 @@ export class TaskLedger implements TaskSource {
       const patch = this.buildReclassifyPatch(existing, disposition, reason);
       // Same primitive as task_update: candidate guard, board-attempt liveness,
       // revision-checked UPDATE, effect receipt, temporal generation supersession.
-      const record = this.transitionTaskInTransaction(id, patch, origin);
+      record = this.transitionTaskInTransaction(id, patch, origin);
       this.db.exec('COMMIT');
-      this.notifyOwnerTaskCommit(previousGeneration);
-      return record;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
+    this.notifyOwnerTaskCommit(previousGeneration);
+    return record;
   }
 
   private assertTaskReclassificationAuthorized(origin: ChangeOrigin): void {
