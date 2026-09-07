@@ -25,6 +25,8 @@
  * ```
  */
 
+import { AsyncResource } from 'node:async_hooks';
+
 import {
   type LaneState,
   type QueueEntry,
@@ -130,7 +132,7 @@ export class LaneManager {
 
     return new Promise((resolve, reject) => {
       const entry: QueueEntry<T> = {
-        task,
+        task: AsyncResource.bind(task),
         resolve: resolve as (value: unknown) => void,
         reject,
         enqueuedAt: Date.now(),
@@ -187,7 +189,11 @@ export class LaneManager {
     const globalLaneName = this.resolveGlobalLane(globalLane);
 
     // Nested queueing: session → global
-    return this.enqueue(sessionLaneName, () => this.enqueue(globalLaneName, task), options);
+    return this.enqueue(
+      sessionLaneName,
+      () => this.enqueue(globalLaneName, task, options),
+      options
+    );
   }
 
   /**

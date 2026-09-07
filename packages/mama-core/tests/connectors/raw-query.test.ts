@@ -2,8 +2,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getAdapter } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
-import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
-import { searchAllRaw, searchRaw } from '../../src/connectors/raw-query.js';
+import {
+  connectorEventIndexId,
+  upsertConnectorEventIndex,
+} from '../../src/connectors/event-index.js';
+import {
+  getRawById,
+  getRawHistory,
+  searchAllRaw,
+  searchRaw,
+} from '../../src/connectors/raw-query.js';
 
 const KOREAN_RISK_TOKEN = '\ud504\ub85c\uc81d\ud2b8\uc704\ud5d8';
 const KOREAN_MEETING_TEXT = `${KOREAN_RISK_TOKEN} \uc77c\uc815 \uc870\uc815 \ud68c\uc758\ub85d`;
@@ -52,6 +60,25 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
 
   afterAll(async () => {
     await cleanupTestDB(testDbPath);
+  });
+
+  it('TG-03 returns a compact search hit then the complete scoped source on explicit detail access', () => {
+    const content = `deepraw ${'source detail '.repeat(80)}END OF ORIGINAL`;
+    seedRawEvent({ sourceId: 'long-document', content, timestampMs: Date.now() });
+    const visibility = {
+      connectors: ['slack'],
+      scopes: [{ kind: 'project' as const, id: 'alpha' }],
+    };
+    const hit = searchAllRaw(getAdapter(), { query: 'deepraw', ...visibility }).hits[0]!;
+    expect(hit.content_preview.length).toBeLessThanOrEqual(240);
+    expect(hit).not.toHaveProperty('content');
+    expect(getRawById(getAdapter(), hit.raw_id, visibility)?.content).toBe(content);
+    expect(
+      getRawById(getAdapter(), hit.raw_id, {
+        ...visibility,
+        scopes: [{ kind: 'project', id: 'other' }],
+      })
+    ).toBeNull();
   });
 
   describe('AC #1: raw.search searches one connector through FTS', () => {
@@ -202,6 +229,99 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
           scopes: [{ kind: 'workspace' as never, id: 'alpha' }],
         })
       ).toThrow('Invalid raw search scope kind');
+    });
+  });
+
+  describe("AC #4: getRawHistory returns an entity's revisions, grant-bounded and paged", () => {
+    function seedRevision(o: {
+      sourceId: string;
+      entityId: string;
+      content: string;
+      timestampMs: number;
+      connector?: string;
+      scopeId?: string;
+    }): void {
+      upsertConnectorEventIndex(getAdapter(), {
+        source_connector: o.connector ?? 'calendar',
+        source_type: 'event',
+        source_id: o.sourceId,
+        source_entity_id: o.entityId,
+        source_locator: `${o.connector ?? 'calendar'}:cal:${o.sourceId}`,
+        channel: 'cal',
+        author: 'org',
+        content: o.content,
+        event_datetime: o.timestampMs,
+        source_timestamp_ms: o.timestampMs,
+        memory_scope_kind: 'project',
+        memory_scope_id: o.scopeId ?? 'alpha',
+      });
+    }
+
+    it('returns only the entity revisions in order, excludes out-of-scope, and pages', () => {
+      const t = Date.parse('2026-09-07T00:00:00.000Z');
+      seedRevision({ sourceId: 'evt:v1', entityId: 'evt', content: 'A', timestampMs: t });
+      seedRevision({ sourceId: 'evt:v2', entityId: 'evt', content: 'B', timestampMs: t + 1000 });
+      seedRevision({ sourceId: 'evt:v3', entityId: 'evt', content: 'C', timestampMs: t + 2000 });
+      seedRevision({ sourceId: 'other:v1', entityId: 'other', content: 'X', timestampMs: t + 500 });
+      seedRevision({
+        sourceId: 'evt:secret',
+        entityId: 'evt',
+        content: 'S',
+        timestampMs: t + 1500,
+        scopeId: 'beta',
+      });
+
+      const visibility = {
+        connectors: ['calendar'],
+        scopes: [{ kind: 'project' as const, id: 'alpha' }],
+      };
+      const p1 = getRawHistory(getAdapter(), { entityId: 'evt', ...visibility, limit: 2 });
+      expect(p1.hits.map((h) => h.source_id)).toEqual(['evt:v1', 'evt:v2']);
+      expect(p1.next_cursor).toEqual(expect.any(String));
+
+      const p2 = getRawHistory(getAdapter(), {
+        entityId: 'evt',
+        ...visibility,
+        limit: 2,
+        cursor: p1.next_cursor ?? undefined,
+      });
+      expect(p2.hits.map((h) => h.source_id)).toEqual(['evt:v3']);
+      expect(p2.next_cursor).toBeNull();
+
+      const all = [...p1.hits, ...p2.hits].map((h) => h.source_id);
+      expect(all).not.toContain('evt:secret');
+      expect(all).not.toContain('other:v1');
+    });
+
+    it('resolves the entity from a visible rawId anchor', () => {
+      const t = Date.parse('2026-09-07T00:00:00.000Z');
+      seedRevision({ sourceId: 'evt:v1', entityId: 'evt', content: 'A', timestampMs: t });
+      seedRevision({ sourceId: 'evt:v2', entityId: 'evt', content: 'B', timestampMs: t + 1000 });
+      const anchorId = connectorEventIndexId('calendar', 'evt:v2');
+      const res = getRawHistory(getAdapter(), {
+        rawId: anchorId,
+        connectors: ['calendar'],
+        scopes: [{ kind: 'project', id: 'alpha' }],
+      });
+      expect(res.hits.map((h) => h.source_id)).toEqual(['evt:v1', 'evt:v2']);
+    });
+
+    it('returns nothing for a rawId anchor the caller may not see', () => {
+      const t = Date.parse('2026-09-07T00:00:00.000Z');
+      seedRevision({
+        sourceId: 'evt:v1',
+        entityId: 'evt',
+        content: 'A',
+        timestampMs: t,
+        scopeId: 'beta',
+      });
+      const anchorId = connectorEventIndexId('calendar', 'evt:v1');
+      const res = getRawHistory(getAdapter(), {
+        rawId: anchorId,
+        connectors: ['calendar'],
+        scopes: [{ kind: 'project', id: 'alpha' }],
+      });
+      expect(res.hits).toEqual([]);
     });
   });
 });

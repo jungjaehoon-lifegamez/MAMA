@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPersonaReportAsk } from '../../src/operator/report-run.js';
+import { LaneManager } from '../../src/concurrency/lane-manager.js';
 import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 
 let nextId = 0;
@@ -22,6 +23,50 @@ function exchange(name: string, result: { error?: boolean; body?: string } = {})
 }
 
 describe('createPersonaReportAsk (M3-T4)', () => {
+  it('TG-05/TG-06 gives on-demand reports owner priority without overtaking an earlier owner request', async () => {
+    const lanes = new LaneManager();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const active = lanes.enqueueWithSession(OWNER_RUNTIME_SESSION_KEY, () => gate);
+    const ask = createPersonaReportAsk({
+      run: async (prompt, _ref, options) =>
+        lanes.enqueueWithSession(
+          OWNER_RUNTIME_SESSION_KEY,
+          async () => {
+            order.push(prompt);
+            return { response: prompt, history: [] };
+          },
+          undefined,
+          { priority: options?.lanePriority ?? 0 }
+        ),
+      log: () => {},
+    });
+    const scheduled = ask.compose({
+      sourceMessageRef: 'owner-report:test-1',
+      prompt: 'scheduled',
+      requestKind: 'scheduled_full',
+    });
+    const owner = lanes.enqueueWithSession(
+      OWNER_RUNTIME_SESSION_KEY,
+      async () => {
+        order.push('earlier-owner');
+      },
+      undefined,
+      { priority: 100 }
+    );
+    const requested = ask.compose({
+      sourceMessageRef: 'owner-report:test-2',
+      prompt: 'requested',
+      requestKind: 'on_demand_full',
+    });
+    release();
+    await Promise.all([active, scheduled, owner, requested]);
+    expect(order).toEqual(['earlier-owner', 'requested', 'scheduled']);
+  });
+
   it('uses the one durable owner runtime key', () => {
     expect(OWNER_RUNTIME_SESSION_KEY).toBe('owner:runtime');
   });
@@ -36,7 +81,8 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       log: () => {},
     });
 
-    const output = await ask.full({
+    const output = await ask.compose({
+      requestKind: 'scheduled_full',
       prompt: 'packet prompt',
       sourceMessageRef: 'owner-report:scheduled-1',
     });
@@ -57,7 +103,8 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     });
 
     await expect(
-      ask.full({
+      ask.compose({
+        requestKind: 'scheduled_full',
         prompt: 'progressive report prompt',
         sourceMessageRef: 'owner-report:scheduled-2',
       })
@@ -75,7 +122,9 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     });
 
     await expect(
-      ask.full({
+      ask.compose({
+        sourceMessageRef: 'owner-report:test-5',
+        requestKind: 'scheduled_full',
         prompt: 'packet prompt',
       })
     ).rejects.toThrow('empty report response');
@@ -88,7 +137,8 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       log: (line) => logs.push(line),
     });
 
-    await ask.full({
+    await ask.compose({
+      requestKind: 'scheduled_full',
       prompt: 'progressive prompt',
       sourceMessageRef: 'owner-report:scheduled-3',
     });
@@ -106,7 +156,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       onRunProvenance: (provenance) => seen.push(provenance),
     });
 
-    await ask('compose');
+    await ask.compose({
+      sourceMessageRef: 'owner-report:test-7',
+      requestKind: 'scheduled_full',
+      prompt: 'compose',
+    });
 
     expect(seen).toEqual([{ status: 'available', modelRunId: 'mr_7' }]);
   });
@@ -118,7 +172,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       log: () => {},
       onRunProvenance: (provenance) => seen.push(provenance),
     });
-    await askNoRun('compose');
+    await askNoRun.compose({
+      sourceMessageRef: 'owner-report:test-8',
+      requestKind: 'scheduled_full',
+      prompt: 'compose',
+    });
 
     const askLost = createPersonaReportAsk({
       run: async () => ({
@@ -130,7 +188,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       log: () => {},
       onRunProvenance: (provenance) => seen.push(provenance),
     });
-    await askLost('compose');
+    await askLost.compose({
+      sourceMessageRef: 'owner-report:test-9',
+      requestKind: 'scheduled_full',
+      prompt: 'compose',
+    });
 
     expect(seen).toEqual([
       { status: 'unavailable', reason: 'no_run_handle' },
@@ -150,7 +212,13 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       onRecoveryFailure,
     });
 
-    await expect(ask('compose')).resolves.toBe('body');
+    await expect(
+      ask.compose({
+        sourceMessageRef: 'owner-report:test-10',
+        requestKind: 'scheduled_full',
+        prompt: 'compose',
+      })
+    ).resolves.toBe('body');
     expect(onRecoveryFailure).toHaveBeenCalledOnce();
   });
 
@@ -161,7 +229,11 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       history: [...exchange('kagemusha_tasks'), ...exchange('mama_save')],
     });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    const out = await ask('write the report');
+    const out = await ask.compose({
+      sourceMessageRef: 'owner-report:test-11',
+      requestKind: 'scheduled_full',
+      prompt: 'write the report',
+    });
     expect(out).toBe('the report');
     expect(logs).toEqual([]);
   });
@@ -170,15 +242,18 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     const logs: string[] = [];
     const run = async () => ({ response: '   ', history: [...exchange('Bash')] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    await expect(ask('write ordinary report')).rejects.toThrow(/empty report response/);
+    await expect(
+      ask.compose({
+        sourceMessageRef: 'owner-report:test-12',
+        requestKind: 'scheduled_full',
+        prompt: 'write ordinary report',
+      })
+    ).rejects.toThrow(/empty report response/);
     expect(logs).toEqual([]);
   });
 
-  it('empty FINAL segment recovers the report body from an earlier assistant turn', async () => {
-    // Live incident 2026-07-27: on the claude text-gateway path the loop
-    // returns only the LAST assistant segment; after a closing tool round it
-    // was empty, killing the cadence although the composed report existed in
-    // an earlier turn.
+  it('TG-06 rejects an empty final response instead of promoting earlier prose to a report', async () => {
+    // Earlier prose can be provisional. Only an explicit final response is deliverable.
     const logs: string[] = [];
     const run = async () => ({
       response: '',
@@ -189,16 +264,25 @@ describe('createPersonaReportAsk (M3-T4)', () => {
       ],
     });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    const out = await ask('write digest');
-    expect(out).toBe('1) key situation: quiet day');
-    expect(logs.join('\n')).toMatch(/recovered from an earlier assistant turn/);
+    await expect(
+      ask.compose({
+        sourceMessageRef: 'owner-report:test-13',
+        requestKind: 'scheduled_full',
+        prompt: 'write digest',
+      })
+    ).rejects.toThrow('empty report response');
+    expect(logs).toEqual([]);
   });
 
   it('a digest prompt does not warn about missing gather tools', async () => {
     const logs: string[] = [];
     const run = async () => ({ response: 'digest', history: [] });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
-    await ask('short digest');
+    await ask.compose({
+      sourceMessageRef: 'owner-report:test-14',
+      requestKind: 'scheduled_full',
+      prompt: 'short digest',
+    });
     expect(logs.join('\n')).not.toMatch(/NO gateway gather tools/);
   });
 });

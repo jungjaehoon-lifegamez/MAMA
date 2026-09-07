@@ -131,7 +131,14 @@ function harness(port: FakePort, options: { scheduledFire?: boolean } = {}) {
     memory: fakeMem(),
     registry,
     askAgent: async () => '[]',
-    reportAsk: async () => 'owner digest body\nUSED_TRIGGERS: none',
+    reportAsk: createPersonaReportAsk({
+      run: async (_prompt, sourceMessageRef) => {
+        expect(pending?.request?.mode).toBe('digest');
+        expect(sourceMessageRef).toBe(`owner-report:${pending?.request?.deliveryId}`);
+        return { response: 'owner digest body\nUSED_TRIGGERS: none', history: [] };
+      },
+      log: () => {},
+    }),
     review: async () => ({ action: 'kept' as const }),
     reportDelivery: port,
     reportTarget: TARGET,
@@ -151,6 +158,62 @@ function harness(port: FakePort, options: { scheduledFire?: boolean } = {}) {
 }
 
 describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
+  it('TG-05/TG-06 resumes a persisted digest occurrence after a model failure without repeating delivered work', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mama-digest-recovery-'));
+    const storePath = join(directory, 'pending.json');
+    const db = new Database(':memory:');
+    const port = new FakePort();
+    const refs: string[] = [];
+    const makeLoop = (fail: boolean, delta: FakeDelta) =>
+      new OperatorTriggerLoop({
+        delta,
+        memory: fakeMem(),
+        registry: new TriggerRegistry(db),
+        askAgent: async () => '[]',
+        reportAsk: createPersonaReportAsk({
+          run: async (_prompt, ref) => {
+            const state = new FilePendingReportStore(storePath).load();
+            expect(state).not.toBeNull();
+            if (!state) throw new Error('missing persisted request');
+            expect(state.request?.mode).toBe('digest');
+            expect(ref).toBe(`owner-report:${state.request?.deliveryId}`);
+            refs.push(ref!);
+            if (fail) throw new Error('model interrupted');
+            return { response: 'current digest\nUSED_TRIGGERS: none', history: [] };
+          },
+          log: () => {},
+        }),
+        review: async () => ({ action: 'kept' as const }),
+        reportDelivery: port,
+        reportTarget: TARGET,
+        pendingReportStore: new FilePendingReportStore(storePath),
+        config: {
+          tickMs: 60000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          reportEveryNTicks: 1,
+        },
+        log: () => {},
+      });
+    try {
+      const delta = new FakeDelta();
+      delta.queue.push(ev(1, 'project', 'deadline changed'));
+      await expect(makeLoop(true, delta).tick()).rejects.toThrow('model interrupted');
+      expect(port.calls).toHaveLength(0);
+      const recovered = makeLoop(false, new FakeDelta());
+      await recovered.tick();
+      await recovered.tick();
+      expect(refs).toHaveLength(2);
+      expect(refs[0]).toBe(refs[1]);
+      expect(port.calls).toHaveLength(1);
+    } finally {
+      db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('TG-01/TG-03/TG-04/TG-05/TG-06 carries one scoped full-report turn through a durable delivered receipt', async () => {
     const mamaHome = mkdtempSync(join(tmpdir(), 'mama-full-report-e2e-'));
     const pendingPath = join(mamaHome, 'pending-report.json');
@@ -475,6 +538,8 @@ describe('OperatorTriggerLoop + ReportDeliveryPort', () => {
     expect(pendingState()?.digest.windowTotal).toBeGreaterThan(0);
     expect(scheduler.state.success).toHaveLength(0);
     expect(logs.join('\n')).toContain('retry scheduled');
+    expect(logs.join('\n')).not.toContain('SENT');
+    expect(logs.join('\n')).toContain('pending delivery');
 
     await loop.tick();
 

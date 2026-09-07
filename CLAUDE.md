@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Intent first — 최상위 목적과 완료 판정
+
+작업 시작/리쥼 전에 루트 [INTENT.md](INTENT.md)를 읽고 기존 계획을 그 목적과 사용자
+시나리오에 연결한다. 목적·성공 기준을 기술 작업이나 테스트 통과로 축소하지 않는다.
+각 작업 완료 후 [개발 목적 점검](docs/development/intent-workflow.md)을 수행하고
+[점검 기록](docs/development/intent-checks.md)에 결과·근거·남은 실패를 남긴다.
+하위 작업 완료와 최상위 목표 완료를 구분한다. 같은 버전의 공통 문서를 불필요하게 재독하지 않는다.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview

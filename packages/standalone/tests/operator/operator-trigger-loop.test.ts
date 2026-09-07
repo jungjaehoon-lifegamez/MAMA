@@ -40,12 +40,12 @@ import type { AskAgent } from '../../src/operator/trigger-author.js';
 
 const TEST_REPORT_TARGET = { source: 'telegram', channelId: 'test-owner-chat' } as const;
 function packetReportAsk(ask: AskAgent): AskAgent & {
-  full: (input: { prompt: string }) => Promise<string>;
+  compose: (input: { prompt: string }) => Promise<string>;
 } {
-  if (typeof (ask as { full?: unknown }).full === 'function') {
-    return ask as AskAgent & { full: (input: { prompt: string }) => Promise<string> };
+  if (typeof (ask as { compose?: unknown }).compose === 'function') {
+    return ask as AskAgent & { compose: (input: { prompt: string }) => Promise<string> };
   }
-  return Object.assign(ask, { full: ({ prompt }: { prompt: string }) => ask(prompt) });
+  return Object.assign(ask, { compose: ({ prompt }: { prompt: string }) => ask(prompt) });
 }
 
 function testReportOutput(
@@ -1548,7 +1548,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
     const failingAsk = Object.assign(
       vi.fn(async () => 'unused'),
       {
-        full: vi.fn(async () => {
+        compose: vi.fn(async () => {
           throw new Error('simulated model crash');
         }),
       }
@@ -1566,7 +1566,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
     });
 
     expect(first.startFullReport().accepted).toBe(true);
-    await vi.waitFor(() => expect(failingAsk.full).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(failingAsk.compose).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(pendingRef.current?.request).toBeDefined());
     const persistedDeliveryId = pendingRef.current!.request!.deliveryId;
     expect(pendingRef.current!.request!.contextJson).toBeUndefined();
@@ -1579,7 +1579,7 @@ describe('TG-06: durable owner-report delivery identity', () => {
     });
     const recoveryAsk = Object.assign(
       vi.fn(async () => 'unused'),
-      { full: recoveredFull }
+      { compose: recoveredFull }
     );
     const recovered = durableLoop(pendingRef, {
       output: { send },

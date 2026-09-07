@@ -191,11 +191,11 @@ export class PollingScheduler {
               const canonical = canonicalChannelKey(item, channelConfigs);
               return canonical === null ? item : { ...item, channel: canonical };
             });
-            this.rawStore.save(name, scopedItems);
+            const savedItems = this.rawStore.save(name, scopedItems);
             if (this.rawIndexSink) {
-              await this.rawIndexSink(name, scopedItems);
+              await this.rawIndexSink(name, savedItems);
             }
-            allItems.push(...scopedItems);
+            allItems.push(...savedItems);
           }
           // Only advance the cursor after a successful poll+save+index.
           this.lastPollTimes.set(name, new Date());

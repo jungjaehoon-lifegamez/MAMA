@@ -1,0 +1,196 @@
+{
+  "version": 1,
+  "description": "Synthetic, private-data-free supplied-evidence fixtures for TG-03/TG-04/TG-06 report judgment. These fixtures do not exercise autonomous retrieval.",
+  "fixtures": [
+    {
+      "id": "month-separated-obligations",
+      "asOf": "2026-09-07T10:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "mail-sep-pending",
+          "observedAt": "2026-09-07T09:10:00+09:00",
+          "period": "2026-09",
+          "text": "September invoice workflow is marked pending by the external system. No payment or reply record is included in this snapshot."
+        },
+        {
+          "ref": "task-oct-upcoming",
+          "observedAt": "2026-09-07T09:12:00+09:00",
+          "period": "2026-10",
+          "text": "A separate October invoice workflow is scheduled to open on October 2."
+        }
+      ],
+      "expected": [
+        {
+          "label": "september-payment-state",
+          "disposition": "unconfirmed",
+          "period": "2026-09",
+          "requiredRefs": ["mail-sep-pending"]
+        },
+        {
+          "label": "october-work-is-separate",
+          "disposition": "confirmed",
+          "period": "2026-10",
+          "requiredRefs": ["task-oct-upcoming"]
+        }
+      ]
+    },
+    {
+      "id": "meeting-assignment-authority",
+      "asOf": "2026-09-07T12:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "meeting-note",
+          "observedAt": "2026-09-07T11:00:00+09:00",
+          "period": "2026-09",
+          "text": "The launch review ended. Follow-up: assign the finite checklist review after confirming the assignee has capacity."
+        },
+        {
+          "ref": "owner-grant",
+          "observedAt": "2026-09-07T08:00:00+09:00",
+          "period": "2026-09",
+          "text": "The authenticated owner grant allows the agent to assign this checklist review without another approval."
+        },
+        {
+          "ref": "workload-current",
+          "observedAt": "2026-09-07T11:30:00+09:00",
+          "period": "2026-09",
+          "text": "Assignee Cedar has capacity for one review today and already owns the launch component."
+        }
+      ],
+      "expected": [
+        {
+          "label": "assignment-is-agent-action",
+          "disposition": "agent_action",
+          "period": "2026-09",
+          "requiredRefs": ["meeting-note", "owner-grant", "workload-current"]
+        }
+      ]
+    },
+    {
+      "id": "submission-before-receipt",
+      "asOf": "2026-09-07T14:30:00+09:00",
+      "evidence": [
+        {
+          "ref": "submission-1357",
+          "observedAt": "2026-09-07T13:57:00+09:00",
+          "period": "2026-09",
+          "text": "The synthetic filing was submitted at 13:57."
+        },
+        {
+          "ref": "receipt-1529",
+          "observedAt": "2026-09-07T15:29:00+09:00",
+          "period": "2026-09",
+          "text": "The receiving system issued its acceptance receipt at 15:29."
+        }
+      ],
+      "expected": [
+        {
+          "label": "receipt-state",
+          "disposition": "unconfirmed",
+          "period": "2026-09",
+          "requiredRefs": ["submission-1357"]
+        }
+      ]
+    },
+    {
+      "id": "submission-after-receipt",
+      "asOf": "2026-09-07T16:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "submission-1357",
+          "observedAt": "2026-09-07T13:57:00+09:00",
+          "period": "2026-09",
+          "text": "The synthetic filing was submitted at 13:57."
+        },
+        {
+          "ref": "receipt-1529",
+          "observedAt": "2026-09-07T15:29:00+09:00",
+          "period": "2026-09",
+          "text": "The receiving system issued its acceptance receipt at 15:29."
+        }
+      ],
+      "expected": [
+        {
+          "label": "receipt-state",
+          "disposition": "completed",
+          "period": "2026-09",
+          "requiredRefs": ["submission-1357", "receipt-1529"]
+        }
+      ]
+    },
+    {
+      "id": "retries-are-not-days",
+      "asOf": "2026-09-07T18:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "retry-ledger",
+          "observedAt": "2026-09-07T17:45:00+09:00",
+          "period": "2026-09",
+          "text": "Six retry receipts exist: two on September 4, three on September 5, and one on September 7. No observations exist for September 6."
+        },
+        {
+          "ref": "availability-snapshot",
+          "observedAt": "2026-09-07T17:50:00+09:00",
+          "period": "2026-09",
+          "text": "The same rolling availability window appeared in each retry. No reservation-change event is present."
+        }
+      ],
+      "expected": [
+        {
+          "label": "consecutive-day-claim",
+          "disposition": "unsupported",
+          "period": "2026-09",
+          "requiredRefs": ["retry-ledger"]
+        },
+        {
+          "label": "reservation-change-claim",
+          "disposition": "unconfirmed",
+          "period": "2026-09",
+          "requiredRefs": ["availability-snapshot"]
+        }
+      ]
+    },
+    {
+      "id": "partial-absence-is-not-completion",
+      "asOf": "2026-09-07T19:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "partial-source-page",
+          "observedAt": "2026-09-07T18:45:00+09:00",
+          "period": "2026-09",
+          "coverage": "partial",
+          "text": "The first of three source pages contains no issue and no completion event. Pages two and three are unavailable."
+        }
+      ],
+      "expected": [
+        {
+          "label": "completion-inferred-from-absence",
+          "disposition": "unconfirmed",
+          "period": "2026-09",
+          "requiredRefs": ["partial-source-page"]
+        }
+      ]
+    },
+    {
+      "id": "explicit-completion-survives-partial-coverage",
+      "asOf": "2026-09-07T19:00:00+09:00",
+      "evidence": [
+        {
+          "ref": "exact-receipt",
+          "observedAt": "2026-09-07T18:40:00+09:00",
+          "period": "2026-09",
+          "coverage": "partial",
+          "text": "A signed receipt explicitly identifies synthetic task task-amber and states accepted and complete. Other source pages are unavailable."
+        }
+      ],
+      "expected": [
+        {
+          "label": "task-amber-completion",
+          "disposition": "completed",
+          "period": "2026-09",
+          "requiredRefs": ["exact-receipt"]
+        }
+      ]
+    }
+  ]
+}

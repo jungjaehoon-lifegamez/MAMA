@@ -531,6 +531,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
 
+        if (message.includes('duplicate column') && version === 67) {
+          this.recoverConnectorEventSourceEntityIdMigration067();
+          info(`[node-sqlite-adapter] Migration ${file} recovered successfully`);
+          continue;
+        }
+
         if (message.includes('no such column') && version === 62) {
           warn(
             `[node-sqlite-adapter] Migration ${file} deferred until connector structure recovery (${message})`
@@ -540,6 +546,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
         if (
           version === 63 &&
+          (message.includes('no such column') || message.includes('no such table'))
+        ) {
+          warn(
+            `[node-sqlite-adapter] Migration ${file} deferred until connector structure recovery (${message})`
+          );
+          continue;
+        }
+
+        if (
+          version === 67 &&
           (message.includes('no such column') || message.includes('no such table'))
         ) {
           warn(
@@ -680,6 +696,15 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           this.recoverConnectorEventLegacyRefreshMigration063();
           info('[node-sqlite-adapter] Repaired skipped legacy connector event refresh migration');
         }
+      }
+
+      const hasMissingSourceEntityIdFeature =
+        !this.tableColumns('connector_event_index').has('source_entity_id') ||
+        !this.indexExists('idx_connector_event_source_entity') ||
+        !this.schemaVersionExists(67);
+      if (hasMissingSourceEntityIdFeature) {
+        this.recoverConnectorEventSourceEntityIdMigration067();
+        info('[node-sqlite-adapter] Repaired skipped connector event source_entity_id migration');
       }
     }
 
@@ -974,6 +999,50 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       if (!this.indexExists(indexName)) {
         throw new Error(`Migration 034 recovery failed: missing index ${indexName}`);
       }
+    }
+  }
+
+  private recoverConnectorEventSourceEntityIdMigration067(): void {
+    this.transaction(() => {
+      const columns = this.tableColumns('connector_event_index');
+      if (!columns.has('source_entity_id')) {
+        this.exec('ALTER TABLE connector_event_index ADD COLUMN source_entity_id TEXT');
+      }
+      // Backfill only when metadata_json exists; a legacy/minimal table rebuilt by the repair path
+      // may not have it yet. New rows carry source_entity_id at write time regardless.
+      if (columns.has('metadata_json')) {
+        this.exec(`
+          UPDATE connector_event_index
+            SET source_entity_id = json_extract(metadata_json, '$.sourceEntityId')
+            WHERE source_entity_id IS NULL
+              AND metadata_json IS NOT NULL
+              AND json_extract(metadata_json, '$.sourceEntityId') IS NOT NULL
+        `);
+      }
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_connector_event_source_entity
+          ON connector_event_index(source_connector, source_entity_id)
+      `);
+
+      this.assertMigration067Complete();
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        67,
+        'Add connector_event_index source_entity_id'
+      );
+    });
+  }
+
+  private assertMigration067Complete(): void {
+    const columns = this.tableColumns('connector_event_index');
+    if (!columns.has('source_entity_id')) {
+      throw new Error(
+        'Migration 067 recovery failed: missing connector_event_index.source_entity_id'
+      );
+    }
+    if (!this.indexExists('idx_connector_event_source_entity')) {
+      throw new Error(
+        'Migration 067 recovery failed: missing index idx_connector_event_source_entity'
+      );
     }
   }
 
