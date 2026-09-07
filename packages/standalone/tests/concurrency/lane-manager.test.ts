@@ -4,6 +4,7 @@
  * Tests for the lane-based concurrency system
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   LaneManager,
@@ -22,6 +23,58 @@ const silentLogger = {
 };
 
 describe('LaneManager', () => {
+  it('TG-05 keeps each queued task in its own admission async context', async () => {
+    const manager = new LaneManager({ logger: silentLogger });
+    const context = new AsyncLocalStorage<string>();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const active = context.run('owner-input', () => manager.enqueue('shared', () => gate));
+    const queued = context.run('background-report', () =>
+      manager.enqueue('shared', async () => context.getStore())
+    );
+    release();
+    await active;
+    expect(await queued).toBe('background-report');
+  });
+
+  it('TG-05 preserves owner priority after session admission into a busy global lane', async () => {
+    const manager = new LaneManager({ logger: silentLogger });
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const active = manager.enqueue('main', () => gate);
+    const background = manager.enqueueWithSession(
+      'background',
+      async () => {
+        order.push('background');
+      },
+      'main'
+    );
+    const earlierOwner = manager.enqueueWithSession(
+      'owner-a',
+      async () => {
+        order.push('earlier-owner');
+      },
+      'main',
+      { priority: 100 }
+    );
+    const report = manager.enqueueWithSession(
+      'owner-b',
+      async () => {
+        order.push('owner-report');
+      },
+      'main',
+      { priority: 100 }
+    );
+    release();
+    await Promise.all([active, background, earlierOwner, report]);
+    expect(order).toEqual(['earlier-owner', 'owner-report', 'background']);
+  });
+
   it('runs a queued owner message before older background work in the same session', async () => {
     const manager = new LaneManager();
     const order: string[] = [];

@@ -25,8 +25,11 @@ function makeConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorConfig {
   };
 }
 
-function makeEventListJson(events: Record<string, unknown>[]): string {
-  return JSON.stringify({ items: events });
+function makeEventListJson(
+  events: Record<string, unknown>[],
+  options: { nextPageToken?: string; timeZone?: string } = {}
+): string {
+  return JSON.stringify({ items: events, ...options });
 }
 
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -44,7 +47,7 @@ function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unkn
 
 describe('CalendarConnector', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockExecSync.mockReturnValue('' as unknown as ReturnType<typeof execSync>);
   });
 
@@ -132,7 +135,7 @@ describe('CalendarConnector', () => {
       expect(items[0]?.type).toBe('event');
     });
 
-    it('sets sourceId to event.id', async () => {
+    it('versions sourceId while preserving the stable eventId in metadata', async () => {
       mockExecSync
         .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
         .mockReturnValueOnce(
@@ -143,7 +146,8 @@ describe('CalendarConnector', () => {
       const connector = new CalendarConnector(makeConfig());
       await connector.init();
       const items = await connector.poll(new Date(0));
-      expect(items[0]?.sourceId).toBe('unique-evt-id');
+      expect(items[0]?.sourceId).toMatch(/^unique-evt-id:[a-f0-9]{24}$/);
+      expect(items[0]?.metadata).toMatchObject({ eventId: 'unique-evt-id' });
     });
 
     it('formats content as "summary | start ~ end\\ndescription"', async () => {
@@ -257,6 +261,104 @@ describe('CalendarConnector', () => {
       const cmd = String(listCall?.[0]);
       expect(cmd).toContain('"singleEvents":true');
       expect(cmd).toContain('"orderBy":"startTime"');
+    });
+
+    it('collects every upstream page and preserves cancellation updates (TG-03/TG-06)', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeEventListJson([makeEvent({ id: 'confirmed' })], {
+            nextPageToken: 'page-2',
+            timeZone: 'Asia/Seoul',
+          }) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeEventListJson(
+            [
+              makeEvent({
+                id: 'cancelled',
+                status: 'cancelled',
+                start: { date: '2026-09-08' },
+                end: { date: '2026-09-09' },
+              }),
+            ],
+            { timeZone: 'Asia/Seoul' }
+          ) as unknown as ReturnType<typeof execSync>
+        );
+
+      const connector = new CalendarConnector(makeConfig());
+      await connector.init();
+      const items = await connector.poll(new Date('2026-09-07T00:00:00.000Z'));
+
+      expect(new Set(items.map((item) => item.sourceId)).size).toBe(2);
+      expect(items[0]?.sourceId).toMatch(/^confirmed:/);
+      expect(items[1]?.sourceId).toMatch(/^cancelled:/);
+      expect(items[0]?.metadata).toMatchObject({ eventId: 'confirmed' });
+      expect(items[1]?.metadata).toMatchObject({
+        eventId: 'cancelled',
+        observedAt: expect.any(String),
+        status: 'cancelled',
+        start: '2026-09-08',
+        end: '2026-09-09',
+        allDay: true,
+        endExclusive: true,
+        timeZone: 'Asia/Seoul',
+      });
+      const listCalls = mockExecSync.mock.calls.filter((call) =>
+        String(call[0]).includes('calendar events list')
+      );
+      expect(listCalls).toHaveLength(2);
+      expect(String(listCalls[1]?.[0])).toContain('"pageToken":"page-2"');
+      expect(String(listCalls[0]?.[0])).toContain('"showDeleted":true');
+    });
+
+    it('fails explicitly on a repeated upstream page token instead of returning partial data', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeEventListJson([makeEvent({ id: 'first' })], {
+            nextPageToken: 'repeat',
+          }) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeEventListJson([makeEvent({ id: 'second' })], {
+            nextPageToken: 'repeat',
+          }) as unknown as ReturnType<typeof execSync>
+        );
+
+      const connector = new CalendarConnector(makeConfig());
+      await connector.init();
+      await expect(connector.poll(new Date('2026-09-07T00:00:00.000Z'))).rejects.toThrow(
+        /repeated.*page token/i
+      );
+      await expect(connector.healthCheck()).resolves.toMatchObject({
+        healthy: false,
+        lastPollCount: 0,
+      });
+    });
+
+    it('fails explicitly at the finite upstream page cap instead of returning partial data', async () => {
+      let page = 0;
+      mockExecSync.mockImplementation((command) => {
+        if (!String(command).includes('calendar events list')) {
+          return '' as unknown as ReturnType<typeof execSync>;
+        }
+        page += 1;
+        return makeEventListJson([makeEvent({ id: `event-${page}` })], {
+          nextPageToken: `page-${page + 1}`,
+        }) as unknown as ReturnType<typeof execSync>;
+      });
+
+      const connector = new CalendarConnector(makeConfig());
+      await connector.init();
+      await expect(connector.poll(new Date('2026-09-07T00:00:00.000Z'))).rejects.toThrow(
+        /page cap.*incomplete/i
+      );
+      expect(page).toBe(20);
+      await expect(connector.healthCheck()).resolves.toMatchObject({
+        healthy: false,
+        lastPollCount: 0,
+      });
     });
 
     it('handles prefix lines like "Using keyring backend: ..." before JSON', async () => {

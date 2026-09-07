@@ -171,15 +171,16 @@ export function upsertConnectorEventIndex(
       .prepare(
         `
           INSERT INTO connector_event_index (
-            event_index_id, source_connector, source_type, source_id, source_locator,
-            channel, author, title, content, event_datetime, event_date, source_timestamp_ms,
-            source_cursor, tenant_id, project_id, memory_scope_kind, memory_scope_id,
-            metadata_json, artifact_locator, artifact_title, content_hash, indexed_at, updated_at,
-            expires_at
+            event_index_id, source_connector, source_type, source_id, source_entity_id,
+            source_locator, channel, author, title, content, event_datetime, event_date,
+            source_timestamp_ms, source_cursor, tenant_id, project_id, memory_scope_kind,
+            memory_scope_id, metadata_json, artifact_locator, artifact_title, content_hash,
+            indexed_at, updated_at, expires_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(source_connector, source_id) DO UPDATE SET
             source_type = excluded.source_type,
+            source_entity_id = excluded.source_entity_id,
             source_locator = excluded.source_locator,
             channel = excluded.channel,
             author = excluded.author,
@@ -224,6 +225,7 @@ export function upsertConnectorEventIndex(
         input.source_connector,
         input.source_type,
         input.source_id,
+        input.source_entity_id ?? input.source_id,
         input.source_locator ?? null,
         input.channel ?? null,
         input.author ?? null,

@@ -14,6 +14,8 @@ export interface TelegramResponseAdapter {
 }
 
 export interface TelegramResponsePresenterOptions {
+  /** Serialize the final multipart batch after pending streaming edits drain. */
+  withDelivery?: (send: () => Promise<void>) => Promise<void>;
   throttleMs?: number;
   maxLength?: number;
   chunkRetryCount?: number;
@@ -86,6 +88,7 @@ export function splitTelegramMessage(text: string, maxLength: number): string[] 
 
 export class TelegramResponsePresenter {
   private readonly adapter: TelegramResponseAdapter;
+  private readonly withDelivery: (send: () => Promise<void>) => Promise<void>;
   private readonly throttleMs: number;
   private readonly maxLength: number;
   private handle: string | null = null;
@@ -101,6 +104,7 @@ export class TelegramResponsePresenter {
 
   constructor(adapter: TelegramResponseAdapter, options: TelegramResponsePresenterOptions = {}) {
     this.adapter = adapter;
+    this.withDelivery = options.withDelivery ?? ((send) => send());
     this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
     this.maxLength = options.maxLength ?? DEFAULT_MAX_LENGTH;
     this.chunkRetryCount = Math.max(1, options.chunkRetryCount ?? 3);
@@ -161,53 +165,56 @@ export class TelegramResponsePresenter {
     this.cancelPendingEdit();
     try {
       await this.inFlightEdit;
-
-      const sanitized = sanitizeVisibleText(rawResponse);
-      const visible = (sanitized ?? '').trim() || EMPTY_RESPONSE_MESSAGE;
-      const chunks = splitTelegramMessage(visible, this.maxLength);
-
-      if (this.resumeFromChunk >= chunks.length) {
-        this.finalized = true;
-        return;
-      }
-
-      if (!this.handle || this.resumeFromChunk > 0) {
-        if (this.handle) {
-          const staleHandle = this.handle;
-          this.handle = null;
-          await this.adapter.delete(staleHandle).catch(() => {});
-        }
-        await this.sendChunks(chunks.slice(this.resumeFromChunk), this.resumeFromChunk);
-        this.finalized = true;
-        return;
-      }
-
-      const handle = this.handle;
-      this.handle = null;
-      try {
-        await this.recordChunkProgress(0, true);
-        await this.adapter.edit(handle, chunks[0]);
-      } catch (error) {
-        const message = telegramErrorMessage(error);
-        if (/message is not modified/i.test(message)) {
-          // Telegram already has the desired text. Treat this as committed.
-        } else if (/message to edit not found/i.test(message)) {
-          await this.adapter.delete(handle).catch(() => {});
-          await this.sendChunks(chunks);
-          this.finalized = true;
-          return;
-        } else {
-          // A timeout/network error may mean the edit was applied remotely.
-          // Do not delete and resend an answer that could already be visible.
-          throw error;
-        }
-      }
-      await this.recordChunkProgress(1, false);
-      await this.sendChunks(chunks.slice(1), 1);
-      this.finalized = true;
+      await this.withDelivery(() => this.deliverFinal(rawResponse));
     } finally {
       this.finalizing = false;
     }
+  }
+
+  private async deliverFinal(rawResponse: string): Promise<void> {
+    const sanitized = sanitizeVisibleText(rawResponse);
+    const visible = (sanitized ?? '').trim() || EMPTY_RESPONSE_MESSAGE;
+    const chunks = splitTelegramMessage(visible, this.maxLength);
+
+    if (this.resumeFromChunk >= chunks.length) {
+      this.finalized = true;
+      return;
+    }
+
+    if (!this.handle || this.resumeFromChunk > 0) {
+      if (this.handle) {
+        const staleHandle = this.handle;
+        this.handle = null;
+        await this.adapter.delete(staleHandle).catch(() => {});
+      }
+      await this.sendChunks(chunks.slice(this.resumeFromChunk), this.resumeFromChunk);
+      this.finalized = true;
+      return;
+    }
+
+    const handle = this.handle;
+    this.handle = null;
+    try {
+      await this.recordChunkProgress(0, true);
+      await this.adapter.edit(handle, chunks[0]);
+    } catch (error) {
+      const message = telegramErrorMessage(error);
+      if (/message is not modified/i.test(message)) {
+        // Telegram already has the desired text. Treat this as committed.
+      } else if (/message to edit not found/i.test(message)) {
+        await this.adapter.delete(handle).catch(() => {});
+        await this.sendChunks(chunks);
+        this.finalized = true;
+        return;
+      } else {
+        // A timeout/network error may mean the edit was applied remotely.
+        // Do not delete and resend an answer that could already be visible.
+        throw error;
+      }
+    }
+    await this.recordChunkProgress(1, false);
+    await this.sendChunks(chunks.slice(1), 1);
+    this.finalized = true;
   }
 
   async fail(message: string): Promise<void> {

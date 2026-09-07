@@ -83,7 +83,7 @@ describe('RawStore', () => {
   });
 
   describe('deduplication', () => {
-    it('deduplicates items by sourceId (INSERT OR IGNORE)', () => {
+    it('preserves changed content under the same upstream ID', () => {
       const item = makeItem({ sourceId: 'fixed-id', content: 'original' });
       const duplicate = makeItem({ sourceId: 'fixed-id', content: 'duplicate' });
 
@@ -91,18 +91,18 @@ describe('RawStore', () => {
       store.save('slack', [duplicate]);
 
       const results = store.query('slack', new Date(0));
-      expect(results).toHaveLength(1);
+      expect(results).toHaveLength(2);
       expect(results[0]?.content).toBe('original');
     });
 
-    it('saves only unique items in a single batch', () => {
+    it('preserves different revisions in one batch', () => {
       const item1 = makeItem({ sourceId: 'same-id', content: 'first' });
       const item2 = makeItem({ sourceId: 'same-id', content: 'second' });
 
       store.save('slack', [item1, item2]);
 
       const results = store.query('slack', new Date(0));
-      expect(results).toHaveLength(1);
+      expect(results).toHaveLength(2);
     });
   });
 

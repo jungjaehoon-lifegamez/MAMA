@@ -750,7 +750,11 @@ describe('AgentLoop', () => {
           log: () => {},
         });
 
-        await ask('compose the owner report');
+        await ask.compose({
+          prompt: 'compose the owner report',
+          requestKind: 'scheduled_full',
+          sourceMessageRef: 'owner-report:progressive-test',
+        });
 
         expect(effectivePrompt).toContain(userOwnedGatewayExample);
         expect(reportPolicy.agentContext.role.allowedTools).toEqual(
