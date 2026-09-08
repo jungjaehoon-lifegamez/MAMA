@@ -126,7 +126,7 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.delete).not.toHaveBeenCalled();
   });
 
-  it('delivers the final answer as Telegram entities, not as raw markup', async () => {
+  it('TG-01/TG-06 delivers the final answer as Telegram entities, not as raw markup', async () => {
     const adapter = makeAdapter();
     const presenter = new TelegramResponsePresenter(adapter);
     await presenter.start();
@@ -136,6 +136,21 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.edit).toHaveBeenCalledWith('message-1', {
       text: 'Status\nAll clear.',
       entities: [{ type: 'bold', offset: 0, length: 6 }],
+    });
+  });
+
+  it('TG-01/TG-06 keeps legacy streaming markup literal', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, {
+      chunkFormat: 'plain-v1',
+      throttleMs: 1,
+    });
+    await presenter.start();
+    presenter.callbacks().onDelta?.('<b>legacy</b>');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(adapter.edit).toHaveBeenLastCalledWith('message-1', {
+      text: '<b>legacy</b>',
+      entities: [],
     });
   });
 

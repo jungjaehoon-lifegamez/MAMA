@@ -249,8 +249,11 @@ export class TelegramResponsePresenter {
     // A closed snapshot can still be empty (the cut fell inside the first tag),
     // and then the placeholder start() already wrote is the right thing to show.
     const formatted =
-      formatTelegramMessage(closeOpenTelegramHtml(visible), Number.MAX_SAFE_INTEGER)[0] ??
-      plain(PENDING_PLACEHOLDER);
+      formatTelegramMessage(
+        this.chunkFormat === 'html-v1' ? closeOpenTelegramHtml(visible) : visible,
+        Number.MAX_SAFE_INTEGER,
+        this.chunkFormat
+      )[0] ?? plain(PENDING_PLACEHOLDER);
     // Clip the rendered tail, not the HTML source: removing an opening tag
     // before parsing would expose its closing tag and lose the entity span.
     let start = Math.max(0, formatted.text.length - this.maxLength);

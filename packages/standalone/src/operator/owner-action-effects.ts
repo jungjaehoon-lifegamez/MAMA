@@ -422,6 +422,8 @@ export class OwnerActionEffectLedger {
    * (and the other workspace effects) dedup on the exact command, so a replayed
    * turn that emits a different command runs it for real. Any unsettled row of
    * any kind blocks regardless of kind.
+   * Task deduplication is key-bound, not semantic: a different creation_key can
+   * create another task. Multiple legitimate tasks per occurrence remain allowed.
    */
   hasUnsafeReplayEffects(occurrenceKey: string): boolean {
     const key = requireIdentity(occurrenceKey, 'occurrenceKey');
