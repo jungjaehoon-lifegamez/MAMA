@@ -124,3 +124,26 @@
   연결이 남아 P0 완전 종료는 아님.
 - 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: raw 변경이력 저장+조회+API 노출 완료.
   **최상위 목표 미완료.** 다음: 에이전트 런타임 소비 연결(provenance 통합) → 그 뒤 P1(폴링→delta→보고).
+
+## 2026-09-08 — 보드 갱신 봉인 해제 (Stage 0, feat/intent-v4-owner-flow 80e52da9)
+
+- 작업 / 인텐트 버전 / 연결 시나리오: INTENT v4. I-02, I-03, I-01(내용 조건), I-07 실측.
+- 기대한 사용자 행동 변화: 전체보고를 요청하면 답장 내용이 "작업판 갱신 실패·미해결"이라는
+  MAMA 자체 오류 대신 현재 보드를 반영한다. 정기 보드 갱신이 실제로 돈다.
+- 실제 결과와 증거 수준·위치:
+  - 원인(코드+운영DB 검증): `hasUnsafeReplayEffects`가 확정된 `task_create`를 재실행 위험으로
+    판정 → 고정 occurrence `workorder:board:full:repair`가 영구 봉인 → 비강제 full 보드가 claim
+    즉시 failed(board#4688) → `report-slots.json` 3칸이 09-07 16:44 stale. 수정: 확정
+    `task_create`를 `native_run`과 함께 허용(`ledger.atomic`로 재실행 시 영수증 반환). 확정 Bash /
+    native_tool / 미확정 효과는 계속 차단(기존 pin 테스트 :95/:160 무변경 green).
+  - 단위: `tests/operator/board-repair-replay-gate.test.ts` 4건(RED 재현→GREEN + 음성 3건),
+    관련 5 스위트 119 통과, typecheck. 실원장 복사본: board 3→0 해제, self-check Bash 1→1 유지.
+  - 운영(정상 데몬, 후보 설치 10:48): board#4694 `completed`(같은 고정키), 강제 갱신 0건,
+    `report-slots.json` briefing/action_required/decisions **10:52:29 current**(before 09-07 16:44 stale).
+  - 오너 텔레그램: `전체보고해줘` 10:54:54 → 답장 11:07:40, 본문에 갱신 실패 문구 0건, 10:52 슬롯 인용.
+- 남은 실패·미확인 조건 / 기준 축소 여부: **I-07 미충족** — 766초(큐 대기 70s + 턴 700s; 툴 실행 11s,
+  나머지 모델 스텝 간 사고·작성, code_act 16회). n=1, p95 미측정. I-05 서식 plain. 기준 축소 없음.
+- 의도 판정: **I-02 충족, I-03 부분 확인→충족(슬롯 current; 보드-화면 직접 대조는 이 사례만),
+  I-01 부분 부합(내용 조건 충족, 서식·시간 미충족), I-07 미충족.**
+- 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: Stage 0 완료. **최상위 목표 미완료.**
+  다음: Stage 1 — 스텝 수 축소로 보고 지연(모델 사고 시간) 해결, 새 기구 없이. Stage 2 — 서식.
