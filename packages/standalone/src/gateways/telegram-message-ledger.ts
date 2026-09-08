@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
+import type { TelegramChunkFormat } from './telegram-format.js';
 
 export type TelegramMessageState = 'processing' | 'ready' | 'delivered';
 
@@ -20,6 +21,8 @@ export interface TelegramMessageLedgerEntry {
   response?: string;
   nextChunkIndex?: number;
   deliveryUncertain?: boolean;
+  /** Missing on pre-formatting receipts, whose original chunk boundaries must survive. */
+  chunkFormat?: TelegramChunkFormat;
   deliveryTarget?: string;
   payloadIdentity?: string;
   /**
@@ -138,7 +141,7 @@ export class TelegramMessageLedger {
     return { claimed: true, entry: { ...entry } };
   }
 
-  markReady(key: string, response: string): void {
+  markReady(key: string, response: string, chunkFormat: TelegramChunkFormat = 'plain-v1'): void {
     if (response.length > MAX_RESPONSE_CHARS) {
       throw new Error('Telegram durable response exceeds its size limit');
     }
@@ -148,6 +151,7 @@ export class TelegramMessageLedger {
         ...entry,
         state: 'ready',
         response,
+        chunkFormat,
         nextChunkIndex: 0,
         deliveryUncertain: false,
         updatedAt: this.now(),
@@ -466,6 +470,9 @@ function isLedgerEntry(value: unknown): value is TelegramMessageLedgerEntry {
     (item.nextChunkIndex === undefined ||
       (Number.isSafeInteger(item.nextChunkIndex) && (item.nextChunkIndex as number) >= 0)) &&
     (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean') &&
+    (item.chunkFormat === undefined ||
+      item.chunkFormat === 'plain-v1' ||
+      item.chunkFormat === 'html-v1') &&
     ((item.deliveryTarget === undefined && item.payloadIdentity === undefined) ||
       isDeliveryBinding({
         deliveryTarget: item.deliveryTarget,
