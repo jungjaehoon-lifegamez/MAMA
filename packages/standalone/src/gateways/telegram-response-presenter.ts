@@ -2,18 +2,37 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { StreamCallbacks } from '../agent/types.js';
+import {
+  closeOpenTelegramHtml,
+  formatTelegramMessage,
+  TELEGRAM_MAX_MESSAGE_LENGTH,
+  type TelegramFormattedText,
+  type TelegramChunkFormat,
+} from './telegram-format.js';
 
 const DEFAULT_THROTTLE_MS = 800;
-const DEFAULT_MAX_LENGTH = 4096;
+const DEFAULT_MAX_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH;
 const EMPTY_RESPONSE_MESSAGE = 'No response was generated.';
+/** The host-written placeholder shown while the answer is still forming. */
+const PENDING_PLACEHOLDER = '⏳';
 
+/**
+ * The transport seam. Every visible payload crosses it already formatted, so
+ * the presenter owns the conversion and the transport owns only delivery.
+ */
 export interface TelegramResponseAdapter {
-  send(text: string): Promise<string | null>;
-  edit(handle: string, text: string): Promise<void>;
+  send(message: TelegramFormattedText): Promise<string | null>;
+  edit(handle: string, message: TelegramFormattedText): Promise<void>;
   delete(handle: string): Promise<void>;
 }
 
+/** A status line the host writes itself; it carries no model markup. */
+function plain(text: string): TelegramFormattedText {
+  return { text, entities: [] };
+}
+
 export interface TelegramResponsePresenterOptions {
+  chunkFormat?: TelegramChunkFormat;
   /** Serialize the final multipart batch after pending streaming edits drain. */
   withDelivery?: (send: () => Promise<void>) => Promise<void>;
   throttleMs?: number;
@@ -65,28 +84,8 @@ function isSafeRateLimitRetry(error: unknown): boolean {
   return /(?:^|\b)429\b|too many requests/i.test(telegramErrorMessage(error));
 }
 
-export function splitTelegramMessage(text: string, maxLength: number): string[] {
-  const codePoints = Array.from(text);
-  if (codePoints.length <= maxLength) {
-    return [text];
-  }
-  const chunks: string[] = [];
-  let remaining = codePoints;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining.join(''));
-      break;
-    }
-    const candidate = remaining.slice(0, maxLength);
-    const newline = candidate.lastIndexOf('\n');
-    const splitAt = newline > maxLength * 0.3 ? newline + 1 : maxLength;
-    chunks.push(remaining.slice(0, splitAt).join(''));
-    remaining = remaining.slice(splitAt);
-  }
-  return chunks;
-}
-
 export class TelegramResponsePresenter {
+  private readonly chunkFormat: TelegramChunkFormat;
   private readonly adapter: TelegramResponseAdapter;
   private readonly withDelivery: (send: () => Promise<void>) => Promise<void>;
   private readonly throttleMs: number;
@@ -103,6 +102,7 @@ export class TelegramResponsePresenter {
   private readonly onChunkProgress?: TelegramResponsePresenterOptions['onChunkProgress'];
 
   constructor(adapter: TelegramResponseAdapter, options: TelegramResponsePresenterOptions = {}) {
+    this.chunkFormat = options.chunkFormat ?? 'html-v1';
     this.adapter = adapter;
     this.withDelivery = options.withDelivery ?? ((send) => send());
     this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
@@ -117,7 +117,7 @@ export class TelegramResponsePresenter {
       return;
     }
     try {
-      this.handle = await this.adapter.send('⏳');
+      this.handle = await this.adapter.send(plain(PENDING_PLACEHOLDER));
     } catch {
       this.handle = null;
     }
@@ -174,7 +174,7 @@ export class TelegramResponsePresenter {
   private async deliverFinal(rawResponse: string): Promise<void> {
     const sanitized = sanitizeVisibleText(rawResponse);
     const visible = (sanitized ?? '').trim() || EMPTY_RESPONSE_MESSAGE;
-    const chunks = splitTelegramMessage(visible, this.maxLength);
+    const chunks = formatTelegramMessage(visible, this.maxLength, this.chunkFormat);
 
     if (this.resumeFromChunk >= chunks.length) {
       this.finalized = true;
@@ -243,12 +243,30 @@ export class TelegramResponsePresenter {
     if (!visible) {
       return;
     }
-    const visibleCodePoints = Array.from(visible);
-    const bounded =
-      visibleCodePoints.length > this.maxLength
-        ? visibleCodePoints.slice(-this.maxLength).join('')
-        : visible;
-    await this.adapter.edit(this.handle, bounded).catch(() => {});
+    // A streaming snapshot is cut mid-markup. Formatted as-is, one open tag
+    // makes the whole snapshot literal and the owner watches the answer flicker
+    // between styled text and raw HTML. Close the snapshot first, then format.
+    // A closed snapshot can still be empty (the cut fell inside the first tag),
+    // and then the placeholder start() already wrote is the right thing to show.
+    const formatted =
+      formatTelegramMessage(
+        this.chunkFormat === 'html-v1' ? closeOpenTelegramHtml(visible) : visible,
+        Number.MAX_SAFE_INTEGER,
+        this.chunkFormat
+      )[0] ?? plain(PENDING_PLACEHOLDER);
+    // Clip the rendered tail, not the HTML source: removing an opening tag
+    // before parsing would expose its closing tag and lose the entity span.
+    let start = Math.max(0, formatted.text.length - this.maxLength);
+    if (/[\uDC00-\uDFFF]/.test(formatted.text[start])) start += 1;
+    const message = {
+      text: formatted.text.slice(start),
+      entities: formatted.entities.flatMap((entity) => {
+        const offset = Math.max(start, entity.offset);
+        const end = entity.offset + entity.length;
+        return end > offset ? [{ ...entity, offset: offset - start, length: end - offset }] : [];
+      }),
+    };
+    await this.adapter.edit(this.handle, message).catch(() => {});
   }
 
   private cancelPendingEdit(): void {
@@ -258,7 +276,7 @@ export class TelegramResponsePresenter {
     }
   }
 
-  private async sendChunks(chunks: string[], startIndex = 0): Promise<void> {
+  private async sendChunks(chunks: TelegramFormattedText[], startIndex = 0): Promise<void> {
     for (let offset = 0; offset < chunks.length; offset += 1) {
       const chunk = chunks[offset];
       const chunkIndex = startIndex + offset;

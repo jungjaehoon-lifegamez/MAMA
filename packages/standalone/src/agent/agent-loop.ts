@@ -90,6 +90,7 @@ import {
   McpResultMissingError,
 } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
+import { TELEGRAM_FORMAT_GUIDE } from '../gateways/telegram-format.js';
 import {
   beginTemporalCodeActCall,
   createTemporalCodeActBreakerState,
@@ -549,6 +550,7 @@ function ownerRuntimeSessionPolicyFingerprint(
     version: 1,
     subject: OWNER_RUNTIME_SESSION_KEY,
     subagentPolicy: OWNER_SUBAGENT_INSTRUCTIONS,
+    telegramFormatPolicy: TELEGRAM_FORMAT_GUIDE,
     model: model ?? null,
     allowedTools: [...(role?.allowedTools ?? [])].sort(),
     blockedTools: [...(role?.blockedTools ?? [])].sort(),
@@ -1597,6 +1599,9 @@ export class AgentLoop {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
         if (ownerRuntime && !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)) {
           baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_SUBAGENT_INSTRUCTIONS}`;
+        }
+        if (ownerRuntime && !baseSystemPrompt.includes(TELEGRAM_FORMAT_GUIDE)) {
+          baseSystemPrompt = `${baseSystemPrompt}\n\n${TELEGRAM_FORMAT_GUIDE}`;
         }
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && this.useCodeAct) {

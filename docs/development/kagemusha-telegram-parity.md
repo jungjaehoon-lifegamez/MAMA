@@ -1597,3 +1597,13 @@ scope bindings, and the day's `[learning]` audit lines).
 - 실제 파일 저장소를 이용한 digest 모델 실패→재생성된 loop 복구에서 같은 발생 참조와
   단일 전달을 확인한다. 이 증거는 실제 Telegram 화면이나 전체 데이터 가공 품질 증거가 아니다.
 - 상태: 소스 후보 전환 중. 설치본 미반영, 전체 parity 미완료.
+
+
+## Stage 2 Telegram formatting candidate: 2026-09-08
+
+- TG-01/TG-06: the shared outbound formatter converts Telegram HTML to entities, clips entity spans at UTF-16 boundaries, and falls back to unstyled text only for formatting rejection. Streaming clips rendered text after parsing; final multipart delivery retains existing queue and receipt ownership.
+- TG-05/TG-06: the standing owner policy includes the transport-conditional guide and its fingerprint. Reports no longer append the guide on each turn. The real ingress/router/AgentLoop/protocol fixture starts one thread with one guide for either background-first or inbound-first order.
+- TG-01/TG-06: pending receipts without a chunk-format marker resume using their original literal code-point boundaries. New deliveries persist html-v1 in the existing ledger, preserving it on retry. Both old inbound and outbound tail-loss regressions fail before correction and pass afterwards.
+- Independent bounded Codex review cleared the three findings after correction. The related seven-file gate passed 300 tests; the later protocol fixture passed both admission orders. Build and typecheck passed. Actual model output, installed Telegram rendering, and percentile latency remain unverified; this is candidate evidence only.
+
+- Installed candidate evidence: the first real report remained plain due to conflicting local owner-brief formatting rules, despite the guide appearing in the model policy. The obsolete rules were replaced with the actual HTML-to-entities contract. After owner correction and another request, the delivered full report contained five bold headings; the owner confirmed they appeared bold in Telegram. Receipt completed about 166 seconds after router admission. This is one real observation, not a percentile SLO or proof of every formatting mode. Public release remains pending.
