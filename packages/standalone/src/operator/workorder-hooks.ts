@@ -143,14 +143,13 @@ export interface WorkerTraceQueries {
   countObligatedTraceRowsSince: (maxId: number) => number;
 }
 
-export const REQUIRED_FULL_BOARD_SLOTS = [
-  'briefing',
-  'action_required',
-  'decisions',
-  'pipeline',
-] as const;
+export const REQUIRED_BOARD_JUDGMENT_SLOTS = ['briefing', 'action_required', 'decisions'] as const;
 
-/** Completed, attempt-bound report_publish evidence for a complete Board repair. */
+// Board freshness includes the host-managed pipeline. Model publish receipts do not:
+// the board turn writes only judgment, while the report store projects the task ledger.
+export const REQUIRED_FULL_BOARD_SLOTS = [...REQUIRED_BOARD_JUDGMENT_SLOTS, 'pipeline'] as const;
+
+/** Completed, attempt-bound report_publish evidence for the Board's authored judgment. */
 export function buildFullBoardTraceQueries(
   sessionsDb: SQLiteDatabase | undefined,
   workerChannelId: string,
@@ -159,7 +158,7 @@ export function buildFullBoardTraceQueries(
   if (!Number.isSafeInteger(workorderAttemptId) || workorderAttemptId < 1) {
     throw new Error('[workorder-hooks] full Board attempt id must be a positive integer');
   }
-  const requiredSlotPredicates = REQUIRED_FULL_BOARD_SLOTS.map(
+  const requiredSlotPredicates = REQUIRED_BOARD_JUDGMENT_SLOTS.map(
     () =>
       `EXISTS (SELECT 1 FROM json_each(json_extract(details, '$.report_slot_ids')) WHERE value = ?)`
   ).join(' AND ');
@@ -189,7 +188,7 @@ export function buildFullBoardTraceQueries(
              AND json_type(details, '$.report_slot_ids') = 'array'
              AND ${requiredSlotPredicates}`
         )
-        .get(workerChannelId, workorderAttemptId, maxId, ...REQUIRED_FULL_BOARD_SLOTS) as {
+        .get(workerChannelId, workorderAttemptId, maxId, ...REQUIRED_BOARD_JUDGMENT_SLOTS) as {
         n: number;
       };
       return row.n;

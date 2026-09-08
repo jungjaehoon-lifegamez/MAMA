@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.51.2] - 2026-09-08
+
+### Fixed
+
+- Board maintenance now recognizes successfully saved analysis without requiring the agent to rewrite the host-managed task pipeline. This prevents an unnecessary follow-up repair after completed work while retaining checks for partial, failed, or unrelated execution results.
+
 ## mama-os [0.51.1] - 2026-09-08
 
 ### Fixed
