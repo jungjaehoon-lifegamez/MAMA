@@ -1598,7 +1598,6 @@ scope bindings, and the day's `[learning]` audit lines).
   단일 전달을 확인한다. 이 증거는 실제 Telegram 화면이나 전체 데이터 가공 품질 증거가 아니다.
 - 상태: 소스 후보 전환 중. 설치본 미반영, 전체 parity 미완료.
 
-
 ## Stage 2 Telegram formatting candidate: 2026-09-08
 
 - TG-01/TG-06: the shared outbound formatter converts Telegram HTML to entities, clips entity spans at UTF-16 boundaries, and falls back to unstyled text only for formatting rejection. Streaming clips rendered text after parsing; final multipart delivery retains existing queue and receipt ownership.
@@ -1607,3 +1606,16 @@ scope bindings, and the day's `[learning]` audit lines).
 - Independent bounded Codex review cleared the three findings after correction. The related seven-file gate passed 300 tests; the later protocol fixture passed both admission orders. Build and typecheck passed. Actual model output, installed Telegram rendering, and percentile latency remain unverified; this is candidate evidence only.
 
 - Installed candidate evidence: the first real report remained plain due to conflicting local owner-brief formatting rules, despite the guide appearing in the model policy. The obsolete rules were replaced with the actual HTML-to-entities contract. After owner correction and another request, the delivered full report contained five bold headings; the owner confirmed they appeared bold in Telegram. Receipt completed about 166 seconds after router admission. This is one real observation, not a percentile SLO or proof of every formatting mode. Public release remains pending.
+
+## 2026-09-08 local fix — Board judgment receipt contract (TG-01/TG-06)
+
+- Full repair now requires the three authored judgment slots in a completed, same-attempt
+  report_publish receipt. The host-managed pipeline remains required by full-board freshness;
+  it is not required in the model's publish arguments.
+- Regression: real publisher and sessions DB -> receipt query -> repair gate clears the captured
+  generation, while later input remains dirty. Missing judgment, failed publication/projection,
+  other-attempt evidence and old trace rows remain insufficient.
+- Focused verification: 112 tests passed; standalone build, typecheck and changed-file lint passed.
+  Read-only replay of production attempt4704/trace276781: old predicate0, fixed predicate1.
+- This is a local code fix, not an installed release or a fresh Telegram/latency observation.
+  The original294-second board execution and broader projection/runtime redesign remain separate.

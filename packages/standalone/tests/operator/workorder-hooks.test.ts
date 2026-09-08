@@ -12,6 +12,8 @@ import { initAgentTables } from '../../src/db/agent-store.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { createReportPublisher, createReportStore } from '../../src/api/report-handler.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { BoardRefreshGate } from '../../src/operator/board-refresh-gate.js';
+import { renderPipelineSlot } from '../../src/operator/board-pipeline-render.js';
 import {
   buildWorkerTraceQueries,
   buildFullBoardTraceQueries,
@@ -163,7 +165,94 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(queries.countObligatedTraceRowsSince(after)).toBe(0);
     });
 
-    it('TG-06 full repair evidence is attempt-bound and requires all four slots', async () => {
+    it('TG-06 accepts persisted judgment slots and clears only the captured repair generation', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      const ledger = new TaskLedger(new Database(':memory:'));
+      executor.setTaskLedger(ledger);
+      ledger.create({ title: 'fixture task', completion_criteria: 'fixture result is stored' });
+      const store = createReportStore();
+      store.setTaskProjectionProvider(() => {
+        const page = ledger.listPage({ includeTerminal: false, order: 'deadline_priority' });
+        return {
+          basisRevision: ledger.readGeneration(),
+          html: renderPipelineSlot(page.tasks, Date.now(), page.total),
+        };
+      });
+      executor.setReportPublisher(createReportPublisher(store, new Set()));
+      const gate = new BoardRefreshGate({ initialGeneration: 100 });
+      const workOrder = {
+        id: 4704,
+        workKind: 'board',
+        payload: { mode: 'full', attempts: 1, ...gate.captureFullRepair() },
+      } as unknown as WorkOrderRecord;
+      const queries = buildFullBoardTraceQueries(sessionsDb, 'worker:board', workOrder.id);
+      const before = queries.getTraceMaxId();
+      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate);
+      expect(gate.needsFullRepair()).toBe(true);
+
+      await executor.execute(
+        'report_publish',
+        {
+          slots: { briefing: '<p>b</p>', action_required: '<p>a</p>', decisions: '<p>d</p>' },
+        } as never,
+        {
+          executionSurface: 'model_tool',
+          source: 'operator',
+          channelId: 'worker:board',
+          workorderAttemptId: workOrder.id,
+        } as never
+      );
+      expect(store.get('pipeline')).toMatchObject({
+        freshness: 'current',
+        basisRevision: ledger.readGeneration(),
+      });
+      expect(store.get('pipeline')?.html).toContain('fixture task');
+      const verified = queries.countObligatedTraceRowsSince(before) > 0;
+      expect(verified).toBe(true);
+      applyBoardRefreshVerdict(workOrder, verified, { disposition: 'complete' }, gate);
+      expect(gate.needsFullRepair()).toBe(false);
+      gate.markChannelDirty('fixture:later-input');
+      applyBoardRefreshVerdict(workOrder, verified, { disposition: 'complete' }, gate);
+      expect(gate.needsFullRepair()).toBe(true);
+      expect(queries.countObligatedTraceRowsSince(queries.getTraceMaxId())).toBe(0);
+    });
+
+    it('TG-06 does not count judgment publication when the managed pipeline cannot refresh', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      const store = createReportStore();
+      let unavailable = false;
+      store.setTaskProjectionProvider(() => {
+        if (unavailable) throw new Error('fixture projection unavailable');
+        return { basisRevision: 'fixture-revision', html: '<p>pipeline</p>' };
+      });
+      executor.setReportPublisher(createReportPublisher(store, new Set()));
+      const queries = buildFullBoardTraceQueries(sessionsDb, 'worker:board', 4704);
+      const before = queries.getTraceMaxId();
+      unavailable = true;
+      await expect(
+        executor.execute(
+          'report_publish',
+          {
+            slots: { briefing: '<p>b</p>', action_required: '<p>a</p>', decisions: '<p>d</p>' },
+          } as never,
+          {
+            executionSurface: 'model_tool',
+            source: 'operator',
+            channelId: 'worker:board',
+            workorderAttemptId: 4704,
+          } as never
+        )
+      ).rejects.toThrow(/fixture projection unavailable/);
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+    });
+
+    it('TG-06 full repair evidence is attempt-bound and requires all judgment slots', async () => {
       const sessionsDb: SQLiteDatabase = new Database(':memory:');
       initAgentTables(sessionsDb);
       const opDb: SQLiteDatabase = new Database(':memory:');
@@ -311,15 +400,15 @@ describe('Story S2-T3: extracted workorder hooks', () => {
           slots: {
             briefing: '<p>b</p>',
             action_required: '<p>a</p>',
-            decisions: '<p>d</p>',
-            pipeline: 'x'.repeat(600_000),
+            decisions: 'x'.repeat(600_000),
+            pipeline: '<p>host projection does not substitute for missing judgment</p>',
           },
         } as never,
         context as never
       );
       expect(partial).toMatchObject({
         success: true,
-        acceptedSlotIds: ['action_required', 'briefing', 'decisions'],
+        acceptedSlotIds: ['action_required', 'briefing', 'pipeline'],
       });
       expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
 
