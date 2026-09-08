@@ -6,7 +6,8 @@
  */
 
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,7 +80,6 @@ import { TelegramGateway } from '../../src/gateways/telegram.js';
 import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 import { getMemberCandidateStore } from '../../src/gateways/member-candidate-store.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
-import { splitTelegramMessage } from '../../src/gateways/telegram-response-presenter.js';
 
 const startedGateways = new Set<TelegramGateway>();
 const mediaRoots = new Set<string>();
@@ -244,52 +244,55 @@ describe('TelegramGateway basics', () => {
 });
 
 describe('TelegramGateway - message splitting', () => {
-  it('should not split messages under 4096 chars', () => {
-    const shortText = 'Hello, world!';
-    const chunks = splitTelegramMessage(shortText, 4096);
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toBe(shortText);
-  });
-
-  it('should not split a message of exactly 4096 chars', () => {
-    const exactText = 'a'.repeat(4096);
-    const chunks = splitTelegramMessage(exactText, 4096);
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toBe(exactText);
-  });
-
-  it('should split a message exceeding 4096 chars into multiple chunks', () => {
-    const longText = 'a'.repeat(8192);
-    const chunks = splitTelegramMessage(longText, 4096);
-    expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) {
-      expect(chunk.length).toBeLessThanOrEqual(4096);
+  it.each(['inbound', 'outbound'] as const)(
+    'TG-01/TG-06 resumes legacy %s chunks without dropping the unsent tail',
+    async (direction) => {
+      mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+      const ledgerPath = join(
+        await makeMediaRoot(join(tmpdir(), 'mama-legacy-chunks-')),
+        'ledger.json'
+      );
+      const text = `<b>${'x'.repeat(4096)}</b>`;
+      const ledger = new TelegramMessageLedger(ledgerPath);
+      const key =
+        direction === 'inbound'
+          ? '7777:125'
+          : `outbound:${createHash('sha256').update('text\0legacy-operation').digest('hex')}`;
+      ledger.claim(
+        key,
+        direction === 'inbound'
+          ? undefined
+          : {
+              deliveryTarget: 'telegram:7777',
+              payloadIdentity: createHash('sha256').update(text).digest('hex'),
+            }
+      );
+      ledger.markReady(
+        key,
+        direction === 'inbound'
+          ? text
+          : JSON.stringify({ version: 1, nextIndex: 1, uncertain: false })
+      );
+      if (direction === 'inbound') ledger.markDeliveryProgress(key, 1, false);
+      // Pre-upgrade files have no chunk-format marker at all.
+      const oldFile = JSON.parse(readFileSync(ledgerPath, 'utf8')) as {
+        entries: Array<{ chunkFormat?: string }>;
+      };
+      for (const entry of oldFile.entries) delete entry.chunkFormat;
+      writeFileSync(ledgerPath, JSON.stringify(oldFile));
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        turnProcessor: mockMessageRouter,
+        config: { allowedChats: ['7777'] },
+        messageLedgerPath: ledgerPath,
+      });
+      await gateway.start();
+      if (direction === 'outbound') await gateway.sendMessage('7777', text, 'legacy-operation');
+      expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['xxx</b>']);
+      expect(new TelegramMessageLedger(ledgerPath).get(key)?.state).toBe('delivered');
+      await gateway.stop();
     }
-  });
-
-  it('should preserve the full content after splitting', () => {
-    const longText = 'x'.repeat(9000);
-    const chunks = splitTelegramMessage(longText, 4096);
-    expect(chunks.join('')).toBe(longText);
-  });
-
-  it('does not split a Unicode surrogate pair at the Telegram boundary', () => {
-    const text = `${'a'.repeat(4095)}😀tail`;
-    const chunks = splitTelegramMessage(text, 4096);
-
-    expect(chunks.join('')).toBe(text);
-    expect(chunks.every((chunk: string) => !chunk.includes('�'))).toBe(true);
-    expect(chunks[0].endsWith('😀')).toBe(true);
-  });
-
-  it('should prefer splitting at newline boundaries when possible', () => {
-    const line1 = 'a'.repeat(3000) + '\n';
-    const line2 = 'b'.repeat(3000);
-    const text = line1 + line2;
-    const chunks = splitTelegramMessage(text, 4096);
-    expect(chunks.length).toBeGreaterThanOrEqual(2);
-    expect(chunks.join('')).toBe(text);
-  });
+  );
 
   it('retries the failed chunk without resending earlier confirmed chunks', async () => {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
@@ -323,6 +326,38 @@ describe('TelegramGateway - message splitting', () => {
     expect(mockApi.sendMessage.mock.calls.map((call) => String(call[1]).length)).toEqual([
       4096, 4096, 4096, 808,
     ]);
+    await gateway.stop();
+  });
+
+  it('refuses an empty delivery instead of recording one that never happened', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const ledgerPath = join(
+      await makeMediaRoot(join(tmpdir(), 'mama-telegram-empty-ledger-')),
+      'ledger.json'
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    // sendMessage() drops blank text before this point, so the invariant is
+    // pinned at the ledger boundary itself: whatever else changes upstream, a
+    // zero-chunk payload must never reach a claim or a delivered mark.
+    const sendNow = (
+      gateway as unknown as {
+        sendMessageNow(chatId: string, text: string, idempotencyKey?: string): Promise<void>;
+      }
+    ).sendMessageNow.bind(gateway);
+
+    await expect(sendNow('7777', '', 'operation-empty')).rejects.toThrow(
+      'Refusing to record an empty Telegram delivery'
+    );
+
+    // No API call, and nothing claimed or marked delivered in the ledger.
+    expect(mockApi.sendMessage).not.toHaveBeenCalled();
+    expect(new TelegramMessageLedger(ledgerPath).listUndelivered()).toEqual([]);
     await gateway.stop();
   });
 
@@ -1816,6 +1851,46 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       expect.stringContaining('turns'),
       expect.anything()
     );
+    await gateway.stop();
+  });
+
+  it('delivers a formatted answer as Telegram entities instead of raw markup', async () => {
+    const gateway = await makeGateway();
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      response: '<b>Done</b> and <a href="https://example.com/r">linked</a>.',
+      duration: 1,
+    });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 7777, 113),
+      text: 'process this',
+    });
+
+    expect(mockApi.editMessageText).toHaveBeenCalledWith(7777, 1, 'Done and linked.', {
+      entities: [
+        { type: 'bold', offset: 0, length: 4 },
+        { type: 'text_link', offset: 9, length: 6, url: 'https://example.com/r' },
+      ],
+    });
+    await gateway.stop();
+  });
+
+  it('resends the answer unstyled when Telegram rejects the entities', async () => {
+    const gateway = await makeGateway();
+    mockApi.editMessageText.mockRejectedValueOnce(
+      new Error("Bad Request: can't parse entities: unsupported start tag")
+    );
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      response: '<b>Done</b>',
+      duration: 1,
+    });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 7777, 114),
+      text: 'process this',
+    });
+
+    expect(mockApi.editMessageText).toHaveBeenLastCalledWith(7777, 1, 'Done');
     await gateway.stop();
   });
 });

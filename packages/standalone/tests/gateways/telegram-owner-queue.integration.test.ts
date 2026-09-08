@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +21,8 @@ import { OwnerActionEffectLedger } from '../../src/operator/owner-action-effects
 import { getSessionPool } from '../../src/agent/session-pool.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import { installReportCodexServer } from '../helpers/report-codex-server.js';
+import { TELEGRAM_FORMAT_GUIDE } from '../../src/gateways/telegram-format.js';
+import { projectOwnerRuntimeRole } from '../../src/operator/owner-runtime.js';
 
 // Only Telegram transport and the external model protocol are replaced.
 const transport = vi.hoisted(() => ({
@@ -89,8 +91,11 @@ describe('TG-01/TG-04/TG-06 real owner ingress and background tool delivery', ()
   it.each(['background-first', 'inbound-first'] as const)(
     'delivers a receipted background tool send with %s owner admission',
     async (order) => {
-      installReportCodexServer(root, order === 'inbound-first' ? 2 : 1);
-      const ownerRole = { ...DEFAULT_ROLES.definitions.owner_console, model: 'gpt-5.6-sol' };
+      const capture = installReportCodexServer(root, order === 'inbound-first' ? 2 : 1);
+      const ownerRole = projectOwnerRuntimeRole({
+        ...DEFAULT_ROLES.definitions.owner_console,
+        model: 'gpt-5.6-sol',
+      });
       getRoleManager({
         rolesConfig: {
           ...DEFAULT_ROLES,
@@ -225,6 +230,19 @@ describe('TG-01/TG-04/TG-06 real owner ingress and background tool delivery', ()
         });
         expect(await reportResult).not.toBeInstanceOf(Error);
         expect(await inbound).not.toBeInstanceOf(Error);
+        const requests = readFileSync(capture, 'utf8')
+          .trim()
+          .split('\n')
+          .map(
+            (line) =>
+              JSON.parse(line) as { method?: string; params?: { baseInstructions?: string } }
+          );
+        const starts = requests.filter((request) => request.method === 'thread/start');
+        expect(starts).toHaveLength(1);
+        expect(starts[0].params?.baseInstructions?.split(TELEGRAM_FORMAT_GUIDE)).toHaveLength(2);
+        for (const request of requests.filter((request) => request.method === 'turn/start')) {
+          expect(JSON.stringify(request)).not.toContain('Telegram message formatting');
+        }
         expect(transport.sent.filter((text) => text === 'background effect')).toHaveLength(1);
         const firstChunk = transport.sent.findIndex((text) => text.startsWith('batch:'));
         expect(transport.sent[firstChunk + 1]).toBe('A'.repeat(910));

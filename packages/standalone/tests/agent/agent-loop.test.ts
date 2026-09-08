@@ -47,6 +47,7 @@ import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { buildOperatorReportAgentPolicy } from '../../src/cli/commands/start.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import { hashSessionPolicyFingerprint } from '../../src/gateways/message-router.js';
+import { TELEGRAM_FORMAT_GUIDE } from '../../src/gateways/telegram-format.js';
 
 interface CanonicalDeclarationParam {
   name: string;
@@ -3897,6 +3898,10 @@ Skills provide additional tools.
       expect(fingerprints[0]).toBe(fingerprints[1]);
       expect(fingerprints[0]).not.toContain('telegram-channel-policy');
       expect(fingerprints[0]).not.toContain('operator-report-policy');
+      // A formatting policy rollout must replace old policy once, while a
+      // switch between owner chat and reports must keep the same thread policy.
+      const ownerPolicy = JSON.parse(JSON.parse(fingerprints[0]).callerFingerprint);
+      expect(ownerPolicy.telegramFormatPolicy).toBe(TELEGRAM_FORMAT_GUIDE);
     });
 
     it('TG-05 prepares the default Claude policy for the first background owner stimulus', async () => {
@@ -3923,6 +3928,7 @@ Skills provide additional tools.
       const delivered = persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt;
       expect(delivered).toContain('default owner policy');
       expect(delivered).toContain(OWNER_SUBAGENT_INSTRUCTIONS);
+      expect(delivered?.split(TELEGRAM_FORMAT_GUIDE)).toHaveLength(2);
     });
 
     it('TG-05 leaves a default initial non-owner Claude policy unchanged', async () => {

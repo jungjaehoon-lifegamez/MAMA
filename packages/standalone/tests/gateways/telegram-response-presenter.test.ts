@@ -1,13 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TelegramResponsePresenter } from '../../src/gateways/telegram-response-presenter.js';
+import type { TelegramFormattedText } from '../../src/gateways/telegram-format.js';
 
 function makeAdapter() {
   return {
-    send: vi.fn(async (_text: string) => 'message-1'),
-    edit: vi.fn(async (_handle: string, _text: string) => {}),
+    send: vi.fn(async (_message: TelegramFormattedText) => 'message-1'),
+    edit: vi.fn(async (_handle: string, _message: TelegramFormattedText) => {}),
     delete: vi.fn(async (_handle: string) => {}),
   };
+}
+
+type Adapter = ReturnType<typeof makeAdapter>;
+
+function sentTexts(adapter: Adapter): string[] {
+  return adapter.send.mock.calls.map(([message]) => message.text);
+}
+
+function editedTexts(adapter: Adapter): string[] {
+  return adapter.edit.mock.calls.map(([, message]) => message.text);
 }
 
 describe('TelegramResponsePresenter', () => {
@@ -25,8 +36,7 @@ describe('TelegramResponsePresenter', () => {
 
     await presenter.start();
 
-    expect(adapter.send).toHaveBeenCalledWith('⏳');
-    expect(adapter.send).toHaveBeenCalledTimes(1);
+    expect(sentTexts(adapter)).toEqual(['⏳']);
   });
 
   it('replaces the placeholder with an explicit queue status', async () => {
@@ -37,10 +47,10 @@ describe('TelegramResponsePresenter', () => {
     presenter.markQueued();
     await vi.advanceTimersByTimeAsync(800);
 
-    expect(adapter.edit).toHaveBeenCalledWith(
-      'message-1',
-      '⏳ Waiting for the earlier task to finish.'
-    );
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', {
+      text: '⏳ Waiting for the earlier task to finish.',
+      entities: [],
+    });
   });
 
   it('continues without a placeholder when the initial send fails', async () => {
@@ -51,7 +61,7 @@ describe('TelegramResponsePresenter', () => {
     await expect(presenter.start()).resolves.toBeUndefined();
     await presenter.finalize('Final answer');
 
-    expect(adapter.send).toHaveBeenNthCalledWith(2, 'Final answer');
+    expect(sentTexts(adapter)[1]).toBe('Final answer');
     expect(adapter.edit).not.toHaveBeenCalled();
   });
 
@@ -69,8 +79,7 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.edit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'hello world');
-    expect(adapter.edit).toHaveBeenCalledTimes(1);
+    expect(editedTexts(adapter)).toEqual(['hello world']);
   });
 
   it('shows concise tool progress only before response text arrives', async () => {
@@ -81,11 +90,11 @@ describe('TelegramResponsePresenter', () => {
 
     callbacks.onToolUse?.('code_act', {});
     await vi.advanceTimersByTimeAsync(800);
-    expect(adapter.edit).toHaveBeenLastCalledWith('message-1', '🔧 code_act...');
+    expect(editedTexts(adapter).at(-1)).toBe('🔧 code_act...');
 
     callbacks.onDelta?.('actual response');
     await vi.advanceTimersByTimeAsync(800);
-    expect(adapter.edit).toHaveBeenLastCalledWith('message-1', 'actual response');
+    expect(editedTexts(adapter).at(-1)).toBe('actual response');
   });
 
   it('never streams a partial leading reasoning decoration', async () => {
@@ -100,8 +109,8 @@ describe('TelegramResponsePresenter', () => {
 
     callbacks.onDelta?.(' | ⏱️ 1 turns||\nresponse');
     await vi.advanceTimersByTimeAsync(800);
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'response');
-    expect(adapter.edit.mock.calls.flat().join('\n')).not.toContain('turns');
+    expect(editedTexts(adapter)).toEqual(['response']);
+    expect(editedTexts(adapter).join('\n')).not.toContain('turns');
   });
 
   it('finalizes the same placeholder without the reasoning header or tool progress', async () => {
@@ -112,9 +121,66 @@ describe('TelegramResponsePresenter', () => {
 
     await presenter.finalize('||🔧 code_act | ⏱️ 1 turns||\nCompleted.');
 
-    expect(adapter.edit).toHaveBeenLastCalledWith('message-1', 'Completed.');
+    expect(editedTexts(adapter).at(-1)).toBe('Completed.');
     expect(adapter.send).toHaveBeenCalledTimes(1);
     expect(adapter.delete).not.toHaveBeenCalled();
+  });
+
+  it('delivers the final answer as Telegram entities, not as raw markup', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter);
+    await presenter.start();
+
+    await presenter.finalize('<b>Status</b>\nAll clear.');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', {
+      text: 'Status\nAll clear.',
+      entities: [{ type: 'bold', offset: 0, length: 6 }],
+    });
+  });
+
+  it('TG-01 preserves formatting when a streamed span exceeds the message limit', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { maxLength: 10, throttleMs: 1 });
+    await presenter.start();
+
+    presenter.callbacks().onDelta?.('<b>12345678901234567890</b>');
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(adapter.edit).toHaveBeenLastCalledWith('message-1', {
+      text: '1234567890',
+      entities: [{ type: 'bold', offset: 0, length: 10 }],
+    });
+  });
+
+  it('carries entities onto every chunk of a long formatted answer', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { maxLength: 5 });
+    await presenter.start();
+
+    await presenter.finalize('<b>1234567</b>');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', {
+      text: '12345',
+      entities: [{ type: 'bold', offset: 0, length: 5 }],
+    });
+    expect(adapter.send).toHaveBeenLastCalledWith({
+      text: '67',
+      entities: [{ type: 'bold', offset: 0, length: 2 }],
+    });
+  });
+
+  it('sends unparseable markup as literal text rather than dropping the answer', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter);
+    await presenter.start();
+
+    await presenter.finalize('<b>unterminated answer');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', {
+      text: '<b>unterminated answer',
+      entities: [],
+    });
   });
 
   it('redacts inbound attachment paths from a custom MAMA_WORKSPACE', async () => {
@@ -128,7 +194,7 @@ describe('TelegramResponsePresenter', () => {
       'Saved at /private/custom workspace/media/inbound/telegram/private-image.png'
     );
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'Saved at [attachment]');
+    expect(editedTexts(adapter)).toEqual(['Saved at [attachment]']);
     if (previousWorkspace === undefined) delete process.env.MAMA_WORKSPACE;
     else process.env.MAMA_WORKSPACE = previousWorkspace;
   });
@@ -140,9 +206,8 @@ describe('TelegramResponsePresenter', () => {
 
     await presenter.finalize('1234567890abcdefghijXYZ');
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', '1234567890');
-    expect(adapter.send).toHaveBeenNthCalledWith(2, 'abcdefghij');
-    expect(adapter.send).toHaveBeenNthCalledWith(3, 'XYZ');
+    expect(editedTexts(adapter)).toEqual(['1234567890']);
+    expect(sentTexts(adapter)).toEqual(['⏳', 'abcdefghij', 'XYZ']);
   });
 
   it('keeps a Unicode surrogate pair together when chunking a response', async () => {
@@ -150,10 +215,15 @@ describe('TelegramResponsePresenter', () => {
     const presenter = new TelegramResponsePresenter(adapter, { maxLength: 5 });
     await presenter.start();
 
-    await presenter.finalize('1234😀tail');
+    const emoji = String.fromCodePoint(0x1f600);
+    await presenter.finalize(`1234${emoji}tail`);
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', '1234😀');
-    expect(adapter.send).toHaveBeenNthCalledWith(2, 'tail');
+    const delivered = [...editedTexts(adapter), ...sentTexts(adapter).slice(1)];
+    expect(delivered.join('')).toBe(`1234${emoji}tail`);
+    for (const chunk of delivered) {
+      expect(/[\uD800-\uDBFF]$/.test(chunk)).toBe(false);
+      expect(/^[\uDC00-\uDFFF]/.test(chunk)).toBe(false);
+    }
   });
 
   it('does not retry an ambiguously failed later chunk and can publish a visible failure notice', async () => {
@@ -168,14 +238,11 @@ describe('TelegramResponsePresenter', () => {
     await expect(presenter.finalize('123456789')).rejects.toThrow('chunk failed');
     await presenter.fail('Response delivery stopped after a partial send.');
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', '12345');
-    expect(adapter.send).toHaveBeenCalledWith('6789');
-    expect(
-      adapter.send.mock.calls
-        .slice(2)
-        .map(([text]) => text)
-        .join('')
-    ).toBe('Response delivery stopped after a partial send.');
+    expect(editedTexts(adapter)).toEqual(['12345']);
+    expect(sentTexts(adapter)).toContain('6789');
+    expect(sentTexts(adapter).slice(2).join('')).toBe(
+      'Response delivery stopped after a partial send.'
+    );
   });
 
   it('sends all chunks normally when no placeholder exists', async () => {
@@ -185,8 +252,7 @@ describe('TelegramResponsePresenter', () => {
     await presenter.finalize('123456789');
 
     expect(adapter.edit).not.toHaveBeenCalled();
-    expect(adapter.send).toHaveBeenNthCalledWith(1, '12345');
-    expect(adapter.send).toHaveBeenNthCalledWith(2, '6789');
+    expect(sentTexts(adapter)).toEqual(['12345', '6789']);
   });
 
   it('deletes a stale placeholder and sends the final response when editing fails', async () => {
@@ -198,7 +264,7 @@ describe('TelegramResponsePresenter', () => {
     await presenter.finalize('Final answer');
 
     expect(adapter.delete).toHaveBeenCalledWith('message-1');
-    expect(adapter.send).toHaveBeenNthCalledWith(2, 'Final answer');
+    expect(sentTexts(adapter)[1]).toBe('Final answer');
   });
 
   it('treats Telegram message-not-modified as a successful final edit', async () => {
@@ -220,7 +286,7 @@ describe('TelegramResponsePresenter', () => {
 
     await presenter.finalize('  ');
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'No response was generated.');
+    expect(editedTexts(adapter)).toEqual(['No response was generated.']);
   });
 
   it('bounds every streaming edit to the Telegram limit', async () => {
@@ -231,7 +297,32 @@ describe('TelegramResponsePresenter', () => {
     presenter.callbacks().onDelta?.('1234567890');
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', '34567890');
+    expect(editedTexts(adapter)).toEqual(['34567890']);
+  });
+
+  it('never shows raw markup while the answer streams in', async () => {
+    // Every prefix of a formatted answer is a snapshot the owner can actually
+    // see. One open tag used to make the whole snapshot literal, so the
+    // placeholder flickered between styled text and raw HTML.
+    const answer =
+      '<b>Status</b>\nsee <a href="https://example.com/x">the source</a> and ' +
+      '<i>note</i> <code>id-1</code>\n<blockquote>quoted</blockquote>';
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { throttleMs: 10 });
+    await presenter.start();
+    const callbacks = presenter.callbacks();
+
+    for (const character of answer) {
+      callbacks.onDelta?.(character);
+      await vi.advanceTimersByTimeAsync(10);
+    }
+
+    expect(editedTexts(adapter).length).toBeGreaterThan(10);
+    for (const text of editedTexts(adapter)) {
+      expect(text).not.toContain('<b');
+      expect(text).not.toContain('href=');
+    }
+    expect(editedTexts(adapter).at(-1)).toBe('Status\nsee the source and note id-1\nquoted');
   });
 
   it('cancels pending streaming edits after finalization', async () => {
@@ -243,8 +334,7 @@ describe('TelegramResponsePresenter', () => {
     await presenter.finalize('final');
     await vi.advanceTimersByTimeAsync(800);
 
-    expect(adapter.edit).toHaveBeenCalledTimes(1);
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'final');
+    expect(editedTexts(adapter)).toEqual(['final']);
   });
 
   it('waits for an in-flight streaming edit before writing the final answer', async () => {
@@ -266,10 +356,7 @@ describe('TelegramResponsePresenter', () => {
     releaseStreamingEdit?.();
     await finalization;
 
-    expect(adapter.edit.mock.calls).toEqual([
-      ['message-1', 'intermediate'],
-      ['message-1', 'final'],
-    ]);
+    expect(editedTexts(adapter)).toEqual(['intermediate', 'final']);
   });
 
   it('does not resend completed chunks when a later chunk send fails', async () => {
@@ -283,8 +370,8 @@ describe('TelegramResponsePresenter', () => {
 
     await expect(presenter.finalize('12345abcdeXYZ')).rejects.toThrow('third chunk failed');
 
-    expect(adapter.edit).toHaveBeenCalledWith('message-1', '12345');
-    expect(adapter.send.mock.calls.map(([text]) => text)).toEqual(['⏳', 'abcde', 'XYZ']);
+    expect(editedTexts(adapter)).toEqual(['12345']);
+    expect(sentTexts(adapter)).toEqual(['⏳', 'abcde', 'XYZ']);
     expect(adapter.delete).not.toHaveBeenCalled();
   });
 
@@ -325,7 +412,7 @@ describe('TelegramResponsePresenter', () => {
     await presenter.finalize('12345abcdeXYZ');
 
     expect(adapter.edit).not.toHaveBeenCalled();
-    expect(adapter.send.mock.calls.map(([text]) => text)).toEqual(['XYZ']);
+    expect(sentTexts(adapter)).toEqual(['XYZ']);
     expect(progress).toEqual([
       [2, true],
       [3, false],

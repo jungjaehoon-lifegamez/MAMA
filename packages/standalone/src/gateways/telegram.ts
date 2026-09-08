@@ -35,7 +35,12 @@ import {
   pruneTelegramMediaRoot,
   type TelegramMediaDownloadRequest,
 } from './telegram-media.js';
-import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
+import { TelegramResponsePresenter } from './telegram-response-presenter.js';
+import {
+  formatTelegramMessage,
+  isTelegramEntityRejection,
+  type TelegramFormattedText,
+} from './telegram-format.js';
 import { TelegramMessageLedger } from './telegram-message-ledger.js';
 import { getMemberCandidateStore, MEMBER_CANDIDATE_TTL_MS } from './member-candidate-store.js';
 import {
@@ -128,6 +133,69 @@ function telegramRejectionReason(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+type TelegramApi = Bot['api'];
+type SendMessageOther = Parameters<TelegramApi['sendMessage']>[2];
+type EditMessageTextOther = Parameters<TelegramApi['editMessageText']>[3];
+
+/**
+ * Telegram's own MessageEntity union is narrower than the structural entity the
+ * formatter produces; the wire shape is identical.
+ */
+function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
+  return { entities } as unknown as T;
+}
+
+/**
+ * Send one formatted chunk. If Telegram rejects the entity list, resend the
+ * same text unstyled: losing the styling is acceptable, losing the answer is
+ * not. Any other failure stays a failure so the delivery ledger sees it.
+ * Unstyled text is sent exactly as before, without an options argument.
+ */
+async function sendFormattedMessage(
+  api: TelegramApi,
+  chatId: number | string,
+  message: TelegramFormattedText
+): Promise<{ message_id: number }> {
+  if (!message.entities.length) {
+    return await api.sendMessage(chatId, message.text);
+  }
+  try {
+    return await api.sendMessage(
+      chatId,
+      message.text,
+      entityOptions<SendMessageOther>(message.entities)
+    );
+  } catch (error) {
+    if (!isTelegramEntityRejection(telegramRejectionReason(error))) throw error;
+    return await api.sendMessage(chatId, message.text);
+  }
+}
+
+/** Edit one formatted chunk, with the same styling-only fallback. */
+async function editFormattedMessage(
+  api: TelegramApi,
+  chatId: number | string,
+  messageId: number,
+  message: TelegramFormattedText
+): Promise<void> {
+  if (!message.entities.length) {
+    await api.editMessageText(chatId, messageId, message.text);
+    return;
+  }
+  try {
+    await api.editMessageText(
+      chatId,
+      messageId,
+      message.text,
+      entityOptions<EditMessageTextOther>(message.entities)
+    );
+    return;
+  } catch (error) {
+    if (!isTelegramEntityRejection(telegramRejectionReason(error))) throw error;
+  }
+  await api.editMessageText(chatId, messageId, message.text);
 }
 
 const EMOTION_EMOJI: Record<string, string[]> = {
@@ -600,7 +668,7 @@ export class TelegramGateway extends BaseGateway {
         'The previous processing attempt was interrupted. It was not rerun because its external ' +
         'side effects could not be proven safe to repeat. Please send a new message if you want ' +
         'to retry it.';
-      this.messageLedger.markReady(messageKey, interruptedNotice);
+      this.messageLedger.markReady(messageKey, interruptedNotice, 'html-v1');
       try {
         await presenter.finalize(interruptedNotice);
         this.messageLedger.markDelivered(messageKey);
@@ -790,7 +858,7 @@ export class TelegramGateway extends BaseGateway {
         });
       } catch (error) {
         const failureNotice = 'An error occurred while processing the message.';
-        this.messageLedger.markReady(messageKey, failureNotice);
+        this.messageLedger.markReady(messageKey, failureNotice, 'html-v1');
         try {
           await presenter.fail(failureNotice);
           this.messageLedger.markDelivered(messageKey);
@@ -804,13 +872,13 @@ export class TelegramGateway extends BaseGateway {
         if (initialResponseMessageId !== null) {
           await api.deleteMessage(numChatId, initialResponseMessageId).catch(() => {});
         }
-        this.messageLedger.markReady(messageKey, '');
+        this.messageLedger.markReady(messageKey, '', 'html-v1');
         this.messageLedger.markDelivered(messageKey);
         telegramLogger.info('[Telegram] Turn externally diverted; no response sent');
         return;
       }
 
-      this.messageLedger.markReady(messageKey, result.response);
+      this.messageLedger.markReady(messageKey, result.response, 'html-v1');
       try {
         await presenter.finalize(result.response);
         this.messageLedger.markDelivered(messageKey);
@@ -934,14 +1002,21 @@ export class TelegramGateway extends BaseGateway {
   ): Promise<void> {
     const bot = this.bot;
     if (!bot) throw new Error('Telegram gateway not connected');
-    const chunks = splitTelegramMessage(text, TELEGRAM_MAX_LENGTH);
+    const ledgerKey = idempotencyKey ? this.outboundLedgerKey(idempotencyKey, 'text') : undefined;
+    const pending = ledgerKey ? this.messageLedger.get(ledgerKey) : null;
+    const chunkFormat =
+      pending?.state === 'ready' ? (pending.chunkFormat ?? 'plain-v1') : 'html-v1';
+    const chunks = formatTelegramMessage(text, TELEGRAM_MAX_LENGTH, chunkFormat);
+    // Zero chunks means zero API calls. Claiming the ledger and marking it
+    // delivered would record a send that never happened and suppress every
+    // retry of it, so refuse before touching the ledger at all.
+    if (chunks.length === 0) throw new Error('Refusing to record an empty Telegram delivery');
     const numChatId = Number(chatId);
-    if (!idempotencyKey) {
-      for (const chunk of chunks) await bot.api.sendMessage(numChatId, chunk);
+    if (!ledgerKey) {
+      for (const chunk of chunks) await sendFormattedMessage(bot.api, numChatId, chunk);
       return;
     }
 
-    const ledgerKey = this.outboundLedgerKey(idempotencyKey, 'text');
     const binding = {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: createHash('sha256').update(text).digest('hex'),
@@ -963,22 +1038,25 @@ export class TelegramGateway extends BaseGateway {
     for (let index = nextIndex; index < chunks.length; index += 1) {
       this.messageLedger.markReady(
         ledgerKey,
-        JSON.stringify({ version: 1, nextIndex: index, uncertain: true })
+        JSON.stringify({ version: 1, nextIndex: index, uncertain: true }),
+        chunkFormat
       );
       try {
-        await bot.api.sendMessage(numChatId, chunks[index]);
+        await sendFormattedMessage(bot.api, numChatId, chunks[index]);
       } catch (error) {
         if (isDefiniteTelegramApiRejection(error)) {
           this.messageLedger.markReady(
             ledgerKey,
-            JSON.stringify({ version: 1, nextIndex: index, uncertain: false })
+            JSON.stringify({ version: 1, nextIndex: index, uncertain: false }),
+            chunkFormat
           );
         }
         throw error;
       }
       this.messageLedger.markReady(
         ledgerKey,
-        JSON.stringify({ version: 1, nextIndex: index + 1, uncertain: false })
+        JSON.stringify({ version: 1, nextIndex: index + 1, uncertain: false }),
+        chunkFormat
       );
     }
     this.messageLedger.markDelivered(ledgerKey);
@@ -1105,7 +1183,7 @@ export class TelegramGateway extends BaseGateway {
             : 'The previous processing attempt was interrupted. It was not rerun because its ' +
               'external side effects could not be proven safe to repeat. Please send a new message ' +
               'if you want to retry it.';
-        if (entry.state !== 'ready') this.messageLedger.markReady(entry.key, response);
+        if (entry.state !== 'ready') this.messageLedger.markReady(entry.key, response, 'html-v1');
         if (entry.deliveryUncertain) {
           console.warn(
             `[Telegram] Resuming inbound delivery ${entry.key} from uncertain chunk ` +
@@ -1135,7 +1213,7 @@ export class TelegramGateway extends BaseGateway {
         send: async (content) => {
           const sent = await this.runInChatQueue(
             String(chatId),
-            () => api.sendMessage(chatId, content),
+            () => sendFormattedMessage(api, chatId, content),
             true
           );
           onInitialSend?.(sent.message_id);
@@ -1144,7 +1222,7 @@ export class TelegramGateway extends BaseGateway {
         edit: async (handle, content) => {
           await this.runInChatQueue(
             String(chatId),
-            () => api.editMessageText(chatId, Number(handle), content),
+            () => editFormattedMessage(api, chatId, Number(handle), content),
             true
           );
         },
@@ -1158,6 +1236,10 @@ export class TelegramGateway extends BaseGateway {
       },
       {
         resumeFromChunk,
+        chunkFormat:
+          this.messageLedger.get(messageKey)?.state === 'ready'
+            ? (this.messageLedger.get(messageKey)?.chunkFormat ?? 'plain-v1')
+            : 'html-v1',
         withDelivery: (send) => this.runInChatQueue(String(chatId), send, true),
         onChunkProgress: (nextIndex, uncertain) => {
           if (this.messageLedger.get(messageKey)?.state === 'ready') {
