@@ -411,13 +411,26 @@ export class OwnerActionEffectLedger {
     );
   }
 
+  /**
+   * True when replaying this occurrence could re-execute an effect whose outcome
+   * is not already proven. Only CONFIRMED rows of the listed kinds are safe:
+   * `native_run` is the admission marker for one model run and names no effect
+   * of its own; `task_create` is executed through `atomic` keyed by the caller's
+   * `creation_key`, so a replay short-circuits on the confirmed row and returns
+   * the stored receipt instead of creating a second task. Every other kind stays
+   * blocked - `native_tool` is only observed after the fact, and gateway `Bash`
+   * (and the other workspace effects) dedup on the exact command, so a replayed
+   * turn that emits a different command runs it for real. Any unsettled row of
+   * any kind blocks regardless of kind.
+   */
   hasUnsafeReplayEffects(occurrenceKey: string): boolean {
     const key = requireIdentity(occurrenceKey, 'occurrenceKey');
     return Boolean(
       this.db
         .prepare(
           `SELECT 1 FROM ${OWNER_ACTION_EFFECTS_TABLE}
-       WHERE occurrence_key = ? AND (effect_kind != 'native_run' OR status != 'confirmed') LIMIT 1`
+       WHERE occurrence_key = ? AND (effect_kind NOT IN ('native_run', 'task_create')
+         OR status != 'confirmed') LIMIT 1`
         )
         .get(key)
     );
