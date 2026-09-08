@@ -357,7 +357,8 @@ describe('TelegramGateway - message splitting', () => {
 
     // No API call, and nothing claimed or marked delivered in the ledger.
     expect(mockApi.sendMessage).not.toHaveBeenCalled();
-    expect(new TelegramMessageLedger(ledgerPath).listUndelivered()).toEqual([]);
+    const key = `outbound:${createHash('sha256').update('text\0operation-empty').digest('hex')}`;
+    expect(new TelegramMessageLedger(ledgerPath).get(key)).toBeNull();
     await gateway.stop();
   });
 

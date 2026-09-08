@@ -8,328 +8,336 @@ import {
   TELEGRAM_MAX_MESSAGE_LENGTH,
 } from '../../src/gateways/telegram-format.js';
 
-describe('formatTelegramMessage', () => {
-  it('leaves plain text untouched and adds no entities', () => {
-    const chunks = formatTelegramMessage('line one\nline two');
+describe('Story TG-01/TG-06: Telegram formatting', () => {
+  describe('AC: final chunks preserve text and entity boundaries', () => {
+    it('leaves plain text untouched and adds no entities', () => {
+      const chunks = formatTelegramMessage('line one\nline two');
 
-    expect(chunks).toEqual([{ text: 'line one\nline two', entities: [] }]);
-  });
+      expect(chunks).toEqual([{ text: 'line one\nline two', entities: [] }]);
+    });
 
-  it('returns no chunk for empty input', () => {
-    expect(formatTelegramMessage('')).toEqual([]);
-  });
+    it('returns no chunk for empty input', () => {
+      expect(formatTelegramMessage('')).toEqual([]);
+    });
 
-  it('never returns zero chunks for a non-empty answer that parses to no text', () => {
-    // Readable markup around nothing. Zero chunks would let the transport call
-    // the answer delivered without one API call and strand the placeholder.
-    expect(formatTelegramMessage('<b></b>')).toEqual([{ text: '<b></b>', entities: [] }]);
-  });
+    it('never returns zero chunks for a non-empty answer that parses to no text', () => {
+      // Readable markup around nothing. Zero chunks would let the transport call
+      // the answer delivered without one API call and strand the placeholder.
+      expect(formatTelegramMessage('<b></b>')).toEqual([{ text: '<b></b>', entities: [] }]);
+    });
 
-  it('converts bold, italic, underline and strikethrough into entity spans', () => {
-    const [chunk] = formatTelegramMessage('<b>Alpha</b> <i>beta</i> <u>gamma</u> <s>delta</s>');
+    it('converts bold, italic, underline and strikethrough into entity spans', () => {
+      const [chunk] = formatTelegramMessage('<b>Alpha</b> <i>beta</i> <u>gamma</u> <s>delta</s>');
 
-    expect(chunk.text).toBe('Alpha beta gamma delta');
-    expect(chunk.entities).toEqual([
-      { type: 'bold', offset: 0, length: 5 },
-      { type: 'italic', offset: 6, length: 4 },
-      { type: 'underline', offset: 11, length: 5 },
-      { type: 'strikethrough', offset: 17, length: 5 },
-    ]);
-  });
+      expect(chunk.text).toBe('Alpha beta gamma delta');
+      expect(chunk.entities).toEqual([
+        { type: 'bold', offset: 0, length: 5 },
+        { type: 'italic', offset: 6, length: 4 },
+        { type: 'underline', offset: 11, length: 5 },
+        { type: 'strikethrough', offset: 17, length: 5 },
+      ]);
+    });
 
-  it('accepts the alias tags for bold and italic', () => {
-    const [chunk] = formatTelegramMessage('<strong>a</strong><em>b</em>');
+    it('accepts the alias tags for bold and italic', () => {
+      const [chunk] = formatTelegramMessage('<strong>a</strong><em>b</em>');
 
-    expect(chunk.text).toBe('ab');
-    expect(chunk.entities.map((entity) => entity.type)).toEqual(['bold', 'italic']);
-  });
+      expect(chunk.text).toBe('ab');
+      expect(chunk.entities.map((entity) => entity.type)).toEqual(['bold', 'italic']);
+    });
 
-  it('converts inline code and code blocks', () => {
-    const [chunk] = formatTelegramMessage('id <code>abc-1</code>\n<pre>one\ntwo</pre>');
+    it('converts inline code and code blocks', () => {
+      const [chunk] = formatTelegramMessage('id <code>abc-1</code>\n<pre>one\ntwo</pre>');
 
-    expect(chunk.text).toBe('id abc-1\none\ntwo');
-    expect(chunk.entities).toEqual([
-      { type: 'code', offset: 3, length: 5 },
-      { type: 'pre', offset: 9, length: 7 },
-    ]);
-  });
+      expect(chunk.text).toBe('id abc-1\none\ntwo');
+      expect(chunk.entities).toEqual([
+        { type: 'code', offset: 3, length: 5 },
+        { type: 'pre', offset: 9, length: 7 },
+      ]);
+    });
 
-  it('converts a link into a text_link entity carrying the url', () => {
-    const [chunk] = formatTelegramMessage('see <a href="https://example.com/x">the source</a>');
+    it('converts a link into a text_link entity carrying the url', () => {
+      const [chunk] = formatTelegramMessage('see <a href="https://example.com/x">the source</a>');
 
-    expect(chunk.text).toBe('see the source');
-    expect(chunk.entities).toEqual([
-      { type: 'text_link', offset: 4, length: 10, url: 'https://example.com/x' },
-    ]);
-  });
+      expect(chunk.text).toBe('see the source');
+      expect(chunk.entities).toEqual([
+        { type: 'text_link', offset: 4, length: 10, url: 'https://example.com/x' },
+      ]);
+    });
 
-  it('refuses a link protocol Telegram would not open', () => {
-    const input = 'see <a href="javascript:alert(1)">here</a>';
+    it('refuses a link protocol Telegram would not open', () => {
+      const input = 'see <a href="javascript:alert(1)">here</a>';
 
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('keeps list markers as literal text and styles only the marked span', () => {
-    const [chunk] = formatTelegramMessage('- <b>first</b>\n- second\n1. third');
-
-    expect(chunk.text).toBe('- first\n- second\n1. third');
-    expect(chunk.entities).toEqual([{ type: 'bold', offset: 2, length: 5 }]);
-  });
-
-  it('decodes escaped angle brackets and ampersands into literal text', () => {
-    const [chunk] = formatTelegramMessage('<b>a &amp; b</b> &lt;tag&gt;');
-
-    expect(chunk.text).toBe('a & b <tag>');
-    expect(chunk.entities).toEqual([{ type: 'bold', offset: 0, length: 5 }]);
-  });
-
-  it('nests non-verbatim styling', () => {
-    const [chunk] = formatTelegramMessage('<b>bold <i>and italic</i></b>');
-
-    expect(chunk.text).toBe('bold and italic');
-    expect(chunk.entities).toEqual([
-      { type: 'bold', offset: 0, length: 15 },
-      { type: 'italic', offset: 5, length: 10 },
-    ]);
-  });
-
-  it('falls back to literal text for an unclosed tag', () => {
-    const input = 'report <b>never closed';
-
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('falls back to literal text for a mismatched closing tag', () => {
-    const input = '<b>a</i>';
-
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('falls back to literal text for a tag outside the subset', () => {
-    const input = '<div>block</div>';
-
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('falls back to literal text for an unexpected attribute', () => {
-    const input = '<b class="x">a</b>';
-
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('falls back to literal text for markup nested inside code', () => {
-    const input = '<code>a <b>b</b></code>';
-
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
-
-  it('falls back to literal text for code inside another tag', () => {
-    // The guide forbids both directions; the parser must agree with the guide.
-    for (const input of [
-      '<blockquote>note <code>x</code></blockquote>',
-      '<pre><code>x</code></pre>',
-      '<a href="https://example.com"><code>x</code></a>',
-    ]) {
       expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-    }
-  });
+    });
 
-  it('falls back to literal text for a tg: link', () => {
-    // A tg: deep link is not in the guide, and Telegram rejects the entity with
-    // an unsupported-protocol 400 the unstyled resend cannot recover from.
-    const input = 'see <a href="tg://user?id=1">here</a>';
+    it('keeps list markers as literal text and styles only the marked span', () => {
+      const [chunk] = formatTelegramMessage('- <b>first</b>\n- second\n1. third');
 
-    expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
-  });
+      expect(chunk.text).toBe('- first\n- second\n1. third');
+      expect(chunk.entities).toEqual([{ type: 'bold', offset: 2, length: 5 }]);
+    });
 
-  it('keeps a bare less-than sign as text', () => {
-    const chunks = formatTelegramMessage('threshold < 3 and 5 > 4');
+    it('decodes escaped angle brackets and ampersands into literal text', () => {
+      const [chunk] = formatTelegramMessage('<b>a &amp; b</b> &lt;tag&gt;');
 
-    expect(chunks).toEqual([{ text: 'threshold < 3 and 5 > 4', entities: [] }]);
-  });
+      expect(chunk.text).toBe('a & b <tag>');
+      expect(chunk.entities).toEqual([{ type: 'bold', offset: 0, length: 5 }]);
+    });
 
-  it('splits past the limit and preserves the whole text', () => {
-    const text = 'a'.repeat(9000);
+    it('nests non-verbatim styling', () => {
+      const [chunk] = formatTelegramMessage('<b>bold <i>and italic</i></b>');
 
-    const chunks = formatTelegramMessage(text);
+      expect(chunk.text).toBe('bold and italic');
+      expect(chunk.entities).toEqual([
+        { type: 'bold', offset: 0, length: 15 },
+        { type: 'italic', offset: 5, length: 10 },
+      ]);
+    });
 
-    expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) {
-      expect(chunk.text.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_LENGTH);
-    }
-    expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
-  });
+    it('falls back to literal text for an unclosed tag', () => {
+      const input = 'report <b>never closed';
 
-  it('does not split a message that is exactly at the limit', () => {
-    const text = 'a'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH);
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-    expect(formatTelegramMessage(text)).toHaveLength(1);
-  });
+    it('falls back to literal text for a mismatched closing tag', () => {
+      const input = '<b>a</i>';
 
-  it('prefers a late newline as the split boundary', () => {
-    const text = `${'a'.repeat(8)}\n${'b'.repeat(8)}`;
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-    const chunks = formatTelegramMessage(text, 10);
+    it('falls back to literal text for a tag outside the subset', () => {
+      const input = '<div>block</div>';
 
-    expect(chunks.map((chunk) => chunk.text)).toEqual([`${'a'.repeat(8)}\n`, 'b'.repeat(8)]);
-  });
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-  it('never splits a surrogate pair across chunks', () => {
-    const text = `1234${String.fromCodePoint(0x1f600)}tail`;
+    it('falls back to literal text for an unexpected attribute', () => {
+      const input = '<b class="x">a</b>';
 
-    const chunks = formatTelegramMessage(text, 5);
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-    expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
-    for (const chunk of chunks) {
-      expect(/[\uD800-\uDBFF]$/.test(chunk.text)).toBe(false);
-      expect(/^[\uDC00-\uDFFF]/.test(chunk.text)).toBe(false);
-    }
-  });
+    it('falls back to literal text for markup nested inside code', () => {
+      const input = '<code>a <b>b</b></code>';
 
-  it('never splits a surrogate pair at the real Telegram boundary', () => {
-    // The boundary is counted in UTF-16 code units, so the pair straddles 4096
-    // exactly: a code-point count would have measured this text as fitting.
-    const text = `${'a'.repeat(4095)}\u{1F600}tail`;
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-    const chunks = formatTelegramMessage(text);
+    it('falls back to literal text for code inside another tag', () => {
+      // The guide forbids both directions; the parser must agree with the guide.
+      for (const input of [
+        '<blockquote>note <code>x</code></blockquote>',
+        '<pre><code>x</code></pre>',
+        '<a href="https://example.com"><code>x</code></a>',
+      ]) {
+        expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+      }
+    });
 
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks[0].text.length).toBe(4095);
-    expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
-    for (const chunk of chunks) {
-      expect(chunk.text.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_LENGTH);
-      expect(/[\uD800-\uDBFF]$/.test(chunk.text)).toBe(false);
-      expect(/^[\uDC00-\uDFFF]/.test(chunk.text)).toBe(false);
-    }
-  });
+    it('falls back to literal text for a tg: link', () => {
+      // A tg: deep link is not in the guide, and Telegram rejects the entity with
+      // an unsupported-protocol 400 the unstyled resend cannot recover from.
+      const input = 'see <a href="tg://user?id=1">here</a>';
 
-  it('maps an entity that straddles a chunk boundary onto both chunks', () => {
-    const text = `<b>${'a'.repeat(12)}</b>`;
+      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    });
 
-    const chunks = formatTelegramMessage(text, 5);
+    it('keeps a bare less-than sign as text', () => {
+      const chunks = formatTelegramMessage('threshold < 3 and 5 > 4');
 
-    expect(chunks.map((chunk) => chunk.text)).toEqual(['aaaaa', 'aaaaa', 'aa']);
-    expect(chunks.map((chunk) => chunk.entities)).toEqual([
-      [{ type: 'bold', offset: 0, length: 5 }],
-      [{ type: 'bold', offset: 0, length: 5 }],
-      [{ type: 'bold', offset: 0, length: 2 }],
-    ]);
-  });
+      expect(chunks).toEqual([{ text: 'threshold < 3 and 5 > 4', entities: [] }]);
+    });
 
-  it('drops an entity from a chunk it does not reach', () => {
-    const chunks = formatTelegramMessage('<b>ab</b>cdefgh', 5);
+    it('splits past the limit and preserves the whole text', () => {
+      const text = 'a'.repeat(9000);
 
-    expect(chunks.map((chunk) => chunk.entities)).toEqual([
-      [{ type: 'bold', offset: 0, length: 2 }],
-      [],
-    ]);
-  });
-});
+      const chunks = formatTelegramMessage(text);
 
-describe('TELEGRAM_FORMAT_GUIDE', () => {
-  it('names every tag the parser accepts and forbids the markup it cannot read', () => {
-    for (const tag of [
-      '<b>',
-      '<i>',
-      '<u>',
-      '<s>',
-      '<code>',
-      '<pre>',
-      '<tg-spoiler>',
-      '<blockquote>',
-    ]) {
-      expect(TELEGRAM_FORMAT_GUIDE).toContain(tag);
-    }
-    expect(TELEGRAM_FORMAT_GUIDE).toContain('<a href="..."');
-    expect(TELEGRAM_FORMAT_GUIDE).toMatch(/no Markdown/i);
-    expect(TELEGRAM_FORMAT_GUIDE).toMatch(/&amp;/);
-    // The sender owns entities and splitting; the model must never restate them.
-    expect(TELEGRAM_FORMAT_GUIDE).toMatch(/Never write entity JSON, offsets or lengths/);
-  });
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const chunk of chunks) {
+        expect(chunk.text.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_LENGTH);
+      }
+      expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
+    });
 
-  it('states the nesting and protocol rules the parser actually enforces', () => {
-    expect(TELEGRAM_FORMAT_GUIDE).toMatch(
-      /<code> and <pre>\n.*must not appear inside any other tag/
-    );
-    expect(TELEGRAM_FORMAT_GUIDE).toMatch(/Links must be http, https or mailto/);
-    // Naming a protocol the parser rejects would be a contract the sender
-    // cannot honour: the resulting 400 costs the answer, not just the styling.
-    expect(TELEGRAM_FORMAT_GUIDE).not.toMatch(/\btg:/);
-  });
+    it('does not split a message that is exactly at the limit', () => {
+      const text = 'a'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH);
 
-  it('is markup the parser round-trips, not markup it rejects', () => {
-    const [chunk] = formatTelegramMessage(TELEGRAM_FORMAT_GUIDE);
+      expect(formatTelegramMessage(text)).toHaveLength(1);
+    });
 
-    expect(chunk.text).toBe(TELEGRAM_FORMAT_GUIDE);
-    expect(chunk.entities).toEqual([]);
-  });
-});
+    it('prefers a late newline as the split boundary', () => {
+      const text = `${'a'.repeat(8)}\n${'b'.repeat(8)}`;
 
-describe('closeOpenTelegramHtml', () => {
-  it('leaves a complete snapshot alone', () => {
-    expect(closeOpenTelegramHtml('<b>done</b> tail')).toBe('<b>done</b> tail');
-    expect(closeOpenTelegramHtml('no markup at all')).toBe('no markup at all');
-  });
+      const chunks = formatTelegramMessage(text, 10);
 
-  it('drops a tag the stream cut in half', () => {
-    expect(closeOpenTelegramHtml('see <a href="https:')).toBe('see ');
-    expect(closeOpenTelegramHtml('<b')).toBe('');
-  });
+      expect(chunks.map((chunk) => chunk.text)).toEqual([`${'a'.repeat(8)}\n`, 'b'.repeat(8)]);
+    });
 
-  it('drops a tag the stream has opened but not yet filled', () => {
-    // Closing it would build markup around no text, which formatTelegramMessage
-    // shows literally rather than send as an empty message.
-    expect(closeOpenTelegramHtml('<b>')).toBe('');
-    expect(closeOpenTelegramHtml('<b><i>')).toBe('');
-    expect(closeOpenTelegramHtml('a <b>')).toBe('a ');
-  });
+    it('never splits a surrogate pair across chunks', () => {
+      const text = `1234${String.fromCodePoint(0x1f600)}tail`;
 
-  it('closes the tags still open, innermost first', () => {
-    expect(closeOpenTelegramHtml('<b>bold <i>and')).toBe('<b>bold <i>and</i></b>');
-  });
+      const chunks = formatTelegramMessage(text, 5);
 
-  it('leaves a snapshot the scan cannot follow to the parser', () => {
-    expect(closeOpenTelegramHtml('</b>orphan')).toBe('</b>orphan');
-    expect(closeOpenTelegramHtml('<div>block')).toBe('<div>block');
-  });
+      expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
+      for (const chunk of chunks) {
+        expect(/[\uD800-\uDBFF]$/.test(chunk.text)).toBe(false);
+        expect(/^[\uDC00-\uDFFF]/.test(chunk.text)).toBe(false);
+      }
+    });
 
-  it('shows no raw markup for ANY prefix of a formatted answer', () => {
-    const answer =
-      '<b>Status</b>\nsee <a href="https://example.com/x">the source</a> and ' +
-      '<i>note</i> <code>id-1</code>\n<blockquote>quoted</blockquote>';
+    it('never splits a surrogate pair at the real Telegram boundary', () => {
+      // The boundary is counted in UTF-16 code units, so the pair straddles 4096
+      // exactly: a code-point count would have measured this text as fitting.
+      const text = `${'a'.repeat(4095)}\u{1F600}tail`;
 
-    for (let cut = 1; cut <= answer.length; cut += 1) {
-      const [chunk] = formatTelegramMessage(closeOpenTelegramHtml(answer.slice(0, cut)));
-      expect(chunk?.text ?? '').not.toMatch(/<[a-z/]|href=/i);
-    }
+      const chunks = formatTelegramMessage(text);
+
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks[0].text.length).toBe(4095);
+      expect(chunks.map((chunk) => chunk.text).join('')).toBe(text);
+      for (const chunk of chunks) {
+        expect(chunk.text.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE_LENGTH);
+        expect(/[\uD800-\uDBFF]$/.test(chunk.text)).toBe(false);
+        expect(/^[\uDC00-\uDFFF]/.test(chunk.text)).toBe(false);
+      }
+    });
+
+    it('maps an entity that straddles a chunk boundary onto both chunks', () => {
+      const text = `<b>${'a'.repeat(12)}</b>`;
+
+      const chunks = formatTelegramMessage(text, 5);
+
+      expect(chunks.map((chunk) => chunk.text)).toEqual(['aaaaa', 'aaaaa', 'aa']);
+      expect(chunks.map((chunk) => chunk.entities)).toEqual([
+        [{ type: 'bold', offset: 0, length: 5 }],
+        [{ type: 'bold', offset: 0, length: 5 }],
+        [{ type: 'bold', offset: 0, length: 2 }],
+      ]);
+    });
+
+    it('drops an entity from a chunk it does not reach', () => {
+      const chunks = formatTelegramMessage('<b>ab</b>cdefgh', 5);
+
+      expect(chunks.map((chunk) => chunk.entities)).toEqual([
+        [{ type: 'bold', offset: 0, length: 2 }],
+        [],
+      ]);
+    });
   });
 });
 
-describe('isTelegramEntityRejection', () => {
-  it('recognizes the Telegram entity parse rejection', () => {
-    expect(
-      isTelegramEntityRejection(new Error("Bad Request: can't parse entities: unexpected end"))
-    ).toBe(true);
-    expect(isTelegramEntityRejection('Bad Request: entity offset is out of range')).toBe(true);
-  });
+describe('Story TG-05/TG-06: producer formatting contract', () => {
+  describe('AC: the advertised subset agrees with the formatter', () => {
+    it('names every tag the parser accepts and forbids the markup it cannot read', () => {
+      for (const tag of [
+        '<b>',
+        '<i>',
+        '<u>',
+        '<s>',
+        '<code>',
+        '<pre>',
+        '<tg-spoiler>',
+        '<blockquote>',
+      ]) {
+        expect(TELEGRAM_FORMAT_GUIDE).toContain(tag);
+      }
+      expect(TELEGRAM_FORMAT_GUIDE).toContain('<a href="..."');
+      expect(TELEGRAM_FORMAT_GUIDE).toMatch(/no Markdown/i);
+      expect(TELEGRAM_FORMAT_GUIDE).toMatch(/&amp;/);
+      // The sender owns entities and splitting; the model must never restate them.
+      expect(TELEGRAM_FORMAT_GUIDE).toMatch(/Never write entity JSON, offsets or lengths/);
+    });
 
-  it('recognizes every entity-level 400 wording, so none costs the answer', () => {
-    for (const message of [
-      "Bad Request: can't parse entities: unsupported start tag",
-      "Bad Request: CAN'T PARSE ENTITIES",
-      'Bad Request: entity offset is out of range',
-      'Bad Request: entity is invalid',
-      'Bad Request: entities are invalid',
-      'Bad Request: too many entities',
-      'Bad Request: unsupported URL protocol',
-    ]) {
-      expect(isTelegramEntityRejection(new Error(message))).toBe(true);
-      expect(isTelegramEntityRejection(message)).toBe(true);
-    }
-  });
+    it('states the nesting and protocol rules the parser actually enforces', () => {
+      expect(TELEGRAM_FORMAT_GUIDE).toMatch(
+        /<code> and <pre>\n.*must not appear inside any other tag/
+      );
+      expect(TELEGRAM_FORMAT_GUIDE).toMatch(/Links must be http, https or mailto/);
+      // Naming a protocol the parser rejects would be a contract the sender
+      // cannot honour: the resulting 400 costs the answer, not just the styling.
+      expect(TELEGRAM_FORMAT_GUIDE).not.toMatch(/\btg:/);
+    });
 
-  it('does not claim an unrelated failure as a markup problem', () => {
-    expect(isTelegramEntityRejection(new Error('Bad Request: chat not found'))).toBe(false);
-    expect(isTelegramEntityRejection(new Error('socket hang up'))).toBe(false);
+    it('is markup the parser round-trips, not markup it rejects', () => {
+      const [chunk] = formatTelegramMessage(TELEGRAM_FORMAT_GUIDE);
+
+      expect(chunk.text).toBe(TELEGRAM_FORMAT_GUIDE);
+      expect(chunk.entities).toEqual([]);
+    });
+  });
+});
+
+describe('Story TG-01: streaming formatting', () => {
+  describe('AC: partial tags do not expose raw markup', () => {
+    it('leaves a complete snapshot alone', () => {
+      expect(closeOpenTelegramHtml('<b>done</b> tail')).toBe('<b>done</b> tail');
+      expect(closeOpenTelegramHtml('no markup at all')).toBe('no markup at all');
+    });
+
+    it('drops a tag the stream cut in half', () => {
+      expect(closeOpenTelegramHtml('see <a href="https:')).toBe('see ');
+      expect(closeOpenTelegramHtml('<b')).toBe('');
+    });
+
+    it('drops a tag the stream has opened but not yet filled', () => {
+      // Closing it would build markup around no text, which formatTelegramMessage
+      // shows literally rather than send as an empty message.
+      expect(closeOpenTelegramHtml('<b>')).toBe('');
+      expect(closeOpenTelegramHtml('<b><i>')).toBe('');
+      expect(closeOpenTelegramHtml('a <b>')).toBe('a ');
+    });
+
+    it('closes the tags still open, innermost first', () => {
+      expect(closeOpenTelegramHtml('<b>bold <i>and')).toBe('<b>bold <i>and</i></b>');
+    });
+
+    it('leaves a snapshot the scan cannot follow to the parser', () => {
+      expect(closeOpenTelegramHtml('</b>orphan')).toBe('</b>orphan');
+      expect(closeOpenTelegramHtml('<div>block')).toBe('<div>block');
+    });
+
+    it('shows no raw markup for ANY prefix of a formatted answer', () => {
+      const answer =
+        '<b>Status</b>\nsee <a href="https://example.com/x">the source</a> and ' +
+        '<i>note</i> <code>id-1</code>\n<blockquote>quoted</blockquote>';
+
+      for (let cut = 1; cut <= answer.length; cut += 1) {
+        const [chunk] = formatTelegramMessage(closeOpenTelegramHtml(answer.slice(0, cut)));
+        expect(chunk?.text ?? '').not.toMatch(/<[a-z/]|href=/i);
+      }
+    });
+  });
+});
+
+describe('Story TG-01/TG-06: entity rejection', () => {
+  describe('AC: styling rejection is distinct from transport failure', () => {
+    it('recognizes the Telegram entity parse rejection', () => {
+      expect(
+        isTelegramEntityRejection(new Error("Bad Request: can't parse entities: unexpected end"))
+      ).toBe(true);
+      expect(isTelegramEntityRejection('Bad Request: entity offset is out of range')).toBe(true);
+    });
+
+    it('recognizes every entity-level 400 wording, so none costs the answer', () => {
+      for (const message of [
+        "Bad Request: can't parse entities: unsupported start tag",
+        "Bad Request: CAN'T PARSE ENTITIES",
+        'Bad Request: entity offset is out of range',
+        'Bad Request: entity is invalid',
+        'Bad Request: entities are invalid',
+        'Bad Request: too many entities',
+        'Bad Request: unsupported URL protocol',
+      ]) {
+        expect(isTelegramEntityRejection(new Error(message))).toBe(true);
+        expect(isTelegramEntityRejection(message)).toBe(true);
+      }
+    });
+
+    it('does not claim an unrelated failure as a markup problem', () => {
+      expect(isTelegramEntityRejection(new Error('Bad Request: chat not found'))).toBe(false);
+      expect(isTelegramEntityRejection(new Error('socket hang up'))).toBe(false);
+    });
   });
 });
