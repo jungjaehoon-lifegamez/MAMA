@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.51.1] - 2026-09-08
+
+### Fixed
+
+- Board refresh can resume after a confirmed atomic task creation without weakening the replay block for shell/native or unsettled effects.
+- Telegram owner replies and reports render supported HTML as native text entities, including streamed and multipart answers. Styling rejection preserves the text, and legacy pending deliveries retain their original chunk boundaries after upgrades.
+- The formatting guide is part of the shared owner session policy instead of repeated report prompts.
+
+Existing installations with historical plain-text-only owner instructions should update those local instructions to permit the Telegram HTML subset. The owner-confirmed local report rendered five bold headings; its roughly 166-second response is a single observation, not a percentile guarantee.
+
 ## mama-core [2.4.0] - 2026-09-08
 
 ### Added
