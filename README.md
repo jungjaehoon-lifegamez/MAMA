@@ -124,7 +124,7 @@ Details: [Security guide](docs/guides/security.md), [Remote access](docs/guides/
 |---|---|---|
 | Memory store | Originals kept, decision history, change causes, local search | done |
 | Single-owner assistant | Scheduled reports, board and journal, corrections become rules | done |
-| Helpers and continuation | Long work to helper agents; reports continue from the last version | verified locally, preparing release |
+| Helpers and continuation | Long work to helper agents; reports continue from the last version | done (0.52.0) |
 | Team members | Verified people share the same memory within their own permissions | next |
 | File work | Request → read → new version → approval → delivery → follow-up | next |
 | Extension guide | How to add your own sources, tools, and rules | next |
