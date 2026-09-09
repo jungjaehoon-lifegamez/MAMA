@@ -2014,6 +2014,7 @@ export async function runAgentLoop(
       // One memory for the one owner:runtime thread: whichever lane sends the brief
       // first satisfies the other, so a correction reaches the thread exactly once.
       admitOwnerBrief: (brief) => ownerBriefMemory.admit(OWNER_RUNTIME_SESSION_KEY, brief),
+      retractOwnerBrief: () => ownerBriefMemory.forget(OWNER_RUNTIME_SESSION_KEY),
       // Host-rendered pipeline: the ledger's own deadline_priority page, published through
       // the SAME report publisher report_publish uses (bound after the API routes exist).
       selfCheckInput: () => ({

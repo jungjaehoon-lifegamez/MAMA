@@ -121,6 +121,12 @@ export interface WorkOrderConsumerDeps {
    * (tests and any host that has no thread memory).
    */
   admitOwnerBrief?: (brief: string) => boolean;
+  /**
+   * Undo an admission whose turn never reached the model. `admitOwnerBrief` marks the brief
+   * as seen on the thread, so a run that dies before delivery would otherwise make the
+   * retry omit standing policy no turn ever carried.
+   */
+  retractOwnerBrief?: () => void;
   hasUnsafeReplayEffects?: (wo: WorkOrderRecord) => boolean;
   hasUnsettledEffects?: (wo: WorkOrderRecord) => boolean;
   /**
@@ -474,6 +480,14 @@ export class WorkOrderConsumer {
       return;
     }
 
+    // A brief admitted but never delivered must not stay marked as seen on the thread.
+    const retractBriefIfCarried = (): void => {
+      if (briefCarried) {
+        briefCarried = false;
+        this.deps.retractOwnerBrief?.();
+      }
+    };
+
     const hook = this.hooks.get(wo.workKind);
     let beforeState: unknown;
     if (hook?.before) {
@@ -481,6 +495,7 @@ export class WorkOrderConsumer {
         beforeState = await hook.before(wo);
       } catch (err) {
         // A broken before-hook must not strand the claim: fail the order loudly.
+        retractBriefIfCarried();
         this.handleFailure(
           wo,
           `before-hook: ${errMessage(err)}`,
@@ -499,6 +514,7 @@ export class WorkOrderConsumer {
       // failure) fails the order instead of running without an envelope.
       runOptions = await this.deps.runOptionsFor?.(wo);
     } catch (err) {
+      retractBriefIfCarried();
       this.handleFailure(
         wo,
         `run-options: ${errMessage(err)}`,
@@ -585,6 +601,8 @@ export class WorkOrderConsumer {
         this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);
         return;
       }
+      // The run threw instead of returning: no turn delivered the brief.
+      retractBriefIfCarried();
       const reason = errMessage(err);
       const transient = classifyTransientModelError(reason);
       const temporalContractRepeat =
@@ -612,6 +630,8 @@ export class WorkOrderConsumer {
     // TRANSPORT failure: retry it, never complete it, never deliver it.
     const transportError = detectTransportErrorResponse(response);
     if (transportError) {
+      // The CLI printed an upstream error as its response: the model never saw the turn.
+      retractBriefIfCarried();
       this.handleFailure(wo, `model-transport-error: ${transportError}`);
       return;
     }

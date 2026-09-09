@@ -166,6 +166,12 @@ describe('TG-03/TG-05 execution experience evidence', () => {
         state
       );
       expect(executionPage).toMatchObject({ success: true, traces: expect.any(Array) });
+      // The list page bound is validated like the trace offset/chars, not cast through.
+      for (const limit of [0, 101, 1.5, '5']) {
+        await expect(
+          replacement.execute('experience_read', { kind: 'executions', limit }, state)
+        ).rejects.toThrow('Execution evidence limit invalid');
+      }
       const scope = traceReadScope({
         ownerScope: 'owner:runtime',
         projectId: state.envelope!.scope.project_refs[0].id,

@@ -25,6 +25,7 @@ function activationLines(batch: OwnerEventBatch): string[] {
           '- A matched procedure is unavailable under current access/status. Continue independent work; do not execute its old snapshot.',
         ]
       : [
+          `- trigger=${activation.triggerId} kind=${activation.kind}`,
           ...(activation.procedureRef
             ? [
                 `  procedure=${activation.procedureRef.id}@${activation.procedureRef.revision}`,
@@ -33,7 +34,6 @@ function activationLines(batch: OwnerEventBatch): string[] {
                   : []),
               ]
             : []),
-          `- trigger=${activation.triggerId} kind=${activation.kind}`,
           `  memoryQuery: ${activation.memoryQuery}`,
           `  requiredEvidence: ${activation.requiredEvidence.join(', ') || '(none)'}`,
           ...activation.procedure.map((step) => `  ${step.action}: ${step.description}`),

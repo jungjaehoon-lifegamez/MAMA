@@ -4872,12 +4872,17 @@ export class TaskLedger implements TaskSource {
       throw new Error(`workorder delegation: row ${id} is '${row.status}', expected in_progress`);
     }
     const payload = { ...row.payload, [WORKORDER_DELEGATED_AT_KEY]: delegatedAt };
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE operator_tasks SET payload = ?, latest_event = ?, updated_at = ?
          WHERE id = ? AND kind = 'system' AND status = 'in_progress'`
       )
       .run(JSON.stringify(payload), 'delegated to a native subagent', this.now(), id);
+    // The row can leave in_progress between the read above and this write. A no-op UPDATE
+    // is not a delegation: say so instead of reporting a mark that was never stored.
+    if (result.changes !== 1) {
+      throw new Error(`workorder delegation: row ${id} left in_progress before the mark`);
+    }
   }
 
   completeWorkOrder(id: number): void {

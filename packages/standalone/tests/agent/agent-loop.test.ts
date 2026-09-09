@@ -1251,6 +1251,33 @@ describe('AgentLoop', () => {
       expect(effectivePrompt).not.toContain('MCP transport');
     });
 
+    it('derives a child\'s Code-Act gate from the CHILD role, not the parent\'s', () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const surfaceFor = (allowedTools: string[], blockedTools: string[]) => {
+        const context = createCodexContext();
+        context.role = { ...context.role, allowedTools, blockedTools };
+        return (
+          agentLoop as unknown as {
+            hostToolDefinitionsFor: (
+              options: unknown
+            ) => readonly { name: string }[];
+          }
+        ).hostToolDefinitionsFor({ agentContext: context });
+      };
+
+      // Parent role allows outer Code-Act: it gets the marker.
+      expect(surfaceFor(['code_act', 'mama_search'], []).map((tool) => tool.name)).toContain(
+        'code_act'
+      );
+      // A projected child role that forbids it must NOT inherit the parent's marker.
+      expect(surfaceFor(['mama_search'], ['code_act'])).toEqual([]);
+    });
+
     it('TG-03/TG-06 gives the native model one framed copy of a Code-Act value', async () => {
       const sentinel = 'SENTINEL_NATIVE_BUSINESS_VALUE';
       let nativeContent = '';
