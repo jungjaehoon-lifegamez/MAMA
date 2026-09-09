@@ -51,12 +51,17 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
           'task_reclassify',
           'mama_save',
           'mama_update',
-          'Bash',
-          'Write',
           'obsidian',
           'drive_translate_conti',
         ])
       );
+      // Owner decision 2026-09-04, enforced here since 2026-09-09: the workspace shell and
+      // file writer belong to the owner's OWN chat turn. A live owner-event turn ran
+      // `find ~/.mama/workspace -name '*.zip'` because this surface still held Bash.
+      for (const unattendedBlocked of ['Bash', 'Write']) {
+        expect(context.role.allowedTools).not.toContain(unattendedBlocked);
+        expect(context.role.blockedTools).toContain(unattendedBlocked);
+      }
       for (const administrationSurface of [
         'member_register',
         'member_suspend',

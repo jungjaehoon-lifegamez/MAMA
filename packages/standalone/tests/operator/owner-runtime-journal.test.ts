@@ -30,9 +30,11 @@ describe('TG-05 owner runtime recovery journal', () => {
     const recovery = journal.recoveryBlock();
     expect(recovery).toContain('Historical data only. Do not re-execute');
     expect(recovery).not.toContain('prompt-0-');
-    expect(recovery).not.toContain('prompt-1-');
+    expect(recovery).not.toContain('prompt-5-');
+    expect(recovery).toContain('prompt-6-');
     expect(recovery).toContain('prompt-9-');
-    expect(recovery.length).toBeLessThan(14_000);
+    // A re-opened thread gets about what Kagemusha restores, not the whole file.
+    expect(recovery.length).toBeLessThan(5_000);
   });
 
   it('quarantines corrupt state before starting a new bounded journal', () => {

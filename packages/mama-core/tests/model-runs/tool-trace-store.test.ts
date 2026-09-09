@@ -9,7 +9,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
 import { beginModelRun } from '../../src/model-runs/store.js';
-import { appendToolTrace, listToolTracesForRun } from '../../src/model-runs/tool-trace-store.js';
+import {
+  appendToolTrace,
+  listToolTracesForRun,
+  listToolTraces,
+  readToolTrace,
+} from '../../src/model-runs/tool-trace-store.js';
 
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
 const TEST_DB = join(os.tmpdir(), `test-tool-trace-store-${randomUUID()}.db`);
@@ -256,5 +261,161 @@ describe('Story M2.2: Tool Trace Ledger', () => {
         expect(appended.failure_code).toBeNull();
       });
     });
+  });
+});
+
+describe('TG-03/04/05: scoped progressive tool evidence', () => {
+  const scope = { owner_scope: 'owner:runtime', project_id: 'project-a' };
+  beforeEach(async () => {
+    await closeDB();
+    cleanupDb();
+    process.env.MAMA_DB_PATH = TEST_DB;
+    await beginModelRun({ model_run_id: 'mr_evidence' });
+  });
+  afterEach(async () => {
+    await closeDB();
+    delete process.env.MAMA_DB_PATH;
+    cleanupDb();
+  });
+
+  it('preserves exact JSON across reopen and leaves old summaries intact', async () => {
+    const evidence_json = '{ "input": {"x":1}, "result": {"error":"bad argument"} }';
+    const saved = await appendToolTrace({
+      model_run_id: 'mr_evidence',
+      tool_name: 'example',
+      ...scope,
+      channel_id: 'channel-a',
+      input_summary: 'safe summary',
+      diagnostic_json: '{"kind":"tool_contract"}',
+      evidence_json,
+      catalog_revision: 'v1',
+    });
+    await closeDB();
+    expect(await readToolTrace(saved.trace_id, scope)).toEqual(saved);
+    expect(saved.input_summary).toBe('safe summary');
+    expect(saved.evidence_json).toBe(evidence_json);
+    expect((await listToolTraces(scope)).traces[0].evidence_json).toBeNull();
+    expect(await readToolTrace(saved.trace_id, { ...scope, project_id: 'other' })).toBeNull();
+    expect(await readToolTrace(saved.trace_id, { ...scope, owner_scope: 'other' })).toBeNull();
+    expect(await readToolTrace(saved.trace_id, { ...scope, channel_id: 'other' })).toBeNull();
+  });
+
+  it('paginates matching metadata deterministically without skipping timestamp ties', async () => {
+    for (const trace_id of ['a', 'b', 'c']) {
+      await appendToolTrace({
+        trace_id,
+        model_run_id: 'mr_evidence',
+        tool_name: 'example',
+        ...scope,
+        created_at: 100,
+      });
+    }
+    await appendToolTrace({
+      trace_id: 'foreign',
+      model_run_id: 'mr_evidence',
+      tool_name: 'example',
+      ...scope,
+      project_id: 'other',
+      created_at: 200,
+    });
+    const first = await listToolTraces({ ...scope, limit: 2 });
+    expect(first.traces.map((t) => t.trace_id)).toEqual(['c', 'b']);
+    expect(first.next_cursor).toBeTypeOf('string');
+    const second = await listToolTraces({ ...scope, limit: 2, cursor: first.next_cursor! });
+    expect(second.traces.map((t) => t.trace_id)).toEqual(['a']);
+    expect(second.next_cursor).toBeNull();
+    expect((await listToolTraces({ ...scope, tool_name: 'different' })).traces).toEqual([]);
+  });
+
+  it('retains nullable legacy fields and never includes unscoped records in discovery', async () => {
+    const legacy = await appendToolTrace({ model_run_id: 'mr_evidence', tool_name: 'legacy' });
+    expect(legacy.diagnostic_json).toBeNull();
+    expect(legacy.evidence_json).toBeNull();
+    expect((await listToolTraces(scope)).traces).toEqual([]);
+    expect(await readToolTrace(legacy.trace_id, scope)).toBeNull();
+    expect(await listToolTracesForRun('mr_evidence')).toEqual([legacy]);
+  });
+
+  it('upgrades pre-diagnostic rows without changing their summaries or granting scope', () => {
+    const db = new Database(':memory:');
+    for (const file of migrationFiles().filter((file) => !file.startsWith('068-'))) {
+      db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+    }
+    db.prepare('INSERT INTO model_runs (model_run_id, status, created_at) VALUES (?, ?, ?)').run(
+      'old-run',
+      'legacy',
+      1
+    );
+    db.prepare(
+      'INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run('old-trace', 'old-run', 'old-tool', 'unchanged', 2);
+    db.exec(readFileSync(join(MIGRATIONS_DIR, '068-tool-trace-diagnostics.sql'), 'utf8'));
+    expect(
+      db
+        .prepare(
+          'SELECT input_summary, diagnostic_json, evidence_json, owner_scope FROM tool_traces'
+        )
+        .get()
+    ).toEqual({
+      input_summary: 'unchanged',
+      diagnostic_json: null,
+      evidence_json: null,
+      owner_scope: null,
+    });
+    db.close();
+  });
+
+  it('fails explicitly on corrupted stored detail without returning malformed evidence', async () => {
+    const row = await appendToolTrace({
+      ...scope,
+      model_run_id: 'mr_evidence',
+      tool_name: 'example',
+    });
+    getAdapter()
+      .prepare('UPDATE tool_traces SET evidence_json = ? WHERE trace_id = ?')
+      .run('{invalid', row.trace_id);
+    await expect(readToolTrace(row.trace_id, scope)).rejects.toThrow(/evidence_json.*malformed/);
+    expect((await listToolTraces(scope)).traces[0].evidence_json).toBeNull();
+  });
+
+  it('filters detailed evidence before pagination so newer inspection metadata cannot displace it', async () => {
+    await appendToolTrace({
+      ...scope,
+      trace_id: 'evidence-old',
+      model_run_id: 'mr_evidence',
+      tool_name: 'example',
+      created_at: 1,
+      evidence_json: '{"result":"observed"}',
+    });
+    for (let index = 0; index < 5; index++) {
+      await appendToolTrace({
+        ...scope,
+        trace_id: `metadata-${index}`,
+        model_run_id: 'mr_evidence',
+        tool_name: 'experience_read',
+        created_at: index + 2,
+      });
+    }
+    const page = await listToolTraces({ ...scope, evidence_only: true, limit: 1 });
+    expect(page.traces.map((trace) => trace.trace_id)).toEqual(['evidence-old']);
+    expect(page.next_cursor).toBeNull();
+    expect(
+      (await listToolTraces({ ...scope, evidence_only: false, limit: 1 })).traces[0].trace_id
+    ).toBe('metadata-4');
+    // Runtime tool input still needs validation beyond the TypeScript caller contract.
+    await expect(
+      listToolTraces({ ...scope, evidence_only: 'true' as unknown as boolean })
+    ).rejects.toThrow(/evidence_only/);
+  });
+
+  it('rejects malformed/non-object JSON and invalid scope/pagination explicitly', async () => {
+    for (const value of ['{bad', '[]', 'null', '1', '']) {
+      await expect(
+        appendToolTrace({ model_run_id: 'mr_evidence', tool_name: 'example', evidence_json: value })
+      ).rejects.toThrow(/evidence_json/);
+    }
+    await expect(listToolTraces({ ...scope, project_id: '' })).rejects.toThrow(/project_id/);
+    await expect(listToolTraces({ ...scope, cursor: 'bad' })).rejects.toThrow(/cursor/);
+    await expect(listToolTraces({ ...scope, limit: 101 })).rejects.toThrow(/limit/);
   });
 });

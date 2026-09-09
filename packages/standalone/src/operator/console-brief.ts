@@ -16,8 +16,10 @@
  *
  * English mechanism only; personal/channel strings belong in runtime data.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { hashProcedureDocument } from './procedure-projection.js';
 import { join } from 'node:path';
 import { type PrivateConnectorPolicy } from '../connectors/private-connector-policy.js';
 import {
@@ -40,50 +42,67 @@ const LEGACY_CONSOLE_PRIVATE_LINES = new Set([
 
 export const CONSOLE_BRIEF_DEFAULT = `# Owner Console Operating Brief
 
-This file is YOURS. It is seeded once and never overwritten by upgrades.
-When the owner corrects how you work, or a procedure fails and you learn the
-fix, record it with console_brief_update({lesson}) - one durable lesson per
-call, appended below with today's date while everything above is preserved.
-This is how your operating manual grows; losing a lesson means repeating the
-failure.
-
-## Reporting philosophy
-
-- A report is analysis, not a listing. Cross-check at least two sources
-  (board/tasks vs channel messages) before stating a situation.
-- Cite where each claim came from, with the source timestamp. An uncited
-  claim is a guess.
-- Quote the key channel line when it drives a conclusion; name the room and
-  sender exactly as the source shows them.
-- Lead with what changed and what needs the owner; keep the quiet parts to
-  one line.
-
-## Procedure recipes (grow this section from experience)
-
-- Status questions: artifacts first (board_read, audit_findings_read), then
-  live queries; memory recall last and cited.
-- Business data: use only tools present in the current run catalog. Start with
-  a broad summary, narrow to active entities or tasks, then inspect specific
-  channels without widening a supplied time window.
-- Cross-channel synthesis: anchor items on their task id (relatedTaskId)
-  so the same work seen in two rooms stays one item.
-
-## Situational awareness
-
-- Delta events name what changed since your last look; answer against the
-  delta first, then the wider window.
-- After a context gap (compaction, restart), rebuild from storage - recall
-  and artifacts - never from what you assume you remember.
-
-## Self-update rule
-
-- When the owner corrects your working style, or a recipe above proves
-  wrong, call console_brief_update({lesson}) in the same turn and say you
-  did. One concrete lesson per call; the file itself is curated by the
-  owner - you only ever add.
-
-## Lessons
+This file is yours; upgrades never overwrite it. It holds standing operating rules only.
+How you work is learned from the owner's corrections: store each one with procedure_update
+(when_to_use / when_not_to_use) in the turn it arrives. This brief is not a lesson log.
+Correct one of its rules with console_brief_update (replace or retire an exact target with the
+expected_hash from procedure_read({id:"owner-console-brief"})). Saving is not proof of changed behavior.
 `;
+
+/** Upgrade only the known, code-owned legacy tool mechanism when rendering a modern runtime.
+ * The stored original and all owner business rules remain untouched. */
+export function modernizeLegacyBriefMechanism(raw: string): string {
+  const shortIntroduction =
+    'When the owner corrects how you work, or a procedure fails and you learn the\n' +
+    'fix, record it with console_brief_update({lesson}) - one durable lesson per\n' +
+    "call, appended below with today's date while everything above is preserved.";
+  const oldIntroduction =
+    shortIntroduction +
+    '\n' +
+    'This is how your operating manual grows; losing a lesson means repeating the\n' +
+    'failure.';
+  const oldSelfUpdate =
+    '- When the owner corrects your working style, or a recipe above proves\n' +
+    '  wrong, call console_brief_update({lesson}) in the same turn and say you\n' +
+    '  did. One concrete lesson per call; the file itself is curated by the\n' +
+    '  owner - you only ever add.';
+  const correctedIntroduction =
+    'Store owner corrections with procedure_update (when_to_use / when_not_to_use). Correct one existing brief rule with console_brief_update replace or retire and expected_hash; the brief is not a lesson log. Saving is not proof of changed behavior.';
+  const replacements = [
+    // Replace the longer seed first so its obsolete continuation cannot survive.
+    [oldIntroduction, correctedIntroduction],
+    [shortIntroduction, correctedIntroduction],
+    [
+      oldSelfUpdate,
+      '- Store the correction with procedure_update in the same turn; correct a contradicted brief rule with console_brief_update replace or retire and expected_hash, preserving unrelated rules.',
+    ],
+  ];
+  const project = (text: string): string =>
+    replacements.reduce(
+      (value, [before, after]) =>
+        value
+          .replace(before, after)
+          .replace(before.replace(/\n/g, '\r\n'), after.replace(/\n/g, '\r\n')),
+      text
+    );
+  let output = '';
+  let prose = '';
+  let fence: { char: string; length: number } | null = null;
+  for (const line of raw.match(/[^\n]*(?:\n|$)/g) ?? []) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (!fence && marker) {
+      output += project(prose) + line;
+      prose = '';
+      fence = { char: marker[1][0], length: marker[1].length };
+    } else if (fence) {
+      output += line;
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length) fence = null;
+    } else {
+      prose += line;
+    }
+  }
+  return output + project(prose);
+}
 
 export function consoleBriefPath(homeDir: string = homedir()): string {
   return join(homeDir, '.mama', 'briefs', 'brief-owner-console.md');
@@ -95,10 +114,20 @@ export function ensureConsoleBrief(homeDir: string = homedir()): boolean {
   const path = consoleBriefPath(homeDir);
   if (existsSync(path)) return false;
   mkdirSync(join(homeDir, '.mama', 'briefs'), { recursive: true });
-  const tmpPath = `${path}.tmp`;
-  writeFileSync(tmpPath, CONSOLE_BRIEF_DEFAULT, 'utf-8');
-  renameSync(tmpPath, path);
-  return true;
+  const tmpPath = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tmpPath, CONSOLE_BRIEF_DEFAULT, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  try {
+    // Exclusive publication keeps a concurrent human-created brief intact.
+    linkSync(tmpPath, path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return false;
+    }
+    throw error;
+  } finally {
+    unlinkSync(tmpPath);
+  }
 }
 
 /** Read the current brief; empty string when absent (caller seeds on boot). */
@@ -135,44 +164,128 @@ export function projectConsoleBriefForPrompt(raw: string, policy: PrivateConnect
   return `${projected}${separator}${overlay}\n`;
 }
 
-/**
- * Append one dated lesson for the agent's self-update tool. APPEND, never
- * replace: on the loop's first live fire (2026-07-24) the model answered a
- * full-replace contract with just its new lesson, wiping the seeded manual
- * including the self-update rule itself. Accretion is the mechanism Kagemusha
- * actually validated - the agent only ever adds; reorganizing the file is the
- * owner's (or an owner-directed session's) manual edit.
- *
- * Loud validation, no fallback: an empty lesson is refused, and a brief that
- * would exceed the ceiling is refused (the manual needs owner curation),
- * never truncated.
+export const hashConsoleBrief = hashProcedureDocument;
+
+export function readConsoleBriefSnapshot(homeDir: string = homedir()): {
+  path: string;
+  text: string;
+  hash: string | null;
+} {
+  const path = consoleBriefPath(homeDir);
+  const text = loadConsoleBrief(homeDir);
+  return { path, text, hash: existsSync(path) ? hashConsoleBrief(text) : null };
+}
+
+export interface ConsoleBriefUpdate {
+  operation: 'append' | 'replace' | 'retire';
+  lesson?: string;
+  target?: string;
+  replacement?: string;
+  expectedHash?: string;
+}
+
+/** Pure preparation: the canonical store commits this text and its old revision
+ * before attempting Markdown publication. No full-document replace operation.
  */
-export function appendConsoleBriefLesson(lesson: string, homeDir: string = homedir()): string {
-  const trimmed = lesson.trim();
-  if (!trimmed) {
-    throw new Error('console brief update refused: empty lesson');
+export function prepareConsoleBriefUpdate(
+  input: ConsoleBriefUpdate,
+  current: string
+): {
+  text: string;
+  priorHash: string;
+  hash: string;
+} {
+  const priorHash = hashConsoleBrief(current);
+  if (input.expectedHash !== undefined && input.expectedHash !== priorHash) {
+    throw new Error('console brief update refused: expected hash conflict');
   }
-  // A brief absent at call time (deleted, first run) is re-seeded so the
-  // lesson lands inside the full manual, not alone in an empty file.
-  let existing = loadConsoleBrief(homeDir);
-  if (!existing.trim()) {
-    ensureConsoleBrief(homeDir);
-    existing = loadConsoleBrief(homeDir);
-  }
-  const date = new Date().toISOString().slice(0, 10);
-  const entry = `- ${date}: ${trimmed.replace(/\s*\n\s*/g, ' ')}`;
-  const base = existing.replace(/\s+$/, '');
-  const next = `${base}\n${base.includes('\n## Lessons') ? '' : '\n## Lessons\n'}${entry}\n`;
-  if (next.length > CONSOLE_BRIEF_MAX_CHARS) {
+  let text: string;
+  if (input.operation === 'append') {
+    // Retired 2026-09-09: dated lesson lines accreted into a 10K brief with contradictory
+    // rules. Corrections are procedures now; the brief only ever changes by exact target.
     throw new Error(
-      `console brief update refused: ${next.length} chars exceeds ${CONSOLE_BRIEF_MAX_CHARS} - ` +
-        'ask the owner to curate the brief before recording more lessons'
+      'console brief update refused: append is retired; store the correction with procedure_update'
+    );
+  } else if (input.operation === 'replace' || input.operation === 'retire') {
+    if (!input.expectedHash) {
+      throw new Error('console brief update refused: expected hash required');
+    }
+    const target = input.target;
+    if (!target?.trim() || target.trim() === current.trim()) {
+      throw new Error('console brief update refused: exact partial target required');
+    }
+    const offset = current.indexOf(target);
+    if (offset < 0 || current.indexOf(target, offset + 1) >= 0) {
+      throw new Error('console brief update refused: missing or ambiguous target');
+    }
+    const end = offset + target.length;
+    if (
+      (offset > 0 && current[offset - 1] !== '\n') ||
+      (end < current.length && !target.endsWith('\n') && !/^[\r\n]/.test(current.slice(end)))
+    ) {
+      throw new Error(
+        'console brief update refused: target must contain a complete rule or section'
+      );
+    }
+    const section = /^(#{2,6})[ \t]+/.exec(target);
+    if (section) {
+      const level = section[1].length;
+      const nextHeading = /^(#{1,6})[ \t]+/gm;
+      nextHeading.lastIndex = offset + target.split('\n')[0].length + 1;
+      let boundary = current.length;
+      let match: RegExpExecArray | null;
+      while ((match = nextHeading.exec(current)) !== null) {
+        if (match[1].length <= level) {
+          boundary = match.index;
+          break;
+        }
+      }
+      if (end > boundary || current.slice(end, boundary).trim()) {
+        throw new Error(
+          'console brief update refused: target must contain exactly one complete section'
+        );
+      }
+    } else {
+      const isListRule = /^[-*+] |^\d+[.)] /.test(target);
+      const precedingLine =
+        current
+          .slice(0, offset)
+          .replace(/\r?\n$/, '')
+          .split(/\r?\n/)
+          .pop() ?? '';
+      if (
+        /^#/.test(target) ||
+        /\n(?:#{1,6} |[-*+] |\d+[.)] )/.test(target) ||
+        (!isListRule && (precedingLine.trim() || /\r?\n\s*\r?\n/.test(target.trim())))
+      ) {
+        throw new Error(
+          'console brief update refused: target must contain one complete rule or section'
+        );
+      }
+    }
+    if (!section) {
+      const remainder = current.slice(end).replace(/^\r?\n/, '');
+      const followingLine = remainder.split(/\r?\n/)[0];
+      if (followingLine.trim() && !/^(?:#{1,6} |[-*+] |\d+[.)] )/.test(followingLine)) {
+        throw new Error(
+          'console brief update refused: target must contain the complete wrapped rule'
+        );
+      }
+    }
+    const replacement = input.operation === 'retire' ? '' : input.replacement;
+    if (replacement === undefined || (input.operation === 'replace' && !replacement.trim())) {
+      throw new Error('console brief update refused: nonempty replacement required');
+    }
+    text = current.slice(0, offset) + replacement + current.slice(end);
+  } else {
+    throw new Error('console brief update refused: unsupported operation');
+  }
+  if (text.length > CONSOLE_BRIEF_MAX_CHARS) {
+    throw new Error(
+      `console brief update refused: ${text.length} chars exceeds ${CONSOLE_BRIEF_MAX_CHARS}`
     );
   }
-  const path = consoleBriefPath(homeDir);
-  mkdirSync(join(homeDir, '.mama', 'briefs'), { recursive: true });
-  const tmpPath = `${path}.tmp`;
-  writeFileSync(tmpPath, next, 'utf-8');
-  renameSync(tmpPath, path);
-  return next;
+  return { text, priorHash, hash: hashConsoleBrief(text) };
 }
+
+/** Legacy append-only API, preserving its return value and seed-on-missing behavior. */

@@ -130,7 +130,7 @@ mama init
 ~/.mama/
 ├── config.yaml              # Main configuration file
 ├── CLAUDE.md                # Workspace documentation for Claude
-├── SOUL.md                  # Shipped operating principles
+├── SOUL.md                  # Onboarding marker, not loaded at runtime
 ├── IDENTITY.md              # One-front MAMA identity
 ├── USER.md                  # Scoped owner-learning policy
 ├── skills/                  # Custom skills directory
@@ -174,7 +174,7 @@ Claude Code 인증 확인... ✓
 데이터 디렉토리 생성 중... ✓
 로그 디렉토리 생성 중... ✓
 CLAUDE.md 생성 중... ✓
-Creating default runtime personas...
+Creating default onboarding markers...
   SOUL.md ✓
   IDENTITY.md ✓
   USER.md ✓
@@ -262,9 +262,9 @@ curl -H "Authorization: Bearer $MAMA_AUTH_TOKEN" \
 Envelope metadata lives behind `/api/envelope/status`, which reports `issuance`,
 `key_id`, `key_version`, and `recent_mismatch_count_24h`.
 
-`context_compile` uses this envelope context to persist trusted context packets. Managed
-`dashboard-agent` and `wiki-agent` runs prefer `context_compile` when issuance is enabled, then
-fall back to `mama_search` if no active worker envelope is available.
+`context_compile` uses this envelope context to persist trusted context packets. Scheduled board
+and wiki work orders in the owner runtime prefer `context_compile` when issuance is enabled, then
+fall back to `mama_search` if no active envelope is available.
 
 Production notes:
 
@@ -479,8 +479,7 @@ agent:
   codex_ephemeral: false
   codex_add_dirs:
     - ~/.mama/workspace
-  codex_config_overrides:
-    - 'model_reasoning_effort="high"'
+  effort: high
   tools:
     gateway:
       - '*'
@@ -492,6 +491,8 @@ agent:
 Notes:
 
 - Codex native config normally lives under `~/.codex`, but with `codex_home` you can isolate runtime state in `~/.mama/.codex`.
+- MAMA regenerates the managed `config.toml` under `codex_home` at every launch, so edit
+  `agent.effort` (low | medium | high | xhigh) in `~/.mama/config.yaml` rather than the TOML file.
 - MCP config location for MAMA tool routing is `agent.tools.mcp_config` and is backend-independent (same for Claude/Codex when running through MAMA).
 - For Cloudflare Zero Trust external access, set `MAMA_TRUST_CLOUDFLARE_ACCESS=true` in the shell or service that starts `mama`.
 
@@ -499,20 +500,21 @@ Notes:
 
 #### Agent Settings
 
-| Option                      | Type   | Default                  | Description                                   |
-| --------------------------- | ------ | ------------------------ | --------------------------------------------- |
-| `backend`                   | string | claude                   | Agent backend (`claude`, `codex`, or `cline`) |
-| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend               |
-| `max_turns`                 | number | 10                       | Maximum conversation turns                    |
-| `timeout`                   | number | 300000                   | Request timeout in milliseconds               |
-| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory                  |
-| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory                       |
-| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                            |
-| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard               |
-| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`                |
-| `codex_ephemeral`           | bool   | false                    | Disable session persistence                   |
-| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex          |
-| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides            |
+| Option                      | Type   | Default                  | Description                                            |
+| --------------------------- | ------ | ------------------------ | ------------------------------------------------------ |
+| `backend`                   | string | claude                   | Agent backend (`claude`, `codex`, or `cline`)          |
+| `model`                     | string | claude-sonnet-4-20250514 | Model name for selected backend                        |
+| `max_turns`                 | number | 10                       | Maximum conversation turns                             |
+| `timeout`                   | number | 300000                   | Request timeout in milliseconds                        |
+| `codex_home`                | string | ~/.mama/.codex           | Codex state/config directory                           |
+| `codex_cwd`                 | string | ~/.mama/workspace        | Codex working directory                                |
+| `codex_sandbox`             | string | workspace-write          | Codex sandbox mode                                     |
+| `codex_skip_git_repo_check` | bool   | true                     | Skip Codex git repository guard                        |
+| `codex_profile`             | string | (unset)                  | Codex profile in `config.toml`                         |
+| `codex_ephemeral`           | bool   | false                    | Disable session persistence                            |
+| `codex_add_dirs`            | array  | []                       | Extra writable directories for Codex                   |
+| `codex_config_overrides`    | array  | []                       | Raw Codex `-c key=value` overrides                     |
+| `effort`                    | string | high (codex)             | Codex `model_reasoning_effort` (low/medium/high/xhigh) |
 
 ### Codex external MCP notes (Brave)
 
@@ -700,8 +702,7 @@ After initialization, your workspace looks like this:
 │
 ├── skills/                  # Custom skills
 │   ├── image-translate/     # Image translation skill
-│   ├── document-analysis/   # Document analysis skill
-│   └── heartbeat-report/    # Heartbeat report skill
+│   └── document-analysis/   # Document analysis skill
 │
 ├── workspace/               # Working directory
 │   ├── scripts/             # Shell scripts
@@ -715,9 +716,9 @@ After initialization, your workspace looks like this:
 
 - **config.yaml** - All settings, tokens, gateway configuration
 - **CLAUDE.md** - Tells Claude where to work (workspace boundaries)
-- **IDENTITY.md** - Shipped one-front MAMA identity; not a human-team grant
-- **USER.md** - Your preferences and context
-- **SOUL.md** - Shipped operating principles; not a product-facing worker roster
+- **IDENTITY.md** - Shipped one-front MAMA identity; not loaded by the owner runtime
+- **USER.md** - Your preferences and context; not loaded by the owner runtime
+- **SOUL.md** - Shipped operating principles; not loaded by the owner runtime, which takes its fixed procedure text from `~/.mama/operator/console-brief.md`
 
 ---
 

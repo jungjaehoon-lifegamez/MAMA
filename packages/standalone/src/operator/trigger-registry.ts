@@ -14,6 +14,8 @@ import type { SQLiteDatabase } from '../sqlite.js';
 import type { CreateTriggerInput, TriggerRecord, TriggerStatus } from './trigger-types.js';
 
 interface TriggerRow {
+  procedure_ref_json: string | null;
+  revision: number;
   id: string;
   kind: string;
   memory_query: string;
@@ -78,6 +80,10 @@ export class TriggerRegistry {
       );
     `);
     this.migrateReviewWatermark();
+    this.db.exec(`CREATE TABLE IF NOT EXISTS operator_trigger_outcome_receipts (
+      trigger_id TEXT NOT NULL, receipt_id TEXT NOT NULL, outcome TEXT NOT NULL,
+      PRIMARY KEY (trigger_id, receipt_id)
+    )`);
   }
 
   /**
@@ -91,6 +97,14 @@ export class TriggerRegistry {
         name: string;
       }>;
       const names = new Set(columns.map((column) => column.name));
+      if (!names.has('procedure_ref_json')) {
+        this.db.exec('ALTER TABLE operator_triggers ADD COLUMN procedure_ref_json TEXT');
+      }
+      if (!names.has('revision')) {
+        this.db.exec(
+          'ALTER TABLE operator_triggers ADD COLUMN revision INTEGER NOT NULL DEFAULT 1'
+        );
+      }
       if (!names.has('reviewed_fired')) {
         this.db.exec(
           `ALTER TABLE operator_triggers ADD COLUMN reviewed_fired INTEGER NOT NULL DEFAULT 0`
@@ -118,6 +132,7 @@ export class TriggerRegistry {
     const record: TriggerRecord = {
       ...input,
       status: 'active',
+      revision: 1,
       createdAt: now,
       updatedAt: now,
       stats: { fired: 0, succeeded: 0, failed: 0 },
@@ -126,8 +141,8 @@ export class TriggerRegistry {
       .prepare(
         `INSERT INTO operator_triggers
            (id, kind, memory_query, match_json, procedure_json, required_evidence_json,
-            status, authored_by, created_at, updated_at, provenance_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            status, authored_by, created_at, updated_at, provenance_json, procedure_ref_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         record.id,
@@ -140,7 +155,8 @@ export class TriggerRegistry {
         record.authoredBy,
         record.createdAt,
         record.updatedAt,
-        JSON.stringify(record.provenance)
+        JSON.stringify(record.provenance),
+        record.procedureRef ? JSON.stringify(record.procedureRef) : null
       );
     return record;
   }
@@ -171,7 +187,7 @@ export class TriggerRegistry {
   }
 
   /** Advance the durable review watermark only after a review decision was applied. */
-  markReviewed(id: string, fired: number): void {
+  markReviewed(id: string, fired: number, expectedRevision?: number): void {
     if (!Number.isInteger(fired) || fired < 0) {
       throw new Error(`markReviewed: fired must be a non-negative integer for ${id}`);
     }
@@ -180,9 +196,9 @@ export class TriggerRegistry {
         `UPDATE operator_triggers
          SET reviewed_fired = MAX(reviewed_fired, ?), review_failures = 0,
              review_retry_after = NULL, updated_at = ?
-         WHERE id = ? AND status = 'active'`
+         WHERE id = ? AND status = 'active' AND (? IS NULL OR revision = ?)`
       )
-      .run(fired, Date.now(), id);
+      .run(fired, Date.now(), id, expectedRevision ?? null, expectedRevision ?? null);
     if (result.changes === 0) throw new Error(`markReviewed: no active trigger with id ${id}`);
   }
 
@@ -273,23 +289,39 @@ export class TriggerRegistry {
   }
 
   /** Record a terminal result for a previously recorded fire. */
-  recordOutcome(id: string, outcome: 'succeeded' | 'failed'): void {
-    const column = outcome === 'succeeded' ? 'succeeded' : 'failed';
-    const result = this.db
-      .prepare(
-        `UPDATE operator_triggers
-         SET ${column} = ${column} + 1, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(Date.now(), id);
-    if (result.changes === 0) throw new Error(`recordOutcome: no trigger with id ${id}`);
+  recordOutcome(id: string, outcome: 'succeeded' | 'failed', receiptId?: string): void {
+    if (receiptId !== undefined && !receiptId.trim()) throw new Error('receiptId required');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.getById(id)) throw new Error(`recordOutcome: no trigger with id ${id}`);
+      const inserted =
+        receiptId === undefined
+          ? true
+          : this.db
+              .prepare(
+                'INSERT OR IGNORE INTO operator_trigger_outcome_receipts (trigger_id, receipt_id, outcome) VALUES (?, ?, ?)'
+              )
+              .run(id, receiptId, outcome).changes > 0;
+      if (inserted) {
+        const column = outcome === 'succeeded' ? 'succeeded' : 'failed';
+        this.db
+          .prepare(
+            `UPDATE operator_triggers SET ${column} = ${column} + 1, updated_at = ? WHERE id = ?`
+          )
+          .run(Date.now(), id);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   /** Retire a trigger (agent-judged in Task 4; here it's the mechanical write). */
   disable(id: string, reason: string): TriggerRecord {
     const result = this.db
       .prepare(
-        `UPDATE operator_triggers SET status = 'disabled', disabled_reason = ?, updated_at = ? WHERE id = ?`
+        `UPDATE operator_triggers SET status = 'disabled', disabled_reason = ?, updated_at = ?, revision = revision + 1 WHERE id = ?`
       )
       .run(reason, Date.now(), id);
     if (result.changes === 0) throw new Error(`disable: no trigger with id ${id}`);
@@ -299,33 +331,76 @@ export class TriggerRegistry {
   }
 
   /** Agent retirement must never overwrite a durable owner disable that won the race (TG-06). */
-  retireActive(id: string, reason: string): TriggerRecord {
+  retireActive(id: string, reason: string, expectedRevision?: number): TriggerRecord {
     const result = this.db
       .prepare(
         `UPDATE operator_triggers
-         SET status = 'disabled', disabled_reason = ?, updated_at = ?
-         WHERE id = ? AND status = 'active'`
+         SET status = 'disabled', disabled_reason = ?, updated_at = ?, revision = revision + 1
+         WHERE id = ? AND status = 'active' AND (? IS NULL OR revision = ?)`
       )
-      .run(reason, Date.now(), id);
+      .run(reason, Date.now(), id, expectedRevision ?? null, expectedRevision ?? null);
     if (result.changes === 0) throw new Error(`retireActive: no active trigger with id ${id}`);
     const record = this.getById(id);
     if (!record) throw new Error(`retireActive: trigger ${id} missing after update`);
     return record;
   }
 
+  hasProcedureBindings(id: string): boolean {
+    if (
+      !this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operator_trigger_procedure_bindings'"
+        )
+        .get()
+    )
+      return false;
+    return (
+      this.db
+        .prepare('SELECT 1 FROM operator_trigger_procedure_bindings WHERE trigger_id = ? LIMIT 1')
+        .get(id) !== undefined
+    );
+  }
+
   /** Disable the original and insert its replacement as one rollback-safe decision. */
-  refine(id: string, reason: string, replacement: CreateTriggerInput): TriggerRecord {
+  refine(
+    id: string,
+    reason: string,
+    replacement: CreateTriggerInput,
+    expectedRevision?: number
+  ): TriggerRecord {
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const mapped = this.hasProcedureBindings(id);
+      if (mapped) {
+        const original = this.getById(id);
+        if (
+          !original ||
+          replacement.procedureRef ||
+          JSON.stringify(replacement.procedure) !== JSON.stringify(original.procedure)
+        ) {
+          throw new Error('Update the scoped canonical procedure before refining its trigger');
+        }
+      }
+
       const result = this.db
         .prepare(
           `UPDATE operator_triggers
-           SET status = 'disabled', disabled_reason = ?, updated_at = ?
-           WHERE id = ? AND status = 'active'`
+           SET status = 'disabled', disabled_reason = ?, updated_at = ?, revision = revision + 1
+           WHERE id = ? AND status = 'active' AND (? IS NULL OR revision = ?)`
         )
-        .run(reason, Date.now(), id);
+        .run(reason, Date.now(), id, expectedRevision ?? null, expectedRevision ?? null);
       if (result.changes === 0) throw new Error(`refine: no active trigger with id ${id}`);
       const created = this.create(replacement);
+      if (mapped) {
+        this.db
+          .prepare(
+            `INSERT INTO operator_trigger_procedure_bindings
+          (trigger_id,owner_scope,project_id,channel_id,procedure_id,procedure_revision,scope_key,snapshot_hash)
+          SELECT ?,owner_scope,project_id,channel_id,procedure_id,procedure_revision,scope_key,snapshot_hash
+          FROM operator_trigger_procedure_bindings WHERE trigger_id = ?`
+          )
+          .run(created.id, id);
+      }
       this.db.exec('COMMIT');
       return created;
     } catch (error) {
@@ -342,6 +417,8 @@ export class TriggerRegistry {
 function rowToRecord(row: TriggerRow): TriggerRecord {
   return {
     id: row.id,
+    revision: row.revision,
+    ...(row.procedure_ref_json ? { procedureRef: JSON.parse(row.procedure_ref_json) } : {}),
     kind: row.kind,
     memoryQuery: row.memory_query,
     match: JSON.parse(row.match_json),

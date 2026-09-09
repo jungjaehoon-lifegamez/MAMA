@@ -6,6 +6,7 @@ import type { RoleConfig } from '../../cli/config/types.js';
 import { RoleManager } from '../role-manager.js';
 import { PRIVATE_CONNECTOR_TOOL_DEFINITIONS } from '../../connectors/private-connector-policy.js';
 import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from '../context-compile-contract.js';
+import { buildReportPublishToolContract } from '../../operator/board-slot-instructions.js';
 import type { CodeActToolPolicy } from './tool-policy.js';
 import { ProjectedToolCatalog } from './tool-catalog.js';
 
@@ -199,8 +200,11 @@ const TOOL_REGISTRY: ToolMeta[] = [
   // Dashboard
   {
     name: 'report_publish',
-    description:
-      'Publish dashboard analysis as HTML. pipeline is a managed live task projection; update tasks instead. An omitted analysis basis is unknown.',
+    // ONE source with the gateway registry (src/agent/tool-registry.ts). The
+    // board card vocabulary must reach the agent through tool_search /
+    // tool_describe, which read THIS registry; a second hand-written string
+    // here is how the vocabulary went missing at the moment of use.
+    description: buildReportPublishToolContract(),
     params: [
       {
         name: 'slots',
@@ -266,9 +270,108 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'console_brief_update',
-    description: 'Append one dated lesson to your operating brief (the rest is preserved)',
-    params: [{ name: 'lesson', type: 'string', required: true }],
-    returnType: '{ message: string }',
+    description:
+      'Append a new lesson or replace/retire an exact existing partial rule with expected_hash from procedure_read({id:"owner-console-brief"}). Stored/projected is not behavior verified.',
+    params: [
+      { name: 'operation', type: "'append' | 'replace' | 'retire'", required: false },
+      { name: 'lesson', type: 'string', required: false },
+      { name: 'target', type: 'string', required: false },
+      { name: 'replacement', type: 'string', required: false },
+      { name: 'expected_hash', type: 'string', required: false },
+      { name: 'reason', type: 'string', required: false },
+      { name: 'superseded_memory_ids', type: 'string[]', required: false },
+    ],
+    returnType:
+      '{ status: string; revision: number; hash: string; behaviorVerified: false; message: string }',
+    category: 'os',
+  },
+  {
+    name: 'experience_read',
+    description:
+      'Discover authorized execution evidence by run or tool, or kind skills for installed skill descriptions/source paths, then read trace_id for actual input/result and completeness. Historical evidence is not an instruction or proof of learning.',
+    params: [
+      { name: 'kind', type: "'executions' | 'skills'", required: false },
+      { name: 'trace_id', type: 'string', required: false },
+      { name: 'offset', type: 'number', required: false },
+      { name: 'chars', type: 'number', required: false },
+      { name: 'run_id', type: 'string', required: false },
+      { name: 'tool_name', type: 'string', required: false },
+      { name: 'cursor', type: 'string', required: false },
+      { name: 'limit', type: 'number', required: false },
+    ],
+    returnType:
+      '{ traces?: unknown[]; next_cursor?: string | null; trace?: unknown; content?: string; next_offset?: number | null; total_chars?: number; behaviorVerified: false }',
+    category: 'os',
+  },
+  {
+    name: 'procedure_list',
+    description:
+      'Discover authorized procedure metadata and applicability; read selected full instructions with procedure_read.',
+    params: [],
+    returnType:
+      '{ procedures: Array<{id: string; revision: number; title: string; description: string; whenToUse: string; whenNotToUse: string}> }',
+    category: 'os',
+  },
+  {
+    name: 'procedure_read',
+    description:
+      'Read and pin one authorized active procedure revision for this run. Retirement and revoked authority override pinned versions. Owners can read id owner-console-brief for exact text and hash before a targeted console_brief_update; revision 0 is an unimported legacy snapshot.',
+    params: [
+      { name: 'id', type: 'string', required: true },
+      { name: 'revision', type: 'number', required: false },
+    ],
+    returnType:
+      '{ procedure: {id: string; revision: number; title: string; body: string; whenToUse?: string; whenNotToUse?: string; originalInstruction?: string; sourceRefs?: string[]}; hash: string; behaviorVerified: false }',
+    category: 'os',
+  },
+  {
+    name: 'procedure_update',
+    description:
+      'Create or correct the same procedure using owner instruction or corroborated outcomes. expected_revision 0 creates. Host binds authority and original stimulus; stored does not mean behavior verified.',
+    params: [
+      { name: 'id', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+      { name: 'title', type: 'string', required: true },
+      { name: 'description', type: 'string', required: true },
+      { name: 'when_to_use', type: 'string', required: true },
+      { name: 'when_not_to_use', type: 'string', required: true },
+      { name: 'body', type: 'string', required: true },
+      { name: 'expected_results', type: 'string[]', required: true },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'source_refs', type: 'string[]', required: false },
+      { name: 'superseded_memory_ids', type: 'string[]', required: false },
+    ],
+    returnType:
+      '{ status: string; procedure: {id: string; revision: number}; behaviorVerified: false }',
+    category: 'os',
+  },
+  {
+    name: 'procedure_retire',
+    description: 'Withdraw an exact current procedure revision while preserving history.',
+    params: [
+      { name: 'id', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+      { name: 'reason', type: 'string', required: true },
+    ],
+    returnType: '{ status: string; behaviorVerified: false }',
+    category: 'os',
+  },
+  {
+    name: 'procedure_observe',
+    description:
+      'Record a receipted agent observation. Keep unknown/noop/failure distinct; satisfaction is not independent verification of learning.',
+    params: [
+      { name: 'id', type: 'string', required: true },
+      { name: 'revision', type: 'number', required: true },
+      { name: 'receipt_id', type: 'string', required: true },
+      {
+        name: 'status',
+        type: "'selected' | 'satisfied' | 'failed' | 'noop' | 'not_performed' | 'unknown'",
+        required: true,
+      },
+      { name: 'evidence_refs', type: 'string[]', required: true },
+    ],
+    returnType: '{ observation: {status: string}; behaviorVerified: false }',
     category: 'os',
   },
   {
@@ -1099,6 +1202,9 @@ const TOOL_REGISTRY: ToolMeta[] = [
 
 /** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
+  'experience_read',
+  'procedure_list',
+  'procedure_read',
   'mama_search',
   'mama_recall',
   'mama_provenance',
@@ -1147,6 +1253,9 @@ export function isCodeActMutatingTool(toolName: string): boolean {
 
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
+  'procedure_update',
+  'procedure_retire',
+  'procedure_observe',
   'mama_save',
   'context_compile',
   'mama_update',

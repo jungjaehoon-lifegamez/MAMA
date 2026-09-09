@@ -1,5 +1,7 @@
 # Skills API Reference
 
+> **ARCHIVED:** historical skills API reference. The built-in skill set and the owner runtime have since changed; see [Architecture Overview](../explanation/architecture.md).
+
 **Category:** Reference  
 **Audience:** Developers creating custom skills  
 **Version:** 0.1.0
@@ -420,33 +422,6 @@ MAMA Standalone includes three template skills:
 ```
 User: [sends image] 번역해줘
 MAMA: [generates HTML with original + Korean translation, sends screenshot to Discord]
-```
-
-### heartbeat-report
-
-**Purpose:** Collect activity from gateways and create summary report
-
-**Triggers:**
-
-- Keywords: `보고서`, `리포트`, `heartbeat`, `상황보고`
-
-**Output:** `text`
-
-**Report formats:**
-
-- **Delta report**: Only new activity since last check
-- **Comprehensive report**: Full project status overview
-
-**Example:**
-
-```
-User: 보고서
-MAMA: 📊 델타 보고서
-
-**Slack**
-- #general: 새 메시지 3개
-  - [Alice] 프로젝트 진행 상황 공유
-  - [Bob] 버그 수정 완료
 ```
 
 ### document-analyze

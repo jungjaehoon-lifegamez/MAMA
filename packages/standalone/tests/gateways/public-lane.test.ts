@@ -49,6 +49,7 @@ import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import type { AgentContext, AgentLoopOptions } from '../../src/agent/types.js';
 import { getRoleManager, resetRoleManager, RoleManager } from '../../src/agent/role-manager.js';
 import { DEFAULT_ROLES, type RoleConfig } from '../../src/cli/config/types.js';
+import { projectOwnerRuntimeRole } from '../../src/operator/owner-runtime.js';
 import { createMockMamaApi, type MamaApiClient } from '../../src/gateways/context-injector.js';
 import { MessageRouter, PUBLIC_LANE_SYSTEM_PROMPT } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
@@ -368,12 +369,14 @@ describe('Task 7: safe public lane', () => {
 
     expect(calls[0]?.options.agentContext).toMatchObject({
       roleName: 'owner_console',
-      role: { allowedTools: DEFAULT_ROLES.definitions.owner_console.allowedTools },
+      role: {
+        allowedTools: projectOwnerRuntimeRole(DEFAULT_ROLES.definitions.owner_console).allowedTools,
+      },
     });
     expect(calls[0]?.options.systemPrompt).toContain('OWNER AGENTS INJECTION');
     expect(calls[0]?.options.systemPrompt).toContain('OWNER RULES INJECTION');
     expect(calls[0]?.options.systemPrompt).toContain('OWNER KEYWORD INJECTION');
-    expect(calls[0]?.prompt).toContain('OWNER SKILL INJECTION');
+    expect(calls[0]?.prompt).not.toContain('OWNER SKILL INJECTION');
     expect(calls[0]?.prompt).toContain('OWNER PROFILE BASELINE');
     expect(enhance).toHaveBeenCalledOnce();
     expect(mamaApi.recallMemory).toHaveBeenCalledOnce();

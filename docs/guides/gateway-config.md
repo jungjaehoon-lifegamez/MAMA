@@ -475,7 +475,7 @@ gateways:
 
 **⚠️ `allowed_chats` is the OWNER TRUST ANCHOR (v0.22+):** any allowlisted
 chat's 1:1 private DM is granted the `owner_console` role — a wide operational
-surface (board/audit reads, `report_request`,
+surface (board/audit reads,
 `mama_save`/`mama_update`, task creation). Only list chats you trust with
 owner-level access. Group/supergroup IDs (negative numbers) never escalate,
 but listing a teammate's private chat gives THAT person the owner console.
@@ -632,8 +632,8 @@ gateways:
 
 `DELEGATE::` / `DELEGATE_BG::` message prefixes are no longer executed. The delegation
 executor was removed in v0.29.0 after the logs showed it had been wired zero times, and the
-`delegate` gateway tool is registered but not dispatchable — calling it throws
-`Unknown tool: delegate`.
+`delegate` gateway tool is absent from the tool registry and the executor entirely.
+MAMA uses the model runtime's native subagents when extra workers are useful.
 
 A message beginning with `DELEGATE::` is still a shouldRespond trigger on Discord, so the bot
 will READ it; it will then answer as ordinary chat. Scheduled system work runs through the

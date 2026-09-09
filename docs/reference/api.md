@@ -1097,7 +1097,7 @@ Update a specific agent's config.
   "model": "claude-sonnet-5",
   "tier": 1,
   "enabled": true,
-  "can_delegate": true // accepted + persisted but INERT: the delegate tool is not dispatchable
+  "can_delegate": true // accepted + persisted but INERT: the host delegate tool no longer exists
 }
 ```
 

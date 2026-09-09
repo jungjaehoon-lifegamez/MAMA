@@ -432,3 +432,45 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
     });
   });
 });
+
+describe('interrupted native run does not poison replay', () => {
+  const occurrence = 'owner-report:digest:interrupted';
+  const ctx: OwnerActionContext = { ...context, occurrenceKey: occurrence };
+  it('allows replay when the only non-confirmed row is the native_run marker', () => {
+    const { ledger, database } = open();
+    ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
+    ledger.markUnknown(ctx, 'native-run:abc', 'native_run', 'native turn did not finish cleanly');
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(false);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(false);
+    // Replay admits a new marker under the new run id and leaves the old observation.
+    const next: OwnerActionContext = { ...ctx, modelRunId: 'mr-replay', envelopeHash: 'env-replay' };
+    expect(ledger.begin(next, 'native-run:def', 'native_run', { admitted: true }).state).toBe(
+      'execute'
+    );
+    expect(
+      database
+        .prepare(
+          "SELECT status FROM owner_action_effects WHERE action_key = 'native-run:abc'"
+        )
+        .get()
+    ).toEqual({ status: 'unknown' });
+  });
+  it('stays blocked when a real effect of the interrupted run is unproven', () => {
+    const { ledger } = open();
+    ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
+    ledger.markUnknown(ctx, 'native-run:abc', 'native_run', 'native turn did not finish cleanly');
+    ledger.begin(ctx, 'bash:1', 'Bash', { command: 'printf x' });
+    ledger.markUnknown(ctx, 'bash:1', 'Bash', 'shell outcome unknown');
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(true);
+  });
+  it('stays blocked on a confirmed external send', () => {
+    const { ledger } = open();
+    ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
+    ledger.confirm(ctx, 'native-run:abc', 'native_run', { completed: true });
+    ledger.begin(ctx, 'send:1', 'telegram_send', intent);
+    ledger.confirm(ctx, 'send:1', 'telegram_send', { messageId: 'm-1' });
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(false);
+  });
+});

@@ -25,7 +25,12 @@ import {
 } from './member-effective-scope.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt } from '../agent/agent-loop.js';
-import { loadConsoleBrief, projectConsoleBriefForPrompt } from '../operator/console-brief.js';
+import {
+  loadConsoleBrief,
+  projectConsoleBriefForPrompt,
+  modernizeLegacyBriefMechanism,
+} from '../operator/console-brief.js';
+import type { ProcedureStore } from '../operator/procedure-store.js';
 import { OWNER_RUNTIME_SESSION_KEY, projectOwnerRuntimeRole } from '../operator/owner-runtime.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { buildGatewayToolCatalog } from '../agent/gateway-tool-catalog.js';
@@ -41,10 +46,6 @@ import { laneChannelId, makeHostPrincipal } from './principal.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
-import { buildLearningContext, formatLearningAuditLine } from '../operator/learning-context.js';
-import { cappedLearningReader } from '../operator/learning-read.js';
-import { observeOwnerTurn } from '../operator/turn-observer.js';
-import { loadLearningMarkers } from '../operator/learning-markers.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import {
   stripUntrustedBlocks,
@@ -218,13 +219,11 @@ function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
   roleManager: RoleManager,
   trelloAvailable: boolean,
-  privateConnectorPolicy: PrivateConnectorPolicy,
-  options: { includeOperatingDiscipline?: boolean } = {}
+  privateConnectorPolicy: PrivateConnectorPolicy
 ): string {
   if (agentContext.roleName !== 'owner_console') {
     return '';
   }
-  const { includeOperatingDiscipline = true } = options;
   // TG-04: name the Trello read primitives the role actually holds. The former text said
   // Trello was reachable "only through context_compile" while the owner role also held
   // trello_search/trello_card/trello_kanban, and forbade the lifecycle judgment the owner
@@ -250,35 +249,10 @@ function buildStableRolePolicyInstructions(
     privateConnectorPolicy.enabledPrivateConnectors.length > 0
       ? '\n- Private connector task tools are read-only evidence. Keep their lifecycle state separate from the native task board.'
       : '';
-  const evidencePolicy = `- Task-store canonicity: the task board (task_list/task_create/task_update/task_reclassify) is the tracker YOU maintain for the owner. Every external store remains separate evidence: name the store a fact came from, and decide the board's lifecycle from what the evidence shows rather than copying an external status. Create a task only when the owner is asking for finite work and supply a concrete completion_criteria. Lessons, memories, principles, aspirations, observations and open-ended management questions remain records/memory/decisions.${privateStoreBoundary}${trelloBoundary}
-- Answer status questions from artifacts first (board_read, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
-  return includeOperatingDiscipline
-    ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
-    : evidencePolicy;
+  // Trust boundaries only: which store is the owner's own tracker and which are external
+  // evidence. How to investigate and how to answer are learned, not restated per turn.
+  return `- Task-store canonicity: the task board (task_list/task_create/task_update/task_reclassify) is the tracker YOU maintain for the owner. Every external store remains separate evidence: name the store a fact came from, and decide the board's lifecycle from what the evidence shows rather than copying an external status. Create a task only when the owner is asking for finite work and supply a concrete completion_criteria. Lessons, memories, principles, aspirations, observations and open-ended management questions remain records/memory/decisions.${privateStoreBoundary}${trelloBoundary}`;
 }
-
-/**
- * Owner-console operating posture, restated on every owner turn.
- *
- * Without it the only behavioural instruction the chat persona carries is "Be concise", which
- * reliably yields a cautious advisor ("you may want to check X") instead of an operator that
- * checks X and reports the result. The scheduled operator report already carries an equivalent
- * SOP (situation-report.ts buildPrompt); this is the interactive half of the same contract.
- *
- * English default, mechanism only - no personal, business, or channel strings (locale overrides
- * belong in ~/.mama/operator/*.json, as with the other operator prompts).
- */
-const OWNER_CONSOLE_OPERATING_DISCIPLINE = `## Owner console operating discipline (applies to every reply)
-- You are the owner's operator, not an advisor. Report what you found and what you did; do not hand back work you could have done yourself.
-- Gather before answering. Any question about status, work, or what happened is answered by CALLING your gateway tools first. Never reply "please check X" when a gateway tool can check X - check it, then report.
-- Never claim a check you did not run. If a tool errored or was denied, name the tool and the error; a missing answer is reported as missing, never smoothed over.
-- Act by default; ask only before the irreversible. Reversible work is yours to do and then report: reading, analysing, ranking, drafting, and writes whose only audience is this console (mama_save, task_create/task_update on your task board). Ask first only when the effect leaves this conversation and cannot be taken back - sending to another channel (telegram_send), uploading or overwriting shared files (drive_upload), storing credentials, or delegating a run you cannot cancel.
-- A status or full-report request is YOUR judgment task in THIS conversation. Use compact descriptors and overview reads first, deepen only the material uncertainties through bounded pages, take authorized reversible actions, and answer the owner directly. Never hand it to another report agent and never reply with only an acknowledgement.
-- Do not close by offering work you could have done. "Shall I rank these?" or "want it broken down by person?" is work, not a question - if you can do it now it belongs in this reply. End with what you did and what the OWNER has to decide, never with a menu of things you are willing to do next.
-- Multi-step requests: decide the steps, carry out the reversible ones, then report the outcome. Do not return the plan as a suggestion and stop.
-- Synthesize, do not dump. A raw tool result is evidence, not an answer - say what it means for the owner and cite which source answered.
-- Before saying something is done, verify it (re-read the artifact or re-run the query) and say what you verified.
-- Reply in the language the owner writes in.`;
 
 export function projectOwnerConversationAgency(roleName: string, role: RoleConfig): RoleConfig {
   if (roleName !== 'owner_console') {
@@ -369,6 +343,8 @@ const SENSITIVE_PATTERNS = [
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
+/** Wall for a native child's own grant: long delegated work must not expire mid-run. */
+const SUBAGENT_ENVELOPE_WALL_SECONDS = 1800;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
 const HOST_MESSAGE_SOURCES = new Set<NormalizedMessage['source']>(['viewer', 'mobile', 'system']);
 export const PUBLIC_LANE_SYSTEM_PROMPT =
@@ -414,9 +390,13 @@ function buildReactiveEnvelopeInput(
   config: ReactiveEnvelopeConfig,
   surface: ConnectorCapabilitySurface,
   privateConnectorPolicy: PrivateConnectorPolicy,
-  memberEffectiveScope?: MemberEffectiveScope
+  memberEffectiveScope?: MemberEffectiveScope,
+  wallSecondsOverride?: number
 ): Omit<Envelope, 'envelope_hash' | 'signature'> {
   const policy = getReactiveRoutePolicy(message, config);
+  // A native child outlives the chat turn, so its own grant gets its own wall. Same scope,
+  // longer clock - never the parent's snapshot, which the child cannot renew.
+  const wallSeconds = wallSecondsOverride ?? policy.reactiveBudgetSeconds;
   const memberMemoryScopes = memberEffectiveScope?.memoryScopes.map((scope) => ({ ...scope }));
   const memberRawConnectors = memberEffectiveScope
     ? Object.entries(memberEffectiveScope.channelGrant)
@@ -446,10 +426,10 @@ function buildReactiveEnvelopeInput(
       allowed_destinations: policy.allowedDestinations,
     },
     tier: memberEffectiveScope ? 2 : 1,
-    budget: { wall_seconds: policy.reactiveBudgetSeconds },
+    budget: { wall_seconds: wallSeconds },
     // Wall budget limits agent work; envelope validity gets slack for tool finalization.
     expires_at: new Date(
-      Date.now() + policy.reactiveBudgetSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
+      Date.now() + wallSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
     ).toISOString(),
   };
 }
@@ -536,6 +516,21 @@ function normalizeTranslationTargetLanguage(
  * Central hub for processing messages from all messenger platforms.
  */
 export class MessageRouter implements TurnProcessor {
+  private procedureStore?: ProcedureStore;
+  setProcedureStore(store: ProcedureStore): void {
+    this.procedureStore = store;
+  }
+  private readOwnerConsoleBrief(): string {
+    const projectId = this.getRuntimeProjectId();
+    const text =
+      (projectId
+        ? this.procedureStore?.read('owner-console-brief', {
+            ownerScope: 'owner:runtime',
+            projectId,
+          })?.body
+        : undefined) ?? loadConsoleBrief();
+    return this.procedureStore ? modernizeLegacyBriefMechanism(text) : text;
+  }
   private sessionStore: SessionStore;
   private contextInjector: ContextInjector;
   private mamaApi: MamaApiClient;
@@ -745,7 +740,8 @@ export class MessageRouter implements TurnProcessor {
   private buildReactiveEnvelope(
     message: NormalizedMessage,
     agentContext: AgentContext,
-    memberEffectiveScope?: MemberEffectiveScope
+    memberEffectiveScope?: MemberEffectiveScope,
+    wallSecondsOverride?: number
   ): Envelope | undefined {
     const config = this.envelopeConfig;
     const authority = this.envelopeAuthority;
@@ -761,7 +757,8 @@ export class MessageRouter implements TurnProcessor {
         config,
         surface,
         this.privateConnectorPolicy,
-        memberEffectiveScope
+        memberEffectiveScope,
+        wallSecondsOverride
       )
     );
   }
@@ -1288,23 +1285,9 @@ This protects your credentials from being exposed in chat logs.`;
           }, streamFlushIntervalMs);
         }
 
-        // Skill on-demand injection: prepend matched skill content to user message
-        // (not system prompt — PersistentCLI can't update system prompt after creation)
-        const skillPrefix =
-          !isPublicLane && enhanced.skillContent
-            ? `<system-reminder>\n${enhanced.skillContent.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n`
-            : '';
-        // Owner policy and lessons ride the user message for the same reason skills do:
-        // a persistent CLI session cannot change its system prompt after creation.
-        const learningPrefix =
-          !isPublicLane && agentContext.roleName === 'owner_console'
-            ? await this.buildLearningPrefix(message)
-            : '';
-        if (!isPublicLane && enhanced.skillContent) {
-          logger.info(
-            `[SkillMatch] Injecting skill into user message: ${enhanced.skillContent.length} chars`
-          );
-        }
+        // Skill descriptions and source paths come from the common admission catalog.
+        // Keyword coincidence must not promote a whole unrelated skill into an instruction.
+        const skillPrefix = '';
 
         // NEW sessions may receive implicit memory/context prefixes. CONTINUE turns
         // keep using CLI conversation state and only prepend queued audit notices.
@@ -1345,6 +1328,19 @@ This protects your credentials from being exposed in chat logs.`;
             ? {
                 prepareEnvelope: () =>
                   this.buildReactiveEnvelope(message, agentContext, memberEffectiveScope),
+              }
+            : {}),
+          // The owner's chat turn may delegate to a native child that keeps working after
+          // the turn ends; that child gets its OWN grant on its own wall.
+          ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY
+            ? {
+                prepareSubagentEnvelope: async () =>
+                  this.buildReactiveEnvelope(
+                    message,
+                    agentContext,
+                    memberEffectiveScope,
+                    SUBAGENT_ENVELOPE_WALL_SECONDS
+                  ),
               }
             : {}),
           sourceTurnId,
@@ -1495,7 +1491,7 @@ This protects your credentials from being exposed in chat logs.`;
 
           // Add text content (with memory context, skill context, and page context)
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
+          const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1541,7 +1537,7 @@ This protects your credentials from being exposed in chat logs.`;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
           const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${memoryPrefix}${learningPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
+          const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -1647,21 +1643,6 @@ This protects your credentials from being exposed in chat logs.`;
         });
       if (!persisted) {
         throw new Error('Unable to persist final assistant response');
-      }
-      if (
-        (message.principal?.lane ?? 'owner') !== 'public' &&
-        response &&
-        message.text &&
-        agentContext.roleName === 'owner_console'
-      ) {
-        // Owner corrections and rules become lesson:/policy: rows (turn-observer.ts).
-        // Only AFTER the reply persisted (a failed persist throws above): a turn that did
-        // not commit must not leave standing instructions for later prompts.
-        void this.observeOwnerLearning(message).catch((error: unknown) => {
-          logger.warn(
-            `[learning] observer failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-        });
       }
       // Release session lock AFTER final persistence to prevent out-of-order turns
       releaseCliSessionLock();
@@ -1822,9 +1803,8 @@ ${historyContext}
       prompt += injectedContext;
     }
 
-    prompt += `\n## Instructions\n- Be concise. Save important decisions.${hasHistory ? '' : ' Greet naturally.'}`;
     if (agentContext?.platform === 'viewer') {
-      prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
+      prompt += `\n## Instructions\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
     }
     if (agentContext) {
       // Store canonicity and external-evidence trust are stable owner policy.
@@ -1836,7 +1816,7 @@ ${historyContext}
       // manual layered ABOVE the code-owned discipline floor. Loaded per build so
       // a self-update reaches the very next NEW session.
       if (agentContext.roleName === 'owner_console') {
-        const consoleBrief = loadConsoleBrief();
+        const consoleBrief = this.readOwnerConsoleBrief();
         if (consoleBrief.trim()) {
           const projectedBrief = projectConsoleBriefForPrompt(
             consoleBrief,
@@ -1901,7 +1881,7 @@ ${historyContext}
         // Brief edits must rotate the durable-session policy (re-anchor carries
         // the new manual); non-owner roles contribute an empty string.
         (agentContext.roleName === 'owner_console'
-          ? `\n${projectConsoleBriefForPrompt(loadConsoleBrief(), this.privateConnectorPolicy)}`
+          ? `\n${projectConsoleBriefForPrompt(this.readOwnerConsoleBrief(), this.privateConnectorPolicy)}`
           : '') +
         `\n${gatewayCatalog.cacheKey}`,
     });
@@ -2088,77 +2068,6 @@ ${historyContext}
 
   private getRuntimeProjectId(): string | undefined {
     return process.env.MAMA_WORKSPACE || process.cwd();
-  }
-
-  private async observeOwnerLearning(message: NormalizedMessage): Promise<void> {
-    if (!this.mamaApi.saveMemory || !this.mamaApi.queryRelevantTruth) {
-      return;
-    }
-    const scopes = deriveMemoryScopes({
-      source: message.source,
-      channelId: message.channelId,
-      projectId: this.getRuntimeProjectId(),
-    });
-    const result = await observeOwnerTurn({
-      userMessage: message.text,
-      scopes,
-      source: {
-        package: 'standalone',
-        source_type: message.source,
-        channel_id: message.channelId,
-        project_id: this.getRuntimeProjectId(),
-      },
-      markers: loadLearningMarkers(),
-      turnCommitted: true,
-      save: async (input) => {
-        const saved = await this.mamaApi.saveMemory!(input);
-        return { memoryId: saved.id };
-      },
-      // Exact-topic lookup over the active rows in scope. Not capped: a cap keeps the newest
-      // rows and could drop an older exact match, turning a dedupe into a duplicate.
-      findExisting: async (topic) => {
-        const rows = await this.mamaApi.queryRelevantTruth!({ query: '', scopes });
-        const hit = rows.find((row) => row.topic === topic);
-        return hit ? { memory_id: hit.memory_id } : null;
-      },
-      // A repeat carries the same normalized text (that is what the topic hash pins), so the
-      // existing row already says it; dedupe needs no rewrite.
-    });
-    if (result.kind !== 'none') {
-      logger.info(
-        `[learning] observed kind=${result.kind} topic=${result.topic} deduped=${result.deduped === true} (${result.reason})`
-      );
-    }
-  }
-
-  /** <policy>/<lessons> for an owner chat turn, or '' (learning-context.ts). */
-  private async buildLearningPrefix(message: NormalizedMessage): Promise<string> {
-    if (!this.mamaApi.queryRelevantTruth) {
-      return '';
-    }
-    try {
-      const scopes = deriveMemoryScopes({
-        source: message.source,
-        channelId: message.channelId,
-        projectId: this.getRuntimeProjectId(),
-      });
-      const context = await buildLearningContext({
-        scopes,
-        query: message.text.slice(0, 500),
-        readClaims: cappedLearningReader(
-          (params) => this.mamaApi.queryRelevantTruth!(params),
-          (line) => logger.info(line)
-        ),
-      });
-      const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
-      logger.info(formatLearningAuditLine('chat', channelScopeId, context));
-      return context.promptBlock ? `${context.promptBlock}\n\n` : '';
-    } catch (error) {
-      logger.warn(
-        `[learning] chat prefix failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return '';
-    }
   }
 
   private async getPerTurnMemoryPrefix(message: NormalizedMessage): Promise<string> {

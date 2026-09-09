@@ -18,7 +18,10 @@ import {
   type WorkOrderConsumerEvent,
   classifyTemporalFailure,
   buildTurnKindSection,
+  DELEGATED_ATTEMPT_TIMEOUT_MS,
+  NATIVE_SUBAGENT_ITEM_NAMES,
 } from '../../src/operator/workorder-consumer.js';
+import { ThreadBriefMemory } from '../../src/operator/thread-brief-memory.js';
 
 function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
   deps: WorkOrderConsumerDeps;
@@ -114,6 +117,70 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       ctx.db.close();
     }
   );
+
+  describe('console brief: standing policy reaches the thread once', () => {
+    async function runOrder(deps: WorkOrderConsumerDeps, ledger: TaskLedger, key: string) {
+      ledger.enqueueWorkOrder({ workKind: 'wiki', idempotencyKey: key, input: { events: [] } });
+      await new WorkOrderConsumer(deps).tick();
+    }
+
+    it('sends the brief on the first turn, omits it while unchanged, resends on a change', async () => {
+      const local = makeDeps();
+      const prompts: string[] = [];
+      const memory = new ThreadBriefMemory();
+      let brief = 'BRIEF-ONE. Do the work.';
+      local.deps.loadOwnerBrief = () => brief;
+      local.deps.admitOwnerBrief = (text) => memory.admit('owner:runtime', text);
+      local.deps.runner = {
+        runWithContent: async (content) => {
+          prompts.push(content.map((block) => ('text' in block ? block.text : '')).join(''));
+          return { response: 'ok done' };
+        },
+      };
+
+      await runOrder(local.deps, local.ledger, 'wiki:b1');
+      await runOrder(local.deps, local.ledger, 'wiki:b2');
+      brief = 'BRIEF-TWO. Corrected by the owner.';
+      await runOrder(local.deps, local.ledger, 'wiki:b3');
+      await runOrder(local.deps, local.ledger, 'wiki:b4');
+
+      expect(prompts).toHaveLength(4);
+      expect(prompts[0]).toContain('BRIEF-ONE');
+      expect(prompts[1]).not.toContain('BRIEF-ONE');
+      expect(prompts[2]).toContain('BRIEF-TWO');
+      expect(prompts[3]).not.toContain('BRIEF-TWO');
+      // The turn-kind delta is on every turn - only the standing half is dropped.
+      for (const prompt of prompts) {
+        expect(prompt).toContain('Work order:');
+        expect(prompt.length).toBeGreaterThan(0);
+      }
+      expect(prompts[1].length).toBeLessThan(prompts[0].length);
+      local.db.close();
+    });
+
+    it('keeps the completion receipt hash on the full composed brief either way', async () => {
+      const local = makeDeps();
+      const memory = new ThreadBriefMemory();
+      local.deps.admitOwnerBrief = (text) => memory.admit('owner:runtime', text);
+      await runOrder(local.deps, local.ledger, 'wiki:h1');
+      await runOrder(local.deps, local.ledger, 'wiki:h2');
+      const hashes = local.events
+        .filter((event) => event.type === 'complete')
+        .map((event) => event.briefHash);
+      expect(hashes).toHaveLength(2);
+      expect(hashes[0]).toBe(hashes[1]);
+      local.db.close();
+    });
+
+    it('still fails loudly when the brief is missing, never a turn-kind-only run', async () => {
+      const local = makeDeps();
+      local.deps.loadOwnerBrief = () => null;
+      local.deps.admitOwnerBrief = () => false;
+      await runOrder(local.deps, local.ledger, 'wiki:missing');
+      expect(local.events.some((event) => event.reason === 'brief-missing')).toBe(true);
+      local.db.close();
+    });
+  });
 
   it('keeps the temporal retry budget explicit at three attempts', () => {
     expect(WORKORDER_MAX_ATTEMPTS.temporal).toBe(3);
@@ -1188,48 +1255,89 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     ).toBeNull();
     expect(classifyTransientModelError('brief-missing')).toBeNull();
   });
-  describe('One MAMA: turn-kind sections', () => {
-    it('tells the board turn to omit compile scopes and overrides chat-only brief instructions', () => {
+  /**
+   * Owner decision 2026-09-09: an unattended maintenance turn receives a STIMULUS - the
+   * result the host verifies, the input, the budget - and decides for itself how to work.
+   * The board and wiki sections were ~7,047 and ~7,277 characters of step-by-step script.
+   */
+  describe('One MAMA: turn kinds are outcome contracts, not scripts', () => {
+    it('states the board result and nothing about tool order', () => {
       const board = buildTurnKindSection('board');
-      expect(board).toContain('Do not supply scopes or seed_refs');
-      expect(board).toContain('standing-policy administration remain owner-interactive');
-      expect(board).toContain('concrete, finite completion_criteria');
-      for (const kind of ['wiki', 'memory-curation', 'temporal'] as const) {
-        expect(buildTurnKindSection(kind)).toContain('## Scheduled turn');
+      expect(board).toContain(
+        'Result required: the three judgment slots (briefing, action_required, decisions) published with report_publish as HTML fragments, or contract_no_update'
+      );
+      expect(board).toContain('The pipeline slot is host-rendered.');
+      expect(board).toContain('The input carries the batch and the candidates.');
+      // The script that used to tell it HOW to read and in what order.
+      expect(board).not.toContain('task_list({view');
+      expect(board).not.toContain('Read the board progressively');
+      // Host-enforced mechanics are enforced by the tools' own errors, not restated.
+      expect(board).not.toContain('expected_revision');
+      expect(board).not.toContain('Do not supply scopes or seed_refs');
+      expect(board.length).toBeLessThan(1300);
+    });
+
+    it('states the wiki result and drops the continuity script', () => {
+      const wiki = buildTurnKindSection('wiki');
+      expect(wiki).toContain(
+        'Result required: the wiki pages this batch affects published with wiki_publish, or contract_no_update'
+      );
+      // P3-8: the host also requires source coverage before it accepts the no-update.
+      expect(wiki).toContain(
+        'A no-update is accepted only once this attempt has completed context_compile, every bounded task_list page, and wiki_read of Home.md and the bound daily page.'
+      );
+      expect(wiki).not.toContain('task_list({view');
+      // The script told it HOW to read; the coverage clause only names what the host requires.
+      expect(wiki).not.toContain('wiki_read({');
+      expect(wiki.length).toBeLessThan(1300);
+    });
+
+    it.each(['board', 'wiki', 'memory-curation', 'self-check', 'temporal'] as const)(
+      'the %s turn carries the two-sentence unattended preamble',
+      (kind) => {
+        const prompt = buildTurnKindSection(kind);
+        expect(prompt).toContain('## Scheduled turn');
+        expect(prompt).toContain(
+          'This turn runs unattended: no one replies inside it and there is no send.'
+        );
+        expect(prompt).toContain('owner-facing output');
+        expect(prompt).toContain('without waiting for an answer');
+        expect(prompt).not.toContain('state the lesson in your final message');
       }
+    );
+
+    /**
+     * Review P1-2: `input.noUpdateScope` named a variable the code-act sandbox does not
+     * have, while the host refuses any scope that is not the exact host-issued string. The
+     * literal is rendered into the section instead.
+     */
+    it('P1-2 renders the literal no-update scope and never points at an `input.` variable', () => {
+      for (const kind of ['board', 'wiki', 'memory-curation', 'self-check'] as const) {
+        const section = buildTurnKindSection(kind, 'full:2026-09-09');
+        expect(section).toContain('contract_no_update({reason, scope: "full:2026-09-09"})');
+        expect(section).not.toContain('input.');
+      }
+      // No host-issued scope: say so, rather than name a variable that does not exist.
+      const noScope = buildTurnKindSection('wiki');
+      expect(noScope).toContain('the exact scope the host issued for this attempt');
+      expect(noScope).not.toContain('input.');
+    });
+
+    /** P3-7: the host hard-requires both, so the RESULT requirement says both. */
+    it('P3-7 states the temporal context packet requirement and the report_publish prohibition', () => {
+      const temporal = buildTurnKindSection('temporal');
+      expect(temporal).toContain(
+        'carrying the context_packet_id of a context_compile made in this attempt'
+      );
+      expect(temporal).toContain('Do not call report_publish.');
+    });
+
+    it('keeps the two turn-kind sections that were already outcome contracts', () => {
+      expect(buildTurnKindSection('memory-curation')).toContain('mama_save');
+      expect(buildTurnKindSection('self-check')).toContain('repair_request({issue_id');
       expect(buildTurnKindSection('temporal')).toContain(
         'exactly one successful task_temporal_reconcile'
       );
-    });
-
-    it('gives the wiki turn the explicit continuity contract', () => {
-      const wiki = buildTurnKindSection('wiki');
-      // The typed input fields the host supplies.
-      expect(wiki).toContain('ownerDate');
-      expect(wiki).toContain('range');
-      expect(wiki).toContain('start_ms');
-      expect(wiki).toContain('end_ms');
-      expect(wiki).toContain('sourceWatermark');
-      expect(wiki).toContain('connectors');
-      // The batchId-as-watermark bug is explicitly rejected.
-      expect(wiki).toContain('batchId');
-      expect(wiki.toLowerCase()).toContain('not a watermark');
-      expect(wiki.toLowerCase()).toMatch(/never infer/);
-      // All three source classes, read progressively.
-      expect(wiki).toContain('context_compile');
-      expect(wiki).toContain('task_list({view:"items"');
-      expect(wiki).toContain('taskUpdatedSince/taskUpdatedBefore');
-      expect(wiki).toContain('the host injects');
-      expect(wiki).toContain('nextCursor');
-      expect(wiki).toContain('mama_search');
-      // Memory is supplementary, never the authoritative last-30 gate.
-      expect(wiki.toLowerCase()).toContain('supplementary');
-      expect(wiki.toLowerCase()).toContain('authoritative');
-      // Coverage stated honestly; MAMA activity cannot substitute for sources.
-      expect(wiki.toLowerCase()).toContain('cannot substitute');
-      // The daily page keeps exact-date identity and the no-update contract.
-      expect(wiki).toContain('daily/');
-      expect(wiki).toContain('contract_no_update');
     });
   });
 
@@ -1288,36 +1396,6 @@ describe('transient upstream model errors are named, not anonymous digests', () 
         workOrderId: wo.id,
         reason: 'pipeline-render-failed: report store unavailable',
       });
-    });
-  });
-  describe('ONE-MAMA-P2 Task 1: learning block on scheduled turns', () => {
-    it('AC #8 appends the policy and lessons block after the brief and before the turn section', async () => {
-      const ctx = makeDeps();
-      let seen = '';
-      ctx.deps.runner = {
-        runWithContent: async (content) => {
-          seen = JSON.stringify(content);
-          return { response: 'DONE' };
-        },
-      };
-      ctx.deps.buildLearningBlock = async (wo) =>
-        wo.workKind === 'wiki'
-          ? '<policy>\nOwner policy, in force.\n- pages: cite sources\n</policy>'
-          : '';
-      const consumer = new WorkOrderConsumer(ctx.deps);
-      ctx.ledger.enqueueWorkOrder({
-        workKind: 'wiki',
-        idempotencyKey: 'wiki:learn:1',
-        input: { batchId: 'b', events: ['e'] },
-      });
-      await consumer.tick();
-      expect(seen).toContain('## Owner policy and lessons');
-      expect(seen.indexOf('You are a test worker')).toBeLessThan(
-        seen.indexOf('## Owner policy and lessons')
-      );
-      expect(seen.indexOf('## Owner policy and lessons')).toBeLessThan(
-        seen.indexOf('## Scheduled turn')
-      );
     });
   });
   describe('ONE-MAMA-P3 Task 3: self-check turn', () => {
@@ -1389,12 +1467,13 @@ describe('transient upstream model errors are named, not anonymous digests', () 
   });
 });
 
-describe('board turn section carries the slot HTML vocabulary', () => {
-  it('names the board class vocabulary for the board kind only (0.41.0 regression: plain-text slots)', () => {
+describe('board turn section names the slot format without the class vocabulary', () => {
+  it('the required result says HTML fragments; the class list lives in the board persona', () => {
     const board = buildTurnKindSection('board');
-    expect(board).toContain('report-card');
-    expect(board).toContain('HTML fragment, never plain text');
-    for (const kind of ['wiki', 'memory-curation', 'recheck', 'self-check', 'temporal'] as const) {
+    expect(board).toContain('as HTML fragments');
+    // 0.41.0 wrote plain text whose newlines collapsed; the format is still stated. The
+    // per-class vocabulary is not a turn instruction and stays where it is used.
+    for (const kind of ['board', 'wiki', 'memory-curation', 'self-check', 'temporal'] as const) {
       expect(buildTurnKindSection(kind)).not.toContain('report-card');
     }
   });
@@ -1461,104 +1540,355 @@ describe('Story TG-04/TG-06 AC #1: the assembled board prompt is coherent end to
     return { systemPrompt, userMessage, allowedTools: policy.agentContext.role.allowedTools };
   }
 
-  it('TG-04 every read/write tool the turn section names is in the grant, and no layer narrows Trello to context_compile', async () => {
+  it('every tool the turn section names is in the grant, and no layer narrows Trello to context_compile', async () => {
     const { systemPrompt, userMessage, allowedTools } = await assembleBoardTurn();
     const board = userMessage.slice(userMessage.indexOf('## Turn: board'));
-    // v0.48.1: the section names task_create ONLY to say it is host-blocked here
-    // (records and tasks are separate). A tool named as blocked is the opposite of
-    // an instruction to call it, so the "named => granted" scan runs on the section
-    // with that sentence removed, and both directions are pinned explicitly below.
-    const callable = board;
-    expect(callable).toContain('task_create');
-    expect(allowedTools).toContain('task_create');
 
+    // The outcome contract names only the two tools that record the result.
     const named = new Set(
-      callable.match(
+      board.match(
         /\b(?:trello_[a-z_]+|context_compile|task_(?:list|create|update|reclassify|external_bind|external_correlation|lifecycle_reconcile)|report_publish|contract_no_update)\b/g
       ) ?? []
     );
-    expect([...named]).toEqual(
+    expect([...named].sort()).toEqual(['contract_no_update', 'report_publish']);
+    for (const tool of named) {
+      expect(allowedTools, `turn section names ${tool} but the grant lacks it`).toContain(tool);
+    }
+    // Dropping the script must not drop the judgment capability: the agent decides how to
+    // work, so the tools the old script walked it through stay granted.
+    expect(allowedTools).toEqual(
       expect.arrayContaining([
-        'trello_kanban',
-        'context_compile',
         'task_list',
         'task_update',
         'task_reclassify',
         'task_external_bind',
         'task_lifecycle_reconcile',
         'task_external_correlation',
+        'context_compile',
+        'trello_kanban',
+        'telegram_send',
+        'report_publish',
       ])
     );
-    for (const tool of named) {
-      expect(allowedTools, `turn section names ${tool} but the grant lacks it`).toContain(tool);
-    }
     expect(systemPrompt).not.toMatch(/only through context_compile/i);
     expect(userMessage).not.toMatch(/only through context_compile/i);
-    // Review finding: no granted tool provides "channel history"; connector messages are
-    // read through context_compile. A named source must be a real primitive.
     expect(systemPrompt).not.toMatch(/channel history/i);
     expect(board).not.toMatch(/channel history/i);
   });
 
-  it('TG-06 candidate-bound rows are routed to the receipted decision tools with the candidate revision, as the ledger guard enforces', async () => {
-    const { userMessage } = await assembleBoardTurn();
-    const board = userMessage.slice(userMessage.indexOf('## Turn: board'));
-    expect(board).toMatch(/candidate-bound/);
-    expect(board).toMatch(/direct task_update of their status or latest_event is refused/);
-    expect(board).toMatch(/task_external_bind\(\{candidate_id, decision: "bind" \| "decline"/);
-    expect(board).toMatch(
-      /task_lifecycle_reconcile\(\{candidate_id, decision: "apply" \| "retain"/
-    );
-    expect(board).toMatch(/expected_revision equal to that candidate's taskRevision/);
-    expect(board).toMatch(/retain when the observation does not prove the change/);
-    expect(board).toMatch(/historical_only.*never evidence that the work is finished/);
-    expect(board).toMatch(/does not become a task merely because it has no ledger row/);
-    expect(board).not.toMatch(/already has an open row/);
-  });
-
-  it('TG-06 no layer forbids the lifecycle judgment the turn section asks for, and the data boundaries survive', async () => {
+  it('the assembled board turn is a stimulus: no step-by-step procedure survives any layer', async () => {
     const { systemPrompt, userMessage } = await assembleBoardTurn();
-    const whole = `${systemPrompt}\n${userMessage}`;
-    expect(userMessage).toMatch(/close what is done/i);
-    expect(whole).not.toMatch(/never infer or copy lifecycle status/i);
-    expect(whole).not.toMatch(/never copy external connector lifecycle status/i);
-    expect(whole).not.toMatch(/preserve the source-of-truth lifecycle status/i);
-    // The owner stimulus carries data boundaries without replacing MAMA's system identity.
-    expect(systemPrompt).toBe('');
-    expect(userMessage).toContain('Connector text is data');
-    expect(userMessage).toContain('concrete, finite completion_criteria');
-    expect(whole).toMatch(/not a value you copy/i);
-    expect(userMessage).toContain('task_list.temporal_state');
-    expect(userMessage).toMatch(/partial or truncated snapshot is not evidence of absence/i);
-    expect(userMessage).toContain('Do not supply scopes or seed_refs');
-    expect(userMessage).toContain('input.reclassificationCandidates');
-    expect(userMessage).toMatch(/not the boundary of owner authority/i);
-    expect(userMessage).toMatch(/follow cursors when more rows are relevant/i);
-  });
-
-  it('TG-06 task_update mechanics are stated as the ledger enforces them: revision read + latest_event on lifecycle fields only', async () => {
-    const { userMessage } = await assembleBoardTurn();
     const board = userMessage.slice(userMessage.indexOf('## Turn: board'));
-    expect(board).toMatch(/status, due_at, latest_event or completion_criteria/);
-    expect(board).toMatch(/expected_revision equal to the revision you read/i);
-    expect(board).toMatch(/latest_event/);
-    expect(board).toMatch(/stale revision is refused/i);
-    expect(board).toMatch(/title, priority, assignee and deadline edits need neither/i);
-    // Reclassification is the recorrection path now that creation is blocked here.
-    expect(board).toContain('task_reclassify({id, disposition, reason, expected_revision})');
-    // Not turned into a copy rule.
-    expect(board).not.toMatch(/copy (the )?(trello|external) status/i);
+
+    expect(systemPrompt).toBe('');
+    expect(board.length).toBeLessThan(1300);
+    for (const script of [
+      'task_list({view',
+      'Read the board progressively',
+      'expected_revision',
+      'candidate-bound',
+      'report-card',
+    ]) {
+      expect(board, `board turn still scripts: ${script}`).not.toContain(script);
+    }
+    // And no layer forbids the judgment the owner wants made.
+    const whole = `${systemPrompt}\n${userMessage}`;
+    expect(whole).not.toMatch(/never infer or copy lifecycle status/i);
+    expect(whole).not.toMatch(/do not ask questions/i);
   });
 
-  it('TG-06 owner questions go to the decisions slot; nothing in the prompt forbids them or requires a send', async () => {
-    const { systemPrompt, userMessage, allowedTools } = await assembleBoardTurn();
-    const whole = `${systemPrompt}\n${userMessage}`;
-    expect(whole).not.toMatch(/do not ask questions/i);
-    expect(whole).not.toMatch(/decide from the evidence or record no update/i);
-    expect(userMessage).toMatch(/cannot decide[^.]*decisions slot/i);
-    expect(userMessage).toMatch(/decisions slot[^.]*owner/i);
-    expect(userMessage).toContain('standing-policy administration remain owner-interactive');
-    expect(allowedTools).toContain('telegram_send');
+  it('the owner question route survives as the decisions slot, with no send required', async () => {
+    const { userMessage, allowedTools } = await assembleBoardTurn();
+    expect(userMessage).toMatch(/decisions slot/);
+    expect(userMessage).toContain('without waiting for an answer');
     expect(allowedTools).toContain('report_publish');
+  });
+});
+
+/**
+ * Owner decision 2026-09-09: the owner agent may hand long maintenance work to a native
+ * subagent and return WITHOUT waiting. The runtime wakes it when the child finishes, and the
+ * child's tool calls land on the owner session - so the attempt stays OPEN in `delegated`
+ * and the SAME trace verification answers on a later tick. Delegation is observed on the
+ * runner's own item stream, never claimed in prose.
+ */
+describe('delegated maintenance attempts', () => {
+  function delegatingCtx(
+    verified: { current: boolean },
+    announce: 'tool-use' | 'subagent-start' = 'tool-use'
+  ) {
+    const ctx = makeDeps({ now: () => clock.current });
+    ctx.deps.runner = {
+      runWithContent: async (_content, options) => {
+        const stream = options.streamCallbacks as
+          | {
+              onToolUse?: (name: string, input: Record<string, unknown>) => void;
+              onSubagentStart?: (info: {
+                agentThreadId: string;
+                agentPath: string;
+                itemId: string;
+              }) => void;
+            }
+          | undefined;
+        if (announce === 'subagent-start') {
+          stream?.onSubagentStart?.({
+            agentThreadId: 'child-1',
+            agentPath: '/root/board',
+            itemId: 'sub-1',
+          });
+        } else {
+          stream?.onToolUse?.('collabAgentToolCall', { nativeToolUseId: 'item-1' });
+        }
+        return { response: 'handed to a subagent' };
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    // A verdictRequired hook whose verification is the thing that answers later.
+    consumer.registerHook('wiki', {
+      verdictRequired: true,
+      before: () => 41,
+      after: (_wo, _response, beforeState) => {
+        expect(beforeState).toBe(41);
+        return verified.current
+          ? { disposition: 'complete' as const }
+          : { disposition: 'fail' as const, reason: 'no obligated tool ran' };
+      },
+    });
+    return { ctx, consumer };
+  }
+
+  const clock = { current: 1_000_000 };
+  beforeEach(() => {
+    clock.current = 1_000_000;
+  });
+
+  it('names the observed native subagent items', () => {
+    expect(NATIVE_SUBAGENT_ITEM_NAMES).toContain('collabAgentToolCall');
+    expect(NATIVE_SUBAGENT_ITEM_NAMES).toContain('subAgentActivity');
+  });
+
+  it('keeps the attempt open in delegated, then completes it when the verification passes', async () => {
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified);
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:delegated:1',
+      input: { batchId: 'b', events: ['e'] },
+    });
+
+    await consumer.tick();
+    // Not failed: the work was handed on, and the row keeps its idempotency slot.
+    expect(ctx.events).toContainEqual({
+      type: 'delegated',
+      workKind: 'wiki',
+      workOrderId: wo.id,
+      reason: 'no obligated tool ran',
+    });
+    expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
+    expect(ctx.logs).toContain(`[workorder] delegated kind=wiki attempt=${wo.id}`);
+    const delegated = ctx.ledger.getWorkOrderById(wo.id);
+    expect(delegated?.status).toBe('in_progress');
+    expect(delegated?.delegatedAt).toBe(1_000_000);
+
+    // The child does its work: the same verification, against the same snapshot, now passes.
+    verified.current = true;
+    clock.current += 60_000;
+    await consumer.tick();
+    expect(ctx.logs).toContain(`[workorder] delegated→done kind=wiki attempt=${wo.id}`);
+    expect(ctx.events).toContainEqual(
+      expect.objectContaining({ type: 'complete', workKind: 'wiki', workOrderId: wo.id })
+    );
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.status).toBe('done');
+  });
+
+  it('delegates on onSubagentStart alone, which is all codex-cli 0.153.4 emits', async () => {
+    // Live: board#4764 failed as `no-durable-result` because only `subAgentActivity`
+    // reached the host, and that item never becomes an onToolUse. The dedicated
+    // admission callback must be enough on its own.
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified, 'subagent-start');
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:delegated:subagent-start',
+      input: { batchId: 'b', events: ['e'] },
+    });
+
+    await consumer.tick();
+    expect(ctx.events).toContainEqual({
+      type: 'delegated',
+      workKind: 'wiki',
+      workOrderId: wo.id,
+      reason: 'no obligated tool ran',
+    });
+    expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
+    expect(ctx.logs).toContain(
+      `[workorder] subagent observed kind=wiki attempt=${wo.id} path=/root/board`
+    );
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.status).toBe('in_progress');
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.delegatedAt).toBe(1_000_000);
+  });
+
+  it('fails a delegated attempt as delegated-timeout after 30 minutes with no evidence', async () => {
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified);
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:delegated:timeout',
+      input: { batchId: 'b', events: ['e'] },
+    });
+
+    await consumer.tick();
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.status).toBe('in_progress');
+
+    // One tick short of the bound is still open.
+    clock.current += DELEGATED_ATTEMPT_TIMEOUT_MS - 1;
+    await consumer.tick();
+    expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
+
+    clock.current += 1;
+    await consumer.tick();
+    expect(
+      ctx.events.filter((event) => event.type === 'failed').map((event) => event.reason)
+    ).toContain('delegated-timeout');
+  });
+
+  it('does not delegate a verification failure when no subagent was observed', async () => {
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified);
+    ctx.deps.runner = { runWithContent: async () => ({ response: 'did it myself' }) };
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:not-delegated',
+      input: { batchId: 'b', events: ['e'] },
+    });
+
+    await consumer.tick();
+    expect(ctx.events.some((event) => event.type === 'delegated')).toBe(false);
+    expect(
+      ctx.events.filter((event) => event.type === 'failed').map((event) => event.reason)
+    ).toContain('no obligated tool ran');
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.status).not.toBe('in_progress');
+  });
+
+  it('a requeued replacement carries no delegation of its own', () => {
+    const ctx = makeDeps();
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:requeue-delegated',
+      input: { batchId: 'b', events: ['e'] },
+    });
+    const claimed = ctx.ledger.claimNextWorkOrder();
+    if (!claimed) throw new Error('claim expected');
+    ctx.ledger.markWorkOrderDelegated(claimed.id, 12_345);
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.delegatedAt).toBe(12_345);
+
+    const replacement = ctx.ledger.requeueWorkOrder(
+      ctx.ledger.getWorkOrderById(wo.id)!,
+      'delegated-timeout'
+    );
+    expect(replacement.delegatedAt).toBeNull();
+    expect(replacement.payload.delegated_at).toBeUndefined();
+  });
+
+  /**
+   * Live stall (daemon local.10, 2026-09-09, board#4765): the stored payload of a delegated
+   * attempt carries the ledger-managed `delegated_at`, and the candidate receipt
+   * reconciliation revalidated that stored row with the ENQUEUE validator - so a
+   * delegated-and-verified board attempt logged `unknown field 'delegated_at'` on every tick,
+   * sat in unresolvedBoardCandidateEffects forever, and the unresolved set is a hard claim
+   * barrier that blocks EVERY later work order.
+   */
+  it('settles a delegated board attempt whose stored payload carries delegated_at', async () => {
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified);
+    consumer.registerHook('board', {
+      verdictRequired: true,
+      before: () => 41,
+      after: () =>
+        verified.current
+          ? { disposition: 'complete' as const }
+          : { disposition: 'fail' as const, reason: 'no obligated tool ran' },
+    });
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:delegated:delegated-at',
+      input: { mode: 'full' },
+    });
+
+    await consumer.tick();
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.payload.delegated_at).toBe(1_000_000);
+
+    verified.current = true;
+    clock.current += 60_000;
+    await consumer.tick();
+
+    expect(ctx.logs.some((line) => line.includes('candidate receipt state unresolved'))).toBe(
+      false
+    );
+    expect(ctx.logs).toContain(`[workorder] delegated\u2192done kind=board attempt=${wo.id}`);
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.status).toBe('done');
+
+    // The claim barrier is clear: a later order still drains.
+    const next = ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:delegated:after-stall',
+      input: { mode: 'full' },
+    });
+    clock.current += 60_000;
+    await consumer.tick();
+    expect(ctx.ledger.getWorkOrderById(next.id)?.status).not.toBe('pending');
+  });
+
+  it('refuses to record a delegation on a row that is not claimed', () => {
+    const ctx = makeDeps();
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:delegate-pending',
+      input: { batchId: 'b', events: ['e'] },
+    });
+    expect(() => ctx.ledger.markWorkOrderDelegated(wo.id, 1)).toThrow(/expected in_progress/);
+  });
+});
+
+/**
+ * Owner decision 2026-09-09: the scheduled board is UPDATED from the accumulated state. The
+ * delta contract names the three reads it has and says the raw sources are not among them.
+ */
+describe('board delta turn contract', () => {
+  const anchor = '2026-09-09T08:00:00.000Z';
+  const section = () =>
+    buildTurnKindSection('board', 'full:91', { boardMode: 'delta', deltaAnchor: anchor });
+
+  it('names the anchor and the three accumulated-state sources', () => {
+    const body = section();
+    expect(body).toContain(`Anchor: ${anchor}`);
+    expect(body).toContain('board_read');
+    expect(body).toContain(`changes_read({since: "${anchor}"})`);
+    expect(body).toContain(`task_list with updated_since "${anchor}"`);
+    expect(body).toContain('contract_no_update({reason, scope: "full:91"})');
+    expect(body).toContain('report_publish');
+  });
+
+  it('forbids raw connector reads and rebuilding', () => {
+    const body = section();
+    expect(body).toContain('Raw connector reads are not part of this turn');
+    expect(body).toContain('do not rebuild it from the sources');
+    expect(body).not.toContain('The input carries the batch and the candidates.');
+    expect(body.length).toBeLessThan(1600);
+  });
+
+  it('leaves the full contract untouched for every other mode', () => {
+    for (const options of [
+      undefined,
+      { boardMode: 'full' },
+      { boardMode: 'reconcile' },
+      // A delta without a host anchor is not a delta contract - it must not be told to read
+      // from a baseline the host never named.
+      { boardMode: 'delta' },
+    ]) {
+      const body = buildTurnKindSection('board', 'full:91', options);
+      expect(body).toContain('The input carries the batch and the candidates.');
+      expect(body).not.toContain('changes_read');
+    }
   });
 });

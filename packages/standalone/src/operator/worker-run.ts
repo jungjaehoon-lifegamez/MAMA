@@ -78,6 +78,12 @@ export interface WorkerRunInput {
    * lane's fresh-session pool).
    */
   runOptions?: Record<string, unknown>;
+  /**
+   * Hash source for `briefHash` when the composed brief deliberately omits standing text
+   * the thread already carries. Without it the receipt hash would describe the trimmed
+   * turn instead of the operating brief it is meant to identify.
+   */
+  briefHashSource?: string;
 }
 
 const KIND_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -139,7 +145,7 @@ export function attachWorkOrderAttemptContext(
  */
 export async function workerRun(
   runner: WorkerRunner,
-  { kind, brief, input, runOptions }: WorkerRunInput
+  { kind, brief, input, runOptions, briefHashSource }: WorkerRunInput
 ): Promise<WorkerRunOutput> {
   if (!KIND_PATTERN.test(kind)) {
     throw new Error(`[worker-run] invalid worker kind "${kind}" (expected kebab-case)`);
@@ -194,7 +200,10 @@ export async function workerRun(
     usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
       ? usage.input_tokens + usage.output_tokens
       : undefined;
-  const briefHash = createHash('sha256').update(brief).digest('hex').slice(0, 16);
+  const briefHash = createHash('sha256')
+    .update(briefHashSource ?? brief)
+    .digest('hex')
+    .slice(0, 16);
   const stopped = result.stoppedBy === 'budget' ? { stoppedBy: 'budget' as const } : {};
   const journal =
     result.ownerJournalProvenance === 'commit_failed'

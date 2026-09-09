@@ -191,7 +191,8 @@ export const DEFAULT_ROLES: RolesConfig = {
         'file_export',
         // Owner decision 2026-09-04: the owner's own chat turn gets the workspace shell and
         // file writer (cwd ~/.mama/workspace, destructive-pattern guard, 60s). Unattended
-        // turns block both in OWNER_EVENT_BLOCKED_TOOLS / SCHEDULED_TURN_BLOCKED_TOOLS.
+        // turns block both by name through UNATTENDED_BLOCKED_TOOLS (owner-event-policy.ts),
+        // which SCHEDULED_TURN_BLOCKED_TOOLS (start.ts) re-exports.
         'Bash',
         'Write',
         'code_act',

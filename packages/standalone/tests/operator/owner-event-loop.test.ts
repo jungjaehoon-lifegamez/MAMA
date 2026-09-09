@@ -99,6 +99,133 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
     inbox = new OwnerEventInbox(db, () => now);
   });
 
+  it('TG-04/TG-05 pins admission revision and retains queued reference', async () => {
+    inbox.enqueue({
+      ...batch(),
+      activations: [
+        {
+          triggerId: 't1',
+          kind: 'feedback',
+          memoryQuery: 'old',
+          procedure: [{ action: 'read', description: 'old' }],
+          requiredEvidence: [],
+          procedureRef: { id: 'p1', revision: 1 },
+        },
+      ],
+    });
+    let calls = 0;
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      resolveActivation: (activation) => ({
+        ...activation,
+        procedureRef: { id: 'p1', revision: 2 },
+        procedure: [{ action: 'read', description: 'new' }],
+      }),
+      buildPrompt: (current) => {
+        expect(current.activations[0].procedureRef?.revision).toBe(2);
+        expect(current.activations[0].queuedProcedureRef?.revision).toBe(1);
+        calls++;
+        return 'prompt';
+      },
+      runner: {
+        run: async (_prompt, options) => {
+          expect(options.procedureRefs).toEqual([{ id: 'p1', revision: 2 }]);
+          return result(deliveredHistory);
+        },
+      },
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await loop.tick()).toBe('processed');
+    expect(calls).toBe(1);
+    const stored = db.prepare('SELECT activations_json FROM owner_event_inbox').get() as {
+      activations_json: string;
+    };
+    expect(JSON.parse(stored.activations_json)[0].queuedProcedureRef.revision).toBe(1);
+  });
+
+  it('TG-05 reinterprets pending activation after lane wait immediately before model input', async () => {
+    inbox.enqueue({
+      ...batch(),
+      activations: [
+        {
+          triggerId: 't1',
+          kind: 'report',
+          memoryQuery: 'report',
+          procedure: [],
+          requiredEvidence: [],
+          procedureRef: { id: 'p1', revision: 1 },
+        },
+      ],
+    });
+    let revision = 1;
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      resolveActivation: (a) => ({
+        ...a,
+        procedureRef: { id: 'p1', revision },
+        procedure: [{ action: 'apply', description: `body-${revision}` }],
+      }),
+      buildPrompt: (b) => b.activations[0].procedure[0].description,
+      runner: {
+        run: async (_prompt, options) => {
+          revision = 2;
+          const prepared = await options.prepareContent!();
+          expect(prepared.content).toEqual([{ type: 'text', text: 'body-2' }]);
+          expect(prepared.procedureRefs).toEqual([{ id: 'p1', revision: 2 }]);
+          expect(options.sourceMessageRef).toBe('owner-event:1');
+          return result(deliveredHistory);
+        },
+      },
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await loop.tick()).toBe('processed');
+  });
+
+  it('TG-04 isolates a resolver failure before prompt exposure while other work continues', async () => {
+    inbox.enqueue({
+      ...batch(),
+      activations: [
+        {
+          triggerId: 'private',
+          kind: 'private-name',
+          memoryQuery: 'private-query',
+          procedure: [{ action: 'read', description: 'private-body' }],
+          requiredEvidence: ['private-evidence'],
+          procedureRef: { id: 'p1', revision: 1 },
+        },
+      ],
+    });
+    const loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      resolveActivation: () => {
+        throw new Error('private failure detail');
+      },
+      buildPrompt: (current) => {
+        expect(current.activations[0].availability).toBe('unavailable');
+        expect(current.activations[0].kind).toBe('');
+        expect(current.activations[0].procedure).toEqual([]);
+        return 'independent work';
+      },
+      runner: {
+        run: async (_prompt, options) => {
+          expect(options.procedureRefs).toEqual([]);
+          return result(deliveredHistory);
+        },
+      },
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+    });
+    expect(await loop.tick()).toBe('processed');
+  });
+
   it('drains the owner event turn before allowing the operator database to close', async () => {
     const order: string[] = [];
     let release!: () => void;
@@ -191,11 +318,28 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
   });
 
   it('ACKs a durable terminal receipt before waking the model after a crash', async () => {
-    inbox.enqueue(batch());
+    inbox.enqueue({
+      ...batch(),
+      activations: [
+        {
+          triggerId: 'retired',
+          kind: 'old',
+          memoryQuery: 'old',
+          procedure: [],
+          requiredEvidence: [],
+          procedureRef: { id: 'retired-procedure', revision: 1 },
+        },
+      ],
+    });
+    let resolutions = 0;
     let runs = 0;
     const loop = new OwnerEventLoop({
       inbox,
       agentContext: ownerContext,
+      resolveActivation: () => {
+        resolutions++;
+        throw new Error('retired');
+      },
       runner: {
         run: async () => {
           runs += 1;
@@ -215,6 +359,7 @@ describe('TG-03/TG-05/TG-06 OwnerEventLoop', () => {
 
     expect(await loop.tick()).toBe('processed');
     expect(runs).toBe(0);
+    expect(resolutions).toBe(0);
     expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
   });
 
@@ -594,7 +739,9 @@ describe('TG-05/TG-06 owner-event native replay quarantine', () => {
               envelopeHash: 'hash',
             },
             'native-admission',
-            'native_run',
+            // A real external effect: the `native_run` admission marker alone is
+            // deliberately NOT a quarantine reason (see hasUnsafeReplayEffects).
+            'telegram_send',
             {}
           );
         if (phase === 'before-admission') {
@@ -631,4 +778,44 @@ describe('TG-05/TG-06 owner-event native replay quarantine', () => {
       }
     }
   );
+
+  it('replays an occurrence whose interrupted run left only a native_run marker', async () => {
+    const db = new Database(':memory:');
+    try {
+      const inbox = new OwnerEventInbox(db);
+      const effects = new OwnerActionEffectLedger(db);
+      const id = inbox.enqueue(batch())!;
+      const key = `owner-event:${id}`;
+      const context = {
+        ownerScope: 'owner:runtime',
+        occurrenceKey: key,
+        modelRunId: 'mr-interrupted',
+        envelopeHash: 'hash',
+      };
+      effects.begin(context, 'native-admission', 'native_run', {});
+      effects.markUnknown(context, 'native-admission', 'native_run', 'did not finish cleanly');
+      let calls = 0;
+      const loop = new OwnerEventLoop({
+        inbox,
+        agentContext: ownerContext,
+        issueEnvelope: issueTestEnvelope,
+        buildPrompt: async () => 'test',
+        getNoUpdateMaxId: () => 0,
+        log: () => {},
+        hasUnsafeReplayEffects: () => effects.hasUnsafeReplayEffects(key),
+        hasUnsettledEffects: () => effects.hasUnsettledEffects(key),
+        runner: {
+          run: async () => {
+            calls++;
+            return result(deliveredHistory);
+          },
+        },
+      });
+      expect(await loop.tick()).toBe('processed');
+      expect(calls).toBe(1);
+      expect(inbox.depth()).toMatchObject({ dead: 0, pending: 0 });
+    } finally {
+      db.close();
+    }
+  });
 });

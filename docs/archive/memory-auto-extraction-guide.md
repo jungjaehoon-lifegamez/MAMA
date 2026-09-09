@@ -1,5 +1,7 @@
 # Memory System Auto-Extraction Implementation Guide
 
+> **ARCHIVED:** historical guide. It does not describe the current memory runtime; see [Architecture Overview](../explanation/architecture.md).
+
 ## Core Insight
 
 **Auto-extraction** is the most challenging and important part of a memory system.

@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { OperatorChannelEvent } from './operator-interfaces.js';
-import type { CreateTriggerInput, TriggerRecord } from './trigger-types.js';
+import type { CreateTriggerInput, ProcedureRef, TriggerRecord } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +26,7 @@ export type AskAgent = (prompt: string) => Promise<string>;
 
 /** What the agent returns (a CreateTriggerInput minus server-managed fields). */
 export interface TriggerSpec {
+  procedureRef?: ProcedureRef;
   id?: string;
   kind: string;
   memoryQuery: string;
@@ -80,6 +81,7 @@ export async function authorTriggers(
       memoryQuery: spec.memoryQuery,
       match: spec.match,
       procedure: spec.procedure,
+      ...(spec.procedureRef ? { procedureRef: spec.procedureRef } : {}),
       requiredEvidence: spec.requiredEvidence,
       authoredBy: 'agent',
       provenance: { createdFrom: 'agent-authored', note: opts.note ?? '' },
@@ -191,6 +193,31 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
     return value;
   };
 
+  let procedureRef: ProcedureRef | undefined;
+  if (spec.procedureRef !== undefined) {
+    if (
+      !isObject(spec.procedureRef) ||
+      !Number.isSafeInteger(spec.procedureRef.revision) ||
+      typeof spec.procedureRef.revision !== 'number' ||
+      spec.procedureRef.revision < 1
+    ) {
+      throw new Error('trigger.procedureRef requires id and positive revision');
+    }
+    if (
+      spec.procedureRef.scopeKey !== undefined &&
+      (typeof spec.procedureRef.scopeKey !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(spec.procedureRef.scopeKey))
+    ) {
+      throw new Error('trigger.procedureRef.scopeKey must be a scope hash');
+    }
+    procedureRef = {
+      id: boundedString('trigger.procedureRef.id', spec.procedureRef.id, 512),
+      revision: spec.procedureRef.revision,
+      ...(typeof spec.procedureRef.scopeKey === 'string'
+        ? { scopeKey: spec.procedureRef.scopeKey }
+        : {}),
+    };
+  }
   const id = spec.id === undefined ? undefined : boundedString('trigger.id', spec.id, 512);
   const kind = boundedString('trigger.kind', spec.kind, 256);
   const memoryQuery = boundedString('trigger.memoryQuery', spec.memoryQuery, 4_000);
@@ -248,6 +275,7 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   // Deliberately NO check of kind/action VALUES against any catalog (G3 guard).
   return {
     id,
+    ...(procedureRef ? { procedureRef } : {}),
     kind,
     memoryQuery,
     match: {

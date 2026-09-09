@@ -23,9 +23,11 @@ Code-Act: Message → LLM → JavaScript code → Multiple tools + Data processi
 - **Tier 1/2 agents**: Enable with `useCodeAct: true` in configuration
 - **Tier 3 agents**: Code-Act unavailable (automatically forced to `useCodeAct: false`)
 - **HTTP API**: `POST /api/code-act` defaults to Tier 2 and enforces the caller's request/gateway allowlist. Set `MAMA_CODE_ACT_READ_ONLY=true` to force read-only Code-Act injection.
-- **Managed system agents**: `dashboard-agent` and `wiki-agent` are Code-Act agents. Their
-  default gateway allowlists include `context_compile` so scheduled briefings/wiki compiles gather
-  packet-backed evidence before falling back to `mama_search`.
+- **Scheduled work orders**: board and wiki work orders run inside the owner runtime (often in a
+  delegated native subagent) with Code-Act available. Their gateway grants include `context_compile`
+  so scheduled briefings/wiki compiles gather packet-backed evidence before falling back to
+  `mama_search`. The `dashboard-agent` / `wiki-agent` standing agents are a legacy configuration
+  surface, not the current path.
 
 ### Agent Configuration
 

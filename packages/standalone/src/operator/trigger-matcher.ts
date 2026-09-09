@@ -64,6 +64,7 @@ function buildSignal(
   return {
     kind: trigger.kind,
     memoryQuery: trigger.memoryQuery,
+    ...(trigger.procedureRef ? { procedureRef: { ...trigger.procedureRef } } : {}),
     procedure: trigger.procedure.map((step) => ({ ...step })),
     requiredEvidence: [...trigger.requiredEvidence],
     confidence: trigger.match.minConfidence,

@@ -49,6 +49,21 @@ describe('authorTriggers', () => {
   });
   afterEach(() => reg.close());
 
+  it('TG-05 preserves validated canonical procedure references through authoring', async () => {
+    const spec = {
+      ...JSON.parse(cannedSpec)[0],
+      procedureRef: { id: 'p1', revision: 2, scopeKey: 'a'.repeat(64) },
+    };
+    const created = await authorTriggers([ev('rollback')], reg, async () => JSON.stringify([spec]));
+    expect(reg.getById(created[0].id)?.procedureRef).toEqual(spec.procedureRef);
+    expect(() =>
+      validateTriggerSpec({ ...spec, procedureRef: { ...spec.procedureRef, scopeKey: 'bad' } })
+    ).toThrow(/scopeKey/);
+    expect(() => validateTriggerSpec({ ...spec, procedureRef: { id: 'p1', revision: 0 } })).toThrow(
+      /procedureRef/
+    );
+  });
+
   it('persists an agent-authored trigger with open kind/action (G3)', async () => {
     const created = await authorTriggers(
       [ev('rollback again'), ev('another rollback', 2)],

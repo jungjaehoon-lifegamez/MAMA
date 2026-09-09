@@ -86,7 +86,16 @@ describe('owner workspace effect replay', () => {
         modelRunId: 'mr-native',
         sourceMessageRef: 'message:native',
       })!;
-      expect(ledger.hasUnsettledEffects('message:native')).toBe(true);
+      // The admission row is persisted before any notification, but the marker
+      // alone is not an unsettled external effect.
+      expect(
+        db
+          .prepare(
+            "SELECT status FROM owner_action_effects WHERE occurrence_key = 'message:native' AND effect_kind = 'native_run'"
+          )
+          .get()
+      ).toEqual({ status: 'transmitting' });
+      expect(ledger.hasUnsettledEffects('message:native')).toBe(false);
       observer.started('commandExecution', { nativeToolUseId: 'cmd-1' });
       expect(() => observer.finished?.()).toThrow(/did not settle/);
       observer.settled('commandExecution', 'cmd-1', false);

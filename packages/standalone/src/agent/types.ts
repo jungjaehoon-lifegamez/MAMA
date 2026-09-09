@@ -25,6 +25,9 @@ import type {
   PrincipalScopeGrantRecord,
   PrincipalScopeGrantRef,
   ToolTraceRecord,
+  ListToolTracesInput,
+  ToolTraceScope,
+  ToolTracePage,
   AuditFindingRecord,
 } from '@jungjaehoon/mama-core';
 
@@ -218,8 +221,17 @@ export type GatewayToolExecutionContext = {
   executionSurface: GatewayExecutionSurface;
   sourceTurnId?: string;
   sourceMessageRef?: string;
+  /** Original host-supplied stimulus; never supplied by a model tool argument. */
+  procedureStimulus?: string;
+  /** Host-admitted immutable procedure versions used by this attempt. */
+  procedureRefs?: readonly { id: string; revision: number; scopeKey?: string }[];
   modelRunId?: string | null;
   gatewayCallId?: string;
+  /**
+   * Set only for a Codex-native child's own execution context: its traces belong to the
+   * child's model run, not the parent's. Additive marker; nothing routes on it.
+   */
+  subagentThreadId?: string;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
   /** Host-built temporal authority; never accepted from tool input or fallback state. */
@@ -487,6 +499,13 @@ export interface PromptCallbacks {
   onDelta?: (text: string) => void;
   onToolUse?: (name: string, input: Record<string, unknown>) => void;
   onToolComplete?: (tool: string, toolUseId: string, isError: boolean) => void;
+  /**
+   * A native subagent was announced on this run's own thread. Admission, not an
+   * external effect: it deliberately does NOT travel through onToolUse, because
+   * onToolUse writes a `native_tool` row into the owner effect ledger and any such
+   * row marks the occurrence unsafe to replay. A spawn must never do that.
+   */
+  onSubagentStart?: (info: { agentThreadId: string; agentPath: string; itemId: string }) => void;
   onFinal?: (response: PromptFinalResponse) => void;
   onError?: (error: Error) => void;
 }
@@ -842,6 +861,12 @@ export type GatewayToolName =
   | 'board_read'
   | 'audit_findings_read'
   | 'console_brief_update'
+  | 'experience_read'
+  | 'procedure_list'
+  | 'procedure_read'
+  | 'procedure_update'
+  | 'procedure_retire'
+  | 'procedure_observe'
   | 'repair_request'
   | 'issue_close'
   | 'file_export'
@@ -1019,8 +1044,20 @@ export interface StreamingContext {
  * Agent loop configuration options
  */
 export interface AgentLoopOptions {
+  procedureRefs?: readonly { id: string; revision: number; scopeKey?: string }[];
+  /** Refresh queued stimulus after lane admission and current authority issuance. */
+  prepareContent?: () => Promise<{
+    content: ContentBlock[];
+    procedureRefs: readonly { id: string; revision: number; scopeKey?: string }[];
+  }>;
   /** Host-only issuer invoked after session/global queue admission, before model/tool context. */
   prepareEnvelope?: () => Envelope | undefined | Promise<Envelope | undefined>;
+  /**
+   * Host-only issuer for a native CHILD's own authority. A child outlives the parent turn,
+   * so it must get its own grant with its own wall - never the parent's snapshot. Absent
+   * means no authority is reachable and the child's tool calls are refused loudly.
+   */
+  prepareSubagentEnvelope?: () => Promise<Envelope | undefined>;
   /** Construction-time durable recovery journal for the one owner subject. */
   ownerRuntimeJournal?: OwnerRuntimeJournalPort;
   /** Raw owner stimulus stored for recovery instead of prefixed model input. */
@@ -1040,6 +1077,10 @@ export interface AgentLoopOptions {
   gatewayToolsPrompt?: string;
   /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
   freshSessionSystemPrompt?: () => Promise<string>;
+  /** Measurement only: which host lane produced this turn ([prompt] daemon.log line). */
+  promptKind?: string;
+  /** Measurement only: whether this turn's text carries the console brief. */
+  promptBrief?: 'sent' | 'omitted';
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
   /** One host-derived, detached authority snapshot for the admitted member turn. */
@@ -1550,6 +1591,8 @@ export interface MAMAApiInterface {
   getModelRun?(modelRunId: string): Promise<ModelRunRecord | null>;
   appendToolTrace?(input: AppendToolTraceInput): Promise<ToolTraceRecord>;
   listToolTracesForRun?(modelRunId: string): Promise<ToolTraceRecord[]>;
+  listToolTraces?(input: ListToolTracesInput): Promise<ToolTracePage>;
+  readToolTrace?(traceId: string, scope: ToolTraceScope): Promise<ToolTraceRecord | null>;
   createAuditFinding?(
     input: Omit<AuditFindingRecord, 'finding_id' | 'status' | 'created_at' | 'resolved_at'>
   ): Promise<string>;
