@@ -154,18 +154,27 @@ contract are defined in
 
 ### Cron Scheduler & Worker
 
-- **CronWorker:** Dedicated `PersistentClaudeProcess` (Haiku model, minimal prompt)
-- **Isolation:** Completely decoupled from OS agent — no shared sessions or lanes
-- **Result delivery:** `EventEmitter` → `CronResultRouter` → gateway `sendMessage()`
+`CronWorker` is no longer a separate model identity. It owns timing, serialization and
+events only: `initCronScheduler` hands it a `runnerFactory`, and each job runs through
+`runner.prompt(..., { sessionKey: OWNER_RUNTIME_SESSION_KEY, resumeSession: true })` —
+the same standing owner runtime as chat and owner events
+(`packages/standalone/src/scheduler/cron-worker.ts`,
+`packages/standalone/src/cli/runtime/scheduler-init.ts`).
+
+- **CronWorker:** timing + serial execution queue over the owner runtime session; no
+  dedicated CLI process, no Haiku worker, no per-worker tool restriction list
+- **Result delivery:** `EventEmitter` (`cron:completed` / `cron:failed`) →
+  `CronResultRouter` → gateway `sendMessage()`
+  (`packages/standalone/src/cli/runtime/gateway-wiring.ts`)
 - **Channel routing:** Job config `channel` field (`discord:id`, `slack:id`, `viewer:id`)
-- **Security:** Tool restriction (`Bash`, `Read`, `Write`, `Glob`, `Grep` only)
+- **Permissions:** whatever the owner runtime's current envelope and per-turn policy allow
 
 ```
-CronScheduler ──► CronWorker (Haiku CLI) ──► EventEmitter
-                                                   │
-                                          CronResultRouter
-                                            │      │      │
-                                         Discord  Slack  Viewer
+CronScheduler ──► CronWorker (queue) ──► owner:runtime ──► EventEmitter
+                                                                │
+                                                       CronResultRouter
+                                                         │      │      │
+                                                      Discord  Slack  Viewer
 ```
 
 ### Operator Runtime (MAMA OS)
