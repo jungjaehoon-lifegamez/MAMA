@@ -45,6 +45,19 @@ const EXCLUDED_SKILL_FILES = new Set([
 /** Max tokens per skill file to prevent prompt bloat */
 const MAX_SKILL_TOKENS = () => getConfig().prompt?.skill_max_tokens ?? 2_000;
 const UNSUPPORTED_SKILL_IDS = new Set(['mama/playground']);
+/**
+ * Built-in skills that shipped in earlier versions and were withdrawn.
+ * syncBuiltinSkills() only copies missing templates, so an upgraded install
+ * keeps the old file in ~/.mama/skills — skip it in the catalog.
+ */
+const RETIRED_BUILTIN_SKILLS = new Set(['heartbeat-report']);
+const loggedRetiredBuiltinSkills = new Set<string>();
+
+function noteRetiredBuiltinSkill(name: string): void {
+  if (loggedRetiredBuiltinSkills.has(name)) return;
+  loggedRetiredBuiltinSkills.add(name);
+  skillLogger.warn(`[skills] retired builtin skill ignored: ${name}`);
+}
 const VIEWER_HIDDEN_SKILL_IDS = new Set<string>([]);
 
 /**
@@ -320,6 +333,10 @@ export function buildSkillCatalog(
       const entries = readdirSync(sourceDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        if (RETIRED_BUILTIN_SKILLS.has(entry.name)) {
+          noteRetiredBuiltinSkill(entry.name);
+          continue;
+        }
         const stateKey = `${source}/${entry.name}`;
         if (state[stateKey]?.enabled === false) continue;
 
@@ -406,6 +423,10 @@ export function buildSkillCatalog(
       if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
 
       const id = entry.name.replace(/\.md$/, '');
+      if (RETIRED_BUILTIN_SKILLS.has(id)) {
+        noteRetiredBuiltinSkill(id);
+        continue;
+      }
       const stateKey = `mama/${id}`;
       if (state[stateKey]?.enabled === false) continue;
       if (catalog.some((l) => l.includes(`[${stateKey}]`))) continue;
