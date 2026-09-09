@@ -159,6 +159,9 @@ export {
   type ModelRunRecord,
   type AppendToolTraceInput,
   type ToolTraceRecord,
+  type ToolTraceScope,
+  type ListToolTracesInput,
+  type ToolTracePage,
 } from './model-runs/types.js';
 export {
   beginModelRun,
@@ -170,7 +173,12 @@ export {
   getModelRun,
   getModelRunInAdapter,
 } from './model-runs/store.js';
-export { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
+export {
+  appendToolTrace,
+  listToolTracesForRun,
+  listToolTraces,
+  readToolTrace,
+} from './model-runs/tool-trace-store.js';
 export {
   TWIN_EDGE_SOURCES,
   TWIN_EDGE_TYPES,

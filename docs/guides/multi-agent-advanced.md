@@ -31,7 +31,7 @@ The following historical systems were removed in v0.29.0 because the runtime did
 | Dynamic Workflow DAG (`workflow_plan`) | Type declarations remain; no executor      |
 | Swarm DB and Wave Engine               | Replaced by the Stage-2 workorder pipeline |
 | UltraWork autonomous sessions          | No runtime                                 |
-| `delegate` gateway action              | Not dispatchable; calling it fails         |
+| `delegate` gateway action              | Removed from the registry and executor     |
 
 Configuration keys for these systems may still parse for backward compatibility. Parsing is not
 evidence that a feature runs. Do not present these modes during onboarding or use them in a new

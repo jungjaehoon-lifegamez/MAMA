@@ -74,7 +74,12 @@ import {
   getModelRun,
   getModelRunInAdapter,
 } from './model-runs/store.js';
-import { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
+import {
+  appendToolTrace,
+  listToolTracesForRun,
+  listToolTraces,
+  readToolTrace,
+} from './model-runs/tool-trace-store.js';
 import {
   rollUpSearchHits,
   type SearchRollupLeafHit,
@@ -4114,6 +4119,8 @@ const mama = {
   getModelRunInAdapter,
   appendToolTrace,
   listToolTracesForRun,
+  listToolTraces,
+  readToolTrace,
   saveCheckpoint,
   loadCheckpoint,
   // Legacy functions (retained for internal use, not exposed via MCP)
@@ -4181,6 +4188,8 @@ export {
   getModelRunInAdapter,
   appendToolTrace,
   listToolTracesForRun,
+  listToolTraces,
+  readToolTrace,
   saveCheckpoint,
   loadCheckpoint,
   recall,
