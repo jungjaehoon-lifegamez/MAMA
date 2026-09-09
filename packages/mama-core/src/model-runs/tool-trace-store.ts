@@ -240,17 +240,20 @@ export async function listToolTraces(input: ListToolTracesInput): Promise<ToolTr
     } catch {
       throw new Error('tool_traces.cursor is malformed');
     }
+    if (!Array.isArray(cursor) || cursor.length !== 2) {
+      throw new Error('tool_traces.cursor is malformed');
+    }
+    const [cursorCreatedAt, cursorTraceId] = cursor as [unknown, unknown];
     if (
-      !Array.isArray(cursor) ||
-      cursor.length !== 2 ||
-      !Number.isSafeInteger(cursor[0]) ||
-      typeof cursor[1] !== 'string' ||
-      cursor[1].length === 0
+      typeof cursorCreatedAt !== 'number' ||
+      !Number.isSafeInteger(cursorCreatedAt) ||
+      typeof cursorTraceId !== 'string' ||
+      cursorTraceId.length === 0
     ) {
       throw new Error('tool_traces.cursor is malformed');
     }
     clauses.push('(created_at < ? OR (created_at = ? AND trace_id < ?))');
-    values.push(cursor[0], cursor[0], cursor[1]);
+    values.push(cursorCreatedAt, cursorCreatedAt, cursorTraceId);
   }
   const adapter = await initializedAdapter();
   const rows = adapter
