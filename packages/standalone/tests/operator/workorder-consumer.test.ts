@@ -172,6 +172,36 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       local.db.close();
     });
 
+    it('leaves the brief unadmitted when the run dies before the model, and resends it', async () => {
+      const local = makeDeps();
+      const prompts: string[] = [];
+      const memory = new ThreadBriefMemory();
+      local.deps.loadOwnerBrief = () => 'BRIEF-ONE. Do the work.';
+      local.deps.admitOwnerBrief = (text) => memory.admit('owner:runtime', text);
+      local.deps.retractOwnerBrief = () => memory.forget('owner:runtime');
+      let fail = true;
+      local.deps.runner = {
+        runWithContent: async (content) => {
+          prompts.push(content.map((block) => ('text' in block ? block.text : '')).join(''));
+          if (fail) throw new Error('transport failed before the model');
+          return { response: 'ok done' };
+        },
+      };
+
+      await runOrder(local.deps, local.ledger, 'wiki:retract1');
+      fail = false;
+      await runOrder(local.deps, local.ledger, 'wiki:retract2');
+
+      expect(prompts).toHaveLength(3);
+      expect(prompts[0]).toContain('BRIEF-ONE');
+      // The first run died before the model, so the retry carries the brief again rather
+      // than assuming the thread already holds it.
+      expect(prompts[1]).toContain('BRIEF-ONE');
+      // That retry DID deliver it, so the next turn omits it as before.
+      expect(prompts[2]).not.toContain('BRIEF-ONE');
+      local.db.close();
+    });
+
     it('still fails loudly when the brief is missing, never a turn-kind-only run', async () => {
       const local = makeDeps();
       local.deps.loadOwnerBrief = () => null;
@@ -1837,6 +1867,27 @@ describe('delegated maintenance attempts', () => {
     clock.current += 60_000;
     await consumer.tick();
     expect(ctx.ledger.getWorkOrderById(next.id)?.status).not.toBe('pending');
+  });
+
+  it('refuses to record a delegation whose row left in_progress before the write', () => {
+    const ctx = makeDeps();
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:delegate-raced',
+      input: { batchId: 'b', events: ['e'] },
+    });
+    const claimed = ctx.ledger.claimNextWorkOrder();
+    if (!claimed) throw new Error('claim expected');
+    const stale = ctx.ledger.getWorkOrderById(wo.id);
+    if (!stale) throw new Error('row expected');
+    // The race the guarded UPDATE cannot see: the row moves on between read and write, so
+    // the read reports in_progress and the UPDATE matches nothing.
+    ctx.db.prepare(`UPDATE operator_tasks SET status = 'done' WHERE id = ?`).run(wo.id);
+    (ctx.ledger as unknown as { getWorkOrderById: (id: number) => unknown }).getWorkOrderById =
+      () => stale;
+    expect(() => ctx.ledger.markWorkOrderDelegated(claimed.id, 5)).toThrow(
+      /left in_progress before the mark/
+    );
   });
 
   it('refuses to record a delegation on a row that is not claimed', () => {

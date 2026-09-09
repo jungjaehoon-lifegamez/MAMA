@@ -1616,7 +1616,7 @@ export class AgentLoop {
           options: childOptions,
           parentModelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
           cliSessionId: resolvedCliSessionId,
-          tools: this.hostToolDefinitionsFor(childOptions, outerCodeActAllowed),
+          tools: this.hostToolDefinitionsFor(childOptions),
           tier: runScope.tier,
           activeChildren: 0,
           runFinished: false,
@@ -2736,10 +2736,17 @@ export class AgentLoop {
     return Math.max(this.maxTurns + 10, 50);
   }
 
-  /** The host tool surface this run's role grants; a child is given the same surface. */
+  /**
+   * The host tool surface the given options' role grants.
+   *
+   * The Code-Act gate is derived from THOSE options by default, never from the caller's
+   * own role: a child runs under a projected unattended role, so a parent that may hold
+   * outer Code-Act must not hand that marker to a child whose role forbids it.
+   */
   private hostToolDefinitionsFor(
     options: AgentLoopOptions | undefined,
-    outerCodeActAllowed: boolean
+    outerCodeActAllowed: boolean = this.useCodeAct &&
+      roleAllowsOuterCodeAct(options?.agentContext?.role, this.disallowedTools)
   ): readonly HostToolDefinition[] {
     return this.useCodeAct
       ? outerCodeActAllowed

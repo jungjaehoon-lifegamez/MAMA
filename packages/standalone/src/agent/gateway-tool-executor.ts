@@ -3626,12 +3626,19 @@ export class GatewayToolExecutor {
               behaviorVerified: false,
             } as GatewayToolResult;
           }
+          const limit = args.limit;
+          if (
+            limit !== undefined &&
+            (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+          ) {
+            throw new Error('Execution evidence limit invalid');
+          }
           const page = await api.listToolTraces({
             ...scope,
             ...(typeof args.run_id === 'string' ? { model_run_id: args.run_id } : {}),
             ...(typeof args.tool_name === 'string' ? { tool_name: args.tool_name } : {}),
             ...(typeof args.cursor === 'string' ? { cursor: args.cursor } : {}),
-            ...(args.limit !== undefined ? { limit: args.limit as number } : {}),
+            ...(limit === undefined ? {} : { limit }),
           });
           return { success: true, ...page, behaviorVerified: false } as GatewayToolResult;
         }

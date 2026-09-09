@@ -13,10 +13,11 @@
  * - buildWikiAfterHook: outcome reading only.
  *
  * Delegation note: a delegated attempt is re-verified through these same queries, bound to
- * the attempt id. That path only opens when the runner SURFACES a native subagent start, and
- * today only the Codex app-server does (`collabAgentToolCall`, workorder-consumer.ts
- * NATIVE_SUBAGENT_ITEM_NAMES) - on any other backend a handed-off run is judged on the
- * evidence it has at return time.
+ * the attempt id. That path only opens when the runner SURFACES a native subagent start. The
+ * primary observation is the runner's `onSubagentStart` stream callback; matching item names
+ * (workorder-consumer.ts NATIVE_SUBAGENT_ITEM_NAMES, e.g. `collabAgentToolCall`) are only a
+ * fallback for runners that emit no such callback - on a runner that surfaces neither, a
+ * handed-off run is judged on the evidence it has at return time.
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';

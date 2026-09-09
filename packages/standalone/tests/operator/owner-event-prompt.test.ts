@@ -189,4 +189,53 @@ describe('Story TG-03/TG-04/TG-05/TG-06: MAMA owner-event prompt', () => {
       'A notification without a ledger change does not complete the turn'
     );
   });
+
+  it('attaches each procedure ref to its OWN trigger header, not the previous one', () => {
+    const prompt = buildOwnerEventPrompt({
+      batch: {
+        id: 43,
+        channelKey: 'chatwork:C1',
+        eventIds: ['evt-1'],
+        lines: ['- two triggers matched'],
+        activations: [
+          {
+            triggerId: 'trigger-a',
+            kind: 'relay',
+            memoryQuery: 'a',
+            procedure: [{ action: 'deliver', description: 'A.' }],
+            requiredEvidence: [],
+            procedureRef: { id: 'proc-a', revision: 3 },
+          },
+          {
+            triggerId: 'trigger-b',
+            kind: 'report',
+            memoryQuery: 'b',
+            procedure: [{ action: 'deliver', description: 'B.' }],
+            requiredEvidence: [],
+            procedureRef: { id: 'proc-b', revision: 5 },
+            queuedProcedureRef: { id: 'proc-b', revision: 6 },
+          },
+        ],
+        status: 'claimed',
+        attempts: 0,
+        createdAt: 0,
+      },
+      ownerBrief: 'brief',
+      ownerTelegramChatId: 'owner-chat',
+    });
+
+    const lines = prompt.split('\n');
+    const headerA = lines.findIndex((line) => line.includes('trigger=trigger-a'));
+    const headerB = lines.findIndex((line) => line.includes('trigger=trigger-b'));
+    const refA = lines.findIndex((line) => line.includes('procedure=proc-a@3'));
+    const refB = lines.findIndex((line) => line.includes('procedure=proc-b@5'));
+    const queuedB = lines.findIndex((line) => line.includes('queuedRevision=6'));
+    expect(headerA).toBeGreaterThan(-1);
+    expect(headerB).toBeGreaterThan(headerA);
+    // Each ref sits AFTER its own header and before the next trigger's header.
+    expect(refA).toBeGreaterThan(headerA);
+    expect(refA).toBeLessThan(headerB);
+    expect(refB).toBeGreaterThan(headerB);
+    expect(queuedB).toBeGreaterThan(headerB);
+  });
 });

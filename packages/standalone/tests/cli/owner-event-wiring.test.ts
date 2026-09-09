@@ -53,6 +53,9 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     const start = source.indexOf('attachSubagentWake(agentLoop.getModelRunner()');
     expect(start).toBeGreaterThan(-1);
     const wakeBlock = source.slice(start, source.indexOf('});', start));
+    // A nested '});' would truncate the slice and make the negative assertion vacuous:
+    // pin a token from the END of the registration call so truncation fails loudly.
+    expect(wakeBlock).toContain('prepareSubagentEnvelope');
     // Issuance off must throw like every sibling owner path, not run unauthorised.
     expect(wakeBlock).toContain('requireOwnerRuntimeEnvelope(');
     expect(wakeBlock).not.toContain('prepareEnvelope: () => issueOwnerRuntimeEnvelope(');

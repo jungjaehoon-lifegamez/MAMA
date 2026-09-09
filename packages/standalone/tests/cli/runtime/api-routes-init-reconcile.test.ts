@@ -502,7 +502,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createBoardInputTables(db);
-      const { apiServer, ledger } = await registerReconcileRuntime({
+      const { apiServer, ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
@@ -530,6 +530,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       const afterConnector = ledger.claimNextWorkOrder();
       expect(afterConnector?.payload.mode).toBe('full');
       expect(afterConnector?.payload.deltaWatermark).not.toBe(boot.payload.deltaWatermark);
+      routeHandle.stop();
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
       else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
@@ -547,7 +548,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     process.env.MAMA_BOARD_RECONCILE = '0';
     try {
       createBoardInputTables(db);
-      const { apiServer, ledger } = await registerReconcileRuntime({
+      const { apiServer, ledger, routeHandle } = await registerReconcileRuntime({
         db,
         connectorConfigLoadResult: enabledConnectorConfig,
       });
@@ -590,6 +591,7 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       ).run();
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(ledger.claimNextWorkOrder()?.payload.mode).toBe('delta');
+      routeHandle.stop();
     } finally {
       if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
       else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;

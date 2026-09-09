@@ -271,10 +271,9 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'console_brief_update',
     description:
-      'Append a new lesson or replace/retire an exact existing partial rule with expected_hash from procedure_read({id:"owner-console-brief"}). Stored/projected is not behavior verified.',
+      'Replace or retire one exact existing partial rule with expected_hash from procedure_read({id:"owner-console-brief"}), preserving unrelated text. Not a lesson log. Stored/projected is not behavior verified.',
     params: [
-      { name: 'operation', type: "'append' | 'replace' | 'retire'", required: false },
-      { name: 'lesson', type: 'string', required: false },
+      { name: 'operation', type: "'replace' | 'retire'", required: true },
       { name: 'target', type: 'string', required: false },
       { name: 'replacement', type: 'string', required: false },
       { name: 'expected_hash', type: 'string', required: false },
