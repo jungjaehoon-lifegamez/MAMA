@@ -23,7 +23,12 @@ import type {
   HostToolCallResult,
   HostToolDefinition,
 } from '../../src/agent/model-runner.js';
-import { CodexRuntimeProcess } from '../../src/multi-agent/runtime-process.js';
+import {
+  CodexRuntimeProcess,
+  type SubagentBridge,
+  type SubagentBridgeRequest,
+  type SubagentEvent,
+} from '../../src/multi-agent/runtime-process.js';
 import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
@@ -327,7 +332,51 @@ rl.on('line', line => {
     }
     if (earlyTool) return;
     if (mode === 'progress-delayed') { let progress=0; const interval=setInterval(()=>{progress += 1;send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:id,delta:'tick'}});if(progress===4){clearInterval(interval);complete();}},25); }
-    else if (mode === 'delayed') { const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release'))})){clearInterval(interval);complete();}},5); } else if(mode === 'unknown-response') setTimeout(complete,20); else complete();
+    else if (mode === 'delayed') { const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release'))})){clearInterval(interval);complete();}},5); } else if(mode === 'unknown-response') setTimeout(complete,20);
+    else if (mode.startsWith('subagent')) {
+      const RELEASE_LATE = ${JSON.stringify(join(root, 'release-late'))};
+      const parentThread = message.params.threadId;
+      // A foreign announcement claims a thread this process already drives as its "child".
+      const announced = mode === 'subagent-foreign' ? parentThread : 'child-1';
+      const activity = (kind,thread) => ({type:'subAgentActivity',id:'sub-1',kind,agentThreadId:thread,agentPath:'/root/board'});
+      send({jsonrpc:'2.0',method:'item/started',params:{threadId:parentThread,turnId:id,item:activity('started',announced)}});
+      // 'subagent-restart' holds the SECOND view of the same 'started' announcement back
+      // until after the child's own turn/completed, so it lands on a finished child.
+      if (mode !== 'subagent-restart') send({jsonrpc:'2.0',method:'item/completed',params:{threadId:parentThread,turnId:id,item:activity('started',announced)}});
+      complete();
+      const childMessage = {id:'m1',type:'agentMessage',text:'child says done',phase:'final_answer'};
+      const startChild = () => {
+        send({jsonrpc:'2.0',method:'turn/started',params:{threadId:'child-1',turnId:'child-turn-1'}});
+        if (mode === 'subagent-parent-first') {
+          // The parent announces the completion the child's own turn never confirms.
+          send({jsonrpc:'2.0',method:'item/completed',params:{threadId:parentThread,item:activity('completed','child-1')}});
+          // ...and then, only when the test asks for it, the child's own turn arrives LATE.
+          const late=setInterval(()=>{if(fs.existsSync(RELEASE_LATE)){clearInterval(late);send({jsonrpc:'2.0',method:'item/completed',params:{threadId:'child-1',turnId:'child-turn-1',item:childMessage}});send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:'child-1',turn:{...fullTurn('child-turn-1','completed'),items:[childMessage]}}});}},5);
+          return;
+        }
+        if (mode === 'subagent-restart') {
+          send({jsonrpc:'2.0',method:'item/completed',params:{threadId:'child-1',turnId:'child-turn-1',item:childMessage}});
+          send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:'child-1',turn:{...fullTurn('child-turn-1','completed'),items:[childMessage]}}});
+          setTimeout(()=>send({jsonrpc:'2.0',method:'item/completed',params:{threadId:parentThread,turnId:id,item:activity('started','child-1')}}),10);
+          return;
+        }
+        if (mode === 'subagent-ttl') return;
+        requestTool(requestBase+5,{threadId:'child-1',turnId:'child-turn-1',callId:'call-c1',namespace:null,tool:'synthetic_lookup',arguments:{topic:'child'}},()=>{
+          send({jsonrpc:'2.0',method:'item/completed',params:{threadId:'child-1',turnId:'child-turn-1',item:childMessage}});
+          send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:'child-1',turn:{...fullTurn('child-turn-1','completed'),items:[childMessage]}}});
+          send({jsonrpc:'2.0',method:'item/completed',params:{threadId:parentThread,item:activity('completed','child-1')}});
+        });
+      };
+      if (mode === 'subagent-unannounced') {
+        // A tool call on a thread nobody announced: no child, no authority, no bridge.
+        const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release-child'))})){clearInterval(interval);requestTool(requestBase+5,{threadId:'stranger-1',turnId:'stranger-turn-1',callId:'call-s1',namespace:null,tool:'synthetic_lookup',arguments:{topic:'child'}},()=>{});}},5);
+      } else {
+        // The child starts only when the test releases it: the parent resolving first is
+        // an ordering guarantee, not a race against a timer.
+        const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release-child'))})){clearInterval(interval);startChild();}},5);
+      }
+    }
+    else complete();
     return;
   }
   if (message.method === 'turn/interrupt') {
@@ -2262,6 +2311,79 @@ describe('Story: Codex app-server process', () => {
     expect(input).not.toContain('minimal per-call prompt');
   });
 
+  it('logs one measurable [prompt] line per turn, with reminder state', async () => {
+    const lines: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((arg) => String(arg)).join(' '));
+    });
+    try {
+      const item = fixture();
+      const first = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: 'initial runtime bootstrap',
+        policyFingerprint: 'stable-policy',
+      });
+      await first.prompt('first message', undefined, {
+        promptTelemetry: { kind: 'owner-event', brief: 'sent' },
+      });
+      await first.stop();
+
+      const resumed = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: 'minimal per-call prompt',
+        policyFingerprint: 'stable-policy',
+      });
+      await resumed.prompt('second message', undefined, {
+        promptTelemetry: { kind: 'scheduled:wiki', brief: 'omitted' },
+        resumeInstructions: async () => 'full operator instructions',
+      });
+      await resumed.stop();
+
+      const promptLines = lines.filter((line) => line.startsWith('[prompt] '));
+      expect(promptLines).toHaveLength(2);
+      expect(promptLines[0]).toMatch(
+        /^\[prompt\] thread=\S+ kind=owner-event chars=\d+ brief=sent reminder=omitted$/
+      );
+      expect(promptLines[1]).toMatch(
+        /^\[prompt\] thread=\S+ kind=scheduled:wiki chars=\d+ brief=omitted reminder=omitted$/
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('reports reminder=sent on the legacy replay path, where the turn text still carries it', async () => {
+    const lines: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((arg) => String(arg)).join(' '));
+    });
+    try {
+      const item = fixture();
+      const first = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: 'initial runtime bootstrap',
+        policyFingerprint: 'stable-policy',
+      });
+      await first.prompt('first message');
+      await first.stop();
+
+      const resumed = new CodexAppServerProcess({
+        ...item.options,
+        systemPrompt: 'fresh runtime bootstrap after restart',
+        policyFingerprint: 'stable-policy',
+      });
+      // No resumeInstructions: the caller cannot re-anchor, so the reminder still applies
+      // and the log must say so rather than reporting a saving that did not happen.
+      await resumed.prompt('second message');
+      await resumed.stop();
+
+      const promptLines = lines.filter((line) => line.startsWith('[prompt] '));
+      expect(promptLines[promptLines.length - 1]).toContain('reminder=sent');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('does not build resume instructions while the durable thread stays live', async () => {
     const item = fixture();
     const runner = new CodexAppServerProcess({
@@ -2470,3 +2592,474 @@ it.each(['native-effects-failed', 'native-effects-pending'])(
     }
   }
 );
+
+describe('Story: Codex native subagents', () => {
+  async function waitForEvent(
+    events: readonly SubagentEvent[],
+    kind: SubagentEvent['kind']
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      if (events.some((event) => event.kind === kind)) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`Timed out waiting for a ${kind} subagent event`);
+  }
+
+  /** The child starts only once the test releases it, so ordering is not a timing race. */
+  function releaseChild(root: string): void {
+    writeFileSync(join(root, 'release-child'), '1');
+  }
+
+  /** Lets the child's OWN turn/completed arrive after the grace already fired. */
+  function releaseLateChildTurn(root: string): void {
+    writeFileSync(join(root, 'release-late'), '1');
+  }
+
+  function subagentAuthority(
+    execute: HostToolBridge['execute'] = async () => ({
+      content: 'child lookup child',
+      isError: false,
+    })
+  ): {
+    factory: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
+    requests: SubagentBridgeRequest[];
+    released: Array<{ status: string; error?: string }>;
+  } {
+    const requests: SubagentBridgeRequest[] = [];
+    const released: Array<{ status: string; error?: string }> = [];
+    return {
+      requests,
+      released,
+      factory: async (info) => {
+        requests.push(info);
+        return {
+          bridge: hostBridge(execute),
+          release: async (outcome) => {
+            released.push(outcome);
+          },
+        };
+      },
+    };
+  }
+
+  it('gives a child its OWN authority and releases it with the terminal status', async () => {
+    const item = fixture('subagent');
+    const events: SubagentEvent[] = [];
+    const calls: HostToolCall[] = [];
+    const authority = subagentAuthority(async (call) => {
+      calls.push(call);
+      return { content: `child lookup ${String(call.input.topic)}`, isError: false };
+    });
+    const parentCalls: HostToolCall[] = [];
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, {
+        hostToolBridge: hostBridge(async (call) => {
+          parentCalls.push(call);
+          return { content: 'parent lookup', isError: false };
+        }),
+      })
+    ).resolves.toMatchObject({ response: 'hello', session_id: 'thread-1' });
+    // The parent promise must not wait for the child: the child has not started yet.
+    expect(calls).toEqual([]);
+    releaseChild(item.root);
+
+    await waitForEvent(events, 'completed');
+    await runner.stop();
+
+    // The child ran on its own bridge; the parent's snapshot bridge was never touched.
+    expect(parentCalls).toEqual([]);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        callId: 'call-c1',
+        name: 'synthetic_lookup',
+        input: { topic: 'child' },
+        signal: expect.any(AbortSignal),
+      }),
+    ]);
+    expect(authority.requests).toEqual([
+      {
+        sessionKey: 'session-a',
+        parentThreadId: 'thread-1',
+        agentThreadId: 'child-1',
+        agentPath: '/root/board',
+      },
+    ]);
+    expect(authority.released).toEqual([{ status: 'completed' }]);
+    expect(messages(item.capture)).toContainEqual({
+      jsonrpc: '2.0',
+      id: 715,
+      result: {
+        success: true,
+        contentItems: [{ type: 'inputText', text: 'child lookup child' }],
+      },
+    });
+    expect(events).toEqual([
+      {
+        kind: 'started',
+        sessionKey: 'session-a',
+        parentThreadId: 'thread-1',
+        agentThreadId: 'child-1',
+        agentPath: '/root/board',
+      },
+      {
+        kind: 'completed',
+        sessionKey: 'session-a',
+        parentThreadId: 'thread-1',
+        agentThreadId: 'child-1',
+        agentPath: '/root/board',
+        status: 'completed',
+        finalText: 'child says done',
+      },
+    ]);
+  });
+
+  it("invokes the parent turn's onSubagentStart for a subAgentActivity started item", async () => {
+    // Live capture (codex-cli 0.153.4): a spawn reaches the parent thread ONLY as
+    // `subAgentActivity`, never as `collabAgentToolCall`, and this handler consumes it
+    // before the native-item path. The dedicated callback is the one observation path.
+    const item = fixture('subagent');
+    const starts: { agentThreadId: string; agentPath: string; itemId: string }[] = [];
+    const toolUses: string[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt(
+        'hi',
+        {
+          onSubagentStart: (info) => starts.push(info),
+          onToolUse: (name) => toolUses.push(name),
+        },
+        { hostToolBridge: hostBridge() }
+      )
+    ).resolves.toMatchObject({ response: 'hello' });
+    await runner.stop();
+
+    // Once per child, even though the same `started` announcement arrives twice.
+    expect(starts).toEqual([
+      { agentThreadId: 'child-1', agentPath: '/root/board', itemId: 'sub-1' },
+    ]);
+    // And never as a tool use: a spawn must not reach the owner effect ledger.
+    expect(toolUses).not.toContain('subAgentActivity');
+    expect(toolUses).not.toContain('collabAgentToolCall');
+  });
+
+  it('ignores a re-announced start for a child that already finished', async () => {
+    const item = fixture('subagent-restart');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    // The second view of the same `started` announcement lands 10ms after the child's own
+    // turn/completed, so the finished child must not be resurrected as a new one.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await runner.stop();
+
+    expect(authority.requests).toHaveLength(1);
+    expect(events.filter((event) => event.kind === 'started')).toHaveLength(1);
+    expect(events.filter((event) => event.kind === 'completed')).toHaveLength(1);
+    expect(authority.released).toEqual([{ status: 'completed' }]);
+  });
+
+  it('drops the previous thread context when a session rotates its thread', async () => {
+    const item = fixture('subagent');
+    const runner = new CodexAppServerProcess({ ...item.options });
+    const internals = runner as unknown as {
+      threadContexts: Map<string, unknown>;
+      sessions: Map<string, { threadId?: string }>;
+      registry: { remove: (sessionKey: string) => void };
+    };
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ session_id: 'thread-1' });
+    expect([...internals.threadContexts.keys()]).toEqual(['thread-1']);
+
+    // The reconciliation path re-opens a thread for a session whose in-memory state lost
+    // its threadId, without going through the reset that discards the old context.
+    internals.sessions.delete('session-a');
+    internals.registry.remove('session-a');
+    await expect(
+      runner.prompt('again', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ session_id: 'thread-2' });
+
+    expect([...internals.threadContexts.keys()]).toEqual(['thread-2']);
+    await runner.stop();
+  });
+
+  it('refuses a child call when no host authority exists instead of inheriting one', async () => {
+    const item = fixture('subagent');
+    const events: SubagentEvent[] = [];
+    const parentCalls: HostToolCall[] = [];
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, {
+        hostToolBridge: hostBridge(async (call) => {
+          parentCalls.push(call);
+          return { content: 'parent lookup', isError: false };
+        }),
+      })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    await runner.stop();
+
+    expect(parentCalls).toEqual([]);
+    expect(messages(item.capture)).toContainEqual({
+      jsonrpc: '2.0',
+      id: 715,
+      error: {
+        code: -32602,
+        message: 'subagent authority unavailable: synthetic_lookup was refused',
+      },
+    });
+  });
+
+  it('names expired child authority instead of reporting a plain tool failure', async () => {
+    const item = fixture('subagent');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority(async () => ({
+      content: '[expired] Envelope policy denied this tool call',
+      isError: true,
+    }));
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    await runner.stop();
+
+    expect(messages(item.capture)).toContainEqual({
+      jsonrpc: '2.0',
+      id: 715,
+      result: {
+        success: false,
+        contentItems: [
+          {
+            type: 'inputText',
+            text: 'subagent authority expired: [expired] Envelope policy denied this tool call',
+          },
+        ],
+      },
+    });
+  });
+
+  it('reports status unknown when only the parent said the child completed', async () => {
+    const item = fixture('subagent-parent-first');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+      subagentGraceMs: 40,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    await runner.stop();
+
+    expect(events[1]).toEqual({
+      kind: 'completed',
+      sessionKey: 'session-a',
+      parentThreadId: 'thread-1',
+      agentThreadId: 'child-1',
+      agentPath: '/root/board',
+      status: 'unknown',
+    });
+    expect(authority.released).toEqual([{ status: 'unknown' }]);
+    expect(events).toHaveLength(2);
+  });
+
+  it('ignores a child turn that arrives after the unconfirmed completion was reported', async () => {
+    const item = fixture('subagent-parent-first');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+      subagentGraceMs: 40,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    // The child's own turn/completed now arrives, too late: the child is already gone.
+    releaseLateChildTurn(item.root);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await runner.stop();
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ status: 'unknown' });
+    expect(events[1]).not.toHaveProperty('finalText');
+    expect(authority.released).toEqual([{ status: 'unknown' }]);
+  });
+
+  it('fails a child that never completes once its bounded life runs out', async () => {
+    const item = fixture('subagent-ttl');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+      subagentTtlMs: 40,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    await runner.stop();
+
+    expect(events[1]).toMatchObject({
+      status: 'failed',
+      error: 'subagent produced no completion',
+    });
+    expect(authority.released).toEqual([
+      { status: 'failed', error: 'subagent produced no completion' },
+    ]);
+  });
+
+  it('ignores an announcement claiming a live thread as its child', async () => {
+    const item = fixture('subagent-foreign');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    await runner.stop();
+
+    expect(events).toEqual([]);
+    expect(authority.requests).toEqual([]);
+  });
+
+  it('keeps the disabled-tool reply for a thread nobody announced', async () => {
+    const item = fixture('subagent-unannounced');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      if (messages(item.capture).some((entry) => (entry as { id?: number }).id === 715)) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await runner.stop();
+
+    expect(messages(item.capture)).toContainEqual({
+      jsonrpc: '2.0',
+      id: 715,
+      result: {
+        success: false,
+        contentItems: [{ type: 'inputText', text: 'Native app-server tools are disabled by MAMA' }],
+      },
+    });
+    // The announced child got an authority; the unannounced thread never did - an
+    // unregistered thread cannot mint one by calling a tool.
+    expect(authority.requests.map((request) => request.agentThreadId)).toEqual(['child-1']);
+  });
+
+  it('interrupts every live child at shutdown', async () => {
+    const item = fixture('subagent-ttl');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      onSubagentEvent: (event) => events.push(event),
+      createSubagentBridge: authority.factory,
+    });
+
+    await expect(
+      runner.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'started');
+    await runner.stop();
+    await waitForEvent(events, 'completed');
+    // release() is awaited outside the emit; give the microtask chain a tick.
+    for (let attempt = 0; attempt < 40 && authority.released.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(events[1]).toMatchObject({ status: 'interrupted' });
+    expect(authority.released[0]).toMatchObject({ status: 'interrupted' });
+  });
+
+  it('re-emits subagent events from CodexRuntimeProcess', async () => {
+    const item = fixture('subagent');
+    const events: SubagentEvent[] = [];
+    const authority = subagentAuthority();
+    const runtime = new CodexRuntimeProcess({
+      ...item.options,
+      createSubagentBridge: authority.factory,
+    });
+    runtime.on('subagent', (event: SubagentEvent) => events.push(event));
+
+    await expect(
+      runtime.prompt('hi', undefined, { hostToolBridge: hostBridge() })
+    ).resolves.toMatchObject({ response: 'hello' });
+    releaseChild(item.root);
+    await waitForEvent(events, 'completed');
+    await runtime.stop();
+
+    expect(
+      events.map((event) => `${event.kind}:${event.agentThreadId}:${event.agentPath}`)
+    ).toEqual(['started:child-1:/root/board', 'completed:child-1:/root/board']);
+    expect(events[1]).toMatchObject({
+      // CodexRuntimeProcess routes by its own default session key, not the app-server's.
+      sessionKey: 'default',
+      parentThreadId: 'thread-1',
+      status: 'completed',
+      finalText: 'child says done',
+    });
+  });
+});

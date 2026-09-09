@@ -1211,3 +1211,38 @@ describe('ONE-MAMA-P3 Task 3: one self-check per day', () => {
     }
   });
 });
+
+describe('board baseline accepts a completed delta run', () => {
+  it('lets a verified delta be the next tick baseline', () => {
+    const db = new Database(':memory:');
+    try {
+      const ledger = new TaskLedger(db);
+      const full = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:1',
+        input: { mode: 'full', deltaWatermark: 'v2:w1' },
+      });
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(full.id);
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v2:w1');
+
+      const delta = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:2',
+        input: {
+          mode: 'delta',
+          deltaWatermark: 'v2:w2',
+          deltaAnchor: '2026-09-09T08:00:00.000Z',
+          deltaBasisRevision: 'gen-7',
+        },
+      });
+      ledger.claimNextWorkOrder();
+      // Still the full run: an OPEN delta has not discharged anything.
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v2:w1');
+      ledger.completeWorkOrder(delta.id);
+      expect(ledger.lastCompletedBoardFullRun()?.watermark).toBe('v2:w2');
+    } finally {
+      db.close();
+    }
+  });
+});

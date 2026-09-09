@@ -20,7 +20,14 @@ export interface TriggerSourceRef {
  * A fired trigger's signal. Genericized `SituationSignal` (contract-types.ts:15-27).
  * Drives recall (`memoryQuery`) + evidence gathering, then routes to the agent.
  */
+export interface ProcedureRef {
+  scopeKey?: string;
+  id: string;
+  revision: number;
+}
+
 export interface TriggerSignal {
+  procedureRef?: ProcedureRef;
   kind: string;
   memoryQuery: string;
   /** Immutable procedure snapshot carried into the owner-agent event turn. */
@@ -74,6 +81,9 @@ export type TriggerStatus = 'active' | 'disabled' | 'superseded';
  * triggers self-activate (G4 unfrozen); there is structurally no human-approval gate.
  */
 export interface TriggerRecord {
+  procedureRef?: ProcedureRef;
+  /** Semantic revision; statistics do not advance it. */
+  revision?: number;
   id: string;
   kind: string;
   memoryQuery: string;
@@ -93,5 +103,5 @@ export interface TriggerRecord {
 /** Input to author a trigger. Server manages status/timestamps/stats. */
 export type CreateTriggerInput = Omit<
   TriggerRecord,
-  'status' | 'createdAt' | 'updatedAt' | 'stats' | 'disabledReason'
+  'revision' | 'status' | 'createdAt' | 'updatedAt' | 'stats' | 'disabledReason'
 >;

@@ -14,9 +14,33 @@ import {
   wikiBatchKey,
   promotionKey,
 } from '../../src/operator/workorder-publishers.js';
+import { publisherPayloadOfStoredWorkOrder } from '../../src/operator/task-ledger.js';
 import { externalLifecycleCandidateId } from '../../src/operator/external-lifecycle-candidates.js';
 
 describe('Story S2-T2: publisher contracts', () => {
+  describe('ledger-managed payload keys are never publisher input', () => {
+    it('rejects attempts and delegated_at at enqueue', () => {
+      expect(() => validateWorkOrderPayload('board', { mode: 'full', attempts: 1 })).toThrow(
+        /attempts is ledger-managed/
+      );
+      // The stored-row reader strips this key instead (publisherPayloadOfStoredWorkOrder);
+      // enqueue must still refuse it loudly.
+      expect(() =>
+        validateWorkOrderPayload('board', { mode: 'full', delegated_at: 1_000_000 })
+      ).toThrow(/unknown field 'delegated_at'/);
+      expect(() =>
+        validateWorkOrderPayload('wiki', { batchId: 'b', events: ['e'], delegated_at: 1 })
+      ).toThrow(/unknown field 'delegated_at'/);
+    });
+
+    it('strips both keys from a stored payload so revalidation passes', () => {
+      const stored = { mode: 'full', attempts: 2, delegated_at: 1_000_000 };
+      const publisherInput = publisherPayloadOfStoredWorkOrder(stored);
+      expect(publisherInput).toEqual({ mode: 'full' });
+      expect(() => validateWorkOrderPayload('board', publisherInput)).not.toThrow();
+    });
+  });
+
   describe('AC #1: retired flag guard is strict (no-fallback)', () => {
     it('absent/empty/on boot fine (the pipeline always runs)', () => {
       expect(() => assertStage2FlagCompatible({})).not.toThrow();
@@ -544,5 +568,62 @@ describe('Story S2-T2: publisher contracts', () => {
         })
       ).toThrow(/unknown field/);
     });
+  });
+});
+
+/**
+ * Owner decision 2026-09-09: `delta` is the mode that EDITS the published board from the
+ * accumulated state, so its anchor is host-issued input the turn cannot invent.
+ */
+describe('board delta payload', () => {
+  const anchor = '2026-09-09T08:00:00.000Z';
+
+  it('accepts a delta carrying a canonical anchor and basis', () => {
+    expect(() =>
+      validateWorkOrderPayload('board', {
+        mode: 'delta',
+        deltaAnchor: anchor,
+        deltaBasisRevision: 'gen-42',
+        deltaWatermark: 'v2:c:alpha=1',
+      })
+    ).not.toThrow();
+  });
+
+  it('requires both anchor fields on a delta', () => {
+    expect(() => validateWorkOrderPayload('board', { mode: 'delta' })).toThrow(/deltaAnchor/);
+    expect(() => validateWorkOrderPayload('board', { mode: 'delta', deltaAnchor: anchor })).toThrow(
+      /deltaBasisRevision/
+    );
+  });
+
+  it('refuses a non-canonical anchor', () => {
+    for (const bad of ['2026-09-09', '2026-09-09T08:00:00Z', 'yesterday', 12]) {
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode: 'delta',
+          deltaAnchor: bad,
+          deltaBasisRevision: 'gen-42',
+        })
+      ).toThrow(/deltaAnchor/);
+    }
+  });
+
+  it('keeps the anchor delta-only', () => {
+    for (const mode of ['full', 'reconcile']) {
+      expect(() =>
+        validateWorkOrderPayload('board', {
+          mode,
+          deltaAnchor: anchor,
+          deltaBasisRevision: 'gen-42',
+          ...(mode === 'reconcile' ? { channelKey: 'slack:c1', deltaLines: ['x'] } : {}),
+        })
+      ).toThrow(/delta-only/);
+    }
+  });
+
+  it('rejects an unknown board mode by name', () => {
+    expect(() => validateWorkOrderPayload('board', { mode: 'partial' })).toThrow(
+      /'full'\|'delta'\|'reconcile'/
+    );
   });
 });

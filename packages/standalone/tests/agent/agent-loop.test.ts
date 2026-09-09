@@ -147,9 +147,11 @@ const {
   clineSessionPolicyStatusMock,
   codexRuntimeProcessMock,
   codexSessionPolicyStatusMock,
+  buildChannelKeyMock,
   laneManagerEnqueueWithSessionMock,
   sessionPoolInvalidateMock,
 } = vi.hoisted(() => ({
+  buildChannelKeyMock: vi.fn(() => 'default:default'),
   claudeResetSessionMock: vi.fn(),
   claudeSessionPolicyStatusMock: vi.fn().mockReturnValue('compatible'),
   clineAdapterOptionsMock: vi.fn(),
@@ -186,6 +188,7 @@ const gatewayExecutorFailRuntimeModelRunMock = vi.fn().mockResolvedValue({
   status: 'failed',
 });
 const gatewayExecutorExecuteMock = vi.fn().mockResolvedValue({ success: true });
+const gatewayExecutorPrepareProcedureContextMock = vi.fn(() => ({ hints: [], text: '' }));
 const gatewayExecutorProjectPrivateAgentContextMock = vi.fn(
   (context: AgentContext): AgentContext => context
 );
@@ -274,7 +277,7 @@ vi.mock('../../src/agent/session-pool.js', () => {
       updateTokens: vi.fn().mockReturnValue({ totalTokens: 100, nearThreshold: false }),
       releaseSession: vi.fn(),
     }),
-    buildChannelKey: vi.fn().mockReturnValue('default:default'),
+    buildChannelKey: buildChannelKeyMock,
   };
 });
 
@@ -295,6 +298,7 @@ vi.mock('../../src/agent/gateway-tool-executor.js', async (importOriginal) => {
       commitRuntimeModelRun: gatewayExecutorCommitRuntimeModelRunMock,
       failRuntimeModelRun: gatewayExecutorFailRuntimeModelRunMock,
       execute: gatewayExecutorExecuteMock,
+      prepareProcedureContext: gatewayExecutorPrepareProcedureContextMock,
       projectPrivateAgentContext: gatewayExecutorProjectPrivateAgentContextMock,
     })),
   };
@@ -395,6 +399,7 @@ describe('AgentLoop', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    buildChannelKeyMock.mockReset().mockReturnValue('default:default');
     gatewayExecutorExecuteMock.mockReset().mockResolvedValue({ success: true });
     codexRuntimeProcessMock.mockClear();
     codexSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
@@ -432,6 +437,44 @@ describe('AgentLoop', () => {
       acceptedSlotIds: ['briefing'],
       changedSlotIds: [],
     });
+  });
+
+  it('TG-05 resolves queued procedure content only after lane admission and authority', async () => {
+    const phases: string[] = [];
+    laneManagerEnqueueWithSessionMock.mockImplementationOnce(
+      async (_key: string, run: () => Promise<unknown>) => {
+        phases.push('lane');
+        return run();
+      }
+    );
+    const loop = new AgentLoop(
+      createMockOAuthManager(),
+      {
+        backend: 'codex',
+        systemPrompt: 'base prompt',
+        useLanes: true,
+      },
+      {},
+      { mamaApi: createMockApi() }
+    );
+    await loop.run('stale queued instruction', {
+      source: 'owner-event',
+      channelId: 'fixture',
+      prepareEnvelope: () => {
+        phases.push('authority');
+        return makeSignedEnvelope();
+      },
+      prepareContent: async () => {
+        phases.push('content');
+        return {
+          content: [{ type: 'text', text: 'current admitted procedure instruction' }],
+          procedureRefs: [{ id: 'fixture-procedure', revision: 2 }],
+        };
+      },
+    });
+    expect(phases).toEqual(['lane', 'authority', 'content']);
+    expect(persistentPromptMock.mock.calls.at(-1)?.[0]).toContain('current admitted procedure');
+    expect(persistentPromptMock.mock.calls.at(-1)?.[0]).not.toContain('stale queued instruction');
   });
 
   describe('Codex native gateway bridge', () => {
@@ -4138,6 +4181,48 @@ Skills provide additional tools.
       expect(journal.append).toHaveBeenCalledTimes(2);
     });
 
+    it('re-anchors an owner-event/scheduled turn through baseInstructions, not turn text', async () => {
+      // These lanes pass no systemPrompt and no freshSessionSystemPrompt at all. Before
+      // this, that left resumeInstructions undefined, so a resumed thread fell back to the
+      // turn-text <system-reminder> replay: the whole composed prompt billed as USER text
+      // on the first turn after every daemon restart.
+      let delivered: PromptOptions | undefined;
+      persistentPromptMock.mockImplementation(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          delivered = promptOptions;
+          return {
+            response: 'owner response',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'owner-thread',
+          };
+        }
+      );
+      const context = withOuterCodeAct(createCodexContext());
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'OWNER BASE PROMPT', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('owner event batch', {
+        sessionKey: 'owner:runtime',
+        source: 'operator',
+        channelId: 'owner-event',
+        agentContext: context,
+        sessionPolicyRole: context.role,
+        promptKind: 'owner-event',
+        promptBrief: 'sent',
+      });
+
+      expect(delivered?.resumeInstructions).toBeTypeOf('function');
+      const reanchored = await delivered!.resumeInstructions!();
+      // The same complete policy the turn already runs under - restated, not replaced.
+      expect(reanchored).toBe(delivered?.systemPrompt);
+      expect(reanchored).toContain('OWNER BASE PROMPT');
+      expect(delivered?.promptTelemetry).toEqual({ kind: 'owner-event', brief: 'sent' });
+    });
+
     it('TG-05 includes recovery inside the prompt budget instead of appending past it', async () => {
       let deliveredSystemPrompt = '';
       persistentPromptMock.mockImplementation(
@@ -4472,6 +4557,397 @@ Skills provide additional tools.
         expect.any(Object),
         expect.objectContaining({ sessionKey: 'default:default', resumeSession: true })
       );
+    });
+
+    it('treats a brand-new pool session on a durable runtime as a fresh procedure thread', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('hello', { source: 'discord', channelId: 'channel-1' });
+
+      expect(gatewayExecutorPrepareProcedureContextMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ fresh: true })
+      );
+    });
+
+    /**
+     * A Codex-native child outlives the parent turn, so it must never carry the parent's
+     * authority. These pin what `createSubagentBridge` hands it instead: its own model run
+     * under the parent's, its own envelope from the host's subagent issuer, and its own
+     * bridge whose calls never appear in the parent run's turns.
+     */
+    describe('Codex native subagent authority', () => {
+      const capturedSubagentFactory = ():
+        | ((info: {
+            sessionKey: string;
+            parentThreadId: string;
+            agentThreadId: string;
+            agentPath: string;
+          }) => Promise<{
+            bridge: HostToolBridge;
+            release: (outcome: { status: string; error?: string }) => Promise<void>;
+          } | null>)
+        | undefined =>
+        codexRuntimeProcessMock.mock.calls.at(-1)?.[0]?.createSubagentBridge as never;
+
+      const childInfo = {
+        sessionKey: 'default:default',
+        parentThreadId: 'thread-1',
+        agentThreadId: 'child-1',
+        agentPath: '/root/board',
+      };
+
+      it('issues a child its own model run, envelope and bridge', async () => {
+        gatewayExecutorBeginRuntimeModelRunMock
+          .mockResolvedValueOnce({ model_run_id: 'mr_parent', status: 'running' })
+          .mockResolvedValueOnce({ model_run_id: 'mr_child', status: 'running' });
+        const parentEnvelope = vi.fn(() => makeSignedEnvelope({ agent_id: 'owner-parent' }));
+        const childEnvelope = vi.fn(async () => makeSignedEnvelope({ agent_id: 'owner-child' }));
+        const parentTurns: string[] = [];
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        expect(typeof factory).toBe('function');
+
+        // The child is announced DURING the parent turn, which is the only moment its
+        // authority can be requested: the parent's run context is dropped after the run.
+        let authority: Awaited<ReturnType<NonNullable<typeof factory>>> = null;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          authority = await factory!(childInfo);
+          await authority?.bridge.execute({
+            callId: 'child-call-1',
+            name: 'mama_search',
+            input: { query: 'child work' },
+          });
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: parentEnvelope,
+          prepareSubagentEnvelope: childEnvelope,
+          onTurn: (turn) => parentTurns.push(JSON.stringify(turn)),
+        });
+
+        expect(authority).not.toBeNull();
+        // Its own run, linked to the parent's, referencing the child thread.
+        expect(childEnvelope).toHaveBeenCalledTimes(1);
+        expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledTimes(2);
+        expect(gatewayExecutorBeginRuntimeModelRunMock.mock.calls[1][0]).toMatchObject({
+          parent_model_run_id: 'mr_parent',
+          input_refs: expect.objectContaining({ sourceMessageRef: 'subagent:child-1' }),
+        });
+        // The child's tool call ran, and none of it reached the parent run's turns.
+        expect(
+          gatewayExecutorExecuteMock.mock.calls.some(
+            (call) => call[2]?.modelRunId === 'mr_child' && call[0] === 'mama_search'
+          )
+        ).toBe(true);
+        expect(parentTurns.some((turn) => turn.includes('child-call-1'))).toBe(false);
+
+        // release() closes the CHILD's run, never the parent's.
+        await authority!.release({ status: 'completed' });
+        expect(gatewayExecutorCommitRuntimeModelRunMock).toHaveBeenCalledWith(
+          'mr_child',
+          expect.stringContaining('subagent /root/board')
+        );
+      });
+
+      it('marks an unconfirmed child run failed rather than committed', async () => {
+        gatewayExecutorBeginRuntimeModelRunMock
+          .mockResolvedValueOnce({ model_run_id: 'mr_parent', status: 'running' })
+          .mockResolvedValueOnce({ model_run_id: 'mr_child', status: 'running' });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        let authority: Awaited<ReturnType<NonNullable<typeof factory>>> = null;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          authority = await factory!(childInfo);
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: () => makeSignedEnvelope(),
+          prepareSubagentEnvelope: async () => makeSignedEnvelope(),
+        });
+
+        await authority!.release({ status: 'unknown' });
+        expect(gatewayExecutorFailRuntimeModelRunMock).toHaveBeenCalledWith(
+          'mr_child',
+          'subagent unknown'
+        );
+        expect(gatewayExecutorCommitRuntimeModelRunMock).not.toHaveBeenCalledWith(
+          'mr_child',
+          expect.anything()
+        );
+      });
+
+      it('falls back to the run envelope issuer when no subagent issuer exists', async () => {
+        const parentEnvelope = vi.fn(() => makeSignedEnvelope());
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        let authority: Awaited<ReturnType<NonNullable<typeof factory>>> = null;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          authority = await factory!(childInfo);
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: parentEnvelope,
+        });
+
+        expect(authority).not.toBeNull();
+        expect(parentEnvelope).toHaveBeenCalledTimes(2);
+      });
+
+      it('gives nothing to a child with no run context behind it', async () => {
+        new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+
+        // Nothing ran on this session, so there is nothing to scope a child to.
+        await expect(factory!(childInfo)).resolves.toBeNull();
+        expect(gatewayExecutorBeginRuntimeModelRunMock).not.toHaveBeenCalled();
+      });
+
+      it('fails the child run when its bridge cannot be built', async () => {
+        gatewayExecutorBeginRuntimeModelRunMock
+          .mockResolvedValueOnce({ model_run_id: 'mr_parent', status: 'running' })
+          .mockResolvedValueOnce({ model_run_id: 'mr_child', status: 'running' });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        let childAuthority: Awaited<ReturnType<NonNullable<typeof factory>>> = 'unset' as never;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          // The parent's own bridge is already built; the NEXT build is the child's.
+          vi.spyOn(
+            agentLoop as unknown as { buildHostToolBridge: () => HostToolBridge },
+            'buildHostToolBridge'
+          ).mockImplementationOnce(() => {
+            throw new Error('bridge boom');
+          });
+          childAuthority = await factory!(childInfo);
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: () => makeSignedEnvelope(),
+          prepareSubagentEnvelope: async () => makeSignedEnvelope(),
+        });
+
+        expect(childAuthority).toBeNull();
+        expect(gatewayExecutorFailRuntimeModelRunMock).toHaveBeenCalledWith(
+          'mr_child',
+          expect.stringContaining('bridge boom')
+        );
+        // The abandoned child released the run context, so nothing stays pinned.
+        expect(await factory!(childInfo)).toBeNull();
+        expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledTimes(2);
+      });
+
+      it('gives nothing to a child announced after the run ended, even with a live sibling', async () => {
+        gatewayExecutorBeginRuntimeModelRunMock
+          .mockResolvedValueOnce({ model_run_id: 'mr_parent', status: 'running' })
+          .mockResolvedValueOnce({ model_run_id: 'mr_child', status: 'running' });
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        let sibling: Awaited<ReturnType<NonNullable<typeof factory>>> = null;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          sibling = await factory!(childInfo);
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: () => makeSignedEnvelope(),
+          prepareSubagentEnvelope: async () => makeSignedEnvelope(),
+        });
+
+        // The sibling is still live, so the context object is still reachable - but the
+        // run that issued it is over, and a child announced now never ran under it.
+        expect(sibling).not.toBeNull();
+        await expect(factory!({ ...childInfo, agentThreadId: 'child-late' })).resolves.toBeNull();
+        expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledTimes(2);
+      });
+
+      it('projects the child through the unattended role, without Bash or Write', async () => {
+        gatewayExecutorBeginRuntimeModelRunMock
+          .mockResolvedValueOnce({ model_run_id: 'mr_parent', status: 'running' })
+          .mockResolvedValueOnce({ model_run_id: 'mr_child', status: 'running' });
+        const chatShellContext: AgentContext = {
+          ...createCodexContext(),
+          role: {
+            ...createCodexContext().role,
+            allowedTools: ['mama_search', 'Bash', 'Write'],
+            blockedTools: [],
+          },
+        };
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        let authority: Awaited<ReturnType<NonNullable<typeof factory>>> = null;
+        persistentPromptMock.mockImplementationOnce(async () => {
+          authority = await factory!(childInfo);
+          await authority?.bridge.execute({
+            callId: 'child-call-1',
+            name: 'mama_search',
+            input: { query: 'child work' },
+          });
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: chatShellContext,
+          prepareEnvelope: () => makeSignedEnvelope(),
+          prepareSubagentEnvelope: async () => makeSignedEnvelope(),
+        });
+
+        const childToolNames = (authority?.bridge.tools ?? []).map((tool) => tool.name);
+        expect(childToolNames).not.toContain('Bash');
+        expect(childToolNames).not.toContain('Write');
+        const childCall = gatewayExecutorExecuteMock.mock.calls.find(
+          (call) => call[2]?.modelRunId === 'mr_child'
+        );
+        expect(childCall).toBeDefined();
+        const childRole = childCall?.[2]?.agentContext?.role;
+        expect(childRole?.blockedTools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+        expect(childRole?.allowedTools).not.toContain('Bash');
+        expect(childRole?.allowedTools).not.toContain('Write');
+      });
+
+      it('keys the child factory by the channel key the run was made under', async () => {
+        buildChannelKeyMock.mockImplementation(
+          (source: string, channelId: string) => `${source}:${channelId}`
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+        const seen: string[] = [];
+        persistentPromptMock.mockImplementationOnce(async () => {
+          seen.push(
+            (await factory!({ ...childInfo, sessionKey: 'owner-event:fixture' })) === null
+              ? 'refused'
+              : 'issued'
+          );
+          seen.push(
+            (await factory!({ ...childInfo, sessionKey: 'default:default' })) === null
+              ? 'refused'
+              : 'issued'
+          );
+          return {
+            response: 'parent done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-session',
+          };
+        });
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: () => makeSignedEnvelope(),
+          prepareSubagentEnvelope: async () => makeSignedEnvelope(),
+        });
+
+        expect(seen).toEqual(['issued', 'refused']);
+      });
+
+      it('gives nothing to a child once the parent run already ended', async () => {
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', model: 'gpt-5.4', systemPrompt: 'base prompt', useCodeAct: false },
+          {},
+          { mamaApi: createMockApi() }
+        );
+        const factory = capturedSubagentFactory();
+
+        await agentLoop.run('delegate this', {
+          source: 'owner-event',
+          channelId: 'fixture',
+          agentContext: createCodexContext(),
+          prepareEnvelope: () => makeSignedEnvelope(),
+        });
+
+        await expect(factory!(childInfo)).resolves.toBeNull();
+      });
     });
 
     it('restores the default system prompt when a message override is cleared', () => {

@@ -16,7 +16,11 @@ import type { MessageRouter } from '../../../src/gateways/index.js';
 import { AgentEventBus } from '../../../src/multi-agent/agent-event-bus.js';
 import { TaskLedger } from '../../../src/operator/task-ledger.js';
 import { BoardRefreshGate } from '../../../src/operator/board-refresh-gate.js';
-import { REQUIRED_FULL_BOARD_SLOTS } from '../../../src/operator/workorder-hooks.js';
+import {
+  NO_DURABLE_RESULT_REASON,
+  REQUIRED_BOARD_JUDGMENT_SLOTS,
+  REQUIRED_FULL_BOARD_SLOTS,
+} from '../../../src/operator/workorder-hooks.js';
 import type { ReportStore } from '../../../src/api/report-handler.js';
 import { WorkOrderConsumer } from '../../../src/operator/workorder-consumer.js';
 import { CronScheduler } from '../../../src/scheduler/cron-scheduler.js';
@@ -81,6 +85,24 @@ function createBoardInputTables(db: Database): void {
     topic TEXT,
     created_at TEXT
   )`);
+}
+
+/**
+ * Simulate a run publishing the judgment slots while the HOST owns the pipeline projection -
+ * the daemon's own wiring, and the only shape in which the board has a basis revision.
+ */
+function publishBoardWithProjection(
+  apiServer: { reportStore: ReportStore },
+  basisRevision = 'gen-7'
+): void {
+  apiServer.reportStore.setTaskProjectionProvider(() => ({
+    basisRevision,
+    html: `<p>pipeline ${basisRevision}</p>`,
+  }));
+  for (const [index, slotId] of REQUIRED_BOARD_JUDGMENT_SLOTS.entries()) {
+    apiServer.reportStore.update(slotId, `<p>${slotId}</p>`, index);
+  }
+  apiServer.reportStore.refreshTaskProjection();
 }
 
 /** Simulate a full run publishing the four required board slots. */
@@ -223,7 +245,10 @@ it.each([
   }
 });
 
-async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed' | 'none') {
+async function registerOwnerFullRuntime(
+  effect: 'report' | 'no-update' | 'failed' | 'none',
+  options: { observeSubagentStart?: boolean } = {}
+) {
   const db = new Database(':memory:');
   initAgentTables(db);
   createBoardInputTables(db);
@@ -247,12 +272,13 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
   const consumer = new WorkOrderConsumer({
     ledger,
     runner: {
-      runWithContent: async (_content, options) => {
+      runWithContent: async (_content, options_) => {
+        const runOptions = options_ as { workorderAttemptId?: number };
         const context = {
           executionSurface: 'model_tool' as const,
           source: 'operator' as const,
           channelId: 'worker:board',
-          workorderAttemptId: options.workorderAttemptId,
+          workorderAttemptId: runOptions.workorderAttemptId,
         };
         if (effect === 'report') {
           await toolExecutor.execute(
@@ -285,6 +311,15 @@ async function registerOwnerFullRuntime(effect: 'report' | 'no-update' | 'failed
           await toolExecutor
             .execute('report_publish', {} as never, context as never)
             .catch(() => undefined);
+        }
+        if (options.observeSubagentStart) {
+          (
+            options_ as {
+              streamCallbacks?: {
+                onToolUse?: (name: string, input: Record<string, unknown>) => void;
+              };
+            }
+          ).streamCallbacks?.onToolUse?.('collabAgentToolCall', {});
         }
         duringRun.current?.();
         return { response: effect === 'none' ? 'DONE in prose only' : 'DONE' };
@@ -417,6 +452,50 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
+  /**
+   * Owner decision 2026-09-09. The gate used to start dirty ("buys one full run per boot")
+   * and the watermark carried an in-memory notice term that reset with the process, so every
+   * restart bought a full board run and the owner's first message after a restart waited on
+   * it. A restart is not evidence.
+   */
+  it('a restart enqueues nothing when the board is already current', async () => {
+    const db = new Database(':memory:');
+    try {
+      createBoardInputTables(db);
+      const ledger = new TaskLedger(db);
+      const first = await registerReconcileRuntime({
+        db,
+        ledger,
+        boardRefreshGate: new BoardRefreshGate(),
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const initial = ledger.claimNextWorkOrder();
+      if (!initial) throw new Error('first full expected (no baseline yet)');
+      publishBoardSlots(first.apiServer);
+      ledger.completeWorkOrder(initial.id);
+      first.routeHandle.stop();
+
+      // Restart: the durable ledger survives, the in-memory gate does not.
+      const second = await registerReconcileRuntime({
+        db,
+        ledger,
+        boardRefreshGate: new BoardRefreshGate(),
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+      publishBoardSlots(second.apiServer);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+
+      // And the schedule stays quiet until something the board reads actually moves.
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+      second.routeHandle.stop();
+    } finally {
+      db.close();
+    }
+  });
+
   it('Fix E delta-gates the 30-minute full schedule when reconcile is disabled', async () => {
     const db = new Database(':memory:');
     const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
@@ -429,8 +508,8 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       });
       await vi.advanceTimersByTimeAsync(10_000);
       const boot = ledger.claimNextWorkOrder();
-      // The boot run has no completed predecessor, so it always runs, and it
-      // carries the watermark that becomes the next tick's baseline.
+      // No completed predecessor exists, so this first run happens on that evidence,
+      // and it carries the watermark that becomes the next tick's baseline.
       expect(boot?.payload.mode).toBe('full');
       expect(boot?.payload.deltaWatermark).toEqual(expect.any(String));
       if (!boot) throw new Error('boot full expected');
@@ -458,10 +537,99 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
+  /**
+   * Owner decision 2026-09-09: with a published board behind it, the scheduled run UPDATES that
+   * board from the accumulated state instead of rebuilding it from the raw sources.
+   */
+  it('enqueues mode delta anchored on the published board once a baseline exists', async () => {
+    const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
+    process.env.MAMA_BOARD_RECONCILE = '0';
+    try {
+      createBoardInputTables(db);
+      const { apiServer, ledger } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = ledger.claimNextWorkOrder();
+      if (!boot) throw new Error('boot full expected');
+      // No baseline existed, so the first run rebuilds.
+      expect(boot.payload.mode).toBe('full');
+      publishBoardWithProjection(apiServer);
+      ledger.completeWorkOrder(boot.id);
+
+      db.prepare(
+        `INSERT INTO connector_event_index
+           (event_index_id, source_connector, channel, operator_observation_seq)
+         VALUES ('e1', 'alpha', 'room', 1)`
+      ).run();
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      const first = ledger.claimNextWorkOrder();
+      if (!first) throw new Error('delta expected');
+      expect(first.payload.mode).toBe('delta');
+      expect(first.payload.deltaBasisRevision).toBe('gen-7');
+      expect(first.payload.deltaAnchor).toBe(
+        new Date(first.payload.deltaAnchor as string).toISOString()
+      );
+      // The anchor names the published board, never a later instant.
+      expect(Date.parse(first.payload.deltaAnchor as string)).toBeLessThanOrEqual(Date.now());
+
+      // A verified delta becomes the next baseline: nothing new arrived, so nothing re-fires.
+      // The projection moves with it, the way the host's pipeline slot does once the ledger has.
+      publishBoardWithProjection(apiServer, 'gen-8');
+      ledger.completeWorkOrder(first.id);
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+
+      // And the next arrival is another delta, not a rebuild.
+      db.prepare(
+        `INSERT INTO connector_event_index
+           (event_index_id, source_connector, channel, operator_observation_seq)
+         VALUES ('e2', 'alpha', 'room', 2)`
+      ).run();
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(ledger.claimNextWorkOrder()?.payload.mode).toBe('delta');
+    } finally {
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
+      db.close();
+    }
+  });
+
+  it('keeps an owner-forced refresh a full rebuild', async () => {
+    const db = new Database(':memory:');
+    const previousTestReconcile = process.env.MAMA_BOARD_RECONCILE;
+    process.env.MAMA_BOARD_RECONCILE = '0';
+    try {
+      createBoardInputTables(db);
+      const { apiServer, ledger, routeHandle } = await registerReconcileRuntime({
+        db,
+        connectorConfigLoadResult: enabledConnectorConfig,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = ledger.claimNextWorkOrder();
+      if (!boot) throw new Error('boot full expected');
+      publishBoardWithProjection(apiServer);
+      ledger.completeWorkOrder(boot.id);
+
+      await request(apiServer.app).post('/api/report/agent-refresh').expect(200);
+      const forced = ledger.claimNextWorkOrder();
+      expect(forced?.payload.mode).toBe('full');
+      expect(forced?.payload.deltaAnchor).toBeUndefined();
+      routeHandle.stop();
+    } finally {
+      if (previousTestReconcile === undefined) delete process.env.MAMA_BOARD_RECONCILE;
+      else process.env.MAMA_BOARD_RECONCILE = previousTestReconcile;
+      db.close();
+    }
+  });
+
   it('Fix E delta-gates a dirty repair gate too (MAMA_BOARD_RECONCILE=1)', async () => {
     const runtime = await registerOwnerFullRuntime('none');
     try {
-      // Boot dirt earns the first run.
+      // No baseline yet, so the first tick runs on evidence about the board itself -
+      // not on boot dirt, which the gate no longer invents (owner decision 2026-09-09).
       await vi.advanceTimersByTimeAsync(10_000);
       const boot = runtime.ledger.claimNextWorkOrder();
       expect(boot?.payload.mode).toBe('full');
@@ -470,8 +638,9 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
       publishBoardSlots(runtime.apiServer);
       runtime.ledger.completeWorkOrder(boot.id);
 
-      // The run went unverified, so the repair gate stays dirty - but nothing
-      // the board reads has moved, so the duplicate full run is skipped.
+      // A channel delta arrives, so the repair gate is dirty - but nothing the board
+      // reads has moved, so the duplicate full run is still skipped.
+      runtime.boardRefreshGate.markChannelDirty('slack:C1');
       expect(runtime.boardRefreshGate.needsFullRepair()).toBe(true);
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
@@ -486,15 +655,22 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   });
 
-  it('Fix E never skips a run that left no published board behind', async () => {
+  it('Fix E never skips a run that left no published board behind while input is dirty', async () => {
     const runtime = await registerOwnerFullRuntime('none');
     try {
       await vi.advanceTimersByTimeAsync(10_000);
       const boot = runtime.ledger.claimNextWorkOrder();
-      if (!boot) throw new Error('boot full expected');
+      if (!boot) throw new Error('first full expected');
       // Completed without publishing: not evidence of a rebuilt board.
       runtime.ledger.completeWorkOrder(boot.id);
 
+      // With a clean gate this is an honestly empty board and re-running it every 30
+      // minutes forever would be the boot-forcing bug in another shape.
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      expect(runtime.ledger.claimNextWorkOrder()).toBeNull();
+
+      // Input arrived and there is still no published board: that must not be skipped.
+      runtime.boardRefreshGate.markChannelDirty('slack:C1');
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(runtime.ledger.claimNextWorkOrder()?.payload.mode).toBe('full');
     } finally {
@@ -654,6 +830,45 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
     }
   );
 
+  it('fails a board full attempt whose run produced no durable result', async () => {
+    // board#4760 live: 29s, zero gateway calls, 23 characters of prose, then 'completed'.
+    const runtime = await registerOwnerFullRuntime('none');
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(runtime.ledger.countPendingWorkOrders()).toBe(1);
+
+      await runtime.consumer.tick();
+
+      const rows = runtime.db
+        .prepare(
+          `SELECT status, latest_event FROM operator_tasks WHERE kind = 'system' ORDER BY id ASC`
+        )
+        .all() as Array<{ status: string; latest_event: string | null }>;
+      expect(rows).toEqual([{ status: 'failed', latest_event: NO_DURABLE_RESULT_REASON }]);
+    } finally {
+      runtime.routeHandle.stop();
+      runtime.db.close();
+    }
+  });
+
+  it('keeps a board full attempt open as delegated when the run started a native subagent', async () => {
+    const runtime = await registerOwnerFullRuntime('none', { observeSubagentStart: true });
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(runtime.ledger.countPendingWorkOrders()).toBe(1);
+
+      await runtime.consumer.tick();
+
+      const rows = runtime.db
+        .prepare(`SELECT id, status FROM operator_tasks WHERE kind = 'system' ORDER BY id ASC`)
+        .all() as Array<{ id: number; status: string }>;
+      expect(rows.map((row) => row.status)).toEqual(['in_progress']);
+    } finally {
+      runtime.routeHandle.stop();
+      runtime.db.close();
+    }
+  });
+
   it('TG-06 non-force scheduled repair accepts exact contract_no_update', async () => {
     const runtime = await registerOwnerFullRuntime('no-update');
     try {
@@ -662,6 +877,12 @@ describe('TG-04 Task 7: registered reconcile callback private lifecycle isolatio
 
       await runtime.consumer.tick();
 
+      // The exact-scope receipt is the durable result, so the attempt is done, not failed.
+      expect(
+        runtime.db
+          .prepare(`SELECT status FROM operator_tasks WHERE kind = 'system' ORDER BY id ASC`)
+          .all()
+      ).toEqual([{ status: 'done' }]);
       expect(runtime.boardRefreshGate.needsFullRepair()).toBe(false);
       await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       expect(runtime.ledger.claimNextWorkOrder()).toBeNull();

@@ -1,6 +1,17 @@
 import { EventEmitter } from 'events';
 import { CodexAppServerProcess } from '../agent/codex-app-server-process.js';
 import type {
+  SubagentBridge,
+  SubagentBridgeRequest,
+  SubagentEvent,
+} from '../agent/codex-app-server-process.js';
+
+export type {
+  SubagentBridge,
+  SubagentBridgeRequest,
+  SubagentEvent,
+} from '../agent/codex-app-server-process.js';
+import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
 } from '../agent/persistent-cli-process.js';
@@ -38,6 +49,12 @@ export interface CodexRuntimeProcessOptions {
   /** Managed Codex `model_reasoning_effort`; unset means the built-in default. */
   effort?: string;
   auxiliaryToolPolicy?: CodexAuxiliaryToolPolicy;
+  /**
+   * Host factory for a child-scoped authority (own model run, own envelope, own bridge).
+   * Forwarded verbatim: a Codex-native child outlives the parent turn and must never
+   * inherit the parent's expiring grant.
+   */
+  createSubagentBridge?: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
 }
 
 /**
@@ -84,6 +101,11 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       registryRoot: options.registryRoot,
       mcpConfigPath: options.mcpConfigPath,
       effort: options.effort,
+      // Codex-native subagent activity is observed, never gated: re-emit it for the host.
+      onSubagentEvent: (event: SubagentEvent) => {
+        this.emit('subagent', event);
+      },
+      createSubagentBridge: options.createSubagentBridge,
     });
     this.auxiliaryToolBridge = options.auxiliaryToolPolicy
       ? createCodexAuxiliaryToolBridge({
@@ -149,6 +171,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
         resumeSession: promptOptions?.resumeSession,
         hostToolBridge: promptOptions?.hostToolBridge ?? this.auxiliaryToolBridge,
         resumeInstructions: promptOptions?.resumeInstructions,
+        promptTelemetry: promptOptions?.promptTelemetry,
       });
 
       this._totalLatencyMs += Date.now() - startTime;

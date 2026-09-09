@@ -54,7 +54,6 @@ import {
 import type { BoardRefreshGate } from '../../operator/board-refresh-gate.js';
 import { REQUIRED_FULL_BOARD_SLOTS } from '../../operator/workorder-hooks.js';
 import {
-  agentNoticeTerm,
   composeBoardInputWatermark,
   connectorObservationTerm,
   evaluateBoardFullDelta,
@@ -91,7 +90,6 @@ const { DebugLogger } = debugLogger as unknown as {
 const routesLogger = new DebugLogger('api-routes');
 const HOST_MANUAL_FULL_REPAIR_CHANNEL = 'host:api-report-agent-refresh';
 /** The event bus keeps at most 50 notices; read the whole ring for the term. */
-const AGENT_NOTICE_TERM_LIMIT = 100;
 
 export interface KagemushaTaskQueryInput {
   sourceRoom?: string;
@@ -225,7 +223,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   } = params;
   let boardBootTimeout: ReturnType<typeof setTimeout> | null = null;
   let boardInterval: ReturnType<typeof setInterval> | null = null;
-  let wikiBootTimeout: ReturnType<typeof setTimeout> | null = null;
   let wikiContinuityInterval: ReturnType<typeof setInterval> | null = null;
   let boardReconcileScheduler:
     | import('../../operator/board-reconcile.js').ReconcileScheduler
@@ -462,9 +459,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     };
     const runDashboardAgent = (opts?: { force?: boolean }): void => {
       try {
-        if (!opts?.force && boardRefreshGate && !boardRefreshGate.needsFullRepair()) {
-          return;
-        }
         // Cheap host-side delta gate (Fix E). It runs in BOTH configs, because
         // under MAMA_BOARD_RECONCILE=1 every scheduled enqueue reaches this
         // line WITH dirt: `needsFullRepair()` is true whenever a channel delta
@@ -486,7 +480,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               connectorObservationTerm(adapter),
               ledger.ownerTaskTerm(),
               memoryRecencyTerm(adapter),
-              agentNoticeTerm(eventBus.getRecentNotices(AGENT_NOTICE_TERM_LIMIT)),
             ]);
           },
           readBaseline: () => {
@@ -507,11 +500,61 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             `[stage2] board delta gate unavailable (${delta.warning}); enqueueing the full board anyway`
           );
         }
+        // Two independent authorities, and neither of them is "the daemon just
+        // started" (owner decision 2026-09-09). `delta` means the watermark
+        // moved, and the in-memory gate must agree that something actually
+        // arrived - the notices term of that watermark is an in-memory ring, so
+        // a restart alone changes it and used to buy one full run per boot. The
+        // other reasons are EVIDENCE about the board itself (no baseline, never
+        // published, stale past DEFAULT_BOARD_FULL_MAX_STALENESS_MS, or a signal
+        // we could not read), and those still enqueue on their own: availability
+        // of the board beats the token saving.
+        const gateDirty = boardRefreshGate ? boardRefreshGate.needsFullRepair() : true;
+        // 'unpublished' is the ONE reason that must still agree with the in-memory dirt: a
+        // board whose last completed run honestly had nothing to publish stays unpublished
+        // forever, so on its own this reason would re-enqueue every 30 minutes for the rest
+        // of the daemon's life. Every other reason is bounded on its own - 'no-baseline'
+        // fires once, 'stale' at most once per DEFAULT_BOARD_FULL_MAX_STALENESS_MS, 'delta'
+        // only when a durable term actually moved, and 'signal-unavailable' is the case
+        // where availability of the board beats the token saving.
+        const needsDirtAgreement = delta.reason === 'unpublished';
         if (!opts?.force && !delta.enqueue) {
           routesLogger.info(
             `[stage2] board full skipped: ${delta.reason} - nothing the board reads has moved since the last published full run`
           );
           return;
+        }
+        if (!opts?.force && needsDirtAgreement && !gateDirty) {
+          routesLogger.info(
+            `[stage2] board full skipped: ${delta.reason} with a clean repair gate - the last completed run had nothing to publish and nothing has arrived since`
+          );
+          return;
+        }
+        // The skips say why nothing ran; this says why something did. Without it a boot
+        // enqueue was the one board decision with no reason on the record.
+        // A forced refresh is always a rebuild; otherwise the gate decides (board-delta-gate.ts).
+        const runMode: 'full' | 'delta' = opts?.force ? 'full' : delta.mode;
+        const anchorPublishedAt = runMode === 'delta' ? delta.anchorPublishedAt : null;
+        const anchor =
+          anchorPublishedAt === null ? null : new Date(anchorPublishedAt).toISOString();
+        // The basis the published board rests on, read from the SAME report slots the anchor
+        // came from - not a fresh read, so the turn is told the basis of what it is editing.
+        const anchorBasis =
+          anchor === null
+            ? null
+            : (apiServer.reportStore.get('pipeline')?.currentBasisRevision ?? null);
+        // An anchored decision the store cannot name a basis for is not a delta: the turn would
+        // have to invent the basis it publishes under. Rebuild instead of guessing.
+        const mode: 'full' | 'delta' =
+          runMode === 'delta' && anchor !== null && anchorBasis !== null ? 'delta' : 'full';
+        if (mode === 'delta') {
+          routesLogger.info(
+            `[stage2] board delta enqueued: ${delta.reason} (anchor ${String(anchor)}, basis ${String(anchorBasis)})`
+          );
+        } else {
+          routesLogger.info(
+            `[stage2] board full enqueued: ${opts?.force ? 'force' : delta.reason} (watermark ${delta.watermark ?? 'unavailable'})`
+          );
         }
         if (opts?.force && boardRefreshGate) {
           // Host-owned manual dirt is captured before validation/enqueue can
@@ -540,7 +583,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               ? boardRepairKey()
               : boardFullKey(now),
           {
-            mode: 'full',
+            mode,
+            ...(mode === 'delta'
+              ? { deltaAnchor: anchor as string, deltaBasisRevision: anchorBasis as string }
+              : {}),
             ...(repair ?? {}),
             // Carried so this run's completion becomes the next tick's baseline.
             ...(delta.watermark === null ? {} : { deltaWatermark: delta.watermark }),
@@ -610,10 +656,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           buildWorkerTraceQueries,
           boardCandidateReceiptVerdict,
         } = await import('../../operator/workorder-hooks.js');
-        const reconcileVerifierDeps = {
+        // Per ATTEMPT, not per lane: a sibling board order running inside a delegated
+        // attempt's window must not discharge it (review P1-1).
+        const reconcileVerifierDepsFor = (attemptId: number) => ({
           ...verifierDeps,
-          ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
-        };
+          ...buildWorkerTraceQueries(sessionsDb, 'worker:board', undefined, attemptId),
+        });
         const fullVerifierDepsFor = (attemptId: number) => ({
           ...verifierDeps,
           ...buildFullBoardTraceQueries(sessionsDb, 'worker:board', attemptId),
@@ -623,11 +671,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           before: (wo) => {
             if (wo.payload.mode === 'reconcile') {
               return captureSnapshot(
-                reconcileVerifierDeps,
+                reconcileVerifierDepsFor(wo.id),
                 `reconcile:${String(wo.payload.channelKey)}`
               );
             }
-            if (wo.payload.mode === 'full' && typeof wo.payload.noUpdateScope === 'string') {
+            if (wo.payload.mode !== 'reconcile' && typeof wo.payload.noUpdateScope === 'string') {
               return captureSnapshot(fullVerifierDepsFor(wo.id), wo.payload.noUpdateScope);
             }
             return null;
@@ -645,7 +693,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               ? `reconcile:${String(wo.payload.channelKey)}`
               : String(wo.payload.noUpdateScope);
             const verdict = verifyAfterRun(
-              isReconcile ? reconcileVerifierDeps : fullVerifierDepsFor(wo.id),
+              isReconcile ? reconcileVerifierDepsFor(wo.id) : fullVerifierDepsFor(wo.id),
               beforeState as ReturnType<typeof captureSnapshot>,
               scope
             );
@@ -655,17 +703,21 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             const effectVerified =
               verdict.verified &&
               !(
-                wo.payload.mode === 'full' &&
+                wo.payload.mode !== 'reconcile' &&
                 wo.payload.force === true &&
                 verdict.obligatedTraceCount === 0
               );
+            // The mode is named in the outcome: a verified delta and a verified full are
+            // different claims about how the board was produced, and `full_verified` on a delta
+            // run would hide which one actually happened.
+            const boardMode = wo.payload.mode === 'delta' ? 'delta' : 'full';
             const outcome = effectVerified
               ? isReconcile
                 ? 'reconcile_verified'
-                : 'full_verified'
+                : `${boardMode}_verified`
               : isReconcile
                 ? 'reconcile_unverified'
-                : 'full_unverified';
+                : `${boardMode}_unverified`;
             console.log(
               `[stage2] ${outcome} scope=${scope}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
             );
@@ -949,18 +1001,17 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     if (workOrderConsumer) {
       const { buildWikiAfterHook, buildWorkerTraceQueries, LANE_OBLIGATED_TOOLS } =
         await import('../../operator/workorder-hooks.js');
-      const wikiTraces = buildWorkerTraceQueries(
-        sessionsDb,
-        'worker:wiki',
-        LANE_OBLIGATED_TOOLS.wiki
-      );
+      // Bound to the ATTEMPT: a delegated wiki attempt stays open for up to 30 minutes, and
+      // a sibling wiki order's wiki_publish must not discharge it (review P1-1).
+      const wikiTracesFor = (attemptId: number) =>
+        buildWorkerTraceQueries(sessionsDb, 'worker:wiki', LANE_OBLIGATED_TOOLS.wiki, attemptId);
       workOrderConsumer.registerHook('wiki', {
         verdictRequired: true,
         // The trace rowid before the run is what makes the count run-bound; without it the
         // hook would count any wiki_publish this process ever made.
-        before: () => wikiTraces.getTraceMaxId(),
+        before: (wo) => wikiTracesFor(wo.id).getTraceMaxId(),
         after: buildWikiAfterHook((line) => routesLogger.info(line), {
-          traces: wikiTraces,
+          tracesFor: wikiTracesFor,
           onUnverified: (note) =>
             eventBus.emit({
               type: 'agent:action',
@@ -1048,10 +1099,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       res.json({ ok: true, message: 'Wiki compile workorder enqueued', status: outcome.status });
     });
 
-    // First run after 15s (let connectors and dashboard agent go first).
-    wikiBootTimeout = setTimeout(() => {
-      runWikiAgent('boot');
-    }, 15_000);
+    // No boot enqueue (owner decision 2026-09-09): a restart is not evidence
+    // that the wiki has anything to compile, and the boot continuity order was
+    // what put a multi-minute maintenance turn in front of the owner's first
+    // message after every restart. The hourly continuity tick below still gives
+    // a new owner date its one run, on evidence rather than on boot.
 
     // Host-owned hourly continuity tick. The cheap watermark/date gate inside
     // runWikiAgent skips the model when the same owner date and source watermark
@@ -1063,7 +1115,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     wikiContinuityInterval.unref?.();
 
     routesLogger.info(
-      '[Wiki Agent] Ready — triggers: boot, hourly continuity tick, extraction:completed / memory:promoted events, POST /api/wiki/compile'
+      '[Wiki Agent] Ready — triggers: hourly continuity tick, extraction:completed / memory:promoted events, POST /api/wiki/compile'
     );
   }
 
@@ -1110,13 +1162,15 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         LANE_OBLIGATED_TOOLS,
         LANE_WRITE_TOOLS,
       } = await import('../../operator/workorder-hooks.js');
-      const promotionTraces = buildWorkerTraceQueries(
-        sessionsDb,
-        'worker:memory-curation',
-        LANE_OBLIGATED_TOOLS['memory-curation']
-      );
+      const promotionTracesFor = (attemptId: number) =>
+        buildWorkerTraceQueries(
+          sessionsDb,
+          'worker:memory-curation',
+          LANE_OBLIGATED_TOOLS['memory-curation'],
+          attemptId
+        );
       workOrderConsumer.registerHook('memory-curation', {
-        before: () => promotionTraces.getTraceMaxId(),
+        before: (wo) => promotionTracesFor(wo.id).getTraceMaxId(),
         after: buildPromotionAfterHook(
           {
             emitAgentAction: (action, target) =>
@@ -1125,12 +1179,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             log: (line) => console.log(line),
           },
           {
-            traces: promotionTraces,
-            writeTraces: buildWorkerTraceQueries(
-              sessionsDb,
-              'worker:memory-curation',
-              LANE_WRITE_TOOLS['memory-curation']
-            ),
+            tracesFor: promotionTracesFor,
+            writeTracesFor: (attemptId: number) =>
+              buildWorkerTraceQueries(
+                sessionsDb,
+                'worker:memory-curation',
+                LANE_WRITE_TOOLS['memory-curation'],
+                attemptId
+              ),
             log: (line) => console.log(line),
             onUnverified: (note) =>
               eventBus.emit({
@@ -1894,8 +1950,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       boardBootTimeout = null;
       if (boardInterval) clearInterval(boardInterval);
       boardInterval = null;
-      if (wikiBootTimeout) clearTimeout(wikiBootTimeout);
-      wikiBootTimeout = null;
       if (wikiContinuityInterval) clearInterval(wikiContinuityInterval);
       wikiContinuityInterval = null;
       boardReconcileScheduler?.stop();

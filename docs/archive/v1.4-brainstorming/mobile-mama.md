@@ -1,5 +1,7 @@
 # 📱 MAMA on Mobile: Brainstorming & Feasibility
 
+> **ARCHIVED:** historical brainstorming for v1.4. It does not describe shipped behaviour.
+
 ## 🎯 Goal
 
 Enable MAMA (Memory-Augmented MCP Architecture) access and interaction via mobile devices.

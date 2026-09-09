@@ -18,7 +18,11 @@ import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loade
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { ClineCLIAdapter } from './cline-cli-adapter.js';
 import { CLINE_NATIVE_GUARD_BYPASS, projectClineNativeTools } from './cline-native-tool-policy.js';
-import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
+import {
+  CodexRuntimeProcess,
+  type SubagentBridge,
+  type SubagentBridgeRequest,
+} from '../multi-agent/runtime-process.js';
 import {
   HostToolAbortError,
   HostToolTerminalError,
@@ -26,6 +30,7 @@ import {
   ModelRunnerError,
   type HostToolBridge,
   type HostToolCall,
+  type HostToolDefinition,
   type HostToolTerminalCode,
   type IModelRunner,
   type ModelRunnerErrorCode,
@@ -49,9 +54,11 @@ import { LaneManager, getGlobalLaneManager } from '../concurrency/index.js';
 import { SessionPool, getSessionPool, buildChannelKey } from './session-pool.js';
 import { laneChannelId } from '../gateways/principal.js';
 import {
+  OWNER_RUNTIME_RULES,
   OWNER_RUNTIME_SESSION_KEY,
   OWNER_SUBAGENT_INSTRUCTIONS,
 } from '../operator/owner-runtime.js';
+import { projectUnattendedRole } from '../operator/owner-event-policy.js';
 import type { OAuthManager } from '../auth/index.js';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -354,30 +361,19 @@ export function loadBackendAgentsMd(backend?: string, verbose = false): string {
 }
 
 export function loadComposedSystemPrompt(verbose = false, context?: AgentContext): string {
-  const mamaHome = join(homedir(), '.mama');
   const layers: string[] = [];
 
-  // Load persona files: SOUL.md, IDENTITY.md, USER.md
-  const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
-  for (const file of personaFiles) {
-    const path = join(mamaHome, file);
-    if (existsSync(path)) {
-      if (verbose) console.log(`[AgentLoop] Loaded persona: ${file}`);
-      const content = readFileSync(path, 'utf-8');
-      layers.push(content);
-    } else {
-      if (verbose) console.log(`[AgentLoop] Persona file not found (skipping): ${file}`);
-    }
-  }
-
   // Load skill catalog (on-demand mode — full content injected per-message by PromptEnhancer)
-  const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(verbose), context);
+  const skillCatalog = filterSkillCatalogForContext(
+    loadInstalledSkills(verbose, { includePaths: context?.roleName === 'owner_console' }),
+    context
+  );
   if (skillCatalog.length > 0) {
     const skillDirective = [
       '# Installed Skills',
       '',
-      'To invoke a skill, include its keywords in your message.',
-      'The full skill instructions will be injected automatically when matched.',
+      'Choose relevant skills from their descriptions and the current task; keywords are optional hints.',
+      'Read the selected instructions (source path when listed) before applying them. Learned procedures use procedure_list/read.',
       '',
       ...skillCatalog,
     ].join('\n');
@@ -428,6 +424,10 @@ function getRunGatewayToolsPrompt(
     privateConnectorPolicy: DEFAULT_PRIVATE_CONNECTOR_POLICY,
   }).prompt;
 }
+
+/** Korean/English phrasings that assert a correction, save, update or send has happened. */
+const COMPLETION_CLAIM_PATTERN =
+  /(?:반영|저장|기록|등록|갱신|적용|수정|전송|발송)\s*(?:완료|했습니다|됐습니다|되었습니다|하였습니다)|\b(?:saved|updated|applied|recorded|sent)\b/i;
 
 const CANONICAL_CODE_ACT_HEADING = '## Code-Act: Gateway Tool Execution via Sandbox';
 const CODE_ACT_MCP_COMPAT_NAME = 'mcp__code-act__code_act';
@@ -656,6 +656,46 @@ function withExecutionSurface(
   };
 }
 
+/** Normal coding tasks often need 10+ consecutive Bash calls; 5 was too low. */
+const MAX_CONSECUTIVE_SAME_HOST_TOOL = 15;
+
+/**
+ * The parent run's shape, kept only so a child announced mid-run (or after it) can be
+ * given an authority of its OWN: its own model run under the parent's, its own envelope,
+ * its own bridge with its own counters.
+ */
+/**
+ * The options a native child of this run inherits. Everything is carried EXCEPT the role,
+ * which is projected onto the unattended surface: the owner's 1:1 chat turn holds the
+ * gateway shell and file writer, and a child answers to no one inside the turn.
+ */
+function withUnattendedSubagentRole(options?: AgentLoopOptions): AgentLoopOptions {
+  const agentContext = options?.agentContext;
+  if (!agentContext) {
+    return { ...options };
+  }
+  const role = projectUnattendedRole(agentContext.role);
+  return {
+    ...options,
+    agentContext: {
+      ...agentContext,
+      role,
+      capabilities: [...role.allowedTools],
+      limitations: (role.blockedTools ?? []).map((tool) => `Cannot use ${tool}`),
+    },
+  };
+}
+
+interface SubagentRunContext {
+  options: AgentLoopOptions;
+  parentModelRunId: string | null;
+  cliSessionId: string | null;
+  tools: readonly HostToolDefinition[];
+  tier: 1 | 2 | 3;
+  activeChildren: number;
+  runFinished: boolean;
+}
+
 export class AgentLoop {
   /**
    * Construction-wide child-runtime tool capability.
@@ -669,6 +709,12 @@ export class AgentLoop {
   readonly probesDurableSession: boolean;
   readonly ownerRecoveryJournalEnabled: boolean;
   private readonly agent: IModelRunner;
+  /**
+   * What a native child started by a run on this session needs to be given its own
+   * authority. Keyed by session key, overwritten by each run on that session, and dropped
+   * once the run finished and no child of it is still registered.
+   */
+  private readonly subagentRunContexts = new Map<string, SubagentRunContext>();
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
   private readonly maxTurns: number;
@@ -793,29 +839,15 @@ export class AgentLoop {
       // Priority 1 (never cut): CLAUDE.md base instructions
       // Priority 2 (cut if extreme): personas (SOUL, IDENTITY, USER) + gateway tools
       // Priority 3 (cut first): context prompt + skills + onboarding
-      const mamaHome = join(homedir(), '.mama');
       const claudeMd = loadSystemPrompt();
-      const personaFiles = ['SOUL.md', 'IDENTITY.md', 'USER.md'];
-      const personaParts: string[] = [];
-      for (const file of personaFiles) {
-        const p = join(mamaHome, file);
-        if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
-      }
       const skillCatalog = filterSkillCatalogForContext(
-        loadInstalledSkills(),
+        loadInstalledSkills(false, {
+          includePaths: options.agentContext?.roleName === 'owner_console',
+        }),
         options.agentContext ?? null
       );
       promptLayers = [
         { name: 'claudeMd', content: claudeMd, priority: 1 },
-        ...(personaParts.length > 0
-          ? [
-              {
-                name: 'personas',
-                content: personaParts.join('\n\n---\n\n'),
-                priority: 2,
-              } as PromptLayer,
-            ]
-          : []),
         ...(skillCatalog.length > 0
           ? [
               {
@@ -823,7 +855,7 @@ export class AgentLoop {
                 content: [
                   '# Installed Skills',
                   '',
-                  'To invoke a skill, include its keywords in your message.',
+                  'Choose skills by their purpose and the current task, not only literal keywords.',
                   '',
                   ...skillCatalog,
                 ].join('\n'),
@@ -942,6 +974,9 @@ export class AgentLoop {
         mcpConfigPath: this.useCodeAct
           ? undefined
           : (options.mcpConfigPath ?? (useMCPMode ? mcpConfigPath : undefined)),
+        // A Codex-native child outlives the parent turn. The host - not the child's
+        // parent bridge - issues its authority: own model run, own envelope, own counters.
+        createSubagentBridge: (info) => this.createSubagentBridge(info),
       });
       logger.debug('Codex app-server backend enabled');
     } else if (this.backend === 'cline') {
@@ -1193,6 +1228,16 @@ export class AgentLoop {
   }
 
   /**
+   * The model runner backing this loop, for host adapters that subscribe to runner
+   * lifecycle events (e.g. native subagent completion waking the standing owner).
+   * Returned as `unknown` on purpose: the runner surface differs per backend, so the
+   * caller must feature-detect rather than assume an emitter.
+   */
+  getModelRunner(): unknown {
+    return this.agent;
+  }
+
+  /**
    * Run the agent loop with a user prompt
    *
    * Uses lane-based concurrency when useLanes is enabled:
@@ -1274,11 +1319,27 @@ export class AgentLoop {
     // Queue wait consumes no execution authority. Never renew a signed envelope implicitly:
     // only a host-supplied issuer can prepare the current grant after both lane waits.
     if (options?.prepareEnvelope) {
+      const runEnvelopeIssuer = options.prepareEnvelope;
       options = {
         ...options,
-        envelope: await options.prepareEnvelope(),
+        envelope: await runEnvelopeIssuer(),
         prepareEnvelope: undefined,
+        // A native child outlives this envelope and needs one of its OWN. The run's issuer
+        // is the fallback when the host supplied no dedicated subagent issuer, so it is kept
+        // reachable here instead of being lost with this rewrite - without it a child would
+        // silently get no authority at all.
+        prepareSubagentEnvelope:
+          options.prepareSubagentEnvelope ?? (async () => await runEnvelopeIssuer()),
       };
+      if (this.stopped) {
+        throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
+      }
+    }
+
+    if (options?.prepareContent) {
+      const admitted = await options.prepareContent();
+      content = admitted.content;
+      options = { ...options, procedureRefs: admitted.procedureRefs, prepareContent: undefined };
       if (this.stopped) {
         throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
       }
@@ -1328,7 +1389,13 @@ export class AgentLoop {
       this.buildToolExecutionContext(options),
       backgroundTasks
     );
-
+    if (toolExecutionContext) {
+      toolExecutionContext = {
+        ...toolExecutionContext,
+        procedureStimulus: ownerJournalPrompt,
+        procedureRefs: options?.procedureRefs,
+      };
+    }
     // Track this run's tier for code-act execution and prompt sizing.
     if (options?.agentContext) {
       const rawTier = options.agentContext.tier ?? 1;
@@ -1342,8 +1409,8 @@ export class AgentLoop {
     // Infinite loop prevention
     let consecutiveToolCalls = 0;
     let lastToolName = '';
-    const MAX_CONSECUTIVE_SAME_TOOL = 15; // Increased from 5 - normal coding tasks often need 10+ consecutive Bash calls
-    const EMERGENCY_MAX_TURNS = Math.max(this.maxTurns + 10, 50); // Always above maxTurns
+    const MAX_CONSECUTIVE_SAME_TOOL = MAX_CONSECUTIVE_SAME_HOST_TOOL;
+    const EMERGENCY_MAX_TURNS = this.emergencyMaxCalls(); // Always above maxTurns
 
     // Track channel key for session release
     const channelKey =
@@ -1352,6 +1419,10 @@ export class AgentLoop {
         options?.source ?? 'default',
         laneChannelId(options?.channelId ?? this.sessionKey, 'owner')
       );
+
+    // The context object THIS run created, compared by identity before the finally marks
+    // it finished: a later run on the same session key replaces the map entry.
+    let ownedSubagentRunContext: SubagentRunContext | undefined;
 
     // Use session pool for conversation continuity
     // IMPORTANT: If caller passes cliSessionId, use it directly to avoid double-locking
@@ -1477,119 +1548,81 @@ export class AgentLoop {
           }),
           backgroundTasks
         );
+        if (toolExecutionContext) {
+          toolExecutionContext = {
+            ...toolExecutionContext,
+            procedureStimulus: ownerJournalPrompt,
+            procedureRefs: options?.procedureRefs,
+          };
+        }
       }
 
       nativeEffects = new NativeEffectReplayBoundary(
         this.createNativeEffectObserver?.(toolExecutionContext)
       );
 
-      let nativeToolCallCount = 0;
-      let nativeConsecutiveToolCalls = 0;
-      let nativeLastToolSignature = '';
+      // This run's bridge is ITS OWN: the loop guards, the emergency budget, the history
+      // writes and the turn observers all belong to this run. A Codex-native child gets a
+      // separate bridge from `createSubagentBridge` - sharing this closure let a child trip
+      // the parent's loop guard and append its traces to the parent's committed model run.
+      const hostToolDefinitions = this.hostToolDefinitionsFor(options, outerCodeActAllowed);
       const hostToolBridge: HostToolBridge | undefined =
         isDurableRuntime && this.isGatewayMode
-          ? {
-              tools: this.useCodeAct
-                ? outerCodeActAllowed
-                  ? ToolRegistry.getHostToolDefinitions({ allowedTools: [CODE_ACT_MARKER] })
-                  : []
-                : ToolRegistry.getHostToolDefinitions({
-                    allowedTools: options?.agentContext?.role.allowedTools,
-                    blockedTools: options?.agentContext?.role.blockedTools,
-                    disallowedTools: this.disallowedTools,
-                    viewer: options?.agentContext?.platform === 'viewer',
-                  }),
-              execute: async (call: HostToolCall) => {
-                const callSignal = call.signal ?? new AbortController().signal;
-                callSignal.throwIfAborted();
-                if (nativeToolCallCount >= EMERGENCY_MAX_TURNS) {
-                  return {
-                    content: `Native tool call budget exceeded emergency maximum turns (${EMERGENCY_MAX_TURNS})`,
-                    isError: true,
-                    abort: true,
-                  };
-                }
-
-                const toolSignature =
-                  call.name === CODE_ACT_MARKER && typeof call.input.code === 'string'
-                    ? `${call.name}:${call.input.code.trim()}`
-                    : call.name;
-                const nextConsecutiveCount =
-                  toolSignature === nativeLastToolSignature ? nativeConsecutiveToolCalls + 1 : 1;
-                if (nextConsecutiveCount >= MAX_CONSECUTIVE_SAME_TOOL) {
-                  return {
-                    content: `Infinite loop detected: Tool "${call.name}" called ${nextConsecutiveCount} times consecutively`,
-                    isError: true,
-                    abort: true,
-                  };
-                }
-
-                nativeToolCallCount += 1;
-                nativeConsecutiveToolCalls = nextConsecutiveCount;
-                nativeLastToolSignature = toolSignature;
-                const toolUse: ToolUseBlock = {
-                  type: 'tool_use',
-                  id: call.callId,
-                  name: call.name,
-                  input: call.input,
-                };
-                // Codex does not return completed host exchanges, so record them
-                // here. Cline reports the paired custom-tool exchange from its Hub
-                // event stream and AgentLoop appends it exactly once below.
-                if (isCodex) {
-                  history.push({ role: 'assistant', content: [toolUse] });
-                  runScope.onTurn?.({
-                    turn,
-                    role: 'assistant',
-                    content: [toolUse],
-                    stopReason: 'tool_use',
-                  });
-                }
-                const callExecutionContext = toolExecutionContext
-                  ? {
-                      ...toolExecutionContext,
-                      gatewayCallId: call.callId,
-                      signal: callSignal,
-                    }
-                  : null;
-                const [toolResult] = await this.executeTools(
-                  [toolUse],
-                  options?.stopAfterSuccessfulTools ?? [],
-                  callExecutionContext,
-                  runScope
-                );
-                if (!toolResult) {
-                  callSignal.throwIfAborted();
-                  return {
-                    content: `Native tool "${call.name}" returned no result`,
-                    isError: true,
-                    abort: true,
-                  };
-                }
-                if (!toolResult.terminalCode) {
-                  callSignal.throwIfAborted();
-                }
-                if (isCodex) {
-                  const persistedToolResult = historyToolResult(toolResult);
-                  history.push({ role: 'user', content: [persistedToolResult] });
-                  runScope.onTurn?.({
-                    turn,
-                    role: 'user',
-                    content: [persistedToolResult],
-                  });
-                }
-                return {
-                  content: toolResult.content,
-                  isError: toolResult.is_error === true,
-                  abort: toolResult.abort === true,
-                  terminalCode: toolResult.terminalCode,
-                  stop:
-                    toolResult.is_error !== true &&
-                    (options?.stopAfterSuccessfulTools ?? []).includes(call.name),
-                };
-              },
-            }
+          ? this.buildHostToolBridge({
+              tools: hostToolDefinitions,
+              runScope,
+              executionContext: () => toolExecutionContext,
+              stopAfterSuccessfulTools: options?.stopAfterSuccessfulTools ?? [],
+              emergencyMaxCalls: EMERGENCY_MAX_TURNS,
+              maxConsecutiveSameTool: MAX_CONSECUTIVE_SAME_TOOL,
+              // Codex does not return completed host exchanges, so record them here. Cline
+              // reports the paired custom-tool exchange from its Hub event stream and
+              // AgentLoop appends it exactly once below.
+              ...(isCodex
+                ? {
+                    recordExchange: {
+                      assistant: (toolUse: ToolUseBlock): void => {
+                        history.push({ role: 'assistant', content: [toolUse] });
+                        runScope.onTurn?.({
+                          turn,
+                          role: 'assistant',
+                          content: [toolUse],
+                          stopReason: 'tool_use',
+                        });
+                      },
+                      result: (toolResult: InternalToolResultBlock): void => {
+                        const persistedToolResult = historyToolResult(toolResult);
+                        history.push({ role: 'user', content: [persistedToolResult] });
+                        runScope.onTurn?.({
+                          turn,
+                          role: 'user',
+                          content: [persistedToolResult],
+                        });
+                      },
+                    },
+                  }
+                : {}),
+            })
           : undefined;
+      if (hostToolBridge && isCodex) {
+        // A child can be announced during this run and outlive it, so what its authority
+        // needs is recorded now, per session key, and dropped when nothing needs it.
+        // A previous run's context object stays referenced by ITS still-live children, so
+        // this run starts its own count rather than inheriting one it can never settle.
+        // The child NEVER inherits this turn's role verbatim: an owner 1:1 chat turn holds
+        // the gateway shell and file writer, and a child is unattended by definition.
+        const childOptions = withUnattendedSubagentRole(options);
+        ownedSubagentRunContext = {
+          options: childOptions,
+          parentModelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
+          cliSessionId: resolvedCliSessionId,
+          tools: this.hostToolDefinitionsFor(childOptions, outerCodeActAllowed),
+          tier: runScope.tier,
+          activeChildren: 0,
+          runFinished: false,
+        };
+        this.subagentRunContexts.set(channelKey, ownedSubagentRunContext);
+      }
 
       const prepareSystemPrompt = (
         requestedSystemPrompt: string | undefined,
@@ -1602,6 +1635,9 @@ export class AgentLoop {
         }
         if (ownerRuntime && !baseSystemPrompt.includes(TELEGRAM_FORMAT_GUIDE)) {
           baseSystemPrompt = `${baseSystemPrompt}\n\n${TELEGRAM_FORMAT_GUIDE}`;
+        }
+        if (ownerRuntime && !baseSystemPrompt.includes(OWNER_RUNTIME_RULES)) {
+          baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_RUNTIME_RULES}`;
         }
         let gatewayToolsPrompt = '';
         if (this.isGatewayMode && this.useCodeAct) {
@@ -1733,11 +1769,20 @@ export class AgentLoop {
       // That rebuild costs an embedding search, so hand the backend a lazy builder it
       // invokes only inside the resume branch; a live thread never pays for it.
       const freshSystemPromptBuilder = options?.freshSessionSystemPrompt;
-      const resumeInstructions =
-        isDurableRuntime && freshSystemPromptBuilder
+      // The owner-event and scheduled lanes carry no per-call systemPrompt at all: their
+      // perCallSystemPrompt IS the complete composed owner policy (the ownerRuntime branch
+      // above). Without a resume builder those lanes fell back to the turn-text
+      // <system-reminder> replay - the same full prompt, but billed as USER text on the
+      // first turn after every daemon restart. Re-anchor it through baseInstructions
+      // instead; the reminder is then never needed.
+      const resumeInstructions = !isDurableRuntime
+        ? undefined
+        : freshSystemPromptBuilder
           ? async (): Promise<string> =>
               prepareSystemPrompt(await freshSystemPromptBuilder(), false, false)
-          : undefined;
+          : ownerRuntime
+            ? async (): Promise<string> => perCallSystemPrompt
+            : undefined;
 
       // Reset StopContinuation state for this channel to prevent leaking
       // retry counts from previous invocations
@@ -1804,6 +1849,12 @@ export class AgentLoop {
             nativeEffects.settled(name, toolUseId, isError);
             ext?.onToolComplete?.(name, toolUseId, isError);
           },
+          // A spawn is an admission, not an external effect: forwarded verbatim with NO
+          // nativeEffects call, so it never writes a `native_tool` ledger row and never
+          // makes the occurrence unsafe to replay.
+          onSubagentStart: (info: { agentThreadId: string; agentPath: string; itemId: string }) => {
+            ext?.onSubagentStart?.(info);
+          },
           onFinal: (finalResponse: PromptFinalResponse) => {
             ext?.onFinal?.(finalResponse);
           },
@@ -1824,7 +1875,8 @@ export class AgentLoop {
         let requestSystemPrompt = perCallSystemPrompt;
         let provisionalDurableSessionId: string | undefined;
         // All three backends preserve context and receive only the new user message.
-        const promptText = this.formatLastMessageOnly(history);
+        const basePromptText = this.formatLastMessageOnly(history);
+        let promptText = basePromptText;
         const promptStart = Date.now();
         const throwFinalCliError = (error: unknown): never => {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -1965,11 +2017,22 @@ export class AgentLoop {
             }
             shouldResume = false;
           }
+          promptText = this.withProcedureHints(basePromptText, turn, {
+            threadId: resolvedCliSessionId ?? channelKey,
+            // A NEW pool session has no prior thread to carry procedures forward from, even
+            // when the durable runtime is asked to resume: fresh is about the thread.
+            fresh: !shouldResume || sessionIsNew,
+            context: toolExecutionContext,
+          });
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
             systemPrompt: requestSystemPrompt,
             resumeInstructions,
+            promptTelemetry: {
+              kind: options?.promptKind ?? (options?.source === 'operator' ? 'scheduled' : 'chat'),
+              brief: options?.promptBrief ?? 'omitted',
+            },
             sessionKey: channelKey,
             sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
             sessionId: resolvedCliSessionId ?? undefined,
@@ -2123,6 +2186,11 @@ export class AgentLoop {
                 resetSystemPrompt = prepareSystemPrompt(options?.systemPrompt, false, true);
               }
 
+              promptText = this.withProcedureHints(basePromptText, turn, {
+                threadId: newSessionId,
+                fresh: true,
+                context: toolExecutionContext,
+              });
               piResult = await this.agent.prompt(promptText, callbacks, {
                 model: options?.model,
                 resumeSession: false, // Force new session
@@ -2542,6 +2610,11 @@ export class AgentLoop {
           `Model run ${ownedModelRunId} may remain uncommitted; provenance reported as commit_failed`
         );
       }
+      if (ownerRuntime && finalResponse.trim()) {
+        // Observation only: a completion claim with no durable write in this run is the
+        // failure the owner sees as "corrected" work that never persisted (2026-09-09).
+        void this.observeCompletionClaim(ownedModelRunId, finalResponse);
+      }
       if (ownerRuntime && this.ownerRuntimeJournal && finalResponse.trim()) {
         try {
           this.ownerRuntimeJournal.append({
@@ -2584,6 +2657,18 @@ export class AgentLoop {
       }
       throw nativeEffects.failure(error);
     } finally {
+      this.mcpExecutor.releaseProcedureRun?.(toolExecutionContext);
+      // A child that outlives this run still needs its authority recipe, so the context is
+      // dropped only once the run finished AND no child of it is still registered.
+      if (ownedSubagentRunContext) {
+        ownedSubagentRunContext.runFinished = true;
+        if (
+          ownedSubagentRunContext.activeChildren === 0 &&
+          this.subagentRunContexts.get(channelKey) === ownedSubagentRunContext
+        ) {
+          this.subagentRunContexts.delete(channelKey);
+        }
+      }
       // Always release session lock, even on error
       // BUT only if we own the session (not passed by caller)
       if (ownedSession) {
@@ -2644,6 +2729,311 @@ export class AgentLoop {
           : {}),
       },
     };
+  }
+
+  /** Always above maxTurns: the last-resort stop for a runaway native tool loop. */
+  private emergencyMaxCalls(): number {
+    return Math.max(this.maxTurns + 10, 50);
+  }
+
+  /** The host tool surface this run's role grants; a child is given the same surface. */
+  private hostToolDefinitionsFor(
+    options: AgentLoopOptions | undefined,
+    outerCodeActAllowed: boolean
+  ): readonly HostToolDefinition[] {
+    return this.useCodeAct
+      ? outerCodeActAllowed
+        ? ToolRegistry.getHostToolDefinitions({ allowedTools: [CODE_ACT_MARKER] })
+        : []
+      : ToolRegistry.getHostToolDefinitions({
+          allowedTools: options?.agentContext?.role.allowedTools,
+          blockedTools: options?.agentContext?.role.blockedTools,
+          disallowedTools: this.disallowedTools,
+          viewer: options?.agentContext?.platform === 'viewer',
+        });
+  }
+
+  /**
+   * One dynamic-tool bridge. Every guard it applies - the emergency call budget and the
+   * same-signature loop guard - is private to the bridge, so a parent and its children
+   * never share a counter. `recordExchange` is the ONLY way a bridge writes to a
+   * conversation: a child passes none and therefore cannot touch the parent's history.
+   */
+  private buildHostToolBridge(params: {
+    tools: readonly HostToolDefinition[];
+    runScope: RunScope;
+    /** Read per call: the parent's context is re-pointed once its model run begins. */
+    executionContext: () => AgentToolExecutionContext | null;
+    stopAfterSuccessfulTools: readonly string[];
+    emergencyMaxCalls: number;
+    maxConsecutiveSameTool: number;
+    recordExchange?: {
+      assistant: (toolUse: ToolUseBlock) => void;
+      result: (toolResult: InternalToolResultBlock) => void;
+    };
+  }): HostToolBridge {
+    let toolCallCount = 0;
+    let consecutiveToolCalls = 0;
+    let lastToolSignature = '';
+    return {
+      tools: params.tools,
+      execute: async (call: HostToolCall) => {
+        const callSignal = call.signal ?? new AbortController().signal;
+        callSignal.throwIfAborted();
+        if (toolCallCount >= params.emergencyMaxCalls) {
+          return {
+            content: `Native tool call budget exceeded emergency maximum turns (${params.emergencyMaxCalls})`,
+            isError: true,
+            abort: true,
+          };
+        }
+
+        const toolSignature =
+          call.name === CODE_ACT_MARKER && typeof call.input.code === 'string'
+            ? `${call.name}:${call.input.code.trim()}`
+            : call.name;
+        const nextConsecutiveCount =
+          toolSignature === lastToolSignature ? consecutiveToolCalls + 1 : 1;
+        if (nextConsecutiveCount >= params.maxConsecutiveSameTool) {
+          return {
+            content: `Infinite loop detected: Tool "${call.name}" called ${nextConsecutiveCount} times consecutively`,
+            isError: true,
+            abort: true,
+          };
+        }
+
+        toolCallCount += 1;
+        consecutiveToolCalls = nextConsecutiveCount;
+        lastToolSignature = toolSignature;
+        const toolUse: ToolUseBlock = {
+          type: 'tool_use',
+          id: call.callId,
+          name: call.name,
+          input: call.input,
+        };
+        params.recordExchange?.assistant(toolUse);
+        const executionContext = params.executionContext();
+        const callExecutionContext = executionContext
+          ? {
+              ...executionContext,
+              gatewayCallId: call.callId,
+              signal: callSignal,
+            }
+          : null;
+        const [toolResult] = await this.executeTools(
+          [toolUse],
+          [...params.stopAfterSuccessfulTools],
+          callExecutionContext,
+          params.runScope
+        );
+        if (!toolResult) {
+          callSignal.throwIfAborted();
+          return {
+            content: `Native tool "${call.name}" returned no result`,
+            isError: true,
+            abort: true,
+          };
+        }
+        if (!toolResult.terminalCode) {
+          callSignal.throwIfAborted();
+        }
+        params.recordExchange?.result(toolResult);
+        return {
+          content: toolResult.content,
+          isError: toolResult.is_error === true,
+          abort: toolResult.abort === true,
+          terminalCode: toolResult.terminalCode,
+          stop: toolResult.is_error !== true && params.stopAfterSuccessfulTools.includes(call.name),
+        };
+      },
+    };
+  }
+
+  /**
+   * Give one Codex-native child its OWN authority.
+   *
+   * The parent's bridge closes over an envelope issued for the PARENT's wall, which the
+   * child cannot renew - inheriting it meant a long delegated run losing every tool
+   * mid-flight and still reporting "done". So the child gets: its own model run under the
+   * parent's, its own envelope from a host issuer, its own execution context, and its own
+   * bridge counters. When no issuer is reachable it gets nothing and says so - the process
+   * refuses its calls with `subagent authority unavailable` rather than quietly borrowing.
+   */
+  private async createSubagentBridge(info: SubagentBridgeRequest): Promise<SubagentBridge | null> {
+    const context = this.subagentRunContexts.get(info.sessionKey);
+    if (!context) {
+      console.warn(
+        `[AgentLoop] subagent authority unavailable: no run context for session ${info.sessionKey} ` +
+          `(thread=${info.agentThreadId})`
+      );
+      return null;
+    }
+    if (context.runFinished) {
+      // Only a child announced DURING the run inherits that run's issuer. A finished run
+      // stays reachable while a sibling is live; it must not mint authority hours later.
+      console.warn(
+        `[AgentLoop] subagent authority refused: run for session ${info.sessionKey} already ended ` +
+          `(thread=${info.agentThreadId})`
+      );
+      return null;
+    }
+    // Claimed synchronously: the parent's finally must not drop the context while this
+    // factory is still awaiting an envelope or a model run.
+    context.activeChildren += 1;
+    const abandon = (reason: string): null => {
+      console.warn(reason);
+      this.releaseSubagentRunContext(info.sessionKey, context);
+      return null;
+    };
+    const issuer = context.options.prepareSubagentEnvelope ?? context.options.prepareEnvelope;
+    if (!issuer) {
+      return abandon(
+        `[AgentLoop] subagent authority unavailable: no host envelope issuer for ${info.sessionKey} ` +
+          `(thread=${info.agentThreadId})`
+      );
+    }
+    let envelope: Awaited<ReturnType<NonNullable<AgentLoopOptions['prepareEnvelope']>>>;
+    try {
+      envelope = await issuer();
+    } catch (error) {
+      return abandon(
+        `[AgentLoop] subagent authority issuance failed thread=${info.agentThreadId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    if (!envelope) {
+      return abandon(
+        `[AgentLoop] subagent authority unavailable: issuer returned no envelope ` +
+          `(thread=${info.agentThreadId})`
+      );
+    }
+    const childOptions: AgentLoopOptions = {
+      ...context.options,
+      envelope,
+      prepareEnvelope: undefined,
+      parentModelRunId: context.parentModelRunId,
+      sourceMessageRef: `subagent:${info.agentThreadId}`,
+    };
+    let modelRunId: string;
+    try {
+      const modelRun = await this.mcpExecutor.beginRuntimeModelRun(
+        this.buildModelRunInput(childOptions, context.cliSessionId)
+      );
+      modelRunId = modelRun.model_run_id;
+    } catch (error) {
+      return abandon(
+        `[AgentLoop] subagent model run could not begin thread=${info.agentThreadId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    const childTasks: Promise<unknown>[] = [];
+    const backgroundTasks: BackgroundTaskRegistry = {
+      register(task: Promise<unknown>): void {
+        const observedTask = Promise.resolve(task);
+        observedTask.catch(() => {
+          // Re-thrown later by the child's release drain.
+        });
+        childTasks.push(observedTask);
+      },
+    };
+    let childContext: AgentToolExecutionContext | null;
+    let bridge: HostToolBridge;
+    // The child's model run is already OPEN. Anything that throws while assembling its
+    // context or bridge must fail that run and release the parent's context, or the run
+    // stays `running` forever and the context stays pinned by a child that never existed.
+    try {
+      childContext = this.withBackgroundTaskRegistry(
+        this.buildToolExecutionContext({ ...childOptions, modelRunId }),
+        backgroundTasks
+      );
+      if (childContext) {
+        childContext = { ...childContext, subagentThreadId: info.agentThreadId };
+      }
+      // The child's own run scope: no stream callbacks, no onTurn, no onToolUse. Its work
+      // is not this run's turns, and the parent's model run is already committed by then.
+      const runScope: RunScope = { tier: context.tier, ...createTemporalCodeActBreakerState() };
+      bridge = this.buildHostToolBridge({
+        tools: context.tools,
+        runScope,
+        executionContext: () => childContext,
+        stopAfterSuccessfulTools: [],
+        emergencyMaxCalls: this.emergencyMaxCalls(),
+        maxConsecutiveSameTool: MAX_CONSECUTIVE_SAME_HOST_TOOL,
+      });
+    } catch (error) {
+      const summary = error instanceof Error ? error.message : String(error);
+      try {
+        await this.mcpExecutor.failRuntimeModelRun(
+          modelRunId,
+          `subagent authority could not be assembled: ${summary}`
+        );
+      } catch (failError) {
+        logger.warn(
+          `Failed to mark subagent model run ${modelRunId} failed: ${
+            failError instanceof Error ? failError.message : String(failError)
+          }`
+        );
+      }
+      return abandon(
+        `[AgentLoop] subagent authority could not be assembled thread=${info.agentThreadId}: ${summary}`
+      );
+    }
+    let released = false;
+    return {
+      bridge,
+      release: async (outcome) => {
+        if (released) {
+          return;
+        }
+        released = true;
+        try {
+          await this.drainBackgroundTasks(childTasks);
+        } catch (error) {
+          logger.warn(
+            `AgentLoop subagent background drain failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        try {
+          if (outcome.status === 'completed') {
+            await this.mcpExecutor.commitRuntimeModelRun(
+              modelRunId,
+              `agent_loop subagent ${info.agentPath || info.agentThreadId} completed`
+            );
+          } else {
+            // `unknown` is not success: the run is marked failed with the reason so the
+            // ledger never carries a completion nobody confirmed.
+            await this.mcpExecutor.failRuntimeModelRun(
+              modelRunId,
+              outcome.error ?? `subagent ${outcome.status}`
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            `AgentLoop subagent model run ${modelRunId} could not be closed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+        this.mcpExecutor.releaseProcedureRun?.(childContext);
+        this.releaseSubagentRunContext(info.sessionKey, context);
+      },
+    };
+  }
+
+  /** Drop a run's subagent context once the run finished and no child still holds it. */
+  private releaseSubagentRunContext(sessionKey: string, context: SubagentRunContext): void {
+    context.activeChildren = Math.max(0, context.activeChildren - 1);
+    if (
+      context.runFinished &&
+      context.activeChildren === 0 &&
+      this.subagentRunContexts.get(sessionKey) === context
+    ) {
+      this.subagentRunContexts.delete(sessionKey);
+    }
   }
 
   /**
@@ -2978,6 +3368,50 @@ export class AgentLoop {
    * Format only the last user message for persistent CLI
    * Persistent CLI maintains context automatically, so we only send the new message
    */
+  /**
+   * Turn 1 only, once the backend has said whether the thread is live: a fresh or re-opened
+   * thread is told the relevant procedures once, a live thread only what it has not been
+   * told (procedure-runtime.ts). Later turns of a run carry tool results, not hints.
+   */
+  private withProcedureHints(
+    basePromptText: string,
+    turn: number,
+    input: { threadId: string; fresh: boolean; context: GatewayToolExecutionContext | null }
+  ): string {
+    if (turn !== 1) return basePromptText;
+    const hints = this.mcpExecutor.prepareProcedureContext?.(input.context, {
+      threadId: input.threadId,
+      fresh: input.fresh,
+    });
+    // Logged even when empty: with no procedures stored, this is the only sign the
+    // assembler ran and the thread decision it saw.
+    console.log(
+      `[experience] thread=${input.threadId} fresh=${input.fresh} hints=${hints?.hints.length ?? 0}${hints?.hints.length ? `(${hints.hints.join(',')})` : ''} chars=${hints?.text.length ?? 0}`
+    );
+    if (!hints?.text) return basePromptText;
+    return `${hints.text}\n\n${basePromptText}`;
+  }
+
+  private async observeCompletionClaim(
+    modelRunId: string | null,
+    finalResponse: string
+  ): Promise<void> {
+    const claim = finalResponse.match(COMPLETION_CLAIM_PATTERN)?.[0];
+    if (!claim || !modelRunId) return;
+    try {
+      const wrote = await this.mcpExecutor.runHadDurableWrite?.(modelRunId);
+      if (wrote === false) {
+        console.warn(
+          `[evidence] completion claim without a durable write: run=${modelRunId} claim="${claim}"`
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `[evidence] claim check unavailable: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   private formatLastMessageOnly(history: Message[]): string {
     const imageReaderTool =
       this.backend === 'cline' ? 'read_files' : this.backend === 'codex' ? 'view_image' : 'Read';

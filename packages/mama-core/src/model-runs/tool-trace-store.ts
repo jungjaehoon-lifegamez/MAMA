@@ -2,7 +2,13 @@ import crypto from 'node:crypto';
 
 import { getAdapter, initDB } from '../db-manager.js';
 import type { DatabaseAdapter } from '../db-manager.js';
-import type { AppendToolTraceInput, ToolTraceRecord } from './types.js';
+import type {
+  AppendToolTraceInput,
+  ToolTraceRecord,
+  ToolTraceScope,
+  ListToolTracesInput,
+  ToolTracePage,
+} from './types.js';
 
 type ToolTraceAdapter = Pick<DatabaseAdapter, 'prepare'>;
 
@@ -56,8 +62,33 @@ function requiredNonNegativeInteger(value: unknown, field: string): number {
   return normalized;
 }
 
+function nullableJsonObject(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`tool_traces.${field} must be a JSON object string`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`tool_traces.${field} contains malformed JSON`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`tool_traces.${field} must contain a JSON object`);
+  }
+  return value;
+}
+
 function mapToolTraceRow(row: Record<string, unknown>): ToolTraceRecord {
   return {
+    diagnostic_json: nullableJsonObject(row.diagnostic_json, 'diagnostic_json'),
+    evidence_json: nullableJsonObject(row.evidence_json, 'evidence_json'),
+    catalog_revision: nullableString(row.catalog_revision),
+    owner_scope: nullableString(row.owner_scope),
+    project_id: nullableString(row.project_id),
+    channel_id: nullableString(row.channel_id),
     trace_id: requiredString(row.trace_id, 'trace_id'),
     model_run_id: requiredString(row.model_run_id, 'model_run_id'),
     gateway_call_id: nullableString(row.gateway_call_id),
@@ -84,7 +115,7 @@ function selectToolTrace(adapter: ToolTraceAdapter, id: string): ToolTraceRecord
         SELECT
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
           output_summary, execution_status, duration_ms, envelope_hash, failure_code,
-          created_at
+          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
         FROM tool_traces
         WHERE trace_id = ?
       `
@@ -108,9 +139,9 @@ export async function appendToolTrace(input: AppendToolTraceInput): Promise<Tool
         INSERT INTO tool_traces (
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
           output_summary, execution_status, duration_ms, envelope_hash, failure_code,
-          created_at
+          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
     .run(
@@ -124,7 +155,13 @@ export async function appendToolTrace(input: AppendToolTraceInput): Promise<Tool
       normalizeDuration(input.duration_ms),
       nullableString(input.envelope_hash),
       nullableString(input.failure_code),
-      normalizeTimestamp(input.created_at)
+      normalizeTimestamp(input.created_at),
+      nullableJsonObject(input.diagnostic_json, 'diagnostic_json'),
+      nullableJsonObject(input.evidence_json, 'evidence_json'),
+      nullableString(input.catalog_revision),
+      nullableString(input.owner_scope),
+      nullableString(input.project_id),
+      nullableString(input.channel_id)
     );
 
   return selectToolTrace(adapter, id);
@@ -139,7 +176,7 @@ export async function listToolTracesForRun(modelRunId: string): Promise<ToolTrac
         SELECT
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
           output_summary, execution_status, duration_ms, envelope_hash, failure_code,
-          created_at
+          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
         FROM tool_traces
         WHERE model_run_id = ?
         ORDER BY created_at DESC, rowid DESC
@@ -147,4 +184,89 @@ export async function listToolTracesForRun(modelRunId: string): Promise<ToolTrac
     )
     .all(id) as Record<string, unknown>[];
   return rows.map(mapToolTraceRow);
+}
+
+function scopedWhere(scope: ToolTraceScope): { clauses: string[]; values: (string | number)[] } {
+  const clauses = ['owner_scope = ?', 'project_id = ?'];
+  const values: (string | number)[] = [
+    requiredString(scope.owner_scope, 'owner_scope'),
+    requiredString(scope.project_id, 'project_id'),
+  ];
+  if (scope.channel_id !== undefined) {
+    clauses.push('channel_id = ?');
+    values.push(requiredString(scope.channel_id, 'channel_id'));
+  }
+  return { clauses, values };
+}
+
+/** Access is exact host-derived scope; knowing a trace ID never grants access. */
+export async function readToolTrace(
+  traceId: string,
+  scope: ToolTraceScope
+): Promise<ToolTraceRecord | null> {
+  const { clauses, values } = scopedWhere(scope);
+  clauses.push('trace_id = ?');
+  values.push(requiredString(traceId, 'trace_id'));
+  const adapter = await initializedAdapter();
+  const row = adapter
+    .prepare(`SELECT * FROM tool_traces WHERE ${clauses.join(' AND ')}`)
+    .get(...values) as Record<string, unknown> | undefined;
+  return row ? mapToolTraceRow(row) : null;
+}
+
+/** Bounded metadata discovery; detailed evidence is read explicitly by trace ID. */
+export async function listToolTraces(input: ListToolTracesInput): Promise<ToolTracePage> {
+  const { clauses, values } = scopedWhere(input);
+  if (input.evidence_only !== undefined && typeof input.evidence_only !== 'boolean') {
+    throw new Error('tool_traces.evidence_only must be a boolean');
+  }
+  if (input.evidence_only === true) {
+    clauses.push('evidence_json IS NOT NULL');
+  }
+  const limit = input.limit ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error('tool_traces.limit must be an integer between 1 and 100');
+  }
+  for (const field of ['model_run_id', 'tool_name'] as const) {
+    if (input[field] !== undefined) {
+      clauses.push(`${field} = ?`);
+      values.push(requiredString(input[field], field));
+    }
+  }
+  if (input.cursor !== undefined) {
+    let cursor: unknown;
+    try {
+      cursor = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8'));
+    } catch {
+      throw new Error('tool_traces.cursor is malformed');
+    }
+    if (
+      !Array.isArray(cursor) ||
+      cursor.length !== 2 ||
+      !Number.isSafeInteger(cursor[0]) ||
+      typeof cursor[1] !== 'string' ||
+      cursor[1].length === 0
+    ) {
+      throw new Error('tool_traces.cursor is malformed');
+    }
+    clauses.push('(created_at < ? OR (created_at = ? AND trace_id < ?))');
+    values.push(cursor[0], cursor[0], cursor[1]);
+  }
+  const adapter = await initializedAdapter();
+  const rows = adapter
+    .prepare(
+      `SELECT trace_id, model_run_id, gateway_call_id, tool_name,
+    input_summary, output_summary, execution_status, duration_ms, envelope_hash, failure_code,
+    created_at, diagnostic_json, NULL AS evidence_json, catalog_revision, owner_scope, project_id, channel_id
+    FROM tool_traces WHERE ${clauses.join(' AND ')}
+    ORDER BY created_at DESC, trace_id DESC LIMIT ?`
+    )
+    .all(...values, limit + 1) as Record<string, unknown>[];
+  const traces = rows.slice(0, limit).map(mapToolTraceRow);
+  const last = traces.at(-1);
+  const next_cursor =
+    rows.length > limit && last
+      ? Buffer.from(JSON.stringify([last.created_at, last.trace_id])).toString('base64url')
+      : null;
+  return { traces, next_cursor };
 }

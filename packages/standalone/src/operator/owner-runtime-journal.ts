@@ -32,6 +32,10 @@ interface JournalFile {
 const MAX_ENTRIES = 8;
 const MAX_PROMPT_CHARS = 600;
 const MAX_RESPONSE_CHARS = 900;
+/** Rendered into a re-opened thread: about the size Kagemusha restores (1,200 chars), not the file. */
+const RECOVERY_ENTRIES = 4;
+const RECOVERY_PROMPT_CHARS = MAX_PROMPT_CHARS;
+const RECOVERY_RESPONSE_CHARS = 400;
 
 function bounded(value: string, limit: number): string {
   const text = value.trim();
@@ -60,7 +64,7 @@ export class FileOwnerRuntimeJournal implements OwnerRuntimeJournalPort {
   }
 
   recoveryBlock(): string {
-    const entries = this.load().entries;
+    const entries = this.load().entries.slice(-RECOVERY_ENTRIES);
     if (entries.length === 0) return '';
     const serialized = entries
       .map((entry) =>
@@ -68,8 +72,8 @@ export class FileOwnerRuntimeJournal implements OwnerRuntimeJournalPort {
           trust: entry.trust,
           source: entry.source,
           channelId: entry.channelId,
-          prompt: entry.prompt,
-          response: entry.response,
+          prompt: bounded(entry.prompt, RECOVERY_PROMPT_CHARS),
+          response: bounded(entry.response, RECOVERY_RESPONSE_CHARS),
           committedAt: entry.committedAt,
         })
       )

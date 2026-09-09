@@ -28,7 +28,6 @@ import type {
   PrincipalRepository,
 } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
-import { PromptEnhancer } from '../../agent/prompt-enhancer.js';
 import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
@@ -121,8 +120,15 @@ import {
   type OwnerRuntimeRunner,
 } from '../../operator/owner-runtime.js';
 import {
+  attachSubagentWake,
+  buildSubagentStimulus,
+  buildSubagentStimulusBlock,
+  subagentStimulusSourceRef,
+} from '../../operator/subagent-stimulus.js';
+import {
   ensureConsoleBrief,
   loadConsoleBrief,
+  modernizeLegacyBriefMechanism,
   projectConsoleBriefForPrompt,
 } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
@@ -147,10 +153,32 @@ import {
   type OwnerEventTerminalReceipt,
 } from '../../operator/owner-event-loop.js';
 import { renderPipelineSlot } from '../../operator/board-pipeline-render.js';
-import { buildLearningContext, formatLearningAuditLine } from '../../operator/learning-context.js';
-import { cappedLearningReader } from '../../operator/learning-read.js';
-import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
+import { ProcedureStore } from '../../operator/procedure-store.js';
 import {
+  resolveProcedureActivation,
+  assertActiveProcedureActivations,
+} from '../../operator/procedure-activation.js';
+import { buildOwnerEventPrompt } from '../../operator/owner-event-prompt.js';
+import { ThreadBriefMemory } from '../../operator/thread-brief-memory.js';
+
+/**
+ * One in-process memory of the console brief already delivered on the owner:runtime
+ * thread. Both owner-event batches and scheduled work orders submit to that one thread,
+ * so a single memory keeps the standing brief there once instead of once per turn.
+ * A daemon restart clears it, which is correct: a resumed thread is fresh for this.
+ */
+const ownerBriefMemory = new ThreadBriefMemory();
+
+/**
+ * The owner-event loop builds a batch's prompt twice (once to size the run, once in
+ * prepareContent, which is the text actually sent). The brief decision must be the same
+ * both times, so it is decided once per batch. The loop is serial: one entry suffices.
+ */
+let lastOwnerEventBriefDecision: { batchId: string; carry: boolean } | null = null;
+import { failOrphanedSubagentModelRuns } from '../../agent/subagent-run-reconcile.js';
+import {
+  ADMINISTRATION_TOOLS,
+  UNATTENDED_BLOCKED_TOOLS,
   buildOwnerEventAgentContext,
   resolveOwnerEventExecution,
 } from '../../operator/owner-event-policy.js';
@@ -288,6 +316,10 @@ export function serializeCodeActExecutionResult(
 }
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
+  'procedure_update',
+  'procedure_retire',
+  'procedure_observe',
+  'console_brief_update',
   'mama_save',
   'context_compile',
   'mama_update',
@@ -606,14 +638,7 @@ interface WorkOrderToolPolicy {
 export const ONE_AGENT_TURN_POLICY = { roleName: 'owner_console' } as const;
 
 /** Owner-authored chat only: administration never runs unattended. */
-export const ADMINISTRATION_TOOLS: ReadonlySet<string> = new Set([
-  'member_register',
-  'member_suspend',
-  'member_offboard',
-  'member_scope_grant',
-  'member_scope_revoke',
-  'console_brief_update',
-]);
+export { ADMINISTRATION_TOOLS };
 
 /**
  * Per-turn-kind artifact tools, projected by the HOST. These exist only for scheduled
@@ -640,12 +665,13 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
 };
 
 /**
- * Blocked on EVERY unattended turn. Deliverable, image and Drive tools belong to the
- * owner conversation, and the tier-2 Code-Act projection refuses them anyway - a tool
- * that is advertised but never injected is a hallucinated-call generator. Member data and
- * workspace file reads are owner-conversation material with no use in a scheduled turn.
+ * Blocked on EVERY unattended turn: administration plus the workspace shell and file
+ * writer. ONE list with the owner-event turn and native subagents
+ * (UNATTENDED_BLOCKED_TOOLS, owner-event-policy.ts) - this used to equal
+ * ADMINISTRATION_TOOLS alone, so a scheduled turn still held Bash/Write while both
+ * CLAUDE.md and the role comment said it did not.
  */
-export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = ADMINISTRATION_TOOLS;
+export const SCHEDULED_TURN_BLOCKED_TOOLS: ReadonlySet<string> = UNATTENDED_BLOCKED_TOOLS;
 
 /**
  * Per-turn-kind blocked lists, projected by the HOST. One principal and one brief do
@@ -669,6 +695,7 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
     'task_list',
     'changes_read',
     'board_read',
+    'report_publish',
     'audit_findings_read',
     'schedule_upcoming',
     'context_compile',
@@ -1219,6 +1246,15 @@ export async function runAgentLoop(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const coreAdapter = getAdapter() as DatabaseAdapter;
+  // A native child's model run is closed by the child's own terminal status, which a hard
+  // process death never delivers. Nothing at boot can confirm what such a child did, so
+  // its run is failed by name rather than left reading as work still in flight.
+  const orphanedSubagentRuns = failOrphanedSubagentModelRuns(coreAdapter);
+  if (orphanedSubagentRuns > 0) {
+    console.warn(
+      `[subagent] failed ${orphanedSubagentRuns} model run(s) left running by a previous process`
+    );
+  }
   const principalRegistry = createCorePrincipalRegistry(coreAdapter);
   toolExecutor.setPrincipalRepository(principalRegistry);
   backfillTelegramOwner({
@@ -1573,6 +1609,23 @@ export async function runAgentLoop(
       expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
     });
   };
+  // A native child the owner delegated to keeps working after the parent turn ended, so it
+  // gets its OWN grant with its own wall. The parent's 300-600s envelope, which the child
+  // cannot renew, would refuse every call it made past the parent's clock.
+  //
+  // It keeps the PARENT's channel, not a literal 'subagent': the grant's memory scopes are
+  // derived from the channel (deriveMemoryScopes below), so a hardcoded channel gave the
+  // child a channel scope nobody reads and dropped the parent's channel binding.
+  const issueOwnerSubagentEnvelope = (channelId: string) =>
+    issueOwnerRuntimeEnvelope(channelId, 1800);
+  /** Owner runtime paths must never run unauthorised: no envelope is a loud failure. */
+  const requireOwnerRuntimeEnvelope = async (channelId: string, wallSeconds: number) => {
+    const envelope = await issueOwnerRuntimeEnvelope(channelId, wallSeconds);
+    if (!envelope) {
+      throw new Error(`Owner runtime stimulus ${channelId} requires envelope authority`);
+    }
+    return envelope;
+  };
   const runOwnerStimulus: OwnerRuntimeRunner = async (content, channelId) => {
     return await agentLoop.run(content, {
       sessionKey: OWNER_RUNTIME_SESSION_KEY,
@@ -1581,15 +1634,31 @@ export async function runAgentLoop(
       sourceMessageRef: `owner-stimulus:${channelId}:${randomUUID()}`,
       agentContext: backgroundOwnerContext,
       sessionPolicyRole: ownerRole,
-      prepareEnvelope: async () => {
-        const envelope = await issueOwnerRuntimeEnvelope(channelId, 600);
-        if (!envelope)
-          throw new Error(`Owner runtime stimulus ${channelId} requires envelope authority`);
-        return envelope;
-      },
+      prepareEnvelope: () => requireOwnerRuntimeEnvelope(channelId, 600),
+      prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope(channelId),
       requestTimeoutMs: 600_000,
     });
   };
+  // A native subagent the owner delegated to finishes AFTER the owner's turn ended.
+  // Its completion re-enters the one owner subject as a host stimulus, on the same
+  // path heartbeat and cron use, so the owner conversation never waits on long work.
+  const detachSubagentWake = attachSubagentWake(agentLoop.getModelRunner(), async (event) => {
+    return await agentLoop.run(buildSubagentStimulus(event), {
+      sessionKey: OWNER_RUNTIME_SESSION_KEY,
+      source: 'operator',
+      channelId: 'subagent',
+      agentContext: backgroundOwnerContext,
+      sessionPolicyRole: ownerRole,
+      // Same fail-loud rule as every sibling owner path: issuance off must stop the turn,
+      // never let it run unauthorised.
+      prepareEnvelope: () => requireOwnerRuntimeEnvelope('subagent', 300),
+      prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('subagent'),
+      sourceMessageRef: subagentStimulusSourceRef(event),
+      ownerJournalPrompt: buildSubagentStimulusBlock(event),
+      lanePriority: 10,
+    });
+  });
+
   const cronOwnerRunner: IModelRunner = {
     backendType: runtimeBackend,
     prompt: async (content) => {
@@ -1625,6 +1694,8 @@ export async function runAgentLoop(
     principalResolver
   );
   const { discordGateway, slackGateway, telegramGateway, gateways } = gatewayInit;
+  // The wake subscription is a live listener on the runner; shutdown detaches it.
+  gateways.push({ stop: async () => detachSubagentWake() });
 
   // ── Phase 8: Gateway Wiring ──────────────────────────────────────────────
 
@@ -1655,6 +1726,7 @@ export async function runAgentLoop(
         agentContext: backgroundOwnerContext,
         sessionPolicyRole: ownerRole,
         prepareEnvelope: () => issueOwnerRuntimeEnvelope('heartbeat', 300),
+        prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('heartbeat'),
       };
     }
   );
@@ -1673,6 +1745,16 @@ export async function runAgentLoop(
   const operatorDbPath = expandPath('~/.mama/operator/triggers.db');
   mkdirSync(dirname(operatorDbPath), { recursive: true });
   const operatorDb = new Database(operatorDbPath);
+  const procedureStore = new ProcedureStore(operatorDb);
+  toolExecutor.setProcedureStore(procedureStore);
+  messageRouter.setProcedureStore(procedureStore);
+  const readCanonicalOwnerBrief = (): string =>
+    modernizeLegacyBriefMechanism(
+      procedureStore.read('owner-console-brief', {
+        ownerScope: 'owner:runtime',
+        projectId: resolveReactiveProjectRoot(config, process.env),
+      })?.body ?? loadConsoleBrief()
+    );
   let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
   const refreshTaskBoard: { current: (() => void) | null } = { current: null };
   try {
@@ -1850,9 +1932,6 @@ export async function runAgentLoop(
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
   const boardRepairNudge: { current: (() => void) | null } = { current: null };
-  const learningBlockRef: {
-    current: ((turn: string, scopes: MemoryScopeRef[], query: string) => Promise<string>) | null;
-  } = { current: null };
   let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
@@ -1931,33 +2010,12 @@ export async function runAgentLoop(
         ownerActionEffectLedger.hasUnsafeReplayEffects(`workorder:${wo.idempotencyKey}`),
       ledger: taskLedger,
       runner: workerRunner,
-      loadOwnerBrief: () => loadConsoleBrief(),
+      loadOwnerBrief: readCanonicalOwnerBrief,
+      // One memory for the one owner:runtime thread: whichever lane sends the brief
+      // first satisfies the other, so a correction reaches the thread exactly once.
+      admitOwnerBrief: (brief) => ownerBriefMemory.admit(OWNER_RUNTIME_SESSION_KEY, brief),
       // Host-rendered pipeline: the ledger's own deadline_priority page, published through
       // the SAME report publisher report_publish uses (bound after the API routes exist).
-      buildLearningBlock: async (wo) => {
-        const build = learningBlockRef.current;
-        if (!build) {
-          return '';
-        }
-        const projectId = resolveReactiveProjectRoot(config, process.env);
-        // Same binding the run's envelope gets: a recheck's lessons live under its task's channel.
-        const temporalBinding =
-          wo.workKind === 'temporal'
-            ? temporalTaskBinding(taskLedger, buildTemporalWorkerContext(taskLedger, wo).taskId)
-            : null;
-        const scope = workOrderEnvelopeScope({
-          workKind: wo.workKind,
-          projectId,
-          laneConnectors: codeActRawConnectors,
-          temporalBinding,
-          reconcileChannelKey:
-            wo.workKind === 'board' && typeof wo.payload.channelKey === 'string'
-              ? wo.payload.channelKey
-              : null,
-          privateConnectorPolicy,
-        });
-        return build(wo.workKind, scope.memory_scopes, wo.workKind);
-      },
       selfCheckInput: () => ({
         openIssues: listOpenOperationalIssues(issueDb as never, 20, 'warn').map((issue) => ({
           issueId: issue.issueId,
@@ -2088,6 +2146,26 @@ export async function runAgentLoop(
               budget: { wall_seconds: wallSeconds },
               expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
             });
+          // A native child the turn delegates long maintenance work to keeps working after
+          // the parent attempt returned, so it needs its OWN grant on the SAME scope with a
+          // wall it can actually finish inside. The parent's 900s envelope, which the child
+          // cannot renew, would refuse every call it made past the parent's clock - the same
+          // reason issueOwnerSubagentEnvelope exists for owner turns.
+          const subagentWallSeconds = 1800;
+          runOptions.prepareSubagentEnvelope = () =>
+            workOrderEnvelopeAuthority.buildAndPersist({
+              agent_id: 'mama-owner',
+              instance_id: randomUUID(),
+              source: 'watch',
+              channel_id: `worker:${wo.workKind}`,
+              trigger_context: {
+                user_text: `<stage2 workorder subagent ${wo.workKind}#${wo.id}>`,
+              },
+              scope: workOrderScope,
+              tier: 2,
+              budget: { wall_seconds: subagentWallSeconds },
+              expires_at: new Date(Date.now() + subagentWallSeconds * 1000 + 30_000).toISOString(),
+            });
         }
         return Object.keys(runOptions).length > 0 ? runOptions : undefined;
       },
@@ -2148,34 +2226,6 @@ export async function runAgentLoop(
   if (connectorSchedulerStop) {
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });
   }
-
-  // Owner policy and lessons: bound BEFORE the consumer starts (bootAfterRoutes) and
-  // independent of the trigger loop, so scheduled turns carry the block even when
-  // MAMA_TRIGGER_LOOP=0.
-  // Owner policy and lessons for a turn: one bounded read path for event, scheduled
-  // and (via MamaApiClient) chat turns. Returns the rendered block or ''.
-  const learningReader = cappedLearningReader(
-    (params) => mamaCore.queryRelevantTruth({ query: params.query, scopes: params.scopes }),
-    (line) => console.log(line)
-  );
-  const buildLearningBlockFor = async (
-    turn: string,
-    scopes: MemoryScopeRef[],
-    query: string
-  ): Promise<string> => {
-    try {
-      const context = await buildLearningContext({ scopes, query, readClaims: learningReader });
-      const channelScopeId = scopes.find((scope) => scope.kind === 'channel')?.id ?? null;
-      console.log(formatLearningAuditLine(turn, channelScopeId, context));
-      return context.promptBlock;
-    } catch (error) {
-      console.error(
-        `[learning] ${turn} block failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return '';
-    }
-  };
-  learningBlockRef.current = buildLearningBlockFor;
 
   // ── Trigger loop (M1, default-on): agent-evolved triggers on the live stream ──
   // MAMA_TRIGGER_LOOP=0 is the explicit opt-out. Placed after initConnectors (which feeds
@@ -2275,6 +2325,7 @@ export async function runAgentLoop(
             if (!envelope) throw new Error('Owner maintenance requires envelope authority');
             return envelope;
           },
+          prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('trigger-maintenance'),
           requestTimeoutMs: 600_000,
         });
         return result.response;
@@ -2317,6 +2368,7 @@ export async function runAgentLoop(
                   if (!envelope) throw new Error('Owner report requires envelope authority');
                   return envelope;
                 },
+                prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('report'),
                 requestTimeoutMs: 600_000,
                 ownerJournalPrompt: `Report stimulus: ${sourceMessageRef}`,
                 sourceMessageRef,
@@ -2418,7 +2470,6 @@ export async function runAgentLoop(
           ownerRole,
           privateConnectorPolicy,
         });
-        const ownerEventPromptEnhancer = new PromptEnhancer();
         // ONE expression for what an event turn may read: the envelope and the
         // packet are both built from it, so they can never disagree.
         const ownerEventReadScope = (
@@ -2468,20 +2519,48 @@ export async function runAgentLoop(
           runner: agentLoop,
           agentContext: ownerEventContext,
           ownerRuntimeRole: ownerRole,
+          resolveActivation: (activation, batch) =>
+            resolveProcedureActivation(
+              procedureStore,
+              {
+                ownerScope: 'owner:runtime',
+                projectId: ownerEventReadScope(batch).projectRefs[0].id,
+                channelId: ownerEventReadScope(batch).memoryScopes.find((s) => s.kind === 'channel')
+                  ?.id,
+              },
+              activation
+            ),
+          assertActiveActivations: (batch) =>
+            assertActiveProcedureActivations(
+              procedureStore,
+              {
+                ownerScope: 'owner:runtime',
+                projectId: ownerEventReadScope(batch).projectRefs[0].id,
+                channelId: ownerEventReadScope(batch).memoryScopes.find((s) => s.kind === 'channel')
+                  ?.id,
+              },
+              batch
+            ),
           buildPrompt: async (batch) => {
-            const readScope = ownerEventReadScope(batch);
+            const projectedBrief = projectConsoleBriefForPrompt(
+              readCanonicalOwnerBrief(),
+              privateConnectorPolicy
+            );
+            const batchId = String(batch.id);
+            const carryBrief =
+              lastOwnerEventBriefDecision?.batchId === batchId
+                ? lastOwnerEventBriefDecision.carry
+                : ownerBriefMemory.admit(OWNER_RUNTIME_SESSION_KEY, projectedBrief);
+            lastOwnerEventBriefDecision = { batchId, carry: carryBrief };
             return buildOwnerEventPrompt({
               batch,
-              learning: await buildLearningBlockFor(
-                'event',
-                readScope.memoryScopes,
-                batch.lines.join('\n').slice(0, 500)
-              ),
-              ownerBrief: projectConsoleBriefForPrompt(loadConsoleBrief(), privateConnectorPolicy),
-              skillContent: await ownerEventPromptEnhancer.detectSkillMatch(batch.lines.join('\n')),
+              // Standing policy goes on the thread once; an owner correction to the brief
+              // changes its hash and is carried on the next turn.
+              ownerBrief: carryBrief ? projectedBrief : null,
               ownerTelegramChatId: reportChatId,
             });
           },
+          promptBriefState: () => (lastOwnerEventBriefDecision?.carry ? 'sent' : 'omitted'),
           issueEnvelope: ownerEventIssueEnvelope,
           getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
           hasUnsafeReplayEffects: (batch) =>
@@ -2494,8 +2573,8 @@ export async function runAgentLoop(
               ownerActionEffectLedger,
               taskLedger,
             }),
-          recordTriggerOutcome: (triggerId, outcome) =>
-            triggerRegistry.recordOutcome(triggerId, outcome),
+          recordTriggerOutcome: (triggerId, outcome, receiptId) =>
+            triggerRegistry.recordOutcome(triggerId, outcome, receiptId),
           onDead: async (message) => {
             console.error(message);
             await getLegPageNotifier()?.(message);

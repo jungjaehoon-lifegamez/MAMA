@@ -6,15 +6,39 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   filterSkillCatalogForContext,
   parseSkillSections,
   truncateSkillBySections,
   parseSkillFrontmatter,
+  loadInstalledSkills,
 } from '../../src/agent/skill-loader.js';
 import { forceFallbackMode, resetTokenEstimator } from '../../src/agent/token-estimator.js';
 
 describe('SkillLoader', () => {
+  it('TG-03/TG-05 exposes original skill paths as optional catalog hints without loading body instructions', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skill-hints-'));
+    try {
+      const folder = join(home, '.mama', 'skills');
+      mkdirSync(folder, { recursive: true });
+      const source = join(folder, 'review.md');
+      const original =
+        '---\nname: review\ndescription: Review evidence\nkeywords:\n  - review\n---\n# Private instruction body\nPreserve source records.';
+      writeFileSync(source, original);
+      const hints = loadInstalledSkills(false, { homeDir: home, includePaths: true });
+      expect(hints).toHaveLength(1);
+      expect(hints[0]).toContain(source);
+      expect(hints[0]).toContain('Review evidence');
+      expect(hints[0]).not.toContain('Private instruction body');
+      expect(readFileSync(source, 'utf8')).toBe(original);
+      expect(loadInstalledSkills(false, { homeDir: home })[0]).not.toContain(source);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
   beforeEach(() => {
     resetTokenEstimator();
     forceFallbackMode();

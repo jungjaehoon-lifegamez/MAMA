@@ -46,6 +46,14 @@ export interface ModelRunRecord {
 }
 
 export interface AppendToolTraceInput {
+  /** Host-derived access scope; legacy rows remain unscoped. */
+  owner_scope?: string | null;
+  project_id?: string | null;
+  channel_id?: string | null;
+  diagnostic_json?: string | null;
+  evidence_json?: string | null;
+  catalog_revision?: string | null;
+
   trace_id?: string;
   model_run_id: string;
   gateway_call_id?: string | null;
@@ -61,6 +69,14 @@ export interface AppendToolTraceInput {
 }
 
 export interface ToolTraceRecord {
+  /** Host-derived access scope; legacy rows remain unscoped. */
+  owner_scope?: string | null;
+  project_id?: string | null;
+  channel_id?: string | null;
+  diagnostic_json?: string | null;
+  evidence_json?: string | null;
+  catalog_revision?: string | null;
+
   trace_id: string;
   model_run_id: string;
   gateway_call_id: string | null;
@@ -72,4 +88,24 @@ export interface ToolTraceRecord {
   envelope_hash: string | null;
   failure_code: string | null;
   created_at: number;
+}
+
+export interface ToolTraceScope {
+  owner_scope: string;
+  project_id: string;
+  channel_id?: string;
+}
+
+export interface ListToolTracesInput extends ToolTraceScope {
+  evidence_only?: boolean;
+  model_run_id?: string;
+  tool_name?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ToolTracePage {
+  /** Metadata only: evidence_json is null. Read a scoped trace for details. */
+  traces: ToolTraceRecord[];
+  next_cursor: string | null;
 }

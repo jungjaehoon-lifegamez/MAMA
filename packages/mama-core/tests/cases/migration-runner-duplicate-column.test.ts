@@ -659,3 +659,98 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
     });
   });
 });
+
+describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
+  afterEach(cleanupTempDir);
+
+  it('rolls back added columns and does not stamp 68 when index reconciliation fails', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-068-atomic-'));
+    const dbPath = join(tempDir, 'runtime-068.db');
+    const setupDb = new Database(dbPath);
+    applyThrough(setupDb, 67);
+    setupDb.prepare('INSERT INTO schema_version (version) VALUES (?)').run(67);
+    setupDb.exec('ALTER TABLE tool_traces ADD COLUMN project_id TEXT');
+    setupDb.exec('ALTER TABLE tool_traces ADD COLUMN channel_id TEXT');
+    setupDb.exec('CREATE TABLE idx_tool_traces_scope_recency (blocked TEXT)');
+    setupDb.close();
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow();
+    adapter.disconnect();
+    const db = new Database(dbPath);
+    expect(columnExists(db, 'tool_traces', 'diagnostic_json')).toBe(false);
+    expect(columnExists(db, 'tool_traces', 'project_id')).toBe(true);
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
+      version: 67,
+    });
+    db.close();
+  });
+
+  for (const alreadyStamped of [false, true]) {
+    it(`reconciles existing MetricsStore columns with schema 68 stamped=${alreadyStamped}`, () => {
+      tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-068-'));
+      const dbPath = join(tempDir, 'runtime-068.db');
+      const setupDb = new Database(dbPath);
+      applyThrough(setupDb, 67);
+      setupDb.exec('ALTER TABLE tool_traces ADD COLUMN project_id TEXT');
+      setupDb.exec('ALTER TABLE tool_traces ADD COLUMN channel_id TEXT');
+      setupDb
+        .prepare('INSERT INTO schema_version (version) VALUES (?)')
+        .run(alreadyStamped ? 68 : 67);
+      setupDb
+        .prepare('INSERT INTO model_runs (model_run_id, status, created_at) VALUES (?, ?, ?)')
+        .run('existing-run', 'legacy', 1);
+      setupDb
+        .prepare(
+          'INSERT INTO tool_traces (trace_id, model_run_id, tool_name, project_id, channel_id, input_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        )
+        .run(
+          'existing-trace',
+          'existing-run',
+          'example',
+          'existing-project',
+          'existing-channel',
+          'preserved summary',
+          2
+        );
+      setupDb.close();
+
+      for (let pass = 0; pass < 2; pass++) {
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.disconnect();
+      }
+      const db = new Database(dbPath);
+      for (const column of [
+        'diagnostic_json',
+        'evidence_json',
+        'catalog_revision',
+        'owner_scope',
+        'project_id',
+        'channel_id',
+      ]) {
+        expect(columnExists(db, 'tool_traces', column)).toBe(true);
+      }
+      expect(indexExists(db, 'idx_tool_traces_scope_recency')).toBe(true);
+      expect(indexExists(db, 'idx_tool_traces_channel_recency')).toBe(true);
+      expect(
+        db
+          .prepare(
+            'SELECT project_id, channel_id, input_summary, owner_scope, evidence_json FROM tool_traces WHERE trace_id = ?'
+          )
+          .get('existing-trace')
+      ).toEqual({
+        project_id: 'existing-project',
+        channel_id: 'existing-channel',
+        input_summary: 'preserved summary',
+        owner_scope: null,
+        evidence_json: null,
+      });
+      expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
+        version: 68,
+      });
+      db.close();
+    });
+  }
+});

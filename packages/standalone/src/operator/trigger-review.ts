@@ -63,26 +63,45 @@ export function parseReviewDecision(text: string): ReviewDecision {
 export function applyReview(
   decision: ReviewDecision,
   triggerId: string,
-  registry: TriggerRegistry
+  registry: TriggerRegistry,
+  expectedRevision?: number
 ): EvolutionAction {
   if (decision.action === 'retired') {
-    registry.retireActive(triggerId, decision.reason);
+    registry.retireActive(triggerId, decision.reason, expectedRevision);
     return 'retired';
   }
   if (decision.action === 'refined') {
     const spec = decision.newSpec;
+    const original = registry.getById(triggerId);
+    const mapped = registry.hasProcedureBindings(triggerId);
+    if (
+      original &&
+      (original.procedureRef || mapped) &&
+      ((spec.procedure.length > 0 &&
+        JSON.stringify(spec.procedure) !== JSON.stringify(original.procedure)) ||
+        (spec.procedureRef !== undefined &&
+          (spec.procedureRef.id !== original.procedureRef?.id ||
+            spec.procedureRef.revision !== original.procedureRef?.revision ||
+            spec.procedureRef.scopeKey !== original.procedureRef?.scopeKey)))
+    ) {
+      throw new Error('Update the canonical procedure before refining its trigger');
+    }
     const id = spec.id ?? `${triggerId}.r.${reviewHash(spec.kind, spec.match.keywords)}`;
     const input: CreateTriggerInput = {
       id,
       kind: spec.kind,
       memoryQuery: spec.memoryQuery,
       match: spec.match,
-      procedure: spec.procedure,
+      procedure:
+        original && (original.procedureRef || mapped) ? original.procedure : spec.procedure,
+      ...((original?.procedureRef ?? spec.procedureRef)
+        ? { procedureRef: original?.procedureRef ?? spec.procedureRef }
+        : {}),
       requiredEvidence: spec.requiredEvidence,
       authoredBy: 'agent',
       provenance: { createdFrom: `refined-from:${triggerId}`, note: decision.reason },
     };
-    registry.refine(triggerId, `refined: ${decision.reason}`, input);
+    registry.refine(triggerId, `refined: ${decision.reason}`, input, expectedRevision);
     return 'refined';
   }
   return 'kept';
@@ -114,6 +133,11 @@ export function buildReviewPrompt(trigger: TriggerRecord, recentContext: string[
     `kind: ${kind}`,
     `keywords (${trigger.match.keywordMode}): ${keywords}`,
     `memoryQuery: ${memoryQuery}`,
+    ...(trigger.procedureRef
+      ? [
+          `Canonical procedure: ${trigger.procedureRef.id}@${trigger.procedureRef.revision}. Refine match conditions only; change instructions through the canonical procedure update tool. Use an empty procedure array to retain the existing canonical snapshot.`,
+        ]
+      : []),
     `stats: fired=${trigger.stats.fired} succeeded=${trigger.stats.succeeded} failed=${trigger.stats.failed}`,
     '',
     'Recent messages (context):',

@@ -46,6 +46,8 @@ export interface ToolSearchResult {
 
 export interface ToolDescribeResult {
   readonly contracts: readonly string[];
+  /** Caller-supplied names with no contract in this projected catalog. */
+  readonly unavailable?: readonly string[];
 }
 
 export class ProjectedToolCatalog {
@@ -70,17 +72,29 @@ export class ProjectedToolCatalog {
     const limit = searchLimit(input.limit);
     const offset =
       input.cursor === undefined ? 0 : this.decodeCursor(input.cursor, query, category);
-    const matches = this.definitions.filter((definition) => {
+    // Token AND, not phrase: a multi-word query ("board class vocabulary html")
+    // must find the tool whose description carries those words apart. Phrase
+    // matching silently returned nothing and cost extra model steps.
+    const tokens = query ? query.split(/\s+/).filter((token) => token.length > 0) : [];
+    const filtered = this.definitions.filter((definition) => {
       if (category && definition.category.toLowerCase() !== category) {
         return false;
       }
-      if (!query) {
+      if (tokens.length === 0) {
         return true;
       }
-      return `${definition.name}\n${definition.description}\n${definition.category}`
-        .toLowerCase()
-        .includes(query);
+      const haystack =
+        `${definition.name}\n${definition.description}\n${definition.category}`.toLowerCase();
+      return tokens.every((token) => haystack.includes(token));
     });
+    // Deterministic rank: exact name match first, then catalog (name:asc) order.
+    const matches =
+      tokens.length === 0
+        ? filtered
+        : [
+            ...filtered.filter((definition) => definition.name.toLowerCase() === query),
+            ...filtered.filter((definition) => definition.name.toLowerCase() !== query),
+          ];
     if (offset > matches.length) {
       throw new Error(CURSOR_ERROR);
     }
@@ -117,13 +131,16 @@ export class ProjectedToolCatalog {
       throw new Error('tool_describe names must contain 1 to 4 distinct tool names.');
     }
     const definitions = names.map((name) => this.definitionsByName.get(name));
-    if (definitions.some((definition) => definition === undefined)) {
+    const available = definitions.filter((definition): definition is ToolMeta => definition !== undefined);
+    if (available.length === 0) {
       throw new Error('Requested tool is unavailable.');
     }
+    const unavailable = names.filter((name) => !this.definitionsByName.has(name));
     return {
-      contracts: (definitions as ToolMeta[]).map((definition) =>
+      contracts: available.map((definition) =>
         TypeDefinitionGenerator.generateContract(definition)
       ),
+      ...(unavailable.length ? { unavailable } : {}),
     };
   }
 

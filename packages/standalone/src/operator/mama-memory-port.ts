@@ -25,9 +25,9 @@ export function createMamaMemoryPort(): OperatorMemoryPort {
         kind: 'decision',
         summary: input.content,
         details: input.content,
-        scopes: (input.scopes as { kind: 'project' | 'user' | 'channel' | 'global'; id: string }[] | undefined) ?? [
-          { kind: 'global', id: 'global' },
-        ],
+        scopes: (input.scopes as
+          | { kind: 'project' | 'user' | 'channel' | 'global'; id: string }[]
+          | undefined) ?? [{ kind: 'global', id: 'global' }],
         source: { package: 'standalone', source_type: 'operator-trigger-loop' },
       });
     },

@@ -201,7 +201,10 @@ describe('wiki daily-continuity runtime wiring', () => {
     rmSync(testHome, { recursive: true, force: true });
   });
 
-  it('boot enqueues one typed continuity payload after 15s', async () => {
+  // Owner decision 2026-09-09: a restart is not evidence that the wiki has anything to
+  // compile. The boot continuity order is what put a multi-minute maintenance turn in front
+  // of the owner's first message after every restart.
+  it('boot enqueues NOTHING; the hourly continuity tick is the first run', async () => {
     const db = new Database(':memory:');
     try {
       createSourceTables(db);
@@ -209,10 +212,12 @@ describe('wiki daily-continuity runtime wiring', () => {
 
       expect(wikiRows(db)).toHaveLength(0);
       await vi.advanceTimersByTimeAsync(15_000);
+      expect(wikiRows(db)).toHaveLength(0);
 
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
       const rows = wikiRows(db);
       expect(rows).toHaveLength(1);
-      expectTypedWikiPayload(rows[0].payload, 'boot');
+      expectTypedWikiPayload(rows[0].payload, 'hourly');
       routeHandle.stop();
     } finally {
       db.close();
@@ -233,7 +238,7 @@ describe('wiki daily-continuity runtime wiring', () => {
         rawConnectorScope: ['slack', 'kagemusha'],
       });
 
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
 
       expect(wikiRows(db)[0].payload.connectors).toEqual(['slack']);
       routeHandle.stop();
@@ -248,11 +253,11 @@ describe('wiki daily-continuity runtime wiring', () => {
       createSourceTables(db);
       const { routeHandle } = await registerWikiRuntime(db, join(testHome, 'vault'));
 
-      await vi.advanceTimersByTimeAsync(15_000); // boot
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000); // first hourly tick
       expect(wikiRows(db)).toHaveLength(1);
 
-      // Source movement changes the watermark, so the hourly tick's idempotency
-      // key differs from the still-open boot run and a distinct run is enqueued.
+      // Source movement changes the watermark, so the next tick's idempotency
+      // key differs from the still-open first run and a distinct run is enqueued.
       bumpConnectorWatermark(db, 1);
       await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
       const rows = wikiRows(db);
@@ -264,14 +269,14 @@ describe('wiki daily-continuity runtime wiring', () => {
     }
   });
 
-  it('coalesces boot and event with an unchanged snapshot into one open workorder', async () => {
+  it('coalesces repeated events with an unchanged snapshot into one open workorder', async () => {
     const db = new Database(':memory:');
     try {
       createSourceTables(db);
       const { eventBus, routeHandle } = await registerWikiRuntime(db, join(testHome, 'vault'));
 
-      // Boot (15s) and the debounced extraction event (30s) both plan against the
-      // SAME owner date + source watermark, so ledger dedup keeps one open row.
+      // The debounced extraction event plans against the SAME owner date + source
+      // watermark as any other trigger, so ledger dedup keeps one open row.
       eventBus.emit({ type: 'extraction:completed' } as never);
       await vi.advanceTimersByTimeAsync(30_000);
       expect(wikiRows(db)).toHaveLength(1);
@@ -291,13 +296,17 @@ describe('wiki daily-continuity runtime wiring', () => {
     const db = new Database(':memory:');
     try {
       createSourceTables(db);
-      const { ledger, routeHandle } = await registerWikiRuntime(db, join(testHome, 'vault'));
+      const { ledger, eventBus, routeHandle } = await registerWikiRuntime(
+        db,
+        join(testHome, 'vault')
+      );
 
-      await vi.advanceTimersByTimeAsync(15_000); // boot
-      const boot = wikiRows(db);
-      expect(boot).toHaveLength(1);
-      // Complete the boot run so it becomes the DONE baseline for this owner day.
-      completeWorkOrder(ledger, boot[0].id);
+      eventBus.emit({ type: 'extraction:completed' } as never);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const first = wikiRows(db);
+      expect(first).toHaveLength(1);
+      // Complete it so it becomes the DONE baseline for this owner day.
+      completeWorkOrder(ledger, first[0].id);
 
       // No connector/task/memory movement -> same owner date + same watermark.
       await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
@@ -314,7 +323,7 @@ describe('wiki daily-continuity runtime wiring', () => {
       createSourceTables(db);
       const { routeHandle, eventBus } = await registerWikiRuntime(db, join(testHome, 'vault'));
 
-      // Stop the boot timer so only the event run is planned, then assert it
+      // Only the event run is planned (there is no boot enqueue any more); assert it
       // carries the typed continuity payload.
       routeHandle.stop();
       eventBus.emit({ type: 'extraction:completed' } as never);
@@ -332,14 +341,14 @@ describe('wiki daily-continuity runtime wiring', () => {
     const db = new Database(':memory:');
     try {
       createSourceTables(db);
-      const { ledger, apiServer, routeHandle } = await registerWikiRuntime(
+      const { ledger, apiServer, eventBus, routeHandle } = await registerWikiRuntime(
         db,
         join(testHome, 'vault')
       );
 
-      await vi.advanceTimersByTimeAsync(15_000); // boot
-      const boot = wikiRows(db);
-      completeWorkOrder(ledger, boot[0].id); // establish a same-day baseline
+      eventBus.emit({ type: 'extraction:completed' } as never);
+      await vi.advanceTimersByTimeAsync(30_000);
+      completeWorkOrder(ledger, wikiRows(db)[0].id); // establish a same-day baseline
 
       const res = await request(apiServer.app)
         .post('/api/wiki/compile')
@@ -416,18 +425,17 @@ describe('wiki daily-continuity runtime wiring', () => {
     }
   });
 
-  it('stop() clears the wiki boot and continuity timers', async () => {
+  it('stop() clears the wiki continuity timer', async () => {
     const db = new Database(':memory:');
     try {
       createSourceTables(db);
       const { routeHandle } = await registerWikiRuntime(db, join(testHome, 'vault'));
 
-      // Stop before the 15s boot timer fires: a cleared boot timer produces no run.
       routeHandle.stop();
       await vi.advanceTimersByTimeAsync(20_000);
       expect(wikiRows(db)).toHaveLength(0);
 
-      // And no continuity tick fires after stop either.
+      // No continuity tick fires after stop.
       await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
       expect(wikiRows(db)).toHaveLength(0);
     } finally {

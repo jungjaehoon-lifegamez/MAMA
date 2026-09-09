@@ -3,12 +3,15 @@ export type CodeActBackend = 'claude' | 'codex' | 'cline';
 export const CODE_ACT_SCRIPT_CONTRACT =
   'Code-Act runs a synchronous script. Host function calls settle before returning. ' +
   'Use plain sequential calls with var and make the desired value the last expression. ' +
-  'Do not use top-level return, async, await, Promise, Promise.all, or async IIFEs.';
+  'Do not use top-level return, async, await, Promise, Promise.all, or async IIFEs. ' +
+  'That rule covers the code string only: when code_act is invoked from the Codex exec tool, ' +
+  'the host call itself is asynchronous, so write const r = await tools.code_act({code}) ' +
+  '(an un-awaited call yields an empty {} instead of the result).';
 
 export const CODE_ACT_SCRIPT_EXAMPLE = 'var first=1; var second=2; ({first:first,second:second})';
 
 export const CODE_ACT_METADATA_DECLARATIONS = `declare function tool_search(input?:{query?:string,category?:string,limit?:number,cursor?:string}): {tools:Array<{name:string,description:string,category:string}>,nextCursor:string|null};
-declare function tool_describe(input:{names:string[]}): {contracts:string[]};`;
+declare function tool_describe(input:{names:string[]}): {contracts:string[]; unavailable?:string[]};`;
 
 export function getCodeActInstructions(
   backend: CodeActBackend,
