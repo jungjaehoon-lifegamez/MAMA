@@ -11,7 +11,8 @@
 MAMA is a **memory store** that runs on your own computer, and an **AI assistant** that works
 from it. It keeps what flows through your connected messengers, mail, documents, and calendars
 as-is, and the assistant reads that record to tell you what changed and do what you ask.
-Nothing is uploaded anywhere. The record stays on your machine.
+MAMA runs no hosted service; the record stays on your machine. Only the content a run needs
+leaves it, through the AI CLI and the connectors you configured.
 
 ## Why
 
@@ -108,8 +109,10 @@ Each channel gets a role (truth, hub, deliverable, spoke, reference) used in rep
 assistant, and the assistant can read and write files and run commands. Exposing the server
 exposes that machine. If you open it up:
 
-1. Set an access token. Never expose it without one.
-2. Do not open the port directly; put it behind an authenticated tunnel or VPN.
+1. Set `MAMA_AUTH_TOKEN`. Never expose the server without it, and treat the token and tunnel
+   URL as secrets.
+2. For anything beyond a short test, put it behind Cloudflare Zero Trust (or mTLS / IP
+   allow-listing) in addition to the token. Token-only access is for temporary testing.
 3. Keep the messenger allow-list, and restrict `~/.mama/` to the operating account.
 4. Back up `~/.mama/` together with `~/.claude/mama-memory.db`.
 
