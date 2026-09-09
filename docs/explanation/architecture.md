@@ -154,43 +154,58 @@ contract are defined in
 
 ### Cron Scheduler & Worker
 
-- **CronWorker:** Dedicated `PersistentClaudeProcess` (Haiku model, minimal prompt)
-- **Isolation:** Completely decoupled from OS agent — no shared sessions or lanes
-- **Result delivery:** `EventEmitter` → `CronResultRouter` → gateway `sendMessage()`
+`CronWorker` is no longer a separate model identity. It owns timing, serialization and
+events only: `initCronScheduler` hands it a `runnerFactory`, and each job runs through
+`runner.prompt(..., { sessionKey: OWNER_RUNTIME_SESSION_KEY, resumeSession: true })` —
+the same standing owner runtime as chat and owner events
+(`packages/standalone/src/scheduler/cron-worker.ts`,
+`packages/standalone/src/cli/runtime/scheduler-init.ts`).
+
+- **CronWorker:** timing + serial execution queue over the owner runtime session; no
+  dedicated CLI process, no Haiku worker, no per-worker tool restriction list
+- **Result delivery:** `EventEmitter` (`cron:completed` / `cron:failed`) →
+  `CronResultRouter` → gateway `sendMessage()`
+  (`packages/standalone/src/cli/runtime/gateway-wiring.ts`)
 - **Channel routing:** Job config `channel` field (`discord:id`, `slack:id`, `viewer:id`)
-- **Security:** Tool restriction (`Bash`, `Read`, `Write`, `Glob`, `Grep` only)
+- **Permissions:** whatever the owner runtime's current envelope and per-turn policy allow
 
 ```
-CronScheduler ──► CronWorker (Haiku CLI) ──► EventEmitter
-                                                   │
-                                          CronResultRouter
-                                            │      │      │
-                                         Discord  Slack  Viewer
+CronScheduler ──► CronWorker (queue) ──► owner:runtime ──► EventEmitter
+                                                                │
+                                                       CronResultRouter
+                                                         │      │      │
+                                                      Discord  Slack  Viewer
 ```
 
 ### Operator Runtime (MAMA OS)
 
 The daemon runs an operator identity alongside chat (v0.22-v0.23):
 
-- **Lanes:** chat serializes on the `main` global lane; ALL operator work
-  (scheduled situation reports, workers) serializes on a separate `operator`
-  global lane - long runs never block owner replies.
+- **One owner runtime:** chat, owner events and scheduled work orders all enter the same
+  durable `owner:runtime` session, serialized by the AgentLoop session queue (direct owner
+  messages take priority over queued background stimuli). Long scheduled work stays off the
+  owner's way by being delegated to a native subagent, not by running on a separate lane.
 - **Trigger loop** (default on; `MAMA_TRIGGER_LOOP=0` opts out): agent-evolved triggers on the live
   connector stream + scheduled full situation reports (configurable local
   hours) delivered to the owner channel. Pending report windows are persisted before connector
   cursors advance, so daemon restarts do not silently discard an owner update.
 - **Owner console:** the `owner_console` role resolves ONLY via trust-conditional
   escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
-  operational artifacts (board, audit findings) and can issue
-  work (`report_request`) - fire-and-forget, host code runs it. (`workorder_request` was
-  deleted in v0.41.0: scheduled work is host-published, never agent-delegated.)
+  operational artifacts (board, audit findings). The host `report_request` and `delegate`
+  relays are retired: scheduled work is host-published, and MAMA hands it to the model
+  runtime's own native subagents when extra workers are useful.
 - **Stage-2 workorder pipeline** (the only system run path since v0.28.0):
   scheduled system runs (board / wiki / memory promotion) are durable,
   occurrence-keyed workorders in the operator task
-  ledger, consumed serially by one host-code consumer that launches briefed
-  `workerRun`s on the operator lane. Procedure knowledge lives in
-  one operating brief (`~/.mama/operator/console-brief.md`) plus a host-authored turn-kind
-  section. Workers use the configured Claude, Codex, or Cline backend and run as the same
+  ledger, consumed serially by one host-code consumer that submits them as stimuli to the
+  same owner runtime. The owner typically delegates board / wiki / temporal work to a native
+  subagent (Codex `spawn_agent`); the host observes the spawn, tracks a `delegated` work-order
+  state, verifies the child's durable writes, and wakes the owner when the child finishes.
+  Board updates run in `delta` mode from the last published anchor (`board_read` +
+  `changes_read` + changed task rows); a full rebuild happens only with no published baseline,
+  an unpublished board, or an owner force. Fixed procedure knowledge lives in
+  one operating brief (`~/.mama/operator/console-brief.md`), carried once per thread rather
+  than restated per turn; per-turn text carries the deltas. Workers use the configured Claude, Codex, or Cline backend and run as the same
   `owner_console` principal as chat and event turns (v0.41.0, One MAMA); the host projects each
   turn's grant from data (artifact tools added, administration, deliverable and per-kind mutation
   tools blocked). Worker authority
@@ -235,7 +250,8 @@ publishers (schedule/boot/REST/events) + temporal scanner
     ↓ enqueue (occurrence-keyed, deduped)
 operator_tasks ledger (kind='system')
     ↓ claim (serial, priority)
-WorkOrderConsumer ──► workerRun(brief + payload) on 'operator' lane
+WorkOrderConsumer ──► stimulus into the owner:runtime session
+    ↓ owner delegates to a native subagent (state: delegated) → host wakes owner on completion
     ↓ completion hooks (verification, event re-emission)
 board / wiki / memory artifacts
 ```
@@ -264,13 +280,13 @@ what this system durably changed since a given point, with coverage counts and a
 `returned`/`total` so one page cannot be described as the whole. The scheduled full report
 leads with it.
 
-**Lane verification** (`operator/workorder-hooks.ts`) closes the same gap for the work orders
-themselves. Each lane declares the tools that prove it acted, and separately the tools that
+**Work-kind verification** (`operator/workorder-hooks.ts`) closes the same gap for the work orders
+themselves. Each work kind declares the tools that prove it acted, and separately the tools that
 prove it wrote; a run's claim is reconciled against `execution_status='completed'` traces of
 those tools since a run-bound snapshot. Observe, never block — an overstating run has still
 done whatever it did, and failing it would retry work that may have partly landed. One stated
-limit: the wiki lane's obligated `obsidian` tool covers reads as well as writes and the trace
-records only the tool name, so that lane's verdict is "vault exercised", not "wrote".
+limit: the wiki kind's obligated `obsidian` tool covers reads as well as writes and the trace
+records only the tool name, so that verdict is "vault exercised", not "wrote".
 
 ### Provenance and the Channel Grant (v0.29)
 
@@ -306,7 +322,7 @@ per-channel isolation wins.
 
 ### Evidence transposition (v0.31.0, S2)
 
-- **Causes are wired, not relabeled**: the MAMA owner-event lane hands its inbox batch
+- **Causes are wired, not relabeled**: the MAMA owner-event path hands its inbox batch
   (`causeEventIds`) to every run; on duplicate delivery the HOST batch outranks the
   agent-supplied `source_event_id`. Every effect carries a cause KIND
   (`event | owner_message | clock | card_transition`) with a DB trigger rejecting a kind
@@ -327,10 +343,10 @@ per-channel isolation wins.
 
 Connector deltas belong to MAMA, not to a separate planning persona. The trigger loop persists
 each batch and its matched trigger procedures to `owner_event_inbox` before advancing the source
-cursor. `OwnerEventLoop` consumes that journal through the same daemon `AgentLoop` and current
-owner operating brief as a stateless fresh run per batch on durable per-channel lane keys
-(`owner-event:<channelKey>`); only the lane key persists, never the model thread, because
-each batch prompt is self-contained and a resumed thread replays its whole history.
+cursor. `OwnerEventLoop` consumes that journal through the same daemon `AgentLoop` and the same durable
+`owner:runtime` session that serves chat and scheduled work; there is no separate session or lane
+per channel. The operating brief is carried once per thread (and again only when its hash changes),
+while each batch turn's text carries only the new delta.
 
 The agent chooses the safe primitive sequence. The host fixes connector visibility and the owner
 Telegram destination through the envelope, then ACKs the event only after a completed durable

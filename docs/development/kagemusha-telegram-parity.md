@@ -1619,3 +1619,21 @@ scope bindings, and the day's `[learning]` audit lines).
   Read-only replay of production attempt4704/trace276781: old predicate0, fixed predicate1.
 - This is a local code fix, not an installed release or a fresh Telegram/latency observation.
   The original294-second board execution and broader projection/runtime redesign remain separate.
+
+## 2026-09-08 — Scoped procedure correction candidate (not released)
+
+TG-01/TG-03/TG-04/TG-05/TG-06: chat, report, and event runs receive the same authorized
+procedure metadata. Revisions, applicability/exclusions, partial operating-brief correction,
+legacy trigger bindings, post-lane admission refresh, and retirement checks are implemented.
+Request-based owner work also receives `report_publish` through the common role projection.
+
+The isolated real-model comparison reproduced an overbroad reply rule, corrected the same
+procedure from r1 to r2, retained the owner's original instruction and scope, and confirmed
+report-only use in fresh contexts. This is candidate evidence, not installed Telegram rendering
+or end-to-end connector parity. Separate file runs produced two satisfied artifacts and one
+artifact missing resolved-item evidence. The single-failure observation did not revise the
+procedure; repeated-outcome autonomous improvement and another-model transfer remain unproven.
+
+Full test suite passed (7 tasks; standalone 5,792 passed/7 skipped). Independent scoped code
+reviews are clear. No new implementation has been released or installed. See the latest
+[intent check](intent-checks.md) and [procedure guide](../guides/procedure-corrections.md).

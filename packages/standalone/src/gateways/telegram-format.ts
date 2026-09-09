@@ -72,6 +72,8 @@ const TRAILING_OPENING_TAG = /<[a-z][^>]*>$/i;
 export const TELEGRAM_FORMAT_GUIDE = [
   'Apply the following only to messages delivered via Telegram, including telegram_send.',
   'Telegram message formatting: write the body in the Telegram HTML text subset.',
+  '- In sectioned reports, wrap section headings in <b>...</b>. Plain language means clear wording,',
+  '  not plain-text-only output; keep these headings formatted even when a brief asks for plain language.',
   '- Allowed tags only: <b> <i> <u> <s> <code> <pre> <tg-spoiler> <blockquote> <a href="...">.',
   '- Use real newlines. For lists use a plain marker such as "-" or numbers.',
   '- No Markdown (no **bold**, no # headings, no tables) and no div/span/br or CSS.',

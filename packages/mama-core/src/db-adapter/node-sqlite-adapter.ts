@@ -492,6 +492,19 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         continue;
       }
 
+      // Runtime MetricsStore may already own project_id/channel_id. Reconcile
+      // this additive migration atomically instead of accepting a duplicate skip.
+      if (version === 68) {
+        if (!this.tableExists('tool_traces')) {
+          // Legacy version ledgers can have skipped 033; the structural repair
+          // below creates its table before reconciling 068. Do not stamp it yet.
+          continue;
+        }
+        this.recoverToolTraceDiagnosticsMigration068();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
       const migrationPath = path.join(migrationsDir, file);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
@@ -638,6 +651,17 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         '033-create-model-runs-and-tool-traces.sql',
         'model run provenance'
       );
+    }
+
+    // Also repairs databases already stamped 68 by the former generic duplicate
+    // skip, which rolled back the new columns before advancing schema_version.
+    // Only enter the recovery transaction when something is actually missing —
+    // a complete database must not take the write path on every runMigrations().
+    if (
+      fs.existsSync(path.join(migrationsDir, '068-tool-trace-diagnostics.sql')) &&
+      this.needsToolTraceDiagnosticsRepair068()
+    ) {
+      this.recoverToolTraceDiagnosticsMigration068();
     }
 
     if (this.tableExists('connector_event_index')) {
@@ -871,6 +895,67 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'Migration 041 recovery failed: incompatible operator_memory_commit_intents table definition missing claim invariant'
       );
     }
+  }
+
+  private needsToolTraceDiagnosticsRepair068(): boolean {
+    if (!this.tableExists('tool_traces')) {
+      // The table itself is missing: let the recovery helper fail loudly.
+      return true;
+    }
+    const columns = this.tableColumns('tool_traces');
+    const hasMissingColumn = [
+      'diagnostic_json',
+      'evidence_json',
+      'catalog_revision',
+      'owner_scope',
+      'project_id',
+      'channel_id',
+    ].some((column) => !columns.has(column));
+    const hasMissingIndex = [
+      'idx_tool_traces_scope_recency',
+      'idx_tool_traces_channel_recency',
+    ].some((indexName) => !this.indexExists(indexName));
+    return hasMissingColumn || hasMissingIndex || !this.schemaVersionExists(68);
+  }
+
+  private recoverToolTraceDiagnosticsMigration068(): void {
+    this.transaction(() => {
+      if (!this.tableExists('tool_traces')) {
+        throw new Error('Migration 068 recovery failed: missing table tool_traces');
+      }
+      const expectedColumns = [
+        'diagnostic_json',
+        'evidence_json',
+        'catalog_revision',
+        'owner_scope',
+        'project_id',
+        'channel_id',
+      ];
+      const columns = this.tableColumns('tool_traces');
+      for (const column of expectedColumns) {
+        if (!columns.has(column)) {
+          this.exec(`ALTER TABLE tool_traces ADD COLUMN ${column} TEXT`);
+        }
+      }
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tool_traces_scope_recency
+          ON tool_traces(owner_scope, project_id, created_at DESC, trace_id DESC);
+        CREATE INDEX IF NOT EXISTS idx_tool_traces_channel_recency
+          ON tool_traces(owner_scope, project_id, channel_id, created_at DESC, trace_id DESC);
+      `);
+      const actualColumns = this.tableColumns('tool_traces');
+      for (const column of expectedColumns) {
+        if (!actualColumns.has(column)) {
+          throw new Error(`Migration 068 recovery failed: missing tool_traces.${column}`);
+        }
+      }
+      for (const index of ['idx_tool_traces_scope_recency', 'idx_tool_traces_channel_recency']) {
+        if (!this.indexExists(index)) {
+          throw new Error(`Migration 068 recovery failed: missing index ${index}`);
+        }
+      }
+      this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(68);
+    });
   }
 
   private recoverMemoryProvenanceMigration032(): void {

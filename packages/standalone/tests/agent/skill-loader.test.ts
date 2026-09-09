@@ -6,15 +6,89 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   filterSkillCatalogForContext,
   parseSkillSections,
   truncateSkillBySections,
   parseSkillFrontmatter,
+  loadInstalledSkills,
 } from '../../src/agent/skill-loader.js';
 import { forceFallbackMode, resetTokenEstimator } from '../../src/agent/token-estimator.js';
 
 describe('SkillLoader', () => {
+  it('TG-03/TG-05 exposes original skill paths as optional catalog hints without loading body instructions', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skill-hints-'));
+    try {
+      const folder = join(home, '.mama', 'skills');
+      mkdirSync(folder, { recursive: true });
+      const source = join(folder, 'review.md');
+      const original =
+        '---\nname: review\ndescription: Review evidence\nkeywords:\n  - review\n---\n# Private instruction body\nPreserve source records.';
+      writeFileSync(source, original);
+      const hints = loadInstalledSkills(false, { homeDir: home, includePaths: true });
+      expect(hints).toHaveLength(1);
+      expect(hints[0]).toContain(source);
+      expect(hints[0]).toContain('Review evidence');
+      expect(hints[0]).not.toContain('Private instruction body');
+      expect(readFileSync(source, 'utf8')).toBe(original);
+      expect(loadInstalledSkills(false, { homeDir: home })[0]).not.toContain(source);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+  /**
+   * Acceptance Criteria — retired built-in skills are never advertised
+   *
+   * AC1: A leftover flat file (~/.mama/skills/heartbeat-report.md) from an
+   *      upgraded install is absent from the catalog.
+   *      → expect(catalog.some(l => l.includes('heartbeat-report'))).toBe(false)
+   * AC2: A leftover directory form (~/.mama/skills/mama/heartbeat-report/SKILL.md)
+   *      is also absent from the catalog.
+   *      → same assertion after the directory case
+   * AC3: Skipping the retired skill does not suppress live skills that sit
+   *      beside it.
+   *      → expect(catalog.some(l => l.includes('[mama/review]'))).toBe(true)
+   * AC4: The leftover files are not deleted or rewritten by the loader.
+   *      → expect(existsSync(retiredFlat)).toBe(true)
+   */
+  it('skips retired builtin skills left behind by an upgraded install', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skill-retired-'));
+    try {
+      const skillsBase = join(home, '.mama', 'skills');
+      mkdirSync(skillsBase, { recursive: true });
+      const retiredFlat = join(skillsBase, 'heartbeat-report.md');
+      writeFileSync(
+        retiredFlat,
+        '---\nname: heartbeat-report\ndescription: Retired heartbeat report\n---\n# Body'
+      );
+      writeFileSync(
+        join(skillsBase, 'review.md'),
+        '---\nname: review\ndescription: Review evidence\n---\n# Body'
+      );
+
+      const retiredDir = join(skillsBase, 'mama', 'heartbeat-report');
+      mkdirSync(retiredDir, { recursive: true });
+      writeFileSync(
+        join(retiredDir, 'SKILL.md'),
+        '---\nname: heartbeat-report\ndescription: Retired heartbeat report\n---\n# Body'
+      );
+
+      const catalog = loadInstalledSkills(false, { homeDir: home });
+
+      // AC1 + AC2
+      expect(catalog.some((line) => line.includes('heartbeat-report'))).toBe(false);
+      // AC3
+      expect(catalog.some((line) => line.includes('[mama/review]'))).toBe(true);
+      // AC4
+      expect(existsSync(retiredFlat)).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(() => {
     resetTokenEstimator();
     forceFallbackMode();

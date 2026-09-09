@@ -1,5 +1,7 @@
 # vNext Release Readiness Guide
 
+> **ARCHIVED:** historical vNext readiness record. It does not describe the current release line.
+
 MAMA vNext is the primary-operator rebuild. It keeps durable writes behind one reviewed commit
 authority instead of letting dashboard, wiki, memory, connector, and gateway agents write state from
 separate loops.
