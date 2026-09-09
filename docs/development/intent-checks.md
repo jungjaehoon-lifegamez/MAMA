@@ -495,3 +495,9 @@
 - Vocabulary warning now requires a structural class (report-summary / report-card / report-section-title / report-table); badges alone no longer pass (the 20:06 invented `card-grid`/`card` shape is a fixture). The warning result carries the full contract once.
 - Owner correction "대시보드는 항상 카드형식으로" (20:05) was stored as procedure owner-full-report-board-html (cards + status badges, no tables/plain text); content is sound.
 - Installed 20:23 (backup pre-local16-20260909-202233). Suite 431 files / 5,903 passed, 1 todo. Verification pending: next report_publish must carry report-card/report-summary.
+
+### 2026-09-09 v0.52.0 released (pass)
+- PR #278 (part 1, 40 files) and #277 (part 2, 100 files) squash-merged with the admin account after local CodeRabbit CLI review (14 findings: 13 fixed, 1 deliberately skipped as an insurance guard; follow-up finding on the owner-event brief fixed; final pass "No findings") and remote CodeRabbit on #278 (7/7 addressed). Remote CodeRabbit did not review #277 (rate limit); noted for billing.
+- Release workflow run 34357112416: tags, npm `@jungjaehoon/mama-os@0.52.0` (depends on `^2.4.1`) and `@jungjaehoon/mama-core@2.4.1`, GitHub release v0.52.0, Pages deployed.
+- Live daemon replaced local.16 with npm 0.52.0 at 22:32 (backup pre-npm-0.52.0-20260909-223155); health up in 9s, Telegram connected, boot board decision logged with its reason.
+- Not yet verified on the npm build: a full owner-flow day (scheduled reports at 08/13/18, board delta runs, a chat correction). The local.7-16 evidence covers the same code.
