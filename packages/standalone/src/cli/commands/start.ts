@@ -2561,7 +2561,20 @@ export async function runAgentLoop(
               ownerTelegramChatId: reportChatId,
             });
           },
-          promptBriefState: () => (lastOwnerEventBriefDecision?.carry ? 'sent' : 'omitted'),
+          promptBriefState: (batch) =>
+            lastOwnerEventBriefDecision?.batchId === String(batch.id) &&
+            lastOwnerEventBriefDecision.carry
+              ? 'sent'
+              : 'omitted',
+          // No model turn ran, so the brief this batch admitted was never delivered on the
+          // owner thread: forget it so the retry carries it again.
+          retractBrief: (batch) => {
+            if (lastOwnerEventBriefDecision?.batchId !== String(batch.id)) return;
+            if (lastOwnerEventBriefDecision.carry) {
+              ownerBriefMemory.forget(OWNER_RUNTIME_SESSION_KEY);
+            }
+            lastOwnerEventBriefDecision = null;
+          },
           issueEnvelope: ownerEventIssueEnvelope,
           getNoUpdateMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
           hasUnsafeReplayEffects: (batch) =>

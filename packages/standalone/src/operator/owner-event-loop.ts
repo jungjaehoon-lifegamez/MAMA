@@ -58,10 +58,16 @@ export interface OwnerEventLoopDeps {
   assertActiveActivations?: (batch: OwnerEventBatch) => void | Promise<void>;
   buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
   /**
-   * Whether the prompt this host just built carries the console brief. Measurement only:
-   * it feeds the per-turn [prompt] line and never changes what the turn contains.
+   * Whether the prompt this host just built for THIS batch carries the console brief.
+   * Measurement only: it feeds the per-turn [prompt] line and never changes what the turn
+   * contains. Batch-scoped so a stale decision cannot be reported as this batch's.
    */
-  promptBriefState?: () => 'sent' | 'omitted';
+  promptBriefState?: (batch: OwnerEventBatch) => 'sent' | 'omitted';
+  /**
+   * A brief admitted for this batch but never delivered must not stay marked as seen on the
+   * owner thread. Called only on paths where no model turn ran, so the retry carries it again.
+   */
+  retractBrief?: (batch: OwnerEventBatch) => void | Promise<void>;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
   hasUnsafeReplayEffects?: (batch: OwnerEventBatch) => boolean;
@@ -135,6 +141,9 @@ export class OwnerEventLoop {
         return 'failed';
       }
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
+      // prepareContent returning is the last host step before the model run: after it, the
+      // turn reached the model and its brief counts as delivered.
+      let modelReached = false;
 
       try {
         const resolveActivations = async (): Promise<void> => {
@@ -181,7 +190,7 @@ export class OwnerEventLoop {
           sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'owner-event',
           promptKind: 'owner-event',
-          promptBrief: this.deps.promptBriefState?.() ?? 'omitted',
+          promptBrief: this.deps.promptBriefState?.(batch) ?? 'omitted',
           actorId: 'mama-owner',
           channelId: batch.channelKey,
           agentContext: this.deps.agentContext,
@@ -196,10 +205,11 @@ export class OwnerEventLoop {
           prepareContent: async () => {
             await resolveActivations();
             await this.deps.assertActiveActivations?.(batch);
-            return {
-              content: [{ type: 'text', text: await this.deps.buildPrompt(batch) }],
-              procedureRefs: procedureRefs(),
-            };
+            const content = [
+              { type: 'text' as const, text: await this.deps.buildPrompt(batch) },
+            ];
+            modelReached = true;
+            return { content, procedureRefs: procedureRefs() };
           },
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
@@ -261,6 +271,10 @@ export class OwnerEventLoop {
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        // The run threw before any model turn: nothing delivered the brief.
+        if (!modelReached) {
+          await this.deps.retractBrief?.(batch);
+        }
         if (this.deps.hasUnsettledEffects?.(batch)) {
           await this.quarantineEffects(batch);
           return 'failed';

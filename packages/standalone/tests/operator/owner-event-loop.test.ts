@@ -8,6 +8,8 @@ import {
 } from '../../src/operator/owner-event-loop.js';
 import type { AgentContext } from '../../src/agent/types.js';
 import type { Envelope } from '../../src/envelope/types.js';
+import { ThreadBriefMemory } from '../../src/operator/thread-brief-memory.js';
+import { OWNER_RUNTIME_SESSION_KEY } from '../../src/operator/owner-runtime.js';
 
 const testEnvelope = {} as Envelope;
 const issueTestEnvelope = async () => testEnvelope;
@@ -814,6 +816,135 @@ describe('TG-05/TG-06 owner-event native replay quarantine', () => {
       expect(await loop.tick()).toBe('processed');
       expect(calls).toBe(1);
       expect(inbox.depth()).toMatchObject({ dead: 0, pending: 0 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('owner-event brief admission is retracted when no model turn ran', () => {
+  const OWNER_BRIEF = 'standing owner brief';
+
+  interface Harness {
+    loop: OwnerEventLoop;
+    prompts: string[];
+    briefStates: Array<'sent' | 'omitted'>;
+    retractions: number;
+    briefState: (batchId: string) => 'sent' | 'omitted';
+    /** True while the owner thread still remembers this brief as delivered. */
+    remembersBrief: () => boolean;
+  }
+
+  // Mirrors the host wiring in start.ts: one ThreadBriefMemory per owner thread plus one
+  // per-batch decision, so the loop's hook is exercised against the real memory.
+  function harness(
+    inbox: OwnerEventInbox,
+    run: (calls: number, prepareContent?: () => Promise<unknown>) => Promise<unknown>
+  ): Harness {
+    const memory = new ThreadBriefMemory();
+    let decision: { batchId: string; carry: boolean } | null = null;
+    const state: Harness = {
+      prompts: [],
+      briefStates: [],
+      retractions: 0,
+      briefState: (batchId) =>
+        decision?.batchId === batchId && decision.carry ? 'sent' : 'omitted',
+      remembersBrief: () => !memory.admit(OWNER_RUNTIME_SESSION_KEY, OWNER_BRIEF),
+    } as Harness;
+    let calls = 0;
+    state.loop = new OwnerEventLoop({
+      inbox,
+      agentContext: ownerContext,
+      issueEnvelope: issueTestEnvelope,
+      getNoUpdateMaxId: () => 0,
+      log: () => {},
+      buildPrompt: (current) => {
+        const batchId = String(current.id);
+        const carry =
+          decision?.batchId === batchId
+            ? decision.carry
+            : memory.admit(OWNER_RUNTIME_SESSION_KEY, OWNER_BRIEF);
+        decision = { batchId, carry };
+        const prompt = carry ? `turn + ${OWNER_BRIEF}` : 'turn';
+        state.prompts.push(prompt);
+        return prompt;
+      },
+      promptBriefState: (current) => state.briefState(String(current.id)),
+      retractBrief: (current) => {
+        if (decision?.batchId !== String(current.id)) return;
+        if (decision.carry) {
+          memory.forget(OWNER_RUNTIME_SESSION_KEY);
+          state.retractions += 1;
+        }
+        decision = null;
+      },
+      runner: {
+        run: async (_prompt, options) => {
+          calls += 1;
+          state.briefStates.push(options.promptBrief ?? 'omitted');
+          return (await run(calls, options.prepareContent)) as ReturnType<typeof result>;
+        },
+      },
+    });
+    return state;
+  }
+
+  it('re-sends the brief after a run that threw before the model turn', async () => {
+    const db = new Database(':memory:');
+    try {
+      let now = 1_000;
+      const inbox = new OwnerEventInbox(db, () => now);
+      inbox.enqueue(batch());
+      const h = harness(inbox, async (calls) => {
+        if (calls === 1) throw new Error('envelope issue failed');
+        return result(deliveredHistory);
+      });
+
+      expect(await h.loop.tick()).toBe('failed');
+      expect(h.retractions).toBe(1);
+      now += 10 * 60_000;
+      expect(await h.loop.tick()).toBe('processed');
+      // The retracted admission means the retried batch builds the brief again.
+      expect(h.prompts).toEqual([`turn + ${OWNER_BRIEF}`, `turn + ${OWNER_BRIEF}`]);
+      expect(h.briefStates).toEqual(['sent', 'sent']);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('keeps the admission when the model turn ran', async () => {
+    const db = new Database(':memory:');
+    try {
+      let now = 1_000;
+      const inbox = new OwnerEventInbox(db, () => now);
+      inbox.enqueue(batch());
+      const h = harness(inbox, async (calls, prepareContent) => {
+        await prepareContent?.();
+        if (calls === 1) throw new Error('transport died after the turn ran');
+        return result(deliveredHistory);
+      });
+
+      expect(await h.loop.tick()).toBe('failed');
+      expect(h.retractions).toBe(0);
+      now += 10 * 60_000;
+      expect(await h.loop.tick()).toBe('processed');
+      // The turn reached the model, so the thread still counts the brief as delivered.
+      expect(h.retractions).toBe(0);
+      expect(h.remembersBrief()).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('reports omitted for a batch other than the one that decided', async () => {
+    const db = new Database(':memory:');
+    try {
+      const inbox = new OwnerEventInbox(db, () => 1_000);
+      inbox.enqueue(batch());
+      const h = harness(inbox, async () => result(deliveredHistory));
+      await h.loop.tick();
+      expect(h.briefState('1')).toBe('sent');
+      expect(h.briefState('2')).toBe('omitted');
     } finally {
       db.close();
     }
