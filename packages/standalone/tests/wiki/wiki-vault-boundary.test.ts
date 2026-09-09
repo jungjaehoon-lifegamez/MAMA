@@ -375,7 +375,10 @@ describe('TG-06 wiki completion hook is authoritative', () => {
   it('returns a fail verdict without a run-bound obligated trace and complete with one', () => {
     const run = (traceCount: number) =>
       buildWikiAfterHook(() => undefined, {
-        traces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => traceCount },
+        tracesFor: () => ({
+          getTraceMaxId: () => 0,
+          countObligatedTraceRowsSince: () => traceCount,
+        }),
       })(wo, 'compiled 2 pages', 0);
     expect(run(0)).toEqual({ disposition: 'fail', reason: expect.stringMatching(/no obligated/i) });
     expect(run(1)).toEqual({ disposition: 'complete' });

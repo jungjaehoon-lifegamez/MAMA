@@ -15,6 +15,7 @@ import { buildOwnerEventAgentContext } from '../../src/operator/owner-event-poli
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import type { Envelope } from '../../src/envelope/types.js';
+import { deriveMemoryScopes } from '../../src/memory/scope-context.js';
 
 describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
   function ownerContext() {
@@ -42,6 +43,55 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       'utf8'
     );
     expect(source).not.toMatch(/ownerEventInbox\.readPriorContext\s*\(/);
+  });
+
+  it('never runs the subagent wake turn without envelope authority', () => {
+    const source = readFileSync(
+      new URL('../../src/cli/commands/start.ts', import.meta.url),
+      'utf8'
+    );
+    const start = source.indexOf('attachSubagentWake(agentLoop.getModelRunner()');
+    expect(start).toBeGreaterThan(-1);
+    const wakeBlock = source.slice(start, source.indexOf('});', start));
+    // A nested '});' would truncate the slice and make the negative assertion vacuous:
+    // pin a token from the END of the registration call so truncation fails loudly.
+    expect(wakeBlock).toContain('prepareSubagentEnvelope');
+    // Issuance off must throw like every sibling owner path, not run unauthorised.
+    expect(wakeBlock).toContain('requireOwnerRuntimeEnvelope(');
+    expect(wakeBlock).not.toContain('prepareEnvelope: () => issueOwnerRuntimeEnvelope(');
+  });
+
+  /**
+   * Review P2-5: the child's grant derives its memory scopes from its channel, so a
+   * hardcoded 'subagent' gave every owner child a channel scope nobody reads and dropped
+   * the parent run's channel binding.
+   */
+  it('P2-5 derives a child grant from the PARENT channel, not a literal subagent channel', () => {
+    const projectId = '/tmp/project';
+    const parent = deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId });
+    const hardcoded = deriveMemoryScopes({ source: 'operator', channelId: 'subagent', projectId });
+    expect(parent).toContainEqual({ kind: 'channel', id: 'operator:report' });
+    expect(hardcoded).not.toContainEqual({ kind: 'channel', id: 'operator:report' });
+
+    const source = readFileSync(
+      new URL('../../src/cli/commands/start.ts', import.meta.url),
+      'utf8'
+    );
+    // The issuer takes the caller's channel; no owner site re-binds the child to a literal.
+    expect(source).toContain(
+      'const issueOwnerSubagentEnvelope = (channelId: string) =>\n    issueOwnerRuntimeEnvelope(channelId, 1800)'
+    );
+    expect(source).not.toContain('prepareSubagentEnvelope: issueOwnerSubagentEnvelope,');
+    expect(source).toContain(
+      'prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope(channelId)'
+    );
+    expect(source).toContain("prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('report')");
+    expect(source).toContain(
+      "prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('heartbeat')"
+    );
+    expect(source).toContain(
+      "prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('trigger-maintenance')"
+    );
   });
 
   it('moves one connector event from durable intake to a receipted MAMA owner turn', async () => {

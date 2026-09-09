@@ -122,6 +122,33 @@ export const WORKORDER_KINDS = [
   'self-check',
 ] as const;
 export type WorkOrderKind = (typeof WORKORDER_KINDS)[number];
+
+/**
+ * Ledger-managed payload key holding the delegation timestamp. Like `attempts`, it is never
+ * valid publisher input (validateWorkOrderPayload rejects unknown fields at enqueue) and it
+ * is stripped from a requeued replacement, which has delegated nothing.
+ */
+export const WORKORDER_DELEGATED_AT_KEY = 'delegated_at';
+
+/**
+ * Publisher-shaped view of a STORED workorder payload.
+ *
+ * Stored rows carry ledger-managed keys (`attempts`, `delegated_at`) that the enqueue
+ * validator rejects by design. Revalidating a stored row must therefore check only what a
+ * publisher could have supplied; validating the raw stored payload turned a
+ * delegated-and-verified board attempt into a permanently "unresolved" receipt state
+ * (live, 2026-09-09, workorder #4765). Enqueue input is still rejected loudly.
+ */
+export function publisherPayloadOfStoredWorkOrder(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    attempts: _attempts,
+    [WORKORDER_DELEGATED_AT_KEY]: _delegatedAt,
+    ...publisherInput
+  } = payload;
+  return publisherInput;
+}
 export const TEMPORAL_WORKORDER_MAX_ATTEMPTS = 3;
 
 /** source_channel namespace for workorder rows: 'workorder:<workKind>'. */
@@ -161,6 +188,17 @@ export interface WorkOrderRecord {
   idempotencyKey: string;
   /** Parsed payload; always carries `attempts` (>= 1). */
   payload: Record<string, unknown> & { attempts: number };
+  /**
+   * When this attempt handed its remaining work to a native subagent, or null.
+   *
+   * `delegated` is a WORK-ORDER state, not a task status: the row stays `in_progress`
+   * (it IS still claimed and open) and this timestamp is what distinguishes an attempt
+   * waiting on a child from one still inside its own run. It deliberately does not enter
+   * the shared `status` CHECK, which owner tasks share - a new owner-visible status would
+   * ripple through every board projection to record something only the work-order consumer
+   * can act on.
+   */
+  delegatedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -1498,7 +1536,7 @@ export class TaskLedger implements TaskSource {
     if (!attempt || attempt.workKind !== 'board' || attempt.status !== 'in_progress') {
       throw new Error(`external lifecycle candidate requires claimed board attempt ${attemptId}`);
     }
-    const { attempts: _attempts, ...payload } = attempt.payload;
+    const payload = publisherPayloadOfStoredWorkOrder(attempt.payload);
     validateWorkOrderPayload('board', payload);
     if (payload.mode !== 'reconcile' || !payload.candidates) {
       throw new Error(
@@ -1533,7 +1571,7 @@ export class TaskLedger implements TaskSource {
     if (!attempt || attempt.workKind !== 'board') {
       throw new Error(`board candidate inspection requires board attempt ${attemptId}`);
     }
-    const { attempts: _attempts, ...payload } = attempt.payload;
+    const payload = publisherPayloadOfStoredWorkOrder(attempt.payload);
     validateWorkOrderPayload('board', payload);
     if (payload.mode !== 'reconcile' || !payload.candidates) {
       return { disposition: 'none' };
@@ -3134,7 +3172,7 @@ export class TaskLedger implements TaskSource {
     if (!attempt || attempt.workKind !== 'board') {
       return;
     }
-    const { attempts: _attempts, ...payload } = attempt.payload;
+    const payload = publisherPayloadOfStoredWorkOrder(attempt.payload);
     validateWorkOrderPayload('board', payload);
     if (payload.mode !== 'reconcile' || !payload.candidates) {
       return;
@@ -3258,10 +3296,12 @@ export class TaskLedger implements TaskSource {
   }
 
   /**
-   * The newest COMPLETED full board run - the baseline the scheduled
-   * full-board producer gates against (board-delta-gate.ts).
+   * The newest COMPLETED full-board-class run - the baseline the scheduled full-board producer
+   * gates against (board-delta-gate.ts). A `delta` run counts too: it publishes the same three
+   * judgment slots from the same accumulated state, so excluding it would leave the previous
+   * full run as the baseline forever and re-trigger a delta on every tick.
    *
-   * Only `status='done'` full rows count: an open or failed run has not
+   * Only `status='done'` full/delta rows count: an open or failed run has not
    * discharged its interval. `watermark` is null when the run captured none
    * (an owner-forced refresh), which makes the next scheduled tick enqueue
    * rather than skip.
@@ -3276,7 +3316,7 @@ export class TaskLedger implements TaskSource {
         `SELECT json_extract(payload, '$.deltaWatermark') AS watermark, created_at, updated_at
            FROM operator_tasks
           WHERE kind = 'system' AND source_channel = ? AND status = 'done'
-            AND json_extract(payload, '$.mode') = 'full'
+            AND json_extract(payload, '$.mode') IN ('full', 'delta')
           ORDER BY id DESC LIMIT 1`
       )
       .get(`${WORKORDER_CHANNEL_PREFIX}board`) as
@@ -4429,7 +4469,7 @@ export class TaskLedger implements TaskSource {
     reason: string
   ): WorkOrderRecord {
     this.transitionWorkOrder(workOrder.id, 'failed', reason);
-    const { attempts: _attempts, ...payload } = workOrder.payload;
+    const payload = publisherPayloadOfStoredWorkOrder(workOrder.payload);
     const replacement = this.insertWorkOrder(
       {
         workKind: 'temporal',
@@ -4797,7 +4837,7 @@ export class TaskLedger implements TaskSource {
         throw new Error(`workorder retry: claimed row ${wo.id} no longer matches input`);
       }
       this.transitionWorkOrder(current.id, 'failed', reason);
-      const { attempts: _attempts, ...input } = current.payload;
+      const input = publisherPayloadOfStoredWorkOrder(current.payload);
       const replacement = this.insertWorkOrder(
         {
           workKind: current.workKind,
@@ -4812,6 +4852,36 @@ export class TaskLedger implements TaskSource {
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
+    }
+  }
+
+  /**
+   * Record that a claimed attempt is waiting on a native subagent.
+   *
+   * The status stays `in_progress`, which is the truth: the attempt is open and its
+   * idempotency slot is still held, so nothing re-enqueues the same occurrence underneath
+   * the child. Only the durable verification (or the consumer's timeout) moves it on.
+   */
+  markWorkOrderDelegated(id: number, delegatedAt: number): void {
+    if (!Number.isSafeInteger(delegatedAt) || delegatedAt < 0) {
+      throw new Error('workorder delegation timestamp must be a non-negative safe integer');
+    }
+    const row = this.getWorkOrderById(id);
+    if (!row) throw new Error(`workorder delegation: no system row with id ${id}`);
+    if (row.status !== 'in_progress') {
+      throw new Error(`workorder delegation: row ${id} is '${row.status}', expected in_progress`);
+    }
+    const payload = { ...row.payload, [WORKORDER_DELEGATED_AT_KEY]: delegatedAt };
+    const result = this.db
+      .prepare(
+        `UPDATE operator_tasks SET payload = ?, latest_event = ?, updated_at = ?
+         WHERE id = ? AND kind = 'system' AND status = 'in_progress'`
+      )
+      .run(JSON.stringify(payload), 'delegated to a native subagent', this.now(), id);
+    // The row can leave in_progress between the read above and this write. A no-op UPDATE
+    // is not a delegation: say so instead of reporting a mark that was never stored.
+    if (result.changes !== 1) {
+      throw new Error(`workorder delegation: row ${id} left in_progress before the mark`);
     }
   }
 
@@ -4996,6 +5066,10 @@ export class TaskLedger implements TaskSource {
       priority: row.priority as TaskPriority,
       idempotencyKey: row.source_event_id,
       payload: { ...payload, attempts: payload.attempts },
+      delegatedAt:
+        typeof payload[WORKORDER_DELEGATED_AT_KEY] === 'number'
+          ? (payload[WORKORDER_DELEGATED_AT_KEY] as number)
+          : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

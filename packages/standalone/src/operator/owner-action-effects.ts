@@ -400,12 +400,22 @@ export class OwnerActionEffectLedger {
     ).map((row) => row.effect_kind);
   }
 
+  /**
+   * True when some effect of this occurrence started and has no proven outcome.
+   * The `native_run` admission marker is excluded for the same reason it is
+   * excluded from `hasUnsafeReplayEffects`: it names no external effect, and
+   * every caller of this predicate (owner-event-loop quarantine,
+   * workorder-consumer failure paths - wired in start.ts) turns it into the same
+   * permanent replay block. An interrupted run leaving only `native_run|unknown`
+   * therefore used to kill the occurrence forever with nothing unproven.
+   */
   hasUnsettledEffects(occurrenceKey: string): boolean {
     return Boolean(
       this.db
         .prepare(
           `SELECT 1 FROM ${OWNER_ACTION_EFFECTS_TABLE}
-      WHERE occurrence_key = ? AND status != 'confirmed' LIMIT 1`
+      WHERE occurrence_key = ? AND status != 'confirmed'
+        AND effect_kind != 'native_run' LIMIT 1`
         )
         .get(requireIdentity(occurrenceKey, 'occurrenceKey'))
     );
@@ -421,7 +431,10 @@ export class OwnerActionEffectLedger {
    * blocked - `native_tool` is only observed after the fact, and gateway `Bash`
    * (and the other workspace effects) dedup on the exact command, so a replayed
    * turn that emits a different command runs it for real. Any unsettled row of
-   * any kind blocks regardless of kind.
+   * any OTHER kind blocks regardless of kind; `native_run` never blocks at any
+   * status, because an interrupted run records `native_run|unknown` while every
+   * real effect it started carries its own row, so the marker alone proves
+   * nothing is unproven.
    * Task deduplication is key-bound, not semantic: a different creation_key can
    * create another task. Multiple legitimate tasks per occurrence remain allowed.
    */
@@ -431,8 +444,8 @@ export class OwnerActionEffectLedger {
       this.db
         .prepare(
           `SELECT 1 FROM ${OWNER_ACTION_EFFECTS_TABLE}
-       WHERE occurrence_key = ? AND (effect_kind NOT IN ('native_run', 'task_create')
-         OR status != 'confirmed') LIMIT 1`
+       WHERE occurrence_key = ? AND effect_kind != 'native_run'
+         AND (effect_kind != 'task_create' OR status != 'confirmed') LIMIT 1`
         )
         .get(key)
     );

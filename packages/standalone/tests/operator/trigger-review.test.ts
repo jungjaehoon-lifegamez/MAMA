@@ -196,3 +196,49 @@ describe('buildReviewPrompt input budget', () => {
     expect(prompt).toContain('Return ONLY one JSON object');
   });
 });
+
+it('TG-05 keeps canonical linkage on match refinement and rejects independent body replacement', () => {
+  const db = new Database(':memory:');
+  const reg = new TriggerRegistry(db);
+  try {
+    const original = reg.create({
+      id: 'linked',
+      kind: 'k',
+      memoryQuery: 'q',
+      match: { keywords: ['report'], keywordMode: 'any', minConfidence: 0.7 },
+      procedure: [],
+      requiredEvidence: [],
+      authoredBy: 'agent',
+      provenance: { createdFrom: 'test', note: '' },
+      procedureRef: { id: 'p', revision: 1 },
+    });
+    const newSpec = {
+      kind: 'k',
+      memoryQuery: 'q',
+      match: original.match,
+      procedure: [],
+      requiredEvidence: [],
+    };
+    expect(() =>
+      applyReview(
+        {
+          action: 'refined',
+          reason: 'different procedure',
+          newSpec: { ...newSpec, procedure: [{ action: 'replace', description: 'divergent' }] },
+        },
+        'linked',
+        reg,
+        original.revision
+      )
+    ).toThrow(/canonical procedure/);
+    applyReview(
+      { action: 'refined', reason: 'narrow match', newSpec },
+      'linked',
+      reg,
+      original.revision
+    );
+    expect(reg.listActive()[0].procedureRef).toEqual({ id: 'p', revision: 1 });
+  } finally {
+    reg.close();
+  }
+});

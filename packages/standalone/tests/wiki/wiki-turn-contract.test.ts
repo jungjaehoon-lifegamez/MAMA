@@ -1,10 +1,11 @@
 /**
- * Drift guard: the runtime wiki turn and the provisioned default persona carry
- * the ONE code-owned canonical wiki contract. The contract is complete enough
- * for the actual workorder run - daily journal behavior, lesson rules, Home.md
- * maintenance, and the progressive source reads - so removing any required
- * section from the runtime fails here. The persona is that contract plus a
- * managed marker, so the two cannot drift.
+ * Drift guard for the ONE code-owned canonical wiki contract and the provisioned default
+ * persona built from it. The persona is that contract plus a managed marker, so the two
+ * cannot drift.
+ *
+ * The RUNTIME wiki turn no longer carries this script (owner decision 2026-09-09): a work
+ * order is a stimulus stating the result the host verifies, and ~7,000 characters of
+ * procedure told the agent how to work instead. The last test here pins that.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -12,8 +13,7 @@ import { buildTurnKindSection } from '../../src/operator/workorder-consumer.js';
 import { WIKI_AGENT_PERSONA } from '../../src/multi-agent/wiki-agent-persona.js';
 import { WIKI_TURN_CONTRACT_TEXT, WIKI_TURN_CONTRACT } from '../../src/wiki/wiki-turn-contract.js';
 
-// Every required behavioral section. Removing any of these from the canonical
-// contract (and therefore from the runtime turn) fails this test.
+// Every required behavioral section of the canonical contract that the persona ships.
 const REQUIRED_RUNTIME_SECTIONS = [
   // Input boundary (typed, host-supplied; batchId is not a watermark)
   'ownerDate',
@@ -57,14 +57,11 @@ const REQUIRED_RUNTIME_SECTIONS = [
 ] as const;
 
 describe('wiki turn contract does not drift from the provisioned persona', () => {
-  it('the runtime wiki turn embeds the canonical contract verbatim', () => {
-    expect(buildTurnKindSection('wiki')).toContain(WIKI_TURN_CONTRACT_TEXT);
-  });
-
-  it('the runtime wiki turn carries every required behavioral section', () => {
-    const section = buildTurnKindSection('wiki');
+  it('the canonical contract carries every required behavioral section', () => {
     for (const required of REQUIRED_RUNTIME_SECTIONS) {
-      expect(section, `runtime wiki turn is missing: ${required}`).toContain(required);
+      expect(WIKI_TURN_CONTRACT_TEXT, `canonical contract is missing: ${required}`).toContain(
+        required
+      );
     }
   });
 
@@ -75,7 +72,7 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
   });
 
   it('warns there is no input/range sandbox variable and requires literal values (P0-5)', () => {
-    const section = buildTurnKindSection('wiki');
+    const section = WIKI_TURN_CONTRACT_TEXT;
     expect(section).toContain('there is NO `input` or `range` variable');
     // Requires copying the literal payload values, and names the code form to avoid.
     expect(section.toLowerCase()).toContain('literal');
@@ -83,7 +80,7 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
   });
 
   it('keeps task boundaries host-owned instead of asking the model to repeat them', () => {
-    const section = buildTurnKindSection('wiki');
+    const section = WIKI_TURN_CONTRACT_TEXT;
     expect(section).toContain('task_list({view:"items"})');
     expect(section).toContain('taskUpdatedSince/taskUpdatedBefore');
     expect(section).toContain('the host injects');
@@ -91,14 +88,14 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
   });
 
   it('the no-update contract uses the literal noUpdateScope and forbids batchId (P0-6)', () => {
-    const section = buildTurnKindSection('wiki');
+    const section = WIKI_TURN_CONTRACT_TEXT;
     expect(section).toContain('contract_no_update({reason, scope:');
     expect(section).toContain('literal noUpdateScope');
     expect(section).toContain('never derive the scope from batchId');
   });
 
   it('instructs LEGACY_INPUT_UNBOUND for a legacy payload missing typed fields (M2)', () => {
-    const section = buildTurnKindSection('wiki');
+    const section = WIKI_TURN_CONTRACT_TEXT;
     expect(section).toContain('LEGACY_INPUT_UNBOUND');
     expect(section.toLowerCase()).toContain('do not infer');
     // Never publish or invent a contract_no_update scope for a legacy payload.
@@ -118,5 +115,23 @@ describe('wiki turn contract does not drift from the provisioned persona', () =>
     expect(WIKI_AGENT_PERSONA).toContain(
       'mama_search({limit: 30}) must not stand in for checking connector and task movement'
     );
+  });
+
+  it('the runtime wiki turn is an outcome contract, not the script', () => {
+    const section = buildTurnKindSection('wiki');
+    expect(section).toContain(
+      'Result required: the wiki pages this batch affects published with wiki_publish, or contract_no_update'
+    );
+    // P1-2: the literal host-issued scope, never an `input.` variable the sandbox lacks.
+    expect(buildTurnKindSection('wiki', 'wiki:2026-09-09')).toContain(
+      'contract_no_update({reason, scope: "wiki:2026-09-09"})'
+    );
+    expect(section).not.toContain('input.');
+    expect(section).not.toContain(WIKI_TURN_CONTRACT_TEXT);
+    // P3-8 names the host's coverage requirement for a no-update; the SCRIPT stayed out.
+    for (const script of ['task_list({view:"items"', 'wiki_read({', '## Progress']) {
+      expect(section, `runtime wiki turn still scripts: ${script}`).not.toContain(script);
+    }
+    expect(section.length).toBeLessThan(1300);
   });
 });

@@ -6,7 +6,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import {
-  agentNoticeTerm,
   composeBoardInputWatermark,
   connectorObservationTerm,
   memoryRecencyTerm,
@@ -117,19 +116,6 @@ describe('board input watermark terms', () => {
     });
   });
 
-  describe('agentNoticeTerm', () => {
-    it('advances when a new notice is emitted and is stable otherwise', () => {
-      const notices = [{ timestamp: 1000 }];
-      const before = agentNoticeTerm(notices);
-      expect(agentNoticeTerm([{ timestamp: 1000 }])).toBe(before);
-      expect(agentNoticeTerm([{ timestamp: 2000 }, { timestamp: 1000 }])).not.toBe(before);
-    });
-
-    it('reads an empty ring without throwing', () => {
-      expect(agentNoticeTerm([]).length).toBeGreaterThan(0);
-    });
-  });
-
   describe('composeBoardInputWatermark', () => {
     it('changes when ANY term changes', () => {
       const base = composeBoardInputWatermark(['a', 'b', 'c']);
@@ -214,6 +200,33 @@ describe('evaluateBoardFullDelta', () => {
     expect(decision).toMatchObject({ enqueue: true, reason: 'unpublished' });
   });
 
+  /**
+   * Review P2-3: 'unpublished' won ahead of the watermark comparison, and the caller requires
+   * in-memory dirt to agree with THAT reason only - so a real input delta arriving after an
+   * honestly-empty (hence permanently unpublished) run was suppressed to the 2h bound.
+   */
+  it('P2-3 reports a moved watermark as `delta` even when the last run published nothing', () => {
+    const decision = evaluateBoardFullDelta({
+      ...base,
+      readBoardPublishedAt: () => 500, // the baseline run never published
+      readWatermark: () => 'w2',
+      readBaseline: () => publishedBaseline('w1'),
+    });
+
+    expect(decision).toMatchObject({ enqueue: true, watermark: 'w2', reason: 'delta' });
+  });
+
+  it('P2-3 still reports `unpublished` when the watermark has NOT moved', () => {
+    const decision = evaluateBoardFullDelta({
+      ...base,
+      readBoardPublishedAt: () => 500,
+      readWatermark: () => 'w1',
+      readBaseline: () => publishedBaseline('w1'),
+    });
+
+    expect(decision).toMatchObject({ enqueue: true, reason: 'unpublished' });
+  });
+
   it('enqueues once the last completed full run passes the staleness bound', () => {
     const decision = evaluateBoardFullDelta({
       readWatermark: () => 'w1',
@@ -259,5 +272,90 @@ describe('evaluateBoardFullDelta', () => {
       expect(decision.reason).toBe('signal-unavailable');
       expect(decision.warning).toBeTruthy();
     }
+  });
+});
+
+/**
+ * Owner decision 2026-09-09: the board is UPDATED from the accumulated state, not rebuilt from
+ * raw sources. The gate decides which of the two the enqueued run is.
+ */
+describe('evaluateBoardFullDelta run mode', () => {
+  const baseline = (watermark: string | null) => ({
+    watermark,
+    createdAt: 1_000,
+    completedAt: 2_000,
+  });
+  const base = { now: () => 3_000, readBoardPublishedAt: () => 1_500 };
+
+  it('anchors a moved watermark to the published board', () => {
+    const decision = evaluateBoardFullDelta({
+      ...base,
+      readWatermark: () => 'w2',
+      readBaseline: () => baseline('w1'),
+    });
+
+    expect(decision).toMatchObject({
+      enqueue: true,
+      reason: 'delta',
+      mode: 'delta',
+      anchorPublishedAt: 1_500,
+    });
+  });
+
+  it('anchors a staleness run too - the board it refreshes is published', () => {
+    const decision = evaluateBoardFullDelta({
+      readWatermark: () => 'w1',
+      readBaseline: () => baseline('w1'),
+      readBoardPublishedAt: () => 1_500,
+      now: () => 2_000 + DEFAULT_BOARD_FULL_MAX_STALENESS_MS,
+    });
+
+    expect(decision).toMatchObject({ reason: 'stale', mode: 'delta', anchorPublishedAt: 1_500 });
+  });
+
+  it('rebuilds when there is no baseline to edit', () => {
+    for (const missing of [null, baseline(null)]) {
+      const decision = evaluateBoardFullDelta({
+        ...base,
+        readWatermark: () => 'w1',
+        readBaseline: () => missing,
+      });
+
+      expect(decision).toMatchObject({
+        reason: 'no-baseline',
+        mode: 'full',
+        anchorPublishedAt: null,
+      });
+    }
+  });
+
+  it('rebuilds when the baseline run published nothing, whatever the reason', () => {
+    for (const watermark of ['w1', 'w2']) {
+      const decision = evaluateBoardFullDelta({
+        ...base,
+        readBoardPublishedAt: () => 500,
+        readWatermark: () => watermark,
+        readBaseline: () => baseline('w1'),
+      });
+
+      expect(decision.mode).toBe('full');
+      expect(decision.anchorPublishedAt).toBeNull();
+    }
+  });
+
+  it('rebuilds when a signal is unreadable', () => {
+    const decision = evaluateBoardFullDelta({
+      ...base,
+      readWatermark: () => {
+        throw new Error('no such table: connector_event_index');
+      },
+      readBaseline: () => baseline('w1'),
+    });
+
+    expect(decision).toMatchObject({
+      reason: 'signal-unavailable',
+      mode: 'full',
+      anchorPublishedAt: null,
+    });
   });
 });

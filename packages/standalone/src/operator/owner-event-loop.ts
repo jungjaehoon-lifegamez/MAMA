@@ -1,7 +1,12 @@
+import type { ProcedureRef } from './trigger-types.js';
 import type { AgentContext } from '../agent/types.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
-import type { OwnerEventBatch, OwnerEventInbox } from './owner-event-inbox.js';
+import type {
+  OwnerEventActivation,
+  OwnerEventBatch,
+  OwnerEventInbox,
+} from './owner-event-inbox.js';
 import { buildOwnerEventEffectAuthority } from './owner-event-effects.js';
 import { OWNER_RUNTIME_SESSION_KEY } from './owner-runtime.js';
 import {
@@ -26,7 +31,15 @@ interface OwnerEventRunner {
       causeEventIds: readonly string[];
       sourceMessageRef: string;
       ownerJournalPrompt: string;
+      procedureRefs?: ProcedureRef[];
+      prepareContent?: () => Promise<{
+        content: Array<{ type: 'text'; text: string }>;
+        procedureRefs: ProcedureRef[];
+      }>;
       ownerEventEffects: ReturnType<typeof buildOwnerEventEffectAuthority>;
+      /** Measurement only (per-turn [prompt] log line); changes nothing the turn contains. */
+      promptKind?: string;
+      promptBrief?: 'sent' | 'omitted';
     }
   ): Promise<{ response: string; history: OwnerEventHistoryMessage[]; stoppedBy?: 'budget' }>;
 }
@@ -37,13 +50,34 @@ export interface OwnerEventLoopDeps {
   agentContext: AgentContext;
   /** Stable owner capability catalog; execution remains narrowed by agentContext + envelope. */
   ownerRuntimeRole?: RoleConfig;
+  /** Resolve and authorize each activation before any metadata reaches the prompt. */
+  resolveActivation?: (
+    activation: OwnerEventActivation,
+    batch: OwnerEventBatch
+  ) => OwnerEventActivation | Promise<OwnerEventActivation>;
+  assertActiveActivations?: (batch: OwnerEventBatch) => void | Promise<void>;
   buildPrompt: (batch: OwnerEventBatch) => Promise<string> | string;
+  /**
+   * Whether the prompt this host just built for THIS batch carries the console brief.
+   * Measurement only: it feeds the per-turn [prompt] line and never changes what the turn
+   * contains. Batch-scoped so a stale decision cannot be reported as this batch's.
+   */
+  promptBriefState?: (batch: OwnerEventBatch) => 'sent' | 'omitted';
+  /**
+   * A brief admitted for this batch but never delivered must not stay marked as seen on the
+   * owner thread. Called only on paths where no model turn ran, so the retry carries it again.
+   */
+  retractBrief?: (batch: OwnerEventBatch) => void | Promise<void>;
   issueEnvelope: (batch: OwnerEventBatch) => Promise<Envelope>;
   getNoUpdateMaxId: (scope: string) => number;
   hasUnsafeReplayEffects?: (batch: OwnerEventBatch) => boolean;
   hasUnsettledEffects?: (batch: OwnerEventBatch) => boolean;
   getTerminalReceipt?: (batch: OwnerEventBatch) => OwnerEventTerminalReceipt | null;
-  recordTriggerOutcome?: (triggerId: string, outcome: 'succeeded' | 'failed') => void;
+  recordTriggerOutcome?: (
+    triggerId: string,
+    outcome: 'succeeded' | 'failed',
+    receiptId?: string
+  ) => void;
   onDead?: (message: string) => void | Promise<void>;
   /** Failures become evidence: called once per dead batch with a stable signature. */
   recordIssue?: (input: { channelKey: string; reason: string }) => void;
@@ -107,20 +141,76 @@ export class OwnerEventLoop {
         return 'failed';
       }
       const noUpdateBefore = this.deps.getNoUpdateMaxId(scope);
+      // prepareContent returning is the last host step before the model run: after it, the
+      // turn reached the model and its brief counts as delivered.
+      let modelReached = false;
 
       try {
+        const resolveActivations = async (): Promise<void> => {
+          if (this.deps.resolveActivation) {
+            const admitted: OwnerEventActivation[] = [];
+            for (const activation of batch.activations) {
+              let resolved: OwnerEventActivation;
+              try {
+                resolved = await this.deps.resolveActivation(activation, batch);
+              } catch {
+                resolved = {
+                  triggerId: activation.triggerId,
+                  kind: '',
+                  memoryQuery: '',
+                  procedure: [],
+                  requiredEvidence: [],
+                  procedureRef: activation.procedureRef,
+                  availability: 'unavailable',
+                  resolutionReason: 'activation_resolution_failed',
+                };
+              }
+              admitted.push({
+                ...resolved,
+                triggerId: activation.triggerId,
+                queuedProcedureRef:
+                  activation.queuedProcedureRef ??
+                  activation.procedureRef ??
+                  resolved.queuedProcedureRef,
+              });
+            }
+            batch.activations = admitted;
+            this.deps.inbox.saveAdmittedActivations(batch);
+          }
+        };
+        const procedureRefs = (): ProcedureRef[] =>
+          batch.activations.flatMap((activation) =>
+            activation.availability !== 'unavailable' && activation.procedureRef
+              ? [{ ...activation.procedureRef }]
+              : []
+          );
+        await resolveActivations();
         const prompt = await this.deps.buildPrompt(batch);
         const result = await this.deps.runner.run(prompt, {
           sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'owner-event',
+          promptKind: 'owner-event',
+          promptBrief: this.deps.promptBriefState?.(batch) ?? 'omitted',
           actorId: 'mama-owner',
           channelId: batch.channelKey,
           agentContext: this.deps.agentContext,
           sessionPolicyRole: this.deps.ownerRuntimeRole ?? this.deps.agentContext.role,
-          prepareEnvelope: () => this.deps.issueEnvelope(batch),
+          prepareEnvelope: async () => {
+            return this.deps.issueEnvelope(batch);
+          },
           causeEventIds: batch.eventIds,
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerJournalPrompt: batch.lines.join('\n'),
+          procedureRefs: procedureRefs(),
+          prepareContent: async () => {
+            await resolveActivations();
+            await this.deps.assertActiveActivations?.(batch);
+            const content = [
+              { type: 'text' as const, text: await this.deps.buildPrompt(batch) },
+            ];
+            modelReached = true;
+            return { content, procedureRefs: procedureRefs() };
+          },
           ownerEventEffects: buildOwnerEventEffectAuthority(batch),
         });
         if (this.deps.hasUnsettledEffects?.(batch)) {
@@ -181,6 +271,10 @@ export class OwnerEventLoop {
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        // The run threw before any model turn: nothing delivered the brief.
+        if (!modelReached) {
+          await this.deps.retractBrief?.(batch);
+        }
         if (this.deps.hasUnsettledEffects?.(batch)) {
           await this.quarantineEffects(batch);
           return 'failed';
@@ -225,7 +319,15 @@ export class OwnerEventLoop {
     if (!this.deps.recordTriggerOutcome) return;
     for (const triggerId of new Set(batch.activations.map((activation) => activation.triggerId))) {
       try {
-        this.deps.recordTriggerOutcome(triggerId, outcome);
+        const unavailable = batch.activations.some(
+          (activation) =>
+            activation.triggerId === triggerId && activation.availability === 'unavailable'
+        );
+        this.deps.recordTriggerOutcome(
+          triggerId,
+          unavailable ? 'failed' : outcome,
+          `owner-event:${batch.id}`
+        );
       } catch (error) {
         this.deps.log(
           `[owner-event] trigger outcome skipped for ${triggerId}: ${

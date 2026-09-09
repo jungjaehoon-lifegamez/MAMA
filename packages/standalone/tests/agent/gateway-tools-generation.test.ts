@@ -8,6 +8,7 @@ import { buildGatewayToolCatalog } from '../../src/agent/gateway-tool-catalog.js
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { CONTEXT_COMPILE_TOOL_DESCRIPTION } from '../../src/agent/context-compile-contract.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
+import { buildReportPublishToolContract } from '../../src/operator/board-slot-instructions.js';
 
 describe('Gateway tools generation', () => {
   it('TG-03/TG-04 builds the public wildcard catalog without private connector text', () => {
@@ -76,6 +77,26 @@ describe('Gateway tools generation', () => {
       expect(tool?.params).toContain('strictness?');
       expect(tool?.params).toContain('threshold?');
       expect(tool?.params).toContain('diagnostics?');
+    });
+
+    // The board stylesheet understands one class vocabulary; a generic
+    // <section>/<ul> slot renders as plain text. The vocabulary therefore
+    // travels WITH the publishing tool, so an agent that describes
+    // report_publish before calling it learns the shape.
+    it('report_publish carries the board class vocabulary in its own contract', () => {
+      const tool = ToolRegistry.getTool('report_publish');
+      expect(tool?.description).toContain('report-summary');
+      expect(tool?.description).toContain('report-card');
+      expect(tool?.description).toContain('report-section-title');
+      expect(tool?.description).toContain('card-action');
+      expect(tool?.description).toContain('stat-highlight');
+      // pipeline is host-rendered; the agent must never supply it.
+      expect(tool?.description).toContain('Never write it');
+      // Sanitizer facts, so the agent does not spend a slot on stripped markup.
+      expect(tool?.description).toContain('sanitizes script');
+      expect(tool?.description).toContain('inline styles');
+      // One source, not a second copy of the vocabulary strings.
+      expect(tool?.description).toBe(buildReportPublishToolContract());
     });
 
     it('keeps context_compile registry params aligned with scoped compile input', () => {

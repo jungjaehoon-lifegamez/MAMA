@@ -47,6 +47,74 @@ export interface CodexAppServerProcessOptions {
   effort?: string;
   /** Stable identity/rules fingerprint; dynamic conversation context must be excluded. */
   policyFingerprint?: string;
+  /** Observability sink for Codex-native subagent threads spawned by a parent turn. */
+  onSubagentEvent?: (event: SubagentEvent) => void;
+  /**
+   * Host factory for a CHILD-SCOPED authority. A child outlives the parent turn, so it
+   * must never inherit the parent's snapshot bridge (whose envelope expires with the
+   * parent wall). Called once per announced child; the child's tool calls are queued
+   * until it resolves. `null` (or no factory at all) means the child has no authority
+   * and every call it makes is refused with `subagent authority unavailable`.
+   */
+  createSubagentBridge?: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
+  /**
+   * Grace after the PARENT announced a child completed before the child's missing own
+   * `turn/completed` is reported as `unknown`. Test seam; the default is 5s.
+   */
+  subagentGraceMs?: number;
+  /** Bounded life of a registered child; a child Codex killed must not leak. */
+  subagentTtlMs?: number;
+}
+
+/** What the host is asked for when Codex announces a child thread. */
+export interface SubagentBridgeRequest {
+  /** The PARENT's session key; a child never owns a session of its own. */
+  sessionKey: string;
+  parentThreadId: string;
+  agentThreadId: string;
+  agentPath: string;
+}
+
+/**
+ * One child's own authority: its tools and the release that closes its run.
+ *
+ * `release` is called exactly once per child, with the terminal status the process
+ * observed. `unknown` means the parent announced a completion the child's own
+ * `turn/completed` never confirmed - it is not success.
+ */
+export interface SubagentBridge {
+  bridge: HostToolBridge;
+  release: (outcome: {
+    status: 'completed' | 'failed' | 'interrupted' | 'unknown';
+    error?: string;
+  }) => Promise<void>;
+}
+
+/**
+ * One Codex-native subagent thread, observed from the parent thread.
+ *
+ * Codex announces children on the PARENT thread as `subAgentActivity` items and then
+ * drives the child on ITS OWN thread id - including after the parent turn completed.
+ * These events only report that; they never gate the child.
+ */
+export interface SubagentEvent {
+  kind: 'started' | 'completed';
+  /** The PARENT's session key; a child never owns a session of its own. */
+  sessionKey: string;
+  parentThreadId: string;
+  agentThreadId: string;
+  /** Codex agent path, e.g. "/root/board". */
+  agentPath: string;
+  /**
+   * Completion events only. `unknown` is the honest verdict when the parent announced a
+   * completion and the child's own `turn/completed` never arrived: no result, no failure
+   * either. It must never be rendered as success.
+   */
+  status?: 'completed' | 'failed' | 'interrupted' | 'unknown';
+  /** Last `final_answer` agentMessage text seen on the child thread, bounded. */
+  finalText?: string;
+  /** Redacted failure message; failed child turns only. */
+  error?: string;
 }
 
 export interface CodexAppServerPromptOptions {
@@ -76,6 +144,8 @@ export interface CodexAppServerPromptOptions {
    * only inside the resume branch. Omit it to keep the legacy bootstrap behaviour.
    */
   resumeInstructions?: () => Promise<string>;
+  /** Measurement only: host lane and brief state for the per-turn [prompt] log line. */
+  promptTelemetry?: { kind: string; brief: 'sent' | 'omitted' };
 }
 
 type JsonObject = Record<string, unknown>;
@@ -121,6 +191,7 @@ interface PendingTurn {
   onDelta?: (text: string) => void;
   onToolUse?: PromptCallbacks['onToolUse'];
   onToolComplete?: PromptCallbacks['onToolComplete'];
+  onSubagentStart?: PromptCallbacks['onSubagentStart'];
   nativeItems: Map<string, { name: string; completed: boolean }>;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
@@ -165,11 +236,44 @@ interface SessionPolicy {
   policyFingerprint?: string;
   hostToolBridge?: HostToolBridge;
   resumeInstructions?: () => Promise<string>;
+  promptTelemetry?: { kind: string; brief: 'sent' | 'omitted' };
 }
 
 interface SessionState {
   threadId: string;
   bootstrapPending: boolean;
+}
+
+/**
+ * Which session a thread belongs to, and where its observability callbacks go. A child
+ * can be announced after the parent turn already resolved (PendingTurn is gone by then),
+ * so this outlives the turn. It deliberately carries NO host tool bridge: authority is
+ * never inherited across the parent turn boundary (see `createSubagentBridge`).
+ */
+interface ThreadContext {
+  sessionKey: string;
+  onToolUse?: PromptCallbacks['onToolUse'];
+  onToolComplete?: PromptCallbacks['onToolComplete'];
+}
+
+interface SubagentState extends ThreadContext {
+  parentThreadId: string;
+  agentPath: string;
+  finalText: string;
+  startedAt: number;
+  /** Per-child serialization; mirrors PendingTurn's queue so duplicate callIds settle once. */
+  toolCallQueue: Promise<void>;
+  toolCallResults: Map<string, HostToolCallState>;
+  stoppingCallIds: Set<string>;
+  abortController: AbortController;
+  /** This child's OWN authority, requested once at registration. */
+  authority: Promise<SubagentBridge | null>;
+  /** One log line per child when it has no authority, not one per refused call. */
+  authorityWarned: boolean;
+  /** Bounded life: a child Codex killed silently must still resolve. */
+  ttlTimer?: NodeJS.Timeout;
+  /** Started by the PARENT's completion announcement; the child's own turn wins. */
+  graceTimer?: NodeJS.Timeout;
 }
 
 const DEFAULT_TIMEOUT = 300_000;
@@ -183,6 +287,17 @@ const OVERLOADED_ERROR_CODE = -32001;
 const OVERLOAD_RETRY_LIMIT = 4;
 const OVERLOAD_RETRY_BASE_MS = 25;
 const TURN_START_RECONCILE_GRACE_MS = 250;
+const SUBAGENT_FINAL_TEXT_LIMIT = 4_000;
+/** Wait for the child's own `turn/completed` after the parent announced it finished. */
+const SUBAGENT_COMPLETION_GRACE_MS = 5_000;
+/** A registered child that never completes is reported failed rather than leaked. */
+const SUBAGENT_TTL_MS = 45 * 60_000;
+/** Bound on remembered finished child threads; identity, not history. */
+const MAX_FINISHED_SUBAGENTS = 200;
+const SUBAGENT_AUTHORITY_UNAVAILABLE = 'subagent authority unavailable';
+const SUBAGENT_AUTHORITY_EXPIRED = 'subagent authority expired';
+/** EnvelopeViolation code prefix the enforcer returns once a grant is past its wall. */
+const ENVELOPE_EXPIRED_MARKER = '[expired]';
 
 class CodexAppServerRpcError extends Error {
   readonly code: number;
@@ -448,7 +563,15 @@ export class CodexAppServerProcess {
       | 'isolatedHome'
       | 'registryRoot'
     >
-  > & { mcpConfigPath?: string; policyFingerprint?: string; effort?: string };
+  > & {
+    mcpConfigPath?: string;
+    policyFingerprint?: string;
+    effort?: string;
+    onSubagentEvent?: (event: SubagentEvent) => void;
+    createSubagentBridge?: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
+    subagentGraceMs?: number;
+    subagentTtlMs?: number;
+  };
   private readonly registry: CodexThreadRegistry;
   private child: ChildProcessWithoutNullStreams | undefined;
   private stdout: ReadlineInterface | undefined;
@@ -458,6 +581,16 @@ export class CodexAppServerProcess {
   private lateTurnStarts = new Map<number, LateTurnStart>();
   private turnStartReconciliations = new Map<string, TurnStartReconciliation>();
   private turns = new Map<string, PendingTurn>();
+  private readonly subagents = new Map<string, SubagentState>();
+  /**
+   * Child threads that already reported a terminal status. The SAME `started`
+   * announcement arrives as both an item/started and an item/completed view, and the
+   * second view can land after the child's own turn/completed - `subagents.has` no longer
+   * dedupes it then, so it would mint a second authority and a second completion for a
+   * dead child. Bounded FIFO: identity of recent children, not a growing ledger.
+   */
+  private readonly finishedSubagents = new Set<string>();
+  private readonly threadContexts = new Map<string, ThreadContext>();
   private sessions = new Map<string, SessionState>();
   private sessionQueues = new Map<string, Promise<void>>();
   private connectionQueue: Promise<void> = Promise.resolve();
@@ -507,6 +640,7 @@ export class CodexAppServerProcess {
         }
         const launch = buildCodexAppServerLaunchConfig(this.options.mcpConfigPath, process.env);
         if (overrides.resumeSession === false) {
+          this.discardSessionThreadState(session.sessionKey, 'session was restarted');
           this.registry.remove(session.sessionKey);
           this.sessions.delete(session.sessionKey);
         }
@@ -534,10 +668,29 @@ export class CodexAppServerProcess {
             this.sessions.set(session.sessionKey, state);
           }
         }
-        const turnText =
-          state.bootstrapPending && session.systemPrompt
-            ? `<system-reminder>\nFresh MAMA runtime context after resuming this durable thread:\n${session.systemPrompt.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n${text}`
-            : text;
+        const replayReminder = Boolean(state.bootstrapPending && session.systemPrompt);
+        const turnText = replayReminder
+          ? `<system-reminder>\nFresh MAMA runtime context after resuming this durable thread:\n${session.systemPrompt.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n${text}`
+          : text;
+        // One line per turn, where the text that actually reaches the model is known.
+        // This is what makes "fixed things once, turns carry only deltas" measurable
+        // from daemon.log instead of asserted.
+        console.log(
+          `[prompt] thread=${state.threadId} kind=${session.promptTelemetry?.kind ?? 'chat'} ` +
+            `chars=${turnText.length} brief=${session.promptTelemetry?.brief ?? 'omitted'} ` +
+            `reminder=${replayReminder ? 'sent' : 'omitted'}`
+        );
+        // A Codex-native child can be announced after this turn resolved, so remember
+        // which session the thread belongs to outside the PendingTurn lifetime. The
+        // parent's BRIDGE is deliberately not kept: a child gets its own authority.
+        // A session that rotated its thread leaves the previous thread's context behind,
+        // and a stale entry both leaks and lets a dead thread announce children.
+        this.pruneThreadContexts(session.sessionKey, state.threadId);
+        this.threadContexts.set(state.threadId, {
+          sessionKey: session.sessionKey,
+          onToolUse: callbacks?.onToolUse,
+          onToolComplete: callbacks?.onToolComplete,
+        });
         const result = await this.startTurn(
           state.threadId,
           turnText,
@@ -567,6 +720,7 @@ export class CodexAppServerProcess {
 
   async reset(sessionKey = this.options.sessionKey): Promise<void> {
     await this.enqueueSession(sessionKey, async () => {
+      this.discardSessionThreadState(sessionKey, 'session was reset');
       this.registry.remove(sessionKey);
       this.sessions.delete(sessionKey);
     });
@@ -585,6 +739,8 @@ export class CodexAppServerProcess {
   async stop(): Promise<void> {
     this.stopped = true;
     await this.shutdown(new Error('Codex app-server process stopped'));
+    this.terminateSubagents(new Error('Codex app-server process stopped'));
+    this.threadContexts.clear();
   }
 
   async executeSandboxedCommand(
@@ -667,6 +823,7 @@ export class CodexAppServerProcess {
       policyFingerprint: overrides.policyFingerprint ?? this.options.policyFingerprint,
       hostToolBridge,
       resumeInstructions: overrides.resumeInstructions,
+      promptTelemetry: overrides.promptTelemetry,
     };
   }
 
@@ -1051,6 +1208,7 @@ export class CodexAppServerProcess {
         onDelta: callbacks?.onDelta,
         onToolUse: callbacks?.onToolUse,
         onToolComplete: callbacks?.onToolComplete,
+        onSubagentStart: callbacks?.onSubagentStart,
         nativeItems: new Map(),
         resolve: resolveTurn,
         reject: rejectTurn,
@@ -1264,6 +1422,9 @@ export class CodexAppServerProcess {
     if (!data || typeof data.threadId !== 'string') {
       return;
     }
+    if (this.handleSubagentNotification(method, data.threadId, data)) {
+      return;
+    }
     const turn = this.turns.get(data.threadId);
     if (!turn) {
       return;
@@ -1451,6 +1612,551 @@ export class CodexAppServerProcess {
     });
   }
 
+  // ─── Codex-native subagents ───────────────────────────────────────────────
+  //
+  // Codex announces a child on the PARENT thread as a `subAgentActivity` item and then
+  // drives the child on its OWN thread id, which outlives the parent turn. Nothing here
+  // blocks a run. A child NEVER inherits the parent turn's bridge: the parent's envelope
+  // expires with the parent's wall and the child cannot renew it, so a child that
+  // inherited it would lose every tool mid-run and still report "done". The host issues
+  // the child its own authority instead (`createSubagentBridge`), or the child has none
+  // and its calls are refused loudly.
+
+  /** Returns true when this notification belongs to the subagent surface and was consumed. */
+  private handleSubagentNotification(method: string, threadId: string, data: JsonObject): boolean {
+    if (method === 'item/started' || method === 'item/completed') {
+      const item = object(data.item);
+      if (item?.type === 'subAgentActivity') {
+        // Only a thread this process actually drives may announce children.
+        if (!this.subagents.has(threadId) && !this.threadContexts.has(threadId)) {
+          return false;
+        }
+        if (item.kind === 'started') {
+          this.registerSubagent(threadId, item);
+        } else if (item.kind === 'completed') {
+          this.observeParentSideCompletion(threadId, item);
+        }
+        return true;
+      }
+      const child = this.subagents.get(threadId);
+      if (!child) {
+        return false;
+      }
+      this.refreshParentTurnIdleTimeout(child);
+      if (
+        method === 'item/completed' &&
+        item?.type === 'agentMessage' &&
+        item.phase === 'final_answer' &&
+        typeof item.text === 'string'
+      ) {
+        child.finalText = item.text.slice(0, SUBAGENT_FINAL_TEXT_LIMIT);
+      }
+      return true;
+    }
+    const child = this.subagents.get(threadId);
+    if (!child) {
+      return false;
+    }
+    this.refreshParentTurnIdleTimeout(child);
+    if (method !== 'turn/completed') {
+      return true;
+    }
+    const completed = object(data.turn);
+    const status = completed?.status;
+    if (status === 'inProgress') {
+      return true;
+    }
+    if (status !== 'completed' && status !== 'failed' && status !== 'interrupted') {
+      return true;
+    }
+    if (!child.finalText) {
+      child.finalText = this.subagentFinalText(completed?.items);
+    }
+    // The child's OWN turn/completed is the only completing event: the parent-side
+    // announcement carries neither status nor result.
+    this.finishSubagent(
+      threadId,
+      status,
+      status === 'failed'
+        ? this.redact(errorMessage(completed?.error, 'Codex app-server subagent turn failed'))
+        : undefined
+    );
+    return true;
+  }
+
+  private subagentFinalText(items: unknown): string {
+    if (!Array.isArray(items)) {
+      return '';
+    }
+    let text = '';
+    for (const entry of items) {
+      const item = object(entry);
+      if (item?.type === 'agentMessage' && typeof item.text === 'string') {
+        text = item.text;
+      }
+    }
+    return text.slice(0, SUBAGENT_FINAL_TEXT_LIMIT);
+  }
+
+  /** A working child keeps the parent's idle timeout alive (the parent may be in wait_agent). */
+  private refreshParentTurnIdleTimeout(child: SubagentState): void {
+    const parentTurn = this.turns.get(child.parentThreadId);
+    if (parentTurn) {
+      this.refreshTurnIdleTimeout(parentTurn);
+    }
+  }
+
+  /** Drop every thread context this session left behind on a previous thread id. */
+  private pruneThreadContexts(sessionKey: string, currentThreadId: string): void {
+    for (const [threadId, context] of this.threadContexts) {
+      if (context.sessionKey === sessionKey && threadId !== currentThreadId) {
+        this.threadContexts.delete(threadId);
+      }
+    }
+  }
+
+  private knownThreadIds(): Set<string> {
+    const ids = new Set<string>(this.threadContexts.keys());
+    for (const state of this.sessions.values()) {
+      if (state.threadId) {
+        ids.add(state.threadId);
+      }
+    }
+    for (const threadId of this.turns.keys()) {
+      ids.add(threadId);
+    }
+    return ids;
+  }
+
+  private registerSubagent(parentThreadId: string, item: JsonObject): void {
+    const agentThreadId = typeof item.agentThreadId === 'string' ? item.agentThreadId : '';
+    if (!agentThreadId || this.subagents.has(agentThreadId)) {
+      // The same `started` announcement arrives twice (item/started + item/completed views).
+      return;
+    }
+    if (this.finishedSubagents.has(agentThreadId)) {
+      // The second view of that announcement lost the race with the child's own
+      // turn/completed. Re-registering would resurrect a finished child.
+      console.warn(
+        `[CodexAppServer] subagent announcement ignored: thread=${agentThreadId} already finished`
+      );
+      return;
+    }
+    // A child may never claim a thread this process already drives: that would let one
+    // session's announcement capture another session's live parent thread.
+    if (this.knownThreadIds().has(agentThreadId)) {
+      console.warn(
+        `[CodexAppServer] subagent announcement refused: thread=${agentThreadId} is a live thread`
+      );
+      return;
+    }
+    // A grandchild's session comes from the child that announced it.
+    const parent = this.subagents.get(parentThreadId) ?? this.threadContexts.get(parentThreadId);
+    if (!parent) {
+      return;
+    }
+    const agentPath = typeof item.agentPath === 'string' ? item.agentPath : '';
+    // Observed admission: tell the PARENT'S live turn that this run handed work to a
+    // child. Nothing else on the item stream carries that fact - on codex-cli 0.153.4
+    // a spawn surfaces ONLY as `subAgentActivity`, which this handler consumes before
+    // the native-item path. Never routed through onToolUse (effect ledger, see
+    // PromptCallbacks.onSubagentStart).
+    const parentTurn = this.turns.get(parentThreadId);
+    if (parentTurn?.onSubagentStart) {
+      const itemId = typeof item.id === 'string' ? item.id : '';
+      try {
+        parentTurn.onSubagentStart({ agentThreadId, agentPath, itemId });
+      } catch (error: unknown) {
+        console.warn(
+          `[CodexAppServer] onSubagentStart callback failed: ${this.toError(error).message}`
+        );
+      }
+    }
+    const factory = this.options.createSubagentBridge;
+    const child: SubagentState = {
+      parentThreadId,
+      sessionKey: parent.sessionKey,
+      agentPath,
+      onToolUse: parent.onToolUse,
+      onToolComplete: parent.onToolComplete,
+      finalText: '',
+      startedAt: Date.now(),
+      toolCallQueue: Promise.resolve(),
+      toolCallResults: new Map(),
+      stoppingCallIds: new Set(),
+      abortController: new AbortController(),
+      authorityWarned: false,
+      authority: factory
+        ? factory({
+            sessionKey: parent.sessionKey,
+            parentThreadId,
+            agentThreadId,
+            agentPath,
+          })
+            .then((authority) => authority ?? null)
+            .catch((error: unknown) => {
+              console.warn(
+                `[CodexAppServer] subagent authority factory failed thread=${agentThreadId}: ${
+                  this.toError(error).message
+                }`
+              );
+              return null;
+            })
+        : Promise.resolve(null),
+    };
+    child.ttlTimer = setTimeout(() => {
+      child.ttlTimer = undefined;
+      this.finishSubagent(agentThreadId, 'failed', 'subagent produced no completion');
+    }, this.options.subagentTtlMs ?? SUBAGENT_TTL_MS);
+    child.ttlTimer.unref();
+    this.subagents.set(agentThreadId, child);
+    console.log(`[CodexAppServer] subagent started path=${agentPath} thread=${agentThreadId}`);
+    this.emitSubagentEvent({
+      kind: 'started',
+      sessionKey: parent.sessionKey,
+      parentThreadId,
+      agentThreadId,
+      agentPath,
+    });
+  }
+
+  /**
+   * The parent says a child finished. That is an announcement, not a result: it can win
+   * the race against the child's own `turn/completed`, which is what carries status and
+   * final text. Wait a bounded grace for the real event, then report `unknown`.
+   */
+  private observeParentSideCompletion(announcingThreadId: string, item: JsonObject): void {
+    const agentThreadId = typeof item.agentThreadId === 'string' ? item.agentThreadId : '';
+    const child = agentThreadId ? this.subagents.get(agentThreadId) : undefined;
+    if (!child) {
+      return;
+    }
+    if (child.parentThreadId !== announcingThreadId) {
+      console.warn(
+        `[CodexAppServer] subagent completion refused: thread=${announcingThreadId} does not own ${agentThreadId}`
+      );
+      return;
+    }
+    if (child.graceTimer) {
+      return;
+    }
+    child.graceTimer = setTimeout(() => {
+      child.graceTimer = undefined;
+      console.warn(
+        `[CodexAppServer] subagent completion unconfirmed path=${child.agentPath} thread=${agentThreadId}`
+      );
+      this.finishSubagent(agentThreadId, 'unknown');
+    }, this.options.subagentGraceMs ?? SUBAGENT_COMPLETION_GRACE_MS);
+    child.graceTimer.unref();
+  }
+
+  /**
+   * Emits exactly one completion per child thread and releases its authority with the
+   * same terminal status. Grandchildren keep their own entries.
+   */
+  private finishSubagent(
+    agentThreadId: string,
+    status: NonNullable<SubagentEvent['status']>,
+    error?: string
+  ): void {
+    const child = this.subagents.get(agentThreadId);
+    if (!child) {
+      return;
+    }
+    this.subagents.delete(agentThreadId);
+    this.rememberFinishedSubagent(agentThreadId);
+    this.clearSubagentTimers(child);
+    console.log(
+      `[CodexAppServer] subagent completed status=${status} path=${child.agentPath} thread=${agentThreadId}`
+    );
+    const finalText = child.finalText ? this.redact(child.finalText) : '';
+    this.emitSubagentEvent({
+      kind: 'completed',
+      sessionKey: child.sessionKey,
+      parentThreadId: child.parentThreadId,
+      agentThreadId,
+      agentPath: child.agentPath,
+      status,
+      ...(finalText ? { finalText } : {}),
+      ...(error ? { error } : {}),
+    });
+    void child.authority
+      .then(async (authority) => {
+        if (!authority) {
+          return;
+        }
+        await authority.release({ status, ...(error ? { error } : {}) });
+      })
+      .catch((releaseError: unknown) => {
+        console.warn(
+          `[CodexAppServer] subagent authority release failed thread=${agentThreadId}: ${
+            this.toError(releaseError).message
+          }`
+        );
+      });
+  }
+
+  /** FIFO-bounded identity of finished children; the oldest id is forgotten first. */
+  private rememberFinishedSubagent(agentThreadId: string): void {
+    this.finishedSubagents.add(agentThreadId);
+    while (this.finishedSubagents.size > MAX_FINISHED_SUBAGENTS) {
+      const oldest = this.finishedSubagents.values().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.finishedSubagents.delete(oldest);
+    }
+  }
+
+  private clearSubagentTimers(child: SubagentState): void {
+    if (child.ttlTimer) {
+      clearTimeout(child.ttlTimer);
+      child.ttlTimer = undefined;
+    }
+    if (child.graceTimer) {
+      clearTimeout(child.graceTimer);
+      child.graceTimer = undefined;
+    }
+  }
+
+  private emitSubagentEvent(event: SubagentEvent): void {
+    const emit = this.options.onSubagentEvent;
+    if (!emit) {
+      return;
+    }
+    try {
+      emit(event);
+    } catch (error: unknown) {
+      console.warn(
+        `[CodexAppServer] subagent event listener failed: ${this.toError(error).message}`
+      );
+    }
+  }
+
+  /** Every live child is reported interrupted and its authority released. */
+  private terminateSubagents(reason: Error): void {
+    const safe = this.toError(reason);
+    for (const agentThreadId of [...this.subagents.keys()]) {
+      const child = this.subagents.get(agentThreadId);
+      if (!child) {
+        continue;
+      }
+      child.abortController.abort(safe);
+      this.finishSubagent(agentThreadId, 'interrupted', safe.message);
+    }
+  }
+
+  /** A reset/restart drops the thread's context and interrupts its children. */
+  private discardSessionThreadState(sessionKey: string, reason: string): void {
+    const threadId = this.sessions.get(sessionKey)?.threadId;
+    if (threadId) {
+      this.threadContexts.delete(threadId);
+    }
+    for (const agentThreadId of [...this.subagents.keys()]) {
+      const child = this.subagents.get(agentThreadId);
+      if (!child || child.sessionKey !== sessionKey) {
+        continue;
+      }
+      child.abortController.abort(new Error(`Codex app-server ${reason}`));
+      this.finishSubagent(agentThreadId, 'interrupted', reason);
+    }
+  }
+
+  private handleSubagentToolRequest(
+    request: ServerToolRequest,
+    agentThreadId: string,
+    child: SubagentState,
+    data: JsonObject
+  ): void {
+    this.refreshParentTurnIdleTimeout(child);
+    // The child's authority is host-issued and asynchronous; its calls queue until it
+    // resolves rather than falling back to anything the parent held.
+    void child.authority.then((authority) => {
+      try {
+        const turnId = this.requiredToolString(data, 'turnId');
+        const callId = this.requiredToolString(data, 'callId');
+        const tool = this.requiredToolString(data, 'tool');
+        if (data.namespace !== null && typeof data.namespace !== 'string') {
+          throw new Error('Codex app-server tool call namespace must be null or a string');
+        }
+        const input = object(data.arguments);
+        if (!input) {
+          throw new Error('Codex app-server tool call arguments must be an object');
+        }
+        if (!authority) {
+          if (!child.authorityWarned) {
+            child.authorityWarned = true;
+            console.warn(
+              `[CodexAppServer] ${SUBAGENT_AUTHORITY_UNAVAILABLE} path=${child.agentPath} thread=${agentThreadId}`
+            );
+          }
+          this.replyToolError(request, `${SUBAGENT_AUTHORITY_UNAVAILABLE}: ${tool} was refused`);
+          return;
+        }
+        const bridge = authority.bridge;
+        if (!bridge.tools.some((definition) => definition.name === tool)) {
+          throw new Error(`Codex app-server tool call ${tool} was not advertised`);
+        }
+        this.dispatchSubagentToolCall(request, agentThreadId, child, bridge, {
+          turnId,
+          callId,
+          tool,
+          namespace: data.namespace ?? null,
+          input,
+        });
+      } catch (error: unknown) {
+        // A child's protocol error is reported to the child only: the parent turn it was
+        // spawned from may already have resolved, and there is nothing here to fail.
+        this.replyToolError(request, this.toError(error).message);
+      }
+    });
+  }
+
+  private dispatchSubagentToolCall(
+    request: ServerToolRequest,
+    agentThreadId: string,
+    child: SubagentState,
+    bridge: HostToolBridge,
+    call: {
+      turnId: string;
+      callId: string;
+      tool: string;
+      namespace: string | null;
+      input: JsonObject;
+    }
+  ): void {
+    const { turnId, callId, tool, namespace, input } = call;
+    const identity = JSON.stringify(
+      stableJson({ threadId: agentThreadId, turnId, tool, namespace, arguments: input })
+    );
+    const existing = child.toolCallResults.get(callId);
+    if (existing && existing.identity !== identity) {
+      throw new Error(`Codex app-server callId ${callId} had a conflicting request`);
+    }
+    let execution = existing?.execution;
+    if (!execution) {
+      execution = child.toolCallQueue
+        .then(async () => {
+          if (!this.isSubagentToolActive(request, agentThreadId, child)) {
+            return {
+              result: this.toolResult(false, 'Codex app-server tool call is no longer active'),
+              stop: false,
+              abortError: undefined,
+            };
+          }
+          try {
+            child.onToolUse?.(tool, {
+              nativeToolUseId: callId,
+              subagentThreadId: agentThreadId,
+              agentPath: child.agentPath,
+            });
+          } catch (error: unknown) {
+            console.warn(
+              `[CodexAppServer] subagent onToolUse failed: ${this.toError(error).message}`
+            );
+          }
+          let result: unknown;
+          try {
+            result = await bridge.execute({
+              callId,
+              name: tool,
+              input,
+              signal: child.abortController.signal,
+            });
+          } catch (error: unknown) {
+            result = { content: this.toError(error).message, isError: true };
+          }
+          const resultData = object(result);
+          if (
+            !resultData ||
+            typeof resultData.content !== 'string' ||
+            typeof resultData.isError !== 'boolean'
+          ) {
+            this.reportSubagentToolComplete(child, tool, callId, true);
+            return {
+              result: this.toolResult(false, 'Host tool returned a malformed result'),
+              stop: false,
+              abortError: undefined,
+            };
+          }
+          this.reportSubagentToolComplete(child, tool, callId, resultData.isError);
+          if (resultData.isError && resultData.content.includes(ENVELOPE_EXPIRED_MARKER)) {
+            // Expired authority is named, never silently downgraded to a plain failure:
+            // a child whose grant ran out must not read as work that merely did not apply.
+            return {
+              result: this.toolResult(
+                false,
+                `${SUBAGENT_AUTHORITY_EXPIRED}: ${resultData.content}`
+              ),
+              stop: false,
+              abortError: undefined,
+            };
+          }
+          return {
+            result: this.toolResult(!resultData.isError, resultData.content),
+            stop: resultData.stop === true || resultData.abort === true,
+            abortError: undefined,
+          };
+        })
+        .catch((error: unknown) => ({
+          result: this.toolResult(false, this.toError(error).message),
+          stop: false,
+          abortError: undefined,
+        }));
+      child.toolCallResults.set(callId, { identity, execution });
+      child.toolCallQueue = execution.then(
+        () => undefined,
+        () => undefined
+      );
+    }
+    void execution.then(({ result, stop }) => {
+      if (!this.isSubagentToolActive(request, agentThreadId, child)) {
+        if (this.child === request.child) {
+          this.replyToolError(request, 'Codex app-server tool call is no longer active');
+        }
+        return;
+      }
+      this.reply(request.child, { jsonrpc: '2.0', id: request.id, result });
+      if (stop && !child.stoppingCallIds.has(callId)) {
+        child.stoppingCallIds.add(callId);
+        child.abortController.abort(new Error('Codex app-server subagent tool stopped the run'));
+        void this.request('turn/interrupt', { threadId: agentThreadId, turnId }).catch(
+          (error: unknown) =>
+            console.warn(
+              `[CodexAppServer] subagent interrupt failed: ${this.toError(error).message}`
+            )
+        );
+      }
+    });
+  }
+
+  private reportSubagentToolComplete(
+    child: SubagentState,
+    tool: string,
+    callId: string,
+    isError: boolean
+  ): void {
+    try {
+      child.onToolComplete?.(tool, callId, isError);
+    } catch (error: unknown) {
+      console.warn(
+        `[CodexAppServer] subagent onToolComplete failed: ${this.toError(error).message}`
+      );
+    }
+  }
+
+  private isSubagentToolActive(
+    request: ServerToolRequest,
+    agentThreadId: string,
+    child: SubagentState
+  ): boolean {
+    return (
+      this.child === request.child &&
+      this.subagents.get(agentThreadId) === child &&
+      !child.abortController.signal.aborted
+    );
+  }
+
   private handleServerRequest(
     child: ChildProcessWithoutNullStreams,
     id: number | string,
@@ -1489,6 +2195,14 @@ export class CodexAppServerProcess {
     const data = object(request.params);
     const threadId = typeof data?.threadId === 'string' ? data.threadId : undefined;
     const turn = threadId ? this.turns.get(threadId) : undefined;
+    if (data && threadId && !turn && !expectedTurn) {
+      // A Codex-native child calls on ITS OWN thread id, which never holds a PendingTurn.
+      const child = this.subagents.get(threadId);
+      if (child) {
+        this.handleSubagentToolRequest(request, threadId, child, data);
+        return;
+      }
+    }
     if (!data || !turn || !turn.hostToolBridge || (expectedTurn && turn !== expectedTurn)) {
       this.replyDisabledTool(request);
       return;
@@ -1887,6 +2601,10 @@ export class CodexAppServerProcess {
 
   private failAll(error: Error): void {
     const safe = this.toError(error);
+    // Pending child tool calls abort exactly like a parent turn's.
+    for (const child of this.subagents.values()) {
+      child.abortController.abort(safe);
+    }
     for (const threadId of [...this.turns.keys()]) {
       this.failTurn(threadId, safe);
     }
@@ -1981,6 +2699,10 @@ export class CodexAppServerProcess {
     this.stderr = undefined;
     this.child = undefined;
     this.sessions.clear();
+    // The connection is gone, so every child is gone with it: say so once per child and
+    // release its authority instead of dropping the registry silently.
+    this.terminateSubagents(new Error('Codex app-server connection closed'));
+    this.threadContexts.clear();
     this.lateTurnStarts.clear();
     for (const [threadId, reconciliation] of this.turnStartReconciliations) {
       this.completeTurnStartReconciliation(threadId, reconciliation);

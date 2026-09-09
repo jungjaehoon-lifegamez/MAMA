@@ -22,20 +22,31 @@
  *    connector_event_index.
  *  - memory: `MAX(rowid)` over `decisions` - the brief's recency check
  *    (`mama_search` with no query, compare created_at). A save always inserts.
- *  - notices: the newest `agent_notices` entry. That ring is in-memory on the
- *    event bus, so this term resets on restart - which reads as a delta and
- *    buys one full run per boot, the same thing the repair gate's bootDirty
- *    does.
+ *
+ * REMOVED (owner decision 2026-09-09): the agent-notice term. That ring is
+ * in-memory on the event bus, so it reset on every restart, read as a delta and
+ * bought one full run per boot - the same boot-forcing the repair gate's
+ * bootDirty did, and the reason the owner's first message after a restart waited
+ * on a maintenance turn. A term that cannot survive a process boundary cannot be
+ * a delta signal. The cost is stated rather than hidden: an agent notice alone
+ * no longer wakes the board.
  *
  * NOT COVERED, stated rather than hidden: anything the board reads that moves
- * none of the four terms - report slots edited out of band, connector rows
- * deleted by retention, config/persona changes, and any future board input.
+ * none of the three terms - agent notices, report slots edited out of band,
+ * connector rows deleted by retention, config/persona changes, and any future
+ * board input.
  * Two independent escapes bound that blind spot: a run is never skipped while
  * the last completed full run has no PUBLISHED board behind it, and never
  * skipped once that run is older than DEFAULT_BOARD_FULL_MAX_STALENESS_MS.
  *
  * Availability beats the token saving: any broken or missing signal enqueues
  * as before and logs a warning.
+ *
+ * The gate also decides HOW the enqueued run works (owner decision 2026-09-09). When there is a
+ * PUBLISHED board behind the baseline, the run is a `delta`: it edits that board from the
+ * accumulated state, anchored to the board's publish time. Only the cases with no trustworthy
+ * published board to edit - no baseline, unpublished, unreadable signal, owner-forced rebuild -
+ * still rebuild from the sources.
  */
 
 import { createHash } from 'node:crypto';
@@ -86,15 +97,6 @@ export function memoryRecencyTerm(db: BoardDeltaDbLike): string {
   return `m:${String(row?.max_rowid ?? 0)}/${String(row?.n ?? 0)}`;
 }
 
-/** Agent-notice term, read from the in-memory event-bus ring. */
-export function agentNoticeTerm(notices: readonly { timestamp: number }[]): string {
-  let newest = 0;
-  for (const notice of notices) {
-    if (notice.timestamp > newest) newest = notice.timestamp;
-  }
-  return `n:${String(newest)}/${String(notices.length)}`;
-}
-
 /**
  * Fold the input terms into one comparable watermark. A change in ANY term
  * changes the result; nothing else about the string is meaningful to the gate.
@@ -126,11 +128,29 @@ export type BoardFullDeltaReason =
   | 'no-delta'
   | 'signal-unavailable';
 
+/**
+ * How the enqueued run must work.
+ *
+ * `full` rebuilds the board from the sources. `delta` UPDATES the published board from the
+ * accumulated state (owner decision 2026-09-09): a run that has a published baseline behind it
+ * already has the judgment of every event since - the owner-event turns wrote it into the task
+ * ledger - so re-reading raw connector data is re-judging what was already judged. Only the
+ * cases where there is no trustworthy published board to edit stay `full`.
+ */
+export type BoardRunMode = 'full' | 'delta';
+
 export interface BoardFullDeltaDecision {
   enqueue: boolean;
   /** Watermark to carry on the workorder; null when the signal was unusable. */
   watermark: string | null;
   reason: BoardFullDeltaReason;
+  /** `delta` only when a PUBLISHED baseline exists to edit; `full` otherwise. */
+  mode: BoardRunMode;
+  /**
+   * The published board's write time (epoch ms) the delta run is anchored to; null whenever
+   * the mode is `full` (there is nothing published to anchor on, or we could not read it).
+   */
+  anchorPublishedAt: number | null;
   warning: string | null;
 }
 
@@ -169,20 +189,63 @@ export function evaluateBoardFullDelta(input: BoardFullDeltaInput): BoardFullDel
       enqueue: true,
       watermark: null,
       reason: 'signal-unavailable',
+      // A run whose input signal we could not read cannot be anchored either: it rebuilds.
+      mode: 'full',
+      anchorPublishedAt: null,
       warning: err instanceof Error ? err.message : String(err),
     };
   }
+  /**
+   * Whether there is a published board to EDIT, as opposed to one to rebuild. The same
+   * evidence 'unpublished' rests on: a run that reached 'done' without writing the slots left
+   * nothing a delta turn could anchor on.
+   */
+  const published = baseline !== null && publishedAt >= baseline.createdAt;
+  const anchored = <R extends BoardFullDeltaReason>(reason: R): BoardFullDeltaDecision => ({
+    enqueue: true,
+    watermark,
+    reason,
+    mode: published ? 'delta' : 'full',
+    anchorPublishedAt: published ? publishedAt : null,
+    warning: null,
+  });
   if (baseline === null || baseline.watermark === null) {
-    return { enqueue: true, watermark, reason: 'no-baseline', warning: null };
+    return {
+      enqueue: true,
+      watermark,
+      reason: 'no-baseline',
+      mode: 'full',
+      anchorPublishedAt: null,
+      warning: null,
+    };
   }
-  if (publishedAt < baseline.createdAt) {
-    return { enqueue: true, watermark, reason: 'unpublished', warning: null };
+  // The INPUT delta is asked first, before the evidence-about-the-board reasons.
+  // 'unpublished' used to win here, and the caller requires in-memory dirt to agree with
+  // that one reason - so a real input delta arriving after an honestly-empty (and therefore
+  // permanently unpublished) full run was suppressed until the 2h staleness bound. A moved
+  // watermark is the strongest signal the gate has; it must not be reported as a weaker one.
+  if (baseline.watermark !== watermark) {
+    return anchored('delta');
+  }
+  if (!published) {
+    return {
+      enqueue: true,
+      watermark,
+      reason: 'unpublished',
+      mode: 'full',
+      anchorPublishedAt: null,
+      warning: null,
+    };
   }
   if (now() - baseline.completedAt >= maxStalenessMs) {
-    return { enqueue: true, watermark, reason: 'stale', warning: null };
+    return anchored('stale');
   }
-  if (baseline.watermark !== watermark) {
-    return { enqueue: true, watermark, reason: 'delta', warning: null };
-  }
-  return { enqueue: false, watermark, reason: 'no-delta', warning: null };
+  return {
+    enqueue: false,
+    watermark,
+    reason: 'no-delta',
+    mode: 'full',
+    anchorPublishedAt: null,
+    warning: null,
+  };
 }

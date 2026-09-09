@@ -148,6 +148,8 @@ export interface PromptOptions {
    * live sessions never pay the rebuild.
    */
   resumeInstructions?: () => Promise<string>;
+  /** Measurement only: host lane and brief state for the per-turn [prompt] log line. */
+  promptTelemetry?: { kind: string; brief: 'sent' | 'omitted' };
 }
 
 export type SessionPolicyStatus = 'missing' | 'compatible' | 'mismatch';

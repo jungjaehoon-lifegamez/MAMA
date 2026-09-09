@@ -18,6 +18,7 @@ import {
   buildWorkerTraceQueries,
   buildFullBoardTraceQueries,
   applyBoardRefreshVerdict,
+  NO_DURABLE_RESULT_REASON,
   LANE_OBLIGATED_TOOLS,
   buildPromotionAfterHook,
   boardCandidateReceiptVerdict,
@@ -124,6 +125,60 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate);
       expect(cleared).toEqual([88]);
     });
+
+    it('clears the same dirt for a verified DELTA run: it published from the accumulated state', () => {
+      const cleared: number[] = [];
+      const gate = {
+        completeVerifiedReconcile: () => undefined,
+        completeVerifiedFull: (generation: number) => cleared.push(generation),
+      };
+      const workOrder = {
+        id: 14,
+        workKind: 'board',
+        payload: {
+          attempts: 1,
+          mode: 'delta',
+          repairGeneration: 91,
+          noUpdateScope: 'full:91',
+          deltaAnchor: '2026-09-09T08:00:00.000Z',
+          deltaBasisRevision: 'gen-42',
+        },
+      } as unknown as WorkOrderRecord;
+
+      applyBoardRefreshVerdict(workOrder, false, { disposition: 'complete' }, gate);
+      expect(cleared).toEqual([]);
+      applyBoardRefreshVerdict(workOrder, true, { disposition: 'complete' }, gate);
+      expect(cleared).toEqual([91]);
+    });
+
+    it('fails a board attempt that produced neither an obligated trace nor the exact no-update receipt', () => {
+      const gate = {
+        completeVerifiedReconcile: () => undefined,
+        completeVerifiedFull: () => undefined,
+      };
+      const fullOrder = {
+        id: 4760,
+        workKind: 'board',
+        payload: { attempts: 1, mode: 'full', repairGeneration: 88, noUpdateScope: 'full:88' },
+      } as unknown as WorkOrderRecord;
+
+      // Live case (board#4760): 23 characters of prose, zero gateway calls.
+      expect(applyBoardRefreshVerdict(fullOrder, false, { disposition: 'complete' }, gate)).toEqual(
+        {
+          disposition: 'fail',
+          reason: NO_DURABLE_RESULT_REASON,
+        }
+      );
+      // A receipt failure is the more specific finding and keeps its own reason.
+      expect(
+        applyBoardRefreshVerdict(
+          fullOrder,
+          false,
+          { disposition: 'fail', reason: 'candidate receipt set is empty' },
+          gate
+        )
+      ).toEqual({ disposition: 'fail', reason: 'candidate receipt set is empty' });
+    });
   });
 
   describe('AC #1 (G1): worker trace queries see rows written by the REAL executor log path', () => {
@@ -183,6 +238,9 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       });
       executor.setReportPublisher(createReportPublisher(store, new Set()));
       const gate = new BoardRefreshGate({ initialGeneration: 100 });
+      // The gate is dirt and nothing else: a channel delta is what makes it dirty now
+      // that a boot no longer does (owner decision 2026-09-09).
+      gate.markChannelDirty('slack:C1');
       const workOrder = {
         id: 4704,
         workKind: 'board',
@@ -482,6 +540,102 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
     });
 
+    /**
+     * Review P1-1: the lane's channel key is shared by every order of the same kind, and a
+     * delegated attempt stays open for up to DELEGATED_ATTEMPT_TIMEOUT_MS - so a SIBLING
+     * order's traces used to discharge the attempt still waiting on its own child. The real
+     * channel-keyed query is used here, with the real executor writing the rows.
+     */
+    it('P1-1 binds a delegated re-verification to ITS OWN attempt: a sibling order discharges nothing', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      executor.setTaskLedger(new TaskLedger(new Database(':memory:')));
+
+      const attemptA = 9001;
+      const attemptB = 9002;
+      const tracesFor = (attemptId: number) =>
+        buildWorkerTraceQueries(sessionsDb, 'worker:board', undefined, attemptId);
+      const logs: string[] = [];
+      const hook = buildWikiAfterHook((line) => logs.push(line), { tracesFor });
+      const woA = { id: attemptA, workKind: 'wiki', payload: {} } as unknown as WorkOrderRecord;
+      const anchorA = tracesFor(attemptA).getTraceMaxId();
+
+      const runAs = async (channelId: string, workorderAttemptId: number) => {
+        const result = (await executor.execute(
+          'task_create',
+          {
+            title: `probe ${channelId}#${workorderAttemptId}`,
+            completion_criteria: 'probe complete',
+          } as never,
+          {
+            executionSurface: 'model_tool',
+            source: 'operator',
+            channelId,
+            workorderAttemptId,
+          } as never
+        )) as { success?: boolean };
+        expect(result.success).toBe(true);
+      };
+
+      // Sibling order B of the SAME kind, on the same lane channel, during A's window.
+      await runAs('worker:board', attemptB);
+      expect(hook(woA, 'NO_UPDATE', anchorA)).toEqual({
+        disposition: 'fail',
+        reason: 'said NO_UPDATE without recording it through contract_no_update',
+      });
+
+      // P2-6: the runtime's wake turn for the finished child runs on channel 'subagent'.
+      // It carries no attempt id, and even with one it is not the lane channel.
+      await runAs('subagent', attemptA);
+      expect(hook(woA, 'NO_UPDATE', anchorA)).toEqual({
+        disposition: 'fail',
+        reason: 'said NO_UPDATE without recording it through contract_no_update',
+      });
+
+      // Only A's OWN child bridge - lane channel plus A's attempt id - answers for A.
+      await runAs('worker:board', attemptA);
+      expect(hook(woA, 'PROMOTED 1', anchorA)).toEqual({ disposition: 'complete' });
+      // B is still owed its own evidence.
+      const woB = { id: attemptB, workKind: 'wiki', payload: {} } as unknown as WorkOrderRecord;
+      expect(tracesFor(attemptB).countObligatedTraceRowsSince(anchorA)).toBe(1);
+      expect(hook(woB, 'PROMOTED 1', anchorA)).toEqual({ disposition: 'complete' });
+    });
+
+    it('P2-6 pins the child trace channel and attempt id the verification reads', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      executor.setTaskLedger(new TaskLedger(new Database(':memory:')));
+      await executor.execute(
+        'task_create',
+        { title: 'child probe', completion_criteria: 'child probe stored' } as never,
+        {
+          executionSurface: 'model_tool',
+          source: 'operator',
+          channelId: 'worker:wiki',
+          workorderAttemptId: 7777,
+        } as never
+      );
+      const row = sessionsDb
+        .prepare(
+          `SELECT json_extract(details, '$.channel_id') AS channel,
+                  json_extract(details, '$.workorder_attempt_id') AS attempt
+             FROM agent_activity WHERE type = 'gateway_tool_call' ORDER BY id DESC LIMIT 1`
+        )
+        .get() as { channel: string; attempt: number };
+      expect(row.channel).toBe('worker:wiki');
+      expect(row.attempt).toBe(7777);
+    });
+
+    it('refuses a non-positive workorder attempt id', () => {
+      expect(() => buildWorkerTraceQueries(undefined, 'worker:wiki', undefined, 0)).toThrow(
+        /attempt id must be a positive integer/
+      );
+    });
+
     it('missing sessions db degrades to zeros (bracket reads as unverified, never throws)', () => {
       const queries = buildWorkerTraceQueries(undefined, 'worker:board');
       expect(queries.getTraceMaxId()).toBe(0);
@@ -527,7 +681,7 @@ describe('Story S2-T3: extracted workorder hooks', () => {
         traceCount === null
           ? buildPromotionAfterHook(events)
           : buildPromotionAfterHook(events, {
-              traces: tracesReturning(traceCount),
+              tracesFor: () => tracesReturning(traceCount),
               log: (line) => lines.push(line),
               onUnverified: (note) => unverified.push(note),
             });
@@ -558,8 +712,8 @@ describe('Story S2-T3: extracted workorder hooks', () => {
         },
         {
           // One obligated trace (the contract_no_update call), zero write traces.
-          traces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 },
-          writeTraces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 0 },
+          tracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 }),
+          writeTracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 0 }),
           log: (line) => lines.push(line),
         }
       );
@@ -609,7 +763,10 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       const lines: string[] = [];
       const unverified: string[] = [];
       const hook = buildWikiAfterHook((line) => lines.push(line), {
-        traces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => traceCount },
+        tracesFor: () => ({
+          getTraceMaxId: () => 0,
+          countObligatedTraceRowsSince: () => traceCount,
+        }),
         onUnverified: (note) => unverified.push(note),
       });
       return { lines, unverified, hook };

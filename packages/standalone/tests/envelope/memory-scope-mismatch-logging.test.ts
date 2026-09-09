@@ -828,7 +828,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
 
     const result = await executor.execute(
       'report_publish',
-      { slots: { daily: '<h1>Daily</h1>' } } as unknown as GatewayToolInput,
+      { slots: { daily: '<div class="report-card">Daily</div>' } } as unknown as GatewayToolInput,
       {
         agentId: 'dashboard',
         source: 'telegram',
