@@ -108,7 +108,7 @@ multi_agent:
 | Timeout behavior   | Per request                    | Confirmed turns are isolated; unreconciled starts restart the process |
 | Compaction         | Managed by MAMA session policy | Managed by Codex app-server                                           |
 
-On a new Codex conversation, MAMA creates a thread with the current persona and runtime policy.
+On a new Codex conversation, MAMA creates a thread with the current system prompt and runtime policy.
 After a MAMA daemon restart, it resumes the durable thread and sends a fresh runtime bootstrap on
 the first resumed turn so current policy and tool context are not stale. An explicit fresh session
 removes the old registry entry and starts a new thread.
@@ -186,7 +186,11 @@ interface AgentConfig {
   model: string;
   timeout: number;
 
-  effort?: 'low' | 'medium' | 'high' | 'max'; // Claude only
+  // claude: adaptive thinking ('max' requires claude-opus-4-6)
+  // codex: managed `model_reasoning_effort` (low | medium | high | xhigh), written into the
+  //        managed `$CODEX_HOME/config.toml`, which MAMA regenerates at every launch — editing
+  //        that file by hand is overwritten
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   use_persistent_cli?: boolean; // Claude only
 
   codex_home?: string;
@@ -209,7 +213,7 @@ interface AgentConfig {
   `codex-mcp` values are migrated.
 - **Thread policy mismatch:** the app-server process rejects the stale durable thread without
   changing its registry entry. The MAMA AgentLoop then performs one bounded reset, rebuilds the
-  complete current persona/rules/tool prompt, and retries on a fresh thread. A successful recovery
+  complete current rules/tool prompt, and retries on a fresh thread. A successful recovery
   emits no user-facing error callback. If the reset retry fails, MAMA reports one normalized error;
   repeated retries are not attempted, and the replacement pool entry is invalidated so the next
   request rebuilds a full prompt instead of persisting minimal resume instructions. Opt-in legacy

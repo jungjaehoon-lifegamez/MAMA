@@ -2,6 +2,146 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.52.0] - 2026-09-09
+
+This release is the first one we consider usable by people other than the author. The owner
+runtime no longer waits on its own background work, corrections stick, reports continue from
+the accumulated record, and the dashboard renders again. Every item below was verified on a
+live installation (see docs/development/intent-checks.md, entries dated 2026-09-08 and
+2026-09-09) before being written here.
+
+### Added
+
+- **Corrections become procedures.** Owner corrections given in chat are stored with
+  `procedure_update` as scoped, versioned procedures (new `operator_procedures` tables in
+  `operator/triggers.db`; immutable revisions with the original instruction, reason, and
+  evidence). `procedure_list` / `procedure_read` / `procedure_retire` / `procedure_observe`
+  complete the set. Relevant procedures are offered to the agent as `procedure_hints` on the
+  first turn of a thread (≤1,200 chars) and on later turns only when new or revised (≤600 chars),
+  with per-thread memory so the same hint is not repeated. The console brief is corrected with
+  `console_brief_update` `replace`/`retire` against an exact target and hash; the append form is
+  retired. Guide: docs/guides/procedure-corrections.md.
+- **Delegated background work.** Scheduled board, wiki, and temporal work orders are delegated to
+  the model runtime's native subagents (Codex `spawn_agent`). The host observes the spawn through
+  a dedicated `onSubagentStart` callback (Codex 0.153.x announces it only as `subAgentActivity`),
+  records a `delegated` work-order state, verifies the child's durable writes against the
+  attempt's own snapshot, times out after 30 minutes, and wakes the owner with the child's result
+  (`[subagent] wake owner`). Each child gets its own model run (linked by `parent_model_run_id`),
+  its own 1,800-second authority envelope, and the unattended tool projection. Orphaned child runs
+  are failed at boot.
+- **Board delta mode.** When a published board baseline exists, the scheduled board order runs in
+  `delta` mode: the contract names the anchor (last publish time and basis revision) and the
+  sources (`board_read`, `changes_read` since the anchor, changed task rows); raw connector reads
+  are not part of the turn. A full rebuild happens only with no baseline, an unpublished board,
+  or an explicit refresh. A verified delta run becomes the next baseline. Log lines:
+  `[stage2] board delta enqueued` / `delta_verified`.
+- **Prompt telemetry.** One line per turn: `[prompt] thread=… kind=… chars=… brief=sent|omitted
+  reminder=sent|omitted`, so prompt growth can be measured from daemon.log.
+- `report_publish` now returns `warnings` (and the full contract once) when a slot uses none of
+  the board's structural classes; the publish still succeeds. Daemon log: `[board] slot …
+  published without the board vocabulary`.
+- Tests: `tests/agent/tool-registry-parity.test.ts` pins `report_publish` parity between the
+  gateway registry and the code-act HostBridge registry and freezes the 61 tools whose
+  descriptions still differ (todo).
+
+### Changed
+
+- **Fixed policy once, deltas per turn.** The composed owner policy is re-anchored through
+  `thread/resume { baseInstructions }` for every owner lane instead of being replayed as a
+  14-15K-char user-text reminder after each restart. The console brief is sent once per thread
+  and again only when its hash changes. The owner-event header keeps only batch-specific text;
+  its fixed completion contract moved into the standing `OWNER_RUNTIME_RULES`. Measured per-turn
+  host text: owner-event 6.8K → 1K chars, scheduled 3.9K → 0.9K.
+- **Subtraction of persona-era prompt material.** SOUL/IDENTITY/USER loading, persona scripts,
+  the router's fixed "Be concise / Greet" text, the operating-discipline block, the learning
+  prefix/observer modules, and the 7K-char scheduled-turn scripts are gone. Scheduled turns carry
+  a two-sentence preamble, a short result contract, and the delegation shape. The workspace
+  CLAUDE.md shrinks to workspace authority only (~300 chars). Owner rules are a 548-char block.
+- **Report and dashboard assembled from the record.** The builtin skill `heartbeat-report`, whose
+  keywords hijacked chat report requests into raw channel collection, is removed from the shipped
+  templates (an existing `~/.mama/skills/heartbeat-report.md` must be deleted once by hand).
+  Measured: a chat "full report" went from 268s / 36 tool calls (raw reads, two
+  `context_compile`) to 54s / 10 calls (board_read, changes_read, task rows).
+- **Board card vocabulary lives in the tool contract.** The slot shape and class vocabulary
+  (`report-summary`, `report-card`, `report-section-title`, `report-table`, badges) are the
+  `report_publish` description in both registries (single source
+  `buildReportPublishToolContract()`), reached through `tool_describe` at publish time. Badges
+  alone no longer count as using the vocabulary.
+- **`tool_search` matches tokens.** Every whitespace-separated token must appear in name,
+  description, or category; exact name matches rank first. Previously the whole query had to
+  appear as one phrase, which returned nothing for 46% of multi-word queries in one day.
+- **Code-Act contract states the exec-side `await` rule.** Inside the Codex exec tool,
+  `tools.code_act(...)` returns a Promise; the previous "do not use await" wording (meant for the
+  inner script) caused 51 un-awaited calls in one day, each a 1-2.5 minute stall.
+- Owner policy no longer recommends `fork_turns: "none"` for subagents: a child spawned without
+  the history fork loses the parent's host tools (measured on codex-cli 0.153.4).
+- Scheduled and owner-event contracts no longer contain the "do not describe what another agent
+  should do" clause, which argued against delegation.
+- Unattended turns block gateway `Bash` and `Write` by name (`UNATTENDED_BLOCKED_TOOLS`); only
+  the owner's 1:1 chat turn holds them.
+- Board attempts with neither an obligated trace nor an exact-scope no-update receipt fail as
+  `no-durable-result` instead of completing. Work-order verification queries are bound to the
+  attempt (sibling orders can no longer satisfy them).
+- `console_brief_update` `append` is refused with a pointer to `procedure_update`.
+- The recovery journal render is bounded (4 entries, 400-char responses). Boot no longer forces
+  work orders; the board decision logs its reason (`[stage2] board full enqueued: <reason>`).
+- Telegram formatting rules are part of the session policy rather than repeated per report.
+
+### Fixed
+
+- **Restart no longer poisons occurrences.** An interrupted run left a `native_run|unknown` row in
+  the owner action ledger, and `hasUnsafeReplayEffects` treated that admission marker as an
+  unproven effect, blocking every replay of the occurrence (the report leg died after a restart;
+  six owner-event batches had been killed the same way). The admission marker alone never blocks
+  replay; real effect rows still do.
+- **Consumer wedge after a delegated order.** The ledger-managed `delegated_at` payload key was
+  re-validated with the enqueue validator on stored rows, so a delegated-and-done board order sat
+  in the unresolved set and the serial consumer drained nothing. Stored rows are now read through
+  `publisherPayloadOfStoredWorkOrder`; enqueue still rejects ledger keys.
+- `[experience] fresh=` was false on a new thread; hints now treat a new or resumed-after-restart
+  thread as fresh.
+- A correction answered with "applied" and zero tool calls; the standing rules now state that an
+  owner correction is stored with `procedure_update` in the turn it arrives, and a completion
+  claim without a durable write is logged as `[evidence] completion claim without a durable write`.
+- Codex reasoning effort is configured by `agent.effort` in `~/.mama/config.yaml`; the managed
+  `~/.mama/.codex/config.toml` is regenerated at launch and must not be edited directly. The
+  default stays `high`.
+
+### Removed
+
+- `learning-context.ts`, `learning-read.ts`, `learning-markers.ts`, `turn-observer.ts` and their
+  tests; `appendConsoleBriefLesson`; boot-forced work orders; the `heartbeat-report` template.
+
+### Documentation
+
+- README rewritten as a technical manual; the GitHub Pages landing mirrors it; `docs/index.md` drops the v0.39.5 status text. New:
+  docs/guides/procedure-corrections.md, docs/development/one-mama-learning-anchor.md,
+  docs/development/2026-09-08-one-mama-autonomy-audit.md. Root `INTENT.md` and the intent
+  check workflow (docs/development/intent-workflow.md, intent-checks.md) are the release gate.
+
+### Upgrade notes
+
+- Delete `~/.mama/skills/heartbeat-report.md` once; the sync no longer recreates it.
+- Existing `~/.mama/CLAUDE.md` persona text is no longer loaded; operating rules belong in
+  procedures (`procedure_update`) and the console brief.
+- Reasoning effort: set `agent.effort` in `~/.mama/config.yaml` (`low|medium|high|xhigh|max`).
+- Dashboard slots published before this release may render as plain text until the next
+  publish uses the board vocabulary.
+
+## mama-core [2.4.1] - 2026-09-09
+
+### Added
+
+- `listToolTraces` and `readToolTrace`: scoped, cursor-paged tool-trace reads for evidence and
+  diagnostics. Migration 068 adds `diagnostic_json`, `evidence_json`, `catalog_revision`,
+  `owner_scope`, `project_id`, `channel_id` to `tool_traces` with scope/recency indexes.
+
+### Fixed
+
+- Migration runner reconciles 068 idempotently on databases where the runtime MetricsStore had
+  already added `project_id`/`channel_id`, and repairs databases stamped 68 by the former
+  duplicate-column skip, instead of rolling the new columns back.
+
 ## mama-os [0.51.2] - 2026-09-08
 
 ### Fixed

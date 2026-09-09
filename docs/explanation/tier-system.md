@@ -312,7 +312,7 @@ Two things the old version of this page got wrong:
 - **Tier 2 and Tier 3 defaults are byte-identical.** Downgrading an agent from 2 to 3 changes nothing by default. Differences only come from an explicit `tool_permissions` block on the persona.
 - **These are Claude-Code-native tool names, not MAMA gateway tools.** Memory writes (`mama_save`, `mama_update`) are NOT granted by tier; they require an explicit `tool_permissions` allowlist, and gateway-tool authority is governed separately by per-run envelopes (see the generated catalog `packages/standalone/src/agent/gateway-tools.md`).
 
-Delegation (`can_delegate`) is accepted and persisted by the API but **inert**: the `delegate` tool is not dispatchable - its executor was deleted with the multi-agent delegation path.
+Delegation (`can_delegate`) is accepted and persisted by the API but **inert**: the host `delegate` tool and its executor no longer exist. MAMA delegates through the model runtime's native subagents instead.
 
 Tier 3 agents cannot opt into Code-Act and fall back to normal tool-call mode. The `/api/code-act` HTTP endpoint defaults to Tier 2 for Code-Act-enabled agents, but can be forced into read-only injection with `MAMA_CODE_ACT_READ_ONLY=true`.
 

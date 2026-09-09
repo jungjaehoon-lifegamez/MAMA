@@ -1,5 +1,7 @@
 # Functional Requirements Mapping
 
+> **ARCHIVED:** historical requirement mapping for v1.0. It does not describe the current runtime.
+
 **Document Purpose:** This document maps all features in MAMA to their corresponding Functional Requirements (FRs) defined in the [Product Requirements Document (PRD)](../project/prd.md).
 
 ---
