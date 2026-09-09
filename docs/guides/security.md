@@ -75,7 +75,6 @@ resolved per message by trust checks — never by static configuration:
   runtime and flagged as MAJOR by the deterministic code audit.
 - **`allowed_chats` is therefore the owner trust anchor** — every listed chat's
   DM gets owner powers (artifact reads: `board_read`, `audit_findings_read`,
-  work issuance: `report_request`;
   memory writes: `mama_save`, `mama_update`; task creation). List only chats
   you trust with owner-level access. An empty allowlist disables the owner
   console entirely and startup warns loudly that inbound is open.
@@ -1128,7 +1127,7 @@ User's Claude Code Session         MAMA OS Agent
 cwd: ~/project/                    cwd: ~/.mama/workspace/
 CLAUDE.md: ~/CLAUDE.md ✅          CLAUDE.md: none (blocked by git boundary)
 plugins: ~/.claude/plugins/ ✅     plugins: ~/.mama/.empty-plugins/ (empty directory)
-system-prompt: none                system-prompt: persona+skills+tools (injected once)
+system-prompt: none                system-prompt: rules+skills+tools (injected once)
 ```
 
 ### Isolation Mechanisms
@@ -1144,7 +1143,7 @@ system-prompt: none                system-prompt: persona+skills+tools (injected
 
 MAMA includes everything the managed runtime needs in `--system-prompt`:
 
-- Runtime identity and capability instructions (including a legacy persona when configured)
+- Runtime identity and capability instructions (the owner runtime loads no persona files)
 - Skill catalog
 - Gateway tool definitions
 

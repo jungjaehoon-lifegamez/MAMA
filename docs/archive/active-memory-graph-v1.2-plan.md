@@ -1,5 +1,7 @@
 # MAMA v1.2: Active Memory & Connected Reasoning Architecture (AX Focused)
 
+> **ARCHIVED:** historical plan. It does not describe the current runtime; see [Architecture Overview](../explanation/architecture.md).
+
 ## 1. Philosophy: From UX to AX (Agent Experience)
 
 MAMA v1.2 shifts the focus from User Experience (UX) to **Agent Experience (AX)**.

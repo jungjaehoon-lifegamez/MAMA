@@ -1,27 +1,18 @@
 # MAMA Documentation
 
-**MAMA OS:** The work agent behind your messenger
 **Navigation Hub**
 
-> One accountable MAMA remembers the Case, does authorized work, and returns verified artifacts.
+MAMA is a memory store that runs on your own computer, and an AI assistant that works from it. It
+keeps what flows through your connected messengers, mail, documents, and calendars as-is, and the
+assistant reads that record to tell you what changed and do what you ask.
 
-The contract-first memory plugin remains a core substrate: it tracks why a decision was made and
-prevents later coding sessions from silently breaking that reasoning.
+## Start here
 
-MAMA exposes one accountable work agent through existing messengers. A human team can submit
-requests and files, continue scoped Cases, and receive verified artifacts without selecting or
-coordinating named AI personas. Current releases are owner-first; the complete human-team grant
-and Work Case contract is the v1 direction.
-
-## ✨ Key Strengths
-
-- **Contract-first coding:** PreToolUse searches contracts before edits and blocks guessing when none exist.
-- **Grounded reasoning:** Reasoning Summary is derived from actual matches (unknowns are explicit).
-- **Task-scoped context:** Context Compile turns broad evidence into selected/rejected/missing
-  packets with trusted `context_packet_id` provenance.
-- **Persistence across sessions:** Contracts saved in MCP prevent schema drift over time.
-- **Low-noise guidance:** Per-session long/short output reduces repetition.
-- **Safer outputs:** Prompt-sanitized contract injection reduces prompt-injection risk.
+1. [Getting Started](tutorials/getting-started.md) - First-time setup and basic usage
+2. [Standalone Setup](guides/standalone-setup.md) - Run the always-on assistant
+3. [Gateway Configuration](guides/gateway-config.md) - Connect Telegram, Slack, Discord
+4. [Correcting procedures](guides/procedure-corrections.md) - Turn a correction into a standing rule
+5. [Security](guides/security.md) - Boundaries, allow-lists, and remote access
 
 ## Quick Links
 
@@ -165,12 +156,4 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.39.5 with MAMA Core v2.2.2 — Claude CLI, Codex app-server, and Cline Hub are equivalent supported
-backends with backend-owned durable context, role-scoped Code-Act projection, bounded recovery,
-and explicit non-replayable mutation outcomes. MAMA itself owns connector-event work as
-stateless fresh runs per batch on durable per-channel lane keys; configured private connectors
-remain installation-local and are never promoted into generic catalogs or prompts. Verified human
-members are the Phase 2b release candidate: one host-computed read scope per turn, limited to their
-private memory and explicit owner grants across Telegram, Slack, and Discord. Installation, restart
-validation, and a real human-member canary remain before that candidate is called shipped.
-**Last Updated:** 2026-08-28
+**Last Updated:** 2026-09-09

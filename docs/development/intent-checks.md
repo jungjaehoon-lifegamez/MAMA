@@ -257,3 +257,241 @@
   운영 sessions DB 읽기 전용으로 실제4704/276781 기록을 빌드된 검증기에 적용: 기존0건/수정1건.
 - 판정: 좁은 완료 검증 버그 수정으로 부합. 실제 실행 확인은 유지했다. 코드 수정/검증 완료이며
   설치·재시작·새 Telegram 검증·실제 지연 개선과 v1 전체 완료는 아니다.
+
+## 2026-09-08 — 교정·절차·트리거 공통 실행 후보
+
+- 인텐트: v6의 오너 교정·반복 작업 결과 → 조건 있는 재사용 절차 → 다음 실제 업무.
+  I-01/I-02/I-05/I-06, TG-01/TG-03/TG-04/TG-05/TG-06에 연결한다.
+- 변경: 기존 operator DB의 scope별 불변 절차 revision과 조회·교정·폐기·관측 도구,
+  운영 브리프 부분 대체 및 충돌 보존, legacy trigger 연결, 대기 후 admission 재확인,
+  공통 owner 역할의 요청형 report_publish 노출. 사용 조건과 비적용 조건은 에이전트가
+  판단하며 저장·선택·결과 관측을 실제 학습 성공과 구분한다.
+- 코드 근거: 전체 `pnpm test` 작업 7개 성공, standalone 5,792 통과/7 제외.
+  마지막 최초 브리프 읽기 결함은 runtime 회귀 테스트 RED 확인 후 관련 38개 GREEN.
+  변경 TypeScript 39개 ESLint 및 Prettier 통과. 독립 리뷰의 범위·대기 admission·projection
+  복구·legacy 연결 지적을 수정하고 마지막 두 한정 재검토 CLEAR.
+- 실제 모델 근거: 격리된 AgentLoop/GatewayToolExecutor/ProcedureStore와 고정 합성 입력.
+  보고용 규칙의 오해를 재현한 뒤 오너 교정으로 r1→r2 변경, 원지시·scope 유지,
+  새 대화의 보고 적용과 일반 대화 비적용 확인. 운영 메신저나 실자료 전달 증거는 아니다.
+- 파일 업무의 첫 관측: A는 원문 항목을 의미상 보존하여 충족, B는 완료 항목의 근거
+  2개를 누락하여 실패. 단일 실패 관측 후 절차를 유지한 결과는 음성 사례이며 자율 개선
+  성공이 아니다. 추가 C 파일은 전체 항목과 근거를 보존하여 충족했다. 반복 실패가
+  확보되지 않아 추가 관측·학습 후 heldout 및 다른 모델 전이는 실행하지 않았다.
+- 증거 위치: 로컬 `.superpowers/validation/correction-activation/live/validation-summary.json`,
+  `usage-timing-summary.json`, `report-revision-history.json` 및 원본/실제 산출물.
+  총 9회 실제 모델 실행 합계 537.651초, 보고된 입력 592,701/출력 9,549 tokens.
+  입력 사용량에는 반복 컨텍스트가 포함될 수 있다. 전달 단계·운영 p95 측정값은 아니다.
+- 현재 판정: 기반 코드와 오너 교정 사례 부분 확인. 자율 개선·교체 모델의 비보고 산출물,
+  `pnpm build` 2개 작업도 성공했다. 패키지 설치·실운영 반영은 미확인. 아직 릴리즈하지 않았으며 v1 전체 완료가 아니다.
+
+## 2026-09-08 — 교정 후보의 로컬 운영 설치 (공개 릴리즈 전 개밥먹기)
+
+- 오너가 로컬 후보 설치를 명시 승인했다. 공개 릴리즈와 로컬 실사용 평가를 분리한다.
+- 기존 `0.51.2-local.1` 복구 패키지, SQLite 11개와 설정·운영 브리프를 백업한 뒤
+  `0.52.0-local.1`을 설치했다. 로컬 패키지의 workspace 의존성을 실제 mama-core 2.4.0으로
+  해석하여 설치했고, 설치 파일 1,495개의 해시가 후보 아카이브와 일치했다.
+- `mama status` exit 0: CLI/runtime 모두 `0.52.0-local.1`, PID 18800, Running,
+  Health 98/100. Telegram 연결, procedure 테이블 5개 생성, Operator JS HTTP 200 및
+  설치 파일 일치 확인. 기존 운영 브리프 원문은 백업과 바이트 단위 동일하다.
+- 재시작 로그에서 위키 작업 #4728의 effect reconciliation 전 replay 보류를 관측했다.
+  중복 효과를 강제 재실행하지 않았다. Calendar page cap 20 경고는 이전 운영 로그에도 있다.
+- 증거: 로컬 `.superpowers/validation/correction-activation/local-install.json`.
+  복구 백업은 `~/.mama/backups/pre-correction-local-20260908-214526/`에 보관한다.
+- 판정: 로컬 설치·연결 확인 완료. 이후 실제 Telegram 요청·교정·후속 보고/파일 업무에서
+  적용 범위와 지속성을 검증할 수 있다. 합성 운영 메시지는 전송하지 않았으며 실사용에서의
+  자율 학습·재시작 후 행동 개선은 아직 미입증이다. PR/머지/공개 릴리즈는 미실행이다.
+
+## 2026-09-08 — 원마마의 자율 수행 경로 재조사
+
+- INTENT v6, I-01/I-02/I-06/I-07 및 TG-03/TG-04/TG-05/TG-06 기준으로 설치 후보를 조사했다.
+- 오너가 재확인한 완료 기준은 관련 상황의 작은 힌트 → 자료의 점진 조사 → 판단·수행 →
+  실제 결과 관측 → 근거 있는 교정 → 다음 상황의 개선된 힌트·행동이라는 순환이다.
+  호스트가 정한 행동 순서를 잘 실행하는 것을 자율 에이전트의 성공으로 간주하지 않는다.
+- 예약 실행의 교훈 저장 억제 지시, 병행 policy/lesson 작성자, 독립적인 프롬프트 조립,
+  결과 관측의 분리, 무관한 알림 혼입과 장시간 배경 작업의 직접 요청 차단을 확인했다.
+- 실제 4회 실행에서 Code-Act 59회 중 탐색/설명 포함 36회, 도구 실행 합계 4.633초.
+  최소 힌트 조건의 동일 데이터 비교는 아직 미수행이며 원마마 완료로 선언하지 않는다.
+- 상세 근거와 폐기·통합 방향: [자율 수행 조사](2026-09-08-one-mama-autonomy-audit.md).
+  조사 중 운영 지침 수정·프로세스 재시작·추가 모델 실험은 하지 않았다.
+
+## 2026-09-08 — 경험 순환 앵커로 수정안 재평가·재계획
+
+- INTENT v6의 목적은 충분하며 추가 기능 목록으로 확장하지 않았다. [학습 앵커](one-mama-learning-anchor.md)를
+  문서화하고 실제 운영에서 확인한 실패를 완료 판정의 기준으로 삼았다.
+- 기존 교정 계획은 scope/revision/CAS/projection 기반으로 재분류했다. 배경 학습 억제,
+  키워드 정책 작성자, 병행 프롬프트 조립은 폐기/통합 대상으로 명시했다.
+- 후속 계획: 로컬 .superpowers/plans/2026-09-08-one-mama-experience-loop-plan.md.
+  Code-Act 오류 경험의 재사용을 첫 수직 사례로 삼고, 보고 교정·비보고 파일 작업·비적용·
+  담당 교체 및 최소 힌트 비교를 별도 실제 결과로 검증한다.
+- 이번 작업은 재평가와 계획 작성이다. 운영 코드 변경·재시작·새 모델 행동 실험·공개 릴리즈는 하지 않았다.
+
+## 2026-09-09 — 공통 힌트·실행 근거 연결 구현 후보
+
+- INTENT v6 및 원마마 학습 앵커, I-01/I-02/I-06/I-07, TG-03/TG-04/TG-05/TG-06.
+- 기존 tool_traces에 scope·상세 근거·진단·catalog revision을 additive migration 068로 연결했다.
+  별도 경험 DB나 자동 액션표를 만들지 않았다. 목록/상세/페이지 조회는 권한 범위 안에서 동작한다.
+- AgentLoop admission에서 최근 실행 근거 refs와 설치 스킬 설명/원문 위치를 제공한다.
+  키워드 일치로 스킬 본문 전체를 지시처럼 주입하던 대화·이벤트 경로를 제거했다.
+- 예약 실행의 교훈 저장 억제와 short legacy intro의 추가 전용 문구 잔존을 수정했다.
+  운영 원본 파일을 대신 편집하거나 보고 정답을 하드코딩하지 않았다.
+- 실제 DB/GWE 기본 API 통합에서 오류 input/result 보존, 성공 호출, 재개 후 힌트,
+  authority 인자 위조 거절, evidence 읽기의 재귀 복제 방지, DB 조회 실패시 독립 실행 유지,
+  skill catalog/execution 목록의 공개 도구 호출을 확인했다. 관련 137개 테스트 통과.
+- 한정 리뷰 지적(문자열 credential·요약 노출, 선택적 조회의 실행 차단, 과거 근거 재복제,
+  kind 인자 계약 누락)을 수정하고 재검토했다. 전체 테스트와 설치 검증은 다음 기록으로 확정한다.
+- 경계: 현재 힌트는 최근 실행 후보와 스킬 카탈로그이며 의미 기반 관련성 검색·기존 policy/lesson
+  작성자 통합·긴 보드 행동 대본 정리는 남아 있다. 실제 학습 전이/반복 개정 감소/속도 개선은
+  아직 입증하지 않았다. 저장·통합 테스트를 에이전트 자율 개선 완료로 세지 않는다.
+
+## 2026-09-09 — 실행 근거/스킬 힌트 후보 로컬 설치 및 운영 스키마 복구
+
+- 설치 후보: mama-os 0.52.0-local.3 + mama-core 2.4.1-local.2. 공개 릴리즈가 아니다.
+- 전체 사전 검증: pnpm test 7개 작업 성공, standalone 5,809 통과/7 제외, pnpm build 2개 작업 성공.
+- 첫 설치에서 migration068이 운영 MetricsStore의 기존 project_id/channel_id와 충돌했다.
+  기존 runner가 전체 transaction을 rollback한 뒤 version68을 표시해 새 필드가 없는 상태였다.
+  상태조회는 정상이어도 실제 DB 필드 검증이 실패했으므로 서비스를 중지하고 복구했다.
+- core migration68 전용 idempotent reconciliation으로 누락 컬럼/인덱스를 같은 transaction에서
+  보충·검증한다. 이미68인 부분 적용 DB도 복구하고 기존 데이터를 유지한다. 운영 DB 복사본에서
+  실제 복구 및 trace row count 보존 확인. runner12+기타 migration/trace31 테스트 통과,
+  한정 독립 리뷰 차단 사항 없음. 후속 전체 검증 결과는 별도 로그로 보관한다.
+- 최종 설치 파일 검증: standalone 1,499개/core286개 해시 일치. PID13044, Running,
+  CLI/runtime0.52.0-local.3, Health98/100, Telegram연결. 실제 DB6필드/2인덱스와 OperatorJS
+  HTTP200/설치파일 일치 확인. 기존 운영 브리프는 백업과 바이트 동일.
+- 백업: ~/.mama/backups/pre-experience-local-20260909-011704/ (복구패키지·DB11개·설정·브리프·스킬).
+  증거: .superpowers/validation/experience-loop/local-install.json,
+  /private/tmp/mama-schema068-repair-proof.json, /private/tmp/mama-experience-repaired-runtime.log.
+- 현재 실제 학습 전이, 보드 반복 감소, latency 개선은 아직 미입증이다. 새로 발생한 실행의
+  근거를 수집하며, legacy unscoped trace를 임의로 owner에게 귀속시키지는 않는다.
+
+- 후속 운영 관측: 새 버전의 실제 첫 실행에는 skill hints, 다음 실행에는 skill hints와
+  이전 execution refs가 함께 주입됐다. scoped 상세 근거 10건을 읽기 전용으로 확인했다.
+  전달 경로가 실운영에서 이어진 근거이며, 에이전트의 경험 수정·행동 개선까지 증명한 것은 아니다.
+- 복구 후 모노레포 전체 재검증도 pnpm test 7개 작업 모두 성공했다.
+
+## 2026-09-09 — 세션 인지 procedure 힌트 (카게무샤 같은세션 힌트 재사용, 미설치)
+
+- INTENT v6, 원마마 학습 앵커, I-01/I-06/I-07, TG-03/TG-04/TG-05. 체크포인트 다음 단계 3(카게 재사용).
+- 카게무샤 agent-loop.ts buildBrainContext/memory-hint-policy.ts를 코드로 대조했다. 재사용한 것: 현재 메시지
+  기반 상위 3건, 같은 세션 ≤600자·재개/무상태 ≤1200자, 같은 힌트의 같은 세션 반복 억제, 기억 100개 상한.
+  복사하지 않은 것: 자동화 채널 힌트 배제, 트리거 문구 정규식, 강제 업무 대본.
+- 변경: 공통 admission의 매 턴 주입(procedure 카탈로그 20건 JSON, 설치 스킬 8건, 최근 trace 12건)을 제거하고
+  turn 1 프롬프트 직전(백엔드 세션 probe 이후, `fresh = !shouldResume`)에 스레드별 `<procedure_hints>`만 붙인다.
+  procedure 카탈로그를 세션 정책 fingerprint에서 제외해 procedure 교정이 다음 턴 스레드를 리셋하지 않는다.
+  스킬 목록은 시스템 프롬프트 1회(오너는 source 경로 포함), 실행 근거는 도구 결과의 experience_ref와
+  experience_read로만 접근한다. 세션 리셋 재시도 경로는 새 thread id로 fresh 힌트를 재계산한다.
+  파일: experience-hints.ts(신규), procedure-runtime.ts, gateway-tool-executor.ts, agent-loop.ts,
+  experience-evidence.ts(renderExecutionHints 삭제), docs/guides/procedure-corrections.md.
+- 근거: 새 단위 4개·런타임/근거/전이 통합 테스트 갱신 통과, standalone 전체 429파일/5,814 통과·7 제외,
+  tsc/eslint/prettier 통과, pnpm build 2/2 성공(core는 캐시 = core 변경 없음).
+- 판정: 부분 부합. 매 턴 무관한 근거 주입과 학습 직후 스레드 리셋이라는 구조 결함은 제거했으나 설치·실운영
+  관측(`[experience] thread= fresh= hints= chars=` 라인, 프롬프트 크기, 오너 요청 지연)은 아직 없다.
+- 남은 병행 주입: chat learningPrefix(policy 전건+lesson 3건 매 턴), workorder brief의 learning block,
+  NEW 세션 recallMemory prefix — Task 2/3에서 같은 조립기로 통합할 대상. 관련성은 토큰 겹침이며 의미 검색이
+  아니다(procedure 수가 작아 카탈로그 전체는 procedure_list로 도달). 힌트 전달을 학습 성공으로 세지 않는다.
+
+## 2026-09-09 — local.4 로컬 설치 (오너 승인, 세션 인지 힌트 실운영 관측 시작)
+
+- 오너가 "로컬 설치해서 내가 확인" 지시. 공개 릴리즈가 아니다.
+- 이전 데몬(PID 13044)은 launchd 없이 수동 기동된 상태(로그 /private/tmp)였다. `mama stop`(우아한 종료
+  시간 초과→강제 종료; wiki#4746은 효과 대조 전 재생 보류, owner-event batch 866 pending) 후 백업
+  (`~/.mama/backups/pre-experience-local4-20260909-103648`, 1.1G, DB 18개, rollback local.3 tgz 포함),
+  `npm install -g` local.4(nested core 2.4.1-local.2 유지), 스테이징 1,503파일 SHA-256 전부 일치,
+  `launchctl bootstrap`으로 launchd 관리 복귀.
+- 결과: PID 87655, health HTTP 200, `mama status` Running 98/100, Telegram 연결, CLI 0.52.0-local.4,
+  daemon.log 신규 오류 없음(기존 calendar page cap 경고만). 증거: .superpowers/validation/experience-loop/local-install-local4.json.
+- 판정: 설치·연결 확인. `[experience]` 라인·스레드 유지·오너 지연은 오너의 실제 사용에서 관측한다.
+  설치됐다는 이유로 I-01/I-06/I-07을 충족으로 바꾸지 않는다.
+
+## 2026-09-09 — 전면 삭제(subtraction) 후보 local.5 설치
+
+- 목표(계획 최상단): 오너 교정이 에이전트 스스로 procedure로 저장·발견·적용되고, 방해하는 고정 텍스트를 제거한다.
+- 실측 실패(기준 사례): 10:56 교정 턴 도구 0회 "보고 형식 반영 완료"; 10:57 전체보고 903자 5섹션 대화체 반복,
+  412초/19스텝; 시스템 프롬프트 31,964자(브리프 10.6K+복구 저널 9.5K+페르소나 6.9K) 상한 초과 절단.
+- 제거: SOUL/IDENTITY/USER 주입, 페르소나 대본(~/.mama/CLAUDE.md 5,022→303자), 라우터 "Be concise/Greet" 고정 문구,
+  매 턴 재진술되던 OWNER_CONSOLE_OPERATING_DISCIPLINE 10줄과 "artifacts→live→memory" 조사 순서, 채팅/워크오더/
+  오너이벤트의 policy/lesson 블록과 turn-observer(오늘 0건 기록)·learning-* 모듈 4개, console_brief_update append
+  (날짜 줄 누적 경로), 브리프 r1의 40개 날짜 줄(r2 501자로 교체, r1은 저장소 이력에 보존).
+- 추가(데이터·도구·스킬로 얻을 수 없는 것만): OWNER_RUNTIME_RULES 3줄(힌트 블록 의미, 교정은 procedure_update,
+  영속 쓰기 없는 완료 선언 금지), `[evidence] completion claim without a durable write` 관측 로그(차단 없음),
+  복구 저널 렌더 4턴·응답 400자 상한.
+- 검증: standalone 426파일/5,789 통과, tsc/eslint/prettier, build 2/2, 1,487파일 해시 일치, PID 16253 health 98,
+  Telegram 연결. 증거: .superpowers/validation/experience-loop/local-install-local5.json.
+- 판정: 부분 부합(구조 제거 완료). 오너 실사용에서 교정 1회→procedure_update trace→다음 보고 변화를 아직 관측하지
+  않았다. 워크오더 turn-kind 대본(board/wiki/temporal)은 이번 범위 밖으로 남아 있다.
+
+## 2026-09-09 11:41 — 첫 실사용 전이 확인 (local.5, 오너 판정)
+
+- 11:32:27 오너 교정 "보고는 가독성 좋게 이모지와 텔레그램 서식, 대화체 금지, 간결하게" → 그 턴(40초, 5스텝)에서
+  `procedure_update` → `owner-report-telegram-readability@1` 저장(when_to_use: 모든 보고성 응답, body 6줄).
+- 다음 run부터 `[experience] hints=1(owner-report-telegram-readability@1)` 주입, 스레드는 CONTINUE 유지(리셋 없음).
+- 11:35:34 "전체 보고하자" → 11:40:53 보고(898자): 상태 이모지, 한 줄 한 상태, 담당/의존관계/마감/근거, 문장 종결 없음.
+  오너가 텔레그램에서 "행동이 교정된 건 확인"으로 판정. 이전 10:56(도구 0회 "반영 완료")과 대비되는 첫 성공.
+- 남은 실패: 같은 보고 턴이 319초·14스텝, task_list 9회·trello_search 5회·kagemusha_messages 5회 재조회.
+  재시작 시 부팅 워크오더(board:full:repair, wiki boot)가 오너 레인을 먼저 점유해 첫 메시지가 130초 대기.
+  NEW thread에서 `[experience] fresh=false`로 찍힘(durable 런타임 판정식 오류, 후보 미반영).
+- 판정: I-01 부분 부합→교정 전이 1건 실증. I-07(지연)·반복 조회는 미충족. 이 1건으로 학습 완료를 선언하지 않는다.
+
+## 2026-09-09 16:26 — local.6 설치(하위에이전트 위임 구조) 및 사건·초기 관측
+
+- 내용: A/B/D/E(코덱스 하위 스레드 등록·도구 라우팅·하위 자기 run/envelope/브리지·완료→오너 자극·무인 역할 투영·TTL·리셋 정리), C/F(부팅 강제 실행 삭제, board/wiki 대본→결과 계약, delegated 상태 attempt 바인딩, 리터럴 no-update scope). Opus 리뷰 3회, 전체 5,843 통과, 1,495파일 해시 일치. 백업 pre-delegation-local6-20260909-162551. 기록 local-install-local6.json.
+- 사건: 14:40 "Standalone takeover"로 launchd 인스턴스 정상 종료 후 정체불명 인스턴스 기동, ~14:42 이후 무처리(모델 run 14:39~16:26 없음), 16:25 설치 시 프로세스·서비스 부재. 워커 트랜스크립트에 데몬 기동 명령 없음, 오너 인바운드 없음(피해 없음), node 크래시 5건은 parent=claude 실험 프로세스. 원인 확정: 오너가 직접 정지시킨 것(16:40 오너 확인). 장애 아님.
+- 초기 관측: `[experience] fresh=true`(수정 확인). 부팅 시 board#4760(board:full:repair) 여전히 등록(사유 미로그). 그 run이 도구 0회·평문 23자로 끝났는데 `[stage2] full_unverified` 후 `completed` 처리 — 거짓 완료 경로 발견. 무인 owner-event 턴이 gateway `Bash`(workspace find) 실행 — 무인 Bash/Write 차단 불일치 실증. 두 건과 사유 로그를 워커 G에 배정.
+- 판정: 구조 설치 완료, 실사용 판정(위임·완료 자극·통합) 미관측. 거짓 완료·무인 Bash는 미충족 항목으로 유지.
+
+### 2026-09-09 local.7 — delegation not taken up (fail)
+- Installed 0.52.0-local.7 (backup pre-local7-20260909-164501, hash match, health 21s). Boot enqueued only board#4763 (board:full:repair); no boot-forced runs.
+- Observed 3 turns: owner-event 68s, board:full 158s (verdict full_verified), owner-event 33s. Every turn ran inline on the owner thread; the owner lane waited 157s behind board:full.
+- The Codex thread has the collaboration tools (spawn_agent etc.) and the owner policy text says to delegate, but the board contract asks for the result directly and the owner-event header says not to "describe what another agent should do". The agent never spawned. Delegation state, subagent wake, no-durable-result and unattended Bash/Write block were therefore not exercised.
+- Top goal not met: the owner is still blocked behind scheduled work. Next: make the scheduled contracts state the delegation shape and drop the anti-delegation clause (worker H), reinstall as local.8, observe spawn_agent → [subagent] wake → delegated→done.
+
+### 2026-09-09 local.8 — delegation fires; three blockers found (fail)
+- board#4764: owner spawned a native subagent and ended its turn in 38s; host woke the owner on child completion ([subagent] wake), owner verified and recorded contract_no_update. The owner lane was free while the child ran. This is the intended shape.
+- Blocker 1: the child had NO gateway tools. Protocol experiments (scratch appserver-dyn-tool-nofork / appserver-resume-dyn): a child spawned with fork_turns "none" loses the parent's dynamicTools; a child spawned with the default fork inherits them, on both fresh and resumed parent threads. The owner policy text recommended fork_turns "none"; text corrected to say it removes host tools.
+- Blocker 2: the consumer never observed the spawn. codex-cli 0.153.4 surfaces a spawn on the parent thread only as subAgentActivity items (no collabAgentToolCall); the process consumes those before the native-item callback. board#4764 was failed as no-durable-result instead of entering delegated. Fix: dedicated onSubagentStart callback (worker J), no ledger row.
+- Blocker 3: the report leg died after the restart. The interrupted owner-report occurrence left a native_run|unknown row, and hasUnsafeReplayEffects blocks every replay of that occurrence (startup recovery and every trigger-loop tick). Twelve older native_run|unknown rows exist from earlier restarts; six owner-event batches are dead for the same reason. Fix: the native_run admission marker alone never blocks replay (worker I).
+- Also seen: 45 owner-event batches dead from 2026-08-21..24 with Codex "usage limit" errors (historical, plan quota).
+
+### 2026-09-09 local.9 — delegation verified end to end; owner wait root cause found
+- board#4765: `[workorder] subagent observed` → `delegated kind=board attempt=4765` (owner turn 17s, lane released) → child ran with gateway tools (kagemusha_*, board_read, task_list) → `[subagent] wake owner` → `[workorder] delegated→done`. Report leg recovered at boot (`recovered digest report SENT`, the previously poisoned occurrence confirmed).
+- Owner chat at 17:17:05 still showed "Waiting for the earlier task to finish": it waited 155s behind an owner-event delta turn (226s total). Of that turn, 2m20s (8 model steps) was spent debugging `var r = tools.code_act(...)` returning `{}`: the Codex exec host call returns a Promise and must be awaited, while the code_act contract said "do not use await" (meant for the inner script). Today's rollouts show 51 un-awaited code_act calls across 10 turns, each a 1-2.5 min stall. This is the "unnecessary repetition" the owner reported. Fix: contract text now states the exec-side await rule (local.10).
+- Remaining: owner-event delta turns still run inline on the owner thread, and chat has priority but no preemption. `model_reasoning_effort = "xhigh"` in ~/.mama/.codex/config.toml is the other latency lever (not changed).
+
+### 2026-09-09 local.10 — await stall gone (pass for this defect)
+- Installed 17:22 (backup pre-local10-20260909-172130). First two turns after boot: every code_act call awaited on the first attempt (1/1 and 14/14), turn durations 43s and 48s versus 226s for the same kind of delta turn on local.9. No replay-guard errors at boot.
+- Still open: delta turns run inline on the owner thread (no chat preemption), reasoning effort xhigh, wiki/temporal delegation and delegated-timeout unobserved.
+
+### 2026-09-09 local.11 — consumer wedge fixed; report-turn cost measured
+- local.10 exposed a wedge: the ledger-managed `delegated_at` key was re-validated with the enqueue validator on stored rows, so the delegated-and-done board#4765 sat in unresolvedBoardCandidateEffects and the serial consumer drained nothing (tick returned early, boot recovery broke out). Fix: publisherPayloadOfStoredWorkOrder strips ledger keys at the three stored-row sites and two requeue sites; enqueue still rejects them. Installed 17:31 (backup pre-local11-20260909-173110); boot recovered #4765 as stale-claim and enqueued #4766.
+- Owner-requested full report (chat, 17:24:01) took 268s: tools 1.3s total (36 calls), 19 model steps, 7 of them discovery (tool_search/tool_describe/skill Read), context_compile twice, final answer generation 113s for 7.3K output tokens. Prompt cache held (≈23K cached, ≈400 new tokens per step). Cost is step count and long-form generation, not host overhead.
+- Owner set model_reasoning_effort to low (config backup config.toml.pre-low-*); daemon restarted; confirmation of the new effort awaits the next turn's turn_context.
+- Native subagents are on the same thread for every turn kind; only the scheduled contracts tell the agent to delegate. A chat-requested full report can be delegated the same way if the owner wants the chat turn to return immediately.
+
+### 2026-09-09 local.12 — board delta anchor verified (pass); heartbeat-report skill retired
+- Boot logged `board delta enqueued: delta (anchor 2026-09-09T08:57:45Z, basis Cm6ZAUdF…)` instead of a full rebuild. board#4768 was delegated (owner turn 19s); the child ran 37s and read only board_read, changes_read, task_list (no kagemusha_* reads), recorded contract_no_update for the delta scope; host woke the owner; `delta_verified` and `delegated→done`. The owner's post-wake turn also read board_read/changes_read/task_list only.
+- The 18:00 scheduled full report went out in a 66s turn (`recovered full report SENT`).
+- Builtin skill heartbeat-report removed from templates/skills and from the live ~/.mama/skills (backup pre-local12-20260909-180131/skills). No retire mechanism exists in syncBuiltinSkills; the live file was removed by hand once.
+- Full standalone suite 428 files / 5,874 tests passed on the combined tree (workers H, I, J, K, L, M + the two inline text edits).
+- Left as full on purpose: no-baseline, unpublished, signal-unavailable, owner force; and boardPublishedAt is a min over four slots including the host pipeline, so a judgment-only republish can still read as unpublished (noted, not changed).
+
+### 2026-09-09 local.13 — fixed blocks once, turns carry deltas (pass)
+- Installed 18:56 (backup pre-local13-20260909-185555; suite 429 files / 5,888 passed). Restart reminder gone: first turn after restart `reminder=omitted`, re-anchored through thread/resume baseInstructions (owner-event and scheduled lanes previously never supplied resumeInstructions; only chat did).
+- `[prompt]` lines on the live thread: scheduled:board 4,136 chars brief=sent (first on thread) → later scheduled 1,007 brief=omitted; owner-event 13,573 brief=sent → 14,310 / 3,976 brief=omitted (the large ones are the connector delta itself, not host text). Board#4770 ran as delta, delegated, child published (briefing, action_required, pipeline changed) → delta_verified → delegated→done.
+- Owner thread context ≈104K tokens (same thread since 17:22); growth per turn now bounded by the delta content and tool outputs the owner reads directly.
+- Remaining: chat-requested full report still runs on the owner thread; thread rotation threshold not defined; boardPublishedAt min-over-slots wrinkle; wiki/temporal delegation unobserved.
+
+### 2026-09-09 local.14 — board card vocabulary moved into the report_publish tool contract
+- Finding: slots were HTML but generic (`<section><h3><ul>`), so the viewer (which styles only the report-summary/report-card class vocabulary) showed plain text. The vocabulary lived in board-slot-instructions.ts and was consumed only by the retired dashboard persona; the owner agent never saw it.
+- Fix: `buildReportPublishToolContract()` is the single source for the report_publish description (registry + gateway-tools.md parity test), reached progressively via tool_describe at publish time. No per-turn text added. Legacy dashboard-agent persona path is dead under the owner runtime (left for later removal).
+- Installed 19:27 (backup pre-local14-20260909-192659 incl. report-slots.json). Suite 429 files / 5,889 passed. Verification pending: next report_publish must contain report-card/report-summary classes.
+
+### 2026-09-09 local.15 — vocabulary warning closes the loop (pass); card shape left to owner correction
+- 19:59 chat turn published three generic slots → three `[board] slot … without the board vocabulary` warnings in the log and in the tool result → the same turn read the board again and republished at 20:00:43 using the vocabulary (`report-table`, `badge badge-*`); no further warnings. The agent chose tables with status badges rather than report-summary/report-card blocks, which the contract describes as the slot shape. Whether the owner wants cards specifically is a correction for the owner to give (procedure), not a host rule.
+- Test note: one envelope fixture updated to carry a vocabulary class; `agent-situation-api` singleflight failed once under full parallel load and passed twice in isolation (flake, file untouched today).
+- Open: boardPublishedAt min-over-slots made the boot gate read "unpublished" after a judgment-only republish (harmless skip this time).
+
+### 2026-09-09 local.16 — the contract finally reaches the agent; registry split found
+- Root cause of "contract ignored": code-act tool_search/tool_describe read the HostBridge TOOL_REGISTRY (host-bridge.ts), not the gateway registry where local.14 put the vocabulary. The 19:28 child's tool_describe output had no vocabulary. 61 of 62 shared tools have divergent descriptions between the two registries (frozen in tests/agent/tool-registry-parity.test.ts with a todo); report_publish is now single-sourced in both.
+- tool_search matched the whole query as one substring: today 59 multi-word queries, 27 empty (46%). Now token-AND with exact-name-first ranking.
+- Vocabulary warning now requires a structural class (report-summary / report-card / report-section-title / report-table); badges alone no longer pass (the 20:06 invented `card-grid`/`card` shape is a fixture). The warning result carries the full contract once.
+- Owner correction "대시보드는 항상 카드형식으로" (20:05) was stored as procedure owner-full-report-board-html (cards + status badges, no tables/plain text); content is sound.
+- Installed 20:23 (backup pre-local16-20260909-202233). Suite 431 files / 5,903 passed, 1 todo. Verification pending: next report_publish must carry report-card/report-summary.

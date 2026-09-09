@@ -45,6 +45,19 @@ const EXCLUDED_SKILL_FILES = new Set([
 /** Max tokens per skill file to prevent prompt bloat */
 const MAX_SKILL_TOKENS = () => getConfig().prompt?.skill_max_tokens ?? 2_000;
 const UNSUPPORTED_SKILL_IDS = new Set(['mama/playground']);
+/**
+ * Built-in skills that shipped in earlier versions and were withdrawn.
+ * syncBuiltinSkills() only copies missing templates, so an upgraded install
+ * keeps the old file in ~/.mama/skills — skip it in the catalog.
+ */
+const RETIRED_BUILTIN_SKILLS = new Set(['heartbeat-report']);
+const loggedRetiredBuiltinSkills = new Set<string>();
+
+function noteRetiredBuiltinSkill(name: string): void {
+  if (loggedRetiredBuiltinSkills.has(name)) return;
+  loggedRetiredBuiltinSkills.add(name);
+  skillLogger.warn(`[skills] retired builtin skill ignored: ${name}`);
+}
 const VIEWER_HIDDEN_SKILL_IDS = new Set<string>([]);
 
 /**
@@ -294,8 +307,11 @@ export function collectMarkdownFiles(
  * Build skill catalog (one line per enabled skill) for system prompt.
  * Format: "- [source/skillId] keywords: kw1, kw2 | description"
  */
-export function buildSkillCatalog(verbose = false): string[] {
-  const skillsBase = join(homedir(), '.mama', 'skills');
+export function buildSkillCatalog(
+  verbose = false,
+  options: { includePaths?: boolean; homeDir?: string } = {}
+): string[] {
+  const skillsBase = join(options.homeDir ?? homedir(), '.mama', 'skills');
   const stateFile = join(skillsBase, 'state.json');
   const catalog: string[] = [];
 
@@ -317,6 +333,10 @@ export function buildSkillCatalog(verbose = false): string[] {
       const entries = readdirSync(sourceDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        if (RETIRED_BUILTIN_SKILLS.has(entry.name)) {
+          noteRetiredBuiltinSkill(entry.name);
+          continue;
+        }
         const stateKey = `${source}/${entry.name}`;
         if (state[stateKey]?.enabled === false) continue;
 
@@ -337,7 +357,9 @@ export function buildSkillCatalog(verbose = false): string[] {
                 const fm = parseSkillFrontmatter(content);
                 const description = fm.description || '';
                 const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : sub.name;
-                catalog.push(`- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}`);
+                catalog.push(
+                  `- [${stateKey}/${sub.name}] keywords: ${keywords} | ${description}${options.includePaths ? ` | source: ${subMain}` : ''}`
+                );
                 if (verbose) {
                   skillLogger.debug(`Skill catalog (plugin sub): ${stateKey}/${sub.name}`);
                 }
@@ -359,7 +381,9 @@ export function buildSkillCatalog(verbose = false): string[] {
               const parsed: unknown = JSON.parse(readFileSync(pluginJson, 'utf-8'));
               const meta = parsed as { description?: string } | null;
               if (meta?.description) {
-                catalog.push(`- [${stateKey}] keywords: ${entry.name} | ${meta.description}`);
+                catalog.push(
+                  `- [${stateKey}] keywords: ${entry.name} | ${meta.description}${options.includePaths ? ` | source: ${pluginJson}` : ''}`
+                );
               }
             } catch (e) {
               if (verbose) skillLogger.warn(`Failed to parse plugin.json for ${stateKey}:`, e);
@@ -376,7 +400,9 @@ export function buildSkillCatalog(verbose = false): string[] {
           const fm = parseSkillFrontmatter(content);
           const description = fm.description || '';
           const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : entry.name;
-          catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+          catalog.push(
+            `- [${stateKey}] keywords: ${keywords} | ${description}${options.includePaths ? ` | source: ${mainFile}` : ''}`
+          );
           if (verbose) {
             skillLogger.debug(`Skill catalog: ${stateKey}`);
           }
@@ -397,6 +423,10 @@ export function buildSkillCatalog(verbose = false): string[] {
       if (EXCLUDED_SKILL_FILES.has(entry.name)) continue;
 
       const id = entry.name.replace(/\.md$/, '');
+      if (RETIRED_BUILTIN_SKILLS.has(id)) {
+        noteRetiredBuiltinSkill(id);
+        continue;
+      }
       const stateKey = `mama/${id}`;
       if (state[stateKey]?.enabled === false) continue;
       if (catalog.some((l) => l.includes(`[${stateKey}]`))) continue;
@@ -406,7 +436,9 @@ export function buildSkillCatalog(verbose = false): string[] {
         const fm = parseSkillFrontmatter(content);
         const description = fm.description || '';
         const keywords = fm.keywords.length > 0 ? fm.keywords.join(', ') : id;
-        catalog.push(`- [${stateKey}] keywords: ${keywords} | ${description}`);
+        catalog.push(
+          `- [${stateKey}] keywords: ${keywords} | ${description}${options.includePaths ? ` | source: ${join(skillsBase, entry.name)}` : ''}`
+        );
         if (verbose) console.log(`[SkillLoader] Skill catalog (flat): ${stateKey}`);
       } catch {
         /* skip */
@@ -425,9 +457,9 @@ export function buildSkillCatalog(verbose = false): string[] {
  */
 export function loadInstalledSkills(
   verbose = false,
-  _options: { onlyCommands?: boolean } = {}
+  options: { onlyCommands?: boolean; includePaths?: boolean; homeDir?: string } = {}
 ): string[] {
-  return buildSkillCatalog(verbose);
+  return buildSkillCatalog(verbose, options);
 }
 
 export function filterSkillCatalogForContext(

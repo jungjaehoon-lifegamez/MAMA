@@ -1,5 +1,7 @@
 # 📱 MAMA on Mobile: Brainstorming & Feasibility
 
+> **ARCHIVED:** historical brainstorming for v1.4. It does not describe shipped behaviour.
+
 ## 🎯 Goal
 
 Enable MAMA (Memory-Augmented MCP Architecture) access and interaction via mobile devices.
@@ -23,10 +25,13 @@ Enable MAMA (Memory-Augmented MCP Architecture) access and interaction via mobil
   - **Power**: Uses your PC's CPU/GPU for embeddings and LLM (Ollama), not a weak mobile chip.
   - **Chat Capability**: Yes! You can talk to the LLM. The web app sends your text/voice to the PC, the PC asks the LLM, and sends the answer back. Your phone is just a "thin client".
 - **Workflow**:
-  1.  Run `mama-server` on PC.
-  2.  Run `ngrok http 3000`.
-  3.  Open ngrok URL on phone.
+  1.  Set `MAMA_AUTH_TOKEN` and run `mama-server` on PC.
+  2.  Expose it through an authenticated tunnel (e.g. Tailscale, or a Cloudflare
+      Tunnel with access policy) — never an unauthenticated public ngrok URL.
+  3.  Open the tunnel URL on phone and authenticate.
   4.  Use "Quick Add" to send voice/text directly to your PC's DB.
+  > ⚠️ A tunnel publishes your local server. See
+  > [docs/guides/security.md](../../guides/security.md) "External Access via Tunnels".
 
 ### 2. The "Field Agent" (Async/Offline-First)
 

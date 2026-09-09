@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MAMA OS — The work agent behind your messenger</title>
+    <title>MAMA — memory store on your computer, assistant that works from it</title>
     <meta
       name="description"
-      content="MAMA is the work agent behind your messenger: owner-only artifact handling today, extending in v1 to scoped human-team Cases."
+      content="MAMA is a memory store that runs on your own computer, and an AI assistant that works from it. MAMA runs no hosted service; the record stays on your machine. Only the content a run needs leaves it, through the AI CLI and the connectors you configured."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -976,6 +976,146 @@
         font-size: 0.74rem;
         color: var(--muted-soft);
       }
+
+      /* Tables */
+      .doc-table-wrap {
+        overflow-x: auto;
+        max-width: 100%;
+      }
+      .doc-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.94rem;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .doc-table th,
+      .doc-table td {
+        text-align: left;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--hairline);
+        vertical-align: top;
+      }
+      .doc-table thead th {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: var(--lavender-soft);
+      }
+      .doc-table tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      .doc-table code {
+        font-family: var(--mono);
+        font-size: 0.84em;
+        background: var(--lavender-soft);
+        padding: 1px 5px;
+        border-radius: 3px;
+      }
+
+      /* Prose blocks */
+      .prose {
+        max-width: 72ch;
+        margin: 0 auto;
+      }
+      .prose p {
+        color: var(--muted);
+        font-size: 1rem;
+      }
+      .prose p strong {
+        color: var(--ink);
+      }
+      .plain-list {
+        list-style: none;
+        margin: 20px 0 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .plain-list li {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        font-size: 0.96rem;
+        color: var(--muted);
+      }
+      .plain-list li::before {
+        content: '·';
+        color: var(--yellow-dark);
+        font-weight: 800;
+        font-family: var(--mono);
+        font-size: 1.2rem;
+        line-height: 1;
+        margin-top: 2px;
+      }
+      .plain-list li code,
+      .prose code {
+        font-family: var(--mono);
+        font-size: 0.84em;
+        background: var(--lavender-soft);
+        padding: 1px 5px;
+        border-radius: 3px;
+        overflow-wrap: anywhere;
+      }
+      .rule-list {
+        counter-reset: rule;
+        list-style: decimal;
+        margin: 20px 0 0;
+        padding-left: 22px;
+        display: grid;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+      .mt-lg {
+        margin-top: 36px;
+      }
+      .mt-md {
+        margin-top: 28px;
+      }
+      .mt-sm {
+        margin-top: 24px;
+      }
+      .mt-xs {
+        margin-top: 20px;
+      }
+      .doc-links {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 720px) {
+        .doc-links {
+          grid-template-columns: 1fr;
+        }
+      }
+      .doc-links a {
+        display: block;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--white);
+        font-weight: 600;
+      }
+      .doc-links a:hover {
+        background: var(--lavender-soft);
+      }
+      .doc-links span {
+        display: block;
+        margin-top: 4px;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        font-weight: 400;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
     </style>
   </head>
   <body>
@@ -984,15 +1124,18 @@
       <div class="container nav-inner">
         <a href="#top" class="brand">
           <img src="assets/mama-icon.svg" alt="" />
-          <span>MAMA OS</span>
+          <span>MAMA</span>
         </a>
         <div class="nav-links" id="nav-links">
-          <a href="#actors">How</a>
-          <a href="#different">Different</a>
-          <a href="#local">Local</a>
-          <a href="#install">Install</a>
+          <a href="#why">Why</a>
+          <a href="#principles">Principles</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#getting-started">Getting started</a>
+          <a href="#security">Security</a>
+          <a href="#status-and-roadmap">Roadmap</a>
+          <a href="#documentation">Docs</a>
         </div>
-        <span class="nav-cta">v0.39.5</span>
+        <span class="nav-cta">0.52.x</span>
         <button
           class="nav-toggle"
           type="button"
@@ -1009,13 +1152,13 @@
     <section class="hero" id="top">
       <div class="container">
         <div class="hero-copy">
-          <span class="eyebrow">The work agent behind your messenger</span>
-          <h1>Send the work. <em>Get the artifact back.</em></h1>
+          <span class="eyebrow">A memory store on your computer</span>
+          <h1>No hosted service. <em>The record stays on your machine.</em></h1>
           <p>
-            Today, the owner contacts one MAMA through existing messengers. Using shipped owner-only
-            primitives, MAMA remembers the work, composes bounded domain tools, and can return
-            reports or real files with evidence. v1 binds that flow to authorized human-team Cases;
-            it does not add an AI roster or another collaboration app.
+            MAMA is a memory store that runs on your own computer, and an AI assistant that works
+            from it. It keeps what flows through your connected messengers, mail, documents, and
+            calendars as-is, and the assistant reads that record to tell you what changed and do
+            what you ask.
           </p>
         </div>
         <div class="hero-image">
@@ -1025,7 +1168,7 @@
           />
         </div>
         <div class="hero-actions">
-          <a href="#install" class="btn btn-primary">Install locally</a>
+          <a href="#getting-started" class="btn btn-primary">Install locally</a>
           <a
             href="https://github.com/jungjaehoon-lifegamez/MAMA"
             class="btn btn-ghost"
@@ -1033,327 +1176,342 @@
             rel="noreferrer"
             >GitHub</a
           >
+          <a href="#documentation" class="btn btn-ghost">Docs</a>
         </div>
       </div>
     </section>
 
-    <!-- MANIFESTO STRIP -->
-    <section class="manifesto-strip">
-      <div class="container manifesto-inner">
-        <span class="eyebrow">North Star</span>
-        <p class="manifesto-line">
-          One MAMA outside.<br />The necessary complexity inside.<br /><em
-            >Humans delegate outcomes, not orchestration.</em
-          >
-        </p>
-        <p class="manifesto-elab">
-          MAMA keeps purpose, people, files, decisions, revisions, and receipts together as a scoped
-          Case. Internal workers may help, but the user sees one accountable front and one verified
-          result.
-        </p>
-      </div>
-    </section>
-
-    <!-- TWO ACTORS -->
-    <section class="section section-tint" id="actors">
+    <!-- WHY -->
+    <section class="section section-tint" id="why">
       <div class="container">
         <div class="section-head">
-          <span class="eyebrow">One front, two internal layers</span>
-          <h2>MAMA holds the Case and owns the result.</h2>
+          <span class="eyebrow">Why</span>
+          <h2>Memory kept on your own computer.</h2>
+        </div>
+        <div class="prose">
           <p>
-            One is the substrate — a local, append-only record of what your team did and said,
-            preserved so stronger models can re-read it tomorrow. The other is execution — the tools
-            and optional workers MAMA uses to inspect, modify, audit, verify, and deliver.
+            An AI assistant is only useful with memory, and memory kept on a company's server
+            disappears when the service changes or shuts down. MAMA keeps the record of what you did
+            and decided on your own computer, in the original form, so a better model can read the
+            same record tomorrow. The memory layer is fixed; which sources you connect and what work
+            you hand over is up to you.
           </p>
         </div>
-
-        <div class="actors">
-          <article class="actor substrate">
-            <span class="role">Substrate · MAMA</span>
-            <h3>A game record of your team. Re-readable by stronger models tomorrow.</h3>
-            <p class="lede">
-              Local SQLite. Append-only. Edges instead of overwrites. Every record carries time,
-              source refs, model run, and envelope hash — so an agent today and a stronger model
-              next year can both re-simulate the same history.
-            </p>
-            <ul>
-              <li>14 connectors poll chats, docs, sheets, repos, and work logs</li>
-              <li>Raw layer: cross-source unified search, windowing, and as-of time travel</li>
-              <li>
-                Graph: entities, cases, decisions linked by typed edges (supersedes · builds_on ·
-                debates · synthesizes)
-              </li>
-              <li>Provenance ledger: source refs · model runs · tool traces</li>
-              <li>Envelopes: scope · expiry · allowed destinations · signed</li>
-            </ul>
-          </article>
-
-          <article class="actor agent">
-            <span class="role">Execution · MAMA</span>
-            <h3>Reads. Compares. Acts. Verifies. Delivers — within authority.</h3>
-            <p class="lede">
-              Users contact one MAMA identity. Internally it may use a provider model, deterministic
-              tools, a domain runtime, or an independent reviewer. Those resources never widen the
-              requester's scope and never become a team the user must coordinate.
-            </p>
-            <ul>
-              <li>Reads cross-source raw with time and provenance intact</li>
-              <li>Simulates past positions: <em>"what was visible at moment T?"</em></li>
-              <li>
-                Infers the tacit: patterns and contradictions in the work record the team did not
-                catch
-              </li>
-              <li>Predicts accumulating <em>project</em> risk before it breaks</li>
-              <li>Writes decisions and candidate artifact revisions only when authorized</li>
-              <li>Returns cited reports, verified files, approvals, and delivery receipts</li>
-            </ul>
-          </article>
-        </div>
-
-        <p class="actors-meta">
-          The substrate is what <strong>does not change</strong> as models improve. Execution can
-          change without changing the product front. Build the Case and authority contracts; let
-          models and domain tools improve behind them.
-        </p>
       </div>
     </section>
 
-    <!-- WHAT'S DIFFERENT — 4 honesty cards -->
-    <section class="section" id="different">
+    <!-- PRINCIPLES -->
+    <section class="section" id="principles">
       <div class="container">
         <div class="section-head">
-          <span class="eyebrow">What's different</span>
-          <h2>Most AI gives you a black box. MAMA can't.</h2>
-          <p>
-            Every output the agent ships — report, decision, draft, prediction — carries the same
-            four properties by form, not by policy. The substrate refuses to let the agent hide
-            them.
-          </p>
-        </div>
-        <div class="hero-image" style="margin-bottom: 2.5rem">
-          <img
-            src="assets/mama-os-hero-evidence-board.png"
-            alt="The evidence board as an illustration: event cards on a timeline connected by threads, and a notebook where every line of the agent's judgment points back to a specific pinned source."
-          />
+          <span class="eyebrow">Principles</span>
+          <h2>In order of importance.</h2>
         </div>
         <div class="honesty-grid">
           <article class="honesty-card">
             <span class="num">01</span>
-            <h3>Cited, not asserted.</h3>
-            <p>
-              Every claim points back to a specific raw ref. Not "according to recent activity" —
-              the actual messages, with timestamps and authors.
-            </p>
-            <div class="highlight">EVIDENCE: 9 cited refs ▸ click to expand</div>
+            <h3>Never lose the record.</h3>
+            <p>Original text, time, source, and later changes are kept, not overwritten.</p>
           </article>
           <article class="honesty-card">
             <span class="num">02</span>
-            <h3>Evolved, not stale.</h3>
+            <h3>Know why it changed.</h3>
             <p>
-              Decisions are linked by typed edges. A new decision <em>supersedes</em> the old one
-              with a reason — and the old one is still readable.
+              Every change the assistant makes names the message or event behind it, or is marked
+              "no cause".
             </p>
-            <div class="highlight">JWT → JWT + refresh (reason: frequent logouts)</div>
           </article>
           <article class="honesty-card">
             <span class="num">03</span>
-            <h3>Missing, not silent.</h3>
+            <h3>Act only where allowed.</h3>
             <p>
-              Each output names the context it could not find. Empty pin on the board. The silence
-              is labeled, not pretended away.
+              Sending messages, paying, deleting: anything with outside effect requires prior
+              permission for that target.
             </p>
-            <div class="highlight">MISSING: demo_scope confirmation</div>
           </article>
           <article class="honesty-card">
             <span class="num">04</span>
-            <h3>Bounded, not unleashed.</h3>
+            <h3>Remember corrections.</h3>
             <p>
-              The agent can draft a customer message — but cannot send it unless the envelope allows
-              that destination. Boundary is a frame, not a hope.
+              Say "keep reports short" or "cards on the dashboard" once; it is stored as a rule and
+              applied from then on.
             </p>
-            <div class="highlight">
-              ✓ draft &nbsp; ✓ log &nbsp; ✗ external_email &nbsp; ✗ webhook
-            </div>
+          </article>
+          <article class="honesty-card">
+            <span class="num">05</span>
+            <h3>Stay independent of the model vendor.</h3>
+            <p>
+              The assistant's brain (Claude, Codex, Cline) is swappable; the record's format is not.
+            </p>
+          </article>
+          <article class="honesty-card">
+            <span class="num">06</span>
+            <h3>Everything else.</h3>
+            <p>Speed and convenience improve only within the five above.</p>
           </article>
         </div>
       </div>
     </section>
 
-    <!-- WHY LOCAL -->
-    <section class="section section-tint" id="local">
+    <!-- HOW IT WORKS -->
+    <section class="section section-tint" id="how-it-works">
       <div class="container">
         <div class="section-head">
-          <span class="eyebrow">Why local</span>
-          <h2>Your records stay on your machine by default.</h2>
+          <span class="eyebrow">How it works</span>
+          <h2>Three layers.</h2>
+        </div>
+        <div class="doc-table-wrap">
+          <table class="doc-table">
+            <thead>
+              <tr>
+                <th scope="col">Layer</th>
+                <th scope="col">What it holds</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">What you add</th>
+                <td>sources to connect · work to hand over · rules you correct</td>
+              </tr>
+              <tr>
+                <th scope="row">The assistant</th>
+                <td>one assistant · a tool catalog · permission scopes · a rule store</td>
+              </tr>
+              <tr>
+                <th scope="row">The memory store</th>
+                <td>
+                  SQLite on your machine: originals · decision history · change causes · run logs ·
+                  local search index
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="prose mt-lg">
           <p>
-            MAMA's substrate (SQLite + 1024-dim embeddings) lives on the laptop or server you
-            choose, not in someone else's cloud. Provider-backed agent runs (Claude CLI, Codex
-            app-server, or Cline Hub) still transmit selected prompts and compiled context to the
-            chosen model API — but the persistent record stays local.
+            <strong>Memory store.</strong> Per-source originals live in
+            <code>~/.mama/connectors/&lt;name&gt;/raw.db</code>; decisions and change logs under
+            <code>~/.mama/</code>. Changing a decision adds a "this replaced that" link instead of
+            deleting the old one. Each change log row holds what changed and what caused it; a row
+            with a faked cause is rejected at write time. The search index (embeddings) is built
+            locally.
+          </p>
+          <p>
+            <strong>Assistant.</strong> Your messages, scheduled reports, new source content, and
+            timed jobs all reach one assistant. It picks tools from the catalog and hands long reads
+            and background work to helper agents, taking back only the result. Every run carries a
+            permission scope saying what it may touch and until when. Your corrections are stored as
+            rules and offered as candidates in similar situations. Reports and the board are edited
+            from the last published version, not rebuilt.
+          </p>
+          <p>
+            <strong>What you add.</strong> A new source is one <code>IConnector</code>
+            implementation; polling and storage are handled. A new kind of work is one entry in the
+            tool catalog. A new rule is one message.
           </p>
         </div>
-        <div class="local-grid">
-          <article class="local-card">
-            <span class="num">01 · STORAGE</span>
-            <h3>Local SQLite</h3>
-            <p>
-              The whole substrate is one file on disk you already trust. Open it with any SQLite
-              client. Read it forever, with or without MAMA running.
-            </p>
-          </article>
-          <article class="local-card">
-            <span class="num">02 · EXECUTION</span>
-            <h3>Supported local runtime</h3>
-            <p>
-              The agent runs through Claude CLI, Codex app-server, or Cline's official Hub under
-              your existing authenticated account. No token extraction or header spoofing.
-            </p>
-          </article>
-          <article class="local-card">
-            <span class="num">03 · OWNERSHIP</span>
-            <h3>You own the record</h3>
-            <p>
-              Append-only with provenance on every write. If you stop using MAMA, the substrate is
-              still readable and yours to keep. The record you keep is the record you control.
-            </p>
-          </article>
-          <article class="local-card">
-            <span class="num">04 · COST</span>
-            <h3>No cloud bill for memory</h3>
-            <p>
-              No per-query billing for the substrate. Your authenticated Claude, Codex, or Cline
-              account covers the model runtime. Embeddings run locally on a 560 MB model.
-            </p>
-          </article>
-        </div>
-        <p class="not-this">
-          <strong>What MAMA is not.</strong> Not employee monitoring. Not productivity scoring. Not
-          emotion or turnover prediction. The subject is the work, not the worker — by design. The
-          substrate forbids people-scoring at the schema level.
-        </p>
       </div>
     </section>
 
-    <!-- TODAY / NEXT -->
-    <section class="section">
+    <!-- GETTING STARTED -->
+    <section class="section" id="getting-started">
       <div class="container">
         <div class="section-head">
-          <span class="eyebrow">Today and next</span>
-          <h2>The owner-first operator runs. Phase 2b is the human-team release candidate.</h2>
-          <p>
-            The substrate and the self-evolving operator both ship: agent-authored triggers, a live
-            report board, scheduled memory curation, and a wiki that reads like a journal. Every
-            durable change can name what caused it, or say plainly that it cannot. Sender boundaries
-            and durable principals are shipped foundations. v0.39.5 adds self-teaching CLI onboarding
-            and packages scoped human grants as
-            the Phase 2b release candidate; install, restart validation, and a real member canary
-            remain before it is called shipped. Shared Work Cases and real file-work pilots build on
-            that authority.
+          <span class="eyebrow">Getting started</span>
+          <h2>Requires Node 22.13+ and a logged-in <code>claude</code> or <code>codex</code> CLI.</h2>
+        </div>
+        <div class="prose">
+          <pre class="cc-code">
+claude auth login                   # or: codex login
+npm install -g @jungjaehoon/mama-os
+mama --help                         # tells you the next step
+mama status                         # setup is done when the first report arrives</pre
+          >
+          <ul class="plain-list">
+            <li>
+              Messenger: <code>mama gateway telegram --token-stdin</code> (Slack and Discord work
+              the same way)
+            </li>
+            <li>Sources: <code>mama connector add &lt;name&gt;</code>, then <code>mama connector status</code></li>
+            <li>
+              Web viewer: <code>http://localhost:3847/viewer</code> for reports, the task board, and
+              system status
+            </li>
+            <li>
+              For scripted installs, follow the <code>missing</code> list from
+              <code>mama status --json</code> in order; it is finished only when
+              <code>complete: true</code>.
+            </li>
+          </ul>
+          <p class="mt-sm">
+            Claude Code plugin: <code>/plugin install mama</code>. MCP:
+            <code
+              >{"mcpServers":{"mama":{"command":"npx","args":["@jungjaehoon/mama-server"]}}}</code
+            >.
           </p>
         </div>
-        <div class="today-next">
-          <article class="tn-col shipped">
-            <span class="badge">v0.21–v0.39 · OWNER-FIRST FOUNDATION SHIPPED</span>
-            <h3>The foundation, and the operator on top of it.</h3>
-            <p>
-              Local ingestion, worker evidence surfaces, provenance, graph APIs, situation packets,
-              runtime envelopes, decision evolution — then the operator runtime, the owner console,
-              and a durable workorder pipeline on top.
-            </p>
-            <ul class="tn-list">
-              <li>14 connectors and local ingestion</li>
-              <li>
-                Operator board at /viewer · four live report slots, task board, and trigger library
-              </li>
-              <li>Raw search and raw window APIs</li>
-              <li>Graph, entity, and timeline APIs</li>
-              <li>Worker situation packets</li>
-              <li>Strict search diagnostics for vector noise</li>
-              <li>Runtime envelopes and destination limits</li>
-              <li>Trusted provenance ledger</li>
-              <li>Decision evolution (supersedes / builds_on / debates / synthesizes)</li>
-              <li>93% retrieval on 100Q LongMemEval sample</li>
-            </ul>
-          </article>
-          <article class="tn-col planned">
-            <span class="badge">v1 · SHARED WORK CASES</span>
-            <h3>Cases connect people, files, feedback, and approvals.</h3>
-            <p>
-              After the Phase 2b access-foundation canary, later slices bind humans, files,
-              feedback, revisions, approvals, and delivery receipts into a shared Case while private
-              memory remains private. Internal workers stay behind the single MAMA front.
-            </p>
-            <pre class="cc-code">
-human principal + Case + files → MAMA → verified artifact
-        authority and provenance derived by the host</pre
+      </div>
+    </section>
+
+    <!-- SECURITY -->
+    <section class="section section-tint" id="security">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Security</span>
+          <h2>The server answers only on your machine by default.</h2>
+        </div>
+        <div class="prose">
+          <ul class="plain-list">
+            <li>The server answers only on your machine (<code>127.0.0.1</code>) by default.</li>
+            <li>
+              Sending, uploading, paying, and deleting happen only toward allowed targets.
+              Unattended work (scheduled reports, incoming-content handling) has no send permission.
+            </li>
+            <li>
+              Only allow-listed chats are accepted from messengers (<code>allowedChatIds</code> for
+              Telegram).
+            </li>
+            <li>Values that look like passwords or keys are not stored in memory.</li>
+            <li>
+              Outbound connections go only to the services you connected and the AI CLI you logged
+              into. There is no MAMA company server; you run it yourself.
+            </li>
+          </ul>
+          <p class="mt-md">
+            <strong>Running on another host or reaching it from outside.</strong> The viewer and API
+            drive the assistant, and the assistant can read and write files and run commands.
+            Exposing the server exposes that machine. If you open it up:
+          </p>
+          <ol class="rule-list">
+          <li>Set <code>MAMA_AUTH_TOKEN</code>. Never expose the server without it, and treat the token and tunnel URL as secrets.</li>
+          <li>For anything beyond a short test, put it behind Cloudflare Zero Trust (or mTLS / IP allow-listing) in addition to the token. Token-only access is for temporary testing.</li>
+          <li>Keep the messenger allow-list, and restrict <code>~/.mama/</code> to the operating account.</li>
+          <li>Back up <code>~/.mama/</code> together with <code>~/.claude/mama-memory.db</code>.</li>
+        </ol>
+          <p class="mt-xs">
+            Details:
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/security.md"
+              >Security guide</a
+            >,
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/mobile-access.md"
+              >Remote access</a
+            >.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATUS AND ROADMAP -->
+    <section class="section" id="status-and-roadmap">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Status and roadmap</span>
+          <h2>What is done, and what is next.</h2>
+        </div>
+        <div class="doc-table-wrap">
+          <table class="doc-table">
+            <thead>
+              <tr>
+                <th scope="col">Stage</th>
+                <th scope="col">What</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Memory store</th>
+                <td>Originals kept, decision history, change causes, local search</td>
+                <td>done</td>
+              </tr>
+              <tr>
+                <th scope="row">Single-owner assistant</th>
+                <td>Scheduled reports, board and journal, corrections become rules</td>
+                <td>done</td>
+              </tr>
+              <tr>
+                <th scope="row">Helpers and continuation</th>
+                <td>Long work to helper agents; reports continue from the last version</td>
+                <td>verified locally, preparing release</td>
+              </tr>
+              <tr>
+                <th scope="row">Team members</th>
+                <td>Verified people share the same memory within their own permissions</td>
+                <td>next</td>
+              </tr>
+              <tr>
+                <th scope="row">File work</th>
+                <td>Request → read → new version → approval → delivery → follow-up</td>
+                <td>next</td>
+              </tr>
+              <tr>
+                <th scope="row">Extension guide</th>
+                <td>How to add your own sources, tools, and rules</td>
+                <td>next</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="prose mt-md">
+          <p>
+            Before 1.0, config and storage format changes ship with automatic migration; APIs may
+            change.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- DOCUMENTATION -->
+    <section class="section section-tint" id="documentation">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Documentation</span>
+          <h2>Read more.</h2>
+        </div>
+        <ul class="doc-links">
+          <li>
+            <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/INTENT.md"
+              >Intent<span>INTENT.md</span></a
             >
-            <div class="cc-cells">
-              <div class="cc-cell selected">
-                <div class="label">Effective scope</div>
-                <div class="desc">
-                  principal grants ∩ source authority ∩ Case/artifact scope ∩ tool envelope
-                </div>
-              </div>
-              <div class="cc-cell rejected">
-                <div class="label">Work Case</div>
-                <div class="desc">
-                  purpose, people, files, revisions, decisions, approvals, receipts
-                </div>
-              </div>
-              <div class="cc-cell missing">
-                <div class="label">One front</div>
-                <div class="desc">
-                  users delegate outcomes to MAMA, not orchestration to an AI roster
-                </div>
-              </div>
-              <div class="cc-cell caveats">
-                <div class="label">Lane verification</div>
-                <div class="desc">
-                  claims reconciled against completed tool traces; observes, never blocks
-                </div>
-              </div>
-            </div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- INSTALL -->
-    <section class="section section-tint" id="install">
-      <div class="container">
-        <div class="section-head">
-          <span class="eyebrow">Install</span>
-          <h2>Start local. Keep the record yours.</h2>
-          <p>
-            Runs through your existing Claude, Codex, or Cline authentication — no token extraction
-            and no third-party cloud holding your substrate. Agent runs still send the selected
-            prompt and compiled context to the model backend you choose.
-          </p>
-        </div>
-        <p class="install-warning">
-          <strong>⚠ Run inside an isolated environment.</strong> A Claude, Codex, or Cline-backed
-          MAMA process has the filesystem and network authority granted by its host runtime and MAMA
-          role policy. For shared or production setups, run MAMA OS inside Docker, a dedicated VM,
-          or a non-privileged user account so its agents cannot reach files or services you don't
-          intend to expose.
-        </p>
-        <div class="install-grid">
-          <div class="step">
-            <span class="num">1</span>
-            <h3>Authenticate a CLI</h3>
-            <code>claude auth status</code>
-          </div>
-          <div class="step">
-            <span class="num">2</span>
-            <h3>Install MAMA OS</h3>
-            <code>npm install -g @jungjaehoon/mama-os</code>
-          </div>
-          <div class="step">
-            <span class="num">3</span>
-            <h3>Start the daemon</h3>
-            <code>mama init && mama start</code>
-          </div>
-        </div>
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/explanation/architecture.md"
+              >Architecture<span>docs/explanation/architecture.md</span></a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/security.md"
+              >Security guide<span>docs/guides/security.md</span></a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/mobile-access.md"
+              >Remote access<span>docs/guides/mobile-access.md</span></a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/procedure-corrections.md"
+              >Correcting rules<span>docs/guides/procedure-corrections.md</span></a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/configuration-options.md"
+              >Configuration<span>docs/reference/configuration-options.md</span></a
+            >
+          </li>
+          <li>
+            <a
+              href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/development/developer-playbook.md"
+              >Developer playbook<span>docs/development/developer-playbook.md</span></a
+            >
+          </li>
+        </ul>
       </div>
     </section>
 
@@ -1362,15 +1520,15 @@ human principal + Case + files → MAMA → verified artifact
       <div class="container footer-inner">
         <div class="footer-brand">
           <img src="assets/mama-icon.svg" alt="" />
-          <span>MAMA OS</span>
-          <span class="footer-version">v0.39.5</span>
+          <span>MAMA</span>
+          <span class="footer-version">0.52.x</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA">GitHub</a>
           <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os">npm</a>
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues">Issues</a>
         </div>
-        <p class="footer-legal">MIT · Operator runtime · Local-first · AI provider independent.</p>
+        <p class="footer-legal">MIT © jungjaehoon</p>
       </div>
     </footer>
     <script>
