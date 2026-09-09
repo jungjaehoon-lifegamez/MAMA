@@ -11,6 +11,13 @@
  * - buildPromotionAfterHook: the PROMOTED <n> parse + event re-emission that
  *   keeps the memory:promoted -> wiki ingress chain alive (plan E4/R7).
  * - buildWikiAfterHook: outcome reading only.
+ *
+ * Delegation note: a delegated attempt is re-verified through these same queries, bound to
+ * the attempt id. That path only opens when the runner SURFACES a native subagent start. The
+ * primary observation is the runner's `onSubagentStart` stream callback; matching item names
+ * (workorder-consumer.ts NATIVE_SUBAGENT_ITEM_NAMES, e.g. `collabAgentToolCall`) are only a
+ * fallback for runners that emit no such callback - on a runner that surfaces neither, a
+ * handed-off run is judged on the evidence it has at return time.
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';
@@ -34,11 +41,22 @@ export interface BoardRefreshGatePort {
 }
 
 /**
+ * The verdict reason for an attempt that produced no durable result at all.
+ *
+ * Live case (board#4760, 2026-09-09): a full board run answered in 23 characters of prose,
+ * made ZERO gateway calls, and the consumer marked it `completed` - because an unverified
+ * action only left the repair gate dirty while the receipt verdict stayed 'complete'. A
+ * board attempt that neither published nor recorded the exact no-update scope has nothing
+ * to show, so it is a FAILURE on the normal per-kind policy (loud through the alarm sink),
+ * not a completion.
+ */
+export const NO_DURABLE_RESULT_REASON = 'no-durable-result';
+
+/**
  * Clear repair dirt only when both independent authorities agree: the
  * run-bound action verifier observed an effect and candidate receipts (when
- * present) are complete. The receipt verdict remains the consumer verdict so
- * the existing retry policy is unchanged; unverified prose simply leaves the
- * gate dirty for the scheduled repair pass.
+ * present) are complete. A receipt failure keeps its own, more specific reason;
+ * an action the verifier could not observe is `no-durable-result`.
  */
 export function applyBoardRefreshVerdict(
   workOrder: WorkOrderRecord,
@@ -46,8 +64,11 @@ export function applyBoardRefreshVerdict(
   receiptVerdict: WorkOrderEffectVerdict,
   gate: BoardRefreshGatePort
 ): WorkOrderEffectVerdict {
-  if (!actionVerified || receiptVerdict.disposition !== 'complete') {
+  if (receiptVerdict.disposition !== 'complete') {
     return receiptVerdict;
+  }
+  if (!actionVerified) {
+    return { disposition: 'fail', reason: NO_DURABLE_RESULT_REASON };
   }
   const generation = workOrder.payload.repairGeneration;
   if (!Number.isSafeInteger(generation) || (generation as number) < 0) {
@@ -58,7 +79,13 @@ export function applyBoardRefreshVerdict(
     if (typeof channelKey === 'string' && channelKey.length > 0) {
       gate.completeVerifiedReconcile(channelKey, generation as number);
     }
-  } else if (workOrder.payload.mode === 'full') {
+  } else if (workOrder.payload.mode === 'full' || workOrder.payload.mode === 'delta') {
+    // A VERIFIED delta run clears the same dirt a full run does, and for the reason the dirt
+    // exists: the generation records that something arrived which the published board did not
+    // yet reflect, and a delta run publishes from the accumulated state - the very state those
+    // arrivals were judged into by the owner-event turns - at or after the captured generation.
+    // Treating it as weaker evidence would leave the gate permanently dirty and buy one full
+    // rebuild per staleness window for changes the board already shows.
     gate.completeVerifiedFull(generation as number);
   }
   return receiptVerdict;
@@ -196,12 +223,36 @@ export function buildFullBoardTraceQueries(
   };
 }
 
+/**
+ * Per-attempt trace queries for a lane.
+ *
+ * The attempt id is not optional hygiene. The channel key alone is shared by every work
+ * order of the same kind, and a delegated attempt stays open for up to
+ * DELEGATED_ATTEMPT_TIMEOUT_MS - so a SIBLING order's traces used to discharge the attempt
+ * that was still waiting on its child. Binding the count to
+ * `details.$.workorder_attempt_id` (written by the executor from the run's execution
+ * context, which a native child inherits) makes the measurement name ITS OWN attempt.
+ */
+export type WorkerTraceQueryFactory = (workorderAttemptId: number) => WorkerTraceQueries;
+
 export function buildWorkerTraceQueries(
   sessionsDb: SQLiteDatabase | undefined,
   workerChannelId: string,
-  obligatedTools: readonly string[] = OBLIGATED_TOOLS
+  obligatedTools: readonly string[] = OBLIGATED_TOOLS,
+  workorderAttemptId?: number
 ): WorkerTraceQueries {
   const TRACE_TOOL_LIST = traceToolList(obligatedTools);
+  if (workorderAttemptId !== undefined) {
+    if (!Number.isSafeInteger(workorderAttemptId) || workorderAttemptId < 1) {
+      throw new Error('[workorder-hooks] workorder attempt id must be a positive integer');
+    }
+  }
+  // The anchor stays channel-wide on purpose: it is a rowid boundary, and the attempt
+  // predicate below is what excludes a sibling's rows from the count.
+  const attemptClause =
+    workorderAttemptId === undefined
+      ? ''
+      : `AND json_extract(details, '$.workorder_attempt_id') = ${String(workorderAttemptId)}`;
   return {
     getTraceMaxId: () => {
       if (!sessionsDb) return 0;
@@ -228,6 +279,7 @@ export function buildWorkerTraceQueries(
            WHERE type = 'gateway_tool_call'
              AND json_extract(details, '$.channel_id') = ?
              AND execution_status = 'completed'
+             ${attemptClause}
              AND id > ? AND (normalized_tool_name IN (${TRACE_TOOL_LIST}) OR input_summary IN (${TRACE_TOOL_LIST}))`
         )
         .get(workerChannelId, maxId) as { n: number };
@@ -298,13 +350,18 @@ export function reconcileClaimAgainstTraces(
 }
 
 export interface LaneAfterHookDeps {
-  /** Counts the lane's obligated tools: proves the run ACTED. */
-  traces: WorkerTraceQueries;
   /**
-   * Counts only the lane's write tools: proves the run WROTE. Separate from `traces` because
-   * `contract_no_update` is honest evidence of acting and no evidence at all of writing.
+   * Counts the lane's obligated tools for ONE attempt: proves that attempt ACTED. A factory,
+   * not a fixed query, because a sibling order of the same kind must never discharge the
+   * attempt that is waiting on its own child.
    */
-  writeTraces?: WorkerTraceQueries;
+  tracesFor: WorkerTraceQueryFactory;
+  /**
+   * Counts only the lane's write tools: proves the run WROTE. Separate from `tracesFor`
+   * because `contract_no_update` is honest evidence of acting and no evidence at all of
+   * writing.
+   */
+  writeTracesFor?: WorkerTraceQueryFactory;
   log: (line: string) => void;
   /** Raised when the run cannot be shown to have done what it reported. */
   onUnverified?: (note: string) => void;
@@ -319,7 +376,7 @@ export function buildPromotionAfterHook(
   events: PromotionHookEvents,
   deps?: LaneAfterHookDeps
 ): (wo: WorkOrderRecord, response: string, before?: unknown) => void {
-  return (_wo, response, before) => {
+  return (wo, response, before) => {
     const claim = readLaneClaim(response);
     if (!deps) {
       // No trace source wired (tests, or a daemon without the sessions DB): fall back to
@@ -332,12 +389,12 @@ export function buildPromotionAfterHook(
       return;
     }
     const anchor = typeof before === 'number' ? before : 0;
-    const traceCount = deps.traces.countObligatedTraceRowsSince(anchor);
+    const traceCount = deps.tracesFor(wo.id).countObligatedTraceRowsSince(anchor);
     // The promoted count comes from the WRITE tools only. Using the obligated count here
     // reported "1 saved" for a run whose only obligated call was contract_no_update, and
     // that number is what wakes the wiki compiler.
-    const savedCount = deps.writeTraces
-      ? deps.writeTraces.countObligatedTraceRowsSince(anchor)
+    const savedCount = deps.writeTracesFor
+      ? deps.writeTracesFor(wo.id).countObligatedTraceRowsSince(anchor)
       : traceCount;
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
     events.emitAgentAction(
@@ -357,16 +414,16 @@ export function buildWikiAfterHook(
   log: (line: string) => void,
   deps?: Omit<LaneAfterHookDeps, 'log'>
 ): (wo: WorkOrderRecord, response: string, before?: unknown) => WorkOrderEffectVerdict {
-  return (_wo, response, before) => {
+  return (wo, response, before) => {
     const claim = readLaneClaim(response);
     if (!deps) {
       const reason = 'wiki effect trace source unavailable';
       log(`[stage2] wiki worker: UNVERIFIED - ${reason}`);
       return { disposition: 'fail', reason };
     }
-    const traceCount = deps.traces.countObligatedTraceRowsSince(
-      typeof before === 'number' ? before : 0
-    );
+    const traceCount = deps
+      .tracesFor(wo.id)
+      .countObligatedTraceRowsSince(typeof before === 'number' ? before : 0);
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
     log(`[stage2] wiki worker: ${verdict.verified ? 'verified' : 'UNVERIFIED'} - ${verdict.note}`);
     if (!verdict.verified) {

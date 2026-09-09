@@ -138,7 +138,11 @@ export function selfCheckKey(localDate: string): string {
 // ── Payload schemas (plan G6) ─────────────────────────────────────────────
 
 export interface BoardPayload {
-  mode: 'full' | 'reconcile';
+  /**
+   * `full` rebuilds from the sources; `delta` edits the published board from the accumulated
+   * state and carries the anchor below; `reconcile` repairs one channel partition.
+   */
+  mode: 'full' | 'delta' | 'reconcile';
   /** Owner-forced refresh: brief must publish even on NO_UPDATE. */
   force?: boolean;
   /** Gate generation captured before enqueue. */
@@ -151,6 +155,10 @@ export interface BoardPayload {
    * producer's delta gate compares against (board-delta-gate.ts).
    */
   deltaWatermark?: string;
+  /** Delta-only: the published board's write time (RFC 3339) this run edits from. */
+  deltaAnchor?: string;
+  /** Delta-only: the board's basis revision as read from the report slots at enqueue time. */
+  deltaBasisRevision?: string;
   channelKey?: string;
   readonly deltaLines?: readonly string[];
   /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
@@ -199,6 +207,8 @@ const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
     'repairGeneration',
     'noUpdateScope',
     'deltaWatermark',
+    'deltaAnchor',
+    'deltaBasisRevision',
     'channelKey',
     'deltaLines',
     'eventIds',
@@ -249,9 +259,9 @@ export function validateWorkOrderPayload(
   }
   if (kind === 'board') {
     const mode = payload.mode;
-    if (mode !== 'full' && mode !== 'reconcile') {
+    if (mode !== 'full' && mode !== 'delta' && mode !== 'reconcile') {
       throw new Error(
-        `workorder payload (board): mode must be 'full'|'reconcile', got: ${String(mode)}`
+        `workorder payload (board): mode must be 'full'|'delta'|'reconcile', got: ${String(mode)}`
       );
     }
     if (payload.force !== undefined && typeof payload.force !== 'boolean') {
@@ -280,6 +290,28 @@ export function validateWorkOrderPayload(
     }
     if (payload.reclassificationCandidates !== undefined) {
       validateTaskReclassificationCandidates(payload.reclassificationCandidates);
+    }
+    // The delta anchor is ALL-OR-NONE and mode-exclusive: a delta run with no anchor has
+    // nothing to read from, and a full/reconcile run carrying one would be told to edit from a
+    // baseline the host did not verify it has.
+    const anchor = payload.deltaAnchor;
+    const anchorBasis = payload.deltaBasisRevision;
+    if (mode === 'delta') {
+      const anchorMs = typeof anchor === 'string' ? Date.parse(anchor) : Number.NaN;
+      if (!Number.isFinite(anchorMs) || anchor !== new Date(anchorMs).toISOString()) {
+        throw new Error(
+          `workorder payload (board delta): deltaAnchor must be a canonical ISO 8601 instant`
+        );
+      }
+      if (!isBoundedString(anchorBasis) || anchorBasis !== anchorBasis.trim()) {
+        throw new Error(
+          `workorder payload (board delta): deltaBasisRevision must be a canonical 1-1000 character basis`
+        );
+      }
+    } else if (anchor !== undefined || anchorBasis !== undefined) {
+      throw new Error(
+        `workorder payload (board ${mode}): deltaAnchor/deltaBasisRevision are delta-only`
+      );
     }
     if (mode === 'reconcile') {
       if (payload.deltaWatermark !== undefined) {

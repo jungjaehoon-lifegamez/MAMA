@@ -1,3 +1,10 @@
+import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
+import {
+  captureExecutionEvidence,
+  safeExperienceSummary,
+  traceReadScope,
+  type ExecutionEvidence,
+} from '../operator/experience-evidence.js';
 /**
  * MAMA Tool Executor for MAMA Standalone
  *
@@ -11,6 +18,14 @@
  * - Path-based tools (Read, Write) also check path permissions
  */
 
+import {
+  ProcedureRuntime,
+  deriveProcedureAccess,
+  type ProcedureRuntimeState,
+  type ProcedureTurn,
+} from '../operator/procedure-runtime.js';
+import type { ProcedureStore } from '../operator/procedure-store.js';
+import { isCodeActMutatingTool } from './code-act/host-bridge.js';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, realpathSync } from 'fs';
 import { AsyncLocalStorage } from 'async_hooks';
 import { createHash, randomUUID } from 'crypto';
@@ -26,7 +41,10 @@ import {
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { unlinkSync } from 'node:fs';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
-import { isLearningTopic } from '../operator/learning-context.js';
+import {
+  buildReportPublishToolContract,
+  htmlUsesBoardVocabulary,
+} from '../operator/board-slot-instructions.js';
 import { exportFile, resolveExportRoot, type ExportFileInput } from '../operator/file-export.js';
 import type { RecordIssueInput } from '../observability/operational-issues.js';
 import {
@@ -291,6 +309,8 @@ type ActiveGatewayExecutionContext = {
   executionSurface?: GatewayExecutionSurface;
   sourceTurnId?: string;
   sourceMessageRef?: string;
+  procedureStimulus?: string;
+  procedureRefs?: GatewayToolExecutionContext['procedureRefs'];
   modelRunId?: string | null;
   gatewayCallId?: string;
   workorderAttemptId?: number;
@@ -767,6 +787,9 @@ export interface TelegramGatewayInterface {
 import { ToolRegistry } from './tool-registry.js';
 
 const VALID_TOOLS: GatewayToolName[] = ToolRegistry.getValidToolNames();
+const TOOL_CATALOG_REVISION = createHash('sha256')
+  .update(JSON.stringify(ToolRegistry.getAllTools()))
+  .digest('hex');
 
 /**
  * Sensitive patterns that should be masked in config output
@@ -801,7 +824,42 @@ function isExactTelegramDeliveryReceipt(
   );
 }
 
+/** Gateway tools whose completed execution leaves a durable effect (ledger, memory, file, send). */
+const DURABLE_WRITE_TOOL =
+  /_(?:create|update|publish|send|save|reclassify|retire|observe|bind|reconcile|export|upload|write)$|^console_brief_update$|^Write$|^Bash$/;
+
 export class GatewayToolExecutor {
+  private procedureRuntime: ProcedureRuntime | null = null;
+  setProcedureStore(store: ProcedureStore): void {
+    this.procedureRuntime = new ProcedureRuntime(store);
+  }
+  /**
+   * Turn-1 hints for the thread this prompt goes to (procedure-runtime.ts prepareContext).
+   * Skills stay in the system prompt and execution evidence behind experience_read and the
+   * experience_ref on each tool result: neither is re-sent per turn.
+   */
+  prepareProcedureContext(
+    state: GatewayToolExecutionContext | null,
+    turn: ProcedureTurn
+  ): { text: string; hints: string[] } {
+    return this.procedureRuntime?.prepareContext(state, turn) ?? { text: '', hints: [] };
+  }
+  /** Did this run complete any tool that durably writes? null when traces are unavailable. */
+  async runHadDurableWrite(modelRunId: string): Promise<boolean | null> {
+    const api = await this.initializeMAMAApi();
+    if (!api.listToolTracesForRun) return null;
+    const traces = await api.listToolTracesForRun(modelRunId);
+    return traces.some(
+      (trace) => trace.execution_status === 'completed' && DURABLE_WRITE_TOOL.test(trace.tool_name)
+    );
+  }
+  releaseProcedureRun(state: GatewayToolExecutionContext | null): void {
+    this.procedureRuntime?.releaseRun(state);
+  }
+  readCanonicalProcedureBrief(state: GatewayToolExecutionContext | null): string | null {
+    return this.procedureRuntime?.canonicalBrief(state) ?? null;
+  }
+
   private readonly driveTools: DriveToolService;
   private readonly imageTranslationTools: ImageTranslationToolService;
   private readonly driveDestinationCapabilities = new Map<
@@ -1040,6 +1098,8 @@ export class GatewayToolExecutor {
       executionSurface: executionContext?.executionSurface,
       sourceTurnId: executionContext?.sourceTurnId,
       sourceMessageRef: executionContext?.sourceMessageRef,
+      procedureStimulus: executionContext?.procedureStimulus,
+      procedureRefs: executionContext?.procedureRefs,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
       workorderAttemptId: executionContext?.workorderAttemptId,
@@ -1086,6 +1146,8 @@ export class GatewayToolExecutor {
       executionSurface: active.executionSurface ?? fallback.executionSurface,
       sourceTurnId: active.sourceTurnId ?? fallback.sourceTurnId,
       sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
+      procedureStimulus: active.procedureStimulus,
+      procedureRefs: active.procedureRefs,
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
       // Never merged from fallback - attempt identity is issued for one claimed run only.
@@ -1444,6 +1506,8 @@ export class GatewayToolExecutor {
         getModelRun: mama.getModelRun?.bind(mama),
         appendToolTrace: mama.appendToolTrace?.bind(mama),
         listToolTracesForRun: mama.listToolTracesForRun?.bind(mama),
+        listToolTraces: mama.listToolTraces?.bind(mama),
+        readToolTrace: mama.readToolTrace?.bind(mama),
         createAuditFinding: mama.createAuditFinding?.bind(mama),
         listOpenAuditFindings: (mama.listOpenAuditFindings ?? mama.listAuditFindings)?.bind(mama),
         listAuditFindings: mama.listAuditFindings?.bind(mama),
@@ -1823,6 +1887,8 @@ export class GatewayToolExecutor {
 
     let result!: GatewayToolResult;
     let auditResult!: GatewayToolResult;
+    let executionEvidence: ExecutionEvidence | undefined;
+    let experienceRef: string | undefined;
     try {
       const rawResult = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
@@ -1835,6 +1901,16 @@ export class GatewayToolExecutor {
         await this.executionContextStorage.run(activeCtx, async () => {
           this.requireActiveTemporalAuthority(toolName);
         });
+      }
+      const inspectedEvidence =
+        toolName === 'experience_read' ||
+        (toolName === 'code_act' &&
+          Array.isArray((rawResult as Record<string, unknown>).hostToolExecutions) &&
+          (
+            (rawResult as Record<string, unknown>).hostToolExecutions as Array<{ name?: string }>
+          ).some((call) => call.name === 'experience_read'));
+      if (deriveProcedureAccess(activeCtx) && !inspectedEvidence) {
+        executionEvidence = captureExecutionEvidence(effectiveInput, rawResult);
       }
       const rawFailure = rawResult as { success?: unknown; code?: unknown; error?: unknown };
       if (rawFailure.success === false) {
@@ -1894,7 +1970,13 @@ export class GatewayToolExecutor {
         undefined,
         Date.now() - startedAt,
         gatewayCallId,
-        auditError
+        auditError,
+        deriveProcedureAccess(activeCtx)
+          ? captureExecutionEvidence(effectiveInput, {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          : undefined
       ).catch((appendError: unknown) => {
         securityLogger.warn(
           '[model-run] failed to append failed tool trace before finalization',
@@ -1927,13 +2009,15 @@ export class GatewayToolExecutor {
 
     try {
       try {
-        await this.appendToolTraceIfNeeded(
+        experienceRef = await this.appendToolTraceIfNeeded(
           traceState,
           activeCtx,
           toolName,
           auditResult,
           Date.now() - startedAt,
-          gatewayCallId
+          gatewayCallId,
+          undefined,
+          executionEvidence
         );
       } finally {
         await this.completeDirectModelRunIfNeeded(traceState, toolName, auditResult);
@@ -1967,7 +2051,9 @@ export class GatewayToolExecutor {
     if (scopeAudit.mismatch) {
       this.alarmScopeMismatch(activeCtx, toolName);
     }
-    return result;
+    return experienceRef && executionEvidence
+      ? ({ ...result, experience_ref: experienceRef } as GatewayToolResult)
+      : result;
   }
 
   /**
@@ -2186,18 +2272,19 @@ export class GatewayToolExecutor {
     result: GatewayToolResult | undefined,
     durationMs: number,
     gatewayCallId: string,
-    error?: unknown
-  ): Promise<void> {
+    error?: unknown,
+    evidence?: ExecutionEvidence
+  ): Promise<string | undefined> {
     if (!traceState) {
       return;
     }
-
-    await traceState.api.appendToolTrace({
+    const access = deriveProcedureAccess(ctx);
+    const stored = await traceState.api.appendToolTrace({
       model_run_id: traceState.modelRunId,
       gateway_call_id: gatewayCallId,
       tool_name: toolName,
       input_summary: `tool:${toolName}`,
-      output_summary: this.summarizeToolTraceOutput(result, error),
+      output_summary: safeExperienceSummary(this.summarizeToolTraceOutput(result, error)),
       execution_status: error || result?.success === false ? 'failed' : 'completed',
       duration_ms: durationMs,
       envelope_hash: ctx.envelope?.envelope_hash ?? null,
@@ -2205,7 +2292,27 @@ export class GatewayToolExecutor {
       // preserves `code`); the trace was the one place that dropped it,
       // leaving only sha256 digests. Carried, never invented: no code = NULL.
       failure_code: this.extractFailureCode(result, error),
+      ...(access
+        ? {
+            owner_scope: access.ownerScope,
+            project_id: access.projectId,
+            channel_id: access.channelId ?? null,
+            catalog_revision: TOOL_CATALOG_REVISION,
+            diagnostic_json: JSON.stringify({
+              tool: toolName,
+              status: error || result?.success === false ? 'failed' : 'completed',
+              failureCode: this.extractFailureCode(result, error),
+              evidenceCompleteness: evidence?.completeness ?? 'unavailable',
+              sourceRefs: [
+                ctx.sourceMessageRef,
+                ctx.parentToolName ? `parent-tool:${ctx.parentToolName}` : undefined,
+              ].filter(Boolean),
+            }),
+            ...(evidence ? { evidence_json: JSON.stringify(evidence) } : {}),
+          }
+        : {}),
     });
+    return stored?.trace_id;
   }
 
   private extractFailureCode(
@@ -2809,6 +2916,16 @@ export class GatewayToolExecutor {
     }
 
     try {
+      // A selected running revision remains fixed, but retirement/revocation wins before effects.
+      if (
+        this.procedureRuntime &&
+        toolName !== 'code_act' &&
+        !toolName.startsWith('procedure_') &&
+        toolName !== 'console_brief_update' &&
+        isCodeActMutatingTool(toolName)
+      ) {
+        this.procedureRuntime.assertWritable(activeState as ProcedureRuntimeState);
+      }
       // Lazy MAMA API init — only for tools that need it
       const getApi = () => this.initializeMAMAApi();
 
@@ -3227,17 +3344,6 @@ export class GatewayToolExecutor {
               error: `Refusing to save: content matches secret pattern(s): ${saveSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
             };
           }
-          if (isLearningTopic((saveInput as { topic?: unknown }).topic)) {
-            // Standing policy and lessons come from the OWNER through the turn observer.
-            // An agent that could write policy: would grant itself instructions injected
-            // into every later turn. Refuse at the choke, like secrets.
-            return {
-              success: false,
-              code: 'learning_topic_refused',
-              error:
-                'Topics starting with policy: or lesson: are written by the host from owner instructions, never by the agent.',
-            };
-          }
           const api = await getApi();
           await this.recordMemoryWriteWarnings(api, 'mama_save', saveSecretScan.warnings);
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
@@ -3394,43 +3500,163 @@ export class GatewayToolExecutor {
               );
             }
 
+            // Observability, not enforcement: a board slot is a reversible
+            // durable write, so HTML that misses the board class vocabulary is
+            // published as supplied and reported back as a warning. Without
+            // this the slot silently renders as unstyled plain text.
+            const runLabel = activeState.modelRunId ?? 'unknown';
+            const vocabularyWarnings: string[] = [];
+            for (const slotId of acceptedSlotIds) {
+              const html = slotsInput[slotId];
+              if (typeof html !== 'string' || !html.trim()) continue;
+              if (htmlUsesBoardVocabulary(html)) continue;
+              vocabularyWarnings.push(
+                `slot ${slotId} uses none of the board structural classes (report-summary / report-card / report-section-title / report-table) and will render as plain text; republish using the report_publish contract (tool_describe report_publish)`
+              );
+              console.warn(
+                `[board] slot ${slotId} published without the board vocabulary (run ${runLabel})`
+              );
+            }
+
             return {
               success: true,
               acceptedSlotIds,
               changedSlotIds,
               message: `Dashboard report accepted: ${acceptedSlotIds.join(', ')} (${acceptedSlotIds.length} accepted, ${changedSlotIds.length} changed)`,
+              ...(vocabularyWarnings.length > 0
+                ? {
+                    warnings: vocabularyWarnings,
+                    // The shape and classes in hand once, not per slot, so the
+                    // republish needs no second lookup.
+                    contract: buildReportPublishToolContract(),
+                  }
+                : {}),
             };
           }
           throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
         }
+        case 'experience_read': {
+          const access = deriveProcedureAccess(activeState);
+          if (!access) throw new Error('Execution evidence authority required');
+          const args = input as Record<string, unknown>;
+          const allowed = new Set([
+            'kind',
+            'trace_id',
+            'run_id',
+            'tool_name',
+            'cursor',
+            'limit',
+            'offset',
+            'chars',
+          ]);
+          if (Object.keys(args).some((key) => !allowed.has(key)))
+            throw new Error('Execution evidence scope is host-owned; unknown argument');
+          for (const key of ['trace_id', 'run_id', 'tool_name', 'cursor']) {
+            if (
+              args[key] !== undefined &&
+              (typeof args[key] !== 'string' || !String(args[key]).trim())
+            )
+              throw new Error(`Execution evidence ${key} invalid`);
+          }
+          if (args.kind !== undefined && args.kind !== 'skills' && args.kind !== 'executions')
+            throw new Error('Execution evidence kind invalid');
+          if (args.kind === 'skills') {
+            if (access.ownerScope !== 'owner:runtime')
+              throw new Error('Installed skill catalog owner scope required');
+            if (
+              ['trace_id', 'run_id', 'tool_name', 'cursor', 'chars'].some(
+                (key) => args[key] !== undefined
+              )
+            )
+              throw new Error('Skill catalog accepts offset and limit only');
+            const offset = args.offset ?? 0;
+            const limit = args.limit ?? 20;
+            if (
+              typeof offset !== 'number' ||
+              !Number.isSafeInteger(offset) ||
+              offset < 0 ||
+              typeof limit !== 'number' ||
+              !Number.isSafeInteger(limit) ||
+              limit < 1 ||
+              limit > 100
+            )
+              throw new Error('Skill catalog offset/limit invalid');
+            const skills = filterSkillCatalogForContext(
+              loadInstalledSkills(false, { includePaths: true }),
+              activeState.agentContext
+            );
+            const end = Math.min(offset + limit, skills.length);
+            return {
+              success: true,
+              skills: skills.slice(offset, end),
+              total: skills.length,
+              next_offset: end < skills.length ? end : null,
+            } as GatewayToolResult;
+          }
+          const api = await this.initializeMAMAApi();
+          if (!api.listToolTraces || !api.readToolTrace)
+            throw new Error('Execution evidence storage unavailable');
+          const scope = traceReadScope(access);
+          if (typeof args.trace_id === 'string') {
+            const trace = await api.readToolTrace(args.trace_id, scope);
+            if (!trace) throw new Error('Execution evidence unavailable');
+            const offset = args.offset ?? 0;
+            const chars = args.chars ?? 4000;
+            if (
+              typeof offset !== 'number' ||
+              !Number.isSafeInteger(offset) ||
+              offset < 0 ||
+              typeof chars !== 'number' ||
+              !Number.isSafeInteger(chars) ||
+              chars < 1 ||
+              chars > 8000
+            ) {
+              throw new Error('Execution evidence offset/chars invalid');
+            }
+            const text = Array.from(trace.evidence_json ?? '');
+            if (offset > text.length) throw new Error('Execution evidence offset out of range');
+            const end = Math.min(offset + chars, text.length);
+            return {
+              success: true,
+              trace: { ...trace, evidence_json: null },
+              content: text.slice(offset, end).join(''),
+              offset,
+              total_chars: text.length,
+              next_offset: end < text.length ? end : null,
+              behaviorVerified: false,
+            } as GatewayToolResult;
+          }
+          const limit = args.limit;
+          if (
+            limit !== undefined &&
+            (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+          ) {
+            throw new Error('Execution evidence limit invalid');
+          }
+          const page = await api.listToolTraces({
+            ...scope,
+            ...(typeof args.run_id === 'string' ? { model_run_id: args.run_id } : {}),
+            ...(typeof args.tool_name === 'string' ? { tool_name: args.tool_name } : {}),
+            ...(typeof args.cursor === 'string' ? { cursor: args.cursor } : {}),
+            ...(limit === undefined ? {} : { limit }),
+          });
+          return { success: true, ...page, behaviorVerified: false } as GatewayToolResult;
+        }
+        case 'procedure_list':
+        case 'procedure_read':
+        case 'procedure_update':
+        case 'procedure_retire':
+        case 'procedure_observe': {
+          if (!this.procedureRuntime) {
+            throw new Error('Procedure store not configured');
+          }
+          return this.procedureRuntime.execute(toolName, input, activeState) as GatewayToolResult;
+        }
         case 'console_brief_update': {
-          const { appendConsoleBriefLesson } = await import('../operator/console-brief.js');
-          // Append-only (live incident 2026-07-24): a full-replace contract had
-          // the model overwrite the entire seeded manual with its one new
-          // lesson. Accept `lesson`, with `content` as a lenient alias for
-          // threads still anchored on the old schema.
-          const rawInput = input as { lesson?: unknown; content?: unknown };
-          const lessonInput = rawInput.lesson ?? rawInput.content;
-          if (typeof lessonInput !== 'string') {
-            return { success: false, error: 'console_brief_update requires a string lesson' };
+          if (!this.procedureRuntime) {
+            return { success: false, error: 'procedure store unavailable' };
           }
-          let briefAfter: string;
-          try {
-            briefAfter = appendConsoleBriefLesson(lessonInput);
-          } catch (err) {
-            return { success: false, error: err instanceof Error ? err.message : String(err) };
-          }
-          // Observability over restriction: the agent editing its own operating
-          // brief is logged loudly, never silently absorbed. The next NEW/re-anchored
-          // owner session picks it up via the policy fingerprint.
-          console.log(
-            `[console-brief] agent appended a lesson (brief now ${briefAfter.length} chars)`
-          );
-          return {
-            success: true,
-            message:
-              'Lesson appended to your operating brief; it applies from the next session re-anchor.',
-          };
+          return this.procedureRuntime.execute(toolName, input, activeState) as GatewayToolResult;
         }
         case 'member_candidates': {
           const candidates = getMemberCandidateStore()

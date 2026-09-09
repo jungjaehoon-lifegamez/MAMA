@@ -2,16 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { BoardRefreshGate, boardFullNoUpdateScope } from '../../src/operator/board-refresh-gate.js';
 
 describe('TG-06 BoardRefreshGate', () => {
-  it('starts boot-dirty, captures one full generation, and stays clean after its verified effect', () => {
+  // Owner decision 2026-09-09: a boot is not evidence. The gate that used to start dirty
+  // bought one full maintenance run per restart, which is what the owner's first message
+  // after a restart waited on.
+  it('starts CLEAN: a fresh boot has no dirt of its own', () => {
     const gate = new BoardRefreshGate({ initialGeneration: 100 });
 
-    expect(gate.needsFullRepair()).toBe(true);
+    expect(gate.needsFullRepair()).toBe(false);
     expect(gate.captureFullRepair()).toEqual({
       repairGeneration: 100,
       noUpdateScope: 'full:100',
     });
+  });
 
-    gate.completeVerifiedFull(100);
+  it('a channel delta is the only thing that makes the gate dirty, and a verified full clears it', () => {
+    const gate = new BoardRefreshGate({ initialGeneration: 100 });
+    gate.markChannelDirty('slack:C1');
+    expect(gate.needsFullRepair()).toBe(true);
+
+    gate.completeVerifiedFull(gate.captureFullRepair().repairGeneration);
     expect(gate.needsFullRepair()).toBe(false);
   });
 
@@ -43,7 +52,7 @@ describe('TG-06 BoardRefreshGate', () => {
     expect(gate.needsFullRepair()).toBe(true);
   });
 
-  it('clears only the captured unauthorized private partition without clearing boot or newer work', () => {
+  it('clears only the captured unauthorized private partition without clearing newer work', () => {
     const gate = new BoardRefreshGate({ initialGeneration: 40 });
     const captured = gate.markChannelDirty('kagemusha:private');
     const other = gate.markChannelDirty('telegram:owner');
@@ -55,7 +64,7 @@ describe('TG-06 BoardRefreshGate', () => {
     expect(gate.needsFullRepair()).toBe(true);
   });
 
-  it('a verified full clears boot and generations at or before its capture, but preserves later deltas', () => {
+  it('a verified full clears generations at or before its capture, but preserves later deltas', () => {
     const gate = new BoardRefreshGate({ initialGeneration: 50 });
     gate.markChannelDirty('slack:C1');
     const full = gate.captureFullRepair();

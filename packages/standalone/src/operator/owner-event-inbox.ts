@@ -13,7 +13,7 @@
  */
 import type { SQLiteDatabase } from '../sqlite.js';
 import { scanForSecrets } from '../memory/secret-filter.js';
-import type { TriggerProcedureStep } from './trigger-types.js';
+import type { ProcedureRef, TriggerProcedureStep } from './trigger-types.js';
 
 const MAX_ATTEMPTS = 5;
 const ACKED_RETENTION_MS = 7 * 86_400_000;
@@ -43,6 +43,11 @@ export interface InboxBatch {
 }
 
 export interface OwnerEventActivation {
+  procedureRef?: ProcedureRef;
+  queuedProcedureRef?: ProcedureRef;
+  availability?: 'available' | 'unavailable';
+  resolutionReason?: string;
+
   triggerId: string;
   kind: string;
   memoryQuery: string;
@@ -422,6 +427,16 @@ export class OwnerEventInbox {
       WHERE id = ? AND status IN ('claimed', 'pending')`
       )
       .run(reason.slice(0, 500), id);
+  }
+
+  /** Persist admission without changing the batch/effect identity (TG-05/TG-06). */
+  saveAdmittedActivations(batch: OwnerEventBatch): void {
+    const result = this.db
+      .prepare(
+        "UPDATE owner_event_inbox SET activations_json = ? WHERE id = ? AND status = 'claimed' AND attempts = ?"
+      )
+      .run(JSON.stringify(batch.activations), batch.id, batch.attempts);
+    if (result.changes !== 1) throw new Error('owner event admission lease changed');
   }
 
   retry(id: number, error: string): 'pending' | 'dead' | 'noop' {

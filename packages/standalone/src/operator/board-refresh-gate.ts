@@ -1,10 +1,17 @@
 /**
  * In-memory repair authority for the event-driven Board path (TG-06).
  *
- * The gate starts dirty so every boot earns one full repair. Channel deltas
- * receive monotonically increasing generations before debounce/budgeting. A
- * completion may clear only the generation it captured; later ingress stays
- * dirty and is repaired by a later reconcile or full pass.
+ * The gate is dirt, and nothing else. It starts CLEAN: a boot is not evidence
+ * that anything the board reads moved, and the forced one-full-run-per-boot it
+ * used to buy is what made the owner's first message after a restart wait on a
+ * maintenance turn (owner decision 2026-09-09). Channel deltas receive
+ * monotonically increasing generations before debounce/budgeting. A completion
+ * may clear only the generation it captured; later ingress stays dirty and is
+ * repaired by a later reconcile or full pass.
+ *
+ * Staleness and "no board has ever been published" remain grounds for a full
+ * run, but they are EVIDENCE, read by the delta gate (board-delta-gate.ts),
+ * never state this gate invents at boot.
  */
 
 export interface BoardRefreshGateOptions {
@@ -31,19 +38,16 @@ function assertRepairGeneration(value: number): void {
 
 export class BoardRefreshGate {
   private generation: number;
-  private readonly bootGeneration: number;
-  private bootDirty = true;
   private readonly channelGenerations = new Map<string, number>();
 
   constructor(options: BoardRefreshGateOptions = {}) {
     const initial = options.initialGeneration ?? (options.now ?? Date.now)();
     assertRepairGeneration(initial);
     this.generation = initial;
-    this.bootGeneration = initial;
   }
 
   needsFullRepair(): boolean {
-    return this.bootDirty || this.channelGenerations.size > 0;
+    return this.channelGenerations.size > 0;
   }
 
   markChannelDirty(channelKey: string): number {
@@ -79,9 +83,6 @@ export class BoardRefreshGate {
 
   completeVerifiedFull(capturedGeneration: number): void {
     assertRepairGeneration(capturedGeneration);
-    if (capturedGeneration >= this.bootGeneration) {
-      this.bootDirty = false;
-    }
     for (const [channelKey, generation] of this.channelGenerations) {
       if (generation <= capturedGeneration) {
         this.channelGenerations.delete(channelKey);

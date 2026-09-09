@@ -14,6 +14,10 @@ import {
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import { CODE_ACT_MARKER } from '../../src/agent/code-act/index.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
+import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
+import { createReportPublisher, createReportStore } from '../../src/api/report-handler.js';
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import {
   resolvePrivateConnectorPolicy,
@@ -421,14 +425,21 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       ).toBe(true);
       expect(projected.names).toContain('task_list');
       expect(projected.names).toContain('changes_read');
+      // TG-06: a report can persist its own judgment before replying. The
+      // board worker's artifact policy must not be its only execution path.
+      expect(projected.names).toContain('report_publish');
       // Prompt/permission coherence: advertise exactly what the executor will run.
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
       ].map((match) => match[1]);
       expect(advertised.every((name) => projected.names.includes(name))).toBe(true);
       expect(projected.names).toEqual(
-        expect.arrayContaining(['task_create', 'task_update', 'mama_save', 'Read', 'Bash', 'Write'])
+        expect.arrayContaining(['task_create', 'task_update', 'mama_save', 'Read'])
       );
+      // A scheduled report turn is unattended: the workspace shell and file writer stay in
+      // the owner's own chat turn (UNATTENDED_BLOCKED_TOOLS).
+      expect(projected.names).not.toContain('Bash');
+      expect(projected.names).not.toContain('Write');
     });
 
     it('removes the retired report relay while keeping progressive reads', () => {
@@ -441,6 +452,56 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(projected.names).toContain('changes_read');
       expect(projected.names).not.toContain('report_request');
       expect(policy.gatewayToolsPrompt).not.toContain('report_request');
+    });
+
+    it('TG-06 discovers and persists report judgment through the report Code-Act projection', async () => {
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy);
+      const projected = projectCodeActToolPolicy({
+        tier: policy.agentContext.tier,
+        roleName: policy.agentContext.roleName,
+        role: policy.agentContext.role,
+      });
+      const store = createReportStore();
+      const executor = new GatewayToolExecutor({});
+      executor.setReportPublisher(createReportPublisher(store, new Set()));
+      const bridge = new HostBridge(executor, undefined, {
+        source: 'operator',
+        channelId: 'report',
+      });
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, projected);
+      const result = await sandbox.execute(`
+        var found = tool_search({query:'report_publish',limit:5});
+        var published = report_publish({slots:{
+          briefing:'<p>Current situation</p>',
+          action_required:'<p>Review received work</p>',
+          decisions:'<p>Assign the remaining task</p>'
+        }});
+        ({found:found,published:published});
+      `);
+      expect(result.success).toBe(true);
+      expect(result.value).toMatchObject({
+        found: {
+          tools: expect.arrayContaining([expect.objectContaining({ name: 'report_publish' })]),
+        },
+      });
+      expect(store.get('briefing')?.html).toBe('<p>Current situation</p>');
+      expect(store.get('decisions')?.html).toBe('<p>Assign the remaining task</p>');
+    });
+
+    it('TG-04 preserves an explicit owner block on report publication', () => {
+      const owner = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy)
+        .agentContext.role;
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', enabledPrivatePolicy, {
+        ...owner,
+        blockedTools: [...(owner.blockedTools ?? []), 'report_publish'],
+      });
+      const projected = projectCodeActToolPolicy({
+        tier: policy.agentContext.tier,
+        roleName: policy.agentContext.roleName,
+        role: policy.agentContext.role,
+      });
+      expect(projected.names).not.toContain('report_publish');
     });
 
     it.each([

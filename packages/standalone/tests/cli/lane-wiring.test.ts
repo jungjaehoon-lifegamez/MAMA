@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ADMINISTRATION_TOOLS,
   ONE_AGENT_TURN_POLICY,
+  SCHEDULED_TURN_BLOCKED_TOOLS,
   OPERATOR_REPORT_TOOL_POLICY,
   TURN_KIND_REQUIRED_TOOLS,
   buildTurnAgentPolicy,
@@ -40,8 +41,6 @@ describe('TG-03/TG-04/TG-05: one owner grant across scheduled stimuli', () => {
       'drive_download',
       'obsidian',
       'Read',
-      'Bash',
-      'Write',
     ];
     for (const kind of WORKORDER_KINDS) {
       const context = turn(kind).agentContext;
@@ -63,6 +62,23 @@ describe('TG-03/TG-04/TG-05: one owner grant across scheduled stimuli', () => {
           'kagemusha_messages',
         ])
       );
+    }
+  });
+
+  it('blocks the workspace shell and file writer on every unattended turn', () => {
+    // CLAUDE.md and types.ts both said so; SCHEDULED_TURN_BLOCKED_TOOLS did not, and a live
+    // unattended turn ran a shell command (2026-09-09).
+    for (const kind of WORKORDER_KINDS) {
+      const context = turn(kind).agentContext;
+      for (const tool of ['Bash', 'Write']) {
+        expect(context.role.allowedTools, `${kind} holds ${tool}`).not.toContain(tool);
+        expect(context.role.blockedTools, `${kind} does not block ${tool}`).toContain(tool);
+      }
+    }
+    expect(SCHEDULED_TURN_BLOCKED_TOOLS.has('Bash')).toBe(true);
+    expect(SCHEDULED_TURN_BLOCKED_TOOLS.has('Write')).toBe(true);
+    for (const tool of ADMINISTRATION_TOOLS) {
+      expect(SCHEDULED_TURN_BLOCKED_TOOLS.has(tool)).toBe(true);
     }
   });
 
@@ -92,5 +108,19 @@ describe('TG-03/TG-04/TG-05: one owner grant across scheduled stimuli', () => {
     expect(turn('self-check').agentContext.role.allowedTools).toEqual(
       expect.arrayContaining(['file_export', 'repair_request', 'issue_close'])
     );
+  });
+});
+
+/**
+ * Owner decision 2026-09-09: the scheduled board delta turn reads the accumulated state, so its
+ * three named sources have to be in the lane's own grant - a contract naming a tool the lane
+ * cannot call is a script for a failure.
+ */
+describe('board delta turn sources', () => {
+  it('grants board_read, changes_read and task_list to the board lane', () => {
+    const allowed = new Set(turn('board').agentContext.role.allowedTools);
+    for (const tool of ['board_read', 'changes_read', 'task_list', 'report_publish']) {
+      expect(allowed.has(tool), tool).toBe(true);
+    }
   });
 });

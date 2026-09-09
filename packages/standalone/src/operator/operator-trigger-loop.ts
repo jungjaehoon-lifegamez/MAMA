@@ -637,6 +637,7 @@ export class OperatorTriggerLoop {
             triggerId: signal.triggerId,
             kind: signal.kind,
             memoryQuery: signal.memoryQuery,
+            ...(signal.procedureRef ? { procedureRef: { ...signal.procedureRef } } : {}),
             procedure: signal.procedure.map((step) => ({ ...step })),
             requiredEvidence: [...signal.requiredEvidence],
           });
@@ -722,9 +723,9 @@ export class OperatorTriggerLoop {
         try {
           const decision = await review(trigger, context);
           if (this.stopping) return result(events.length);
-          const action = applyReview(decision, trigger.id, registry);
+          const action = applyReview(decision, trigger.id, registry, trigger.revision);
           if (action === 'kept') {
-            registry.markReviewed(trigger.id, trigger.stats.fired);
+            registry.markReviewed(trigger.id, trigger.stats.fired, trigger.revision);
           }
           reviewed += 1;
           log(`[trigger-loop] tick ${tick}: review trigger=${trigger.id} -> ${action}`);

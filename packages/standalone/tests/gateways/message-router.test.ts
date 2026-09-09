@@ -733,7 +733,7 @@ describe('MessageRouter', () => {
         })
       );
       expect(options.systemPrompt).not.toContain('Previous Conversation');
-      expect(await options.freshSessionSystemPrompt()).toContain('## Instructions');
+      expect(await options.freshSessionSystemPrompt()).toContain('Task-store canonicity');
     });
 
     it('keeps the stable policy fingerprint on resumed sessions', async () => {
@@ -823,7 +823,7 @@ describe('MessageRouter', () => {
 
         expect(receivedOptions[1]?.systemPrompt).toContain('[Role:');
         const rebuiltPrompt = await receivedOptions[1]?.freshSessionSystemPrompt?.();
-        expect(rebuiltPrompt).toContain('## Instructions');
+        expect(rebuiltPrompt).toContain('Task-store canonicity');
         expect(rebuiltPrompt).toContain('Previous Conversation');
         expect(rebuiltPrompt?.length).toBeGreaterThan(
           receivedOptions[1]?.systemPrompt?.length ?? 0
@@ -1107,7 +1107,7 @@ describe('MessageRouter', () => {
       await processFixtureMessage(customRouter, message);
 
       expect(receivedOptions[1]?.resumeSession).toBe(true);
-      expect(receivedOptions[1]?.systemPrompt).toContain('## Instructions');
+      expect(receivedOptions[1]?.systemPrompt).toContain('Task-store canonicity');
     });
 
     // TG-04 (constraint removal Task 1): the Trello boundary names the read primitives the
@@ -1313,7 +1313,7 @@ describe('MessageRouter', () => {
       }
     });
 
-    it('gives the owner console an active operating discipline instead of advisory brevity', async () => {
+    it('gives the owner console the trust boundary without a per-turn behaviour script', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-owner-operating-discipline';
       getRoleManager().setTelegramTrust([ownerChannelId]);
@@ -1339,18 +1339,11 @@ describe('MessageRouter', () => {
           metadata: { chatType: 'private' },
         });
 
-        expect(systemPrompt).toContain('Owner console operating discipline');
-        expect(systemPrompt).toContain('Gather before answering');
-        expect(systemPrompt).toContain('Never claim a check you did not run');
-        expect(systemPrompt).toContain('Synthesize, do not dump');
-        // Observed 2026-07-23: the agent gathers and analyses well, then closes by
-        // offering to do the obvious next step instead of doing it. These two rules
-        // target that closing move and draw the boundary it needs to act inside.
-        expect(systemPrompt).toContain('Act by default; ask only before the irreversible');
-        expect(systemPrompt).toContain('Do not close by offering work you could have done');
-        // The boundary must name irreversible effects, not just assert one exists.
-        expect(systemPrompt).toContain('telegram_send');
-        expect(systemPrompt).toContain('drive_upload');
+        // 2026-09-09: no per-turn behaviour script. Only the trust boundary stays; how to
+        // investigate and answer is learned from owner corrections as procedures.
+        expect(systemPrompt).not.toContain('Owner console operating discipline');
+        expect(systemPrompt).not.toContain('Gather before answering');
+        expect(systemPrompt).toContain('Task-store canonicity');
       } finally {
         resetRoleManager();
       }
@@ -1489,8 +1482,8 @@ describe('MessageRouter', () => {
         });
 
         expect(systemPrompt).not.toContain('waking up for the first time');
-        expect(systemPrompt).toContain('Owner console operating discipline');
-        expect(systemPrompt).toContain('Gather before answering');
+        expect(systemPrompt).not.toContain('Owner console operating discipline');
+        expect(systemPrompt).toContain('Task-store canonicity');
       } finally {
         writeFileSync(testSoulPath, '# Synthetic test persona\n', { mode: 0o600 });
         resetRoleManager();
@@ -1934,7 +1927,7 @@ describe('MessageRouter', () => {
       expect(receivedOptionsHistory[1].systemPrompt).toBeDefined();
       expect(receivedOptionsHistory[1].resumeSession).toBe(true);
       expect(receivedOptionsHistory[1].systemPrompt).toContain('[Role:');
-      expect(receivedOptionsHistory[1].systemPrompt).not.toContain('## Instructions');
+      expect(receivedOptionsHistory[1].systemPrompt).not.toContain('Task-store canonicity');
       expect(receivedOptionsHistory[1].systemPrompt!.length).toBeLessThan(
         receivedOptionsHistory[0].systemPrompt!.length / 4
       );

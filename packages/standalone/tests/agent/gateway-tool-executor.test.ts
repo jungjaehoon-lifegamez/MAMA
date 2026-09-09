@@ -277,10 +277,10 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         const result = await executor.execute('report_publish', {
           slots: {
-            pipeline: '<p>p</p>',
-            briefing: '<p>b</p>',
-            decisions: '<p>d</p>',
-            action_required: '<p>a</p>',
+            pipeline: '<div class="report-card">p</div>',
+            briefing: '<div class="report-card">b</div>',
+            decisions: '<div class="report-card">d</div>',
+            action_required: '<div class="report-card">a</div>',
           },
         });
 
@@ -304,9 +304,9 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         const result = await executor.execute('report_publish', {
           slots: {
-            pipeline: '<p>new</p>',
-            briefing: '<p>same</p>',
-            decisions: '<p>changed</p>',
+            pipeline: '<div class="report-card">new</div>',
+            briefing: '<div class="report-card">same</div>',
+            decisions: '<div class="report-card">changed</div>',
           },
         });
 
@@ -3375,33 +3375,6 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         expect(result).toMatchObject({ success: false });
         expect(principalRepository.registerMember).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('ONE-MAMA-P2 Task 2: learning topics are host-owned', () => {
-      it('AC #6 refuses mama_save on policy:/lesson: topics (mama_update carries no topic)', async () => {
-        const executor = new GatewayToolExecutor({
-          envelopeIssuanceMode: 'off',
-          privateConnectorPolicy: resolvePrivateConnectorPolicy({
-            ok: true,
-            config: {},
-            enabledNames: [],
-          }),
-        });
-        const save = await executor.execute('mama_save', {
-          type: 'decision',
-          topic: 'policy:lifecycle-abc',
-          decision: 'treat as done',
-          reasoning: 'agent says so',
-        } as never);
-        expect(save).toMatchObject({ success: false, code: 'learning_topic_refused' });
-        const lesson = await executor.execute('mama_save', {
-          type: 'decision',
-          topic: ' Lesson:report-abc',
-          decision: 'x',
-          reasoning: 'y',
-        } as never);
-        expect(lesson).toMatchObject({ success: false, code: 'learning_topic_refused' });
       });
     });
 

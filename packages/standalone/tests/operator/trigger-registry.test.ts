@@ -36,6 +36,66 @@ describe('TriggerRegistry', () => {
     reg.close();
   });
 
+  it('TG-05/TG-06 preserves procedure references and deduplicates terminal receipts', () => {
+    reg.create({ ...sampleInput(), procedureRef: { id: 'p1', revision: 2 } });
+    expect(reg.getById('t1')?.procedureRef).toEqual({ id: 'p1', revision: 2 });
+    reg.recordOutcome('t1', 'succeeded', 'owner-event:1');
+    reg.recordOutcome('t1', 'succeeded', 'owner-event:1');
+    expect(reg.getById('t1')?.stats.succeeded).toBe(1);
+  });
+
+  it('TG-06 rejects a stale revision and preserves owner disable', () => {
+    const original = reg.create(sampleInput());
+    reg.disable('t1', 'owner stop');
+    expect(() => reg.refine('t1', 'agent review', sampleInput('new'), original.revision)).toThrow();
+    expect(reg.getById('new')).toBeNull();
+    expect(reg.getById('t1')?.disabledReason).toBe('owner stop');
+  });
+
+  it('TG-06 rejects review after an active procedure revision changed', () => {
+    const original = reg.create(sampleInput());
+    db.prepare('UPDATE operator_triggers SET revision = revision + 1 WHERE id = ?').run('t1');
+    expect(() => reg.retireActive('t1', 'stale review', original.revision)).toThrow();
+    expect(() => reg.markReviewed('t1', 1, original.revision)).toThrow();
+    expect(() => reg.refine('t1', 'stale review', sampleInput('new'), original.revision)).toThrow();
+    expect(reg.getById('t1')?.status).toBe('active');
+    expect(reg.getById('new')).toBeNull();
+  });
+
+  it('TG-05 preserves scoped canonical bindings across safe refinement and rejects body divergence', () => {
+    reg.create(sampleInput());
+    db.exec(
+      `CREATE TABLE operator_trigger_procedure_bindings (trigger_id TEXT,owner_scope TEXT,project_id TEXT,channel_id TEXT,procedure_id TEXT,procedure_revision INTEGER,scope_key TEXT,snapshot_hash TEXT)`
+    );
+    db.prepare('INSERT INTO operator_trigger_procedure_bindings VALUES (?,?,?,?,?,?,?,?)').run(
+      't1',
+      'owner',
+      'project',
+      'channel',
+      'p',
+      1,
+      'scope',
+      'hash'
+    );
+    expect(() =>
+      reg.refine(
+        't1',
+        'change body',
+        { ...sampleInput('bad'), procedure: [{ action: 'bad', description: 'bad' }] },
+        1
+      )
+    ).toThrow(/canonical/);
+    reg.refine('t1', 'safe match refinement', sampleInput('new'), 1);
+    expect(reg.hasProcedureBindings('new')).toBe(true);
+    expect(
+      db
+        .prepare(
+          'SELECT procedure_id FROM operator_trigger_procedure_bindings WHERE trigger_id = ?'
+        )
+        .get('new')
+    ).toEqual({ procedure_id: 'p' });
+  });
+
   it('created trigger is active without human approval (G4 unfrozen)', () => {
     const t = reg.create(sampleInput('t1'));
     expect(t.status).toBe('active');

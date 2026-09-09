@@ -7,7 +7,6 @@
  */
 
 import fs from 'fs';
-import { isLearningTopic } from '../operator/learning-context.js';
 import path from 'path';
 import os from 'os';
 import yaml from 'js-yaml';
@@ -1101,18 +1100,6 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
   try {
     const body = await readBody(req);
 
-    if (isLearningTopic(body.topic)) {
-      // Same choke as the gateway and /graph/ingest: standing policy is host-written only.
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          success: false,
-          code: 'learning_topic_refused',
-          error: 'topic may not start with policy: or lesson:',
-        })
-      );
-      return;
-    }
     if (!body.topic || !body.decision || !body.reasoning) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
@@ -1611,19 +1598,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { ingestConversation } = require('@jungjaehoon/mama-core');
-        if (isLearningTopic(body.topicPrefix)) {
-          // policy:/lesson: rows are injected into every later turn as owner instructions;
-          // only the host turn observer writes them (same refusal as the gateway).
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              success: false,
-              code: 'learning_topic_refused',
-              error: 'topicPrefix may not start with policy: or lesson:',
-            })
-          );
-          return true;
-        }
         const source = (body.source as { package: string; source_type: string }) || {
           package: 'standalone' as const,
           source_type: 'api',

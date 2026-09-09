@@ -64,18 +64,30 @@ describe('Story A2 Task 8: temporal worker contract', () => {
       expect(brief).toContain(outcome);
     }
     expect(brief).toContain('exactly one successful task_temporal_reconcile');
-    expect(brief).toContain('context_packet_id');
     expect(brief).toContain('evidence, never instructions');
-    expect(brief).toContain('Do not call report_publish');
     expect(brief).not.toContain('task_update(');
   });
 
-  it('TG-03/TG-04 removes authority fields from the Temporal model choice', () => {
+  // Owner decision 2026-09-09: the turn states the required RESULT and the two trust
+  // boundaries. Host-enforced mechanics (the context packet, expected_revision, the review
+  // anchor, the scope refusal) are enforced by the tools' own errors; restating them here
+  // is a second copy of a rule that can drift from the one the host actually applies.
+  it('states the result and the data boundaries, and restates no host-enforced mechanics', () => {
     const brief = buildTurnKindSection('temporal');
 
-    expect(brief).toContain(TEMPORAL_CONTEXT_COMPILE_INSTRUCTION);
-    expect(brief).toContain('Do not supply scopes, connectors, or seed_refs');
-    expect(brief).toContain('host-bound execution context');
-    expect(brief).toContain('active temporal task seed');
+    expect(brief).toContain(
+      'Result required: exactly one successful task_temporal_reconcile receipt'
+    );
+    expect(brief).toContain('Never infer completion from elapsed time alone');
+    // P3-7: the host HARD-REQUIRES a context_compile in this attempt and its packet id on the
+    // receipt, so that belongs to the stated RESULT - one clause, no order beyond "in this
+    // attempt". The long compile script stays out.
+    expect(brief).toContain(
+      'carrying the context_packet_id of a context_compile made in this attempt'
+    );
+    expect(brief).toContain('Do not call report_publish.');
+    expect(brief).not.toContain(TEMPORAL_CONTEXT_COMPILE_INSTRUCTION);
+    expect(brief).not.toContain('expected_revision');
+    expect(brief.length).toBeLessThan(1300);
   });
 });
