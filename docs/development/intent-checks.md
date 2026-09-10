@@ -654,3 +654,6 @@
   조건 축소(host tool 대기 중이면 기존 경로)로 해결. agent+gateways 121파일 2,241 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.
 - 판정 기준(라이브): 오너 질문에 위임이 일어나도 (1) 첫 답이 "시작했다"뿐이면 (2) 자식 완료 후 실제 답이 같은 채팅에 도착해야 한다.
   로그 `follow-up answer delivered to telegram:<chat>`가 증거.
+- 라이브 실측(21:03, local.5, 같은 세 질문): Agent 스폰 0(모델 선택), 도구 9회 — mama_search, task_list 3, schedule_upcoming, code_act 5(trello_search·kagemusha_messages 포함),
+  33초, 같은 턴에 세 답 전달. kagemusha_tasks 미사용, 근거는 kakao 시각·Trello 실사·task_list #4711/#4494/#4536/#4798. 20:25 대비 49→33초.
+  이번 턴은 위임이 없어 follow-up 전달 배선은 단위 테스트로만 검증된 상태다(라이브 증거는 다음 위임 사례에서). 남은 품질 결함: 시각이 UTC 표기.
