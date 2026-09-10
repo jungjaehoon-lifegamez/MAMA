@@ -44,8 +44,10 @@ code_act({ code: "${CODE_ACT_SCRIPT_EXAMPLE}" })
 
 ### Progressive gateway discovery
 
-The catalog is the exact gateway policy for this run. \`tool_search\` returns 6 compact,
-name-sorted matches by default; \`limit\` must be an integer from 1 to 12. Continue with
+The catalog is the exact gateway policy for this run. \`tool_search\` ranks by relevance and
+returns the 6 best matches by default; every word is a hint, not a requirement, so a query
+matching only part of a tool's name or description still returns it. \`limit\` must be an
+integer from 1 to 12. Continue with
 \`nextCursor\` until it is null when you need complete
 coverage. \`tool_describe\` returns complete contracts for 1 to 4 selected names without
 slicing declarations. A gateway function you already know may be called directly; discovery
