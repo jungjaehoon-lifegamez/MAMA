@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.53.0] - 2026-09-10
+
+Claude backend delegation becomes observable, a spawn receipt no longer kills scheduled work,
+and the persona files are gone.
+
+### Added
+
+- **Claude native delegation events.** On the Claude backend an `Agent { run_in_background: true }`
+  tool_use, its launch result, `system/task_started` and `task_notification`, the child's own
+  events and the CLI's autonomous follow-up turn are mapped onto the same subagent events the Codex
+  runner emits. The work-order consumer sees the hand-off, the delta board enters the `delegated`
+  state on Claude, and the CLI's own turn carries the wake (no host stimulus, so no duplicate
+  spawn). `supportsNativeSubagents` is true for the Claude adapter; owner subagent rules are
+  backend-neutral with per-runtime mechanics appended.
+
+### Fixed
+
+- **A delegation spawn no longer blocks replay.** A confirmed `native_tool` receipt for the Claude
+  `Agent` spawn under a reused occurrence (`workorder:board:full:repair`) made every later board
+  order fail on arrival with "owner effect requires reconciliation before replay"; confirmed
+  receipts are immutable, so users had no way out. Spawn tool names (Agent, Task, spawn_agent,
+  send_input, resume_agent) are admissions, not effects: the native effect boundary does not record
+  them, and both ledger predicates exclude already-written spawn rows by tool name (NULL-safe).
+  Real native effects (shell, file writes) still block as before.
+
+### Removed
+
+- **Persona files.** The owner runtime no longer reads or seeds SOUL.md, IDENTITY.md, USER.md or
+  `~/.mama/personas/*`; runtime readiness requires only config.yaml, and `mama init` writes none of
+  them. The legacy multi-agent persona seeding runs only when `multi_agent.enabled` is set. The
+  wiki agent's instructions live in code.
+
+### Notes
+
+- Verified live on Claude Sonnet 5: board delta #4818 (spawn observed → delegated → child published
+  → autonomous turn → verified → done) and a delegated memory-curation turn ending in an explicit
+  no-update verdict. Details in docs/development/intent-checks.md.
+
 ## mama-os [0.52.2] - 2026-09-10
 
 Two defects surfaced by the owner's Telegram conversation on the Claude Sonnet 5 backend.
