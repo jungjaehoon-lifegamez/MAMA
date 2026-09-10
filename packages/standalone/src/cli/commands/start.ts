@@ -1553,25 +1553,30 @@ export async function runAgentLoop(
     }
   }
 
-  const agents = config.multi_agent.agents;
-  for (const [id, cfg] of Object.entries(agents)) {
-    if (!getLatestVersion(db, id)) {
-      let personaText: string | null = null;
-      try {
-        const pPath = expandPath(cfg.persona_file);
-        if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
-      } catch {
-        /* ignore */
+  // Agent version rows belong to the legacy multi-agent persona layer. With
+  // multi_agent disabled (the owner-runtime default) nothing is seeded, so boot
+  // neither reads nor requires any ~/.mama/personas file.
+  if (config.multi_agent.enabled) {
+    const agents = config.multi_agent.agents;
+    for (const [id, cfg] of Object.entries(agents)) {
+      if (!getLatestVersion(db, id)) {
+        let personaText: string | null = null;
+        try {
+          const pPath = expandPath(cfg.persona_file);
+          if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
+        } catch {
+          /* ignore */
+        }
+        createAgentVersion(db, {
+          agent_id: id,
+          snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
+          persona_text: personaText,
+          change_note: 'Initial version (migrated from config.yaml)',
+        });
       }
-      createAgentVersion(db, {
-        agent_id: id,
-        snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
-        persona_text: personaText,
-        change_note: 'Initial version (migrated from config.yaml)',
-      });
     }
+    console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
   }
-  console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
