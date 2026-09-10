@@ -66,14 +66,15 @@ function supportsThinkingEffortModel(model: string | undefined): boolean {
   if (!model) {
     return false;
   }
-  return model.startsWith('claude-opus-4-6') || model.startsWith('claude-sonnet-4-6');
+  // Adaptive thinking effort: Claude 4.6 and every Claude 5 family model accept --effort.
+  return /^claude-(opus|sonnet|haiku|fable)-(4-6|5)(\b|-)/.test(model);
 }
 
 function normalizeThinkingEffort(
   model: string | undefined,
   effort: 'low' | 'medium' | 'high' | 'max'
 ): 'low' | 'medium' | 'high' | 'max' {
-  if (effort === 'max' && !model?.startsWith('claude-opus-4-6')) {
+  if (effort === 'max' && !(model && /^claude-(opus-4-6|opus-5|fable-5)(\b|-)/.test(model))) {
     return 'high';
   }
   return effort;
