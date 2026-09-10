@@ -12,6 +12,26 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, spawn: spawnMock };
 });
 
+// Under vitest the module resolves the installed server next to src/mcp, where only the .ts
+// exists; production resolves next to dist/mcp. Point the repair at a real temp file.
+const fakeServer = vi.hoisted(() => {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const os = require('node:os') as typeof import('node:os');
+  const p = require('node:path') as typeof import('node:path');
+  const file = p.join(fs.mkdtempSync(p.join(os.tmpdir(), 'mama-fake-server-')), 'code-act-server.js');
+  fs.writeFileSync(file, '// fake installed server', 'utf-8');
+  return file;
+});
+
+vi.mock('../../src/mcp/code-act-mcp-config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/mcp/code-act-mcp-config.js')>();
+  return {
+    ...actual,
+    ensureCodeActMcpConfigBeforeSpawn: (o: Parameters<typeof actual.ensureCodeActMcpConfigBeforeSpawn>[0]) =>
+      actual.ensureCodeActMcpConfigBeforeSpawn({ ...o, serverPath: o.serverPath ?? fakeServer }),
+  };
+});
+
 import { PersistentClaudeProcess } from '../../src/agent/persistent-cli-process.js';
 
 function fakeChild() {
@@ -54,7 +74,7 @@ describe('persistent Claude process repairs the code-act MCP entry before spawn'
 
     const written = JSON.parse(readFileSync(mcpConfigPath, 'utf-8'));
     expect(written.mcpServers['code-act'].args[0]).not.toBe('/gone/code-act-server.js');
-    expect(written.mcpServers['code-act'].args[0]).toMatch(/mcp\/code-act-server\.js$/);
+    expect(written.mcpServers['code-act'].args[0]).toMatch(/code-act-server\.js$/);
     const flat = errors.map((a) => a.map(String).join(' ')).join('\n');
     expect(flat).toContain('[mcp] code-act server path missing: /gone/code-act-server.js');
     expect(spawnMock).toHaveBeenCalledTimes(1);
