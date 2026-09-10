@@ -584,3 +584,9 @@
 - 의도 판정: 코드 수준에서 **부합**. 라이브 판정은 설치 후 첫 poll 사이클과 이후 24시간 수치로 다시 기록한다.
 - 하위 작업 상태 / 최상위 목표 상태 / 다음: 코드 완료·미커밋. 최상위 목표 미완료. 다음: 전체 스위트 → 커밋/PR → 로컬
   개밥먹기 설치(0.53.2-local) → 첫 poll 증거 → 공개 릴리즈 여부 오너 확인.
+- 라이브 증거(0.53.2-local.1, 19:01 설치, connectors.json kagemusha 채널을 kakao/line/airbnb/schedule/telegram 그룹으로 선언·
+  kagemusha-tasks 6개 제거): 첫 pollAll에서 `[connector:calendar] polled 68 items (since: 2026-09-07T10:31:56Z)` — 3일 만의
+  첫 성공, 커서 10:01Z로 전진, raw 2851→2919, 다음 사이클 65건 정상. kagemusha 신규 인덱스 행은 kakao만(slack/chatwork/카드 0).
+  Chatwork는 두 사이클 0건이나 카게무샤 DB 기준 오늘 사람 메시지 3건(14·15·18시)뿐이라 방이 조용한 것과 일치, force=1 효과는
+  새 메시지 도착 후 판정. CodeRabbit CLI 0건, CI 전 job 통과. 미결: force=1이 공유 토큰의 서버 포인터를 전진시키면 카게무샤
+  (force=0)가 약 10% 놓칠 수 있음 — 공식 문서 미명시, 오너 결정(카게무샤 force=1 전환 또는 별도 토큰).
