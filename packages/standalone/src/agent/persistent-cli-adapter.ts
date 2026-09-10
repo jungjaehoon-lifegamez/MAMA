@@ -49,6 +49,12 @@ export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlo
 export class PersistentCLIAdapter implements IModelRunner {
   readonly backendType = 'claude' as const;
 
+  /**
+   * The persona runs `claude --print` with `--tools ""` (no native Agent tool) and the
+   * stream carries no subagent items, so there is nothing to spawn and nothing to observe.
+   */
+  readonly supportsNativeSubagents = false;
+
   private options: ClaudeCLIWrapperOptions;
   private processPool: PersistentProcessPool;
   private channelKey: string;

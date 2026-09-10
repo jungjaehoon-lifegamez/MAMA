@@ -1661,6 +1661,9 @@ export async function runAgentLoop(
 
   const cronOwnerRunner: IModelRunner = {
     backendType: runtimeBackend,
+    // A facade over agentLoop.run: whether a native subagent can be spawned is decided by
+    // the real runner underneath, not by this shim.
+    supportsNativeSubagents: agentLoop.supportsNativeSubagents,
     prompt: async (content) => {
       const result = await runOwnerStimulus(content, 'cron');
       return {
@@ -1985,6 +1988,9 @@ export async function runAgentLoop(
     // AgentLoopClient.runWithContent is optional in its type; a missing method
     // is a boot-order fault and must throw, not no-op (WorkerRunner adapter).
     const workerRunner: import('../../operator/worker-run.js').WorkerRunner = {
+      // The scheduled contract's delegated shape and the `delegated` attempt state both
+      // follow the ACTIVE runner, not the configured backend name.
+      supportsNativeSubagents: agentLoopClient.supportsNativeSubagents === true,
       runWithContent: async (content, options) => {
         if (!agentLoopClient.runWithContent) {
           throw new Error('[stage2] agentLoopClient.runWithContent unavailable');

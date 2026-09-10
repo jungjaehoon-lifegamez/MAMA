@@ -544,12 +544,15 @@ function combineCodeActSessionPolicyFingerprint(
 
 function ownerRuntimeSessionPolicyFingerprint(
   role: AgentContext['role'] | undefined,
-  model: string | undefined
+  model: string | undefined,
+  supportsNativeSubagents: boolean
 ): string {
   return JSON.stringify({
     version: 1,
     subject: OWNER_RUNTIME_SESSION_KEY,
-    subagentPolicy: OWNER_SUBAGENT_INSTRUCTIONS,
+    // The fingerprint names the policy the session actually carries: a runner without
+    // native subagents is never told to delegate, so it must not be pinned to that text.
+    subagentPolicy: supportsNativeSubagents ? OWNER_SUBAGENT_INSTRUCTIONS : null,
     telegramFormatPolicy: TELEGRAM_FORMAT_GUIDE,
     model: model ?? null,
     allowedTools: [...(role?.allowedTools ?? [])].sort(),
@@ -709,6 +712,16 @@ export class AgentLoop {
   readonly probesDurableSession: boolean;
   readonly ownerRecoveryJournalEnabled: boolean;
   private readonly agent: IModelRunner;
+  /**
+   * Whether the ACTIVE runner can spawn a native subagent the host can observe.
+   *
+   * Read by the owner prompt path and forwarded to the scheduled work-order contract, so
+   * neither has to string-match a backend name. A mocked runner that predates this field
+   * is treated as incapable rather than silently promised delegation.
+   */
+  get supportsNativeSubagents(): boolean {
+    return this.agent.supportsNativeSubagents === true;
+  }
   /**
    * What a native child started by a run on this session needs to be given its own
    * authority. Keyed by session key, overwritten by each run on that session, and dropped
@@ -1488,7 +1501,11 @@ export class AgentLoop {
     const outerCodeActAllowed =
       this.useCodeAct && roleAllowsOuterCodeAct(options?.agentContext?.role, this.disallowedTools);
     const ownerPolicyFingerprint = ownerRuntime
-      ? ownerRuntimeSessionPolicyFingerprint(sessionPolicyRole, options?.model ?? this.model)
+      ? ownerRuntimeSessionPolicyFingerprint(
+          sessionPolicyRole,
+          options?.model ?? this.model,
+          this.supportsNativeSubagents
+        )
       : undefined;
     const effectiveSessionPolicyFingerprint =
       isDurableRuntime && codeActPolicy
@@ -1630,7 +1647,14 @@ export class AgentLoop {
         includeOwnerRecovery = false
       ): string => {
         let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
-        if (ownerRuntime && !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)) {
+        if (
+          ownerRuntime &&
+          this.supportsNativeSubagents &&
+          !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)
+        ) {
+          // On a runner with no native subagent (persistent Claude persona, Cline) the
+          // delegation policy asks for something the runtime cannot do. It is omitted, and
+          // nothing replaces it: the turn's own result contract already says what must exist.
           baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_SUBAGENT_INSTRUCTIONS}`;
         }
         if (ownerRuntime && !baseSystemPrompt.includes(TELEGRAM_FORMAT_GUIDE)) {
