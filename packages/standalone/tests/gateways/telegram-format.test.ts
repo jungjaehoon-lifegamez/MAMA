@@ -405,3 +405,30 @@ describeE('escaped rejected tags keep their entity text literal', () => {
     expectE(chunk.entities.some((e) => e.type === 'bold')).toBe(true);
   });
 });
+
+describe('Markdown written against the HTML contract still renders', () => {
+  // Live 2026-09-11 01:20-01:24: two owner answers carried 27 Markdown markers and zero
+  // HTML tags, so the owner read literal asterisks. The prompt says HTML; the transport is
+  // where the guarantee has to live.
+  it('turns **bold** and # headings into entities and drops the markers', () => {
+    const [chunk] = formatTelegramMessage('# 트뤼파이나 이력\n\n**총 FB 라운드: 3회**\n1. **8/28** — 헤어 음영');
+    expect(chunk.text).toBe('트뤼파이나 이력\n\n총 FB 라운드: 3회\n1. 8/28 — 헤어 음영');
+    expect(chunk.entities).toEqual([
+      { type: 'bold', offset: 0, length: 8 },
+      { type: 'bold', offset: 10, length: 12 },
+      { type: 'bold', offset: 26, length: 4 },
+    ]);
+  });
+
+  it('keeps `code` spans and escapes literal angle brackets in Markdown input', () => {
+    const [chunk] = formatTelegramMessage('값은 `a < b` 입니다 & 끝');
+    expect(chunk.text).toBe('값은 a < b 입니다 & 끝');
+    expect(chunk.entities).toEqual([{ type: 'code', offset: 3, length: 5 }]);
+  });
+
+  it('leaves an answer that already uses the HTML subset alone, asterisks included', () => {
+    const [chunk] = formatTelegramMessage('<b>제목</b> 2**3');
+    expect(chunk.text).toBe('제목 2**3');
+    expect(chunk.entities).toEqual([{ type: 'bold', offset: 0, length: 2 }]);
+  });
+});

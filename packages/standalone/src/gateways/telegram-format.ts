@@ -343,6 +343,28 @@ export function closeOpenTelegramHtml(snapshot: string): string {
   return closed;
 }
 
+/** An opening tag of the subset: the sign that the answer was written against the HTML contract. */
+const SUBSET_OPEN_TAG = /<(?:b|strong|i|em|u|s|del|code|pre|tg-spoiler|blockquote|a)\b[^>]*>/i;
+
+/**
+ * An answer written in Markdown despite the HTML contract is rewritten into the subset
+ * before parsing, so the owner never reads literal `**`. Measured 2026-09-11: two owner
+ * answers carried 27 Markdown markers and no HTML tag. Only applied when the text has no
+ * subset tag at all - an HTML answer keeps its asterisks literal, as it always did.
+ * Covered: `**bold**`, `# heading` lines (rendered bold), and `` `code` `` spans. Bullets
+ * and numbered lines are already plain text the guide allows. Literal &, <, > are escaped
+ * first because Markdown text has no entities of its own.
+ */
+export function markdownFallbackToTelegramHtml(input: string): string {
+  if (SUBSET_OPEN_TAG.test(input)) return input;
+  if (!/\*\*[^*\n]+\*\*|^#{1,6} \S|`[^`\n]+`/m.test(input)) return input;
+  const escaped = input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return escaped
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/^#{1,6} (\S.*)$/gm, '<b>$1</b>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+}
+
 /**
  * Convert one model answer into the chunks the transport sends, in order.
  * An empty input yields no chunks.
@@ -369,7 +391,7 @@ export function formatTelegramMessage(
     }
     return chunks;
   }
-  const parsed = parseTelegramHtml(sanitizeTelegramHtml(input));
+  const parsed = parseTelegramHtml(sanitizeTelegramHtml(markdownFallbackToTelegramHtml(input)));
   // A parse can succeed and still leave nothing to send: `<b></b>` is readable
   // markup around no text. Zero chunks would let the transport report the
   // answer delivered without one API call and leave the placeholder standing
