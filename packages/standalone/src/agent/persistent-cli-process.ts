@@ -45,6 +45,8 @@ import {
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
+import { ensureCodeActMcpConfigBeforeSpawn } from '../mcp/code-act-mcp-config.js';
+import { API_PORT } from '../cli/runtime/utilities.js';
 import { createProcessContextKey } from './code-act/run-context-registry.js';
 import {
   completedCodeActMutationWasObserved,
@@ -433,6 +435,23 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (!existsSync(headFile)) {
       writeFileSync(headFile, 'ref: refs/heads/main\n');
     }
+    // ⚠️ 2026-09-10: a rewritten ~/.mama/mama-mcp-config.json pointing at a
+    // non-existent code-act server left this persona with NO gateway tools for
+    // the whole life of the process. Repair the entry right before spawn, or
+    // fail loudly — never spawn a tool-less persona silently.
+    if (this.options.mcpConfigPath) {
+      const { changed } = ensureCodeActMcpConfigBeforeSpawn({
+        mcpConfigPath: this.options.mcpConfigPath,
+        apiPort: API_PORT,
+        logger: persistentLogger,
+      });
+      if (changed) {
+        persistentLogger.warn(
+          `[mcp] code-act entry regenerated in ${this.options.mcpConfigPath} before spawn`
+        );
+      }
+    }
+
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: workspaceDir, // ⚠️ NEVER change to os.homedir() — breaks agent isolation
