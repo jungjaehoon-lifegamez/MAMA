@@ -8,23 +8,23 @@ export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
 /** Stable owner policy, loaded with the session rather than replayed as turn history. */
 export const OWNER_SUBAGENT_INSTRUCTIONS =
-  'Delegate long, bounded work to a native subagent with one clear objective, the evidence it needs, ' +
-  'and a completion condition. In a conversation keep the child in the foreground: its result must ' +
-  'come back inside this turn so your reply carries it, because nothing delivers text you write ' +
-  'after the turn has ended. Only a host work order asks for a backgrounded child, and it says so ' +
-  'in its own prompt. When the subagent finishes you verify and integrate its ' +
-  'result, and you do NOT spawn another subagent for the same objective; you retain responsibility ' +
-  'for completion.';
+  'In a conversation do not spawn a subagent: a question is answered with your own tools, ' +
+  'inside this turn, and your reply carries the evidence. Text you write after the turn has ' +
+  'ended has no reader. Delegate only when a host work order asks for it, and it says so in ' +
+  'its own prompt: one native subagent with one clear objective, the evidence it needs and a ' +
+  'completion condition. When that subagent finishes you verify and integrate its result, and ' +
+  'you do NOT spawn another subagent for the same objective; you retain responsibility for ' +
+  'completion.';
 
 /** Runtime-specific spawn mechanics. The standing rule above is said once, here too. */
 const SUBAGENT_RUNTIME_RULES: Record<string, string> = {
   codex:
     'Spawn with the native agent tool. Do not pass fork_turns: "none": a child spawned without ' +
     'the history fork has no host tools (measured on codex-cli 0.153.4), so it cannot write ' +
-    'anything durable. In a conversation call wait_agent so the result comes back inside this turn.',
+    'anything durable. For a work order, call wait_agent only if your next step is blocked on the result.',
   claude:
-    'Spawn with the Agent tool. A backgrounded child is only for a work order that asks for it; ' +
-    'there the completion notification is the result arriving, and you continue from it.',
+    'For a work order, spawn with the Agent tool as that order instructs; its completion ' +
+    'notification is the result arriving, and you continue from it.',
 };
 
 /**

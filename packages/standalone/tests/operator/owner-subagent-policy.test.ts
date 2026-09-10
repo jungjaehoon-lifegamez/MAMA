@@ -21,11 +21,12 @@ describe('owner subagent policy (standing, session-wide)', () => {
     expect(text).not.toMatch(/do not block on the result/i);
   });
 
-  it('tells a conversation turn to keep the child in the foreground so the reply carries its result', () => {
+  it('tells a conversation turn not to delegate at all: search with its own tools and answer inside this turn', () => {
     const text = ownerSubagentInstructions('claude');
-    expect(text).toMatch(/foreground/i);
+    expect(text).toMatch(/in a conversation do not spawn/i);
     expect(text).toMatch(/inside this turn/i);
     expect(text).toMatch(/work order/i);
+    expect(text).not.toMatch(/foreground/i);
   });
 
   it('does not tell the codex runner to end the turn either', () => {

@@ -24,14 +24,16 @@ bridge that read every mirrored platform regardless of what was declared.
 
 ### Changed
 
-- **A conversation turn keeps its subagent in the foreground.** The standing owner policy told
-  every turn of the one owner session to spawn with `run_in_background: true` and end the turn.
+- **A conversation turn does not delegate.** The standing owner policy told every turn of the one
+  owner session to spawn a native subagent with `run_in_background: true` and end the turn.
   Measured 2026-09-10 20:01 KST: a 32-character owner question was answered with "backgrounded",
-  the child gathered its evidence in 11 s, the CLI's own follow-up turn wrote the real answer, and
-  nothing delivered it, because text produced after a turn has ended has no reader. The
-  background-and-end-turn mechanics stay where they belong, in the work-order prompt that already
-  states them; the standing rule now says a conversation's child result must come back inside the
-  turn so the reply carries it. No new delivery wiring was added.
+  the child gathered its evidence in 11 s, the CLI's own follow-up turn wrote the real answer,
+  and nothing delivered it. A first correction (foreground child) measured at 20:18: one child,
+  four grandchildren, 26 tool calls, 43 s, and the owner still received "in progress" while the
+  consolidated answer landed in a notification-driven turn with no reader. The standing rule now
+  says: in a conversation, answer with your own tools inside this turn; delegate only when a
+  host work order asks for it, and that order already states the background mechanics. No new
+  delivery wiring was added.
 - **The Kagemusha bridge reads only the platforms its configured channel keys declare.**
   `kakao:<room>` admits kakao, `line:<room>` admits LINE, and task cards flow only when a
   `kagemusha-tasks:<room>` key exists. The Kagemusha DB mirrors slack, chatwork and telegram as
