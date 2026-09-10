@@ -161,7 +161,7 @@ export function initMainAgentLoop(
     config.multi_agent?.agents?.conductor?.useCodeAct ??
     config.multi_agent?.agents?.Conductor?.useCodeAct;
   // Backend-aware default (live incident 2026-07-27): the main claude chat is
-  // persona-locked (--tools "", no MCP config), so outer Code-Act has NO
+  // gateway-locked (--tools Agent only), so outer Code-Act has NO
   // transport there - its instructions tell the model to call an MCP tool
   // that does not exist, and the model answers with the tool NAME as text.
   // Codex and Cline inject code_act through their native runtimes, so it stays

@@ -130,9 +130,6 @@ mama init
 ~/.mama/
 ├── config.yaml              # Main configuration file
 ├── CLAUDE.md                # Workspace documentation for Claude
-├── SOUL.md                  # Onboarding marker, not loaded at runtime
-├── IDENTITY.md              # One-front MAMA identity
-├── USER.md                  # Scoped owner-learning policy
 ├── skills/                  # Custom skills directory
 ├── workspace/               # Working directory for Claude
 │   ├── scripts/             # Shell scripts and automation
@@ -174,10 +171,6 @@ Claude Code 인증 확인... ✓
 데이터 디렉토리 생성 중... ✓
 로그 디렉토리 생성 중... ✓
 CLAUDE.md 생성 중... ✓
-Creating default onboarding markers...
-  SOUL.md ✓
-  IDENTITY.md ✓
-  USER.md ✓
 
 다음 단계:
   mama status   온보딩 상태와 다음 행동 확인
@@ -696,9 +689,6 @@ After initialization, your workspace looks like this:
 ├── config.yaml              # Main configuration
 ├── mama.pid                 # Process ID (when running)
 ├── CLAUDE.md                # Workspace documentation
-├── IDENTITY.md              # One-front MAMA identity
-├── USER.md                  # Scoped owner-learning policy
-├── SOUL.md                  # Operating principles
 │
 ├── skills/                  # Custom skills
 │   ├── image-translate/     # Image translation skill
@@ -716,9 +706,11 @@ After initialization, your workspace looks like this:
 
 - **config.yaml** - All settings, tokens, gateway configuration
 - **CLAUDE.md** - Tells Claude where to work (workspace boundaries)
-- **IDENTITY.md** - Shipped one-front MAMA identity; not loaded by the owner runtime
-- **USER.md** - Your preferences and context; not loaded by the owner runtime
-- **SOUL.md** - Shipped operating principles; not loaded by the owner runtime, which takes its fixed procedure text from `~/.mama/operator/console-brief.md`
+
+> Personas are retired. `mama init` no longer writes `SOUL.md`, `IDENTITY.md` or
+> `USER.md`, and the owner runtime loads none of them — it takes its fixed
+> procedure text from `~/.mama/operator/console-brief.md`. Copies left from an
+> older install are harmless and are never deleted.
 
 ---
 

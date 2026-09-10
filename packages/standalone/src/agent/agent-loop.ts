@@ -242,20 +242,6 @@ function loadSystemPrompt(verbose = false): string {
 }
 
 /**
- * Load composed system prompt with persona layers + CLAUDE.md + optional context
- * Tries to load persona files from ~/.mama/ in order:
- * 1. SOUL.md (philosophical principles)
- * 2. IDENTITY.md (role and character)
- * 3. USER.md (user preferences)
- * 4. **Context Prompt** (if AgentContext provided - role awareness)
- * 5. CLAUDE.md (base instructions)
- *
- * If persona files are missing, logs warning and continues with CLAUDE.md alone.
- *
- * @param verbose - Enable verbose logging
- * @param context - Optional AgentContext for role-aware prompt injection
- */
-/**
  * Load backend-specific AGENTS.md from ~/.mama/
  * Maps backend to file: 'claude' → AGENTS.claude.md, 'codex' → AGENTS.codex.md
  */

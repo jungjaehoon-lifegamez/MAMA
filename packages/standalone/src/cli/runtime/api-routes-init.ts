@@ -266,7 +266,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   };
 
   // ── Report Slots + legacy dashboard/wiki fanout ───────────────────────
-  const dashboardAgentConfigured = hasEnabledAgentConfig('dashboard-agent');
   const wikiAgentConfigured = hasEnabledAgentConfig('wiki-agent');
 
   // Manual refresh endpoint (kept for compatibility)
@@ -353,9 +352,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     });
   }
 
-  if (dashboardAgentConfigured || wikiAgentConfigured) {
-    // Merge code-act MCP server into mama-mcp-config.json.
-    // Makes code_act available to configured legacy self-paced agents.
+  if (config.agent.backend === 'claude') {
+    // Merge code-act MCP server into mama-mcp-config.json. The owner runtime's
+    // own claude persona needs this entry, so it is NOT gated on any legacy
+    // self-paced agent (dashboard-agent / wiki-agent) being configured.
     try {
       ensureCodeActMcpConfig({
         mcpConfigPath: path.join(homedir(), '.mama', 'mama-mcp-config.json'),
@@ -394,19 +394,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       }
       return projected;
     });
-  }
-
-  if (dashboardAgentConfigured) {
-    // Persona seeding stays: the optional legacy dashboard-agent config is
-    // still usable via multi-agent delegation. It does not own the Stage-2
-    // Board worker runtime below.
-    const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
-    ensureDashboardPersona();
-    routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
-  } else {
-    routesLogger.debug(
-      '[Dashboard Agent] Optional legacy persona disabled; Stage-2 Board runtime remains enabled'
-    );
   }
 
   {

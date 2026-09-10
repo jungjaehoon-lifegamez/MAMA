@@ -346,12 +346,15 @@ export async function startEmbeddingServerIfAvailable(
   }
 }
 
-/** Runtime readiness is independent from the first-report onboarding milestone. */
+/**
+ * Runtime readiness is independent from the first-report onboarding milestone.
+ *
+ * Personas were retired: the owner runtime loads no SOUL/IDENTITY/USER file, so
+ * their presence says nothing about whether the runtime can start. config.yaml
+ * is the only artifact the runtime actually reads.
+ */
 export function isRuntimeReady(): boolean {
-  const mamaHome = join(homedir(), '.mama');
-  return ['config.yaml', 'SOUL.md', 'IDENTITY.md', 'USER.md'].every((name) =>
-    existsSync(join(mamaHome, name))
-  );
+  return existsSync(join(homedir(), '.mama', 'config.yaml'));
 }
 
 /**
