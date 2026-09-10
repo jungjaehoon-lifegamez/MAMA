@@ -6,8 +6,8 @@ import { TypeDefinitionGenerator } from './type-definition-generator.js';
 const TOOL_SEARCH_DEFAULT_LIMIT = 6;
 const TOOL_SEARCH_MAX_LIMIT = 12;
 const TOOL_DESCRIBE_MAX_NAMES = 4;
-const CURSOR_VERSION = 1;
-const CURSOR_ORDER = 'name:asc';
+const CURSOR_VERSION = 2;
+const CURSOR_ORDER = 'score:desc,all-tokens:first,name:asc';
 const CURSOR_ERROR = 'Invalid or stale tool catalog cursor.';
 
 interface ToolCatalogPolicy {
@@ -27,7 +27,7 @@ interface ToolDescribeInput {
 }
 
 interface CursorPayload {
-  readonly version: 1;
+  readonly version: 2;
   readonly policy: string;
   readonly query: string;
   readonly category: string;

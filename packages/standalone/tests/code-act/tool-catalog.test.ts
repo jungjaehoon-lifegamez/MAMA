@@ -127,3 +127,30 @@ describe('tool_search relevance ranking', () => {
     ).toThrow('Invalid or stale tool catalog cursor.');
   });
 });
+
+import { describe as describeR, expect as expectR, it as itR } from 'vitest';
+import { ProjectedToolCatalog as CatalogR } from '../../src/agent/code-act/tool-catalog.js';
+
+describeR('tool_search cursors from the alphabetical ordering are rejected', () => {
+  itR('refuses a version-1 name:asc cursor against the ranked catalog', () => {
+    const catalog = new CatalogR({
+      definitions: [
+        { name: 'task_list', description: 'list tasks', category: 'memory' },
+        { name: 'task_update', description: 'update a task', category: 'memory' },
+      ],
+      fingerprintPayload: JSON.stringify({ version: 1, tools: ['task_list', 'task_update'] }),
+    });
+    const first = catalog.search({ query: 'task', limit: 1 });
+    const decoded = JSON.parse(Buffer.from(first.nextCursor as string, 'base64url').toString('utf8')) as {
+      version: number;
+      order: string;
+    };
+    const legacy = Buffer.from(
+      JSON.stringify({ ...decoded, version: 1, order: 'name:asc' }),
+      'utf8'
+    ).toString('base64url');
+    expectR(() => catalog.search({ query: 'task', limit: 1, cursor: legacy })).toThrow();
+    // the current cursor still resumes
+    expectR(catalog.search({ query: 'task', limit: 1, cursor: first.nextCursor as string }).tools).toHaveLength(1);
+  });
+});
