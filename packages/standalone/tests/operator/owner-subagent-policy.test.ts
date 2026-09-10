@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  OWNER_SUBAGENT_INSTRUCTIONS,
+  ownerSubagentInstructions,
+} from '../../src/operator/owner-runtime.js';
+
+/**
+ * The standing policy is shared by every turn of the one owner session, chat included.
+ * Measured 2026-09-10 20:01 KST: a 32-character owner question was answered with an
+ * `Agent { run_in_background: true }` spawn and "backgrounded"; the CLI's own follow-up
+ * turn then wrote the real answer outside any request, where nothing delivers it. The
+ * background-and-end-turn mechanics belong to host work orders (they already say so in
+ * their own prompt), never to the standing rule a conversation turn reads.
+ */
+describe('owner subagent policy (standing, session-wide)', () => {
+  it('does not tell a conversation turn to background the child and end the turn (claude)', () => {
+    const text = ownerSubagentInstructions('claude');
+    expect(text).not.toContain('run_in_background');
+    expect(text).not.toMatch(/end (your|the) turn/i);
+    expect(text).not.toMatch(/do not block on the result/i);
+  });
+
+  it('tells a conversation turn not to delegate at all: search with its own tools and answer inside this turn', () => {
+    const text = ownerSubagentInstructions('claude');
+    expect(text).toMatch(/in a conversation do not spawn/i);
+    expect(text).toMatch(/inside this turn/i);
+    expect(text).toMatch(/work order/i);
+    expect(text).not.toMatch(/foreground/i);
+  });
+
+  it('does not tell the codex runner to end the turn either', () => {
+    expect(ownerSubagentInstructions('codex')).not.toMatch(/end (your|the) turn/i);
+  });
+
+  it('keeps the responsibility rules that are backend-neutral', () => {
+    expect(OWNER_SUBAGENT_INSTRUCTIONS).toContain('one clear objective');
+    expect(OWNER_SUBAGENT_INSTRUCTIONS).toContain('do NOT spawn another subagent');
+    expect(ownerSubagentInstructions('claude')).toContain(OWNER_SUBAGENT_INSTRUCTIONS);
+  });
+});
