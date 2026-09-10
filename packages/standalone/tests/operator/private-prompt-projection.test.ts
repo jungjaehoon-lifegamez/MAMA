@@ -11,31 +11,31 @@ const disabledPrivatePolicy = resolvePrivateConnectorPolicy({
 const PRIVATE_CALL_CASES = [
   {
     name: 'plain call',
-    line: "- kagemusha_tasks({ status: 'pending' })",
+    line: "- kagemusha_messages({ status: 'pending' })",
   },
   {
     name: 'bold call',
-    line: "- **kagemusha_tasks**({ status: 'pending' })",
+    line: "- **kagemusha_messages**({ status: 'pending' })",
   },
   {
     name: 'italic call',
-    line: "- *kagemusha_tasks*({ status: 'pending' })",
+    line: "- *kagemusha_messages*({ status: 'pending' })",
   },
   {
     name: 'bold-italic call',
-    line: "- ***kagemusha_tasks***({ status: 'pending' })",
+    line: "- ***kagemusha_messages***({ status: 'pending' })",
   },
   {
     name: 'arbitrary matched backtick run',
-    line: "- `````kagemusha_tasks`````({ status: 'pending' })",
+    line: "- `````kagemusha_messages`````({ status: 'pending' })",
   },
   {
     name: 'emphasis outside code span',
-    line: "- **`kagemusha_tasks`**({ status: 'pending' })",
+    line: "- **`kagemusha_messages`**({ status: 'pending' })",
   },
   {
     name: 'code span outside emphasis',
-    line: "- `**kagemusha_tasks**`({ status: 'pending' })",
+    line: "- `**kagemusha_messages**`({ status: 'pending' })",
   },
   {
     name: 'nested underscore, emphasis, and code spans',
@@ -54,27 +54,27 @@ const PRIVATE_CALL_CASES = [
 const NON_CALL_CASES = [
   {
     name: 'plain historical prose',
-    line: "- Last year's kagemusha_tasks output used the old status names.",
+    line: "- Last year's kagemusha_messages output used the old status names.",
   },
   {
     name: 'wrapped historical reference without call syntax',
-    line: '- Historical **`kagemusha_tasks`** output used the old status names.',
+    line: '- Historical **`kagemusha_messages`** output used the old status names.',
   },
   {
     name: 'mismatched nested emphasis',
-    line: "- **`kagemusha_tasks`*({ status: 'pending' })",
+    line: "- **`kagemusha_messages`*({ status: 'pending' })",
   },
   {
     name: 'mismatched backtick runs',
-    line: "- ``kagemusha_tasks```({ status: 'pending' })",
+    line: "- ``kagemusha_messages```({ status: 'pending' })",
   },
   {
     name: 'identifier prefix',
-    line: "- archived_kagemusha_tasks({ status: 'pending' })",
+    line: "- archived_kagemusha_messages({ status: 'pending' })",
   },
   {
     name: 'identifier suffix',
-    line: "- kagemusha_tasks_archive({ status: 'pending' })",
+    line: "- kagemusha_messages_archive({ status: 'pending' })",
   },
 ] as const;
 

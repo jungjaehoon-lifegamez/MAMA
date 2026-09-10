@@ -26,12 +26,7 @@ import {
   type WorkerRunner,
 } from '../../src/operator/worker-run.js';
 
-const PRIVATE_TOOLS = [
-  'kagemusha_overview',
-  'kagemusha_entities',
-  'kagemusha_tasks',
-  'kagemusha_messages',
-] as const;
+const PRIVATE_TOOLS = ['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'] as const;
 
 function enabledPrivatePolicy(): PrivateConnectorPolicy {
   const result: ConnectorConfigLoadResult = {
@@ -316,7 +311,7 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
       const authorization = await executor.execute(
         'code_act',
         {
-          code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, tasks: typeof kagemusha_tasks, messages: typeof kagemusha_messages })`,
+          code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, messages: typeof kagemusha_messages })`,
         },
         {
           agentId: 'mama-owner',

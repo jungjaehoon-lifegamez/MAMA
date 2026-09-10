@@ -95,46 +95,6 @@ export const PRIVATE_CONNECTOR_TOOL_DEFINITIONS = Object.freeze([
     }),
   }),
   Object.freeze({
-    name: 'kagemusha_tasks' as const,
-    description:
-      'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
-    category: 'business_data' as const,
-    params: 'sourceRoom?, status?, priority?, search?, limit?',
-    codeAct: Object.freeze({
-      params: Object.freeze([
-        Object.freeze({
-          name: 'sourceRoom',
-          type: 'string',
-          required: false,
-          description: 'Room ID from kagemusha_entities (e.g., "slack:CHANNEL_ID")',
-        }),
-        Object.freeze({
-          name: 'status',
-          type: 'string',
-          required: false,
-          description:
-            'pending, in_progress, review, done, completed, cancelled, dismissed, active',
-        }),
-        Object.freeze({
-          name: 'priority',
-          type: 'string',
-          required: false,
-          description: 'urgent, high, normal',
-        }),
-        Object.freeze({
-          name: 'search',
-          type: 'string',
-          required: false,
-          description: 'Text search in title',
-        }),
-        Object.freeze({ name: 'limit', type: 'number', required: false }),
-      ]),
-      returnType:
-        '{ tasks: Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }> }',
-      category: 'memory' as const,
-    }),
-  }),
-  Object.freeze({
     name: 'kagemusha_messages' as const,
     description:
       "Read raw messages from a specific channel (follow entities -> tasks -> messages). Progressive: a bounded page newest-first (limit 1..50, default 25) with total/returned/nextCursor over an append-only asOf upper bound - walk nextCursor for the rest, and an empty nextCursor is the END of this channel's matches, not that all channels were read. An unknown channel is a loud missing-source error, never an empty success. Long message content is a reachable code-point window (content_offset/content_limit), never a hidden slice; pass messageId (bound to the same channel/time/search scope) to page ONE long message without its peers. All time strings are strictly validated ISO-8601.",
@@ -212,7 +172,7 @@ const PRIVATE_TOOL_NAMES = Object.freeze(
 export const PRIVATE_CONNECTOR_PROMPT_OVERLAY = [
   '## Private business data',
   '',
-  "Use Kagemusha read tools only when they are present in this run's catalog. Explore progressively: overview, then entities or tasks, then messages for a specific channel.",
+  "Use Kagemusha read tools only when they are present in this run's catalog. Explore progressively: overview, then entities, then messages for a specific channel.",
 ].join('\n');
 
 function uniqueStrings(values: readonly string[]): readonly string[] {

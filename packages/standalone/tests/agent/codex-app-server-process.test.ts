@@ -1674,7 +1674,6 @@ describe('Story: Codex app-server process', () => {
               'mama_save',
               'kagemusha_overview',
               'kagemusha_entities',
-              'kagemusha_tasks',
               'kagemusha_messages',
             ]),
           },

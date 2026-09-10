@@ -820,7 +820,7 @@ describe('AgentLoop', () => {
             { name: 'effectivePrompt', content: effectivePrompt, priority: 1 },
           ]).withinBudget
         ).toBe(true);
-        expect(reportPolicy.agentContext.role.allowedTools.includes('kagemusha_tasks')).toBe(
+        expect(reportPolicy.agentContext.role.allowedTools.includes('kagemusha_messages')).toBe(
           enabled
         );
       }
@@ -1256,7 +1256,7 @@ describe('AgentLoop', () => {
       expect(effectivePrompt).not.toContain('MCP transport');
     });
 
-    it('derives a child\'s Code-Act gate from the CHILD role, not the parent\'s', () => {
+    it("derives a child's Code-Act gate from the CHILD role, not the parent's", () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
@@ -1268,9 +1268,7 @@ describe('AgentLoop', () => {
         context.role = { ...context.role, allowedTools, blockedTools };
         return (
           agentLoop as unknown as {
-            hostToolDefinitionsFor: (
-              options: unknown
-            ) => readonly { name: string }[];
+            hostToolDefinitionsFor: (options: unknown) => readonly { name: string }[];
           }
         ).hostToolDefinitionsFor({ agentContext: context });
       };
@@ -2851,7 +2849,7 @@ describe('AgentLoop', () => {
         async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
           const bridge = promptOptions?.hostToolBridge;
           if (!bridge) throw new Error('missing native bridge');
-          await bridge.execute({ callId: 'gather-1', name: 'kagemusha_tasks', input: {} });
+          await bridge.execute({ callId: 'gather-1', name: 'kagemusha_overview', input: {} });
           await bridge.execute({
             callId: 'write-1',
             name: 'mama_save',
@@ -2876,7 +2874,7 @@ describe('AgentLoop', () => {
       const context = codexContext();
       context.role = {
         ...context.role,
-        allowedTools: ['kagemusha_tasks', 'mama_save'],
+        allowedTools: ['kagemusha_overview', 'mama_save'],
         blockedTools: [],
       };
 

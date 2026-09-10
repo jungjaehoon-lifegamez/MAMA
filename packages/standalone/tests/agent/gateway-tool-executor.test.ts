@@ -2776,13 +2776,13 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(hidden.value).toEqual({ tools: [], nextCursor: null });
 
           const unavailable = await disabled.execute('code_act', {
-            code: `tool_describe({ names: ['kagemusha_tasks'] })`,
+            code: `tool_describe({ names: ['kagemusha_messages'] })`,
           });
           const unknown = await disabled.execute('code_act', {
             code: `tool_describe({ names: ['not_a_real_tool'] })`,
           });
           expect(unavailable.error).toBe(unknown.error);
-          expect(String(unavailable.error)).not.toContain('kagemusha_tasks');
+          expect(String(unavailable.error)).not.toContain('kagemusha_messages');
 
           const stale = await disabled.execute('code_act', {
             code: `tool_search({ query: 'kagemusha', cursor: ${JSON.stringify(privateCursor)} })`,
@@ -3013,13 +3013,12 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           });
 
           const result = await executor.execute('code_act', {
-            code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, tasks: typeof kagemusha_tasks, messages: typeof kagemusha_messages })`,
+            code: `({ overview: typeof kagemusha_overview, entities: typeof kagemusha_entities, messages: typeof kagemusha_messages })`,
           });
 
           expect(JSON.parse(String(result.message)).value).toEqual({
             overview: scenario.expected,
             entities: scenario.expected,
-            tasks: scenario.expected,
             messages: scenario.expected,
           });
         });

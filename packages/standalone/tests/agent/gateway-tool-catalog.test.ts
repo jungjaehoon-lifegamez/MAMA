@@ -31,8 +31,8 @@ describe('Gateway tool catalog private isolation', () => {
 
     expect(catalog.toolNames).toContain('mama_search');
     expect(catalog.toolNames).not.toContain('mama_save');
-    expect(catalog.toolNames).toContain('kagemusha_tasks');
-    expect(catalog.prompt).toContain('kagemusha_tasks');
+    expect(catalog.toolNames).toContain('kagemusha_messages');
+    expect(catalog.prompt).toContain('kagemusha_messages');
   });
 
   it('TG-05 keys cached prompts by private policy and never reuses a disabled prompt', () => {
@@ -56,7 +56,7 @@ describe('Gateway tool catalog private isolation', () => {
     expect(repeatedDisabled).toBe(disabledCatalog);
     expect(enabledCatalog.cacheKey).not.toBe(disabledCatalog.cacheKey);
     expect(disabledCatalog.prompt.toLowerCase()).not.toContain('kagemusha');
-    expect(enabledCatalog.prompt).toContain('kagemusha_tasks');
+    expect(enabledCatalog.prompt).toContain('kagemusha_messages');
   });
 
   it('TG-04 keeps an enabled connector off ineligible wildcard surfaces', () => {
@@ -66,7 +66,7 @@ describe('Gateway tool catalog private isolation', () => {
       privateConnectorPolicy: enabledPolicy(),
     });
 
-    expect(catalog.toolNames).not.toContain('kagemusha_tasks');
+    expect(catalog.toolNames).not.toContain('kagemusha_messages');
     expect(catalog.prompt.toLowerCase()).not.toContain('kagemusha');
   });
 
