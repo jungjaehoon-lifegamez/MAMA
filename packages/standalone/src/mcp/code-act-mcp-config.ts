@@ -108,7 +108,12 @@ export function ensureCodeActMcpConfigBeforeSpawn(
 ): EnsureCodeActMcpConfigResult {
   const serverPath = options.serverPath ?? resolveCodeActServerPath();
   const configuredPath = readConfiguredCodeActServerPath(options.mcpConfigPath);
-  if (configuredPath !== undefined && !existsSync(configuredPath)) {
+  if (configuredPath !== undefined && existsSync(configuredPath)) {
+    // An entry that points at a real file is respected as-is: per-agent configs and operator
+    // overrides may legitimately name a different server. Only a dangling path is repaired.
+    return { changed: false, serverPath: configuredPath };
+  }
+  if (configuredPath !== undefined) {
     options.logger?.error?.(
       `[mcp] code-act server path missing: ${configuredPath} — regenerating`
     );
