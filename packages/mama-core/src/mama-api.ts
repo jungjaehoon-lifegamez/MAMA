@@ -2371,6 +2371,18 @@ interface ListDecisionsOptions {
   limit?: number;
   format?: 'json' | 'markdown';
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
+  /**
+   * Exact ledger read: every decision whose topic starts with this string, superseded rows
+   * included (they are the earlier rounds of the same item). `%` and `_` are literal.
+   * This is a lookup, not a search - `suggest({topicPrefix})` treats the prefix as a soft
+   * signal and was measured returning 5 of 12 rows plus one from another item.
+   */
+  topicPrefix?: string;
+}
+
+/** `LIKE ? ESCAPE '\\'` pattern that matches topics starting with `prefix`, metacharacters literal. */
+function topicPrefixLikePattern(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 }
 
 async function listDecisions(
@@ -2381,6 +2393,12 @@ async function listDecisions(
   try {
     const adapter = getAdapter();
     let decisions;
+    const topicPrefix =
+      typeof options.topicPrefix === 'string' ? options.topicPrefix.trim() : '';
+    // A prefix read keeps superseded rows: they are the item's earlier rounds.
+    const currency = topicPrefix ? '' : 'AND d.superseded_by IS NULL';
+    const prefixClause = topicPrefix ? "AND d.topic LIKE ? ESCAPE '\\'" : '';
+    const prefixParams = topicPrefix ? [topicPrefixLikePattern(topicPrefix)] : [];
 
     if (options.scopes && options.scopes.length > 0) {
       // Scope-filtered query: JOIN memory_scope_bindings + memory_scopes
@@ -2392,19 +2410,22 @@ async function listDecisions(
         SELECT DISTINCT d.* FROM decisions d
         JOIN memory_scope_bindings msb ON msb.memory_id = d.id
         WHERE msb.scope_id IN (${placeholders})
-          AND d.superseded_by IS NULL
+          ${currency}
+          ${prefixClause}
         ORDER BY COALESCE(d.event_datetime, d.created_at) DESC, d.created_at DESC
         LIMIT ?
       `);
-      decisions = await stmt.all(...scopeIds, limit);
+      decisions = await stmt.all(...scopeIds, ...prefixParams, limit);
     } else {
       const stmt = adapter.prepare(`
-        SELECT * FROM decisions
-        WHERE superseded_by IS NULL
-        ORDER BY COALESCE(event_datetime, created_at) DESC, created_at DESC
+        SELECT d.* FROM decisions d
+        WHERE 1 = 1
+          ${currency}
+          ${prefixClause}
+        ORDER BY COALESCE(d.event_datetime, d.created_at) DESC, d.created_at DESC
         LIMIT ?
       `);
-      decisions = await stmt.all(limit);
+      decisions = await stmt.all(...prefixParams, limit);
     }
 
     if (format === 'markdown') {
