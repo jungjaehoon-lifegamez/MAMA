@@ -24,7 +24,7 @@ describe('owner runtime: raw events become anchored facts in the turn that reads
 
   it('anchors every event on its item before any task write: one file, one task, rounds as facts', () => {
     // Owner correction 2026-09-11 00:53: "태스크는 각각 나뉘는 게 아니라 파일이 하나의 작업" -
-    // three duplicates for one item (<item> x3, <item> x2, <item> x2) were
+    // three items each had two or three open task rows for one file; they were
     // created because the event turn judged each batch alone and never looked the item up.
     expect(OWNER_RUNTIME_RULES).toContain('ANCHOR FIRST');
     expect(OWNER_RUNTIME_RULES).toMatch(/task_list\(\{search: <the item key>/);

@@ -7,7 +7,7 @@ import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
  * A topic prefix read is a ledger lookup: every fact filed under one item key, exactly.
  *
  * Measured 2026-09-11 against the live daemon: `suggest(prefix, {topicPrefix})` returned 5
- * of the 12 rows under `<item>` and one row from another item, because that path is a
+ * of the 12 rows under one item key and one row from another item, because that path is a
  * similarity search with the prefix as a soft signal. Questions like "how many feedback
  * rounds did this item have" need the exact set, superseded rounds included.
  */
@@ -42,12 +42,12 @@ describe('listDecisions({topicPrefix})', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('list-decisions-topic-prefix');
-    insertDecision({ id: 'd_a1', topic: '<item>_<char>', eventMs: 1_000 });
-    insertDecision({ id: 'd_a2', topic: '<item>_<char>', eventMs: 2_000, supersededBy: 'd_a3' });
-    insertDecision({ id: 'd_a3', topic: '<item>_<char> 할로윈', eventMs: 3_000 });
-    insertDecision({ id: 'd_b1', topic: '<item>_<char>', eventMs: 4_000 });
-    insertDecision({ id: 'd_c1', topic: '<item>_<char>', eventMs: 5_000 });
-    insertDecision({ id: 'd_pct', topic: 'bc%wild', eventMs: 6_000 });
+    insertDecision({ id: 'd_a1', topic: 'a_0001_charB', eventMs: 1_000 });
+    insertDecision({ id: 'd_a2', topic: 'a_0001_charB', eventMs: 2_000, supersededBy: 'd_a3' });
+    insertDecision({ id: 'd_a3', topic: 'a_0001_charB variant', eventMs: 3_000 });
+    insertDecision({ id: 'd_b1', topic: 'b_0001_charB', eventMs: 4_000 });
+    insertDecision({ id: 'd_c1', topic: 'a_0002_charA', eventMs: 5_000 });
+    insertDecision({ id: 'd_pct', topic: 'a%wild', eventMs: 6_000 });
   });
 
   afterAll(async () => {
@@ -55,7 +55,7 @@ describe('listDecisions({topicPrefix})', () => {
   });
 
   it('returns exactly the rows whose topic starts with the prefix, newest first, superseded rounds included', async () => {
-    const rows = (await mama.list({ topicPrefix: '<item>', limit: 10 })) as Array<{
+    const rows = (await mama.list({ topicPrefix: 'a_0001', limit: 10 })) as Array<{
       id: string;
       superseded_by?: string | null;
     }>;
@@ -64,9 +64,9 @@ describe('listDecisions({topicPrefix})', () => {
   });
 
   it('treats LIKE metacharacters in the prefix literally', async () => {
-    const rows = (await mama.list({ topicPrefix: 'bc%', limit: 10 })) as Array<{ id: string }>;
+    const rows = (await mama.list({ topicPrefix: 'a%', limit: 10 })) as Array<{ id: string }>;
     expect(rows.map((r) => r.id)).toEqual(['d_pct']);
-    const underscore = (await mama.list({ topicPrefix: 'bc_1', limit: 10 })) as Array<{
+    const underscore = (await mama.list({ topicPrefix: 'a_0', limit: 10 })) as Array<{
       id: string;
     }>;
     expect(underscore.map((r) => r.id).sort()).toEqual(['d_a1', 'd_a2', 'd_a3', 'd_c1']);

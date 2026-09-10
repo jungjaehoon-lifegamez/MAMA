@@ -17,8 +17,8 @@ import { causeFromOwnerMessage } from '../../src/gateways/message-router.js';
 
 describe('causeFromOwnerMessage', () => {
   it('cites the owner message that started the turn', () => {
-    expect(causeFromOwnerMessage('msg_9182', 'telegram:<owner-chat>:msg_9182')).toEqual({
-      causeEventIds: ['telegram:<owner-chat>:msg_9182'],
+    expect(causeFromOwnerMessage('msg_9182', 'telegram:1000000001:msg_9182')).toEqual({
+      causeEventIds: ['telegram:1000000001:msg_9182'],
     });
   });
 

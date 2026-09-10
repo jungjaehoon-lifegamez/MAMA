@@ -660,19 +660,42 @@
 
 ## 2026-09-10 21:06 — 첫 follow-up 전달 실측 + 플래그 없는 비동기 자식 추적 누락
 
-- 오너 새 질문 "8월 <client> 작업 갯수와 각 프로젝트별 피드백 갯수". 부모: kagemusha_overview/entities, task_list(search <client>, 50건) 호출 후
+- 오너 새 질문 "8월 거래처 A 작업 갯수와 각 프로젝트별 피드백 갯수". 부모: kagemusha_overview/entities, task_list(search 거래처A, 50건) 호출 후
   "task_list는 kagemusha 참고자료 기반이라 8월 집계에 부정확" 이라고 판단해 원문 로그 집계를 Agent에 위임(run_in_background 미지정) → 3초 뒤
-  "백그라운드로 돌렸습니다"로 턴 종료. 이 판단은 오류다: 원장에는 8월 생성 <client> 태스크 18건(done 11, cancelled 5, pending 2)이 있었고,
+  "백그라운드로 돌렸습니다"로 턴 종료. 이 판단은 오류다: 원장에는 8월 생성 거래처 A 태스크 18건(done 11, cancelled 5, pending 2)이 있었고,
   저장된 procedure "task-status-authority-task-list-over-kagemusha"는 정반대(task_list가 기준, kagemusha가 참고)로 적혀 있다. 모델이 교훈을 뒤집어 적용했다.
-  FB 건수는 os_task_events 8월 <client> FB 이벤트 0건이라 원문이 필요했던 것은 맞다.
+  FB 건수는 os_task_events 8월 거래처 A FB 이벤트 0건이라 원문이 필요했던 것은 맞다.
 - 기계 결함: CLI는 플래그 없이도 "Async agent launched"로 비동기 실행했는데 래퍼는 run_in_background===true만 추적 → 미추적 자식 →
   부모 턴 종료 시 run context 닫힘 → 자식 code_act 전부 CODE_ACT_CONTEXT_UNAVAILABLE → 자식 실패 → 미추적 알림 뒤 CLI 자체 턴이 "샌드박스 다운"
   보고 작성. 새 배선은 작동: `unrequested CLI turn ended … handing its text` → `follow-up answer delivered to telegram:<owner-chat> (481 chars)`.
   즉 전달은 첫 라이브 증명, 내용은 실패 보고였다.
 - 수정: Agent tool_use는 전부 등록하고 launch 결과가 "Async agent launched"일 때만 배경 자식으로 유지, 동기 결과면 삭제. RED 1 → GREEN,
   관련 5파일 121 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.
-- 라이브 증명(21:20, local.6 = main dbe854f8): 오너 재질문 "8월 <client> 작업/FB 건수" → 부모가 Agent(bg=true) 위임, 21:20:31 "돌렸습니다"(19.6초) →
+- 라이브 증명(21:20, local.6 = main dbe854f8): 오너 재질문 "8월 거래처 A 작업/FB 건수" → 부모가 Agent(bg=true) 위임, 21:20:31 "돌렸습니다"(19.6초) →
   `holding run context` → 자식 kagemusha_overview/entities/messages 12회+ 정상 → 21:21:39 CLI 자율 턴 답 완성 → 21:21:40
-  `follow-up answer delivered to telegram:<owner-chat> (thread below, 765 chars)`. 질문→실답 89초. 내용: chatwork:<chatwork-room> 8월 123건 전량,
+  `follow-up answer delivered to telegram:<owner-chat> (thread below, 765 chars)`. 질문→실답 89초. 내용: chatwork:<room> 8월 123건 전량,
   제출 약 23건/15항목, 클라 FB 13~17건, 스스로 "task_list 교차검증 미수행" 명시. 위임+전달 경로는 이제 오너 채팅에서 끝까지 증명됐다.
   남은 판단 결함은 원장 미사용(모델 판단, procedure 교정 대상).
+
+## 2026-09-10 21:50 ~ 09-11 01:50 — raw→기억 단절의 원인과 고침, 2항목 클린 시험 통과, 14일 재구축 시작 (PR #295, main f715fa5c)
+
+- 오너: "수많은 장치를 만들었는데 하나도 연결되지 않았다." 실측(local.6, 09-10 하루): owner-event 런 173, task_update 38, **mama_save 1**,
+  contract_no_update 150. case/entity/edge/channel_summaries 0행, os_task_events 07-03 정지. 질문 턴은 code_act 812회로 raw 크롤.
+  원인 ①읽는 턴에 "바꾼 사실을 남겨라"는 의무가 없고 억제문만 있음(쓰는 레인은 이벤트 없이 별도 배치) ②mama_search가 query 없이
+  topicPrefix만 오면 접두어를 버리고 최신 N건(11회 호출 resultHash 동일; core suggest도 12건 중 5건+타항목 1건) ③배치 줄에 시각이 없어
+  event_date 전부 실행일 ④배치만 보고 판단해 라운드마다 새 태스크(한 항목에 3행). 외부 사례(Mem0/Graphiti/AtomMem) 공통 방법과 대조:
+  읽는 곳에서 엔티티 키로 원자 사실 추출→기존과 비교→무효화.
+- 수정(전부 TDD RED→GREEN): OWNER_RUNTIME_RULES에 ANCHOR FIRST / WHAT THIS BATCH CHANGED IS MEMORY / 질문은 topicPrefix→task_list→raw는
+  빈 곳만; core listDecisions({topicPrefix}) 정확 `LIKE ESCAPE`(superseded 포함) + handleSearch 라우팅; delta 줄에 `[2026-09-04T05:03Z]`;
+  mama_save 카탈로그 event_date. 호스트 마크다운→HTML 변환은 넣었다가 오너 지시("코드가 아니라 에이전트가 판단")로 revert.
+  standalone 6,002 / core 683 통과.
+- 검증(라이브): 7일 재처리 117배치 — task 쓴 80런 중 64 사실 저장(80%), 텔레그램 0. 클린 2항목 14일 시험(옛 사실·복구 저널 비운 뒤)
+  22배치 — **17/17 사실 저장, 항목당 태스크 1개(2행), done 행이 새 FB에서 같은 행 재오픈, 담당이 같은 행에서 실제 작업자로 교정**,
+  사실 29건 event_date 실제. 오너 질문 "항목 A의 FB 횟수·단계·작업자" → 도구 1~2회 원장 답변(전날 40회 크롤+"못 센다"). 서식 교정 후
+  다음 답 HTML(procedure_update 0: "브리프에 이미 있음"). telegram_send 알림은 3/3 HTML, 중계된 최종 답만 마크다운 → 모델이 최종 답이
+  텔레그램 메시지임을 모름(CONTINUE 턴은 `[Role: owner_console@telegram]` 32자만 수신). 카게무샤 차이 = 지시가 매 턴의 사실인가.
+- 사고: 30일 태스크 1,695건 삭제 시 receipts/bindings 고아 209건 → 데몬 기동 FK 검사 크래시 → 불변 트리거 일시 해제 후 정리·복구.
+  사용량 제한(22:38~00:41)으로 7일 재처리 20배치 미완. 백업 ~/.mama/backups/pre-rebuild-20260911.
+- 남은 실패: 사람·항목 별칭(Slack 표시명=카카오 실명, 항목 코드 접두 표기, 코드 없는 카카오 대화), 같은 캐릭터의 두 파일을 한 태스크로 둘지(오너 판단), [MAMA Notice]가 오너
+  질문 턴을 가로챔, 질문 턴이 원장을 고침+원인표식이 slack 배치로 오염, 빈 테이블·별도 큐레이션 레인 제거, core 2.4.x 공개(라이브는 로컬
+  패치본). 14일 재구축 70배치(20건/배치, 2항목 85건 제외) 01:47 시작 — 판정: 항목당 태스크 1개, task 쓴 런의 사실 저장률, 09:00 보고 품질.
