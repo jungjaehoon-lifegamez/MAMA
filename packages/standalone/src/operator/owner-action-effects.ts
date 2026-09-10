@@ -179,7 +179,7 @@ function verifyContext(context: OwnerActionContext): VerifiedContext {
  */
 const REPLAY_NEUTRAL_ROW_SQL = `(effect_kind = 'native_run'
   OR (effect_kind = 'native_tool'
-      AND lower(json_extract(intent_json, '$.toolName')) IN
+      AND IFNULL(lower(json_extract(intent_json, '$.toolName')), '') IN
         ('agent', 'task', 'spawn_agent', 'collabagenttoolcall', 'send_input', 'resume_agent')))`;
 
 export class OwnerActionEffectLedger {
