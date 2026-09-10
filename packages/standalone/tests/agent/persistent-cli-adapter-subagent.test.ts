@@ -30,6 +30,10 @@ class FakeProcess extends EventEmitter {
   hasLiveBackgroundAgents(): boolean {
     return this.live;
   }
+  finishChild(): void {
+    (this as { live: boolean }).live = false;
+    this.emit('subagent', { kind: 'completed', agentThreadId: 'agent_1', itemId: 'toolu_1' });
+  }
 }
 
 function wire(adapter: PersistentCLIAdapter, proc: FakeProcess, sessionKey: string): void {
@@ -166,3 +170,38 @@ describe('PersistentCLIAdapter native subagent events', () => {
     expect(results[0]).toMatchObject({ text: 'CHILD_DONE', isError: false });
   });
 });
+
+describe('PersistentCLIAdapter turn admission with a live background child', () => {
+  function waiter(adapter: PersistentCLIAdapter, proc: FakeProcess): Promise<void> {
+    return (
+      adapter as unknown as {
+        waitForLiveBackgroundAgents(proc: unknown, key: string): Promise<void>;
+      }
+    ).waitForLiveBackgroundAgents(proc, 'ctx-1');
+  }
+
+  it('does not wait when no child is live', async () => {
+    const adapter = new PersistentCLIAdapter();
+    let settled = false;
+    await waiter(adapter, new FakeProcess(false)).then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(true);
+  });
+
+  it('holds the next turn until the child reports finished', async () => {
+    const adapter = new PersistentCLIAdapter();
+    const proc = new FakeProcess(true);
+    let settled = false;
+    const pending = waiter(adapter, proc).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+    proc.finishChild();
+    await pending;
+    expect(settled).toBe(true);
+    expect(proc.listenerCount('subagent')).toBe(0);
+  });
+});
+
