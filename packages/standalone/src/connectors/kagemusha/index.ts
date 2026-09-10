@@ -47,13 +47,29 @@ export class KagemushaConnector implements IConnector {
 
   private db: SQLiteDatabase | null = null;
   private dbPath: string;
+  /**
+   * Platforms this connector may read, derived from the configured channel keys
+   * (`kakao:<room>` → `kakao`, `kagemusha-tasks:<room>` → `kagemusha-tasks`). The
+   * Kagemusha DB mirrors every platform it bridges (kakao, line, slack, chatwork,
+   * telegram, …) plus its own task cards; the owner's declaration (2026-07-30) is
+   * that MAMA reads the kakao/LINE conversations from it, not the rest. An empty
+   * channel map keeps the legacy contract: everything is read.
+   */
+  private readonly declaredSources: Set<string> | null;
   private lastPollTime: Date | null = null;
   private lastPollCount = 0;
   private lastError: string | undefined = undefined;
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_config: ConnectorConfig, dbPath?: string) {
+  constructor(config: ConnectorConfig, dbPath?: string) {
     this.dbPath = dbPath ?? join(homedir(), '.kagemusha', 'kagemusha.db');
+    const keys = Object.keys(config.channels ?? {});
+    this.declaredSources =
+      keys.length === 0 ? null : new Set(keys.map((key) => key.split(':')[0] ?? key));
+  }
+
+  private reads(source: string): boolean {
+    return this.declaredSources === null || this.declaredSources.has(source);
   }
 
   async init(): Promise<void> {
@@ -112,6 +128,7 @@ export class KagemushaConnector implements IConnector {
         .all(sinceMs) as ChannelMessage[];
 
       for (const row of rows) {
+        if (!this.reads(row.channel)) continue;
         items.push({
           source: row.channel,
           sourceId: `${row.channel_id}:${row.id}`,
@@ -134,12 +151,14 @@ export class KagemushaConnector implements IConnector {
       this.lastError = err instanceof Error ? err.message : String(err);
     }
 
-    // 2. Tasks (new) — include updated tasks since last poll
+    // 2. Tasks — only when a `kagemusha-tasks:*` channel is declared
     try {
       const sinceMs = since.getTime();
-      const tasks = this.db
-        .prepare(`SELECT * FROM tasks WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500`)
-        .all(sinceMs) as KagemushaTask[];
+      const tasks = this.reads('kagemusha-tasks')
+        ? (this.db
+            .prepare(`SELECT * FROM tasks WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500`)
+            .all(sinceMs) as KagemushaTask[])
+        : [];
 
       for (const task of tasks) {
         const deadline = task.deadline
@@ -196,22 +215,24 @@ export class KagemushaConnector implements IConnector {
 
       if (rows.length === 0) break;
 
-      const items: NormalizedItem[] = rows.map((row) => ({
-        source: row.channel,
-        sourceId: `${row.channel_id}:${row.id}`,
-        channel: row.channel_id,
-        author: row.user_id,
-        content: row.content,
-        timestamp: new Date(Number(row.created_at)),
-        type: 'message' as const,
-        metadata: {
-          channel: row.channel,
-          channelId: row.channel_id,
-          rawConnector: 'kagemusha',
-          userId: row.user_id,
-          role: row.role,
-        },
-      }));
+      const items: NormalizedItem[] = rows
+        .filter((row) => this.reads(row.channel))
+        .map((row) => ({
+          source: row.channel,
+          sourceId: `${row.channel_id}:${row.id}`,
+          channel: row.channel_id,
+          author: row.user_id,
+          content: row.content,
+          timestamp: new Date(Number(row.created_at)),
+          type: 'message' as const,
+          metadata: {
+            channel: row.channel,
+            channelId: row.channel_id,
+            rawConnector: 'kagemusha',
+            userId: row.user_id,
+            role: row.role,
+          },
+        }));
 
       yield items;
       offset += batchSize;
@@ -219,11 +240,11 @@ export class KagemushaConnector implements IConnector {
       if (rows.length < batchSize) break;
     }
 
-    // Also yield all tasks
+    // Also yield all tasks — only when a `kagemusha-tasks:*` channel is declared
     try {
-      const tasks = this.db
-        .prepare(`SELECT * FROM tasks ORDER BY updated_at ASC`)
-        .all() as KagemushaTask[];
+      const tasks = this.reads('kagemusha-tasks')
+        ? (this.db.prepare(`SELECT * FROM tasks ORDER BY updated_at ASC`).all() as KagemushaTask[])
+        : [];
 
       if (tasks.length > 0) {
         yield tasks.map((task) => {

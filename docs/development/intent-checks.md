@@ -541,3 +541,46 @@
 - 0.53.0 (mama-os) released 15:50 via the Release action after PR #288; live replaced with npm 0.53.0 at 15:52. Release evidence: board#4818/#4820 and curation#4819 delegated on Claude Sonnet 5 under local.22/.23.
 - Under npm 0.53.0 a forced board (#4822) overlapped the boot board (#4821) on the one owner session. The adapter superseded the lease #4822's child held, so the child's `report_publish` (15:54:43) was traced under #4821's run (`mr_92eec3a3…`); #4821 verified, #4822 stayed `delegated` with `full_unverified` although the slots were published. The same path would run an unattended child under a chat turn's grant. Fix: the next turn waits for the live child (bound = DELEGATED_ATTEMPT_TIMEOUT_MS, logged when passed). Not yet observed live at the time of writing.
 
+
+## 2026-09-10 18:41 — 설치 환경 정리: 카게무샤 .env 의존 제거 (코드 변경 없음)
+
+- 작업 / 인텐트 버전 / 연결 시나리오: INTENT v6 §데이터와 접근, §판단의 자유와 운영 품질. 오너 지적 "소스가 아니라 설치 환경의 문제".
+- 실측(변경 전): `~/.mama/auth.env`가 `set -a; source ~/project/mama-suite/apps/kagemusha/.env`로 카게무샤 env 전체를 데몬에 주입.
+  connectors.json tokenName이 KAGEMUSHA_SLACK_USER_TOKEN / KAGEMUSHA_CHATWORK_TOKEN, `MAMA_TRELLO_TOKEN`도
+  `${KAGEMUSHA_TRELLO_KEY}:${KAGEMUSHA_TRELLO_TOKEN}` 참조. `envFile`/`apiKeyName`은 코드가 읽지 않는 죽은 필드.
+  `mama connector status`는 CLI 셸에 그 env가 없어 "token not found"를 표시(데몬 실상과 무관).
+  데이터도 이번 주 chatwork 네이티브 1건 vs 카게무샤 DB 경유 86건, slack 42 vs 120(카드 74 포함).
+- 변경: auth.env에서 카게무샤 .env source 제거, MAMA_SLACK_TOKEN / MAMA_CHATWORK_TOKEN / MAMA_TRELLO_KEY /
+  MAMA_TRELLO_USER_TOKEN을 MAMA 이름으로 정의(값은 셸 변수로만 복사, 미출력). connectors.json tokenName을 그 이름으로
+  교체하고 envFile·apiKeyName 삭제. 백업 `~/.mama/backups/env-cleanup-20260910-1839/`.
+- 사고: 첫 재시작(18:40:11)에서 `MAMA_TRELLO_TOKEN`의 `${KAGEMUSHA_TRELLO_KEY}` 참조가 start.sh `set -u`에 걸려
+  auth.env source 실패 → launchd 26회 재시도 실패, 약 71초 다운. 참조를 MAMA 변수로 바꾸고 `bash -u -c 'source …'`로
+  검증 후 18:41:22 재시작 성공. 교훈: auth.env/start.sh 편집 후 재시작 전 반드시 `set -u` source 검증.
+- 검증: 데몬 env에 KAGEMUSHA_* 0개·MAMA_* 토큰 4개, `[connector] 6 connectors active`, 첫 pollAll에서
+  chatwork/slack/kagemusha/drive/trello 오류 없음(캘린더 page cap은 기존 결함), Telegram 연결, health 98, runtime 0.53.1.
+- 남은 실패·미확인 / 기준 축소: 토큰 값 자체는 여전히 카게무샤와 같은 계정의 토큰(파일 결합만 끊음). Chatwork는
+  `force=0` 서버 읽음 커서를 카게무샤와 공유해 네이티브 수집 굶음 지속 → 소스 수정 또는 별도 계정 필요.
+  `canonicalChannelKey`가 null이면 항목을 통과시키므로 kagemusha-tasks 채널 삭제로는 카드 수집을 못 막음 → 소스 수정 필요.
+  캘린더 page cap(timeMax 부재), CLI status 표면, 오너 텔레그램 그룹의 hub 유입은 미해결.
+- 의도 판정: **부분 부합** — 설치 환경의 외부 의존을 제거해 재시작 안정성·설정 진실성을 회복. 데이터 출처의 카게무샤 의존은
+  아직 그대로이며 v1 목표 진전은 아니다.
+- 하위 작업 상태 / 최상위 목표 상태 / 다음: 환경 정리 완료. 최상위 목표 미완료. 다음은 소스 3건(kagemusha 카드 필터,
+  chatwork 조회 방식, calendar timeMax)과 점검 기록 두 갈래 병합 PR.
+
+## 2026-09-10 19:0x — 커넥터 3건 소스 수정 (Chatwork force=1, Calendar 창 닫기, Kagemusha 선언 필터)
+
+- 작업 / 인텐트 버전 / 연결 시나리오: INTENT v6 §데이터와 접근(수집 범위·누락 구분), §현시점의 이해. 오너 지시 "전체 수정하자".
+  카게무샤 코드와 메커니즘만 대조했고 개인 데이터는 옮기지 않았다.
+- 기대한 사용자 행동 변화: Chatwork 원문이 카게무샤 없이 MAMA 자체 수집으로 들어온다. 캘린더 수집이 3일 만에 재개되고
+  이후 poll마다 죽지 않는다. 카게무샤 카드가 MAMA 태스크로 복제되지 않고, 같은 Slack 채널이 두 번 들어오지 않는다.
+- 실제 결과와 증거: TDD. RED 6개(force=1 URL, timeMax=now+90d, maxResults=250, 플랫폼 필터, 카드 미방출, pollBulk 동일 규칙)를
+  먼저 실패 확인 후 최소 구현으로 GREEN. 가드 3개(force=1 재조회 시 중복 미방출, 카드 선언 시 방출, 빈 설정=기존 계약)는
+  변경 전에도 통과함을 명시한다. 대상 3파일 77/77, connectors 스위트 32파일 537/537, eslint 0, tsc 0, prettier 적용.
+  전체 standalone 스위트는 백그라운드 실행 결과를 커밋 전 확인한다. 라이브 설치·관측은 아직 전이다.
+- 남은 실패·미확인 / 기준 축소: 토큰 값은 여전히 카게무샤와 같은 계정. force=1은 방당 최근 100건 창이라 5분 사이 100건을
+  넘는 방은 놓친다(기존 제약). 캘린더는 90일 밖 일정의 변경을 창에 들어올 때까지 못 본다. 카게무샤 필터는 설정으로만
+  작동하므로 설치 시 connectors.json에서 kagemusha-tasks 6개를 빼고 airbnb/schedule/telegram 그룹을 명시해야 한다.
+  오너 텔레그램 그룹 유입(결함 1)과 산출물 앵커(결함 2)는 이 PR 범위 밖이다.
+- 의도 판정: 코드 수준에서 **부합**. 라이브 판정은 설치 후 첫 poll 사이클과 이후 24시간 수치로 다시 기록한다.
+- 하위 작업 상태 / 최상위 목표 상태 / 다음: 코드 완료·미커밋. 최상위 목표 미완료. 다음: 전체 스위트 → 커밋/PR → 로컬
+  개밥먹기 설치(0.53.2-local) → 첫 poll 증거 → 공개 릴리즈 여부 오너 확인.
