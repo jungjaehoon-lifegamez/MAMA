@@ -240,6 +240,8 @@ interface BackgroundAgentState {
   finalText: string;
   /** The spawning turn's callback; `currentCallbacks` is cleared when that turn ends. */
   onSubagentStart?: PromptCallbacks['onSubagentStart'];
+  /** The spawning turn's follow-up sink: the CLI's own later answer goes back to that request. */
+  onFollowUp?: PromptCallbacks['onFollowUp'];
 }
 
 /** Host-visible spawn/finish of a native background Agent on the Claude stream. */
@@ -386,6 +388,12 @@ export class PersistentClaudeProcess extends EventEmitter {
   private state: ProcessState = 'dead';
   private outputBuffer: string = '';
   private currentCallbacks: PromptCallbacks | null = null;
+  /**
+   * The most recent request that offered a follow-up sink. A CLI turn that no stdin request
+   * and no tracked child explains (a grandchild's task notification, measured 2026-09-10)
+   * still answers SOMEONE: the last request that asked.
+   */
+  private lastFollowUp: PromptCallbacks['onFollowUp'] | undefined;
   private currentResolve: ((result: PromptResult) => void) | null = null;
   private currentReject: ((error: Error) => void) | null = null;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
@@ -960,6 +968,27 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.finishAutonomousTurn(event);
           break;
         }
+        if (this.currentResolve === null && this.toolUseBlocks.length === 0) {
+          // A finished CLI turn nobody requested and no tracked child explains (e.g. a
+          // grandchild's task notification). A turn still waiting on host tool results is
+          // not finished and keeps the normal path; a finished one is an answer for the
+          // last request that asked.
+          const text = event.result || '';
+          persistentLogger.info(
+            `[PersistentCLI] unrequested CLI turn ended (${event.duration_ms ?? 0}ms); ` +
+              (this.lastFollowUp
+                ? 'handing its text to the last request'
+                : 'no request to hand it to')
+          );
+          this.lastFollowUp?.({
+            agentThreadId: 'untracked',
+            agentPath: 'cli-turn',
+            itemId: 'untracked',
+            text,
+            isError: event.subtype !== 'success',
+          });
+          break;
+        }
         // Request complete
         this.clearRequestTimeout();
 
@@ -1077,7 +1106,11 @@ export class PersistentClaudeProcess extends EventEmitter {
       nativeToolUseId: toolUse.id,
     });
     persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
-    if (toolUse.name === BACKGROUND_AGENT_TOOL && toolUse.input?.run_in_background === true) {
+    // Every Agent spawn is tracked from here; its LAUNCH RESULT decides whether it is a
+    // background child ("Async agent launched") or a synchronous one (dropped on result).
+    // Measured 2026-09-10 21:06 KST: the CLI launched async without run_in_background, the
+    // flag-gated tracker missed it, and the child lost the run context mid-flight.
+    if (toolUse.name === BACKGROUND_AGENT_TOOL) {
       this.trackBackgroundAgent(toolUse);
     }
     return true;
@@ -1104,6 +1137,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       completed: false,
       finalText: '',
       onSubagentStart: this.currentCallbacks?.onSubagentStart,
+      onFollowUp: this.currentCallbacks?.onFollowUp,
     };
     this.backgroundAgents.set(toolUse.id, state);
     this.pruneBackgroundAgents();
@@ -1148,6 +1182,11 @@ export class PersistentClaudeProcess extends EventEmitter {
 
   /** Lift the child's id out of the "Async agent launched" tool_result text. */
   private recordBackgroundLaunchResult(state: BackgroundAgentState, content: string): void {
+    if (!/async agent launched/i.test(content)) {
+      // A synchronous child: its result IS its answer, inside the parent turn. Nothing to hold.
+      this.backgroundAgents.delete(state.itemId);
+      return;
+    }
     const match = /agentId["'\s:=]+([A-Za-z0-9_-]{4,})/.exec(content);
     if (match) {
       state.agentId = match[1];
@@ -1291,6 +1330,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     // The CLI's own turn IS the owner reacting, so the host must not wake it again.
     this.completeBackgroundAgent(state, false);
     this.emit('autonomousTurnResult', resultEvent);
+    // The answer belongs to the request that spawned the child: hand it back there.
+    (state.onFollowUp ?? this.lastFollowUp)?.(resultEvent);
   }
 
   private completeBackgroundAgent(
@@ -1513,6 +1554,9 @@ export class PersistentClaudeProcess extends EventEmitter {
    */
   private resetRequestState(): void {
     this.clearRequestTimeout();
+    // The request is over, but the runner may still answer it later (its own follow-up turn):
+    // keep the sink the request offered.
+    if (this.currentCallbacks?.onFollowUp) this.lastFollowUp = this.currentCallbacks.onFollowUp;
     this.currentCallbacks = null;
     this.currentResolve = null;
     this.currentReject = null;
