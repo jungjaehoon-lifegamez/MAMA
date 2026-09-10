@@ -440,11 +440,18 @@ export class PersistentClaudeProcess extends EventEmitter {
     // the whole life of the process. Repair the entry right before spawn, or
     // fail loudly — never spawn a tool-less persona silently.
     if (this.options.mcpConfigPath) {
-      const { changed } = ensureCodeActMcpConfigBeforeSpawn({
-        mcpConfigPath: this.options.mcpConfigPath,
-        apiPort: API_PORT,
-        logger: persistentLogger,
-      });
+      let changed: boolean;
+      try {
+        ({ changed } = ensureCodeActMcpConfigBeforeSpawn({
+          mcpConfigPath: this.options.mcpConfigPath,
+          apiPort: API_PORT,
+          logger: persistentLogger,
+        }));
+      } catch (error) {
+        // A failed repair must leave the process startable again, not stuck in 'starting'.
+        this.state = 'dead';
+        throw error;
+      }
       if (changed) {
         persistentLogger.warn(
           `[mcp] code-act entry regenerated in ${this.options.mcpConfigPath} before spawn`

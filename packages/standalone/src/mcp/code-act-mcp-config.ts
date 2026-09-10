@@ -14,7 +14,7 @@
  */
 
 import path from 'node:path';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 
 export interface EnsureCodeActMcpConfigLogger {
   debug?: (...args: unknown[]) => void;
@@ -79,12 +79,24 @@ export function ensureCodeActMcpConfig(
     existing.mcpServers = {};
   }
 
-  const current = existing.mcpServers['code-act'] as { args?: unknown } | undefined;
+  const current = existing.mcpServers['code-act'] as
+    | { command?: unknown; args?: unknown; env?: unknown }
+    | undefined;
   const currentArg =
     current && typeof current === 'object' && Array.isArray(current.args)
       ? current.args[0]
       : undefined;
-  if (currentArg === serverPath) {
+  const currentPort =
+    current && typeof current === 'object' && current.env && typeof current.env === 'object'
+      ? (current.env as Record<string, unknown>).MAMA_SERVER_PORT
+      : undefined;
+  // The whole managed entry must match: a stale command or port would start the server
+  // against the wrong API endpoint even when the script path is right.
+  if (
+    currentArg === serverPath &&
+    current?.command === 'node' &&
+    currentPort === String(options.apiPort)
+  ) {
     return { changed: false, serverPath };
   }
 
@@ -119,6 +131,9 @@ export function ensureCodeActMcpConfigBeforeSpawn(
     );
   }
   try {
+    if (!existsSync(serverPath) || !statSync(serverPath).isFile()) {
+      throw new Error(`installed code-act server is missing: ${serverPath}`);
+    }
     return ensureCodeActMcpConfig({ ...options, serverPath });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
