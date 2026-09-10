@@ -146,6 +146,12 @@ interface TickOptions {
   advanceMaintenance?: boolean;
 }
 
+/** `2026-09-04T05:03Z`: the delta line's event time. Invalid or missing input renders `?`. */
+function eventTimeLabel(ms: number): string {
+  const d = new Date(ms);
+  return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 16) + 'Z' : '?';
+}
+
 export class OperatorTriggerLoop {
   private deps: TriggerLoopDeps;
   private tickCount = 0;
@@ -615,10 +621,14 @@ export class OperatorTriggerLoop {
         // would silently drop events the run acted on from the record of why it acted.
         // Embedded newlines are collapsed: a message body containing "\n[/UNTRUSTED..."
         // must not be able to forge line or block framing downstream.
+        // The event time is on the line so a fact saved from it can carry its real
+        // event_date. Measured 2026-09-10: without it, facts from 09-04 events were all
+        // dated the day the batch ran. Minute precision, UTC, no seconds: enough to date a
+        // fact, small enough not to crowd the 200-char excerpt.
         const shown = channelEvents.slice(-10);
         const lines = shown.map(
           (e) =>
-            `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content
+            `- [id:${e.eventIndexId ?? e.id}] [${eventTimeLabel(e.createdAt)}] ${e.userId}: ${e.content
               .trim()
               .replace(/[\r\n]+/g, ' ')
               .slice(0, 200)}`
