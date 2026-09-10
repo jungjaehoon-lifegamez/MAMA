@@ -9,12 +9,35 @@ export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 /** Stable owner policy, loaded with the session rather than replayed as turn history. */
 export const OWNER_SUBAGENT_INSTRUCTIONS =
   'Delegate long, bounded work to a native subagent with one clear objective, the evidence it needs, ' +
-  'and a completion condition. Do not pass fork_turns: "none": a child spawned without the history ' +
-  'fork has no host tools (measured on codex-cli 0.153.4), so it cannot write anything durable. ' +
-  'Do not call wait_agent unless your next step is blocked on the result. ' +
-  'End your turn after delegating so the owner can still reach you. When the subagent finishes the ' +
-  'host wakes you with its result, and you then verify and integrate it; you retain responsibility ' +
-  'for completion.';
+  'and a completion condition. End your turn after delegating so the owner can still reach you. ' +
+  'Do not block on the result and do not poll for it. When the subagent finishes you are given its ' +
+  'result once - then you verify and integrate it, and you do NOT spawn another subagent for the ' +
+  'same objective; you retain responsibility for completion.';
+
+/** Runtime-specific spawn mechanics. The standing rule above is said once, here too. */
+const SUBAGENT_RUNTIME_RULES: Record<string, string> = {
+  codex:
+    'Spawn with the native agent tool. Do not pass fork_turns: "none": a child spawned without ' +
+    'the history fork has no host tools (measured on codex-cli 0.153.4), so it cannot write ' +
+    'anything durable. Call wait_agent only if your next step is blocked on the result.',
+  claude:
+    'Spawn with the Agent tool and run_in_background: true, then end the turn. The completion ' +
+    'notification is the result arriving; read it and continue from there.',
+};
+
+/**
+ * The standing subagent policy for one runner.
+ *
+ * The shared rule is backend-neutral; only the spawn mechanics differ. Naming another
+ * runtime's tools (wait_agent on Claude, Agent on Codex) is what produced duplicate spawns
+ * on notification, so each runner is told its own mechanics and nothing else.
+ */
+export function ownerSubagentInstructions(backend: string): string {
+  const runtimeRule = SUBAGENT_RUNTIME_RULES[backend];
+  return runtimeRule
+    ? `${OWNER_SUBAGENT_INSTRUCTIONS} ${runtimeRule}`
+    : OWNER_SUBAGENT_INSTRUCTIONS;
+}
 
 const LEGACY_HOST_AGENT_TOOLS = new Set(['report_request', 'delegate']);
 

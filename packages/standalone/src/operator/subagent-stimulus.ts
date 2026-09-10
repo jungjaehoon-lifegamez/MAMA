@@ -26,10 +26,10 @@ const MAX_RESULT_CHARS = 4000;
  * ordering the follow-up is the agent's judgment, not the host's script.
  */
 const OWNER_OBLIGATION =
-  'Read its result (wait_agent/list_agents if you need ' +
-  'more), verify what matters against the sources, and carry the outcome to the owner or the ' +
-  'board as the original objective requires. Do not restate the result as your own work ' +
-  'without checking it.';
+  'Read its result below (your runtime\'s own agent-result tools if you need more), verify what ' +
+  'matters against the sources, and carry the outcome to the owner or the board as the original ' +
+  'objective requires. Do not restate the result as your own work without checking it, and do not ' +
+  'start another subagent for the same objective.';
 const OWNER_SENTENCE = `A subagent you started has finished. ${OWNER_OBLIGATION}`;
 
 /**

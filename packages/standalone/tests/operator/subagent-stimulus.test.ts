@@ -46,10 +46,11 @@ describe('buildSubagentStimulus', () => {
     const tail = text.slice(text.indexOf('</subagent_completed>'));
 
     expect(tail).toContain(
-      'A subagent you started has finished. Read its result (wait_agent/list_agents if you need ' +
-        'more), verify what matters against the sources, and carry the outcome to the owner or the ' +
-        'board as the original objective requires. Do not restate the result as your own work ' +
-        'without checking it.'
+      "A subagent you started has finished. Read its result below (your runtime's own " +
+        'agent-result tools if you need more), verify what matters against the sources, and carry ' +
+        'the outcome to the owner or the board as the original objective requires. Do not restate ' +
+        'the result as your own work without checking it, and do not start another subagent for ' +
+        'the same objective.'
     );
     expect(tail).not.toMatch(/first|then|step \d/i);
   });

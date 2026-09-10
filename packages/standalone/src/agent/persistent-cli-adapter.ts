@@ -12,7 +12,14 @@
  * - System prompt sent only once at process start
  */
 
+import { EventEmitter } from 'events';
 import { PersistentClaudeProcess, PersistentProcessPool } from './persistent-cli-process.js';
+import type {
+  ClaudeAutonomousTurnEvent,
+  ClaudeAutonomousTurnResultEvent,
+  ClaudeSubagentStreamEvent,
+} from './persistent-cli-process.js';
+import type { SubagentEvent } from './codex-app-server-process.js';
 import type {
   ClaudeCLIWrapperOptions,
   PromptCallbacks,
@@ -46,14 +53,17 @@ export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlo
  * Implements the same interface but uses persistent CLI processes under the hood.
  * This enables efficient multi-turn conversations without re-sending system prompts.
  */
-export class PersistentCLIAdapter implements IModelRunner {
+export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
   readonly backendType = 'claude' as const;
 
   /**
-   * The stream carries no subagent items the host can observe (a native Agent tool, when the
-   * persona is given one, runs children the host cannot track), so delegation is never promised.
+   * The CLI's own delegation: `Agent` with `run_in_background: true`. The parent stream
+   * carries the spawn (`system/task_started` plus the launch tool_result that names the
+   * child), the child's tool calls, its final text, and the completion notification, so a
+   * spawn IS observable - PersistentClaudeProcess maps them and this adapter re-emits them
+   * as `subagent` events with the same shape the Codex runner uses.
    */
-  readonly supportsNativeSubagents = false;
+  readonly supportsNativeSubagents = true;
 
   private options: ClaudeCLIWrapperOptions;
   private processPool: PersistentProcessPool;
@@ -63,6 +73,19 @@ export class PersistentCLIAdapter implements IModelRunner {
   private pendingToolResults: Map<string, { result: string; isError: boolean }> = new Map();
   private lastToolUseBlocks: ToolUseBlock[] = [];
   private contextRegistry: RunContextRegistry = runContextRegistry;
+  /** Processes whose subagent stream events are already wired to this adapter. */
+  private readonly wiredProcesses = new WeakSet<PersistentClaudeProcess>();
+  /**
+   * A run-context lease deliberately held past its turn's end because a native background
+   * child (or the CLI's own follow-up turn) is still calling code-act under it.
+   *
+   * A Claude child shares the PARENT process's MAMA_CODE_ACT_CONTEXT_KEY, so it cannot be
+   * given a separate context the way a Codex child can: one key holds one live lease. Its
+   * authority is therefore the parent run's, kept open - never renewed. The registry still
+   * closes the lease at the envelope's own expiry, so nothing outlives the grant, and a
+   * call after that fails loudly with no run context rather than running unauthorised.
+   */
+  private readonly deferredLeases = new Map<string, { leaseId: string; channelKey: string }>();
 
   // ─── Metrics tracking ───
   private _requestCount = 0;
@@ -71,6 +94,7 @@ export class PersistentCLIAdapter implements IModelRunner {
   private _lastRequestAt: number | null = null;
 
   constructor(options: ClaudeCLIWrapperOptions = {}) {
+    super();
     this.options = { ...options };
     this.channelKey = options.sessionId || 'default';
     this.processPool = new PersistentProcessPool({
@@ -127,6 +151,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     // dereference this.currentProcess inside prompt() - concurrent calls race it.
     this.currentProcess = proc;
     this.currentProcessChannelKey = channelKey;
+    this.wireSubagentEvents(proc, channelKey);
 
     // Pending tool results belong to the legacy single-channel path; only flush
     // them when this call routes to that same channel - flushing them into an
@@ -160,6 +185,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     const attemptController = options?.toolExecutionContext ? new AbortController() : null;
     const contextKey = options?.toolExecutionContext ? proc.getRunContextKey() : null;
     let leaseId: string | null = null;
+    let leaseClosedEarly = false;
     let ownsPromptAttempt = false;
     let latencyRecorded = false;
     const recordLatency = (): void => {
@@ -177,6 +203,9 @@ export class PersistentCLIAdapter implements IModelRunner {
         const signal = ownerSignal
           ? AbortSignal.any([ownerSignal, attemptController!.signal])
           : attemptController!.signal;
+        // A lease held open for a background child must not block this turn's own: the new
+        // turn supersedes it, and saying so is better than a lease conflict.
+        this.releaseDeferredLease(contextKey, 'superseded by a new turn');
         leaseId = this.contextRegistry.register(contextKey, {
           ...options.toolExecutionContext,
           signal,
@@ -194,6 +223,7 @@ export class PersistentCLIAdapter implements IModelRunner {
         attemptController?.abort(new Error(terminalError.message));
         if (contextKey && leaseId) {
           this.contextRegistry.close(contextKey, leaseId);
+          leaseClosedEarly = true;
         }
         this.processPool.retireProcess(channelKey, proc);
         return result;
@@ -230,15 +260,98 @@ export class PersistentCLIAdapter implements IModelRunner {
         }
         if (contextKey && leaseId) {
           this.contextRegistry.close(contextKey, leaseId);
+          leaseClosedEarly = true;
         }
         this.processPool.retireProcess(channelKey, proc);
       }
       throw err;
     } finally {
-      if (contextKey && leaseId) {
-        this.contextRegistry.close(contextKey, leaseId);
+      if (contextKey && leaseId && !leaseClosedEarly) {
+        if (typeof proc.hasLiveBackgroundAgents === 'function' && proc.hasLiveBackgroundAgents()) {
+          // The turn is over; its native child is not. Closing now would strip the run
+          // context out from under the child's code-act calls mid-flight.
+          this.deferredLeases.set(contextKey, { leaseId, channelKey });
+          console.log(
+            `[PersistentAdapter] holding run context for a live background agent (${channelKey})`
+          );
+        } else {
+          this.contextRegistry.close(contextKey, leaseId);
+        }
       }
     }
+  }
+
+  // ─── Native background Agent (delegation) observation ────────────────────
+
+  /**
+   * Re-emit one process's background-Agent stream events as runner-level events.
+   *
+   * `subagent` carries the SAME shape the Codex runner emits, so
+   * `attachSubagentWake` works unchanged. A completion the CLI answered with its own
+   * follow-up turn is emitted as `subagentObserved` instead: that turn IS the owner
+   * reacting, and a host wake on top of it would be a second turn for one child.
+   */
+  private wireSubagentEvents(proc: PersistentClaudeProcess, channelKey: string): void {
+    if (this.wiredProcesses.has(proc)) return;
+    // Structural test doubles stand in for the pooled process and carry neither the emitter
+    // nor the background-agent accessor. Nothing to observe there.
+    if (
+      typeof (proc as { on?: unknown }).on !== 'function' ||
+      typeof (proc as { hasLiveBackgroundAgents?: unknown }).hasLiveBackgroundAgents !== 'function'
+    ) {
+      return;
+    }
+    this.wiredProcesses.add(proc);
+
+    proc.on('subagent', (event: ClaudeSubagentStreamEvent) => {
+      const translated: SubagentEvent = {
+        kind: event.kind,
+        sessionKey: channelKey,
+        parentThreadId: proc.getSessionId(),
+        agentThreadId: event.agentThreadId,
+        agentPath: event.agentPath,
+        ...(event.status ? { status: event.status } : {}),
+        ...(event.finalText ? { finalText: event.finalText } : {}),
+      };
+      if (event.kind === 'completed') {
+        this.releaseDeferredLease(proc.getRunContextKey(), 'background agent finished', proc);
+        if (!event.wakeRequired) {
+          console.log(
+            `[PersistentAdapter] subagent ${event.agentThreadId} finished; the CLI's own ` +
+              'turn carries the wake'
+          );
+          this.emit('subagentObserved', translated);
+          return;
+        }
+      }
+      this.emit('subagent', translated);
+    });
+
+    proc.on('autonomousTurn', (event: ClaudeAutonomousTurnEvent) => {
+      this.emit('autonomousTurn', { ...event, sessionKey: channelKey });
+    });
+
+    proc.on('autonomousTurnResult', (event: ClaudeAutonomousTurnResultEvent) => {
+      this.releaseDeferredLease(proc.getRunContextKey(), 'autonomous turn ended', proc);
+      this.emit('autonomousTurnResult', { ...event, sessionKey: channelKey });
+    });
+  }
+
+  /** Close a lease held past its turn, once nothing is still running under it. */
+  private releaseDeferredLease(
+    contextKey: string | null,
+    reason: string,
+    proc?: PersistentClaudeProcess
+  ): void {
+    if (!contextKey) return;
+    const held = this.deferredLeases.get(contextKey);
+    if (!held) return;
+    if (typeof proc?.hasLiveBackgroundAgents === 'function' && proc.hasLiveBackgroundAgents()) {
+      return;
+    }
+    this.deferredLeases.delete(contextKey);
+    this.contextRegistry.close(contextKey, held.leaseId);
+    console.log(`[PersistentAdapter] released held run context (${held.channelKey}): ${reason}`);
   }
 
   /**
@@ -384,6 +497,10 @@ export class PersistentCLIAdapter implements IModelRunner {
    * Stop all processes (cleanup) — legacy name, delegates to stop().
    */
   stopAll(): void {
+    for (const [contextKey, held] of [...this.deferredLeases]) {
+      this.deferredLeases.delete(contextKey);
+      this.contextRegistry.close(contextKey, held.leaseId);
+    }
     this.processPool.stopAll();
     this.currentProcess = null;
     this.currentProcessChannelKey = null;
