@@ -156,6 +156,18 @@ export interface ContentBlock {
 export interface StreamMessage {
   type: 'system' | 'assistant' | 'result' | 'error' | 'user';
   subtype?: string;
+  /**
+   * Set by the CLI on events produced INSIDE a subagent (the Agent tool_use id that
+   * started it). It is the only non-heuristic way to tell a child's tool calls from the
+   * parent's on one stream; absent/null means "this stream position", not "parent".
+   */
+  parent_tool_use_id?: string | null;
+  /** Background-task identity on `system` task_* events; field name varies by CLI build. */
+  task_id?: string;
+  taskId?: string;
+  task?: { id?: string; status?: string; description?: string; agentId?: string };
+  agent_id?: string;
+  agentId?: string;
   message?: {
     role: string;
     content: ContentBlock[];
@@ -192,6 +204,69 @@ interface PromptToolExchangeState {
   toolUseFingerprint: string;
   toolResult?: ToolResultBlock;
   toolResultFingerprint?: string;
+}
+
+/** The native Claude Code delegation tool. `run_in_background: true` is the delegating shape. */
+const BACKGROUND_AGENT_TOOL = 'Agent';
+/** Bound on the child's final text carried to the host wake. Mirrors Codex's limit. */
+const MAX_SUBAGENT_FINAL_TEXT_CHARS = 4_000;
+/**
+ * How long a `task_notification` waits for the CLI's own follow-up turn before the host
+ * takes the wake itself. Measured: `init` follows the notification immediately.
+ */
+const AUTONOMOUS_TURN_GRACE_MS = 5_000;
+/** Identity, not history: finished children are dropped, live ones are few. */
+const MAX_TRACKED_BACKGROUND_AGENTS = 50;
+
+/**
+ * One native background Agent spawned by this process's persona, observed from the
+ * PARENT stream - the only stream the CLI gives us. The child's tool calls reach the same
+ * MCP server with the parent's MAMA_CODE_ACT_CONTEXT_KEY, so they land in the parent's run
+ * context and tool traces; this state tracks only identity and the child's final text, so
+ * the host can wake the owner.
+ */
+interface BackgroundAgentState {
+  /** The `Agent` tool_use id; the CLI stamps it on the child's own events. */
+  itemId: string;
+  agentPath: string;
+  /** From the launch tool_result text; the child's own id. */
+  agentId: string | null;
+  /** From `system/task_started`; the fallback identity when no agentId is parsed. */
+  taskId: string | null;
+  spawnObserved: boolean;
+  startFired: boolean;
+  notificationSeen: boolean;
+  completed: boolean;
+  finalText: string;
+  /** The spawning turn's callback; `currentCallbacks` is cleared when that turn ends. */
+  onSubagentStart?: PromptCallbacks['onSubagentStart'];
+}
+
+/** Host-visible spawn/finish of a native background Agent on the Claude stream. */
+export interface ClaudeSubagentStreamEvent {
+  kind: 'started' | 'completed';
+  agentThreadId: string;
+  agentPath: string;
+  itemId: string;
+  status?: 'completed' | 'unknown';
+  finalText?: string;
+  /**
+   * False when the CLI opened its own follow-up turn for the notification: that turn IS
+   * the owner reacting, so the host must not enqueue a second one.
+   */
+  wakeRequired: boolean;
+}
+
+/** A turn the CLI begins on its own after a background task notification (no stdin). */
+export interface ClaudeAutonomousTurnEvent {
+  agentThreadId: string;
+  agentPath: string;
+  itemId: string;
+}
+
+export interface ClaudeAutonomousTurnResultEvent extends ClaudeAutonomousTurnEvent {
+  text: string;
+  isError: boolean;
 }
 
 const MAX_STREAM_TOOL_RESULT_CHARS = 64 * 1024;
@@ -323,6 +398,18 @@ export class PersistentClaudeProcess extends EventEmitter {
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
   private readonly runContextKey: string | null;
+  /** Live + just-finished native background Agents, keyed by their `Agent` tool_use id. */
+  private readonly backgroundAgents = new Map<string, BackgroundAgentState>();
+  /**
+   * True once a turn's `result` resolved while a background child was still running. From
+   * then until the next stdin request, unattributed assistant/user events on the stream
+   * belong to that child, not to a parent turn that no longer exists.
+   */
+  private parentTurnEnded = false;
+  /** Set between a `task_notification` and the CLI's own follow-up turn. */
+  private pendingNotification: { itemId: string; timer: NodeJS.Timeout } | null = null;
+  /** The CLI-initiated turn currently running with no stdin request behind it. */
+  private autonomousTurn: { state: BackgroundAgentState; text: string } | null = null;
 
   /**
    * Resolve the effective request timeout in ms.
@@ -606,6 +693,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
+    // A live child keeps running, but this turn's own events are the parent's again.
+    this.parentTurnEnded = false;
 
     return new Promise((resolve, reject) => {
       this.currentResolve = resolve;
@@ -685,6 +774,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
+    // A live child keeps running, but this turn's own events are the parent's again.
+    this.parentTurnEnded = false;
 
     return new Promise((resolve, reject) => {
       this.currentResolve = resolve;
@@ -771,16 +862,47 @@ export class PersistentClaudeProcess extends EventEmitter {
     switch (event.type) {
       case 'system':
         if (event.subtype === 'init') {
+          // A notification followed by `init` with no stdin request behind it is the CLI
+          // opening its OWN turn for the finished child. It must be surfaced BEFORE its
+          // assistant text arrives, so the host can bind it to a run.
+          if (this.pendingNotification && this.currentResolve === null) {
+            this.beginAutonomousTurn();
+          }
           persistentLogger.info(`[PersistentCLI] Received init event`);
           // Init event received (logged for debugging)
           this.emit('init', event);
         } else if (event.subtype === 'hook_response') {
           // Hook responses - could extract context if needed
           persistentLogger.info(`[PersistentCLI] Hook response received`);
+        } else if (event.subtype === 'task_started') {
+          this.recordBackgroundTaskStarted(event);
+        } else if (event.subtype === 'task_notification') {
+          this.recordBackgroundTaskNotification(event);
         }
         break;
 
       case 'assistant':
+        if (this.autonomousTurn) {
+          // The CLI's own follow-up turn: its text is that turn's answer, never this
+          // process's next stdin result, and its tool calls are not parent tool uses.
+          for (const block of event.message?.content ?? []) {
+            if (block.type === 'text') {
+              this.autonomousTurn.text += block.text || '';
+            } else if (block.type === 'tool_use') {
+              persistentLogger.info(
+                `[PersistentCLI] autonomous turn tool use: ${block.name ?? 'unknown'}`
+              );
+            }
+          }
+          break;
+        }
+        {
+          const child = this.childAgentFor(event);
+          if (child) {
+            this.absorbChildAssistant(child, event);
+            break;
+          }
+        }
         // Process assistant message content
         if (event.message?.content) {
           for (const block of event.message.content) {
@@ -804,6 +926,24 @@ export class PersistentClaudeProcess extends EventEmitter {
         break;
 
       case 'user':
+        if (this.autonomousTurn) {
+          break;
+        }
+        {
+          const child = this.childAgentFor(event);
+          if (child) {
+            for (const block of event.message?.content ?? []) {
+              if (block.type === 'tool_result' && block.tool_use_id) {
+                this.currentCallbacks?.onToolComplete?.(
+                  'subagent',
+                  block.tool_use_id,
+                  block.is_error === true
+                );
+              }
+            }
+            break;
+          }
+        }
         if (event.message?.content) {
           for (const block of event.message.content) {
             if (block.type === 'tool_result' && !this.recordToolResult(block)) {
@@ -814,6 +954,12 @@ export class PersistentClaudeProcess extends EventEmitter {
         break;
 
       case 'result':
+        // A CLI-initiated turn's result belongs to THAT turn. It must never resolve a
+        // stdin request (its own, or a later one) and must not clear its timeout.
+        if (this.autonomousTurn) {
+          this.finishAutonomousTurn(event);
+          break;
+        }
         // Request complete
         this.clearRequestTimeout();
 
@@ -871,6 +1017,9 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.state = 'idle';
           this.awaitingToolResults = hasToolUse;
           this.pendingToolUseStartedAt = hasToolUse ? Date.now() : null;
+          // The parent turn is over but a background child is still running: from here on
+          // the stream is the child's until the next stdin request.
+          this.parentTurnEnded = this.hasLiveBackgroundAgents();
           this.currentResolve?.(result);
           this.resetRequestState();
           this.emit('idle'); // F7: Trigger message queue drain (after resolve/cleanup)
@@ -928,7 +1077,252 @@ export class PersistentClaudeProcess extends EventEmitter {
       nativeToolUseId: toolUse.id,
     });
     persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
+    if (toolUse.name === BACKGROUND_AGENT_TOOL && toolUse.input?.run_in_background === true) {
+      this.trackBackgroundAgent(toolUse);
+    }
     return true;
+  }
+
+  // ─── Native background Agent observation ───────────────────────────────
+  //
+  // The CLI gives one stream. A `run_in_background: true` Agent tool_use, the
+  // "Async agent launched" tool_result that names the child, `system/task_*` events, the
+  // child's own tool calls, its final text, `task_notification`, and - measured - a whole
+  // turn the CLI opens by itself all arrive on it. These helpers separate those without
+  // inventing anything the stream does not say.
+
+  private trackBackgroundAgent(toolUse: ToolUseBlock): void {
+    const description = toolUse.input?.description;
+    const state: BackgroundAgentState = {
+      itemId: toolUse.id,
+      agentPath: typeof description === 'string' && description.trim() ? description : toolUse.id,
+      agentId: null,
+      taskId: null,
+      spawnObserved: false,
+      startFired: false,
+      notificationSeen: false,
+      completed: false,
+      finalText: '',
+      onSubagentStart: this.currentCallbacks?.onSubagentStart,
+    };
+    this.backgroundAgents.set(toolUse.id, state);
+    this.pruneBackgroundAgents();
+  }
+
+  private pruneBackgroundAgents(): void {
+    if (this.backgroundAgents.size <= MAX_TRACKED_BACKGROUND_AGENTS) return;
+    for (const [id, state] of this.backgroundAgents) {
+      if (this.backgroundAgents.size <= MAX_TRACKED_BACKGROUND_AGENTS) break;
+      if (state.completed) this.backgroundAgents.delete(id);
+    }
+  }
+
+  /** The newest tracked agent matching a predicate; `system` task events carry no item id. */
+  private latestBackgroundAgent(
+    match: (state: BackgroundAgentState) => boolean
+  ): BackgroundAgentState | null {
+    let found: BackgroundAgentState | null = null;
+    for (const state of this.backgroundAgents.values()) {
+      if (match(state)) found = state;
+    }
+    return found;
+  }
+
+  private taskIdentityOf(event: StreamMessage): string | null {
+    return (
+      event.task_id ?? event.taskId ?? event.task?.id ?? event.agent_id ?? event.agentId ?? null
+    );
+  }
+
+  private recordBackgroundTaskStarted(event: StreamMessage): void {
+    const state = this.latestBackgroundAgent((candidate) => !candidate.spawnObserved);
+    if (!state) {
+      console.warn('[PersistentCLI] task_started with no tracked background Agent tool_use');
+      return;
+    }
+    state.spawnObserved = true;
+    state.taskId = this.taskIdentityOf(event) ?? state.taskId;
+    // The spawn is not reported here: `task_started` precedes the launch tool_result, and
+    // that result is what names the child. The task id stays as the fallback identity.
+  }
+
+  /** Lift the child's id out of the "Async agent launched" tool_result text. */
+  private recordBackgroundLaunchResult(state: BackgroundAgentState, content: string): void {
+    const match = /agentId["'\s:=]+([A-Za-z0-9_-]{4,})/.exec(content);
+    if (match) {
+      state.agentId = match[1];
+    } else if (!state.taskId) {
+      console.warn(
+        `[PersistentCLI] background Agent launch result carried no agentId (item=${state.itemId})`
+      );
+    }
+    this.fireSubagentStart(state);
+  }
+
+  private fireSubagentStart(state: BackgroundAgentState): void {
+    if (state.startFired) return;
+    const agentThreadId = state.agentId ?? state.taskId;
+    if (!agentThreadId) return;
+    state.startFired = true;
+    try {
+      state.onSubagentStart?.({
+        agentThreadId,
+        agentPath: state.agentPath,
+        itemId: state.itemId,
+      });
+    } catch (error) {
+      console.error(
+        `[PersistentCLI] onSubagentStart callback failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+    const emitted: ClaudeSubagentStreamEvent = {
+      kind: 'started',
+      agentThreadId,
+      agentPath: state.agentPath,
+      itemId: state.itemId,
+      wakeRequired: false,
+    };
+    this.emit('subagent', emitted);
+  }
+
+  /**
+   * Which background child an assistant/user event belongs to, or null for the parent.
+   *
+   * `parent_tool_use_id` is authoritative when the CLI stamps it. Without it the only
+   * honest signal is position: the parent turn already ended and exactly one child is
+   * live. Two live children and no stamp is ambiguous, so the event stays with the parent
+   * and says so rather than being silently attributed.
+   */
+  private childAgentFor(event: StreamMessage): BackgroundAgentState | null {
+    const stamped = event.parent_tool_use_id;
+    if (typeof stamped === 'string' && stamped) {
+      return this.backgroundAgents.get(stamped) ?? null;
+    }
+    if (!this.parentTurnEnded) return null;
+    const live = [...this.backgroundAgents.values()].filter((state) => !state.completed);
+    if (live.length === 1) return live[0];
+    if (live.length > 1) {
+      console.warn(
+        `[PersistentCLI] ${live.length} live background agents and no parent_tool_use_id; ` +
+          'event left with the parent'
+      );
+    }
+    return null;
+  }
+
+  private absorbChildAssistant(child: BackgroundAgentState, event: StreamMessage): void {
+    for (const block of event.message?.content ?? []) {
+      if (block.type === 'text') {
+        // Only the child's LAST answer matters to the wake, but the stream does not mark
+        // it, so text accumulates bounded, like the Codex child's final_answer buffer.
+        child.finalText = (child.finalText + (block.text || '')).slice(
+          0,
+          MAX_SUBAGENT_FINAL_TEXT_CHARS
+        );
+      } else if (block.type === 'tool_use') {
+        // Observed, never counted as a parent tool use awaiting a host result. The call
+        // itself already reached the MCP server under the parent's context key.
+        this.currentCallbacks?.onToolUse?.(block.name ?? 'unknown', {
+          ...(block.input ?? {}),
+          nativeToolUseId: block.id,
+          subagentItemId: child.itemId,
+        });
+      }
+    }
+  }
+
+  private recordBackgroundTaskNotification(event: StreamMessage): void {
+    const identity = this.taskIdentityOf(event);
+    const state =
+      (identity
+        ? this.latestBackgroundAgent(
+            (candidate) => candidate.agentId === identity || candidate.taskId === identity
+          )
+        : null) ?? this.latestBackgroundAgent((candidate) => !candidate.completed);
+    if (!state) {
+      console.warn('[PersistentCLI] task_notification with no tracked background Agent');
+      return;
+    }
+    if (state.notificationSeen) return;
+    state.notificationSeen = true;
+    // The CLI may answer the notification itself. Give it that window; if it does not, the
+    // host takes the wake so a finished child is never dropped.
+    const timer = setTimeout(() => {
+      this.pendingNotification = null;
+      this.completeBackgroundAgent(state, true);
+    }, AUTONOMOUS_TURN_GRACE_MS);
+    timer.unref?.();
+    this.pendingNotification = { itemId: state.itemId, timer };
+  }
+
+  private beginAutonomousTurn(): void {
+    const pending = this.pendingNotification;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingNotification = null;
+    const state = this.backgroundAgents.get(pending.itemId);
+    if (!state) return;
+    this.autonomousTurn = { state, text: '' };
+    const event: ClaudeAutonomousTurnEvent = {
+      agentThreadId: state.agentId ?? state.taskId ?? state.itemId,
+      agentPath: state.agentPath,
+      itemId: state.itemId,
+    };
+    persistentLogger.info(
+      `[PersistentCLI] autonomous turn opened for finished child ${event.agentThreadId}`
+    );
+    this.emit('autonomousTurn', event);
+  }
+
+  private finishAutonomousTurn(event: StreamMessage): void {
+    const active = this.autonomousTurn;
+    if (!active) return;
+    this.autonomousTurn = null;
+    const state = active.state;
+    const resultEvent: ClaudeAutonomousTurnResultEvent = {
+      agentThreadId: state.agentId ?? state.taskId ?? state.itemId,
+      agentPath: state.agentPath,
+      itemId: state.itemId,
+      text: event.result || active.text,
+      isError: event.is_error === true || event.subtype !== 'success',
+    };
+    // The CLI's own turn IS the owner reacting, so the host must not wake it again.
+    this.completeBackgroundAgent(state, false);
+    this.emit('autonomousTurnResult', resultEvent);
+  }
+
+  private completeBackgroundAgent(
+    state: BackgroundAgentState,
+    wakeRequired: boolean,
+    status: 'completed' | 'unknown' = 'completed'
+  ): void {
+    if (state.completed) return;
+    state.completed = true;
+    const emitted: ClaudeSubagentStreamEvent = {
+      kind: 'completed',
+      agentThreadId: state.agentId ?? state.taskId ?? state.itemId,
+      agentPath: state.agentPath,
+      itemId: state.itemId,
+      // The stream reports a notification, not an exit code; a child cut off by a dead CLI
+      // is `unknown`, never success.
+      status,
+      finalText: state.finalText,
+      wakeRequired,
+    };
+    if (!this.hasLiveBackgroundAgents()) {
+      this.parentTurnEnded = false;
+    }
+    this.emit('subagent', emitted);
+  }
+
+  /** Whether a spawned background child has not been reported finished yet. */
+  hasLiveBackgroundAgents(): boolean {
+    for (const state of this.backgroundAgents.values()) {
+      if (!state.completed) return true;
+    }
+    return false;
   }
 
   private recordToolResult(block: ContentBlock): boolean {
@@ -969,6 +1363,11 @@ export class PersistentClaudeProcess extends EventEmitter {
       toolUseId,
       toolResult.is_error === true
     );
+    const backgroundAgent = this.backgroundAgents.get(toolUseId);
+    if (backgroundAgent) {
+      // "Async agent launched successfully…" - the one event that reliably names the child.
+      this.recordBackgroundLaunchResult(backgroundAgent, toolResult.content);
+    }
     return true;
   }
 
@@ -1024,6 +1423,18 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.process = null;
     this.awaitingToolResults = false;
     this.pendingToolUseStartedAt = null;
+    // A child cannot outlive the CLI that ran it. Report the ones still open as unknown
+    // rather than leaving the host waiting for a notification that can never arrive.
+    if (this.pendingNotification) {
+      clearTimeout(this.pendingNotification.timer);
+      this.pendingNotification = null;
+    }
+    this.autonomousTurn = null;
+    for (const state of [...this.backgroundAgents.values()]) {
+      if (!state.completed) {
+        this.completeBackgroundAgent(state, true, 'unknown');
+      }
+    }
 
     // Reject any pending request
     if (this.currentReject) {
