@@ -69,6 +69,9 @@ export interface CodexRuntimeProcessOptions {
 export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess, IModelRunner {
   readonly backendType = 'codex' as const;
 
+  /** codex app-server spawns native subagents and reports the spawn via onSubagentStart. */
+  readonly supportsNativeSubagents = true;
+
   private readonly options: CodexRuntimeProcessOptions;
   private readonly appServer: CodexAppServerProcess;
   private readonly auxiliaryToolBridge;

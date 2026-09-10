@@ -211,6 +211,18 @@ export interface IModelRunner {
   /** Backend identifier */
   readonly backendType: BackendType;
 
+  /**
+   * Whether THIS runner can spawn a native subagent the host can observe.
+   *
+   * A contract that asks for delegation is only honest on a runner that has the primitive
+   * AND a spawn observation path: codex app-server has both (`onSubagentStart`). The
+   * persistent Claude CLI persona runs with `--tools ""` (no native Agent tool) and has no
+   * subagent stream, and the Cline adapter has neither - on those, a "spawn one subagent"
+   * instruction can only be wasted steps or a reported failure. Read this capability rather
+   * than string-matching a backend name.
+   */
+  readonly supportsNativeSubagents: boolean;
+
   /** Send a prompt and receive a response */
   prompt(
     content: string,

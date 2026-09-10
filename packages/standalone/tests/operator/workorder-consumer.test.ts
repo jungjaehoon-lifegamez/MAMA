@@ -41,6 +41,9 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
   const deps: WorkOrderConsumerDeps = {
     ledger,
     runner: {
+      // Default to the codex-shaped runner these cases were written against; the
+      // no-native-subagent runner is exercised explicitly below.
+      supportsNativeSubagents: true,
       runWithContent: async () => ({ response: 'ok done' }),
     },
     loadOwnerBrief: () => 'You are a test worker. Do the work.',
@@ -458,6 +461,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       // the Stage-2 workorder path never did. The consumer is the only place
       // that sees the run result AND emits the telemetry event.
       ctx.deps.runner = {
+        supportsNativeSubagents: true,
         runWithContent: async () => ({
           response: 'DONE',
           totalUsage: { input_tokens: 41_000, output_tokens: 2_200 },
@@ -479,7 +483,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         tokensUsed: 43_200,
         briefHash: createHash('sha256')
           .update(
-            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+            [
+              'You are a test worker. Do the work.',
+              buildTurnKindSection('board', undefined, { supportsNativeSubagents: true }),
+            ].join('\n\n')
           )
           .digest('hex')
           .slice(0, 16),
@@ -828,7 +835,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workOrderId: wo.id,
         briefHash: createHash('sha256')
           .update(
-            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+            [
+              'You are a test worker. Do the work.',
+              buildTurnKindSection('board', undefined, { supportsNativeSubagents: true }),
+            ].join('\n\n')
           )
           .digest('hex')
           .slice(0, 16),
@@ -1362,6 +1372,61 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       expect(temporal).toContain('Do not call report_publish.');
     });
 
+    /**
+     * The delegated shape asks for a native subagent. A runner without one (the persistent
+     * Claude persona runs with `--tools ""`; Cline has no spawn) can only waste steps on it
+     * or report a failure, so the sentence is omitted - and nothing takes its place, because
+     * the result contract already states the outcome the host verifies.
+     */
+    describe('delegated shape follows the runner capability, not the backend name', () => {
+      const delegatedKinds = ['board', 'wiki', 'temporal'] as const;
+
+      it.each(delegatedKinds)('states the delegated shape for a %s turn on a capable runner', (kind) => {
+        const section = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
+        expect(section).toContain('Expected shape: delegate. Spawn ONE native subagent');
+      });
+
+      it.each(delegatedKinds)('omits the delegated shape for a %s turn on an incapable runner', (kind) => {
+        const capable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
+        const incapable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false });
+        expect(incapable).not.toContain('Expected shape: delegate');
+        expect(incapable).not.toMatch(/subagent/i);
+        expect(incapable).not.toContain('wait_agent');
+        // Only the shape sentence leaves; the result contract is untouched, and no prose
+        // replaces it telling the agent to do the work inline.
+        expect(incapable).toContain('Result required:');
+        expect(incapable).not.toMatch(/inline|yourself|do the work in this turn/i);
+        expect(incapable.length).toBeLessThan(capable.length);
+      });
+
+      it('carries the delta anchor and the omission together on a board delta turn', () => {
+        const section = buildTurnKindSection('board', 'delta:2026-09-10', {
+          boardMode: 'delta',
+          deltaAnchor: '2026-09-10T00:00:00Z',
+          supportsNativeSubagents: false,
+        });
+        expect(section).toContain('Anchor: 2026-09-10T00:00:00Z');
+        expect(section).not.toContain('Expected shape: delegate');
+      });
+
+      it('leaves the kinds that never carried the shape unchanged', () => {
+        for (const kind of ['memory-curation', 'self-check'] as const) {
+          expect(buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true })).toBe(
+            buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false })
+          );
+        }
+      });
+    });
+
+    it('treats an omitted capability as incapable, matching runnerSupportsNativeSubagents()', () => {
+      for (const kind of ['board', 'wiki', 'temporal'] as const) {
+        const omitted = buildTurnKindSection(kind);
+        const incapable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false });
+        expect(omitted).toBe(incapable);
+        expect(omitted).not.toContain('Expected shape: delegate');
+      }
+    });
+
     it('keeps the two turn-kind sections that were already outcome contracts', () => {
       expect(buildTurnKindSection('memory-curation')).toContain('mama_save');
       expect(buildTurnKindSection('self-check')).toContain('repair_request({issue_id');
@@ -1649,6 +1714,7 @@ describe('delegated maintenance attempts', () => {
   ) {
     const ctx = makeDeps({ now: () => clock.current });
     ctx.deps.runner = {
+      supportsNativeSubagents: true,
       runWithContent: async (_content, options) => {
         const stream = options.streamCallbacks as
           | {
@@ -1798,6 +1864,59 @@ describe('delegated maintenance attempts', () => {
       ctx.events.filter((event) => event.type === 'failed').map((event) => event.reason)
     ).toContain('no obligated tool ran');
     expect(ctx.ledger.getWorkOrderById(wo.id)?.status).not.toBe('in_progress');
+  });
+
+  /**
+   * A runner with no native subagent cannot have started one, so a spawn-shaped item name in
+   * its stream is not evidence of anything. `delegated` would park the attempt for 30
+   * minutes on a child that does not exist.
+   */
+  it('never enters delegated on a runner without native subagent support', async () => {
+    const verified = { current: false };
+    const { ctx, consumer } = delegatingCtx(verified);
+    const claudeRunner = { ...ctx.deps.runner, supportsNativeSubagents: false };
+    ctx.deps.runner = claudeRunner;
+    const wo = ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:no-subagent-support',
+      input: { batchId: 'b', events: ['e'] },
+    });
+
+    await consumer.tick();
+
+    expect(ctx.events.some((event) => event.type === 'delegated')).toBe(false);
+    expect(ctx.ledger.getWorkOrderById(wo.id)?.delegatedAt).toBeFalsy();
+    expect(
+      ctx.events.filter((event) => event.type === 'failed').map((event) => event.reason)
+    ).toContain('no obligated tool ran');
+  });
+
+  it('omits the delegated shape from the delivered contract on an incapable runner', async () => {
+    const ctx = makeDeps();
+    const briefs: string[] = [];
+    ctx.deps.runner = {
+      supportsNativeSubagents: false,
+      runWithContent: async (content) => {
+        briefs.push(
+          content
+            .map((block) => (block.type === 'text' ? block.text : ''))
+            .join('\n')
+        );
+        return { response: 'ok done' };
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'board:incapable-runner',
+      input: { mode: 'full' },
+    });
+
+    await consumer.tick();
+
+    expect(briefs).toHaveLength(1);
+    expect(briefs[0]).toContain('Result required:');
+    expect(briefs[0]).not.toContain('Expected shape: delegate');
   });
 
   it('a requeued replacement carries no delegation of its own', () => {

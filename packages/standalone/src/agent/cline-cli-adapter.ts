@@ -474,6 +474,9 @@ function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
 export class ClineCLIAdapter extends EventEmitter implements IModelRunner {
   readonly backendType = 'cline' as const;
 
+  /** No native subagent primitive and no spawn observation path. */
+  readonly supportsNativeSubagents = false;
+
   private readonly options: ClineCLIAdapterOptions;
   private readonly runtimeFactory: ClineHubRuntimeFactory;
   private readonly sessions = new Map<string, ClineSessionRecord>();

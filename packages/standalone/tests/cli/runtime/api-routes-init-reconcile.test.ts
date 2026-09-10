@@ -272,6 +272,8 @@ async function registerOwnerFullRuntime(
   const consumer = new WorkOrderConsumer({
     ledger,
     runner: {
+      // Codex-shaped: this harness exercises the delegated attempt path.
+      supportsNativeSubagents: true,
       runWithContent: async (_content, options_) => {
         const runOptions = options_ as { workorderAttemptId?: number };
         const context = {

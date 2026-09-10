@@ -49,6 +49,12 @@ export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlo
 export class PersistentCLIAdapter implements IModelRunner {
   readonly backendType = 'claude' as const;
 
+  /**
+   * The stream carries no subagent items the host can observe (a native Agent tool, when the
+   * persona is given one, runs children the host cannot track), so delegation is never promised.
+   */
+  readonly supportsNativeSubagents = false;
+
   private options: ClaudeCLIWrapperOptions;
   private processPool: PersistentProcessPool;
   private channelKey: string;
@@ -75,6 +81,8 @@ export class PersistentCLIAdapter implements IModelRunner {
       useGatewayTools: options.useGatewayTools,
       requestTimeout: options.requestTimeout,
       tools: options.tools,
+      // Adaptive thinking effort (agent.effort) reaches the CLI as --effort.
+      effort: options.effort,
       pluginDir: options.pluginDir,
       allowedTools: options.allowedTools,
       disallowedTools: options.disallowedTools,

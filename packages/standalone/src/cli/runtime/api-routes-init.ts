@@ -10,7 +10,6 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
-  writeFileSync,
   statSync,
   openSync,
   readSync,
@@ -37,6 +36,7 @@ import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
+import { ensureCodeActMcpConfig } from '../../mcp/code-act-mcp-config.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
   validateWorkOrderPayload,
@@ -356,40 +356,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   if (dashboardAgentConfigured || wikiAgentConfigured) {
     // Merge code-act MCP server into mama-mcp-config.json.
     // Makes code_act available to configured legacy self-paced agents.
-    const codeActServerPath = path.join(__dirname, '../../mcp/code-act-server.js');
     try {
-      const mamaMcpConfigPath = path.join(homedir(), '.mama', 'mama-mcp-config.json');
-      let existing: {
-        mcpServers?: Record<string, unknown>;
-        [key: string]: unknown;
-      } = { mcpServers: {} };
-      if (existsSync(mamaMcpConfigPath)) {
-        try {
-          const parsedConfig = JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8')) as unknown;
-          if (parsedConfig && typeof parsedConfig === 'object' && !Array.isArray(parsedConfig)) {
-            existing = parsedConfig as typeof existing;
-          }
-        } catch (parseErr) {
-          routesLogger.warn(
-            '[api-routes-init] Invalid MCP config JSON; recreating code-act entry:',
-            parseErr
-          );
-        }
-      }
-      if (
-        !existing.mcpServers ||
-        typeof existing.mcpServers !== 'object' ||
-        Array.isArray(existing.mcpServers)
-      ) {
-        existing.mcpServers = {};
-      }
-      existing.mcpServers['code-act'] = {
-        command: 'node',
-        args: [codeActServerPath],
-        env: { MAMA_SERVER_PORT: String(API_PORT) },
-      };
-      writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
-      routesLogger.debug('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
+      ensureCodeActMcpConfig({
+        mcpConfigPath: path.join(homedir(), '.mama', 'mama-mcp-config.json'),
+        apiPort: API_PORT,
+        logger: routesLogger,
+      });
     } catch (err) {
       routesLogger.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
     }
