@@ -1751,7 +1751,8 @@ This protects your credentials from being exposed in chat logs.`;
           .filter(Boolean)
           .join('\n\n')
       : '';
-    // Load persona files (SOUL.md, IDENTITY.md, USER.md, CLAUDE.md) + optional context
+    // Compose the system prompt: skill catalog + role context + ~/.mama/CLAUDE.md.
+    // Personas are retired — no SOUL.md/IDENTITY.md/USER.md layer is loaded.
     let prompt = loadComposedSystemPrompt(false, agentContext) + '\n';
     logger.info(
       `[BuildSystemPrompt] base=${prompt.length} agents=${enhanced?.agentsContent?.length ?? 0} startup=${sessionStartupContext?.length ?? 0} history=${sessionHistory?.length ?? 0}`

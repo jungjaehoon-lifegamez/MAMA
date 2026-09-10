@@ -25,16 +25,21 @@ afterEach(() => {
 });
 
 describe('Story ONB-7: runtime readiness is not onboarding completion', () => {
-  describe('AC #2: config and all shipped persona files are required', () => {
+  describe('AC #2: config.yaml is the only required runtime input', () => {
     it('ignores setup-complete.json and becomes ready only from runtime inputs', () => {
       writeFileSync(join(mamaHome, 'setup-complete.json'), '{"completed_at":"now"}');
       expect(isRuntimeReady()).toBe(false);
 
       writeFileSync(join(mamaHome, 'config.yaml'), 'version: 1\n');
-      for (const name of ['SOUL.md', 'IDENTITY.md', 'USER.md']) {
-        writeFileSync(join(mamaHome, name), `# ${name}\n`);
-      }
 
+      expect(isRuntimeReady()).toBe(true);
+    });
+
+    it('is ready with config.yaml alone — retired persona files are not required', () => {
+      writeFileSync(join(mamaHome, 'config.yaml'), 'version: 1\n');
+
+      // Personas were retired: the owner runtime loads no SOUL/IDENTITY/USER
+      // file, so their absence must not hold the runtime back.
       expect(isRuntimeReady()).toBe(true);
     });
   });
