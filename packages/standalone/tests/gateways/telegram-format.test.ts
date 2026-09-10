@@ -393,3 +393,15 @@ describe('Story TG-01/TG-06: entity rejection', () => {
     });
   });
 });
+
+import { describe as describeE, expect as expectE, it as itE } from 'vitest';
+import { formatTelegramMessage as formatE } from '../../src/gateways/telegram-format.js';
+
+describeE('escaped rejected tags keep their entity text literal', () => {
+  itE('shows &amp; inside an unsupported tag as text, not decoded twice', () => {
+    const [chunk] = formatE('<b>ok</b> <a href="https://x.test/?a=1&amp;b=2" onclick="x">link</a>', 4096, 'html-v1');
+    expectE(chunk.text).toContain('&amp;b=2');
+    expectE(chunk.text).not.toContain('&b=2"');
+    expectE(chunk.entities.some((e) => e.type === 'bold')).toBe(true);
+  });
+});

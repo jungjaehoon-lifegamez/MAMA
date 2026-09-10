@@ -174,7 +174,9 @@ const MENTION_LEAD = /^[\s,.:;!?/>)\]}\u3001\u3002\uFF0C\uFF09\uFF1A\uFF1B\uFF01
 const HAS_WORD = /[\p{L}\p{N}]/u;
 
 function escapeTagSource(raw: string): string {
-  return raw.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Escape & first: the escaped tag is decoded as text later, so an entity inside a
+  // rejected tag (e.g. a URL with &amp;) must stay literal instead of being re-decoded.
+  return raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** The opening-tag half of the subset check, shared by the parser and the sanitizer. */
