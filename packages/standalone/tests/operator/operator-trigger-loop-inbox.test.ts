@@ -325,4 +325,42 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     // Bare row ids must not collide across channels in the global dedupe PK.
     expect(byKey.get('chat:C2')?.eventIds).toEqual(['raw:chat:C2:2']);
   });
+  it('renders each delta line with the event time, so a saved fact can carry its real event_date', async () => {
+    // Measured 2026-09-10 (7-day replay): six facts saved from a batch of 09-04 events all
+    // carried event_date 2026-09-10. The line showed id, author and text - no time - so the
+    // model had nothing to date the fact by except today.
+    const inbox = new OwnerEventInbox(db);
+    const events: OperatorChannelEvent[] = [
+      { ...makeEvents(1)[0], eventIndexId: 'evi_1', createdAt: Date.UTC(2026, 8, 4, 5, 3) },
+    ];
+    let drained = false;
+    const delta = {
+      drainNew: () => {
+        if (drained) return [];
+        drained = true;
+        return events;
+      },
+      commit: () => {},
+    };
+    const loop = new OperatorTriggerLoop({
+      delta,
+      memory: fakeMem(),
+      registry: reg,
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 3,
+        reviewEveryNTicks: 5,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+      ownerEventInbox: inbox,
+    });
+
+    await loop.tick();
+    const line = inbox.claimNext()!.lines[0];
+    expect(line).toBe('- [id:evi_1] [2026-09-04T05:03Z] u1: message 1');
+  });
 });

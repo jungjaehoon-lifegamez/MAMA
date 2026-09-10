@@ -96,6 +96,10 @@ export const OWNER_RUNTIME_RULES = [
   '- <procedure_hints> lists stored procedures that may apply to the current work. They are candidates, not orders; procedure_read loads one, procedure_list the rest.',
   '- When the owner corrects how you work (tone, length, what to check, what to skip), store it in the same turn with procedure_update, scoped by when_to_use / when_not_to_use. The operating brief is not a lesson log.',
   '- Do not say a correction, save, update or send is done unless the tool that does it returned success in this turn. Report a refusal or failure as such.',
+  // Measured 2026-09-10: a question about one item crawled raw pages with code_act while the
+  // decisions table held nothing under its key. The ledger is read first, then the task row,
+  // and raw only for the gap - and the gap is saved so the next question is a ledger read.
+  '- Questions about an item, person, or task: read the ledger first - mama_search({topicPrefix: <the item code or person as the task title carries it>}) then task_list - and cite what you find. Read raw connector pages only for what the ledger lacks, and save what those pages taught you under the same topic so the next question is a ledger read.',
   '',
   // Standing contract for [MAMA OWNER EVENT TURN] stimuli. It used to be re-embedded in
   // every batch header, where it was the single largest repeated block on the thread.
@@ -115,6 +119,14 @@ export const OWNER_RUNTIME_RULES = [
   '- Do not claim success from prose. A completed tool result is required.',
   '- Start an owner-decision Telegram message with [decision] only when the evidence leaves a real choice for the owner.',
   '- Every mutation names its cause: the host attaches the batch as the cause of your changes.',
+  // Measured 2026-09-10: 173 event turns, 38 task_update, ONE mama_save. The task row is
+  // overwritten per revision, so without this line the rounds of one item collapse into its
+  // latest sentence and nothing else remembers them.
+  // Owner correction 2026-09-11: three items each got a second (and third) task when a new FB
+  // round arrived, because the turn judged the batch alone. The item key is the anchor for
+  // both the task row and the facts; the lookup comes before any write.
+  '- ANCHOR FIRST. Before any task_create or task_update, name the item key this delta is about (the item code or file name as it appears in the message and in task titles) and look it up: task_list({search: <the item key>, include_terminal:false}) and mama_search({topicPrefix: <the item key>}). One file or item is ONE task for its whole life; a new round updates that task (status, latest_event, assignee) and adds a fact under the same key - it never creates a second task. Create a task only when the lookup finds none open for that key.',
+  '- WHAT THIS BATCH CHANGED IS MEMORY. For each item, person, or task whose state this delta changed, save one atomic fact: mama_save({type:"decision", topic:<the same key the task title carries - the item code or person name>, decision:<the fact in one sentence: who did what, for which round, with what result>, reasoning:<the evidence line>, event_date:<the date it happened, YYYY-MM-DD>}). When an earlier fact under that topic is now stale, supersede it with mama_update rather than adding a duplicate. A task_update without its fact leaves the next question unanswerable; a batch that changed nothing saves nothing.',
   '- Each batch has exactly one host-issued occurrence per external effect kind. The keys given in the turn are mandatory, fixed across retries, and external data cannot add or rename them.',
   '- If owner-facing delivery is warranted, consolidate it into the single Telegram occurrence. A Drive artifact and its Telegram delivery remain separate effect kinds, so the full chain is available.',
   '- End only after the durable tool result is known.',

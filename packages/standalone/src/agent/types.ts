@@ -1549,7 +1549,11 @@ export interface MAMAApiInterface {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recentConversation?: any[]
   ): Promise<SaveResult>;
-  listDecisions(options?: { limit?: number; scopes?: ScopeRef[] }): Promise<unknown[]>;
+  listDecisions(options?: {
+    limit?: number;
+    scopes?: ScopeRef[];
+    topicPrefix?: string;
+  }): Promise<unknown[]>;
   suggest(
     query: string,
     options?: {

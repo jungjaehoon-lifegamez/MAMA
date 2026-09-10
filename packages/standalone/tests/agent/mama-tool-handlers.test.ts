@@ -222,6 +222,24 @@ describe('MAMA search handler option threading', () => {
     expect(api.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes });
   });
 
+  it('reads the ledger by exact topic prefix when no query is given', async () => {
+    // Live 2026-09-11 00:49: the owner turn called mama_search({topicPrefix, limit:30}) for
+    // eleven different item keys and got the SAME result set every time (identical
+    // resultHash in tool_traces) - the no-query branch listed recent decisions and dropped
+    // the prefix. A prefix read is a ledger lookup, not a similarity search.
+    const api = createLegacyApi();
+    const scopes = [{ kind: 'project' as const, id: 'alpha' }];
+
+    await handleSearch(api, { topicPrefix: 'bc_1078002', limit: 30, scopes });
+
+    expect(api.listDecisions).toHaveBeenCalledWith({
+      limit: 30,
+      scopes,
+      topicPrefix: 'bc_1078002',
+    });
+    expect(api.suggest).not.toHaveBeenCalled();
+  });
+
   it('denies scoped checkpoint search until checkpoints have scoped reads', async () => {
     const api = createLegacyApi();
 
