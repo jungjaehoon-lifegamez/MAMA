@@ -654,7 +654,42 @@ export class MessageRouter implements TurnProcessor {
     return lines.join('\n') + '\n';
   }
 
-  setGatewayRegistry(_registry: GatewayRegistry): void {}
+  private gatewayRegistry: GatewayRegistry | null = null;
+
+  setGatewayRegistry(registry: GatewayRegistry): void {
+    this.gatewayRegistry = registry;
+  }
+
+  /**
+   * The runner answered a request AFTER that request's turn ended (its own follow-up turn
+   * once a child it spawned finished, or after a task notification nobody tracked). The text
+   * is a later reply to the same message, so it goes back through the same channel; nothing
+   * else reads it. Measured 2026-09-10 20:01 and 20:19 KST: without this the owner received
+   * "backgrounded" and the real answer was written to no one.
+   */
+  private async deliverFollowUpAnswer(
+    message: NormalizedMessage,
+    info: { agentThreadId: string; agentPath: string; text: string; isError: boolean }
+  ): Promise<void> {
+    const text = info.text.trim();
+    if (!text) return;
+    if (!this.gatewayRegistry) {
+      logger.warn(
+        `follow-up answer for ${message.source}:${message.channelId} (thread ${info.agentThreadId}) has no gateway registry to deliver through`
+      );
+      return;
+    }
+    try {
+      await this.gatewayRegistry.sendMessage(message.source, message.channelId, text);
+      logger.info(
+        `follow-up answer delivered to ${message.source}:${message.channelId} (thread ${info.agentThreadId}, ${text.length} chars${info.isError ? ', error' : ''})`
+      );
+    } catch (error) {
+      logger.error(
+        `follow-up answer delivery failed for ${message.source}:${message.channelId}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
   getMemoryAgentStats() {
     return {
@@ -1324,7 +1359,12 @@ This protects your credentials from being exposed in chat logs.`;
           onCliSessionReset: (sessionId) => {
             cliSessionId = sessionId;
           },
-          streamCallbacks: wrappedOnStream || processOptions?.onStream,
+          streamCallbacks: {
+            ...(wrappedOnStream ?? processOptions?.onStream ?? {}),
+            onFollowUp: (info) => {
+              void this.deliverFollowUpAnswer(message, info);
+            },
+          },
           envelope,
           ...(runtimeOwnsSession
             ? {

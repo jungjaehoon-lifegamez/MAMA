@@ -506,6 +506,19 @@ export interface PromptCallbacks {
    * row marks the occurrence unsafe to replay. A spawn must never do that.
    */
   onSubagentStart?: (info: { agentThreadId: string; agentPath: string; itemId: string }) => void;
+  /**
+   * The runner's OWN later turn answered on behalf of this request: the CLI's follow-up
+   * after a child spawned here finished, or after a task notification no tracked child
+   * claimed. That text is a later answer to the same request and must reach whoever asked;
+   * measured 2026-09-10 it otherwise had no reader.
+   */
+  onFollowUp?: (info: {
+    agentThreadId: string;
+    agentPath: string;
+    itemId: string;
+    text: string;
+    isError: boolean;
+  }) => void;
   onFinal?: (response: PromptFinalResponse) => void;
   onError?: (error: Error) => void;
 }

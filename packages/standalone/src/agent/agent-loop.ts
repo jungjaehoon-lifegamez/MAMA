@@ -1871,6 +1871,15 @@ export class AgentLoop {
           onSubagentStart: (info: { agentThreadId: string; agentPath: string; itemId: string }) => {
             ext?.onSubagentStart?.(info);
           },
+          onFollowUp: (info: {
+            agentThreadId: string;
+            agentPath: string;
+            itemId: string;
+            text: string;
+            isError: boolean;
+          }) => {
+            ext?.onFollowUp?.(info);
+          },
           onFinal: (finalResponse: PromptFinalResponse) => {
             ext?.onFinal?.(finalResponse);
           },
