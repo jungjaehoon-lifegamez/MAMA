@@ -2,10 +2,10 @@
  * The ONE code-owned canonical wiki contract.
  *
  * Both the runtime wiki turn (workorder-consumer.ts buildTurnKindBody) and the
- * provisioned default persona (wiki-agent-persona.ts WIKI_AGENT_PERSONA) embed
- * these exact lines, so the instruction the unattended run actually receives and
- * the instruction shipped in the default persona file cannot drift apart. A
- * drift test pins that both carry this text verbatim.
+ * in-code persona text (wiki-agent-persona.ts WIKI_AGENT_PERSONA) embed these
+ * exact lines, so the instruction the unattended run actually receives and the
+ * persona text cannot drift apart. A drift test pins that both carry this text
+ * verbatim. Neither is loaded from a file on disk.
  *
  * It states the explicit typed input boundary the HOST supplies (owner date,
  * range, source watermark, connectors) and forbids the production 0.48.0 bug of
