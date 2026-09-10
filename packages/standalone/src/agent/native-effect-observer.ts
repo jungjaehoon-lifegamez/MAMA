@@ -23,13 +23,29 @@ const NATIVE_EFFECT_NAMES = new Set([
   'execute_command',
   'write_to_file',
   'replace_in_file',
-  'spawn_agent',
+]);
+
+/**
+ * Delegation is an admission, not an effect. Spawning a native subagent (Claude `Agent`/
+ * `Task`, Codex `spawn_agent`/`send_input`/`resume_agent`) names nothing the replay gate
+ * can re-execute: every effect the child performs carries its own ledger row through the
+ * gateway. Measured 2026-09-10: a Claude `Agent` tool_use recorded as `native_tool`
+ * under the reused `workorder:board:full:repair` occurrence blocked every later board
+ * order ("owner effect requires reconciliation before replay", orders #4805-#4807).
+ * Codex spawns already bypass this boundary via `onSubagentStart`; the Claude spawn
+ * arrives as an ordinary tool_use, so the name set must not claim it.
+ */
+const DELEGATION_NAMES = new Set([
   'agent',
   'task',
+  'spawn_agent',
   'collabagenttoolcall',
   'send_input',
   'resume_agent',
 ]);
+export function isDelegationToolName(name: string): boolean {
+  return DELEGATION_NAMES.has(name.toLowerCase());
+}
 
 /** TG-03/04/05/06: a completed shell invocation is still unsafe to replay. */
 export class NativeEffectReplayBoundary {

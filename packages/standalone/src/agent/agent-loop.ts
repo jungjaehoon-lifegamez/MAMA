@@ -57,6 +57,7 @@ import {
   OWNER_RUNTIME_RULES,
   OWNER_RUNTIME_SESSION_KEY,
   OWNER_SUBAGENT_INSTRUCTIONS,
+  ownerSubagentInstructions,
 } from '../operator/owner-runtime.js';
 import { projectUnattendedRole } from '../operator/owner-event-policy.js';
 import type { OAuthManager } from '../auth/index.js';
@@ -531,14 +532,15 @@ function combineCodeActSessionPolicyFingerprint(
 function ownerRuntimeSessionPolicyFingerprint(
   role: AgentContext['role'] | undefined,
   model: string | undefined,
-  supportsNativeSubagents: boolean
+  supportsNativeSubagents: boolean,
+  backend: string
 ): string {
   return JSON.stringify({
     version: 1,
     subject: OWNER_RUNTIME_SESSION_KEY,
     // The fingerprint names the policy the session actually carries: a runner without
     // native subagents is never told to delegate, so it must not be pinned to that text.
-    subagentPolicy: supportsNativeSubagents ? OWNER_SUBAGENT_INSTRUCTIONS : null,
+    subagentPolicy: supportsNativeSubagents ? ownerSubagentInstructions(backend) : null,
     telegramFormatPolicy: TELEGRAM_FORMAT_GUIDE,
     model: model ?? null,
     allowedTools: [...(role?.allowedTools ?? [])].sort(),
@@ -1492,7 +1494,8 @@ export class AgentLoop {
       ? ownerRuntimeSessionPolicyFingerprint(
           sessionPolicyRole,
           options?.model ?? this.model,
-          this.supportsNativeSubagents
+          this.supportsNativeSubagents,
+          this.backend
         )
       : undefined;
     const effectiveSessionPolicyFingerprint =
@@ -1640,10 +1643,11 @@ export class AgentLoop {
           this.supportsNativeSubagents &&
           !baseSystemPrompt.includes(OWNER_SUBAGENT_INSTRUCTIONS)
         ) {
+          // Per-runner: the shared rule plus that runtime's own spawn mechanics.
           // On a runner with no native subagent (persistent Claude persona, Cline) the
           // delegation policy asks for something the runtime cannot do. It is omitted, and
           // nothing replaces it: the turn's own result contract already says what must exist.
-          baseSystemPrompt = `${baseSystemPrompt}\n\n${OWNER_SUBAGENT_INSTRUCTIONS}`;
+          baseSystemPrompt = `${baseSystemPrompt}\n\n${ownerSubagentInstructions(this.backend)}`;
         }
         if (ownerRuntime && !baseSystemPrompt.includes(TELEGRAM_FORMAT_GUIDE)) {
           baseSystemPrompt = `${baseSystemPrompt}\n\n${TELEGRAM_FORMAT_GUIDE}`;

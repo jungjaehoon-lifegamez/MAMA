@@ -168,6 +168,20 @@ function verifyContext(context: OwnerActionContext): VerifiedContext {
  * gives the host durable started / unknown / confirmed state so automatic
  * replay can be blocked until the actual outcome has been inspected.
  */
+
+/**
+ * Rows a replay may never be blocked by. `native_run` is the admission marker of one model
+ * run. A `native_tool` row whose tool is a delegation spawn (Claude `Agent`/`Task`, Codex
+ * `spawn_agent`/`send_input`/`resume_agent`) is an admission too: the child's own effects
+ * carry their own rows. Confirmed receipts are immutable, so rows already written under the
+ * old classification (measured live 2026-09-10: `Agent` under `workorder:board:full:repair`
+ * blocked board orders #4805-#4807) are excluded here rather than rewritten.
+ */
+const REPLAY_NEUTRAL_ROW_SQL = `(effect_kind = 'native_run'
+  OR (effect_kind = 'native_tool'
+      AND IFNULL(lower(json_extract(intent_json, '$.toolName')), '') IN
+        ('agent', 'task', 'spawn_agent', 'collabagenttoolcall', 'send_input', 'resume_agent')))`;
+
 export class OwnerActionEffectLedger {
   constructor(
     private readonly db: SQLiteDatabase,
@@ -415,7 +429,7 @@ export class OwnerActionEffectLedger {
         .prepare(
           `SELECT 1 FROM ${OWNER_ACTION_EFFECTS_TABLE}
       WHERE occurrence_key = ? AND status != 'confirmed'
-        AND effect_kind != 'native_run' LIMIT 1`
+        AND NOT ${REPLAY_NEUTRAL_ROW_SQL} LIMIT 1`
         )
         .get(requireIdentity(occurrenceKey, 'occurrenceKey'))
     );
@@ -444,7 +458,7 @@ export class OwnerActionEffectLedger {
       this.db
         .prepare(
           `SELECT 1 FROM ${OWNER_ACTION_EFFECTS_TABLE}
-       WHERE occurrence_key = ? AND effect_kind != 'native_run'
+       WHERE occurrence_key = ? AND NOT ${REPLAY_NEUTRAL_ROW_SQL}
          AND (effect_kind != 'task_create' OR status != 'confirmed') LIMIT 1`
         )
         .get(key)

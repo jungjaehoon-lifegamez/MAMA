@@ -464,6 +464,26 @@ describe('interrupted native run does not poison replay', () => {
     expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
     expect(ledger.hasUnsettledEffects(occurrence)).toBe(true);
   });
+  it('does not block replay on a confirmed delegation spawn observed as native_tool', () => {
+    const { ledger } = open();
+    ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
+    ledger.confirm(ctx, 'native-run:abc', 'native_run', { completed: true });
+    ledger.begin(ctx, 'native:spawn', 'native_tool', { toolName: 'Agent' });
+    ledger.confirm(ctx, 'native:spawn', 'native_tool', { success: true });
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(false);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(false);
+    // A non-delegation native tool under the same occurrence still blocks.
+    ledger.begin(ctx, 'native:bash', 'native_tool', { toolName: 'Bash' });
+    ledger.confirm(ctx, 'native:bash', 'native_tool', { success: true });
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
+  });
+  it('treats a native_tool row without a tool name as a real, unproven effect', () => {
+    const { ledger } = open();
+    ledger.begin(ctx, 'native:anon', 'native_tool', {});
+    ledger.markUnknown(ctx, 'native:anon', 'native_tool', 'completion observed without start');
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(true);
+  });
   it('stays blocked on a confirmed external send', () => {
     const { ledger } = open();
     ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
