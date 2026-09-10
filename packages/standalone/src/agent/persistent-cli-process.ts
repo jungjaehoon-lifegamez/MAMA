@@ -1106,7 +1106,11 @@ export class PersistentClaudeProcess extends EventEmitter {
       nativeToolUseId: toolUse.id,
     });
     persistentLogger.info(`[PersistentCLI] Tool use: ${toolUse.name}`);
-    if (toolUse.name === BACKGROUND_AGENT_TOOL && toolUse.input?.run_in_background === true) {
+    // Every Agent spawn is tracked from here; its LAUNCH RESULT decides whether it is a
+    // background child ("Async agent launched") or a synchronous one (dropped on result).
+    // Measured 2026-09-10 21:06 KST: the CLI launched async without run_in_background, the
+    // flag-gated tracker missed it, and the child lost the run context mid-flight.
+    if (toolUse.name === BACKGROUND_AGENT_TOOL) {
       this.trackBackgroundAgent(toolUse);
     }
     return true;
@@ -1178,6 +1182,11 @@ export class PersistentClaudeProcess extends EventEmitter {
 
   /** Lift the child's id out of the "Async agent launched" tool_result text. */
   private recordBackgroundLaunchResult(state: BackgroundAgentState, content: string): void {
+    if (!/async agent launched/i.test(content)) {
+      // A synchronous child: its result IS its answer, inside the parent turn. Nothing to hold.
+      this.backgroundAgents.delete(state.itemId);
+      return;
+    }
     const match = /agentId["'\s:=]+([A-Za-z0-9_-]{4,})/.exec(content);
     if (match) {
       state.agentId = match[1];

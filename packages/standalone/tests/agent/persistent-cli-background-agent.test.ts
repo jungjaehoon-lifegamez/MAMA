@@ -354,3 +354,71 @@ describe("the CLI's own follow-up answer reaches the request that spawned the ch
     expect(followUps.map((f) => f.text)).toEqual(['LATE ANSWER']);
   });
 });
+
+describe('a child the CLI launched async without run_in_background', () => {
+  // Measured 2026-09-10 21:06 KST: the model omitted run_in_background, the CLI still answered
+  // "Async agent launched successfully", the wrapper (flag-gated) never tracked the child, the
+  // run context was closed when the parent turn ended, and every code_act call the child made
+  // failed with CODE_ACT_CONTEXT_UNAVAILABLE. The launch RESULT decides, not the flag.
+  function withoutFlag(events: StreamMessage[]): StreamMessage[] {
+    const first = events[0] as { message: { content: Array<{ input?: Record<string, unknown> }> } };
+    delete first.message.content[0]?.input?.run_in_background;
+    return events;
+  }
+
+  it('is tracked from its async launch result and keeps the run context alive', async () => {
+    const process = new PersistentClaudeProcess({ sessionId: 'bg-session' });
+    const testable = process as unknown as TestableProcess;
+    const starts: Array<{ agentThreadId: string }> = [];
+    const events: string[] = [];
+    process.on('subagent', (event: Record<string, unknown>) => events.push(String(event.kind)));
+    testable.state = 'busy';
+    testable.currentCallbacks = { onSubagentStart: (info) => starts.push(info) };
+    const parentResult = new Promise<PromptResult>((resolve, reject) => {
+      testable.currentResolve = resolve;
+      testable.currentReject = reject;
+    });
+    const sequence = withoutFlag(measuredSequence());
+    // Feed up to and including the parent's own `result`; the child is still live then.
+    const parentResultIndex = sequence.findIndex((e) => e.type === 'result');
+    for (const event of sequence.slice(0, parentResultIndex + 1)) testable.processEvent(event);
+    expect((await parentResult).response).toBe('LAUNCHED');
+    expect(starts.map((s) => s.agentThreadId)).toEqual([AGENT_ID]);
+    expect(process.hasLiveBackgroundAgents()).toBe(true);
+
+    for (const event of sequence.slice(parentResultIndex + 1)) testable.processEvent(event);
+    expect(events).toEqual(['started', 'completed']);
+    expect(process.hasLiveBackgroundAgents()).toBe(false);
+  });
+
+  it('forgets an Agent whose result came back synchronously', () => {
+    const process = new PersistentClaudeProcess({ sessionId: 'bg-session' });
+    const testable = process as unknown as TestableProcess;
+    const starts: unknown[] = [];
+    testable.state = 'busy';
+    testable.currentCallbacks = { onSubagentStart: (info) => starts.push(info) };
+    testable.processEvent({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_sync', name: 'Agent', input: { prompt: 'look' } }],
+      },
+    });
+    testable.processEvent({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_sync',
+            content: 'Here is the list: 2 rows',
+            is_error: false,
+          },
+        ],
+      },
+    });
+    expect(starts).toEqual([]);
+    expect(process.hasLiveBackgroundAgents()).toBe(false);
+  });
+});
