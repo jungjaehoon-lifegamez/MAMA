@@ -432,4 +432,45 @@ describe('CalendarConnector', () => {
       await expect(connector.dispose()).resolves.toBeUndefined();
     });
   });
+
+  describe('poll — bounded listing window', () => {
+    function listParams(): Record<string, unknown> {
+      const listCall = mockExecSync.mock.calls.find((c: unknown[]) =>
+        String(c[0]).includes('calendar events list')
+      );
+      const cmd = String(listCall?.[0]);
+      const marker = "--params '";
+      const start = cmd.indexOf(marker) + marker.length;
+      const end = cmd.lastIndexOf("'");
+      return JSON.parse(cmd.slice(start, end).replace(/'\\''/g, "'")) as Record<string, unknown>;
+    }
+
+    it('caps the window with timeMax = now + 90 days so recurring events cannot expand without bound', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2024-01-15T00:00:00.000Z'));
+      try {
+        mockExecSync
+          .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+          .mockReturnValueOnce(makeEventListJson([]) as unknown as ReturnType<typeof execSync>);
+        const connector = new CalendarConnector(makeConfig());
+        await connector.init();
+        await connector.poll(new Date('2024-01-10T00:00:00.000Z'));
+        const params = listParams();
+        expect(params.timeMin).toBe('2024-01-10T00:00:00.000Z');
+        expect(params.timeMax).toBe('2024-04-14T00:00:00.000Z');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('lists 250 events per page so a 90-day window stays far below the page cap', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(makeEventListJson([]) as unknown as ReturnType<typeof execSync>);
+      const connector = new CalendarConnector(makeConfig());
+      await connector.init();
+      await connector.poll(new Date('2024-01-10T00:00:00.000Z'));
+      expect(listParams().maxResults).toBe(250);
+    });
+  });
 });
