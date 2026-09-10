@@ -11,10 +11,17 @@
  * boundary can fall inside a tag pair. Offsets survive splitting; raw HTML does
  * not.
  *
- * Any input the parser cannot read as that subset is returned verbatim with no
- * entities. Plain text is therefore always deliverable and never mangled: an
- * unknown tag, an unclosed tag, an attribute we do not accept, or a nesting the
- * subset forbids all degrade to literal text rather than to an error.
+ * Degradation is per span, not per message. `sanitizeTelegramHtml` rewrites the
+ * input into markup the parser can always read: a tag outside the subset, an
+ * attribute we do not accept, an orphan closing tag, or a nesting the subset
+ * forbids is escaped to literal text on its own, while every well-formed tag
+ * around it still renders. A tag left open at the end is closed for the author
+ * when it encloses real words, and escaped when it reads as a mention of the tag
+ * itself (`write <b>...</b>`). One stray `<b>` therefore no longer makes every
+ * tag in the message visible.
+ *
+ * Plain text is still always deliverable and never mangled, and a non-empty
+ * answer never becomes an empty message.
  *
  * Offsets and lengths are counted in UTF-16 code units, which is what Telegram
  * counts for both entity spans and the 4096 message limit.
@@ -99,9 +106,10 @@ function decodeEntities(text: string): string {
 }
 
 /**
- * Read the HTML subset. Returns the input verbatim with no entities as soon as
- * anything outside the subset appears: unreadable markup must reach the owner
- * as text, never as a dropped or half-styled message.
+ * Read the HTML subset. Still returns the input verbatim with no entities if
+ * anything outside the subset appears, as the last line of defence; callers
+ * reach it through `sanitizeTelegramHtml`, which removes those cases span by
+ * span so a whole-message fallback is no longer the normal outcome.
  */
 function parseTelegramHtml(text: string): TelegramFormattedText {
   const literal: TelegramFormattedText = { text, entities: [] };
@@ -152,6 +160,143 @@ function parseTelegramHtml(text: string): TelegramFormattedText {
     text: plain,
     entities: entities.sort((a, b) => a.offset - b.offset || b.length - a.length),
   };
+}
+
+/**
+ * Content that reads as a mention of a tag rather than as styled words.
+ *
+ * Emphasis in real output opens on a word. A run that opens on a comma, a
+ * closing bracket or a space, or that carries no letter or digit at all, is the
+ * author talking ABOUT the tag -- `write <b>...</b>`, `allowed: <b> <i>` -- and
+ * must survive as text.
+ */
+const MENTION_LEAD = /^[\s,.:;!?/>)\]}\u3001\u3002\uFF0C\uFF09\uFF1A\uFF1B\uFF01\uFF1F]/;
+const HAS_WORD = /[\p{L}\p{N}]/u;
+
+function escapeTagSource(raw: string): string {
+  return raw.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** The opening-tag half of the subset check, shared by the parser and the sanitizer. */
+function readOpeningTag(raw: string): { tag: string; type: string } | null {
+  const opening = OPENING_TAG.exec(raw);
+  if (!opening) return null;
+  const tag = opening[1].toLowerCase();
+  const type = TAG_TYPES[tag];
+  if (!type) return null;
+  if (tag === 'a') {
+    const href = /^\s+href="([^"]+)"\s*$/.exec(opening[2]);
+    if (!href) return null;
+    try {
+      if (!LINK_PROTOCOLS.includes(new URL(decodeEntities(href[1])).protocol)) return null;
+    } catch {
+      return null;
+    }
+  } else if (opening[2].trim()) {
+    return null;
+  }
+  return { tag, type };
+}
+
+interface TagSpan {
+  at: number;
+  end: number;
+  raw: string;
+  tag: string;
+  type: string;
+  closeAt?: number;
+  partner?: number;
+  escaped: boolean;
+}
+
+function spanContent(input: string, from: number, to: number): string {
+  return decodeEntities(input.slice(from, to).replace(TAG_SCAN, ''));
+}
+
+/**
+ * Rewrite one answer into markup `parseTelegramHtml` can always read.
+ *
+ * Every tag is judged on its own: the ones the subset accepts are left alone,
+ * the ones it does not are escaped to literal text, and a tag still open at the
+ * end is closed rather than allowed to poison the message. Nothing here loosens
+ * the subset -- an escaped tag reaches Telegram as characters, never as an
+ * entity, and no attribute or protocol the parser rejects becomes acceptable.
+ */
+export function sanitizeTelegramHtml(input: string): string {
+  const spans: TagSpan[] = [];
+  const open: number[] = [];
+  for (const match of input.matchAll(TAG_SCAN)) {
+    const at = match.index ?? 0;
+    const raw = match[0];
+    const closing = CLOSING_TAG.exec(raw);
+    if (closing) {
+      const tag = closing[1].toLowerCase();
+      const index = spans.length;
+      const top = open.length ? spans[open[open.length - 1]] : undefined;
+      // An orphan or out-of-order closing tag is escaped on its own; the tag it
+      // fails to close is then judged as any other still-open tag.
+      if (!top || top.tag !== tag) {
+        spans.push({ at, end: at + raw.length, raw, tag, type: '', escaped: true });
+        continue;
+      }
+      const openIndex = open.pop() as number;
+      top.closeAt = at;
+      top.partner = index;
+      spans.push({ at, end: at + raw.length, raw, tag, type: top.type, partner: openIndex, escaped: false });
+      continue;
+    }
+    const read = readOpeningTag(raw);
+    if (!read) {
+      spans.push({ at, end: at + raw.length, raw, tag: '', type: '', escaped: true });
+      continue;
+    }
+    const stack = open.map((index) => spans[index]);
+    const insideVerbatim = stack.some((entry) => ['code', 'pre'].includes(entry.type));
+    const verbatimInsideAnything = ['code', 'pre'].includes(read.type) && stack.length > 0;
+    const repeatedSelfNesting =
+      ['text_link', 'blockquote'].includes(read.type) &&
+      stack.some((entry) => entry.type === read.type);
+    // Forbidden nesting escapes the INNER offending tag only: the span that
+    // breaks the rule becomes text, the span that contains it still renders.
+    if (insideVerbatim || verbatimInsideAnything || repeatedSelfNesting) {
+      spans.push({ at, end: at + raw.length, raw, tag: read.tag, type: read.type, escaped: true });
+      continue;
+    }
+    open.push(spans.length);
+    spans.push({ at, end: at + raw.length, raw, tag: read.tag, type: read.type, escaped: false });
+  }
+  const stillOpen = new Set(open.map((index) => spans[index]));
+  const autoClose: string[] = [];
+  for (const span of spans) {
+    if (span.escaped || span.type === '' || span.raw.startsWith('</')) continue;
+    if (stillOpen.has(span)) {
+      const content = spanContent(input, span.end, input.length);
+      if (!HAS_WORD.test(content) || MENTION_LEAD.test(content)) {
+        span.escaped = true;
+        continue;
+      }
+      autoClose.push(span.tag);
+      continue;
+    }
+    const content = spanContent(input, span.end, span.closeAt ?? span.end);
+    // A closed pair around no word at all is a citation, not styling.
+    if (!HAS_WORD.test(content)) {
+      span.escaped = true;
+      if (span.partner !== undefined) spans[span.partner].escaped = true;
+    }
+  }
+  if (!spans.some((span) => span.escaped) && !autoClose.length) return input;
+  let out = '';
+  let cursor = 0;
+  for (const span of spans) {
+    if (!span.escaped) continue;
+    out += input.slice(cursor, span.at) + escapeTagSource(span.raw);
+    cursor = span.end;
+  }
+  out += input.slice(cursor);
+  // Innermost first, the same order `closeOpenTelegramHtml` uses for snapshots.
+  for (let index = autoClose.length - 1; index >= 0; index -= 1) out += `</${autoClose[index]}>`;
+  return out;
 }
 
 /**
@@ -222,7 +367,7 @@ export function formatTelegramMessage(
     }
     return chunks;
   }
-  const parsed = parseTelegramHtml(input);
+  const parsed = parseTelegramHtml(sanitizeTelegramHtml(input));
   // A parse can succeed and still leave nothing to send: `<b></b>` is readable
   // markup around no text. Zero chunks would let the transport report the
   // answer delivered without one API call and leave the placeholder standing

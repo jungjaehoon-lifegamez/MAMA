@@ -94,16 +94,48 @@ describe('Story TG-01/TG-06: Telegram formatting', () => {
       ]);
     });
 
-    it('falls back to literal text for an unclosed tag', () => {
-      const input = 'report <b>never closed';
+    it('closes a tag left open instead of degrading the whole message', () => {
+      // Was whole-message literal. One forgotten closing tag used to make every
+      // tag in the answer visible; now the span the author opened is closed.
+      const [chunk] = formatTelegramMessage('report <b>never closed');
 
-      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+      expect(chunk.text).toBe('report never closed');
+      expect(chunk.entities).toEqual([{ type: 'bold', offset: 7, length: 12 }]);
     });
 
-    it('falls back to literal text for a mismatched closing tag', () => {
-      const input = '<b>a</i>';
+    it('escapes a mismatched closing tag and keeps the surrounding span', () => {
+      // Was whole-message literal.
+      const [chunk] = formatTelegramMessage('<b>a</i>');
 
-      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+      expect(chunk.text).toBe('a</i>');
+      expect(chunk.entities).toEqual([{ type: 'bold', offset: 0, length: 5 }]);
+    });
+
+    it('escapes a tag the author only mentioned, with no entity from it', () => {
+      // Live 2026-09-10: the owner answer explained Telegram formatting and the
+      // cited tag names took the WHOLE reply literal.
+      const [chunk] = formatTelegramMessage('\uc11c\uc2dd(<b>, <i> \ub4f1)\uc744 \uc801\uc6a9');
+
+      expect(chunk.text).toBe('\uc11c\uc2dd(<b>, <i> \ub4f1)\uc744 \uc801\uc6a9');
+      expect(chunk.entities).toEqual([]);
+    });
+
+    it('renders a closed span and auto-closes an unclosed one in the same answer', () => {
+      // The other live shape: a styled heading plus one unclosed tag.
+      const [chunk] = formatTelegramMessage('<b>\uc81c\ubaa9</b> \ubcf8\ubc11 <i>\ubbf8\ub2eb\ud790');
+
+      expect(chunk.text).toBe('\uc81c\ubaa9 \ubcf8\ubc11 \ubbf8\ub2eb\ud790');
+      expect(chunk.entities).toEqual([
+        { type: 'bold', offset: 0, length: 2 },
+        { type: 'italic', offset: 6, length: 3 },
+      ]);
+    });
+
+    it('keeps the rest of the markup when one tag is outside the subset', () => {
+      const [chunk] = formatTelegramMessage('<div>x</div> <b>bold</b>');
+
+      expect(chunk.text).toBe('<div>x</div> bold');
+      expect(chunk.entities).toEqual([{ type: 'bold', offset: 13, length: 4 }]);
     });
 
     it('falls back to literal text for a tag outside the subset', () => {
@@ -118,20 +150,27 @@ describe('Story TG-01/TG-06: Telegram formatting', () => {
       expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
     });
 
-    it('falls back to literal text for markup nested inside code', () => {
-      const input = '<code>a <b>b</b></code>';
+    it('escapes markup nested inside code and keeps the code span', () => {
+      // Was whole-message literal. Nothing nests inside code: the inner tag
+      // becomes text, the verbatim span it sits in still renders.
+      const [chunk] = formatTelegramMessage('<code>a <b>b</b></code>');
 
-      expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+      expect(chunk.text).toBe('a <b>b</b>');
+      expect(chunk.entities).toEqual([{ type: 'code', offset: 0, length: 10 }]);
     });
 
-    it('falls back to literal text for code inside another tag', () => {
-      // The guide forbids both directions; the parser must agree with the guide.
-      for (const input of [
-        '<blockquote>note <code>x</code></blockquote>',
-        '<pre><code>x</code></pre>',
-        '<a href="https://example.com"><code>x</code></a>',
-      ]) {
-        expect(formatTelegramMessage(input)).toEqual([{ text: input, entities: [] }]);
+    it('escapes code inside another tag and keeps the outer span', () => {
+      // Was whole-message literal. The guide forbids both directions; the
+      // forbidden span degrades, the one containing it does not.
+      for (const [input, text, type] of [
+        ['<blockquote>note <code>x</code></blockquote>', 'note <code>x</code>', 'blockquote'],
+        ['<pre><code>x</code></pre>', '<code>x</code>', 'pre'],
+        ['<a href="https://example.com"><code>x</code></a>', '<code>x</code>', 'text_link'],
+      ] as const) {
+        const [chunk] = formatTelegramMessage(input);
+
+        expect(chunk.text).toBe(text);
+        expect(chunk.entities.map((entity) => entity.type)).toEqual([type]);
       }
     });
 
@@ -260,11 +299,24 @@ describe('Story TG-05/TG-06: producer formatting contract', () => {
       expect(TELEGRAM_FORMAT_GUIDE).not.toMatch(/\btg:/);
     });
 
-    it('is markup the parser round-trips, not markup it rejects', () => {
+    it('is shown to the model as text, never styled by its own tag citations', () => {
+      // Was a byte-identical round-trip, which only held because ANY unreadable
+      // markup took the whole message literal. Per-span degradation has to reach
+      // the same outcome for the guide on purpose: every cited tag stays visible
+      // and contributes no entity. The escaped `&amp;`/`&lt;` of the guide's own
+      // escaping rule now decode, as they do in any other answer.
       const [chunk] = formatTelegramMessage(TELEGRAM_FORMAT_GUIDE);
 
-      expect(chunk.text).toBe(TELEGRAM_FORMAT_GUIDE);
       expect(chunk.entities).toEqual([]);
+      expect(chunk.text).toBe(
+        TELEGRAM_FORMAT_GUIDE.replace(
+          'as &amp;, &lt;, &gt; and &quot;.',
+          'as &, <, > and ".'
+        )
+      );
+      for (const tag of ['<b>', '<i>', '<code>', '<pre>', '<blockquote>', '<a href="...">']) {
+        expect(chunk.text).toContain(tag);
+      }
     });
   });
 });
