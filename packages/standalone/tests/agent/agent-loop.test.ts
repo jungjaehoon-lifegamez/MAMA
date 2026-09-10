@@ -35,6 +35,7 @@ import { createPersonaReportAsk } from '../../src/operator/report-run.js';
 import {
   OWNER_RUNTIME_SESSION_KEY,
   OWNER_SUBAGENT_INSTRUCTIONS,
+  ownerSubagentInstructions,
 } from '../../src/operator/owner-runtime.js';
 import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
@@ -4038,7 +4039,11 @@ Skills provide additional tools.
 
       // Deliberate: a runner never told to delegate must not be pinned to that text, or a
       // later capability change would look like a compatible session.
-      expect(capable.sessionPolicyFingerprint).toContain(JSON.stringify(OWNER_SUBAGENT_INSTRUCTIONS));
+      // The pinned text is the policy for THAT runner: the shared rule plus its own spawn
+      // mechanics. Pinning the shared rule alone would call two different policies one.
+      expect(capable.sessionPolicyFingerprint).toContain(
+        JSON.stringify(ownerSubagentInstructions('codex'))
+      );
       expect(incapable.sessionPolicyFingerprint).toContain('"subagentPolicy":null');
       expect(incapable.sessionPolicyFingerprint).not.toBe(capable.sessionPolicyFingerprint);
     });

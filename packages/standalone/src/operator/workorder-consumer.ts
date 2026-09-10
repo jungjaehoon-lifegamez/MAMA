@@ -1416,8 +1416,8 @@ const SCHEDULED_TURN_PREAMBLE = [
  */
 const DELEGATED_TURN_SHAPE =
   'Expected shape: delegate. Spawn ONE native subagent carrying this exact contract plus the input; ' +
-  'do not call wait_agent, and end the turn right after spawning. The host wakes you with the child ' +
-  "result, and this work order is verified against the child's durable writes.";
+  'do not block or poll for it, and end the turn right after spawning. You are given the child ' +
+  "result once, and this work order is verified against the child's durable writes.";
 
 /**
  * The delegated-shape lines for a turn, or none when the runner cannot delegate.
