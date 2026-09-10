@@ -31,3 +31,14 @@ describe('Claude backend --effort flag', () => {
     expect(buildArgs('claude-haiku-4-5-20251001', 'low')).not.toContain('--effort');
   });
 });
+
+import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+
+describe('PersistentCLIAdapter forwards effort to its process pool', () => {
+  it('keeps agent.effort on the pool defaults', () => {
+    const adapter = new PersistentCLIAdapter({ model: 'claude-sonnet-5', effort: 'low' });
+    const pool = (adapter as unknown as { processPool: { defaultOptions: { effort?: string } } })
+      .processPool;
+    expect(pool.defaultOptions.effort).toBe('low');
+  });
+});

@@ -50,8 +50,8 @@ export class PersistentCLIAdapter implements IModelRunner {
   readonly backendType = 'claude' as const;
 
   /**
-   * The persona runs `claude --print` with `--tools ""` (no native Agent tool) and the
-   * stream carries no subagent items, so there is nothing to spawn and nothing to observe.
+   * The stream carries no subagent items the host can observe (a native Agent tool, when the
+   * persona is given one, runs children the host cannot track), so delegation is never promised.
    */
   readonly supportsNativeSubagents = false;
 
@@ -81,6 +81,8 @@ export class PersistentCLIAdapter implements IModelRunner {
       useGatewayTools: options.useGatewayTools,
       requestTimeout: options.requestTimeout,
       tools: options.tools,
+      // Adaptive thinking effort (agent.effort) reaches the CLI as --effort.
+      effort: options.effort,
       pluginDir: options.pluginDir,
       allowedTools: options.allowedTools,
       disallowedTools: options.disallowedTools,

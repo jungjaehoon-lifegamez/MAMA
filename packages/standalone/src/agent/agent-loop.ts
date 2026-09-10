@@ -1030,6 +1030,8 @@ export class AgentLoop {
         // ToolSearch/Agent, native gathering that bypasses report verification).
         // Callers opt in per loop; agent-loop-init locks down the main persona.
         tools: options.builtinTools,
+        // agent.effort: the boot gate already proved it is a level this backend accepts.
+        effort: options.codexEffort as 'low' | 'medium' | 'high' | 'max' | undefined,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });
