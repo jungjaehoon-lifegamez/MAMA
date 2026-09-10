@@ -27,6 +27,7 @@ function installAdapterDependencies(
   adapter: PersistentCLIAdapter,
   process: {
     getRunContextKey: () => string;
+    hasLiveBackgroundAgents: () => boolean;
     isAlive: () => boolean;
     sendMessage: ReturnType<typeof vi.fn>;
   },
@@ -58,6 +59,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     let acquiredContext: GatewayToolExecutionContext | undefined;
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockImplementation(async () => {
         const pin = registry.acquire(CONTEXT_KEY);
@@ -93,6 +95,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const failure = new Error('stream disconnected');
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockImplementation(async () => {
         const pin = registry.acquire(CONTEXT_KEY);
@@ -121,6 +124,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     let attemptSignal: AbortSignal | undefined;
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockImplementation(async () => {
         const pin = registry.acquire(CONTEXT_KEY);
@@ -152,6 +156,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     let attemptSignal: AbortSignal | undefined;
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockImplementation(async () => {
         const pin = registry.acquire(CONTEXT_KEY);
@@ -204,6 +209,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const registry = new RunContextRegistry();
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockResolvedValue({
         response: 'The mutation outcome is unknown.',
@@ -286,6 +292,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     };
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockResolvedValue({
         response: '',
@@ -321,6 +328,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     registry.register(CONTEXT_KEY, incumbent);
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn(),
     };
@@ -340,6 +348,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const registry = new RunContextRegistry();
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockRejectedValue(new McpCompletedMutationInterruptedError([])),
     };
@@ -358,6 +367,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const registry = new RunContextRegistry();
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi
         .fn()
@@ -384,6 +394,7 @@ describe('S3 TG-03/TG-04: PersistentCLIAdapter prompt-attempt lease', () => {
     const registry = new RunContextRegistry();
     const process = {
       getRunContextKey: () => CONTEXT_KEY,
+      hasLiveBackgroundAgents: () => false,
       isAlive: () => true,
       sendMessage: vi.fn().mockResolvedValue({
         response: '',

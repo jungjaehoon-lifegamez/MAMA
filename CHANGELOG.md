@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.53.1] - 2026-09-10
+
+### Fixed
+
+- **A new Claude turn waits for a live background child.** The Claude process has one run
+  context per context key, and the 0.53.0 adapter let the next turn supersede the lease a
+  background `Agent` child was using. Measured right after release: two board orders on one
+  session, the second child's `report_publish` was traced under the first order's run, the
+  second order never verified, and a chat turn arriving in that window would have lent the
+  unattended child its own send grant. The adapter now waits for the child (completion,
+  autonomous-turn result, or process close) before taking the context, bounded by the same
+  30-minute limit a delegated attempt already has, and logs when that bound is passed.
+
 ## mama-os [0.53.0] - 2026-09-10
 
 Claude backend delegation becomes observable, a spawn receipt no longer kills scheduled work,
