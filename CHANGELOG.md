@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.53.2] - 2026-09-10
+
+Three connector fixes measured on the live install: Chatwork polling that a second reader on
+the same token had starved, a Calendar listing window that ran without bound, and a Kagemusha
+bridge that read every mirrored platform regardless of what was declared.
+
+### Fixed
+
+- **Chatwork polls with `force=1`.** `force=0` returns only what the SERVER has not yet handed to
+  the token, and that read cursor is shared by every reader of the token. With another poller on
+  the same token at a 30 s cadence, this 5-minute poller saw about one message a day while the
+  rooms carried about thirty. The connector now asks for the latest window regardless of read
+  state and decides new-ness itself, with the `since` timestamp and the per-room last seen
+  message id it already kept.
+- **Calendar listing is bounded to now + 90 days, 250 events per page.** `singleEvents:true`
+  without `timeMax` expanded recurring events to the end of their recurrence; since the paging
+  cap landed on 2026-09-07 every poll exceeded it, threw, saved nothing, and left the cursor
+  stuck for three days while the health surfaces stayed green. Events further out enter the
+  window as time passes.
+
+### Changed
+
+- **The Kagemusha bridge reads only the platforms its configured channel keys declare.**
+  `kakao:<room>` admits kakao, `line:<room>` admits LINE, and task cards flow only when a
+  `kagemusha-tasks:<room>` key exists. The Kagemusha DB mirrors slack, chatwork and telegram as
+  well, which produced the same Slack channel twice (native and mirrored) and duplicate MAMA
+  tasks from mirrored cards. An empty channel map keeps the previous behaviour of reading
+  everything.
+
 ## mama-os [0.53.1] - 2026-09-10
 
 ### Fixed

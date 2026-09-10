@@ -44,6 +44,15 @@ interface CalendarEventList {
 }
 
 const MAX_EVENT_LIST_PAGES = 20;
+/**
+ * `singleEvents:true` expands recurring events into instances, and without an upper
+ * bound the expansion runs to the end of the recurrence — thousands of rows for an
+ * ordinary personal calendar. Measured live 2026-09-07..10: every poll hit the page
+ * cap, threw, saved nothing and left the cursor stuck for three days. The window is
+ * therefore closed at now + 90 days; events further out enter it as time passes.
+ */
+const EVENT_LIST_HORIZON_MS = 90 * 24 * 60 * 60 * 1000;
+const EVENT_LIST_PAGE_SIZE = 250;
 
 export class CalendarConnector implements IConnector {
   readonly name = 'calendar';
@@ -113,6 +122,7 @@ export class CalendarConnector implements IConnector {
 
     try {
       const timeMin = since.toISOString();
+      const timeMax = new Date(Date.now() + EVENT_LIST_HORIZON_MS).toISOString();
       const observedAt = new Date().toISOString();
       let pageToken: string | undefined;
       const visitedPageTokens = new Set<string>();
@@ -120,10 +130,11 @@ export class CalendarConnector implements IConnector {
         const params = JSON.stringify({
           calendarId: 'primary',
           timeMin,
+          timeMax,
           singleEvents: true,
           showDeleted: true,
           orderBy: 'startTime',
-          maxResults: 50,
+          maxResults: EVENT_LIST_PAGE_SIZE,
           ...(pageToken ? { pageToken } : {}),
         });
         // Escape single quotes so an upstream-controlled value inside the JSON (e.g. a pageToken)
