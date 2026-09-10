@@ -182,7 +182,14 @@ export async function handleSearch(
   const hasScopes = Array.isArray(scopes) && scopes.length > 0;
 
   if (!query) {
-    const decisions = await api.listDecisions({ limit, ...(hasScopes ? { scopes } : {}) });
+    // No query + topicPrefix is a ledger read: exactly the facts filed under one item key.
+    // Live 2026-09-11: eleven prefix calls returned the same recent-N set because the prefix
+    // was dropped here, and the owner turn concluded the ledger could not count FB rounds.
+    const decisions = await api.listDecisions({
+      limit,
+      ...(hasScopes ? { scopes } : {}),
+      ...(typeof topicPrefix === 'string' && topicPrefix.length > 0 ? { topicPrefix } : {}),
+    });
     const raw = Array.isArray(decisions) ? decisions : [];
     let results = raw.filter(isSearchResultItem);
 
