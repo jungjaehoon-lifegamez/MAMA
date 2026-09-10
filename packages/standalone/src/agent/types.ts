@@ -886,7 +886,6 @@ export type GatewayToolName =
   // Kagemusha query — progressive business data exploration
   | 'kagemusha_overview'
   | 'kagemusha_entities'
-  | 'kagemusha_tasks'
   | 'kagemusha_messages'
   | 'trello_search'
   | 'trello_card'

@@ -19,12 +19,7 @@ import {
   PRIVATE_CONNECTORS,
 } from '../../src/connectors/index.js';
 
-const PRIVATE_TOOL_NAMES = [
-  'kagemusha_overview',
-  'kagemusha_entities',
-  'kagemusha_tasks',
-  'kagemusha_messages',
-];
+const PRIVATE_TOOL_NAMES = ['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'];
 
 function connectorResult(enabled: boolean): ConnectorConfigLoadResult {
   return {
@@ -185,9 +180,10 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
       });
     }
 
-    expect(codeActByName.get('kagemusha_tasks')?.description).toContain(
-      'pending|in_progress|review|done|completed|cancelled|dismissed|active'
-    );
+    // Owner declaration 2026-07-30, applied 2026-09-10: Kagemusha's task cards are the owner's
+    // personal work derived from sources MAMA already reads. They are not an answer source.
+    expect(codeActByName.has('kagemusha_tasks')).toBe(false);
+    expect(codeActByName.get('kagemusha_messages')?.description).toContain('Read raw messages');
   });
 
   it('returns immutable snapshots that cannot mutate a later role projection', () => {

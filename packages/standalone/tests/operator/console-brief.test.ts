@@ -59,14 +59,14 @@ describe('owner-console brief substrate', () => {
   });
 
   it('TG-05 hides disabled private lessons without changing the user-owned file', () => {
-    const raw = '# Owner Console Operating Brief\n\n## Lessons\n- Use kagemusha_tasks first.\n';
+    const raw = '# Owner Console Operating Brief\n\n## Lessons\n- Use kagemusha_messages first.\n';
     ensureConsoleBrief(home);
     writeFileSync(consoleBriefPath(home), raw, 'utf-8');
     const policy = resolvePrivateConnectorPolicy({ ok: true, config: {}, enabledNames: [] });
 
     const projected = projectConsoleBriefForPrompt(raw, policy);
 
-    expect(projected).not.toContain('kagemusha_tasks');
+    expect(projected).not.toContain('kagemusha_messages');
     expect(loadConsoleBrief(home)).toBe(raw);
   });
 
@@ -76,12 +76,12 @@ describe('owner-console brief substrate', () => {
       '',
       '## Lessons',
       '- Always call kagemusha_messages before answering an owner status question.',
-      '- Invoke `kagemusha_tasks` first, then summarize the result.',
-      "- **kagemusha_tasks**({ status: 'pending' })",
+      '- Invoke `kagemusha_messages` first, then summarize the result.',
+      "- **kagemusha_messages**({ status: 'pending' })",
       "- `kagemusha_messages`({ channel: 'owner' })",
-      "- ``kagemusha_tasks``({ status: 'pending' })",
+      "- ``kagemusha_messages``({ status: 'pending' })",
       "- ```kagemusha_messages```({ channel: 'owner' })",
-      "- Last year's kagemusha_tasks output used the old status names.",
+      "- Last year's kagemusha_messages output used the old status names.",
       '- Historical note: Kagemusha was the predecessor connector.',
       '- Archive path: /workspace/history/kagemusha_messages-transcript.md',
       '',
@@ -92,12 +92,12 @@ describe('owner-console brief substrate', () => {
     const projected = projectConsoleBriefForPrompt(raw, disabledPrivatePolicy);
 
     expect(projected).not.toContain('Always call kagemusha_messages');
-    expect(projected).not.toContain('Invoke `kagemusha_tasks`');
-    expect(projected).not.toContain('**kagemusha_tasks**(');
+    expect(projected).not.toContain('Invoke `kagemusha_messages`');
+    expect(projected).not.toContain('**kagemusha_messages**(');
     expect(projected).not.toContain('`kagemusha_messages`(');
-    expect(projected).not.toContain('``kagemusha_tasks``(');
+    expect(projected).not.toContain('``kagemusha_messages``(');
     expect(projected).not.toContain('```kagemusha_messages```(');
-    expect(projected).toContain("Last year's kagemusha_tasks output used the old status names.");
+    expect(projected).toContain("Last year's kagemusha_messages output used the old status names.");
     expect(projected).toContain('Historical note: Kagemusha was the predecessor connector.');
     expect(projected).toContain('/workspace/history/kagemusha_messages-transcript.md');
     expect(loadConsoleBrief(home)).toBe(raw);
@@ -142,7 +142,7 @@ describe('owner-console brief substrate', () => {
     const projected = projectConsoleBriefForPrompt(withGeneratedOverlay, disabledPrivatePolicy);
 
     expect(projected).toContain(base);
-    expect(projected).not.toContain('**kagemusha_tasks**');
+    expect(projected).not.toContain('**kagemusha_messages**');
   });
 
   it('seeds the packaged skeleton once and never overwrites edits (agent-owned)', () => {

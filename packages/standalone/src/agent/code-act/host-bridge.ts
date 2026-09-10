@@ -1222,7 +1222,6 @@ export const READ_ONLY_TOOLS = new Set([
   // back to guessing task status from message archaeology.
   'kagemusha_overview',
   'kagemusha_entities',
-  'kagemusha_tasks',
   'kagemusha_messages',
   // Trello LIVE reads: the truth source for current card state (assignees,
   // revision-round labels) - the connector log is only the change history.
