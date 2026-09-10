@@ -216,6 +216,8 @@ vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
       persistentCLIAdapterOptionsMock(options);
       return {
         backendType: 'claude',
+        // `claude --print` runs the persona with `--tools ""`: no native Agent tool.
+        supportsNativeSubagents: false,
         prompt: persistentPromptMock,
         getSessionPolicyStatus: claudeSessionPolicyStatusMock,
         resetSession: claudeResetSessionMock,
@@ -233,6 +235,7 @@ vi.mock('../../src/agent/cline-cli-adapter.js', () => {
       clineAdapterOptionsMock(options);
       return {
         backendType: 'cline',
+        supportsNativeSubagents: false,
         prompt: persistentPromptMock,
         getSessionPolicyStatus: clineSessionPolicyStatusMock,
         setSystemPrompt: persistentSetSystemPromptMock,
@@ -250,6 +253,7 @@ vi.mock('../../src/multi-agent/runtime-process.js', () => {
     CodexRuntimeProcess: vi.fn().mockImplementation((options) => {
       codexRuntimeProcessMock(options);
       return {
+        supportsNativeSubagents: true,
         prompt: persistentPromptMock,
         getSessionPolicyStatus: codexSessionPolicyStatusMock,
         setSystemPrompt: persistentSetSystemPromptMock,
@@ -3974,7 +3978,17 @@ Skills provide additional tools.
       expect(ownerPolicy.telegramFormatPolicy).toBe(TELEGRAM_FORMAT_GUIDE);
     });
 
-    it('TG-05 prepares the default Claude policy for the first background owner stimulus', async () => {
+    /**
+     * The delegation policy is only honest on a runner that HAS a native subagent the host
+     * can observe. `claude --print` runs the persona with `--tools ""` (no native Agent
+     * tool) and emits no subagent stream, so telling it to spawn one can only waste steps
+     * or produce a reported failure. Nothing replaces the omitted text: the turn's own
+     * result contract already states what must exist at the end.
+     */
+    async function runFirstBackgroundOwnerStimulus(backend: 'claude' | 'codex'): Promise<{
+      systemPrompt: string | undefined;
+      sessionPolicyFingerprint: string | undefined;
+    }> {
       const ownerContext = {
         ...createChatBotContext(),
         roleName: 'owner_console',
@@ -3982,7 +3996,7 @@ Skills provide additional tools.
       };
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
-        { backend: 'claude', systemPrompt: 'default owner policy', useCodeAct: false },
+        { backend, systemPrompt: 'default owner policy', useCodeAct: false },
         {},
         { mamaApi: createMockApi() }
       );
@@ -3995,10 +4009,38 @@ Skills provide additional tools.
         sessionPolicyRole: DEFAULT_ROLES.definitions.owner_console,
       });
 
-      const delivered = persistentPromptMock.mock.calls[0]?.[2]?.systemPrompt;
-      expect(delivered).toContain('default owner policy');
-      expect(delivered).toContain(OWNER_SUBAGENT_INSTRUCTIONS);
-      expect(delivered?.split(TELEGRAM_FORMAT_GUIDE)).toHaveLength(2);
+      const options = persistentPromptMock.mock.calls[0]?.[2];
+      return {
+        systemPrompt: options?.systemPrompt,
+        sessionPolicyFingerprint: options?.sessionPolicyFingerprint,
+      };
+    }
+
+    it('TG-05 prepares the default Claude policy for the first background owner stimulus', async () => {
+      const { systemPrompt } = await runFirstBackgroundOwnerStimulus('claude');
+      expect(systemPrompt).toContain('default owner policy');
+      // No native subagent on this runner -> no delegation policy, and no replacement prose.
+      expect(systemPrompt).not.toContain(OWNER_SUBAGENT_INSTRUCTIONS);
+      expect(systemPrompt).not.toMatch(/subagent/i);
+      expect(systemPrompt?.split(TELEGRAM_FORMAT_GUIDE)).toHaveLength(2);
+    });
+
+    it('TG-05 keeps the owner delegation policy on a runner that can spawn a native subagent', async () => {
+      const { systemPrompt } = await runFirstBackgroundOwnerStimulus('codex');
+      expect(systemPrompt).toContain('default owner policy');
+      expect(systemPrompt).toContain(OWNER_SUBAGENT_INSTRUCTIONS);
+    });
+
+    it('TG-05 pins the owner session policy fingerprint to the delegation policy the session carries', async () => {
+      const capable = await runFirstBackgroundOwnerStimulus('codex');
+      persistentPromptMock.mockClear();
+      const incapable = await runFirstBackgroundOwnerStimulus('claude');
+
+      // Deliberate: a runner never told to delegate must not be pinned to that text, or a
+      // later capability change would look like a compatible session.
+      expect(capable.sessionPolicyFingerprint).toContain(JSON.stringify(OWNER_SUBAGENT_INSTRUCTIONS));
+      expect(incapable.sessionPolicyFingerprint).toContain('"subagentPolicy":null');
+      expect(incapable.sessionPolicyFingerprint).not.toBe(capable.sessionPolicyFingerprint);
     });
 
     it('TG-05 leaves a default initial non-owner Claude policy unchanged', async () => {

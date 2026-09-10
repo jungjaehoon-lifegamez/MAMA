@@ -136,6 +136,10 @@ export class TelegramResponsePresenter {
         if (this.finalized || this.finalizing) {
           return;
         }
+        // Text that precedes a tool call is the model narrating its next step,
+        // not the answer. Drop it so the live message shows the tool status
+        // instead of leaking commentary; finalize() uses rawResponse regardless.
+        this.accumulatedText = '';
         this.toolStatus = `🔧 ${name}...`;
         this.scheduleEdit();
       },

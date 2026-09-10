@@ -277,6 +277,8 @@ export interface AgentLoopClient {
   readonly probesDurableSession?: boolean;
   /** AgentLoop owns one bounded cross-channel recovery journal. */
   readonly ownerRecoveryJournalEnabled?: boolean;
+  /** True when the ACTIVE model runner can spawn a native subagent the host observes. */
+  readonly supportsNativeSubagents?: boolean;
   /**
    * Run the agent loop with a prompt
    */
