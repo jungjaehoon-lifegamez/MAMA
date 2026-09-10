@@ -477,6 +477,13 @@ describe('interrupted native run does not poison replay', () => {
     ledger.confirm(ctx, 'native:bash', 'native_tool', { success: true });
     expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
   });
+  it('treats a native_tool row without a tool name as a real, unproven effect', () => {
+    const { ledger } = open();
+    ledger.begin(ctx, 'native:anon', 'native_tool', {});
+    ledger.markUnknown(ctx, 'native:anon', 'native_tool', 'completion observed without start');
+    expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(true);
+    expect(ledger.hasUnsettledEffects(occurrence)).toBe(true);
+  });
   it('stays blocked on a confirmed external send', () => {
     const { ledger } = open();
     ledger.begin(ctx, 'native-run:abc', 'native_run', { admitted: true });
