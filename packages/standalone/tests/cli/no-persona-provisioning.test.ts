@@ -12,9 +12,11 @@ import { join } from 'node:path';
 describe('boot creates no ~/.mama/personas directory', () => {
   let home: string;
   let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
 
   beforeEach(() => {
     originalHome = process.env.HOME;
+    originalUserProfile = process.env.USERPROFILE;
     home = mkdtempSync(join(tmpdir(), 'mama-no-personas-'));
     process.env.HOME = home;
     process.env.USERPROFILE = home;
@@ -27,7 +29,13 @@ describe('boot creates no ~/.mama/personas directory', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
-      process.env.USERPROFILE = originalHome;
+    }
+    if (originalUserProfile === undefined) {
+
+      delete process.env.USERPROFILE;
+    } else {
+
+      process.env.USERPROFILE = originalUserProfile;
     }
     const { resetConfigCache } = await import('../../src/cli/config/config-manager.js');
     resetConfigCache();
