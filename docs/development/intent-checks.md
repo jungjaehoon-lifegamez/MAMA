@@ -671,3 +671,8 @@
   즉 전달은 첫 라이브 증명, 내용은 실패 보고였다.
 - 수정: Agent tool_use는 전부 등록하고 launch 결과가 "Async agent launched"일 때만 배경 자식으로 유지, 동기 결과면 삭제. RED 1 → GREEN,
   관련 5파일 121 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.
+- 라이브 증명(21:20, local.6 = main dbe854f8): 오너 재질문 "8월 <client> 작업/FB 건수" → 부모가 Agent(bg=true) 위임, 21:20:31 "돌렸습니다"(19.6초) →
+  `holding run context` → 자식 kagemusha_overview/entities/messages 12회+ 정상 → 21:21:39 CLI 자율 턴 답 완성 → 21:21:40
+  `follow-up answer delivered to telegram:<owner-chat> (thread below, 765 chars)`. 질문→실답 89초. 내용: chatwork:<chatwork-room> 8월 123건 전량,
+  제출 약 23건/15항목, 클라 FB 13~17건, 스스로 "task_list 교차검증 미수행" 명시. 위임+전달 경로는 이제 오너 채팅에서 끝까지 증명됐다.
+  남은 판단 결함은 원장 미사용(모델 판단, procedure 교정 대상).
