@@ -207,7 +207,9 @@ describe('TelegramResponsePresenter', () => {
     });
   });
 
-  it('sends unparseable markup as literal text rather than dropping the answer', async () => {
+  it('closes unterminated markup rather than dropping or degrading the answer', async () => {
+    // Was pinned to whole-message literal text. Degradation is per span now: an
+    // unclosed tag is closed for the author instead of exposing every tag.
     const adapter = makeAdapter();
     const presenter = new TelegramResponsePresenter(adapter);
     await presenter.start();
@@ -215,7 +217,20 @@ describe('TelegramResponsePresenter', () => {
     await presenter.finalize('<b>unterminated answer');
 
     expect(adapter.edit).toHaveBeenCalledWith('message-1', {
-      text: '<b>unterminated answer',
+      text: 'unterminated answer',
+      entities: [{ type: 'bold', offset: 0, length: 19 }],
+    });
+  });
+
+  it('sends markup outside the subset as literal text rather than dropping the answer', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter);
+    await presenter.start();
+
+    await presenter.finalize('<div>block</div>');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', {
+      text: '<div>block</div>',
       entities: [],
     });
   });
