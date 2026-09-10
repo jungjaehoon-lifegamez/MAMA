@@ -35,6 +35,13 @@ bridge that read every mirrored platform regardless of what was declared.
   registry the reply used. Delegation itself is allowed again: the standing policy no longer
   tells a turn to end after spawning, and it no longer forbids a conversation from delegating.
   No separate delivery channel was added.
+- **A child the CLI launched async is tracked even without `run_in_background`.** Measured
+  2026-09-10 21:06 KST: the model omitted the flag, the CLI still answered "Async agent launched",
+  the flag-gated tracker never registered the child, the run context was closed when the parent
+  turn ended, and every `code_act` call the child made failed with
+  `CODE_ACT_CONTEXT_UNAVAILABLE`; the owner then received a follow-up saying the sandbox was
+  down. The launch result decides now: an async launch is tracked and holds the run context
+  until the child finishes; a synchronous result drops the entry.
 - **The `kagemusha_tasks` read tool is gone.** Kagemusha's task cards are the owner's personal
   work, derived from the same raw sources MAMA already reads; the tool described them as
   "READ-ONLY project-task truth" and the board brief told every turn to read them first. Measured
