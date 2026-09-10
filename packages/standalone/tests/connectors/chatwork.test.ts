@@ -320,4 +320,38 @@ describe('ChatworkConnector', () => {
       expect(await connector.authenticate()).toBe(false);
     });
   });
+
+  describe('poll — shared-token safety', () => {
+    it('requests force=1 so another reader on the same token cannot consume messages first', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue([]) });
+      vi.stubGlobal('fetch', mockFetch);
+      const connector = new ChatworkConnector(
+        makeConfig({ channels: { '12345': { role: 'hub', name: 'project' } } })
+      );
+      await connector.init();
+      await connector.poll(new Date(0));
+      expect(String(mockFetch.mock.calls[0]?.[0])).toContain('/rooms/12345/messages?force=1');
+    });
+
+    it('does not re-emit messages on the next poll even though force=1 returns the same window again', async () => {
+      const batch = [
+        makeChatworkMessage({ message_id: '1001', send_time: 1704067201 }),
+        makeChatworkMessage({ message_id: '1002', send_time: 1704067202 }),
+      ];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(batch) })
+      );
+      const connector = new ChatworkConnector(
+        makeConfig({ channels: { '12345': { role: 'hub', name: 'project' } } })
+      );
+      await connector.init();
+      const first = await connector.poll(new Date(0));
+      const second = await connector.poll(new Date(0));
+      expect(first).toHaveLength(2);
+      expect(second).toHaveLength(0);
+    });
+  });
 });

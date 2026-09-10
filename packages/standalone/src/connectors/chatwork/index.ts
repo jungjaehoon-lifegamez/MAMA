@@ -36,10 +36,13 @@ export class ChatworkConnector implements IConnector {
 
   /**
    * Per-room last seen message ID for incremental polling.
-   * NOTE: The Chatwork API has no cursor-based pagination. The `force=0` mode
-   * returns messages since the server-tracked read cursor (up to 100 per call).
-   * We additionally track the last seen message_id client-side so we can skip
-   * already-processed messages on the first poll after restart.
+   * NOTE: The Chatwork API has no cursor-based pagination. `force=0` returns only
+   * messages the SERVER has not yet handed to this token — a read cursor shared by
+   * every reader of the token. Measured live 2026-09-10: a second poller on the same
+   * token (30 s cadence vs our 5 min) consumed the cursor first and this connector
+   * saw ~1 message/day while the rooms carried ~30/day. So we ask for `force=1`
+   * (the latest 100 regardless of read state) and dedupe client-side with the
+   * `since` timestamp plus this per-room last seen message_id.
    * Limitation: if a room receives >100 messages between polls, the oldest
    * messages in that batch will be missed — this is a Chatwork API constraint.
    */
@@ -105,13 +108,11 @@ export class ChatworkConnector implements IConnector {
       if (channelCfg.role === 'ignore') continue;
 
       try {
-        // Use force=0 to rely on the server-side read cursor rather than
-        // force-fetching all messages. This avoids clobbering the server cursor
-        // and correctly returns only new messages since the last acknowledged read.
-        // Limitation: up to 100 messages per call — busy rooms may drop messages
-        // between polls if the interval is too long relative to message volume.
+        // force=1: the latest 100 messages independent of the server-side read cursor,
+        // which any other reader of this token would otherwise consume first. New-ness
+        // is decided below by `since` and the per-room last seen message_id.
         const lastMsgId = this.lastMessageIds.get(roomId);
-        const res = await fetch(`${this.baseUrl}/rooms/${roomId}/messages?force=0`, {
+        const res = await fetch(`${this.baseUrl}/rooms/${roomId}/messages?force=1`, {
           headers: { 'X-ChatWorkToken': this.token },
         });
 

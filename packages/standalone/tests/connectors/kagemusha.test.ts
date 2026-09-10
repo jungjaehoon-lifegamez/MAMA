@@ -273,4 +273,114 @@ describe('KagemushaConnector', () => {
       expect(await connector.authenticate()).toBe(false);
     });
   });
+
+  describe('poll — configured channels declare what is read', () => {
+    function createTasksTable(db: Database): void {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL,
+          priority TEXT NOT NULL,
+          deadline INTEGER,
+          source_room TEXT,
+          auto_created INTEGER NOT NULL DEFAULT 0,
+          confirmed INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+    }
+    function insertMessage(
+      db: Database,
+      channel: string,
+      channelId: string,
+      content: string
+    ): void {
+      db.prepare(
+        `INSERT INTO channel_messages (channel, channel_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(channel, channelId, 'user-a', 'user', content, 1705309200000);
+    }
+    function insertTask(db: Database, sourceRoom: string): void {
+      db.prepare(
+        `INSERT INTO tasks (title, status, priority, deadline, source_room, auto_created, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`
+      ).run('card', 'pending', 'normal', null, sourceRoom, 1705309200000, 1705309200000);
+    }
+    const since = new Date('2024-01-01T00:00:00.000Z');
+
+    it('emits only platforms present in the configured channel keys', async () => {
+      const db = createTestDb(tempDbPath);
+      insertMessage(db, 'kakao', 'kakao:room-a', 'from kakao');
+      insertMessage(db, 'slack', 'slack:C1', 'from the slack mirror');
+      db.close();
+      const connector = new KagemushaConnector(
+        makeConfig({ channels: { 'kakao:room-a': { role: 'hub' } } }),
+        tempDbPath
+      );
+      await connector.init();
+      const items = await connector.poll(since);
+      expect(items.map((i) => i.source)).toEqual(['kakao']);
+      await connector.dispose();
+    });
+
+    it('does not emit task cards unless a kagemusha-tasks channel is configured', async () => {
+      const db = createTestDb(tempDbPath);
+      createTasksTable(db);
+      insertTask(db, 'kakao:room-a');
+      db.close();
+      const connector = new KagemushaConnector(
+        makeConfig({ channels: { 'kakao:room-a': { role: 'hub' } } }),
+        tempDbPath
+      );
+      await connector.init();
+      const items = await connector.poll(since);
+      expect(items.filter((i) => i.type === 'kanban_card')).toHaveLength(0);
+      await connector.dispose();
+    });
+
+    it('emits task cards when a kagemusha-tasks channel is configured', async () => {
+      const db = createTestDb(tempDbPath);
+      createTasksTable(db);
+      insertTask(db, 'kakao:room-a');
+      db.close();
+      const connector = new KagemushaConnector(
+        makeConfig({ channels: { 'kagemusha-tasks:kakao:room-a': { role: 'truth' } } }),
+        tempDbPath
+      );
+      await connector.init();
+      const items = await connector.poll(since);
+      expect(items.filter((i) => i.type === 'kanban_card')).toHaveLength(1);
+      await connector.dispose();
+    });
+
+    it('keeps emitting every platform when no channels are configured (legacy contract)', async () => {
+      const db = createTestDb(tempDbPath);
+      insertMessage(db, 'kakao', 'kakao:room-a', 'from kakao');
+      insertMessage(db, 'slack', 'slack:C1', 'from the slack mirror');
+      db.close();
+      const connector = new KagemushaConnector(makeConfig({ channels: {} }), tempDbPath);
+      await connector.init();
+      const items = await connector.poll(since);
+      expect(items).toHaveLength(2);
+      await connector.dispose();
+    });
+
+    it('pollBulk honours the same declaration', async () => {
+      const db = createTestDb(tempDbPath);
+      insertMessage(db, 'kakao', 'kakao:room-a', 'from kakao');
+      insertMessage(db, 'chatwork', 'chatwork:1', 'from the chatwork mirror');
+      db.close();
+      const connector = new KagemushaConnector(
+        makeConfig({ channels: { 'kakao:room-a': { role: 'hub' } } }),
+        tempDbPath
+      );
+      await connector.init();
+      const sources: string[] = [];
+      for await (const batch of connector.pollBulk(since)) {
+        sources.push(...batch.map((i) => i.source));
+      }
+      expect(sources).toEqual(['kakao']);
+      await connector.dispose();
+    });
+  });
 });
