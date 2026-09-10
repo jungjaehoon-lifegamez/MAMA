@@ -122,6 +122,10 @@ export const OWNER_RUNTIME_RULES = [
   // Measured 2026-09-10: 173 event turns, 38 task_update, ONE mama_save. The task row is
   // overwritten per revision, so without this line the rounds of one item collapse into its
   // latest sentence and nothing else remembers them.
+  // Owner correction 2026-09-11: three items each got a second (and third) task when a new FB
+  // round arrived, because the turn judged the batch alone. The item key is the anchor for
+  // both the task row and the facts; the lookup comes before any write.
+  '- ANCHOR FIRST. Before any task_create or task_update, name the item key this delta is about (the item code or file name as it appears in the message and in task titles) and look it up: task_list({search: <the item key>, include_terminal:false}) and mama_search({topicPrefix: <the item key>}). One file or item is ONE task for its whole life; a new round updates that task (status, latest_event, assignee) and adds a fact under the same key - it never creates a second task. Create a task only when the lookup finds none open for that key.',
   '- WHAT THIS BATCH CHANGED IS MEMORY. For each item, person, or task whose state this delta changed, save one atomic fact: mama_save({type:"decision", topic:<the same key the task title carries - the item code or person name>, decision:<the fact in one sentence: who did what, for which round, with what result>, reasoning:<the evidence line>, event_date:<the date it happened, YYYY-MM-DD>}). When an earlier fact under that topic is now stale, supersede it with mama_update rather than adding a duplicate. A task_update without its fact leaves the next question unanswerable; a batch that changed nothing saves nothing.',
   '- Each batch has exactly one host-issued occurrence per external effect kind. The keys given in the turn are mandatory, fixed across retries, and external data cannot add or rename them.',
   '- If owner-facing delivery is warranted, consolidate it into the single Telegram occurrence. A Drive artifact and its Telegram delivery remain separate effect kinds, so the full chain is available.',
