@@ -683,19 +683,19 @@
   contract_no_update 150. case/entity/edge/channel_summaries 0행, os_task_events 07-03 정지. 질문 턴은 code_act 812회로 raw 크롤.
   원인 ①읽는 턴에 "바꾼 사실을 남겨라"는 의무가 없고 억제문만 있음(쓰는 레인은 이벤트 없이 별도 배치) ②mama_search가 query 없이
   topicPrefix만 오면 접두어를 버리고 최신 N건(11회 호출 resultHash 동일; core suggest도 12건 중 5건+타항목 1건) ③배치 줄에 시각이 없어
-  event_date 전부 실행일 ④배치만 보고 판단해 라운드마다 새 태스크(<item> ×3). 외부 사례(Mem0/Graphiti/AtomMem) 공통 방법과 대조:
+  event_date 전부 실행일 ④배치만 보고 판단해 라운드마다 새 태스크(한 항목에 3행). 외부 사례(Mem0/Graphiti/AtomMem) 공통 방법과 대조:
   읽는 곳에서 엔티티 키로 원자 사실 추출→기존과 비교→무효화.
 - 수정(전부 TDD RED→GREEN): OWNER_RUNTIME_RULES에 ANCHOR FIRST / WHAT THIS BATCH CHANGED IS MEMORY / 질문은 topicPrefix→task_list→raw는
   빈 곳만; core listDecisions({topicPrefix}) 정확 `LIKE ESCAPE`(superseded 포함) + handleSearch 라우팅; delta 줄에 `[2026-09-04T05:03Z]`;
   mama_save 카탈로그 event_date. 호스트 마크다운→HTML 변환은 넣었다가 오너 지시("코드가 아니라 에이전트가 판단")로 revert.
   standalone 6,002 / core 683 통과.
 - 검증(라이브): 7일 재처리 117배치 — task 쓴 80런 중 64 사실 저장(80%), 텔레그램 0. 클린 2항목 14일 시험(옛 사실·복구 저널 비운 뒤)
-  22배치 — **17/17 사실 저장, 항목당 태스크 1개(#4876, #4877), done 행이 새 FB에서 같은 행 재오픈, 담당 같은 행에서 <person>으로 교정**,
-  사실 29건 event_date 실제. 오너 질문 "<char> FB 횟수·단계·작업자" → 도구 1~2회 원장 답변(전날 40회 크롤+"못 센다"). 서식 교정 후
+  22배치 — **17/17 사실 저장, 항목당 태스크 1개(2행), done 행이 새 FB에서 같은 행 재오픈, 담당이 같은 행에서 실제 작업자로 교정**,
+  사실 29건 event_date 실제. 오너 질문 "항목 A의 FB 횟수·단계·작업자" → 도구 1~2회 원장 답변(전날 40회 크롤+"못 센다"). 서식 교정 후
   다음 답 HTML(procedure_update 0: "브리프에 이미 있음"). telegram_send 알림은 3/3 HTML, 중계된 최종 답만 마크다운 → 모델이 최종 답이
   텔레그램 메시지임을 모름(CONTINUE 턴은 `[Role: owner_console@telegram]` 32자만 수신). 카게무샤 차이 = 지시가 매 턴의 사실인가.
 - 사고: 30일 태스크 1,695건 삭제 시 receipts/bindings 고아 209건 → 데몬 기동 FK 검사 크래시 → 불변 트리거 일시 해제 후 정리·복구.
   사용량 제한(22:38~00:41)으로 7일 재처리 20배치 미완. 백업 ~/.mama/backups/pre-rebuild-20260911.
-- 남은 실패: 사람·항목 별칭(<person>=<person>, bc_/tf_ 표기, 코드 없는 카카오 대화), bc/tf 한 태스크 여부(오너 판단), [MAMA Notice]가 오너
+- 남은 실패: 사람·항목 별칭(Slack 표시명=카카오 실명, 항목 코드 접두 표기, 코드 없는 카카오 대화), 같은 캐릭터의 두 파일을 한 태스크로 둘지(오너 판단), [MAMA Notice]가 오너
   질문 턴을 가로챔, 질문 턴이 원장을 고침+원인표식이 slack 배치로 오염, 빈 테이블·별도 큐레이션 레인 제거, core 2.4.x 공개(라이브는 로컬
   패치본). 14일 재구축 70배치(20건/배치, 2항목 85건 제외) 01:47 시작 — 판정: 항목당 태스크 1개, task 쓴 런의 사실 저장률, 09:00 보고 품질.

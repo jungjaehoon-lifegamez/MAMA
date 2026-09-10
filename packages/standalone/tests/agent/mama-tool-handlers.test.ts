@@ -230,12 +230,12 @@ describe('MAMA search handler option threading', () => {
     const api = createLegacyApi();
     const scopes = [{ kind: 'project' as const, id: 'alpha' }];
 
-    await handleSearch(api, { topicPrefix: '<item>', limit: 30, scopes });
+    await handleSearch(api, { topicPrefix: 'item_0001', limit: 30, scopes });
 
     expect(api.listDecisions).toHaveBeenCalledWith({
       limit: 30,
       scopes,
-      topicPrefix: '<item>',
+      topicPrefix: 'item_0001',
     });
     expect(api.suggest).not.toHaveBeenCalled();
   });
