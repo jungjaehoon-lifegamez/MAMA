@@ -5,10 +5,10 @@
  */
 
 import { readFile, mkdir, open, rename, unlink } from 'node:fs/promises';
-import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 
 import type { MAMAConfig, MultiAgentConfig, AgentPersonaConfig, RoleConfig } from './types.js';
@@ -937,39 +937,16 @@ function getLegacySelfPacedAgentDefaults(): Record<string, Omit<AgentPersonaConf
 }
 
 /**
- * Provision default persona templates and multi-agent config on first start.
+ * Provision default multi-agent config on first start.
  *
- * - Copies builtin persona .md files from templates/personas/ to ~/.mama/personas/
- *   only if the personas directory does not yet exist.
  * - Injects a default (disabled) multi_agent section into config.yaml
  *   only if one is not already present.
+ *
+ * Personas are retired for the owner runtime: nothing is written into
+ * ~/.mama/personas here.
  */
 export async function provisionDefaults(): Promise<void> {
-  const mamaHome = getMAMAHome();
-  const personasDir = join(mamaHome, 'personas');
-
-  // Resolve templates dir relative to this file's compiled location
-  // In dist: dist/cli/config/config-manager.js → ../../../templates/personas
-  const templatesDir = resolve(__dirname, '../../../templates/personas');
-
-  // 1. Provision personas directory with builtin templates (file-level: copies missing files only)
-  if (!existsSync(personasDir)) {
-    mkdirSync(personasDir, { recursive: true });
-  }
-  if (existsSync(templatesDir)) {
-    const copied: string[] = [];
-    for (const file of readdirSync(templatesDir)) {
-      if (file.endsWith('.md') && !existsSync(join(personasDir, file))) {
-        copyFileSync(join(templatesDir, file), join(personasDir, file));
-        copied.push(file);
-      }
-    }
-    if (copied.length > 0) {
-      console.log(`✓ Persona templates installed: ${copied.join(', ')}`);
-    }
-  }
-
-  // 2. Inject default multi_agent config if missing
+  // Inject default multi_agent config if missing
   if (configExists()) {
     const config = await loadConfig();
     if (!config.multi_agent) {
