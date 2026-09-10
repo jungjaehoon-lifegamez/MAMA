@@ -660,20 +660,20 @@
 
 ## 2026-09-10 21:06 — 첫 follow-up 전달 실측 + 플래그 없는 비동기 자식 추적 누락
 
-- 오너 새 질문 "8월 미스트 작업 갯수와 각 프로젝트별 피드백 갯수". 부모: kagemusha_overview/entities, task_list(search 미스트, 50건) 호출 후
+- 오너 새 질문 "8월 거래처 A 작업 갯수와 각 프로젝트별 피드백 갯수". 부모: kagemusha_overview/entities, task_list(search 거래처A, 50건) 호출 후
   "task_list는 kagemusha 참고자료 기반이라 8월 집계에 부정확" 이라고 판단해 원문 로그 집계를 Agent에 위임(run_in_background 미지정) → 3초 뒤
-  "백그라운드로 돌렸습니다"로 턴 종료. 이 판단은 오류다: 원장에는 8월 생성 미스트 태스크 18건(done 11, cancelled 5, pending 2)이 있었고,
+  "백그라운드로 돌렸습니다"로 턴 종료. 이 판단은 오류다: 원장에는 8월 생성 거래처 A 태스크 18건(done 11, cancelled 5, pending 2)이 있었고,
   저장된 procedure "task-status-authority-task-list-over-kagemusha"는 정반대(task_list가 기준, kagemusha가 참고)로 적혀 있다. 모델이 교훈을 뒤집어 적용했다.
-  FB 건수는 os_task_events 8월 미스트 FB 이벤트 0건이라 원문이 필요했던 것은 맞다.
+  FB 건수는 os_task_events 8월 거래처 A FB 이벤트 0건이라 원문이 필요했던 것은 맞다.
 - 기계 결함: CLI는 플래그 없이도 "Async agent launched"로 비동기 실행했는데 래퍼는 run_in_background===true만 추적 → 미추적 자식 →
   부모 턴 종료 시 run context 닫힘 → 자식 code_act 전부 CODE_ACT_CONTEXT_UNAVAILABLE → 자식 실패 → 미추적 알림 뒤 CLI 자체 턴이 "샌드박스 다운"
-  보고 작성. 새 배선은 작동: `unrequested CLI turn ended … handing its text` → `follow-up answer delivered to telegram:7026976631 (481 chars)`.
+  보고 작성. 새 배선은 작동: `unrequested CLI turn ended … handing its text` → `follow-up answer delivered to telegram:<owner-chat> (481 chars)`.
   즉 전달은 첫 라이브 증명, 내용은 실패 보고였다.
 - 수정: Agent tool_use는 전부 등록하고 launch 결과가 "Async agent launched"일 때만 배경 자식으로 유지, 동기 결과면 삭제. RED 1 → GREEN,
   관련 5파일 121 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.
-- 라이브 증명(21:20, local.6 = main dbe854f8): 오너 재질문 "8월 미스트 작업/FB 건수" → 부모가 Agent(bg=true) 위임, 21:20:31 "돌렸습니다"(19.6초) →
+- 라이브 증명(21:20, local.6 = main dbe854f8): 오너 재질문 "8월 거래처 A 작업/FB 건수" → 부모가 Agent(bg=true) 위임, 21:20:31 "돌렸습니다"(19.6초) →
   `holding run context` → 자식 kagemusha_overview/entities/messages 12회+ 정상 → 21:21:39 CLI 자율 턴 답 완성 → 21:21:40
-  `follow-up answer delivered to telegram:7026976631 (thread below, 765 chars)`. 질문→실답 89초. 내용: chatwork:202415824 8월 123건 전량,
+  `follow-up answer delivered to telegram:<owner-chat> (thread below, 765 chars)`. 질문→실답 89초. 내용: chatwork:<room> 8월 123건 전량,
   제출 약 23건/15항목, 클라 FB 13~17건, 스스로 "task_list 교차검증 미수행" 명시. 위임+전달 경로는 이제 오너 채팅에서 끝까지 증명됐다.
   남은 판단 결함은 원장 미사용(모델 판단, procedure 교정 대상).
 
