@@ -34,6 +34,7 @@ import {
   type SessionPolicyStatus,
 } from './model-runner.js';
 import { runContextRegistry, type RunContextRegistry } from './code-act/run-context-registry.js';
+import { DELEGATED_ATTEMPT_TIMEOUT_MS } from '../operator/workorder-consumer.js';
 import {
   completedCodeActMutationWasObserved,
   completedCodeActTerminalError,
@@ -53,6 +54,9 @@ export type { ClaudeCLIWrapperOptions, PromptCallbacks, PromptResult, ToolUseBlo
  * Implements the same interface but uses persistent CLI processes under the hood.
  * This enables efficient multi-turn conversations without re-sending system prompts.
  */
+/** How long a new turn waits for a live background child: the delegated attempt's own bound. */
+const LIVE_CHILD_WAIT_MS = DELEGATED_ATTEMPT_TIMEOUT_MS;
+
 export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
   readonly backendType = 'claude' as const;
 
@@ -203,8 +207,13 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
         const signal = ownerSignal
           ? AbortSignal.any([ownerSignal, attemptController!.signal])
           : attemptController!.signal;
-        // A lease held open for a background child must not block this turn's own: the new
-        // turn supersedes it, and saying so is better than a lease conflict.
+        // A live background child holds this process's ONLY run context (one lease per
+        // context key). Starting another turn now would run the child under the NEW turn's
+        // envelope and attempt id - measured 2026-09-10: board#4822's child published under
+        // board#4821's run, #4822 never verified, and a chat turn would have lent the child
+        // its send grant. Wait for the child; the bound is the one the consumer already gives a
+        // delegated attempt, and passing it is logged before the lease is superseded.
+        await this.waitForLiveBackgroundAgents(proc, contextKey);
         this.releaseDeferredLease(contextKey, 'superseded by a new turn');
         leaseId = this.contextRegistry.register(contextKey, {
           ...options.toolExecutionContext,
@@ -338,6 +347,45 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
   }
 
   /** Close a lease held past its turn, once nothing is still running under it. */
+  /**
+   * Resolve once the process reports no live background child (a completion event, the
+   * autonomous turn's result, or the process closing all report through `subagent`), or
+   * after `LIVE_CHILD_WAIT_MS`, in which case the caller supersedes the lease loudly.
+   */
+  private waitForLiveBackgroundAgents(
+    proc: PersistentClaudeProcess,
+    contextKey: string
+  ): Promise<void> {
+    if (!proc.hasLiveBackgroundAgents()) return Promise.resolve();
+    const startedAt = Date.now();
+    console.log(
+      `[PersistentAdapter] waiting for a live background agent before the next turn (${contextKey})`
+    );
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | null = null;
+      const done = (reason: string): void => {
+        proc.off('subagent', onEvent);
+        proc.off('autonomousTurnResult', onEvent);
+        proc.off('idle', onEvent);
+        if (timer) clearTimeout(timer);
+        console.log(
+          `[PersistentAdapter] background agent wait over: ${reason} after ${Date.now() - startedAt}ms`
+        );
+        resolve();
+      };
+      const onEvent = (): void => {
+        if (!proc.hasLiveBackgroundAgents()) done('child finished');
+      };
+      proc.on('subagent', onEvent);
+      proc.on('autonomousTurnResult', onEvent);
+      proc.on('idle', onEvent);
+      timer = setTimeout(
+        () => done(`bound of ${LIVE_CHILD_WAIT_MS}ms passed; superseding the child's lease`),
+        LIVE_CHILD_WAIT_MS
+      );
+    });
+  }
+
   private releaseDeferredLease(
     contextKey: string | null,
     reason: string,
