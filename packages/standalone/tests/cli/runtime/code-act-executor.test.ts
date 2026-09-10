@@ -227,9 +227,9 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
     expect(result).toMatchObject({
       success: true,
       value: {
+        // Ranked search: the exact-name match leads; sibling kagemusha_* tools may follow.
         found: {
-          tools: [expect.objectContaining({ name: 'kagemusha_tasks' })],
-          nextCursor: null,
+          tools: expect.arrayContaining([expect.objectContaining({ name: 'kagemusha_tasks' })]),
         },
         described: {
           contracts: [expect.stringContaining('declare function kagemusha_tasks')],
@@ -237,6 +237,8 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
         direct: 'function',
       },
     });
+    const found = (result as { value: { found: { tools: Array<{ name: string }> } } }).value.found;
+    expect(found.tools[0]?.name).toBe('kagemusha_tasks');
   });
 
   it('TG-04 rejects the disabled trusted owner surface and an HTTP role upgrade', async () => {
