@@ -804,13 +804,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     | undefined;
 
   if (wikiAgentConfigured && wikiConfig?.enabled && wikiConfig.vaultPath) {
-    const { ensureWikiPersona } = await import('../../multi-agent/wiki-agent-persona.js');
     const { ObsidianWriter } = await import('../../wiki/obsidian-writer.js');
 
-    ensureWikiPersona();
     const obsWriter = new ObsidianWriter(wikiConfig.vaultPath, wikiConfig.wikiDir || 'wiki');
     obsWriter.ensureDirectories();
-    routesLogger.debug(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
+    routesLogger.debug(`[Wiki Agent] vault: ${obsWriter.getWikiPath()}`);
 
     // Wire Obsidian vault path for CLI tool. The wiki directory itself is what
     // gets registered as an Obsidian vault (agent-facing paths like daily/... are
