@@ -1422,10 +1422,12 @@ const DELEGATED_TURN_SHAPE =
 /**
  * The delegated-shape lines for a turn, or none when the runner cannot delegate.
  *
+ * An omitted capability reads as incapable, matching `runnerSupportsNativeSubagents()`: a
+ * runner that never declared it cannot enter `delegated`, so it must not be told to delegate.
  * `.filter(Boolean)` would hide a typo; the empty array is explicit and the caller spreads it.
  */
 function delegatedShapeLines(options?: BoardTurnOptions): readonly string[] {
-  return options?.supportsNativeSubagents === false ? [] : [DELEGATED_TURN_SHAPE];
+  return options?.supportsNativeSubagents === true ? [DELEGATED_TURN_SHAPE] : [];
 }
 
 function buildTurnKindBody(

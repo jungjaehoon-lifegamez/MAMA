@@ -483,7 +483,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         tokensUsed: 43_200,
         briefHash: createHash('sha256')
           .update(
-            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+            [
+              'You are a test worker. Do the work.',
+              buildTurnKindSection('board', undefined, { supportsNativeSubagents: true }),
+            ].join('\n\n')
           )
           .digest('hex')
           .slice(0, 16),
@@ -832,7 +835,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
         workOrderId: wo.id,
         briefHash: createHash('sha256')
           .update(
-            ['You are a test worker. Do the work.', buildTurnKindSection('board')].join('\n\n')
+            [
+              'You are a test worker. Do the work.',
+              buildTurnKindSection('board', undefined, { supportsNativeSubagents: true }),
+            ].join('\n\n')
           )
           .digest('hex')
           .slice(0, 16),
@@ -1410,6 +1416,15 @@ describe('transient upstream model errors are named, not anonymous digests', () 
           );
         }
       });
+    });
+
+    it('treats an omitted capability as incapable, matching runnerSupportsNativeSubagents()', () => {
+      for (const kind of ['board', 'wiki', 'temporal'] as const) {
+        const omitted = buildTurnKindSection(kind);
+        const incapable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false });
+        expect(omitted).toBe(incapable);
+        expect(omitted).not.toContain('Expected shape: delegate');
+      }
     });
 
     it('keeps the two turn-kind sections that were already outcome contracts', () => {
