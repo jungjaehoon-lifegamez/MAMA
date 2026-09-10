@@ -15,7 +15,7 @@ import { countTokens } from './token-estimator.js';
  * A named layer of the system prompt with a priority level.
  *
  * Priority levels:
- * - 1: CLAUDE.md, SOUL.md, IDENTITY.md (NEVER truncate)
+ * - 1: CLAUDE.md (NEVER truncate)
  * - 2: Gateway Tools (extreme truncation only)
  * - 3: Context Prompt (regeneratable)
  * - 4: AGENTS.md (can re-read from file)
@@ -30,7 +30,7 @@ export interface PromptLayer {
   /**
    * Priority level (1 = highest / never truncate, 6 = lowest / drop first).
    *
-   * 1 = CLAUDE.md, SOUL.md, IDENTITY.md (NEVER truncate)
+   * 1 = CLAUDE.md (NEVER truncate)
    * 2 = Gateway Tools (extreme only)
    * 3 = Context Prompt (regeneratable)
    * 4 = AGENTS.md (can re-read)

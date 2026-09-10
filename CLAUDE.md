@@ -414,7 +414,7 @@ MAMA OS agents must **operate only within the `.mama` scope**. Global settings m
 | `--plugin-dir`      | `~/.mama/.empty-plugins` (empty directory) | Removing it causes global plugin skills to be injected redundantly every turn                                                                                                                                                                                                                                                                                                              |
 | `--setting-sources` | `project,local` (excludes user)            | Including `user` loads enabledPlugins from `~/.claude/settings.json`                                                                                                                                                                                                                                                                                                                       |
 | `--system-prompt`   | First turn only (persistent)               | No need for repeated injection in session persistence mode                                                                                                                                                                                                                                                                                                                                 |
-| `--tools`           | `""` for the main persona (gateway-only)   | Native built-ins cross with text-parsed gateway tools (hallucinated tool calls, unverifiable reports). Owner escape hatch: `MAMA_PERSONA_NATIVE_TOOLS=1`. Since 2026-09-04 the owner's 1:1 CHAT turn holds the GATEWAY `Bash`/`Write` (executor-run: workspace cwd, destructive guard, 60s) — that is not a native tool and does not change this flag; unattended turns block both by name |
+| `--tools`           | `Agent` on claude, `""` elsewhere          | The claude persona is spawned with `builtinTools: 'Agent'` (native subagents only); every other backend gets `""`. See `agent-loop-init.ts`. Broader native built-ins cross with text-parsed gateway tools (hallucinated tool calls, unverifiable reports). Owner escape hatch: `MAMA_PERSONA_NATIVE_TOOLS=1` (or `=true`) drops the restriction entirely. Since 2026-09-04 the owner's 1:1 CHAT turn holds the GATEWAY `Bash`/`Write` (executor-run: workspace cwd, destructive guard, 60s) — that is not a native tool and does not change this flag; unattended turns block both by name |
 
 **Prohibited actions:**
 
@@ -423,7 +423,7 @@ MAMA OS agents must **operate only within the `.mama` scope**. Global settings m
 - Adding `user` to `--setting-sources` (loads global plugins)
 - Adding the `--no-session-persistence` flag
 - Removing the `.git/HEAD` creation logic
-- Re-enabling native built-in tools for the main persona in source (env flag only)
+- Widening the main persona's native built-in tools in source beyond `Agent` (env flag `MAMA_PERSONA_NATIVE_TOOLS` only)
 
 **Reason:** MAMA already includes persona + skills + gateway tools in `--system-prompt`. If Claude Code CLI reloads the same content from `~/CLAUDE.md` and global plugins, **thousands of tokens are wasted on duplication every turn**.
 

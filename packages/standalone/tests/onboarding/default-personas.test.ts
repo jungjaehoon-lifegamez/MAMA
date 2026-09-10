@@ -28,26 +28,26 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('Story ONB-7 / TG-03 / TG-04: init ships default operator personas', () => {
+describe('Story ONB-7 / TG-03 / TG-04: init ships no persona files', () => {
   describe('AC #1: initialization needs no personality ritual', () => {
-    it('creates the three runtime persona files and no bootstrap script', async () => {
+    it('writes no persona files and no bootstrap script', async () => {
       await initCommand({ force: true, skipAuthCheck: true, backend: 'codex' });
 
-      for (const name of ['SOUL.md', 'IDENTITY.md', 'USER.md']) {
-        const path = join(mamaHome, name);
-        expect(existsSync(path)).toBe(true);
-        expect(readFileSync(path, 'utf8')).not.toMatch(/personality|emoji|quiz|ritual|woke up/i);
+      for (const name of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'BOOTSTRAP.md']) {
+        expect(existsSync(join(mamaHome, name))).toBe(false);
       }
-      expect(existsSync(join(mamaHome, 'BOOTSTRAP.md'))).toBe(false);
+      // The one prompt input the runtime does read still gets created.
+      expect(existsSync(join(mamaHome, 'CLAUDE.md'))).toBe(true);
     });
 
-    it('preserves an owner-edited persona even during forced config initialization', async () => {
+    it('never deletes or rewrites a persona file left by an older install', async () => {
       mkdirSync(mamaHome, { recursive: true });
       const soulPath = join(mamaHome, 'SOUL.md');
       writeFileSync(soulPath, '# Owner edited soul\n');
 
       await initCommand({ force: true, skipAuthCheck: true, backend: 'codex' });
 
+      expect(existsSync(soulPath)).toBe(true);
       expect(readFileSync(soulPath, 'utf8')).toBe('# Owner edited soul\n');
     });
   });

@@ -17,11 +17,6 @@ import {
   loadConfig,
   saveConfig,
 } from '../config/config-manager.js';
-import {
-  DEFAULT_IDENTITY,
-  DEFAULT_SOUL,
-  DEFAULT_USER,
-} from '../../onboarding/bootstrap-template.js';
 import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { hasPersistedClineCredential } from '../../agent/cline-cli-adapter.js';
 import { emitBackendModelWarnings, rescopeConfigModels } from '../../agent/backend-model-policy.js';
@@ -331,29 +326,6 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       `\nFailed to create CLAUDE.md: ${error instanceof Error ? error.message : String(error)}\n`
     );
     process.exit(1);
-  }
-
-  const defaultPersonas = [
-    { name: 'SOUL.md', content: DEFAULT_SOUL },
-    { name: 'IDENTITY.md', content: DEFAULT_IDENTITY },
-    { name: 'USER.md', content: DEFAULT_USER },
-  ];
-  process.stdout.write('Creating default runtime personas...\n');
-  for (const persona of defaultPersonas) {
-    const personaPath = expandPath(`~/.mama/${persona.name}`);
-    if (existsSync(personaPath)) {
-      console.log(`  ${persona.name} (preserved)`);
-      continue;
-    }
-    try {
-      await writeFile(personaPath, persona.content, 'utf-8');
-      console.log(`  ${persona.name} ✓`);
-    } catch (error) {
-      console.error(
-        `\nFailed to create ${persona.name}: ${error instanceof Error ? error.message : String(error)}\n`
-      );
-      process.exit(1);
-    }
   }
 
   // Copy backend-specific AGENTS.md templates
