@@ -641,3 +641,33 @@
   치환 또는 삭제. 남은 언급은 legacy 브리프 스트리핑 샘플 문자열뿐. eslint·tsc 0. 전체 스위트·빌드 진행 중.
 - 남은 것: 49초 중 도구 시간은 3초, 나머지는 새 세션 기동(4초)과 모델 생성(33초). 답 첫 줄에 영어 내부 서술 누출. UTC 시각 표기.
   이건 정책이 아니라 모델 응답 품질 영역이며 procedure 교정 대상.
+
+## 2026-09-10 21:0x — 오너 정정: 위임이 아니라 전달이 문제다 → 늦은 답을 질문 채널로 보내는 배선
+
+- 오너: "위임이 왜 문제지? 하위에이전트를 써도 답을 못하는 게 문제 아냐?" 맞다. 20:01 자식은 11초 만에 근거를 모았고 CLI는 답을 썼다.
+  직전의 "대화에서 위임 금지"는 증상 회피였고 행동 금지를 쌓는 방식이라 철회한다. 시간도 위임 탓이 아니었다(위임 없는 20:25도 49초, 도구 3초).
+- 수정(소스): PromptCallbacks에 onFollowUp 추가. 래퍼는 자식을 띄운 요청의 sink를 BackgroundAgentState에 보관하고 자율 턴 종료 시
+  그 텍스트를 넘긴다. 추적되지 않은 알림 뒤의 요청 없는 CLI 턴(손자 완료, 20:19 실측)은 마지막으로 sink를 낸 요청에 넘긴다
+  (미완 host tool 대기 턴은 기존 경로 유지). MessageRouter는 기존 GatewayRegistry(답장에 쓰던 것, 지금까지 no-op setter)로
+  같은 source/channelId에 보낸다. 별도 연결 없음. 상시 정책은 "도움이 되면 위임하라, 늦은 답도 질문 채널로 간다"로 되돌림.
+- TDD: RED 3(래퍼 자율턴 sink, 래퍼 untracked, 라우터 전달) → GREEN. 프로세스 풀 테스트 1건 회귀(요청 없이 result를 넣는 합성 상태)를
+  조건 축소(host tool 대기 중이면 기존 경로)로 해결. agent+gateways 121파일 2,241 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.
+- 판정 기준(라이브): 오너 질문에 위임이 일어나도 (1) 첫 답이 "시작했다"뿐이면 (2) 자식 완료 후 실제 답이 같은 채팅에 도착해야 한다.
+  로그 `follow-up answer delivered to telegram:<chat>`가 증거.
+- 라이브 실측(21:03, local.5, 같은 세 질문): Agent 스폰 0(모델 선택), 도구 9회 — mama_search, task_list 3, schedule_upcoming, code_act 5(trello_search·kagemusha_messages 포함),
+  33초, 같은 턴에 세 답 전달. kagemusha_tasks 미사용, 근거는 kakao 시각·Trello 실사·task_list #4711/#4494/#4536/#4798. 20:25 대비 49→33초.
+  이번 턴은 위임이 없어 follow-up 전달 배선은 단위 테스트로만 검증된 상태다(라이브 증거는 다음 위임 사례에서). 남은 품질 결함: 시각이 UTC 표기.
+
+## 2026-09-10 21:06 — 첫 follow-up 전달 실측 + 플래그 없는 비동기 자식 추적 누락
+
+- 오너 새 질문 "8월 미스트 작업 갯수와 각 프로젝트별 피드백 갯수". 부모: kagemusha_overview/entities, task_list(search 미스트, 50건) 호출 후
+  "task_list는 kagemusha 참고자료 기반이라 8월 집계에 부정확" 이라고 판단해 원문 로그 집계를 Agent에 위임(run_in_background 미지정) → 3초 뒤
+  "백그라운드로 돌렸습니다"로 턴 종료. 이 판단은 오류다: 원장에는 8월 생성 미스트 태스크 18건(done 11, cancelled 5, pending 2)이 있었고,
+  저장된 procedure "task-status-authority-task-list-over-kagemusha"는 정반대(task_list가 기준, kagemusha가 참고)로 적혀 있다. 모델이 교훈을 뒤집어 적용했다.
+  FB 건수는 os_task_events 8월 미스트 FB 이벤트 0건이라 원문이 필요했던 것은 맞다.
+- 기계 결함: CLI는 플래그 없이도 "Async agent launched"로 비동기 실행했는데 래퍼는 run_in_background===true만 추적 → 미추적 자식 →
+  부모 턴 종료 시 run context 닫힘 → 자식 code_act 전부 CODE_ACT_CONTEXT_UNAVAILABLE → 자식 실패 → 미추적 알림 뒤 CLI 자체 턴이 "샌드박스 다운"
+  보고 작성. 새 배선은 작동: `unrequested CLI turn ended … handing its text` → `follow-up answer delivered to telegram:7026976631 (481 chars)`.
+  즉 전달은 첫 라이브 증명, 내용은 실패 보고였다.
+- 수정: Agent tool_use는 전부 등록하고 launch 결과가 "Async agent launched"일 때만 배경 자식으로 유지, 동기 결과면 삭제. RED 1 → GREEN,
+  관련 5파일 121 통과, tsc·eslint 0. 전체 스위트·빌드 진행 중.

@@ -14,19 +14,17 @@ import {
  * their own prompt), never to the standing rule a conversation turn reads.
  */
 describe('owner subagent policy (standing, session-wide)', () => {
-  it('does not tell a conversation turn to background the child and end the turn (claude)', () => {
+  it('does not force a conversation turn to end after delegating (claude)', () => {
     const text = ownerSubagentInstructions('claude');
-    expect(text).not.toContain('run_in_background');
     expect(text).not.toMatch(/end (your|the) turn/i);
     expect(text).not.toMatch(/do not block on the result/i);
   });
 
-  it('tells a conversation turn not to delegate at all: search with its own tools and answer inside this turn', () => {
+  it('allows delegation and promises the late answer still reaches the channel that asked', () => {
     const text = ownerSubagentInstructions('claude');
-    expect(text).toMatch(/in a conversation do not spawn/i);
-    expect(text).toMatch(/inside this turn/i);
-    expect(text).toMatch(/work order/i);
-    expect(text).not.toMatch(/foreground/i);
+    expect(text).toMatch(/delegate when it helps/i);
+    expect(text).toMatch(/channel that asked/i);
+    expect(text).not.toMatch(/do not spawn a subagent/i);
   });
 
   it('does not tell the codex runner to end the turn either', () => {
