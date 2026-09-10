@@ -1,8 +1,22 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach } from 'vitest';
 import { resetConfigCache } from '../src/cli/config/config-manager.js';
+
+// $HOME isolation. os.homedir() follows $HOME on macOS/Linux, so every
+// homedir() caller in production code lands in a throwaway directory during
+// tests. On 2026-09-10 a test run that initialised API routes without an
+// isolated HOME rewrote the LIVE daemon's ~/.mama/mama-mcp-config.json and
+// stripped every gateway tool from the running Claude backend. Set BEFORE any
+// test file is imported; a test that overrides HOME itself is left alone
+// (this runs once, at setup time, not per test).
+process.env.MAMA_TEST_REAL_HOME ??= homedir();
+const testHome = mkdtempSync(join(tmpdir(), 'mama-test-home-'));
+mkdirSync(join(testHome, '.mama'), { recursive: true });
+process.env.HOME = testHome;
+process.env.USERPROFILE = testHome;
+process.env.MAMA_TEST_HOME = testHome;
 
 process.env.MAMA_FORCE_TIER_3 ||= 'true';
 // Legacy unit tests instantiate GatewayToolExecutor without the runtime envelope wrapper.

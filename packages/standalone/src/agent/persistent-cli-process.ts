@@ -45,6 +45,8 @@ import {
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
+import { ensureCodeActMcpConfigBeforeSpawn } from '../mcp/code-act-mcp-config.js';
+import { API_PORT } from '../cli/runtime/utilities.js';
 import { createProcessContextKey } from './code-act/run-context-registry.js';
 import {
   completedCodeActMutationWasObserved,
@@ -66,14 +68,15 @@ function supportsThinkingEffortModel(model: string | undefined): boolean {
   if (!model) {
     return false;
   }
-  return model.startsWith('claude-opus-4-6') || model.startsWith('claude-sonnet-4-6');
+  // Adaptive thinking effort: Claude 4.6 and every Claude 5 family model accept --effort.
+  return /^claude-(opus|sonnet|haiku|fable)-(4-6|5)(\b|-)/.test(model);
 }
 
 function normalizeThinkingEffort(
   model: string | undefined,
   effort: 'low' | 'medium' | 'high' | 'max'
 ): 'low' | 'medium' | 'high' | 'max' {
-  if (effort === 'max' && !model?.startsWith('claude-opus-4-6')) {
+  if (effort === 'max' && !(model && /^claude-(opus-4-6|opus-5|fable-5)(\b|-)/.test(model))) {
     return 'high';
   }
   return effort;
@@ -432,6 +435,30 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (!existsSync(headFile)) {
       writeFileSync(headFile, 'ref: refs/heads/main\n');
     }
+    // ⚠️ 2026-09-10: a rewritten ~/.mama/mama-mcp-config.json pointing at a
+    // non-existent code-act server left this persona with NO gateway tools for
+    // the whole life of the process. Repair the entry right before spawn, or
+    // fail loudly — never spawn a tool-less persona silently.
+    if (this.options.mcpConfigPath) {
+      let changed: boolean;
+      try {
+        ({ changed } = ensureCodeActMcpConfigBeforeSpawn({
+          mcpConfigPath: this.options.mcpConfigPath,
+          apiPort: API_PORT,
+          logger: persistentLogger,
+        }));
+      } catch (error) {
+        // A failed repair must leave the process startable again, not stuck in 'starting'.
+        this.state = 'dead';
+        throw error;
+      }
+      if (changed) {
+        persistentLogger.warn(
+          `[mcp] code-act entry regenerated in ${this.options.mcpConfigPath} before spawn`
+        );
+      }
+    }
+
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: workspaceDir, // ⚠️ NEVER change to os.homedir() — breaks agent isolation

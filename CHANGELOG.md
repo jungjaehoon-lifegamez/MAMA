@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.52.1] - 2026-09-10
+
+Fixes found while running the owner runtime on the Claude Sonnet 5 backend.
+
+### Fixed
+
+- **Delegation text follows the runner's capability.** `IModelRunner.supportsNativeSubagents`
+  (codex true; claude and cline false). Scheduled board/wiki/temporal contracts carry the
+  "spawn a subagent" shape and the owner prompt carries the subagent rules only when the runner
+  can spawn a subagent the host observes; the `delegated` work-order state cannot be entered
+  otherwise. An omitted capability reads as incapable. The owner session policy fingerprint
+  records the capability.
+- **No tool-call commentary in the Telegram stream.** Text the model writes before a tool call
+  is commentary; the live-edited message now shows the tool status instead. The final answer is
+  unchanged.
+- **`--effort` reaches Claude 5 models.** The model check matched only `claude-*-4-6`, and the
+  Claude adapter never forwarded `agent.effort` to its process pool.
+- **Code-act MCP entry repaired before spawning the Claude persona.** `~/.mama/mama-mcp-config.json`
+  pointing at a missing server file left the persona without any gateway tool for the life of
+  the process. The entry is now validated right before spawn: a dangling path is logged as an
+  error and rewritten from the installed package; a failed repair throws instead of spawning a
+  tool-less persona. Entries that point at an existing file are left alone.
+
+### Tests
+
+- Every standalone test now runs with `HOME` pointed at a per-run temp directory (a full test
+  run had rewritten the live MCP config); a regression test fails if the isolation is missing.
+
+### Notes
+
+- On the Claude backend the persona runs with `--tools Agent`; children it spawns are not
+  observable by the host, so delegation is never promised there.
+
 ## mama-os [0.52.0] - 2026-09-09
 
 This release is the first one we consider usable by people other than the author. The owner

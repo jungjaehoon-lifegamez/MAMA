@@ -39,6 +39,13 @@ export type WorkerRunnerOptions = WorkerIdentityOptions &
  *  totalUsage is optional because the seam is structural: the real AgentLoopResult
  *  always carries it, but injected test runners and older adapters may not. */
 export interface WorkerRunner {
+  /**
+   * Whether the model runner behind this seam can spawn a native subagent the host observes
+   * (IModelRunner.supportsNativeSubagents, surfaced by AgentLoop). Optional because the seam
+   * is structural; absent is read as INCAPABLE, so nothing is promised delegation it cannot do.
+   */
+  readonly supportsNativeSubagents?: boolean;
+
   runWithContent(
     content: ContentBlock[],
     options: WorkerRunnerOptions

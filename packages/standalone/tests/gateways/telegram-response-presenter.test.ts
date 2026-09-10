@@ -97,6 +97,28 @@ describe('TelegramResponsePresenter', () => {
     expect(editedTexts(adapter).at(-1)).toBe('actual response');
   });
 
+  it('drops pre-tool commentary and streams only text after the last tool', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { throttleMs: 800 });
+    await presenter.start();
+    const callbacks = presenter.callbacks();
+
+    callbacks.onDelta?.('Let me check the actual schema.');
+    callbacks.onToolUse?.('code_act', {});
+    await vi.advanceTimersByTimeAsync(800);
+    expect(editedTexts(adapter).at(-1)).toBe('\u{1F527} code_act...');
+    expect(editedTexts(adapter).join('|')).not.toContain('Let me check');
+
+    callbacks.onToolComplete?.('code_act', 'tool-1', false);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(editedTexts(adapter).at(-1)).toBe('\u{2705} code_act');
+
+    callbacks.onDelta?.('Final answer');
+    await vi.advanceTimersByTimeAsync(800);
+    expect(editedTexts(adapter).at(-1)).toBe('Final answer');
+    expect(editedTexts(adapter).join('|')).not.toContain('Let me check');
+  });
+
   it('never streams a partial leading reasoning decoration', async () => {
     const adapter = makeAdapter();
     const presenter = new TelegramResponsePresenter(adapter, { throttleMs: 800 });

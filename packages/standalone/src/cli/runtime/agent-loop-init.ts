@@ -319,6 +319,7 @@ export function initMainAgentLoop(
     childRuntimeToolCapable: agentLoop.childRuntimeToolCapable,
     probesDurableSession: agentLoop.probesDurableSession,
     ownerRecoveryJournalEnabled: agentLoop.ownerRecoveryJournalEnabled,
+    supportsNativeSubagents: agentLoop.supportsNativeSubagents,
     run: async (prompt: string, options?: AgentLoopOptions) => {
       // Per-call reasoning state (review M2: module-level state crossed runs
       // once operator lanes could overlap chat).
