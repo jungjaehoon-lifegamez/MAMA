@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.52.2] - 2026-09-10
+
+Two defects surfaced by the owner's Telegram conversation on the Claude Sonnet 5 backend.
+
+### Fixed
+
+- **`tool_search` ranks instead of requiring every word.** Under the previous token-AND rule,
+  "task update create" and "task query list" returned nothing although `task_update`, `task_create`
+  and `task_list` were in the catalog; the agent concluded no task tools existed and built an owner
+  report from Kagemusha's personal task data instead of the MAMA ledger. Scoring: +3 exact name
+  segment, +2 name substring, +1 description or category; all-word matches first; catalog order as
+  tiebreak. Cursors minted under the old alphabetical ordering are rejected (cursor version 2).
+- **Invalid Telegram HTML degrades per span, not per message.** A tag cited as text ("(<b>, <i>
+  등)"), an unclosed tag, an unknown tag, a rejected attribute, or forbidden nesting used to make the
+  whole message literal, exposing every tag. Now only the offending span is escaped; open tags that
+  wrap real content are auto-closed; entities inside escaped tags stay literal. The allowed subset is
+  unchanged and Markdown is not converted.
+
+### Notes
+
+- Learning-loop evidence recorded in docs/development/intent-checks.md: two owner corrections on
+  2026-09-10 (Telegram formatting; task_list as the system of record) were stored as procedures and
+  applied in the next owner-facing report.
+
 ## mama-os [0.52.1] - 2026-09-10
 
 Fixes found while running the owner runtime on the Claude Sonnet 5 backend.
