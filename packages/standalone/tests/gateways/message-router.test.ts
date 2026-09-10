@@ -936,13 +936,13 @@ describe('MessageRouter', () => {
           if (expectPrivateDefinitions) {
             expect(rebuilt).toContain('kagemusha_overview');
             expect(rebuilt).toContain('kagemusha_entities');
-            expect(rebuilt).toContain('kagemusha_tasks');
+            expect(rebuilt).toContain('kagemusha_messages');
             expect(rebuilt).toContain('kagemusha_messages');
             expect(rebuilt).toContain('Private business data');
           } else {
             expect(rebuilt).not.toContain('**kagemusha_overview**');
             expect(rebuilt).not.toContain('**kagemusha_entities**');
-            expect(rebuilt).not.toContain('**kagemusha_tasks**');
+            expect(rebuilt).not.toContain('**kagemusha_messages**');
             expect(rebuilt).not.toContain('**kagemusha_messages**');
             expect(rebuilt).not.toContain('Private business data');
           }
@@ -1444,7 +1444,7 @@ describe('MessageRouter', () => {
             metadata: { chatType: 'private' },
           });
 
-          expect(systemPrompt.match(/\*\*kagemusha_tasks\*\*/g) ?? []).toHaveLength(
+          expect(systemPrompt.match(/\*\*kagemusha_messages\*\*/g) ?? []).toHaveLength(
             expectedDefinitions
           );
         } finally {

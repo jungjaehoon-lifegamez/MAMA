@@ -62,7 +62,7 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
     it('chat_bot prompt omits business tools it cannot execute', () => {
       const prompt = promptForRole('chat_bot');
       expect(prompt).toContain('mama_search');
-      expect(prompt).not.toContain('kagemusha_tasks');
+      expect(prompt).not.toContain('kagemusha_messages');
       expect(prompt).not.toContain('task_create');
       expect(prompt).not.toContain('delegate');
       expect(prompt).not.toContain('os_restart_bot');
@@ -70,7 +70,7 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
 
     it('owner_console static prompt excludes private tools and execution tools', () => {
       const prompt = promptForRole('owner_console');
-      expect(prompt).not.toContain('kagemusha_tasks');
+      expect(prompt).not.toContain('kagemusha_messages');
       expect(prompt).toContain('task_create');
       expect(prompt).toContain('schedule_upcoming');
       expect(prompt).toContain('mama_save');
@@ -91,8 +91,8 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       const owner = promptForRole('owner_console', enabledPrivatePolicy());
       const chat = promptForRole('chat_bot', enabledPrivatePolicy());
 
-      expect(owner.match(/\*\*kagemusha_tasks\*\*/g)).toHaveLength(1);
-      expect(chat).not.toContain('kagemusha_tasks');
+      expect(owner.match(/\*\*kagemusha_messages\*\*/g)).toHaveLength(1);
+      expect(chat).not.toContain('kagemusha_messages');
     });
   });
 
@@ -113,8 +113,8 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       const chatSecond = promptForRole('chat_bot');
       expect(ownerFirst).not.toBe(chatFirst);
       expect(chatSecond).toBe(chatFirst);
-      expect(ownerFirst).not.toContain('kagemusha_tasks');
-      expect(chatSecond).not.toContain('kagemusha_tasks');
+      expect(ownerFirst).not.toContain('kagemusha_messages');
+      expect(chatSecond).not.toContain('kagemusha_messages');
     });
   });
 
@@ -150,12 +150,7 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
         expect(context.roleName).toBe('owner_console');
         expect(context.role.allowedTools).toContain('code_act');
         expect(context.role.allowedTools).toEqual(
-          expect.arrayContaining([
-            'kagemusha_overview',
-            'kagemusha_entities',
-            'kagemusha_tasks',
-            'kagemusha_messages',
-          ])
+          expect.arrayContaining(['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'])
         );
         expect(context.role.blockedTools).toEqual(['save_integration_token', 'report_request']);
         // Owner decision 2026-09-04: the owner chat turn holds the workspace shell.

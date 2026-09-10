@@ -226,7 +226,7 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     const logs: string[] = [];
     const run = async () => ({
       response: 'the report',
-      history: [...exchange('kagemusha_tasks'), ...exchange('mama_save')],
+      history: [...exchange('kagemusha_messages'), ...exchange('mama_save')],
     });
     const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l) });
     const out = await ask.compose({

@@ -21,7 +21,7 @@ describe('Story OPS-1: owner_console trust-conditional resolution', () => {
 
       const owner = rm.getRoleForSource('telegram', { channelId: '7777', chatType: 'private' });
       expect(owner.roleName).toBe('owner_console');
-      expect(rm.isToolAllowed(owner.role, 'kagemusha_tasks')).toBe(false);
+      expect(rm.isToolAllowed(owner.role, 'kagemusha_messages')).toBe(false);
       expect(rm.isToolAllowed(owner.role, 'task_create')).toBe(true);
       expect(rm.isToolAllowed(owner.role, 'mama_save')).toBe(true);
       // Owner decision 2026-09-04: the owner chat turn holds the guarded workspace shell.

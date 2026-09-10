@@ -55,12 +55,7 @@ describe('TG-03/TG-04/TG-05: one owner grant across scheduled stimuli', () => {
   it('projects configured private reads independently of work kind or hint scope', () => {
     for (const kind of WORKORDER_KINDS) {
       expect(turn(kind, []).agentContext.role.allowedTools).toEqual(
-        expect.arrayContaining([
-          'kagemusha_overview',
-          'kagemusha_entities',
-          'kagemusha_tasks',
-          'kagemusha_messages',
-        ])
+        expect.arrayContaining(['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'])
       );
     }
   });

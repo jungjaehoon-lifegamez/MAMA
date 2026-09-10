@@ -227,7 +227,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_entities',
           'kagemusha_messages',
           'kagemusha_overview',
-          'kagemusha_tasks',
           'mama_search',
           'report_publish',
           'task_external_correlation',
@@ -260,7 +259,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_entities',
           'kagemusha_messages',
           'kagemusha_overview',
-          'kagemusha_tasks',
           'mama_save',
           'mama_search',
         ],
@@ -341,7 +339,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
             'kagemusha_entities',
             'kagemusha_messages',
             'kagemusha_overview',
-            'kagemusha_tasks',
             'schedule_upcoming',
             'task_list',
             'task_temporal_reconcile',
@@ -372,12 +369,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         });
 
         expect(projected.names).toEqual(
-          expect.arrayContaining([
-            'kagemusha_overview',
-            'kagemusha_entities',
-            'kagemusha_tasks',
-            'kagemusha_messages',
-          ])
+          expect.arrayContaining(['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'])
         );
         expect(policy.gatewayToolsPrompt).toContain('kagemusha_');
       }
@@ -396,7 +388,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         role: policy.agentContext.role,
       });
 
-      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toHaveLength(4);
+      expect(projected.names.filter((name) => name.startsWith('kagemusha_'))).toHaveLength(3);
       expect(policy.gatewayToolsPrompt).toContain('kagemusha_');
     });
 
@@ -518,14 +510,9 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
 
         expect(enabled.agentContext.roleName).toBe(roleName);
         expect(enabled.agentContext.role.allowedTools).toEqual(
-          expect.arrayContaining([
-            'kagemusha_overview',
-            'kagemusha_entities',
-            'kagemusha_tasks',
-            'kagemusha_messages',
-          ])
+          expect.arrayContaining(['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'])
         );
-        expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+        expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_messages');
         expect(disabled.gatewayToolsPrompt).not.toContain('kagemusha_');
       }
     );
@@ -535,9 +522,9 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       const disabled = buildOperatorReportAgentPolicy('gpt-5.4', 'codex', privatePolicy(false));
 
       expect(enabled.agentContext.role.allowedTools).toContain('task_list');
-      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_tasks');
+      expect(enabled.agentContext.role.allowedTools).toContain('kagemusha_messages');
       expect(disabled.agentContext.role.allowedTools).toContain('task_list');
-      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_tasks');
+      expect(disabled.agentContext.role.allowedTools).not.toContain('kagemusha_messages');
       expect(enabled.agentContext.roleName).toBe('owner_console');
       expect(disabled.agentContext.roleName).toBe('owner_console');
     });

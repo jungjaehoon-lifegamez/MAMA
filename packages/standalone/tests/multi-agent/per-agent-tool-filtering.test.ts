@@ -7,12 +7,7 @@ import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
 import type { AgentPersonaConfig, MultiAgentConfig } from '../../src/multi-agent/types.js';
 
-const PRIVATE_TOOLS = [
-  'kagemusha_overview',
-  'kagemusha_entities',
-  'kagemusha_tasks',
-  'kagemusha_messages',
-] as const;
+const PRIVATE_TOOLS = ['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'] as const;
 
 describe('Per-agent tool filtering', () => {
   describe('generatePrompt() with allowed_tools patterns', () => {

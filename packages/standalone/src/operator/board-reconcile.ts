@@ -20,7 +20,7 @@ export interface ReconcilePromptInput {
   channelLabel?: string;
   deltaLines: string[];
   todayIso: string;
-  /** Also read kagemusha_tasks as judgment CONTEXT (never the projection source). */
+  /** Also read the Kagemusha conversation bridge as judgment CONTEXT (never the projection source). */
   kagemushaContext?: boolean;
 }
 

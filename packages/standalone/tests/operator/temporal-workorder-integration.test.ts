@@ -52,12 +52,7 @@ interface FakeEvidence {
 
 const KST = 'Asia/Seoul';
 const at = (time: string): number => Date.parse(`2026-07-21T${time}+09:00`);
-const KAGEMUSHA_TOOLS = [
-  'kagemusha_overview',
-  'kagemusha_entities',
-  'kagemusha_tasks',
-  'kagemusha_messages',
-] as const;
+const KAGEMUSHA_TOOLS = ['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'] as const;
 
 function enabledPrivateConnectorPolicy(): PrivateConnectorPolicy {
   const connectorConfig: ConnectorConfigLoadResult = {

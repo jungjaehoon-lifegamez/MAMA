@@ -627,3 +627,17 @@
   43초 → 부모 답 "에이전트가 계속 진행 중". 손자 완료 알림은 "tracked background Agent 없음"으로 CLI 자체 턴이 되어 20:20:01 답을 완성했으나
   전달 0. 오너 판정 "이 시간이 걸린 게 실패". 정책을 다시 고침: 대화에서는 위임 금지, 자기 도구로 이 턴 안에서 답한다. 위임은 워크오더가
   요구할 때만. 테스트 RED 1 → GREEN 4/4, 관련 스위트 271 통과. local.3 설치 후 오너 재질문으로 판정.
+
+## 2026-09-10 20:4x — 치팅 경로 2: kagemusha_tasks 도구 제거 + 라이브 보드 브리프 교정
+
+- 실측(20:25, local.3 정책으로 오너 재질문): Agent 스폰 0, code_act 5회(게이트웨이 17회), 49초, 같은 턴에 세 질문 근거 포함 답 전달.
+  판정: 전달 결함은 해소. 그러나 첫 네 호출이 kagemusha_tasks였고 답 안에 "kagemusha에는 #834로 잡혀 있으나"가 남아 카게무샤 카드가
+  여전히 답의 근거로 쓰임. 원인: 도구 설명이 "READ-ONLY project-task truth", 라이브 `~/.mama/briefs/brief-board.md`(7/27)가
+  "Task completion/progress state comes ONLY from kagemusha_tasks", "Read the REAL task state first: kagemusha_tasks({})".
+- 수정: (소스) private connector 정책에서 kagemusha_tasks 정의 제거, executor case·types·host-bridge·connector-scope 정리.
+  overview/entities/messages는 유지(카카오/LINE 대화 접근). (환경) 브리프 백업 후 세 문장을 task_list·Trello 근거 기준으로 교체하고
+  "카게무샤 카드는 진실이 아니다(2026-09-10)" 절 추가. 뷰어 `/api/kagemusha/tasks`와 queryTasks는 표시용이라 유지.
+- TDD: RED 3(정책 테스트) → 소스 제거 → 관련 12파일 247 통과, 전체 26개 실패는 모두 도구를 열거하던 테스트로 kagemusha_messages로
+  치환 또는 삭제. 남은 언급은 legacy 브리프 스트리핑 샘플 문자열뿐. eslint·tsc 0. 전체 스위트·빌드 진행 중.
+- 남은 것: 49초 중 도구 시간은 3초, 나머지는 새 세션 기동(4초)과 모델 생성(33초). 답 첫 줄에 영어 내부 서술 누출. UTC 시각 표기.
+  이건 정책이 아니라 모델 응답 품질 영역이며 procedure 교정 대상.
