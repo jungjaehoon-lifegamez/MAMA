@@ -288,3 +288,69 @@ describe('native background Agent on the Claude stream', () => {
     }
   });
 });
+
+describe("the CLI's own follow-up answer reaches the request that spawned the child", () => {
+  it("hands the autonomous turn's text to the spawning request's onFollowUp", async () => {
+    const process = new PersistentClaudeProcess({ sessionId: 'bg-session' });
+    const testable = process as unknown as TestableProcess;
+    const followUps: Array<{ agentThreadId: string; text: string; isError: boolean }> = [];
+    testable.state = 'busy';
+    testable.currentCallbacks = {
+      onFollowUp: (info) => followUps.push(info),
+    };
+    const parentResult = new Promise<PromptResult>((resolve, reject) => {
+      testable.currentResolve = resolve;
+      testable.currentReject = reject;
+    });
+    for (const event of measuredSequence()) testable.processEvent(event);
+    expect((await parentResult).response).toBe('LAUNCHED');
+
+    expect(followUps).toEqual([
+      {
+        agentThreadId: AGENT_ID,
+        agentPath: 'list the open board rows',
+        itemId: AGENT_ITEM,
+        text: 'CHILD_DONE: [2 open rows]',
+        isError: false,
+      },
+    ]);
+  });
+
+  it('routes a CLI turn that answers an untracked task notification to the last request that asked', async () => {
+    // Measured 2026-09-10 20:19 KST: a foreground child spawned grandchildren; their
+    // notifications matched no tracked Agent, the CLI answered on its own, and the text went nowhere.
+    const process = new PersistentClaudeProcess({ sessionId: 'bg-session' });
+    const testable = process as unknown as TestableProcess;
+    const followUps: Array<{ text: string; isError: boolean }> = [];
+    testable.state = 'busy';
+    testable.currentCallbacks = { onFollowUp: (info) => followUps.push(info) };
+    const first = new Promise<PromptResult>((resolve, reject) => {
+      testable.currentResolve = resolve;
+      testable.currentReject = reject;
+    });
+    testable.processEvent(assistantText('working on it'));
+    testable.processEvent({
+      type: 'result',
+      subtype: 'success',
+      result: 'working on it',
+      session_id: 'bg-session',
+      duration_ms: 10,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    expect((await first).response).toBe('working on it');
+
+    testable.processEvent(systemEvent('task_notification', { task_id: 'task_untracked' }));
+    testable.processEvent(systemEvent('init'));
+    testable.processEvent(assistantText('LATE ANSWER'));
+    testable.processEvent({
+      type: 'result',
+      subtype: 'success',
+      result: 'LATE ANSWER',
+      session_id: 'bg-session',
+      duration_ms: 12,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+
+    expect(followUps.map((f) => f.text)).toEqual(['LATE ANSWER']);
+  });
+});

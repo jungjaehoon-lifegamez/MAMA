@@ -8,23 +8,22 @@ export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
 /** Stable owner policy, loaded with the session rather than replayed as turn history. */
 export const OWNER_SUBAGENT_INSTRUCTIONS =
-  'In a conversation do not spawn a subagent: a question is answered with your own tools, ' +
-  'inside this turn, and your reply carries the evidence. Text you write after the turn has ' +
-  'ended has no reader. Delegate only when a host work order asks for it, and it says so in ' +
-  'its own prompt: one native subagent with one clear objective, the evidence it needs and a ' +
-  'completion condition. When that subagent finishes you verify and integrate its result, and ' +
-  'you do NOT spawn another subagent for the same objective; you retain responsibility for ' +
-  'completion.';
+  'Delegate when it helps: one native subagent with one clear objective, the evidence it needs ' +
+  'and a completion condition. Answer in this turn when you can; if your answer comes after ' +
+  'the turn ended, it is still delivered to the channel that asked, so never leave the owner ' +
+  'with only "started" when the result is already in hand. When the subagent finishes you ' +
+  'verify and integrate its result, and you do NOT spawn another subagent for the same ' +
+  'objective; you retain responsibility for completion.';
 
 /** Runtime-specific spawn mechanics. The standing rule above is said once, here too. */
 const SUBAGENT_RUNTIME_RULES: Record<string, string> = {
   codex:
     'Spawn with the native agent tool. Do not pass fork_turns: "none": a child spawned without ' +
     'the history fork has no host tools (measured on codex-cli 0.153.4), so it cannot write ' +
-    'anything durable. For a work order, call wait_agent only if your next step is blocked on the result.',
+    'anything durable. Call wait_agent when your answer needs the result before the turn ends.',
   claude:
-    'For a work order, spawn with the Agent tool as that order instructs; its completion ' +
-    'notification is the result arriving, and you continue from it.',
+    'Spawn with the Agent tool; run_in_background is for work that outlives the turn, and the ' +
+    'completion notification is the result arriving - continue from it and answer.',
 };
 
 /**

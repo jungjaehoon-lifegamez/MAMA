@@ -24,16 +24,17 @@ bridge that read every mirrored platform regardless of what was declared.
 
 ### Changed
 
-- **A conversation turn does not delegate.** The standing owner policy told every turn of the one
-  owner session to spawn a native subagent with `run_in_background: true` and end the turn.
-  Measured 2026-09-10 20:01 KST: a 32-character owner question was answered with "backgrounded",
-  the child gathered its evidence in 11 s, the CLI's own follow-up turn wrote the real answer,
-  and nothing delivered it. A first correction (foreground child) measured at 20:18: one child,
-  four grandchildren, 26 tool calls, 43 s, and the owner still received "in progress" while the
-  consolidated answer landed in a notification-driven turn with no reader. The standing rule now
-  says: in a conversation, answer with your own tools inside this turn; delegate only when a
-  host work order asks for it, and that order already states the background mechanics. No new
-  delivery wiring was added.
+- **A late answer reaches the channel that asked.** When the runner answers a request after
+  that request's turn has ended, either in its own follow-up turn once a child it spawned
+  finished, or after a task notification no tracked child claimed, the text used to go nowhere.
+  Measured 2026-09-10 20:01 and 20:19 KST: the owner received "backgrounded", the CLI wrote the
+  real answer four seconds later, and nothing delivered it. The request now carries a
+  follow-up sink through the existing stream callbacks; the CLI wrapper hands the follow-up
+  text to the request that spawned the child (or to the last request that asked, for an
+  untracked notification), and the message router sends it back through the same gateway
+  registry the reply used. Delegation itself is allowed again: the standing policy no longer
+  tells a turn to end after spawning, and it no longer forbids a conversation from delegating.
+  No separate delivery channel was added.
 - **The `kagemusha_tasks` read tool is gone.** Kagemusha's task cards are the owner's personal
   work, derived from the same raw sources MAMA already reads; the tool described them as
   "READ-ONLY project-task truth" and the board brief told every turn to read them first. Measured

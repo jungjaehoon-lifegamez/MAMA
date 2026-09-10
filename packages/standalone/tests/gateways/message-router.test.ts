@@ -206,6 +206,52 @@ describe('MessageRouter', () => {
       expect(getSessionPool().listSessions().has('owner:runtime')).toBe(true);
     });
 
+    it("forwards the CLI's follow-up answer to the channel that asked", async () => {
+      const runOptions: AgentLoopOptions[] = [];
+      const agentLoop = {
+        run: vi.fn(async (_prompt: string, options?: AgentLoopOptions) => {
+          if (options) runOptions.push(options);
+          return { response: '조사를 시작했습니다.' };
+        }),
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+      const sendMessage = vi.fn(async () => {});
+      customRouter.setGatewayRegistry({ sendMessage });
+
+      await processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'owner-telegram',
+        userId: 'owner',
+        text: '킹스크로스6 SSR1 상태?',
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:owner',
+          consoleEligible: true,
+        },
+      });
+
+      const onFollowUp = runOptions[0]?.streamCallbacks?.onFollowUp;
+      expect(onFollowUp).toBeTypeOf('function');
+      await onFollowUp?.({
+        agentThreadId: 'agent_1',
+        agentPath: 'status lookup',
+        itemId: 'toolu_1',
+        text: '킹스크로스6 SSR1: tk5 제출, 확인 대기',
+        isError: false,
+      });
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        'telegram',
+        'owner-telegram',
+        '킹스크로스6 SSR1: tk5 제출, 확인 대기'
+      );
+    });
+
     it('TG-05 exposes a failed owner recovery commit on the completed turn', async () => {
       const customRouter = new MessageRouter(
         sessionStore,
