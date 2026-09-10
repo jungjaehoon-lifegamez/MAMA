@@ -194,7 +194,7 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
         executeLegacy: vi.fn(),
       });
 
-      const result = await executeCodeAct('typeof kagemusha_tasks', {
+      const result = await executeCodeAct('typeof kagemusha_messages', {
         contextKey: CONTEXT_KEY,
         agentId: 'http-supplied-generic',
       });
@@ -217,9 +217,9 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
 
     const result = await executeCodeAct(
       `
-        var found = tool_search({ query: 'kagemusha_tasks' });
-        var described = tool_describe({ names: ['kagemusha_tasks'] });
-        ({ found: found, described: described, direct: typeof kagemusha_tasks })
+        var found = tool_search({ query: 'kagemusha_messages' });
+        var described = tool_describe({ names: ['kagemusha_messages'] });
+        ({ found: found, described: described, direct: typeof kagemusha_messages })
       `,
       { contextKey: CONTEXT_KEY }
     );
@@ -229,16 +229,16 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
       value: {
         // Ranked search: the exact-name match leads; sibling kagemusha_* tools may follow.
         found: {
-          tools: expect.arrayContaining([expect.objectContaining({ name: 'kagemusha_tasks' })]),
+          tools: expect.arrayContaining([expect.objectContaining({ name: 'kagemusha_messages' })]),
         },
         described: {
-          contracts: [expect.stringContaining('declare function kagemusha_tasks')],
+          contracts: [expect.stringContaining('declare function kagemusha_messages')],
         },
         direct: 'function',
       },
     });
     const found = (result as { value: { found: { tools: Array<{ name: string }> } } }).value.found;
-    expect(found.tools[0]?.name).toBe('kagemusha_tasks');
+    expect(found.tools[0]?.name).toBe('kagemusha_messages');
   });
 
   it('TG-04 rejects the disabled trusted owner surface and an HTTP role upgrade', async () => {
@@ -254,7 +254,7 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
       executeLegacy: vi.fn(),
     });
 
-    const generic = await executeCodeAct('typeof kagemusha_tasks', {
+    const generic = await executeCodeAct('typeof kagemusha_messages', {
       contextKey: CONTEXT_KEY,
       agentId: 'owner_console',
     });
@@ -271,7 +271,7 @@ describe('Story S3/TG-03/TG-04: keyed Code-Act runtime', () => {
       executeLegacy: vi.fn(),
     });
     await expect(
-      disabled('typeof kagemusha_tasks', { contextKey: CONTEXT_KEY })
+      disabled('typeof kagemusha_messages', { contextKey: CONTEXT_KEY })
     ).resolves.toMatchObject({ success: true, value: 'undefined' });
   });
 });

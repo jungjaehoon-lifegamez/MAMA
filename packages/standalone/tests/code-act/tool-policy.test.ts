@@ -16,7 +16,6 @@ import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-conn
 const PRIVATE_TOOL_NAMES = [
   'kagemusha_overview',
   'kagemusha_entities',
-  'kagemusha_tasks',
   'kagemusha_messages',
 ] as const;
 

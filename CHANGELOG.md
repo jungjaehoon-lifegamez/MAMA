@@ -34,6 +34,15 @@ bridge that read every mirrored platform regardless of what was declared.
   says: in a conversation, answer with your own tools inside this turn; delegate only when a
   host work order asks for it, and that order already states the background mechanics. No new
   delivery wiring was added.
+- **The `kagemusha_tasks` read tool is gone.** Kagemusha's task cards are the owner's personal
+  work, derived from the same raw sources MAMA already reads; the tool described them as
+  "READ-ONLY project-task truth" and the board brief told every turn to read them first. Measured
+  2026-09-10 20:25 KST: an owner question opened with four `kagemusha_tasks` calls before any
+  native read. The owner ruled the cards a cheat that hid MAMA's own ability. Task state now
+  comes from the native ledger (`task_list`) and the evidence a transition rests on; the
+  remaining Kagemusha reads (`kagemusha_overview`, `kagemusha_entities`, `kagemusha_messages`)
+  stay for kakao/LINE conversations. The viewer's `/api/kagemusha/tasks` route is display-only
+  and unchanged.
 - **The Kagemusha bridge reads only the platforms its configured channel keys declare.**
   `kakao:<room>` admits kakao, `line:<room>` admits LINE, and task cards flow only when a
   `kagemusha-tasks:<room>` key exists. The Kagemusha DB mirrors slack, chatwork and telegram as

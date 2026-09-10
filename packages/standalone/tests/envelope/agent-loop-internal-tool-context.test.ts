@@ -91,12 +91,7 @@ function flushBackgroundWork(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 120));
 }
 
-const PRIVATE_TOOLS = [
-  'kagemusha_overview',
-  'kagemusha_entities',
-  'kagemusha_tasks',
-  'kagemusha_messages',
-];
+const PRIVATE_TOOLS = ['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'];
 
 function expectFailClosedPrivateProjection(context: unknown): void {
   expect(context).toEqual(
