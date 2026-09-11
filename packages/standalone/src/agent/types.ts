@@ -839,6 +839,8 @@ export type GatewayToolInput =
  */
 export type GatewayToolName =
   | 'mama_save'
+  | 'registry_lookup'
+  | 'registry_upsert'
   | 'mama_search'
   | 'mama_recall'
   | 'mama_provenance'

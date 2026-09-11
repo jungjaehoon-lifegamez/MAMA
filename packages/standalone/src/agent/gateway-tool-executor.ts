@@ -109,6 +109,11 @@ import {
   handleUpdate,
   handleLoadCheckpoint,
 } from './mama-tool-handlers.js';
+import {
+  handleRegistryLookup,
+  handleRegistryUpsert,
+  type RegistryPort,
+} from './registry-tool-handlers.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
@@ -2700,6 +2705,22 @@ export class GatewayToolExecutor {
     };
   }
 
+  /**
+   * The core registry, loaded the same lazy way the memory API is: identity lives in the
+   * same database as the memories that point at it, so the connection is already open.
+   */
+  private async getRegistry(): Promise<RegistryPort> {
+    const core = await import('@jungjaehoon/mama-core');
+    return {
+      resolveAlias: (alias, kind) => core.resolveAlias(alias, kind as never),
+      createNode: (nodeInput) => core.createNode(nodeInput as never),
+      addAlias: (nodeId, alias) => core.addAlias(nodeId, alias),
+      listNodes: (filter) => core.listNodes(filter as never),
+      mergeNodes: (mergeInput) => core.mergeNodes(mergeInput),
+      splitNode: (splitInput) => core.splitNode(splitInput as never),
+    };
+  }
+
   private supportsTrustedSave(api: MAMAApiInterface): boolean {
     return Boolean(api.saveWithTrustedProvenance);
   }
@@ -3416,6 +3437,16 @@ export class GatewayToolExecutor {
             )
           );
         }
+        case 'registry_lookup':
+          return (await handleRegistryLookup(
+            await this.getRegistry(),
+            input as Parameters<typeof handleRegistryLookup>[1]
+          )) as GatewayToolResult;
+        case 'registry_upsert':
+          return (await handleRegistryUpsert(
+            await this.getRegistry(),
+            input as Parameters<typeof handleRegistryUpsert>[1]
+          )) as GatewayToolResult;
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':

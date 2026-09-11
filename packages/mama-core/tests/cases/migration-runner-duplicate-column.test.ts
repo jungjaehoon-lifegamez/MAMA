@@ -747,9 +747,13 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         owner_scope: null,
         evidence_json: null,
       });
-      expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 68,
-      });
+      // 068 is what this case is about, but the runner always finishes at the newest
+      // migration on disk. Pinning the literal made every later migration fail this test
+      // for a reason that has nothing to do with 068.
+      const stamped = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as {
+        version: number;
+      };
+      expect(stamped.version).toBeGreaterThanOrEqual(68);
       db.close();
     });
   }

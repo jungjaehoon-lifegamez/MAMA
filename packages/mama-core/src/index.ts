@@ -373,3 +373,4 @@ export * from './search/ranker-features.js';
 export * from './search/ranker-trainer.js';
 export * from './search/ranker-rescore.js';
 export * from './search/search-quality.js';
+export * from './registry/store.js';

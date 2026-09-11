@@ -317,6 +317,8 @@ describe('ToolRegistry', () => {
       expect(grouped.has('memory')).toBe(true);
       expect(grouped.get('memory')!.map((tool) => tool.name)).toEqual([
         'mama_save',
+        'registry_lookup',
+        'registry_upsert',
         'mama_search',
         'mama_recall',
         'mama_provenance',

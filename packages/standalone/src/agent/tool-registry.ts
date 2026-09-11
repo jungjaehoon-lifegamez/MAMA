@@ -65,6 +65,22 @@ register({
   params:
     'type, topic?, decision?, reasoning?, confidence?, event_date?, context_packet_id?, summary?, next_steps?',
 });
+// Identity: what this work item or person is already known by, and what the agent decided
+// it is. Separate from search - a prefix that is not registered is not a node.
+register({
+  name: 'registry_lookup',
+  description:
+    'Resolve a name, code or nickname to the item/person/client node it belongs to, with that node\'s children. Returns found:false when nothing is registered under that spelling - that is the signal to register it, not to search harder.',
+  category: 'memory',
+  params: 'name, kind? (item|person|client)',
+});
+register({
+  name: 'registry_upsert',
+  description:
+    'Register a node or add spellings to one you already resolved: {kind, name, aliases?, parent_of?, note?}. Adding an alias another node holds is refused with code alias_taken - decide whether the two are the same and ask the owner before merging. Splitting an item into its parts is parent_of.',
+  category: 'memory',
+  params: 'kind, name, aliases?, parent_of?, note?',
+});
 register({
   name: 'mama_search',
   description:
