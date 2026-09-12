@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-09-13
+
+### Added
+
+- Registry lookup/upsert are available through the gateway and Code-Act catalogs.
+- Gateway and retained operational HTTP saves carry explicit record item and actor references.
+- Owner-action receipts support truthful service operation origins without synthetic model runs.
+
 ## [0.54.0] - 2026-09-12
 
 ### Removed

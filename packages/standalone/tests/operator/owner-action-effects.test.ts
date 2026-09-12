@@ -42,6 +42,24 @@ afterEach(() => {
 });
 
 describe('Story TG-04/TG-06: owner action receipts independent of input path', () => {
+  it('does not expose or settle an operation receipt through another operation or model-only cause', () => {
+    const { ledger } = open();
+    const operation = { ...context, modelRunId: 'causal-run', operationId: 'operation-a' };
+    ledger.begin(operation, 'operation-effect', 'telegram_send', intent);
+
+    const otherOperation = { ...operation, operationId: 'operation-b' };
+    expect(ledger.inspect(otherOperation, 'operation-effect', 'telegram_send')).toBeNull();
+    expect(() =>
+      ledger.confirm(otherOperation, 'operation-effect', 'telegram_send', { ok: true })
+    ).toThrow(/not reserved/);
+    expect(ledger.inspect(context, 'operation-effect', 'telegram_send')).toBeNull();
+    expect(() =>
+      ledger.markUnknown(context, 'operation-effect', 'telegram_send', 'causal caller')
+    ).toThrow(/not reserved/);
+
+    ledger.confirm(operation, 'operation-effect', 'telegram_send', { ok: true });
+    expect(ledger.inspect(operation, 'operation-effect', 'telegram_send')?.state).toBe('confirmed');
+  });
   it('AC: only the originating run can release a transmitting no-effect reservation', () => {
     const { ledger } = open();
     ledger.begin(context, 'preflight', 'slack_send', intent);
@@ -317,12 +335,14 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
             effectKind: 'telegram_send',
             state: 'transmitting',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
           {
             actionKey: 'b-write',
             effectKind: 'Write',
             state: 'transmitting',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
         ],
         nextCursor: { createdAt: expect.any(Number), actionKey: 'b-write' },
@@ -336,6 +356,7 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
             effectKind: 'Bash',
             state: 'unknown',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
         ],
         nextCursor: null,
@@ -443,15 +464,17 @@ describe('interrupted native run does not poison replay', () => {
     expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(false);
     expect(ledger.hasUnsettledEffects(occurrence)).toBe(false);
     // Replay admits a new marker under the new run id and leaves the old observation.
-    const next: OwnerActionContext = { ...ctx, modelRunId: 'mr-replay', envelopeHash: 'env-replay' };
+    const next: OwnerActionContext = {
+      ...ctx,
+      modelRunId: 'mr-replay',
+      envelopeHash: 'env-replay',
+    };
     expect(ledger.begin(next, 'native-run:def', 'native_run', { admitted: true }).state).toBe(
       'execute'
     );
     expect(
       database
-        .prepare(
-          "SELECT status FROM owner_action_effects WHERE action_key = 'native-run:abc'"
-        )
+        .prepare("SELECT status FROM owner_action_effects WHERE action_key = 'native-run:abc'")
         .get()
     ).toEqual({ status: 'unknown' });
   });

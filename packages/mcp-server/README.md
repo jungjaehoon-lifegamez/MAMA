@@ -99,12 +99,12 @@ The MCP server exposes 13 tools:
 
 Decisions connect through relationships. Include patterns in your reasoning:
 
-| Edge Type     | Pattern                    | Meaning                    |
-| ------------- | -------------------------- | -------------------------- |
-| `supersedes`  | (automatic for same topic) | Newer replaces older       |
-| `builds_on`   | `builds_on: decision_xxx`  | Extends prior work         |
-| `debates`     | `debates: decision_xxx`    | Alternative view           |
-| `synthesizes` | `synthesizes: [id1, id2]`  | Merges multiple approaches |
+| Edge Type     | Pattern                   | Meaning                    |
+| ------------- | ------------------------- | -------------------------- |
+| `supersedes`  | explicit referenced ID    | Newer replaces older       |
+| `builds_on`   | `builds_on: decision_xxx` | Extends prior work         |
+| `debates`     | `debates: decision_xxx`   | Alternative view           |
+| `synthesizes` | `synthesizes: [id1, id2]` | Merges multiple approaches |
 
 ### Search Quality Controls
 

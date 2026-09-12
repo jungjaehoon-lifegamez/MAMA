@@ -109,6 +109,11 @@ import {
   handleUpdate,
   handleLoadCheckpoint,
 } from './mama-tool-handlers.js';
+import {
+  handleRegistryLookup,
+  handleRegistryUpsert,
+  type RegistryPort,
+} from './registry-tool-handlers.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
@@ -940,6 +945,10 @@ export class GatewayToolExecutor {
     if (!ledger || !state?.envelope || !state.modelRunId || state.memberScopeRequired) {
       return undefined;
     }
+    // Model-backed native run: modelRunId is guaranteed here (guarded above) and
+    // anchors both the context origin and the admission/tool keys. Capturing it
+    // keeps that narrowing across the observer closures.
+    const modelRunId = state.modelRunId;
     const attempt =
       state.workorderAttemptId === undefined
         ? null
@@ -951,7 +960,7 @@ export class GatewayToolExecutor {
     const context: OwnerActionContext = {
       ownerScope: state.agentContext?.principalId ?? 'owner:runtime',
       occurrenceKey,
-      modelRunId: state.modelRunId,
+      modelRunId,
       envelopeHash: state.envelope.envelope_hash,
       ...(attempt ? { workOrderAttemptId: attempt.id } : {}),
     };
@@ -963,7 +972,7 @@ export class GatewayToolExecutor {
         false
       );
     }
-    const admissionKey = `native-run:${createHash('sha256').update(context.modelRunId).digest('hex')}`;
+    const admissionKey = `native-run:${createHash('sha256').update(modelRunId).digest('hex')}`;
     ledger.begin(context, admissionKey, 'native_run', { admitted: true });
     let sequence = 0;
     const pending = new Map<string, { key: string; name: string }>();
@@ -973,7 +982,7 @@ export class GatewayToolExecutor {
           typeof input.nativeToolUseId === 'string'
             ? input.nativeToolUseId
             : `observed:${++sequence}`;
-        const key = `native:${createHash('sha256').update(`${context.modelRunId}:${id}`).digest('hex')}`;
+        const key = `native:${createHash('sha256').update(`${modelRunId}:${id}`).digest('hex')}`;
         const reservation = ledger.begin(context, key, 'native_tool', { toolName: name });
         if (reservation.state !== 'execute') {
           throw new AgentError(
@@ -989,7 +998,7 @@ export class GatewayToolExecutor {
         const match = pending.get(id) ?? [...pending.values()].find((entry) => entry.name === name);
         if (!match) {
           // Completion may be the first provider observation after reconnect.
-          const key = `native:${createHash('sha256').update(`${context.modelRunId}:${id}`).digest('hex')}`;
+          const key = `native:${createHash('sha256').update(`${modelRunId}:${id}`).digest('hex')}`;
           ledger.begin(context, key, 'native_tool', { toolName: name });
           ledger.markUnknown(
             context,
@@ -2699,6 +2708,23 @@ export class GatewayToolExecutor {
     };
   }
 
+  /**
+   * The core registry, loaded the same lazy way the memory API is: identity lives in the
+   * same database as the memories that point at it, so the connection is already open.
+   */
+  private async getRegistry(): Promise<RegistryPort> {
+    const core = await import('@jungjaehoon/mama-core');
+    return {
+      resolveAlias: (alias, kind, scopes) => core.resolveAlias(alias, kind as never, scopes),
+      createNode: (nodeInput) => core.createNode(nodeInput as never),
+      addAlias: (nodeId, alias) => core.addAlias(nodeId, alias),
+      upsertNode: (nodeInput) => core.upsertNode(nodeInput as never),
+      listNodes: (filter) => core.listNodes(filter as never),
+      mergeNodes: (mergeInput) => core.mergeNodes(mergeInput),
+      splitNode: (splitInput) => core.splitNode(splitInput as never),
+    };
+  }
+
   private supportsTrustedSave(api: MAMAApiInterface): boolean {
     return Boolean(api.saveWithTrustedProvenance);
   }
@@ -3409,6 +3435,32 @@ export class GatewayToolExecutor {
             )
           );
         }
+        case 'registry_lookup':
+          if (!this.getExecutionState().envelope?.scope.memory_scopes.length) {
+            return {
+              success: false,
+              code: 'registry_scope_denied',
+              error: 'Registry tools require a signed envelope with admitted memory scopes.',
+            };
+          }
+          return (await handleRegistryLookup(
+            await this.getRegistry(),
+            input as Parameters<typeof handleRegistryLookup>[1],
+            this.getExecutionState().envelope?.scope.memory_scopes
+          )) as GatewayToolResult;
+        case 'registry_upsert':
+          if (!this.getExecutionState().envelope?.scope.memory_scopes.length) {
+            return {
+              success: false,
+              code: 'registry_scope_denied',
+              error: 'Registry tools require a signed envelope with admitted memory scopes.',
+            };
+          }
+          return (await handleRegistryUpsert(
+            await this.getRegistry(),
+            input as Parameters<typeof handleRegistryUpsert>[1],
+            this.getExecutionState().envelope?.scope.memory_scopes
+          )) as GatewayToolResult;
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':

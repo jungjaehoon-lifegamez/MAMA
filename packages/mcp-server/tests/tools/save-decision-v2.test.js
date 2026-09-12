@@ -1,5 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createSaveDecisionTool } from '../../src/tools/save-decision.js';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { createSaveDecisionTool, saveDecisionTool } from '../../src/tools/save-decision.js';
+import { MAMAServer } from '../../src/server.js';
+import Database from 'better-sqlite3';
+import { cleanupTestDB, initTestDB } from '@jungjaehoon/mama-core/test-utils';
+import { createNode } from '@jungjaehoon/mama-core/registry/store';
 
 describe('save_decision v2: scopes + event_date', () => {
   let mockMama;
@@ -72,5 +76,52 @@ describe('save_decision v2: scopes + event_date', () => {
   it('event_date appears in inputSchema', () => {
     expect(tool.inputSchema.properties.event_date).toBeDefined();
     expect(tool.inputSchema.properties.event_date.type).toBe('string');
+  });
+});
+
+describe('save and save_decision real record identity', () => {
+  let dbPath;
+  let item;
+  let person;
+
+  beforeAll(async () => {
+    dbPath = await initTestDB('mcp-save-record-identity');
+    item = createNode({ kind: 'item', name: 'synthetic item' });
+    person = createNode({ kind: 'person', name: 'synthetic person' });
+  });
+
+  afterAll(async () => {
+    await cleanupTestDB(dbPath);
+  });
+
+  it.each([
+    ['save_decision', () => saveDecisionTool.handler],
+    [
+      'save',
+      () => {
+        const server = new MAMAServer();
+        return server.handleSave.bind(server);
+      },
+    ],
+  ])('persists explicit item and actors through %s', async (_name, handlerFactory) => {
+    const result = await handlerFactory()({
+      type: _name === 'save' ? 'decision' : 'user_decision',
+      topic: `identity-${_name}`,
+      decision: 'Keep explicit record identity',
+      reasoning: 'The public MCP save surface must forward registry references.',
+      item,
+      actors: [{ person, role: 'worker' }],
+    });
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    const id = result.decision_id ?? result.id?.id ?? result.id;
+    expect(typeof id).toBe('string');
+    const db = new Database(dbPath);
+    expect(db.prepare('SELECT item_id FROM decisions WHERE id = ?').get(id)).toEqual({
+      item_id: item,
+    });
+    expect(
+      db.prepare('SELECT person_id, role FROM record_actors WHERE record_id = ?').all(id)
+    ).toEqual([{ person_id: person, role: 'worker' }]);
+    db.close();
   });
 });

@@ -2,7 +2,9 @@ import crypto from 'node:crypto';
 import {
   initDB,
   getAdapter,
-  insertDecisionWithEmbedding,
+  buildMemoryScopeId,
+  insertPreparedDecision,
+  prepareDecisionEmbedding,
   ensureMemoryScope,
   vectorSearch,
   fts5Search,
@@ -55,9 +57,22 @@ import {
   sanitizePublicSaveMemoryInput,
   type TrustedMemoryWriteOptions,
 } from './provenance.js';
+import {
+  validateRecordIdentityReferences,
+  writeRecordIdentityInAdapter,
+} from '../registry/record-identity.js';
 
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
+
+export interface LegacyMemoryPersistence {
+  userInvolvement?: string | null;
+  outcome?: string | null;
+  failureReason?: string | null;
+  limitation?: string | null;
+  isStatic?: number;
+  relationships?: Array<{ type: string; targetIds: string[] }>;
+}
 
 export interface FusedHit {
   source_type: 'decision' | 'wiki_page';
@@ -74,10 +89,6 @@ interface WikiScoreEntry {
   score: number;
   lexicalSupport: boolean;
   vectorSimilarity: number | null;
-}
-
-interface SaveMemoryRollbackError extends Error {
-  memoryId?: string;
 }
 
 export function buildDecisionId(topic: string): string {
@@ -331,25 +342,6 @@ function insertTimelineEventForSave(
       event.details,
       createdAt
     );
-}
-
-function cleanupFailedMemorySave(adapter: ReturnType<typeof getAdapter>, memoryId: string): void {
-  const row = adapter.prepare(`SELECT rowid FROM decisions WHERE id = ?`).get(memoryId) as
-    | { rowid: number }
-    | undefined;
-  if (!row) {
-    return;
-  }
-
-  const cleanup = () => {
-    adapter.prepare(`DELETE FROM embeddings WHERE rowid = ?`).run(row.rowid);
-    adapter.prepare(`DELETE FROM decisions WHERE id = ?`).run(memoryId);
-  };
-
-  const txResult = adapter.transaction(cleanup) as unknown;
-  if (typeof txResult === 'function') {
-    txResult();
-  }
 }
 
 function batchLoadScopes(
@@ -679,7 +671,8 @@ type SaveMemoryResult = {
 
 async function saveMemoryInternal(
   input: SaveMemoryInput,
-  options?: TrustedMemoryWriteOptions
+  options?: TrustedMemoryWriteOptions,
+  legacy?: LegacyMemoryPersistence
 ): Promise<SaveMemoryResult> {
   await initDB();
   const adapter = getAdapter();
@@ -688,111 +681,9 @@ async function saveMemoryInternal(
   const now = Date.now();
   const provenance = normalizeMemoryWriteProvenance(options);
   const targetStatus = input.status ?? 'active';
-  const shouldApplyEvolution = targetStatus === 'active';
-  // Find evolution candidates: exact topic match first, then semantic search fallback
-  const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
-  const excludeIds = new Set(input.excludeIds ?? []);
-  let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
-  if (!shouldApplyEvolution) {
-    existingCandidates = [];
-  } else if (primaryScope) {
-    const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
-    existingCandidates = (
-      adapter
-        .prepare(
-          `
-          SELECT d.id, d.topic, d.summary, d.kind
-          FROM decisions d
-          JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-          WHERE d.topic = ? AND msb.scope_id = ?
-            AND (d.status = 'active' OR d.status IS NULL)
-            AND d.superseded_by IS NULL
-          ORDER BY d.created_at DESC
-          LIMIT 5
-        `
-        )
-        .all(input.topic, scopeId) as Array<{
-        id: string;
-        topic: string;
-        summary: string;
-        kind: string;
-      }>
-    ).filter((c) => !excludeIds.has(c.id));
-  } else {
-    existingCandidates = (
-      adapter
-        .prepare(
-          `
-          SELECT id, topic, summary, kind
-          FROM decisions
-          WHERE topic = ?
-            AND (status = 'active' OR status IS NULL)
-            AND superseded_by IS NULL
-          ORDER BY created_at DESC
-          LIMIT 5
-        `
-        )
-        .all(input.topic) as Array<{ id: string; topic: string; summary: string; kind: string }>
-    ).filter((c) => !excludeIds.has(c.id));
-  }
-
-  // Semantic fallback: if no exact topic match, find similar memories via vector search
-  if (shouldApplyEvolution && existingCandidates.length === 0) {
-    try {
-      const queryText = `${input.topic} ${input.summary}`;
-      const embedding = await generateEmbedding(queryText, 'query');
-      // Exclude superseded history so a dense supersede chain cannot fill all 3
-      // candidate slots and hide the prior ACTIVE decision (which would break the
-      // evolution link and create an active duplicate).
-      const semanticResults = await vectorSearch(
-        embedding,
-        3,
-        0.82,
-        undefined,
-        Array.from(EXCLUDED_STATUSES)
-      );
-
-      // Scope-filter semantic candidates when a primary scope is available
-      let scopeFiltered = semanticResults;
-      if (primaryScope) {
-        const semIds = semanticResults.map((r) => String(r.id));
-        const semScopeMap = batchLoadScopes(adapter, semIds);
-        const scopeKey = `${primaryScope.kind}:${primaryScope.id}`;
-        scopeFiltered = semanticResults.filter((r) => {
-          const scopes = semScopeMap.get(String(r.id)) ?? [];
-          return scopes.length === 0 || scopes.some((s) => `${s.kind}:${s.id}` === scopeKey);
-        });
-      }
-
-      existingCandidates = scopeFiltered
-        .filter((r) => {
-          const status = String((r as { status?: unknown }).status || '');
-          return !status || status === 'active' || status === '';
-        })
-        .filter((c) => !excludeIds.has(String(c.id)))
-        .map((r) => ({
-          id: String(r.id),
-          topic: String(r.topic || ''),
-          summary: String(r.decision || ''),
-          kind: 'fact' as const,
-          _semanticMatch: true,
-        }));
-    } catch {
-      // Semantic search unavailable — proceed with empty candidates
-    }
-  }
-
-  const evolution = shouldApplyEvolution
-    ? resolveMemoryEvolution({
-        incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
-        existing: existingCandidates.map((c) => ({
-          ...c,
-          kind: (c.kind || 'fact') as MemoryRecord['kind'],
-        })),
-      })
-    : { edges: [] };
-  const supersedesTarget =
-    evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ?? null;
+  // Relationships are persisted only when the caller names their target ids explicitly.
+  // Matching topic text or vector similarity is evidence for retrieval, not identity.
+  const supersedesTarget = null;
 
   const entityObservationIds = Array.from(new Set(input.entityObservationIds ?? []));
   const eventDateTime =
@@ -807,7 +698,12 @@ async function saveMemoryInternal(
     input.timelineEvent
   );
 
-  await insertDecisionWithEmbedding({
+  validateRecordIdentityReferences({
+    itemId: input.itemId,
+    actors: input.actors,
+    scopes: input.scopes,
+  });
+  const decisionInput = {
     id,
     topic: input.topic,
     decision: input.summary,
@@ -825,22 +721,31 @@ async function saveMemoryInternal(
     gateway_call_id: provenance.gateway_call_id,
     source_refs_json: JSON.stringify(provenance.source_refs),
     provenance_json: JSON.stringify(provenance.provenance),
-  });
+  };
+  const embedding = await prepareDecisionEmbedding(decisionInput);
 
-  // Pre-resolve scope IDs before the synchronous transaction
-  const resolvedScopeIds: Array<{ scopeId: string; isPrimary: boolean }> = [];
-  for (const [index, scope] of input.scopes.entries()) {
-    const scopeId = await ensureMemoryScope(scope.kind, scope.id);
-    resolvedScopeIds.push({ scopeId, isPrimary: index === 0 });
+  const resolvedScopes = input.scopes.map((scope, index) => ({
+    ...scope,
+    scopeId: buildMemoryScopeId(scope.kind, scope.id),
+    isPrimary: index === 0,
+  }));
+  for (const relationship of legacy?.relationships ?? []) {
+    for (const targetId of relationship.targetIds) {
+      const target = adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(targetId);
+      if (!target) {
+        throw new Error(`mama.save() relationship target does not exist: ${targetId}`);
+      }
+    }
   }
-  // Wrap all post-insert mutations in a transaction for atomicity
   try {
     adapter.transaction(() => {
+      insertPreparedDecision(adapter, decisionInput, embedding);
       adapter
         .prepare(
           `
             UPDATE decisions
-            SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
+            SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?,
+                user_involvement = ?, outcome = ?, failure_reason = ?, limitation = ?, updated_at = ?
             WHERE id = ?
           `
         )
@@ -848,13 +753,23 @@ async function saveMemoryInternal(
           input.kind,
           targetStatus,
           input.summary,
-          input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
+          legacy?.isStatic ?? (input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0),
           JSON.stringify({ source: input.source }),
+          legacy?.userInvolvement ?? null,
+          legacy?.outcome ?? null,
+          legacy?.failureReason ?? null,
+          legacy?.limitation ?? null,
           now,
           id
         );
 
-      for (const { scopeId, isPrimary } of resolvedScopeIds) {
+      for (const { scopeId, kind, id: externalId, isPrimary } of resolvedScopes) {
+        adapter
+          .prepare(
+            `INSERT OR IGNORE INTO memory_scopes (id, kind, external_id)
+             VALUES (?, ?, ?)`
+          )
+          .run(scopeId, kind, externalId);
         adapter
           .prepare(
             `
@@ -893,30 +808,43 @@ async function saveMemoryInternal(
         insertTimelineEventForSave(adapter, timelineEvent, now);
       }
 
-      for (const edge of evolution.edges) {
-        if (edge.type === 'supersedes') {
-          adapter
-            .prepare(
-              `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
-            )
-            .run(id, now, edge.to_id);
-        }
+      if (input.itemId !== undefined || input.actors !== undefined) {
+        writeRecordIdentityInAdapter(adapter, {
+          recordId: id,
+          itemId: input.itemId,
+          actors: input.actors,
+          scopes: input.scopes,
+        });
+      }
 
-        adapter
-          .prepare(
-            `
-              INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-              VALUES (?, ?, ?, ?, ?, ?)
-            `
-          )
-          .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
+      const edgeInsert = adapter.prepare(
+        `INSERT INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      );
+      for (const relationship of legacy?.relationships ?? []) {
+        for (const targetId of relationship.targetIds) {
+          if (relationship.type === 'supersedes') {
+            adapter
+              .prepare(
+                "UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?"
+              )
+              .run(id, now, targetId);
+          }
+          edgeInsert.run(
+            id,
+            targetId,
+            relationship.type,
+            `Explicit ${relationship.type} reference in reasoning`,
+            1,
+            now
+          );
+        }
       }
     });
   } catch (error) {
-    cleanupFailedMemorySave(adapter, id);
-    const rollbackError = (
-      error instanceof Error ? error : new Error(String(error))
-    ) as SaveMemoryRollbackError;
+    const rollbackError = (error instanceof Error ? error : new Error(String(error))) as Error & {
+      memoryId?: string;
+    };
     rollbackError.memoryId = id;
     throw rollbackError;
   }
@@ -926,10 +854,7 @@ async function saveMemoryInternal(
   // insertEmbedding populated the cache) and any rows just superseded. This makes
   // the vectorSearch pre-filter correct within this session, not only after reload.
   if (adapter.refreshDecisionStatusCache) {
-    const changedIds = [
-      id,
-      ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
-    ];
+    const changedIds = [id];
     const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
     for (const changedId of changedIds) {
       const ridRow = ridStmt.get(changedId) as { rowid: number } | undefined;
@@ -957,6 +882,14 @@ export async function saveMemoryWithTrustedProvenance(
   options: TrustedMemoryWriteOptions
 ): Promise<SaveMemoryResult> {
   return saveMemoryInternal(sanitizePublicSaveMemoryInput(input), options);
+}
+
+export async function saveLegacyMemory(
+  input: SaveMemoryInput,
+  legacy: LegacyMemoryPersistence,
+  options?: TrustedMemoryWriteOptions
+): Promise<SaveMemoryResult> {
+  return saveMemoryInternal(sanitizePublicSaveMemoryInput(input), options, legacy);
 }
 
 export async function promoteMemoryStatus(input: {

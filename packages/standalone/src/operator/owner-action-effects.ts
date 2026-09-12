@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import {
+  ownerActionOriginMatch,
+  verifyOwnerActionContext,
+  type OwnerActionEffectStoragePort,
+} from '@jungjaehoon/mama-core/operations/owner-action-effects';
 
 import {
   applyOwnerActionEffectsMigration,
@@ -13,14 +18,20 @@ import type { OwnerEventEffectBeginResult } from './owner-event-effects.js';
  * Every field is a TRUSTED host identity. `ownerScope` is the authenticated
  * owner namespace; `occurrenceKey` is derived from stable message / event /
  * workorder occurrence identity and is shared by every retry of that
- * occurrence. `modelRunId` and `envelopeHash` name the current authorized
- * attempt and are recorded for audit only: they never widen or narrow which
- * receipt an occurrence resolves to. None of these may come from model text.
+ * occurrence. The origin names the current authorized attempt and is recorded
+ * for audit only: it never widens or narrows which receipt an occurrence
+ * resolves to. At least one of `modelRunId` (model-backed / legacy path) and
+ * `operationId` (service/CLI operation path) MUST be present and nonempty.
+ * `envelopeHash` names the signed authority. None of these may come from model
+ * text.
  */
 export interface OwnerActionContext {
   ownerScope: string;
   occurrenceKey: string;
-  modelRunId: string;
+  /** Model-run origin. Model-backed and legacy callers set this. */
+  modelRunId?: string;
+  /** Service/CLI operation origin. Set instead of (or beside) modelRunId. */
+  operationId?: string;
   envelopeHash: string;
   workOrderAttemptId?: number;
 }
@@ -35,7 +46,14 @@ export interface OwnerActionPendingEffect {
   actionKey: string;
   effectKind: string;
   state: Exclude<OwnerActionEffectState, 'confirmed'>;
-  originModelRunId: string;
+  /**
+   * A row may carry BOTH origins: its execution operation (`originOperationId`)
+   * and the causal model run (`originModelRunId`) that drove the attempt. A
+   * legacy model-backed row carries only the model run; either may be null, but
+   * never both (the at-least-one-origin CHECK).
+   */
+  originModelRunId: string | null;
+  originOperationId: string | null;
 }
 
 export interface OwnerActionPendingPage {
@@ -128,29 +146,34 @@ function requireIdentity(value: unknown, field: string): string {
 interface VerifiedContext {
   ownerScope: string;
   occurrenceKey: string;
-  modelRunId: string;
+  modelRunId: string | null;
+  operationId: string | null;
   envelopeHash: string;
   workOrderAttemptId: number | null;
 }
 
 function verifyContext(context: OwnerActionContext): VerifiedContext {
-  if (context === null || typeof context !== 'object') {
-    throw new Error('owner action context is required');
-  }
-  const workOrderAttemptId = context.workOrderAttemptId;
-  if (
-    workOrderAttemptId !== undefined &&
-    (!Number.isSafeInteger(workOrderAttemptId) || workOrderAttemptId <= 0)
-  ) {
-    throw new Error('owner action workOrderAttemptId must be a positive integer when present');
-  }
-  return {
-    ownerScope: requireIdentity(context.ownerScope, 'ownerScope'),
-    occurrenceKey: requireIdentity(context.occurrenceKey, 'occurrenceKey'),
-    modelRunId: requireIdentity(context.modelRunId, 'modelRunId'),
-    envelopeHash: requireIdentity(context.envelopeHash, 'envelopeHash'),
-    workOrderAttemptId: workOrderAttemptId ?? null,
-  };
+  return verifyOwnerActionContext(context);
+}
+
+/**
+ * Origin guard for release. Execution origin takes PRECEDENCE over causal model
+ * provenance; the two are never ORed. A single row may carry BOTH a service
+ * operation (its execution origin) and a causal model run id, so an OR would let
+ * one operation — or a model-only caller — release another operation's
+ * reservation merely by sharing the causal model.
+ *
+ * If the caller carries an `operationId`, that is its execution origin: release
+ * matches that operation alone (`origin_operation_id = ?`), regardless of any
+ * causal model, and never matches a legacy row whose operation origin is NULL.
+ * A model-only (legacy) caller may release only a legacy row that has NO
+ * operation origin and whose model run matches (`origin_operation_id IS NULL AND
+ * origin_model_run_id = ?`); a causal model id thus never authorizes release of
+ * an operation-origin row. The bound value is always the caller's nonempty
+ * execution origin, so the equality is never a NULL = ? comparison.
+ */
+function originMatch(verified: VerifiedContext): { clause: string; params: string[] } {
+  return ownerActionOriginMatch(verified);
 }
 
 /**
@@ -182,7 +205,7 @@ const REPLAY_NEUTRAL_ROW_SQL = `(effect_kind = 'native_run'
       AND IFNULL(lower(json_extract(intent_json, '$.toolName')), '') IN
         ('agent', 'task', 'spawn_agent', 'collabagenttoolcall', 'send_input', 'resume_agent')))`;
 
-export class OwnerActionEffectLedger {
+export class OwnerActionEffectLedger implements OwnerActionEffectStoragePort {
   constructor(
     private readonly db: SQLiteDatabase,
     private readonly clock: () => number = () => Date.now()
@@ -207,9 +230,9 @@ export class OwnerActionEffectLedger {
         .prepare(
           `INSERT OR IGNORE INTO ${OWNER_ACTION_EFFECTS_TABLE}
              (owner_scope, occurrence_key, action_key, effect_kind, status,
-              intent_json, intent_sha256, origin_model_run_id, origin_envelope_hash,
-              origin_workorder_attempt_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'transmitting', ?, ?, ?, ?, ?, ?, ?)`
+              intent_json, intent_sha256, origin_model_run_id, origin_operation_id,
+              origin_envelope_hash, origin_workorder_attempt_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'transmitting', ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           verified.ownerScope,
@@ -219,6 +242,7 @@ export class OwnerActionEffectLedger {
           canonical,
           digest,
           verified.modelRunId,
+          verified.operationId,
           verified.envelopeHash,
           verified.workOrderAttemptId,
           now,
@@ -363,18 +387,19 @@ export class OwnerActionEffectLedger {
    */
   releaseUnstarted(context: OwnerActionContext, actionKey: string, effectKind: string): void {
     const verified = verifyContext(context);
+    const origin = originMatch(verified);
     const result = this.db
       .prepare(
         `DELETE FROM ${OWNER_ACTION_EFFECTS_TABLE}
       WHERE owner_scope = ? AND occurrence_key = ? AND action_key = ? AND effect_kind = ?
-        AND status = 'transmitting' AND origin_model_run_id = ?`
+        AND status = 'transmitting' AND ${origin.clause}`
       )
       .run(
         verified.ownerScope,
         verified.occurrenceKey,
         requireIdentity(actionKey, 'actionKey'),
         requireIdentity(effectKind, 'effectKind'),
-        verified.modelRunId
+        ...origin.params
       );
     if (result.changes !== 1) {
       throw new Error('Only the current unstarted reservation can be released');
@@ -482,7 +507,7 @@ export class OwnerActionEffectLedger {
     }
     const rows = this.db
       .prepare(
-        `SELECT action_key, effect_kind, status, origin_model_run_id, created_at
+        `SELECT action_key, effect_kind, status, origin_model_run_id, origin_operation_id, created_at
            FROM ${OWNER_ACTION_EFFECTS_TABLE}
           WHERE owner_scope = ? AND occurrence_key = ? AND status != 'confirmed'
             ${cursor ? 'AND (created_at > ? OR (created_at = ? AND action_key > ?))' : ''}
@@ -498,7 +523,8 @@ export class OwnerActionEffectLedger {
       action_key: string;
       effect_kind: string;
       status: 'transmitting' | 'unknown';
-      origin_model_run_id: string;
+      origin_model_run_id: string | null;
+      origin_operation_id: string | null;
       created_at: number;
     }>;
     const hasMore = rows.length > limit;
@@ -509,6 +535,7 @@ export class OwnerActionEffectLedger {
         effectKind: row.effect_kind,
         state: row.status,
         originModelRunId: row.origin_model_run_id,
+        originOperationId: row.origin_operation_id,
       })),
       nextCursor: hasMore
         ? {
@@ -520,13 +547,20 @@ export class OwnerActionEffectLedger {
   }
 
   private loadRow(verified: VerifiedContext, actionKey: string): StoredRow | undefined {
+    const origin =
+      verified.operationId !== null
+        ? { clause: 'origin_operation_id = ?', params: [verified.operationId] }
+        : { clause: 'origin_operation_id IS NULL', params: [] };
     return this.db
       .prepare(
         `SELECT effect_kind, status, intent_json, result_json
            FROM ${OWNER_ACTION_EFFECTS_TABLE}
-          WHERE owner_scope = ? AND occurrence_key = ? AND action_key = ?`
+          WHERE owner_scope = ? AND occurrence_key = ? AND action_key = ?
+            AND ${origin.clause}`
       )
-      .get(verified.ownerScope, verified.occurrenceKey, actionKey) as StoredRow | undefined;
+      .get(verified.ownerScope, verified.occurrenceKey, actionKey, ...origin.params) as
+      | StoredRow
+      | undefined;
   }
 
   private assertKind(row: StoredRow, actionKey: string, effectKind: string): void {

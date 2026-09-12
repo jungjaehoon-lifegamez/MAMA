@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-core [3.1.0] / mcp-server [2.1.0] / mama-os [0.55.0] - 2026-09-13
+
+Registry nodes and conservative aliases now give records explicit item and actor identity across
+core, MCP, gateway, and retained HTTP save surfaces. The decision, embedding, scopes, events,
+explicit relationships, item binding, and actors commit in one SQLite transaction. Tool traces
+and owner-action receipts accept a real model run or a nonblank service operation origin, with
+operation origin taking precedence during release and reconciliation.
+
 ## mama-core [3.0.0] / mcp-server [2.0.0] / mama-os [0.54.0] / plugin [2.0.0] - 2026-09-12
 
 Removed the obsolete localhost embedding and browser-session runtime. Embeddings remain local and

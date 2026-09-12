@@ -75,6 +75,8 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `embeddings.ts` - Transformers.js embedding generation
 - `db-manager.ts` - SQLite database initialization and scope management
 - `memory-store.js` - Decision CRUD operations (legacy)
+- `registry/` - Explicit work/person/client identity and record bindings
+- `operations/owner-action-effects.ts` - Shared effect policy/types/port; no physical receipt store
 - `mama-api.ts` - High-level API interface (wraps memory API)
 - `decision-tracker.js` - Decision graph management
 - `relevance-scorer.js` - Semantic similarity scoring
@@ -255,10 +257,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 3.0.0 (stable API)
-- **mama-server:** 2.0.0 (follows MAMA version)
+- **mama-core:** 3.1.0 (stable API)
+- **mama-server:** 2.1.0 (follows MAMA version)
 - **claude-code-plugin:** 2.0.0 (follows MAMA version)
-- **mama-os:** 0.54.0 (standalone agent)
+- **mama-os:** 0.55.0 (standalone agent)
 
 ## Distribution Strategy
 

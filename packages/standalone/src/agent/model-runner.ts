@@ -29,6 +29,7 @@ export interface HostToolInputSchema {
   readonly properties: Readonly<Record<string, HostToolJsonValue>>;
   readonly required?: readonly string[];
   readonly additionalProperties: boolean;
+  readonly oneOf?: readonly HostToolJsonValue[];
 }
 
 /** Codex app-server dynamic function definition. */

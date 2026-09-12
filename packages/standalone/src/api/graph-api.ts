@@ -1021,6 +1021,8 @@ async function handleMamaSaveRequest(req: IncomingMessage, res: ServerResponse):
       reasoning: body.reasoning,
       confidence: body.confidence ?? 0.8,
       ...(body.event_date ? { event_date: body.event_date } : {}),
+      ...(typeof body.item === 'string' ? { item: body.item } : {}),
+      ...(Array.isArray(body.actors) ? { actors: body.actors } : {}),
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2212,7 +2214,7 @@ async function handleDashboardStatusRequest(
 
     const agent = {
       model: config.agent?.model || 'unknown',
-      maxTurns: config.agent?.max_turns ?? 10,
+      maxTurns: config.agent?.max_turns,
       timeout: config.agent?.timeout ?? 300000,
       tools: config.agent?.tools || { gateway: ['*'], mcp: [] },
     };

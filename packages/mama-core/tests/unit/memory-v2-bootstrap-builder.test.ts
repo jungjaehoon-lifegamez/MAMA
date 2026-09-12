@@ -65,6 +65,7 @@ describe('memory agent bootstrap builder', () => {
       summary: 'Use npm in this repo',
       details: 'Historical repository standard',
       confidence: 0.3,
+      status: 'superseded',
       scopes: [PROJECT_SCOPE],
       source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
     });

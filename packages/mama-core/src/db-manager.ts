@@ -353,7 +353,7 @@ export function getAdapter(): DatabaseAdapter {
   return dbAdapter;
 }
 
-function buildMemoryScopeId(kind: string, externalId: string): string {
+export function buildMemoryScopeId(kind: string, externalId: string): string {
   return `scope_${kind}_${Buffer.from(externalId).toString('base64url')}`;
 }
 
@@ -520,6 +520,106 @@ export interface DecisionInput {
   provenance_json?: string | null;
 }
 
+/** Generate the optional vector before opening a synchronous SQLite transaction. */
+export async function prepareDecisionEmbedding(
+  decision: DecisionInput
+): Promise<Float32Array | null> {
+  if (
+    decision.event_date !== null &&
+    decision.event_date !== undefined &&
+    (!/^\d{4}-\d{2}-\d{2}$/.test(decision.event_date) ||
+      Number.isNaN(new Date(decision.event_date).getTime()))
+  ) {
+    throw new Error(
+      `Invalid event_date: must be ISO 8601 YYYY-MM-DD (got: ${decision.event_date})`
+    );
+  }
+  if (
+    decision.event_datetime !== null &&
+    decision.event_datetime !== undefined &&
+    (typeof decision.event_datetime !== 'number' ||
+      !Number.isFinite(decision.event_datetime) ||
+      decision.event_datetime <= 0)
+  ) {
+    throw new Error(
+      `Invalid event_datetime: must be a positive millisecond timestamp (got: ${decision.event_datetime})`
+    );
+  }
+  const { generateEnhancedEmbedding } = await import('./embeddings.js');
+  try {
+    return await generateEnhancedEmbedding({
+      topic: decision.topic,
+      decision: decision.decision,
+      reasoning: decision.reasoning || undefined,
+      outcome: decision.outcome || undefined,
+      confidence: decision.confidence,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`);
+    return null;
+  }
+}
+
+/** Insert one decision and its already-prepared vector inside the caller's transaction. */
+export function insertPreparedDecision(
+  adapter: DatabaseAdapter,
+  decision: DecisionInput,
+  embedding: Float32Array | null
+): number {
+  const stmt = adapter.prepare(`
+    INSERT INTO decisions (
+      id, topic, decision, reasoning, outcome, failure_reason, limitation,
+      user_involvement, session_id, supersedes, superseded_by, refined_from,
+      confidence, created_at, updated_at, needs_validation, validation_attempts,
+      last_validated_at, usage_count, trust_context, usage_success, usage_failure,
+      time_saved, evidence, alternatives, risks, event_date, event_datetime,
+      agent_id, model_run_id, envelope_hash, gateway_call_id, source_refs_json, provenance_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    decision.id,
+    decision.topic,
+    decision.decision,
+    decision.reasoning || null,
+    decision.outcome || null,
+    decision.failure_reason || null,
+    decision.limitation || null,
+    decision.user_involvement || null,
+    decision.session_id || null,
+    decision.supersedes || null,
+    decision.superseded_by || null,
+    decision.refined_from ? JSON.stringify(decision.refined_from) : null,
+    decision.confidence ?? 0.5,
+    decision.created_at || Date.now(),
+    decision.updated_at || Date.now(),
+    decision.needs_validation ?? 0,
+    decision.validation_attempts || 0,
+    decision.last_validated_at || null,
+    decision.usage_count || 0,
+    decision.trust_context || null,
+    decision.usage_success || 0,
+    decision.usage_failure || 0,
+    decision.time_saved || 0,
+    decision.evidence || null,
+    decision.alternatives || null,
+    decision.risks || null,
+    decision.event_date || null,
+    decision.event_datetime ?? null,
+    decision.agent_id ?? null,
+    decision.model_run_id ?? null,
+    decision.envelope_hash ?? null,
+    decision.gateway_call_id ?? null,
+    decision.source_refs_json ?? null,
+    decision.provenance_json ?? null
+  );
+  const rowid = Number(result.lastInsertRowid);
+  if (adapter.vectorSearchEnabled && embedding) {
+    adapter.insertEmbedding(rowid, embedding);
+  }
+  return rowid;
+}
+
 /**
  * Insert decision with embedding
  *
@@ -531,132 +631,9 @@ export interface DecisionInput {
  */
 export async function insertDecisionWithEmbedding(decision: DecisionInput): Promise<string> {
   const adapter = getAdapter();
-  const { generateEnhancedEmbedding } = await import('./embeddings.js');
-
-  // Validate event_date before any DB operations
-  if (decision.event_date !== null && decision.event_date !== undefined) {
-    const d = decision.event_date;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(new Date(d).getTime())) {
-      throw new Error(`Invalid event_date: must be ISO 8601 YYYY-MM-DD (got: ${d})`);
-    }
-  }
-  if (decision.event_datetime !== null && decision.event_datetime !== undefined) {
-    if (
-      typeof decision.event_datetime !== 'number' ||
-      !Number.isFinite(decision.event_datetime) ||
-      decision.event_datetime <= 0
-    ) {
-      throw new Error(
-        `Invalid event_datetime: must be a positive millisecond timestamp (got: ${decision.event_datetime})`
-      );
-    }
-  }
-
+  const embedding = await prepareDecisionEmbedding(decision);
   try {
-    // Generate embedding BEFORE transaction (required for SQLite's sync transaction)
-    // Note: Redact topic for privacy - only log length
-    info(
-      `[db-manager] Generating embedding for decision (topic length: ${decision.topic?.length || 0})`
-    );
-    let embedding: Float32Array | null = null;
-    try {
-      // e5 passage role (default) - stored vector
-      embedding = await generateEnhancedEmbedding({
-        topic: decision.topic,
-        decision: decision.decision,
-        reasoning: decision.reasoning || undefined,
-        outcome: decision.outcome || undefined,
-        confidence: decision.confidence,
-      });
-      info(`[db-manager] Embedding generated: ${embedding ? embedding.length : 'null'} dimensions`);
-    } catch (embGenErr) {
-      // Non-fatal: save decision without embedding (e.g. ONNX model unavailable on CI)
-      const message = embGenErr instanceof Error ? embGenErr.message : String(embGenErr);
-      logError(`[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`);
-    }
-
-    // SQLite: Synchronous transaction including embedding
-    adapter.transaction(() => {
-      // Prepare INSERT statement
-      const stmt = adapter.prepare(`
-        INSERT INTO decisions (
-          id, topic, decision, reasoning,
-          outcome, failure_reason, limitation,
-          user_involvement, session_id,
-          supersedes, superseded_by, refined_from,
-          confidence, created_at, updated_at,
-          needs_validation, validation_attempts, last_validated_at, usage_count,
-          trust_context, usage_success, usage_failure, time_saved,
-          evidence, alternatives, risks, event_date, event_datetime,
-          agent_id, model_run_id, envelope_hash, gateway_call_id, source_refs_json, provenance_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const insertResult = stmt.run(
-        decision.id,
-        decision.topic,
-        decision.decision,
-        decision.reasoning || null,
-        decision.outcome || null,
-        decision.failure_reason || null,
-        decision.limitation || null,
-        decision.user_involvement || null,
-        decision.session_id || null,
-        decision.supersedes || null,
-        decision.superseded_by || null,
-        decision.refined_from ? JSON.stringify(decision.refined_from) : null,
-        decision.confidence !== undefined ? decision.confidence : 0.5,
-        // IMPORTANT: All timestamps are stored in milliseconds (Date.now()).
-        // The schema DEFAULT uses unixepoch() (seconds) but is never used
-        // since all inserts go through this function which always provides ms.
-        decision.created_at || Date.now(),
-        decision.updated_at || Date.now(),
-        decision.needs_validation !== undefined ? decision.needs_validation : 0,
-        decision.validation_attempts || 0,
-        decision.last_validated_at || null,
-        decision.usage_count || 0,
-        decision.trust_context || null,
-        decision.usage_success || 0,
-        decision.usage_failure || 0,
-        decision.time_saved || 0,
-        decision.evidence || null,
-        decision.alternatives || null,
-        decision.risks || null,
-        decision.event_date || null,
-        decision.event_datetime ?? null,
-        decision.agent_id ?? null,
-        decision.model_run_id ?? null,
-        decision.envelope_hash ?? null,
-        decision.gateway_call_id ?? null,
-        decision.source_refs_json ?? null,
-        decision.provenance_json ?? null
-      );
-
-      const rowid = Number(insertResult.lastInsertRowid);
-
-      // Insert embedding in same transaction to ensure rowid matching
-      info(`[db-manager] Vector search enabled: ${adapter.vectorSearchEnabled}`);
-      if (adapter.vectorSearchEnabled && embedding) {
-        try {
-          info(`[db-manager] Inserting embedding for rowid: ${rowid}`);
-          adapter.insertEmbedding(rowid, embedding);
-          info(`[db-manager] ✅ Embedding inserted successfully`);
-        } catch (embErr) {
-          const message = embErr instanceof Error ? embErr.message : String(embErr);
-          // Log but don't fail transaction if embedding fails
-          logError(`[db-manager] ❌ Embedding insert failed: ${message}`);
-        }
-      } else {
-        info(`[db-manager] ⚠️  Vector search disabled, skipping embedding`);
-      }
-
-      return rowid;
-    });
-
-    if (process.env.MAMA_DEBUG) {
-      info(`[db-manager] Decision stored: ${decision.id}`);
-    }
-
+    adapter.transaction(() => insertPreparedDecision(adapter, decision, embedding));
     return decision.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -673,19 +650,45 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
  * @param topic - Decision topic to query
  * @returns Array of decisions (ordered by recency)
  */
-export async function queryDecisionGraph(topic: string): Promise<DecisionRecord[]> {
+export async function queryDecisionGraph(
+  topic: string,
+  anchorId?: string
+): Promise<DecisionRecord[]> {
   const adapter = getAdapter();
 
   try {
-    // Story 014.14 Fix: Prioritize exact topic match over fuzzy matching
-    // First try exact match, then fallback to fuzzy if no results
-
-    // Try exact match first
-    let stmt = adapter.prepare(`
+    if (!anchorId) {
+      const decisions = adapter
+        .prepare(
+          `
+          WITH RECURSIVE decision_chain AS (
+            SELECT * FROM decisions WHERE topic = ? AND superseded_by IS NULL
+            UNION
+            SELECT d.* FROM decisions d
+            JOIN decision_chain dc ON d.id = dc.supersedes
+          )
+          SELECT * FROM decision_chain ORDER BY created_at DESC, id DESC
+        `
+        )
+        .all(topic) as DecisionRecord[];
+      const edgesStmt = adapter.prepare(`
+        SELECT * FROM decision_edges
+        WHERE from_id = ?
+          AND (approved_by_user = 1 OR approved_by_user IS NULL)
+      `);
+      for (const decision of decisions) {
+        decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
+      }
+      return decisions;
+    }
+    const stmt = adapter.prepare(`
       WITH RECURSIVE decision_chain AS (
-        -- Base case: Get current decision (not superseded)
-        SELECT * FROM decisions
-        WHERE topic = ? AND superseded_by IS NULL
+        SELECT * FROM (
+          SELECT * FROM decisions
+          WHERE id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        )
 
         UNION ALL
 
@@ -696,31 +699,7 @@ export async function queryDecisionGraph(topic: string): Promise<DecisionRecord[
       SELECT * FROM decision_chain
       ORDER BY created_at DESC
     `);
-
-    let decisions = stmt.all(topic) as DecisionRecord[];
-
-    // If no exact match, try fuzzy matching as fallback
-    if (decisions.length === 0) {
-      const topicKeyword = topic.split('_')[0];
-
-      stmt = adapter.prepare(`
-        WITH RECURSIVE decision_chain AS (
-          -- Base case: Get current decision (not superseded)
-          SELECT * FROM decisions
-          WHERE topic LIKE ? || '%' AND superseded_by IS NULL
-
-          UNION ALL
-
-          -- Recursive case: Get previous decisions
-          SELECT d.* FROM decisions d
-          JOIN decision_chain dc ON d.id = dc.supersedes
-        )
-        SELECT * FROM decision_chain
-        ORDER BY created_at DESC
-      `);
-
-      decisions = stmt.all(topicKeyword) as DecisionRecord[];
-    }
+    const decisions = stmt.all(anchorId) as DecisionRecord[];
 
     // Join with decision_edges to include relationships
     // Prepare statement once outside loop for performance

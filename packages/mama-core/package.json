@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -44,7 +44,11 @@
     "./provenance/source-ref": "./dist/provenance/source-ref.js",
     "./edges/types": "./dist/edges/types.js",
     "./edges/store": "./dist/edges/store.js",
-    "./edges/ref-validation": "./dist/edges/ref-validation.js"
+    "./edges/ref-validation": "./dist/edges/ref-validation.js",
+    "./registry/types": "./dist/registry/types.js",
+    "./registry/store": "./dist/registry/store.js",
+    "./registry/record-identity": "./dist/registry/record-identity.js",
+    "./operations/owner-action-effects": "./dist/operations/owner-action-effects.js"
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc",

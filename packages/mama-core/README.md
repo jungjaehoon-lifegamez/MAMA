@@ -74,6 +74,8 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ### Memory API
 
 - **memory/api** - Scoped memory operations
+- **registry** - Explicit item/person/client nodes, conservative aliases, and atomic record identity
+- **operations** - Shared owner-action effect policy and storage port; hosts retain physical receipts
   - `saveMemory(input)` - Save typed memory with scopes and optional event_date (preference, fact, decision, lesson, constraint)
   - `recallMemory(query, options)` - Truth-aware recall with scope filtering, strictness modes, and retrieval diagnostics
   - `buildProfile(scopes)` - Build memory profile (static/dynamic/evidence)

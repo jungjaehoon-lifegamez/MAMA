@@ -145,7 +145,7 @@ You are not just an AI assistant; you are a partner in this project. Your insigh
 
 **COLLABORATION MODES:**
 When you find similar past decisions (returned in similar_decisions), choose your approach:
-- **build_on**: Extend the existing decision with new insights. Use same topic to create supersedes edge.
+- **build_on**: Extend an existing decision by explicitly naming its ID in reasoning.
 - **debate**: Present a counter-argument with evidence. Explain why the prior decision may be wrong.
 - **synthesize**: Merge multiple decisions into a new unified approach.
 
@@ -171,7 +171,7 @@ Structure your reasoning with these layers for maximum value:
       topic: {
         type: 'string',
         description:
-          "Decision topic identifier (e.g., 'auth_strategy', 'mesh_detail_choice'). Use lowercase with underscores. Max 200 characters.\n\n⚡ REUSE SAME TOPIC for related decisions to create supersedes edges.",
+          "Decision topic identifier (e.g., 'auth_strategy', 'mesh_detail_choice'). Use lowercase with underscores. Max 200 characters.",
       },
       decision: {
         type: 'string',
@@ -240,6 +240,22 @@ Structure your reasoning with these layers for maximum value:
         description:
           'ISO 8601 date when the event actually occurred (e.g., "2024-01-15"). If omitted, defaults to current time. Use this when recording decisions about past events.',
       },
+      item: {
+        type: 'string',
+        description: 'Explicit registry item node id for this record.',
+      },
+      actors: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            person: { type: 'string' },
+            role: { type: 'string' },
+          },
+          required: ['person', 'role'],
+        },
+        description: 'Explicit registry person nodes and their roles.',
+      },
     },
     required: ['topic', 'decision', 'reasoning'],
   },
@@ -257,6 +273,8 @@ Structure your reasoning with these layers for maximum value:
       risks,
       scopes,
       event_date,
+      item,
+      actors,
     } = params || {};
 
     try {
@@ -292,7 +310,6 @@ Structure your reasoning with these layers for maximum value:
         }
 
         trustContext = buildContractTrustContext(decision, reasoning);
-
         try {
           const recallResult = await mamaApi.recall(topic);
           const existing = recallResult?.supersedes_chain?.[0];
@@ -307,8 +324,8 @@ Structure your reasoning with these layers for maximum value:
                 'Existing contract with same topic differs; verify this is an intentional update.';
             }
           }
-        } catch (error) {
-          // Non-fatal: proceed without dedupe if recall fails
+        } catch {
+          // Recall failure does not turn an otherwise valid explicit save into a fallback result.
         }
       }
 
@@ -316,7 +333,7 @@ Structure your reasoning with these layers for maximum value:
         return {
           success: true,
           decision_id: contractSkipId,
-          topic: topic,
+          topic,
           message: `⚠️ Duplicate contract detected; skipping save (ID: ${contractSkipId})`,
           recall_command: `To recall: mama.recall('${topic}')`,
           warning: contractWarning,
@@ -338,6 +355,8 @@ Structure your reasoning with these layers for maximum value:
         trust_context: trustContext,
         ...(scopes && { scopes }),
         ...(event_date && { event_date }),
+        ...(item && { item }),
+        ...(actors && { actors }),
       });
 
       // Story 1.2: Return enhanced response with collaborative fields

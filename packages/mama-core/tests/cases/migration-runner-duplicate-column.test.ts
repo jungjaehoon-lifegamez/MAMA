@@ -108,6 +108,240 @@ describe('Story M2.1: Migration 032 duplicate-column recovery', () => {
   });
 });
 
+describe('Story T4: stamped registry identity migration recovery', () => {
+  afterEach(cleanupTempDir);
+
+  it('repairs partial 069 and 070 structures before dependent migrations run', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-identity-'));
+    const dbPath = join(tempDir, 'partial-identity.db');
+    const setupDb = new Database(dbPath);
+    setupDb.pragma('foreign_keys = ON');
+    applyThrough(setupDb, 68);
+    setupDb.exec('ALTER TABLE decisions ADD COLUMN item_id TEXT');
+    setupDb
+      .prepare('INSERT INTO schema_version (version, description) VALUES (?, ?)')
+      .run(69, 'partial registry stamp');
+    setupDb
+      .prepare('INSERT INTO schema_version (version, description) VALUES (?, ?)')
+      .run(70, 'partial record stamp');
+    setupDb.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    adapter.disconnect();
+
+    const db = new Database(dbPath);
+    expect(tableExists(db, 'registry_nodes')).toBe(true);
+    expect(tableExists(db, 'registry_aliases')).toBe(true);
+    expect(indexExists(db, 'idx_registry_aliases_node')).toBe(true);
+    expect(columnExists(db, 'decisions', 'item_id')).toBe(true);
+    expect(tableExists(db, 'record_actors')).toBe(true);
+    expect(indexExists(db, 'idx_decisions_item')).toBe(true);
+    expect(indexExists(db, 'idx_record_actors_person')).toBe(true);
+    db.close();
+  });
+
+  it('repairs populated evasive shapes and wrong canonical indexes without losing custom objects', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-malformed-identity-'));
+    const dbPath = join(tempDir, 'malformed-identity.db');
+    const setupDb = new Database(dbPath);
+    setupDb.pragma('foreign_keys = ON');
+    applyThrough(setupDb, 68);
+    setupDb.exec(`
+      CREATE TABLE registry_note_refs (id TEXT PRIMARY KEY);
+      INSERT INTO registry_note_refs(id) VALUES ('note');
+      CREATE TABLE registry_nodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'person', 'client')),
+        name INTEGER NOT NULL,
+        parent_id TEXT, merged_into TEXT, merge_reason TEXT, note TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        CHECK (note IS NULL OR note != 'forbidden'),
+        UNIQUE (note, name),
+        FOREIGN KEY (note) REFERENCES registry_note_refs(id)
+      );
+      CREATE TABLE registry_aliases (
+        node_id TEXT NOT NULL REFERENCES registry_nodes(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'person', 'client')),
+        alias TEXT NOT NULL, alias_display TEXT NOT NULL,
+        scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY (kind, alias, scope_kind, scope_id)
+      );
+      CREATE TABLE registry_scope_bindings (
+        node_id TEXT NOT NULL REFERENCES registry_nodes(id) ON DELETE CASCADE,
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'project')),
+        scope_id TEXT NOT NULL,
+        PRIMARY KEY (node_id, scope_kind, scope_id)
+      );
+      CREATE TABLE record_actors (
+        record_id TEXT NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        person_id TEXT NOT NULL, role TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+        PRIMARY KEY (record_id, person_id, role),
+        CHECK (position >= 0),
+        UNIQUE (person_id, position)
+      );
+      ALTER TABLE decisions ADD COLUMN item_id TEXT;
+      INSERT INTO registry_nodes
+        (id, kind, name, parent_id, merged_into, merge_reason, note, created_at, updated_at)
+        VALUES ('reg-preserved', 'item', 'preserved item', NULL, NULL, NULL, 'note', 1, 2);
+      INSERT INTO registry_aliases
+        (node_id, kind, alias, alias_display, scope_kind, scope_id, created_at)
+        VALUES ('reg-preserved', 'item', 'preserved', 'Preserved', 'global', '*', '3');
+      INSERT INTO decisions
+        (id, topic, decision, confidence, created_at, updated_at)
+        VALUES ('decision-preserved', 'topic', 'decision', 1, 1, 1);
+      INSERT INTO record_actors
+        (record_id, person_id, role, position, created_at)
+        VALUES ('decision-preserved', 'reg-person', 'worker', 4, 5);
+      CREATE INDEX idx_registry_custom_note ON registry_nodes(note);
+      CREATE INDEX idx_registry_nodes_kind ON registry_nodes(name);
+      CREATE INDEX idx_registry_nodes_parent ON registry_nodes(note);
+      CREATE INDEX idx_registry_aliases_node ON registry_aliases(alias);
+      CREATE INDEX idx_registry_aliases_scope ON registry_aliases(scope_id);
+      CREATE INDEX idx_registry_scope_lookup ON registry_scope_bindings(node_id);
+      CREATE INDEX idx_record_actors_person ON record_actors(role);
+      CREATE TABLE registry_repair_audit (node_id TEXT);
+      CREATE TRIGGER custom_registry_insert AFTER INSERT ON registry_nodes
+        BEGIN INSERT INTO registry_repair_audit(node_id) VALUES (NEW.id); END;
+      CREATE TABLE registry_external_child (
+        node_id TEXT REFERENCES registry_nodes(id) ON DELETE CASCADE
+      );
+      INSERT INTO registry_external_child(node_id) VALUES ('reg-preserved');
+      CREATE TABLE actor_external_child (
+        record_id TEXT, person_id TEXT, role TEXT,
+        FOREIGN KEY (record_id, person_id, role)
+          REFERENCES record_actors(record_id, person_id, role) ON DELETE CASCADE
+      );
+      INSERT INTO actor_external_child(record_id, person_id, role)
+        VALUES ('decision-preserved', 'reg-person', 'worker');
+      INSERT INTO schema_version (version, description) VALUES (69, 'malformed registry');
+      INSERT INTO schema_version (version, description) VALUES (70, 'malformed actors');
+    `);
+    setupDb.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    adapter.disconnect();
+
+    const db = new Database(dbPath);
+    const firstSchema = db
+      .prepare("SELECT sql FROM sqlite_master WHERE name = 'registry_nodes'")
+      .get() as { sql: string };
+    expect(tableSql(db, 'registry_nodes')).toContain("kind IN ('item', 'person', 'client')");
+    expect(tableSql(db, 'record_actors')).toContain('PRIMARY KEY (record_id, person_id, role)');
+    expect(tableSql(db, 'record_actors')).toContain('DEFAULT 0');
+    expect(indexExists(db, 'idx_registry_scope_lookup')).toBe(true);
+    expect(
+      db.prepare("SELECT name, note FROM registry_nodes WHERE id = 'reg-preserved'").get()
+    ).toEqual({
+      name: 'preserved item',
+      note: 'note',
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT person_id, role, position FROM record_actors WHERE record_id = 'decision-preserved'"
+        )
+        .get()
+    ).toEqual({ person_id: 'reg-person', role: 'worker', position: 4 });
+    expect(indexExists(db, 'idx_registry_custom_note')).toBe(true);
+    expect(triggerExists(db, 'custom_registry_insert')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM registry_external_child').get()).toEqual({
+      count: 1,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM actor_external_child').get()).toEqual({
+      count: 1,
+    });
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO registry_nodes
+           (id, kind, name, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run('reg-invalid', 'item', 'invalid', 'forbidden', 1, 1)
+    ).toThrow(/constraint/i);
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO record_actors
+           (record_id, person_id, role, position, created_at) VALUES (?, ?, ?, ?, ?)`
+        )
+        .run('decision-preserved', 'reg-other', 'worker', -1, 1)
+    ).toThrow(/constraint/i);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+
+    const second = new NodeSQLiteAdapter({ dbPath });
+    second.connect();
+    second.runMigrations(MIGRATIONS_DIR);
+    second.disconnect();
+    const reopened = new Database(dbPath);
+    expect(
+      (
+        reopened.prepare("SELECT sql FROM sqlite_master WHERE name = 'registry_nodes'").get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(firstSchema.sql);
+    expect(reopened.prepare('SELECT COUNT(*) AS count FROM registry_external_child').get()).toEqual(
+      {
+        count: 1,
+      }
+    );
+    expect(reopened.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    reopened.close();
+  });
+
+  it('refuses an unsupported inline constraint before changing rows, children, schema or FK state', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-inline-constraint-'));
+    const dbPath = join(tempDir, 'inline.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 68);
+    setup.exec(`
+      CREATE TABLE registry_nodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'person', 'client')),
+        name TEXT NOT NULL COLLATE NOCASE,
+        parent_id TEXT, merged_into TEXT, merge_reason TEXT, note TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      INSERT INTO registry_nodes VALUES ('kept', 'item', 'Kept', NULL, NULL, NULL, NULL, 1, 1);
+      CREATE TABLE inline_child (
+        node_id TEXT REFERENCES registry_nodes(id) ON DELETE CASCADE
+      );
+      INSERT INTO inline_child VALUES ('kept');
+      INSERT INTO schema_version(version, description) VALUES (69, 'inline partial');
+    `);
+    const schemaBefore = tableSql(setup, 'registry_nodes');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/inline constraint/);
+    expect(
+      (adapter.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+    ).toBe(1);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='registry_nodes'")
+          .get() as { sql: string }
+      ).sql
+    ).toBe(schemaBefore);
+    expect(adapter.prepare('SELECT COUNT(*) AS count FROM registry_nodes').get()).toEqual({
+      count: 1,
+    });
+    expect(adapter.prepare('SELECT COUNT(*) AS count FROM inline_child').get()).toEqual({
+      count: 1,
+    });
+    adapter.disconnect();
+  });
+});
+
 describe('Story M2.3: Migration 034 duplicate-column recovery', () => {
   afterEach(cleanupTempDir);
 
@@ -748,9 +982,83 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         evidence_json: null,
       });
       expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 68,
+        version: 71,
       });
       db.close();
     });
   }
+
+  // A database stamped 68 but missing the 068 diagnostic columns is a legacy
+  // recovery state the runner must still carry all the way to the 071
+  // operation-origin shape. The main loop skips version 68 (already stamped) and
+  // reaches the in-loop 071 branch first, so the 068 prerequisite must be
+  // repaired before the 071 rebuild. This pins that the partial-068 path reaches
+  // the real 071 shape and preserves the row through two opens — merely skipping
+  // 071 (or silently swallowing its failure) would make this red.
+  it('partial-068 stamp still reaches the 071 operation-origin shape', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-068-to-071-'));
+    const dbPath = join(tempDir, 'runtime-068.db');
+    const setupDb = new Database(dbPath);
+    applyThrough(setupDb, 67);
+    setupDb.exec('ALTER TABLE tool_traces ADD COLUMN project_id TEXT');
+    setupDb.exec('ALTER TABLE tool_traces ADD COLUMN channel_id TEXT');
+    setupDb.prepare('INSERT INTO schema_version (version) VALUES (?)').run(68);
+    setupDb
+      .prepare('INSERT INTO model_runs (model_run_id, status, created_at) VALUES (?, ?, ?)')
+      .run('existing-run', 'legacy', 1);
+    setupDb
+      .prepare(
+        'INSERT INTO tool_traces (trace_id, model_run_id, tool_name, project_id, channel_id, input_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        'existing-trace',
+        'existing-run',
+        'example',
+        'existing-project',
+        'existing-channel',
+        'preserved summary',
+        2
+      );
+    setupDb.close();
+
+    for (let pass = 0; pass < 2; pass++) {
+      const adapter = new NodeSQLiteAdapter({ dbPath });
+      adapter.connect();
+      adapter.runMigrations(MIGRATIONS_DIR);
+      adapter.disconnect();
+    }
+
+    const db = new Database(dbPath);
+    // The 071 origin columns must actually exist (skipping 071 leaves them out).
+    expect(columnExists(db, 'tool_traces', 'operation_id')).toBe(true);
+    expect(columnExists(db, 'tool_traces', 'actor_principal_id')).toBe(true);
+    // model_run_id must be relaxed to nullable by the 071 rebuild.
+    const modelRunColumn = (
+      db.prepare('PRAGMA table_info(tool_traces)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>
+    ).find((column) => column.name === 'model_run_id');
+    expect(modelRunColumn?.notnull).toBe(0);
+    // The original row and its values survive the 068 repair + 071 rebuild.
+    expect(
+      db
+        .prepare(
+          'SELECT model_run_id, project_id, channel_id, input_summary, operation_id, actor_principal_id FROM tool_traces WHERE trace_id = ?'
+        )
+        .get('existing-trace')
+    ).toEqual({
+      model_run_id: 'existing-run',
+      project_id: 'existing-project',
+      channel_id: 'existing-channel',
+      input_summary: 'preserved summary',
+      operation_id: null,
+      actor_principal_id: null,
+    });
+    const stamped = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as {
+      version: number;
+    };
+    expect(stamped.version).toBeGreaterThanOrEqual(71);
+    db.close();
+  });
 });

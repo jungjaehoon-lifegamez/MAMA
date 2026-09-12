@@ -1637,3 +1637,13 @@ procedure; repeated-outcome autonomous improvement and another-model transfer re
 Full test suite passed (7 tasks; standalone 5,792 passed/7 skipped). Independent scoped code
 reviews are clear. No new implementation has been released or installed. See the latest
 [intent check](intent-checks.md) and [procedure guide](../guides/procedure-corrections.md).
+
+# PR3A source evidence (2026-09-13)
+
+- **TG-03:** gateway/Code-Act registry lookup and upsert expose explicit identity primitives;
+  record saves carry explicit item/actors. This is code and temporary-SQLite test evidence only.
+- **TG-05:** record identity and the canonical memory row commit or roll back together, so a
+  restarted session cannot observe a successful partial save. Installed continuity is unverified.
+- **TG-06:** service/CLI effects and traces may name a nonblank operation and trusted principal;
+  operation origin takes precedence over causal model provenance during release/reconcile.
+  Live Telegram delivery and receipt rendering remain unverified.

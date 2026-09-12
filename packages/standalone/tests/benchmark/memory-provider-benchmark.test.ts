@@ -171,7 +171,7 @@ describe('Memory Provider Benchmark: Save → Recall', () => {
         const save2 = await mamaApi.save({
           topic: scenario.secondSave.topic,
           decision: scenario.secondSave.decision,
-          reasoning: `${scenario.secondSave.reasoning}. supersedes: previous ${scenario.firstSave.topic} decision`,
+          reasoning: `${scenario.secondSave.reasoning}. supersedes: ${save1.id}`,
           confidence: 0.9,
           type: 'user_decision',
           scopes: SCOPES,

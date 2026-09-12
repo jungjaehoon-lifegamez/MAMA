@@ -150,6 +150,8 @@ export const DEFAULT_ROLES: RolesConfig = {
       model: 'claude-sonnet-5',
       maxTurns: 10,
       allowedTools: [
+        'registry_lookup',
+        'registry_upsert',
         'mama_search',
         'mama_recall',
         'mama_provenance',

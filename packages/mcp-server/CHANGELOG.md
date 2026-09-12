@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-13
+
+### Added
+
+- The `save` and `save_decision` tools accept explicit registry `item` and `actors`
+  references and forward them to the core atomic save.
+
 ## [2.0.0] - 2026-09-12
 
 ### Removed

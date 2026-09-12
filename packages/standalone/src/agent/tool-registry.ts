@@ -59,10 +59,128 @@ function register(meta: ToolDefinitionMeta): void {
 register({
   name: 'mama_save',
   description:
-    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context. A packet compiled ONLY against mirror (grant-implied) scopes cannot back a save - re-compile with at least one envelope-named scope.',
+    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). Optional item and actors references are validated before saving. context_packet_id is trusted provenance and is only honored when supplied from active runtime context. A packet compiled ONLY against mirror (grant-implied) scopes cannot back a save - re-compile with at least one envelope-named scope.',
   category: 'memory',
   params:
-    'type, topic?, decision?, reasoning?, confidence?, event_date?, context_packet_id?, summary?, next_steps?',
+    'type, topic?, decision?, reasoning?, confidence?, event_date?, item?, actors?, context_packet_id?, summary?, next_steps?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['decision', 'checkpoint'] },
+      topic: { type: 'string', minLength: 1 },
+      decision: { type: 'string', minLength: 1 },
+      reasoning: { type: 'string', minLength: 1 },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      event_date: { type: 'string' },
+      item: { type: 'string', minLength: 1 },
+      actors: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            person: { type: 'string', minLength: 1 },
+            role: { type: 'string', minLength: 1 },
+          },
+          required: ['person', 'role'],
+          additionalProperties: false,
+        },
+      },
+      context_packet_id: { type: 'string', minLength: 1 },
+      summary: { type: 'string', minLength: 1 },
+      next_steps: { type: 'string' },
+      open_files: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['type'],
+    additionalProperties: false,
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          type: { const: 'decision' },
+          topic: { type: 'string', minLength: 1 },
+          decision: { type: 'string', minLength: 1 },
+          reasoning: { type: 'string', minLength: 1 },
+          confidence: { type: 'number', minimum: 0, maximum: 1 },
+          event_date: { type: 'string' },
+          item: { type: 'string', minLength: 1 },
+          actors: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                person: { type: 'string', minLength: 1 },
+                role: { type: 'string', minLength: 1 },
+              },
+              required: ['person', 'role'],
+              additionalProperties: false,
+            },
+          },
+          context_packet_id: { type: 'string', minLength: 1 },
+        },
+        required: ['type', 'topic', 'decision', 'reasoning'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          type: { const: 'checkpoint' },
+          summary: { type: 'string', minLength: 1 },
+          next_steps: { type: 'string' },
+          open_files: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['type', 'summary'],
+        additionalProperties: false,
+      },
+    ],
+  },
+});
+// Identity: what this work item or person is already known by, and what the agent decided
+// it is. Separate from search - a prefix that is not registered is not a node.
+register({
+  name: 'registry_lookup',
+  description:
+    "Resolve a name, code or nickname to the item/person/client node it belongs to, with that node's children. Returns found:false when nothing is registered under that spelling - that is the signal to register it, not to search harder.",
+  category: 'memory',
+  params: 'name, kind? (item|person|client)',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', minLength: 1 },
+      kind: { type: 'string', enum: ['item', 'person', 'client'] },
+    },
+    required: ['name'],
+    additionalProperties: false,
+  },
+});
+register({
+  name: 'registry_upsert',
+  description:
+    'Register a node or add spellings to one you already resolved: {kind, name, aliases?, parent_of?, note?}. Adding an alias another node holds is refused with code alias_taken - decide whether the two are the same and ask the owner before merging. Splitting an item into its parts is parent_of.',
+  category: 'memory',
+  params: 'kind, name, aliases?, parent_of?, note?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      kind: { type: 'string', enum: ['item', 'person', 'client'] },
+      name: { type: 'string', minLength: 1 },
+      aliases: { type: 'array', items: { type: 'string', minLength: 1 } },
+      parent_of: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', minLength: 1 },
+            aliases: { type: 'array', items: { type: 'string', minLength: 1 } },
+          },
+          required: ['name'],
+          additionalProperties: false,
+        },
+      },
+      note: { type: 'string' },
+    },
+    required: ['kind', 'name'],
+    additionalProperties: false,
+  },
 });
 register({
   name: 'mama_search',
@@ -678,7 +796,7 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item on YOUR task board. Records and tasks are SEPARATE: create a task only for authorized work with a concrete, finite completion condition, regardless of the input source. Connector observations, lessons, principles, aspirations ("\uc5f4\uc2ec\ud788 \uc0b4\uc790") and open questions ("how should we manage X?") stay records/memory/decisions - do not create rows for them. `creation_key` is a required stable logical task name within this occurrence; reuse it on retries and choose distinct keys for distinct tasks. `completion_criteria` is required, limited to 500 characters, and must name what would make this finished; a title alone is refused. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it; a Board workorder must pass the revision it read when that UPSERT changes lifecycle fields. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board. Records and tasks are SEPARATE: create a task only for authorized work with a concrete, finite completion condition, regardless of the input source. Connector observations, lessons, principles, aspirations ("\uc5f4\uc2ec\ud788 \uc0b4\uc790") and open questions ("how should we manage X?") stay records/memory/decisions - do not create rows for them. `creation_key` is a required stable logical task name within this occurrence; reuse it on retries and choose distinct keys for distinct tasks. `completion_criteria` is required, limited to 500 characters, and must name what would make this finished. Two distinct tasks may cite the same source event. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
     'title (required), creation_key (required, stable across retries), completion_criteria (required, concrete and finite), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?, expected_revision?',
