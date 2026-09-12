@@ -22,7 +22,7 @@ import {
  * Merging is never automatic here: the caller decides. The store only refuses the shapes
  * that would corrupt the graph (an alias claimed by two nodes, a merge into a dead node).
  */
-describe('registry: item and person nodes with aliases', () => {
+describe('Story PR3A: registry item and person nodes with aliases', () => {
   let dbPath: string;
 
   beforeAll(async () => {
@@ -210,18 +210,20 @@ describe('registry: item and person nodes with aliases', () => {
     expect(resolveAlias('a-only-alias', 'item', [{ kind: 'project', id: 'b' }])).toBeNull();
   });
 
-  it('rejects children on an existing node without adding aliases or child rows', () => {
-    const existing = createNode({ kind: 'item', name: 'existing parent' });
-    expect(() =>
-      upsertNode({
-        kind: 'item',
-        name: 'existing parent',
-        aliases: ['must-not-stick'],
-        children: [{ name: 'child one' }, { name: 'child two' }],
-      })
-    ).toThrowError(expect.objectContaining({ code: 'existing_children_unsupported' }));
-    expect(resolveAlias('must-not-stick')).toBeNull();
-    expect(listNodes({ parentId: existing })).toEqual([]);
+  describe('AC: existing-node upsert is atomic', () => {
+    it('rejects children on an existing node without adding aliases or child rows', () => {
+      const existing = createNode({ kind: 'item', name: 'existing parent' });
+      expect(() =>
+        upsertNode({
+          kind: 'item',
+          name: 'existing parent',
+          aliases: ['must-not-stick'],
+          children: [{ name: 'child one' }, { name: 'child two' }],
+        })
+      ).toThrowError(expect.objectContaining({ code: 'existing_children_unsupported' }));
+      expect(resolveAlias('must-not-stick')).toBeNull();
+      expect(listNodes({ parentId: existing })).toEqual([]);
+    });
   });
 
   it('propagates loser scopes on merge so a visible alias never reveals a hidden survivor', () => {
@@ -239,5 +241,31 @@ describe('registry: item and person nodes with aliases', () => {
     expect(resolveAlias('visible loser', 'item', [{ kind: 'project', id: 'a' }])?.id).toBe(
       survivor
     );
+  });
+
+  describe('AC: merged tombstones cannot be reused', () => {
+    it('rejects re-merging a tombstoned loser without moving aliases or scopes', () => {
+      const loser = createNode({
+        kind: 'item',
+        name: 'merge loser',
+        aliases: ['loser-alias'],
+        scopes: [{ kind: 'project', id: 'a' }],
+      });
+      const first = createNode({ kind: 'item', name: 'first survivor' });
+      const second = createNode({ kind: 'item', name: 'second survivor' });
+      mergeNodes({ loser, survivor: first, reason: 'first merge' });
+      expect(() => mergeNodes({ loser, survivor: second, reason: 'second merge' })).toThrowError(
+        expect.objectContaining({ code: 'loser_merged' })
+      );
+      expect(resolveAlias('loser-alias', 'item', [{ kind: 'project', id: 'a' }])?.id).toBe(first);
+      expect(
+        getAdapter()
+          .prepare(
+            `SELECT COUNT(*) AS count FROM registry_scope_bindings
+           WHERE node_id = ? AND scope_kind = 'project' AND scope_id = 'a'`
+          )
+          .get(second)
+      ).toEqual({ count: 0 });
+    });
   });
 });

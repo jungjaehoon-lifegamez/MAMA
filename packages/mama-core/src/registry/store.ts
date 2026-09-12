@@ -229,8 +229,9 @@ export function addAliases(
       return;
     }
     const node = readNode(nodeId);
-    if (!node || node.mergedInto)
+    if (!node || node.mergedInto) {
       throw new RegistryError('unknown_node', 'Registry node unavailable');
+    }
     for (const alias of aliases) {
       insertAlias(nodeId, node.kind, alias, Date.now(), scopes);
     }
@@ -388,6 +389,9 @@ export function mergeNodes(input: { loser: string; survivor: string; reason: str
   const survivor = readNode(input.survivor);
   if (!loser) {
     throw new RegistryError('unknown_node', `No registry node ${input.loser}`);
+  }
+  if (loser.mergedInto) {
+    throw new RegistryError('loser_merged', `Node ${input.loser} was already merged`);
   }
   if (!survivor) {
     throw new RegistryError('unknown_node', `No registry node ${input.survivor}`);

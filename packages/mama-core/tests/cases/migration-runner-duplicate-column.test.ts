@@ -407,6 +407,81 @@ describe('Story PR3A: adapter cache rollback', () => {
       adapter.disconnect();
     }
   );
+
+  it.each([
+    ['top-level', 'COMMIT'],
+    ['nested', 'RELEASE SAVEPOINT mama_nested_1'],
+  ])('restores captured depth once after %s settlement failure', (mode, failingSql) => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-transaction-depth-'));
+    const adapter = new NodeSQLiteAdapter({ dbPath: join(tempDir, 'depth.db') });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    const originalExec = adapter.exec.bind(adapter);
+    const commands: string[] = [];
+    let shouldFail = true;
+    adapter.exec = (sql: string) => {
+      commands.push(sql);
+      if (shouldFail && sql === failingSql) {
+        shouldFail = false;
+        throw new Error('synthetic settlement failure');
+      }
+      originalExec(sql);
+    };
+    if (mode === 'top-level') {
+      expect(() => adapter.transaction(() => undefined)).toThrow('synthetic settlement failure');
+    } else {
+      adapter.transaction(() => {
+        expect(() => adapter.transaction(() => undefined)).toThrow('synthetic settlement failure');
+      });
+    }
+    adapter.transaction(() => undefined);
+    expect(commands.at(-2)).toBe('BEGIN TRANSACTION');
+    expect(commands.at(-1)).toBe('COMMIT');
+    adapter.disconnect();
+  });
+
+  it.each([
+    ['top-level', 'COMMIT'],
+    ['nested', 'RELEASE SAVEPOINT mama_nested_1'],
+  ])('poisons the adapter when %s settlement succeeds but cleanup fails', (mode, settlementSql) => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-transaction-poison-'));
+    const adapter = new NodeSQLiteAdapter({ dbPath: join(tempDir, 'poison.db') });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    const originalExec = adapter.exec.bind(adapter);
+    let throwAfterSettlement = true;
+    adapter.exec = (sql: string) => {
+      originalExec(sql);
+      if (throwAfterSettlement && sql === settlementSql) {
+        throwAfterSettlement = false;
+        throw new Error('wrapper failed after settlement');
+      }
+    };
+    const run = () => {
+      if (mode === 'top-level') {
+        adapter.transaction(() => undefined);
+      } else {
+        adapter.transaction(() => adapter.transaction(() => undefined));
+      }
+    };
+    let failure: unknown;
+    try {
+      run();
+    } catch (error) {
+      failure = error;
+    }
+    const failureMessages = (error: unknown): string[] => {
+      if (error instanceof AggregateError) {
+        return error.errors.flatMap(failureMessages);
+      }
+      return [error instanceof Error ? error.message : String(error)];
+    };
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failureMessages(failure)).toContain('wrapper failed after settlement');
+    expect(failureMessages(failure).length).toBeGreaterThan(1);
+    expect(adapter.isConnected()).toBe(false);
+    expect(() => adapter.transaction(() => undefined)).toThrow('Database not connected');
+  });
 });
 
 describe('Story M2.3: Migration 034 duplicate-column recovery', () => {

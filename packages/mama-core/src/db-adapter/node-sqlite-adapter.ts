@@ -489,19 +489,35 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       ) {
         throw new Error('DatabaseAdapter.transaction() callbacks must be synchronous');
       }
-      this.transactionDepth -= 1;
       this.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
+      this.transactionDepth = depth;
       return result;
     } catch (error) {
       this.vectorCache = vectorSnapshot;
       this.topicCache = topicSnapshot;
       this.statusCache = statusSnapshot;
-      this.transactionDepth -= 1;
+      this.transactionDepth = depth;
+      let cleanupError: unknown;
       try {
         this.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO SAVEPOINT ${savepoint}`);
-        if (depth > 0) this.exec(`RELEASE SAVEPOINT ${savepoint}`);
-      } catch {
-        // Preserve the original transaction failure when rollback also fails.
+        if (depth > 0) {
+          this.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+      } catch (rollbackError) {
+        cleanupError = rollbackError;
+      }
+      if (cleanupError !== undefined) {
+        const failures = [error, cleanupError];
+        try {
+          this.disconnect();
+        } catch (disconnectError) {
+          failures.push(disconnectError);
+          this.db = null;
+        }
+        throw new AggregateError(
+          failures,
+          'Transaction settlement and rollback cleanup both failed; adapter disconnected'
+        );
       }
       throw error;
     }
@@ -984,7 +1000,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       table: string,
       expected: Array<[string, string, number, string | null, number]>
     ): boolean => {
-      if (!this.tableExists(table)) return false;
+      if (!this.tableExists(table)) {
+        return false;
+      }
       const rows = this.prepare(`PRAGMA table_info("${table}")`).all() as ColumnShape[];
       return (
         rows.length === expected.length &&
@@ -1001,7 +1019,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     };
     const fkMatch = (table: string, expected: Array<[string, string, string, string]>): boolean => {
-      if (!this.tableExists(table)) return false;
+      if (!this.tableExists(table)) {
+        return false;
+      }
       const rows = this.prepare(`PRAGMA foreign_key_list("${table}")`).all() as Array<{
         from: string;
         table: string;
@@ -1019,7 +1039,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     };
     const indexMatch = (name: string, columns: string[]): boolean => {
-      if (!this.indexExists(name)) return false;
+      if (!this.indexExists(name)) {
+        return false;
+      }
       const rows = this.prepare(`PRAGMA index_info("${name}")`).all() as Array<{
         seqno: number;
         name: string;
@@ -1118,7 +1140,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     }
 
-    if (!this.tableExists('decisions')) return;
+    if (!this.tableExists('decisions')) {
+      return;
+    }
     if (this.tableColumns('decisions').has('item_id')) {
       const itemColumn = (
         this.prepare('PRAGMA table_info("decisions")').all() as ColumnShape[]
@@ -1157,7 +1181,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       !this.tableExists('record_actors') ||
       !this.indexExists('idx_decisions_item') ||
       !this.indexExists('idx_record_actors_person');
-    if (!needsRecordIdentityRepair) return;
+    if (!needsRecordIdentityRepair) {
+      return;
+    }
 
     this.exec('BEGIN TRANSACTION');
     try {
@@ -1199,7 +1225,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     const extraConstraints = (table: string, canonicalFragments: string[]): string[] => {
       const clauses = splitCreateTableClauses(originalTableSql(table));
-      if (clauses.length === 0) throw new Error(`Migration 069 cannot parse ${table} definition`);
+      if (clauses.length === 0) {
+        throw new Error(`Migration 069 cannot parse ${table} definition`);
+      }
       for (const clause of clauses.filter((candidate) => !clauseIsTableConstraint(candidate))) {
         const normalized = normalizeSqlText(clause);
         const hasInlineConstraint = ['check(', 'unique', 'collate', 'references'].some((token) =>
@@ -1220,7 +1248,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         }
       }
       return clauses.filter((clause) => {
-        if (!clauseIsTableConstraint(clause)) return false;
+        if (!clauseIsTableConstraint(clause)) {
+          return false;
+        }
         const normalized = normalizeSqlText(clause);
         return !canonicalFragments.some((fragment) =>
           normalized.includes(normalizeSqlText(fragment))
@@ -1303,7 +1333,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       'utf8'
     );
     const inject = (table: string, extras: string[]): void => {
-      if (extras.length === 0) return;
+      if (extras.length === 0) {
+        return;
+      }
       const pattern = new RegExp(`(CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?)(\\n\\);)`);
       if (!pattern.test(migrationSQL)) {
         throw new Error(`Migration 069 cannot preserve ${table} constraints`);
@@ -1368,10 +1400,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         for (const row of scopes) {
           insertScope.run(row.node_id, row.scope_kind, row.scope_id);
         }
-        for (const object of customObjects) this.exec(object.sql);
+        for (const object of customObjects) {
+          this.exec(object.sql);
+        }
         const violations = this.prepare('PRAGMA foreign_key_check').all();
-        if (violations.length > 0)
+        if (violations.length > 0) {
           throw new Error('Migration 069 repair left foreign key violations');
+        }
       });
     } finally {
       this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
@@ -1387,7 +1422,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       )?.sql ?? ''
     );
     const actorExtras = splitCreateTableClauses(originalSql).filter((clause) => {
-      if (!clauseIsTableConstraint(clause)) return false;
+      if (!clauseIsTableConstraint(clause)) {
+        return false;
+      }
       const normalized = normalizeSqlText(clause);
       return ![
         'PRIMARY KEY (record_id, person_id, role)',
@@ -1463,10 +1500,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
             typeof row.created_at === 'number' ? row.created_at : 0
           );
         }
-        for (const object of customObjects) this.exec(object.sql);
+        for (const object of customObjects) {
+          this.exec(object.sql);
+        }
         const violations = this.prepare('PRAGMA foreign_key_check').all();
-        if (violations.length > 0)
+        if (violations.length > 0) {
           throw new Error('Migration 070 repair left foreign key violations');
+        }
       });
     } finally {
       this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
