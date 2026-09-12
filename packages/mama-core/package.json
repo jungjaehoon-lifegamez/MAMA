@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,6 +38,8 @@
     "./connectors/event-index": "./dist/connectors/event-index.js",
     "./connectors/raw-query": "./dist/connectors/raw-query.js",
     "./connectors/types": "./dist/connectors/types.js",
+    "./storage/source-archive": "./dist/storage/source-archive.js",
+    "./storage/sqlite": "./dist/storage/sqlite.js",
     "./agent-situation": "./dist/agent-situation/index.js",
     "./agent-graph": "./dist/agent-graph/index.js",
     "./context-compile": "./dist/context-compile/index.js",

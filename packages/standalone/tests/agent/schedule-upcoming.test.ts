@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import Database from '../../src/sqlite.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { CalendarConnector } from '../../src/connectors/calendar/index.js';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import { execSync } from 'child_process';
 
 vi.mock('child_process', async (importOriginal) => ({

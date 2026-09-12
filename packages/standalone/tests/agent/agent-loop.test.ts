@@ -3516,7 +3516,7 @@ Skills provide additional tools.
         validationService as unknown as import('../../src/validation/session-service.js').ValidationSessionService
       );
       agentLoop.setRawStore?.(
-        rawStore as unknown as import('../../src/connectors/framework/raw-store.js').RawStore
+        rawStore as unknown as import('@jungjaehoon/mama-core/storage/source-archive').RawStore
       );
 
       expect(gatewayExecutorSetSessionsDbMock).toHaveBeenCalledWith(sessionsDb);

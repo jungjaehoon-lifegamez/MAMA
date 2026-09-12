@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-core [2.5.0] / mama-os [0.53.3] - 2026-09-12
+
+Raw evidence storage now has one implementation in `mama-core`. Standalone collection, polling,
+and raw readers consume that public source archive while retaining the existing raw database
+schema, revision history, provenance, storage isolation, and close/reopen behavior.
+
 ## mama-os [0.53.2] - 2026-09-10
 
 Three connector fixes measured on the live install: Chatwork polling that a second reader on
@@ -200,10 +206,10 @@ live installation (see docs/development/intent-checks.md, entries dated 2026-09-
   or an explicit refresh. A verified delta run becomes the next baseline. Log lines:
   `[stage2] board delta enqueued` / `delta_verified`.
 - **Prompt telemetry.** One line per turn: `[prompt] thread=… kind=… chars=… brief=sent|omitted
-  reminder=sent|omitted`, so prompt growth can be measured from daemon.log.
+reminder=sent|omitted`, so prompt growth can be measured from daemon.log.
 - `report_publish` now returns `warnings` (and the full contract once) when a slot uses none of
   the board's structural classes; the publish still succeeds. Daemon log: `[board] slot …
-  published without the board vocabulary`.
+published without the board vocabulary`.
 - Tests: `tests/agent/tool-registry-parity.test.ts` pins `report_publish` parity between the
   gateway registry and the code-act HostBridge registry and freezes the 61 tools whose
   descriptions still differ (todo).

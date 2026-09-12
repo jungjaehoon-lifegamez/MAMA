@@ -8,7 +8,7 @@ import { join } from 'path';
 
 import type { ConnectorRegistry } from './connector-registry.js';
 import type { ChannelConfig, NormalizedItem } from './types.js';
-import type { RawIndexSink, RawStore } from './raw-store.js';
+import type { RawIndexSink, RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import { classifyItemsByRole } from '../../memory/history-extractor.js';
 import type { ClassifiedItems } from '../../memory/history-extractor.js';
 

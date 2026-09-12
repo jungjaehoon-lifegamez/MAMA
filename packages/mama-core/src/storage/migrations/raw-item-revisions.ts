@@ -1,4 +1,4 @@
-import type { SQLiteDatabase } from '../../sqlite.js';
+import type { SQLiteDatabase } from '../sqlite.js';
 
 /** Preserve legacy source locators while adding explicit entity and revision identity. */
 export function applyRawItemRevisionsMigration(db: SQLiteDatabase): void {

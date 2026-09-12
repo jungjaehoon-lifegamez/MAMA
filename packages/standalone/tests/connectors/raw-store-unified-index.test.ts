@@ -13,7 +13,7 @@ import { PollingScheduler } from '../../src/connectors/framework/polling-schedul
 import {
   RawStore,
   mapNormalizedItemsToConnectorEventIndexInputs,
-} from '../../src/connectors/framework/raw-store.js';
+} from '@jungjaehoon/mama-core/storage/source-archive';
 import type { IConnector, NormalizedItem } from '../../src/connectors/framework/types.js';
 
 function makeItem(overrides: Partial<NormalizedItem> = {}): NormalizedItem {

@@ -109,7 +109,7 @@ export interface ApiServerOptions {
     check(): Promise<SystemHealthReport>;
   };
   /** RawStore for connector feed queries */
-  rawStore?: import('../connectors/framework/raw-store.js').RawStore;
+  rawStore?: import('@jungjaehoon/mama-core/storage/source-archive').RawStore;
   /** List of enabled connector names */
   enabledConnectors?: string[];
   /** AgentEventBus for notices */

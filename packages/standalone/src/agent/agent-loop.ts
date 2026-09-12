@@ -1193,7 +1193,7 @@ export class AgentLoop {
   /**
    * Set raw store for connector-backed agent_test input gathering.
    */
-  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
+  setRawStore(store: import('@jungjaehoon/mama-core/storage/source-archive').RawStore): void {
     this.mcpExecutor.setRawStore(store);
   }
 

@@ -699,3 +699,13 @@
 - 남은 실패: 사람·항목 별칭(Slack 표시명=카카오 실명, 항목 코드 접두 표기, 코드 없는 카카오 대화), 같은 캐릭터의 두 파일을 한 태스크로 둘지(오너 판단), [MAMA Notice]가 오너
   질문 턴을 가로챔, 질문 턴이 원장을 고침+원인표식이 slack 배치로 오염, 빈 테이블·별도 큐레이션 레인 제거, core 2.4.x 공개(라이브는 로컬
   패치본). 14일 재구축 70배치(20건/배치, 2항목 85건 제외) 01:47 시작 — 판정: 항목당 태스크 1개, task 쓴 런의 사실 저장률, 09:00 보고 품질.
+
+## 2026-09-12 — source archive ownership 이동
+
+- 결과: 원문 저장, revision migration, SQLite 구현과 `NormalizedItem` 소유를 shared core로
+  옮기고 standalone 수집·조회 경로는 같은 공개 구현을 사용하도록 연결했다.
+- 근거: 기존 polling/revision/provenance/reopen/isolation 시험 55개, core와 standalone의
+  typecheck/build가 통과했다. packed-package 검증은 stale core/standalone 산출물 제거,
+  import-only 무부작용, workspace link 없는 실제 저장 내용·타입·재개방·두 경로 격리를 확인했다.
+- 판정: I-03/I-06과 TG-03/TG-05/TG-06의 원문 보존 기반은 유지된다. 이 소유권 이동만으로
+  agent 자율 판단, immutable observation, 실제 owner 업무 완료가 달성된 것은 아니다.

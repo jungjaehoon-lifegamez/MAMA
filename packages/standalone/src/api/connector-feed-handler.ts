@@ -7,7 +7,7 @@
 
 import { Router } from 'express';
 import { asyncHandler } from './error-handler.js';
-import type { RawStore } from '../connectors/framework/raw-store.js';
+import type { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 
 // ---------------------------------------------------------------------------
 // Types

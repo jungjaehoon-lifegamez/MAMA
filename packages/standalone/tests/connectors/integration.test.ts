@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConnectorRegistry } from '../../src/connectors/framework/connector-registry.js';
 import { PollingScheduler } from '../../src/connectors/framework/polling-scheduler.js';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import { classifyItemsByRole } from '../../src/memory/history-extractor.js';
 import type { IConnector, NormalizedItem } from '../../src/connectors/framework/types.js';
 import { mkdtempSync, rmSync } from 'fs';
