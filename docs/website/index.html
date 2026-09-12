@@ -1338,7 +1338,10 @@ mama status                         # setup is done when the first report arrive
               Sources: <code>mama connector add &lt;name&gt;</code>, then
               <code>mama connector status</code>
             </li>
-            <li>Operational API: <code>http://localhost:3847</code> for runtime integrations</li>
+            <li>
+              Health/liveness: <code>http://localhost:3847/health</code>; authenticated operational
+              routes remain under <code>/api</code>
+            </li>
             <li>
               For scripted installs, follow the <code>missing</code> list from
               <code>mama status --json</code> in order; it is finished only when

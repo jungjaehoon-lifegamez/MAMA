@@ -222,6 +222,14 @@ describe('graph api helpers', () => {
         ).toEqual([]);
       });
 
+      it('projects a registered connector even when it was auto-enabled outside config', () => {
+        expect(
+          projectRuntimeConnectors({ ok: true, config: {}, enabledNames: [] } as never, [
+            'claude-code',
+          ])
+        ).toEqual([{ name: 'claude-code', enabled: true, state: 'connected' }]);
+      });
+
       it('uses live gateway health over a stale raw connector setting', () => {
         expect(
           projectRuntimeConnectors(

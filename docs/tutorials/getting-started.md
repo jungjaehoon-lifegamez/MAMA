@@ -62,7 +62,7 @@ same contract through `mama status`.
 **What you get:**
 
 - Slash commands (`/mama-save`, `/mama-recall`, etc.)
-- Automatic context injection (UserPromptSubmit hook)
+- Bounded context on the first eligible code-file `Read` (`PreToolUse` hook)
 - Session continuity (`/mama-checkpoint`, `/mama-resume`)
 - Full decision memory in Claude conversations
 - In-process local embeddings for semantic memory search

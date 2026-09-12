@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -193,15 +193,19 @@ describe('M3.2: MAMA context skill wrapper', () => {
       process.env.TOOL_NAME = 'Read';
       process.env.FILE_PATH = 'src/auth.ts';
 
-      try {
-        const output = execFileSync(process.execPath, [PRE_TOOL_HOOK], {
-          encoding: 'utf8',
-          timeout: 2000,
-          stdio: 'pipe',
-        });
-        expect(typeof output).toBe('string');
-      } catch (error) {
-        expect(error.status).toBeDefined();
+      const result = spawnSync(process.execPath, [PRE_TOOL_HOOK], {
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: 'pipe',
+      });
+
+      expect([0, 2]).toContain(result.status);
+      expect(result.stdout).toBe('');
+      expect(result.stderr.length).toBeGreaterThan(0);
+      if (result.status === 0) {
+        expect(JSON.parse(result.stderr)).toEqual({ decision: 'allow', reason: '' });
+      } else {
+        expect(result.stderr).toContain('Related Decisions');
       }
     });
 

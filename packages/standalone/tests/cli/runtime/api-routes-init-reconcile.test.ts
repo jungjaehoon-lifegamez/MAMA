@@ -232,9 +232,10 @@ it('TG-05 removes direct and proxied viewer sessions from the real Express runti
   });
 
   try {
-    for (const route of ['/api/sessions', '/api/sessions/last-active', '/api/session/create']) {
+    for (const route of ['/api/sessions', '/api/sessions/last-active']) {
       expect((await request(runtime.apiServer.app).get(route)).status, route).toBe(404);
     }
+    expect((await request(runtime.apiServer.app).post('/api/session/create')).status).toBe(404);
     expect((await request(runtime.apiServer.app).get('/api/report')).status).toBe(200);
     expect((await request(runtime.apiServer.app).get('/health')).status).toBe(200);
   } finally {

@@ -65,12 +65,11 @@ export interface InitApiServerResult {
 /**
  * Project the connectors the runtime actually booted with.
  *
- * Only CONFIGURED connectors are listed (so an unconfigured install honestly
- * shows an empty list), filtered through the private-connector visibility
- * policy. `state` reports registration truth, not a guess: a connector the
- * daemon registered is `connected`, one that is switched off is
- * `disconnected`, and one that is enabled in config but absent from the boot
- * registry is `unknown` rather than being claimed as healthy.
+ * Configured, registered, and live-health connectors are listed, filtered
+ * through the private-connector visibility policy. `state` reports registration
+ * truth, not a guess: a connector the daemon registered is `connected`, one that
+ * is switched off is `disconnected`, and one that is enabled in config but
+ * absent from the boot registry is `unknown` rather than being claimed as healthy.
  */
 export function projectRuntimeConnectors(
   connectorConfigLoadResult: ConnectorConfigLoadResult,
@@ -81,7 +80,7 @@ export function projectRuntimeConnectors(
     AVAILABLE_CONNECTORS.includes(name as (typeof AVAILABLE_CONNECTORS)[number])
   );
   const registered = new Set(enabledConnectors);
-  const names = new Set([...configuredNames, ...gatewayStates.keys()]);
+  const names = new Set([...configuredNames, ...registered, ...gatewayStates.keys()]);
   return AVAILABLE_CONNECTORS.filter((name) => names.has(name)).map((name) => {
     const gatewayState = gatewayStates.get(name);
     if (gatewayState) {
@@ -92,8 +91,10 @@ export function projectRuntimeConnectors(
       };
     }
     const enabled =
-      (connectorConfigLoadResult.config as Record<string, { enabled?: boolean } | undefined>)[name]
-        ?.enabled ?? false;
+      registered.has(name) ||
+      ((connectorConfigLoadResult.config as Record<string, { enabled?: boolean } | undefined>)[name]
+        ?.enabled ??
+        false);
     const state: RuntimeConnectorStatus['state'] = registered.has(name)
       ? 'connected'
       : enabled
