@@ -16,6 +16,12 @@ try {
   mkdirSync(consumerDirectory, { recursive: true });
   mkdirSync(importProbeDirectory, { recursive: true });
 
+  rmSync(join(corePackage, 'dist'), { recursive: true, force: true });
+  execFileSync('pnpm', ['--filter', '@jungjaehoon/mama-core', 'build'], {
+    cwd: repositoryRoot,
+    stdio: 'ignore',
+  });
+
   const staleStandalonePaths = [
     'dist/connectors/framework/raw-store.js',
     'dist/connectors/framework/raw-store.d.ts',

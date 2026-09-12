@@ -409,7 +409,7 @@
   412초/19스텝; 시스템 프롬프트 31,964자(브리프 10.6K+복구 저널 9.5K+페르소나 6.9K) 상한 초과 절단.
 - 제거: SOUL/IDENTITY/USER 주입, 페르소나 대본(~/.mama/CLAUDE.md 5,022→303자), 라우터 "Be concise/Greet" 고정 문구,
   매 턴 재진술되던 OWNER_CONSOLE_OPERATING_DISCIPLINE 10줄과 "artifacts→live→memory" 조사 순서, 채팅/워크오더/
-  오너이벤트의 policy/lesson 블록과 turn-observer(오늘 0건 기록)·learning-\* 모듈 4개, console_brief_update append
+  오너이벤트의 policy/lesson 블록과 turn-observer(오늘 0건 기록)·learning-* 모듈 4개, console_brief_update append
   (날짜 줄 누적 경로), 브리프 r1의 40개 날짜 줄(r2 501자로 교체, r1은 저장소 이력에 보존).
 - 추가(데이터·도구·스킬로 얻을 수 없는 것만): OWNER_RUNTIME_RULES 3줄(힌트 블록 의미, 교정은 procedure_update,
   영속 쓰기 없는 완료 선언 금지), `[evidence] completion claim without a durable write` 관측 로그(차단 없음),
@@ -439,14 +439,12 @@
 - 판정: 구조 설치 완료, 실사용 판정(위임·완료 자극·통합) 미관측. 거짓 완료·무인 Bash는 미충족 항목으로 유지.
 
 ### 2026-09-09 local.7 — delegation not taken up (fail)
-
 - Installed 0.52.0-local.7 (backup pre-local7-20260909-164501, hash match, health 21s). Boot enqueued only board#4763 (board:full:repair); no boot-forced runs.
 - Observed 3 turns: owner-event 68s, board:full 158s (verdict full_verified), owner-event 33s. Every turn ran inline on the owner thread; the owner lane waited 157s behind board:full.
 - The Codex thread has the collaboration tools (spawn_agent etc.) and the owner policy text says to delegate, but the board contract asks for the result directly and the owner-event header says not to "describe what another agent should do". The agent never spawned. Delegation state, subagent wake, no-durable-result and unattended Bash/Write block were therefore not exercised.
 - Top goal not met: the owner is still blocked behind scheduled work. Next: make the scheduled contracts state the delegation shape and drop the anti-delegation clause (worker H), reinstall as local.8, observe spawn_agent → [subagent] wake → delegated→done.
 
 ### 2026-09-09 local.8 — delegation fires; three blockers found (fail)
-
 - board#4764: owner spawned a native subagent and ended its turn in 38s; host woke the owner on child completion ([subagent] wake), owner verified and recorded contract_no_update. The owner lane was free while the child ran. This is the intended shape.
 - Blocker 1: the child had NO gateway tools. Protocol experiments (scratch appserver-dyn-tool-nofork / appserver-resume-dyn): a child spawned with fork_turns "none" loses the parent's dynamicTools; a child spawned with the default fork inherits them, on both fresh and resumed parent threads. The owner policy text recommended fork_turns "none"; text corrected to say it removes host tools.
 - Blocker 2: the consumer never observed the spawn. codex-cli 0.153.4 surfaces a spawn on the parent thread only as subAgentActivity items (no collabAgentToolCall); the process consumes those before the native-item callback. board#4764 was failed as no-durable-result instead of entering delegated. Fix: dedicated onSubagentStart callback (worker J), no ledger row.
@@ -454,52 +452,44 @@
 - Also seen: 45 owner-event batches dead from 2026-08-21..24 with Codex "usage limit" errors (historical, plan quota).
 
 ### 2026-09-09 local.9 — delegation verified end to end; owner wait root cause found
-
-- board#4765: `[workorder] subagent observed` → `delegated kind=board attempt=4765` (owner turn 17s, lane released) → child ran with gateway tools (kagemusha\_\*, board_read, task_list) → `[subagent] wake owner` → `[workorder] delegated→done`. Report leg recovered at boot (`recovered digest report SENT`, the previously poisoned occurrence confirmed).
+- board#4765: `[workorder] subagent observed` → `delegated kind=board attempt=4765` (owner turn 17s, lane released) → child ran with gateway tools (kagemusha_*, board_read, task_list) → `[subagent] wake owner` → `[workorder] delegated→done`. Report leg recovered at boot (`recovered digest report SENT`, the previously poisoned occurrence confirmed).
 - Owner chat at 17:17:05 still showed "Waiting for the earlier task to finish": it waited 155s behind an owner-event delta turn (226s total). Of that turn, 2m20s (8 model steps) was spent debugging `var r = tools.code_act(...)` returning `{}`: the Codex exec host call returns a Promise and must be awaited, while the code_act contract said "do not use await" (meant for the inner script). Today's rollouts show 51 un-awaited code_act calls across 10 turns, each a 1-2.5 min stall. This is the "unnecessary repetition" the owner reported. Fix: contract text now states the exec-side await rule (local.10).
 - Remaining: owner-event delta turns still run inline on the owner thread, and chat has priority but no preemption. `model_reasoning_effort = "xhigh"` in ~/.mama/.codex/config.toml is the other latency lever (not changed).
 
 ### 2026-09-09 local.10 — await stall gone (pass for this defect)
-
 - Installed 17:22 (backup pre-local10-20260909-172130). First two turns after boot: every code_act call awaited on the first attempt (1/1 and 14/14), turn durations 43s and 48s versus 226s for the same kind of delta turn on local.9. No replay-guard errors at boot.
 - Still open: delta turns run inline on the owner thread (no chat preemption), reasoning effort xhigh, wiki/temporal delegation and delegated-timeout unobserved.
 
 ### 2026-09-09 local.11 — consumer wedge fixed; report-turn cost measured
-
 - local.10 exposed a wedge: the ledger-managed `delegated_at` key was re-validated with the enqueue validator on stored rows, so the delegated-and-done board#4765 sat in unresolvedBoardCandidateEffects and the serial consumer drained nothing (tick returned early, boot recovery broke out). Fix: publisherPayloadOfStoredWorkOrder strips ledger keys at the three stored-row sites and two requeue sites; enqueue still rejects them. Installed 17:31 (backup pre-local11-20260909-173110); boot recovered #4765 as stale-claim and enqueued #4766.
 - Owner-requested full report (chat, 17:24:01) took 268s: tools 1.3s total (36 calls), 19 model steps, 7 of them discovery (tool_search/tool_describe/skill Read), context_compile twice, final answer generation 113s for 7.3K output tokens. Prompt cache held (≈23K cached, ≈400 new tokens per step). Cost is step count and long-form generation, not host overhead.
-- Owner set model_reasoning_effort to low (config backup config.toml.pre-low-\*); daemon restarted; confirmation of the new effort awaits the next turn's turn_context.
+- Owner set model_reasoning_effort to low (config backup config.toml.pre-low-*); daemon restarted; confirmation of the new effort awaits the next turn's turn_context.
 - Native subagents are on the same thread for every turn kind; only the scheduled contracts tell the agent to delegate. A chat-requested full report can be delegated the same way if the owner wants the chat turn to return immediately.
 
 ### 2026-09-09 local.12 — board delta anchor verified (pass); heartbeat-report skill retired
-
-- Boot logged `board delta enqueued: delta (anchor 2026-09-09T08:57:45Z, basis Cm6ZAUdF…)` instead of a full rebuild. board#4768 was delegated (owner turn 19s); the child ran 37s and read only board*read, changes_read, task_list (no kagemusha*\* reads), recorded contract_no_update for the delta scope; host woke the owner; `delta_verified` and `delegated→done`. The owner's post-wake turn also read board_read/changes_read/task_list only.
+- Boot logged `board delta enqueued: delta (anchor 2026-09-09T08:57:45Z, basis Cm6ZAUdF…)` instead of a full rebuild. board#4768 was delegated (owner turn 19s); the child ran 37s and read only board_read, changes_read, task_list (no kagemusha_* reads), recorded contract_no_update for the delta scope; host woke the owner; `delta_verified` and `delegated→done`. The owner's post-wake turn also read board_read/changes_read/task_list only.
 - The 18:00 scheduled full report went out in a 66s turn (`recovered full report SENT`).
 - Builtin skill heartbeat-report removed from templates/skills and from the live ~/.mama/skills (backup pre-local12-20260909-180131/skills). No retire mechanism exists in syncBuiltinSkills; the live file was removed by hand once.
 - Full standalone suite 428 files / 5,874 tests passed on the combined tree (workers H, I, J, K, L, M + the two inline text edits).
 - Left as full on purpose: no-baseline, unpublished, signal-unavailable, owner force; and boardPublishedAt is a min over four slots including the host pipeline, so a judgment-only republish can still read as unpublished (noted, not changed).
 
 ### 2026-09-09 local.13 — fixed blocks once, turns carry deltas (pass)
-
 - Installed 18:56 (backup pre-local13-20260909-185555; suite 429 files / 5,888 passed). Restart reminder gone: first turn after restart `reminder=omitted`, re-anchored through thread/resume baseInstructions (owner-event and scheduled lanes previously never supplied resumeInstructions; only chat did).
 - `[prompt]` lines on the live thread: scheduled:board 4,136 chars brief=sent (first on thread) → later scheduled 1,007 brief=omitted; owner-event 13,573 brief=sent → 14,310 / 3,976 brief=omitted (the large ones are the connector delta itself, not host text). Board#4770 ran as delta, delegated, child published (briefing, action_required, pipeline changed) → delta_verified → delegated→done.
 - Owner thread context ≈104K tokens (same thread since 17:22); growth per turn now bounded by the delta content and tool outputs the owner reads directly.
 - Remaining: chat-requested full report still runs on the owner thread; thread rotation threshold not defined; boardPublishedAt min-over-slots wrinkle; wiki/temporal delegation unobserved.
 
 ### 2026-09-09 local.14 — board card vocabulary moved into the report_publish tool contract
-
 - Finding: slots were HTML but generic (`<section><h3><ul>`), so the viewer (which styles only the report-summary/report-card class vocabulary) showed plain text. The vocabulary lived in board-slot-instructions.ts and was consumed only by the retired dashboard persona; the owner agent never saw it.
 - Fix: `buildReportPublishToolContract()` is the single source for the report_publish description (registry + gateway-tools.md parity test), reached progressively via tool_describe at publish time. No per-turn text added. Legacy dashboard-agent persona path is dead under the owner runtime (left for later removal).
 - Installed 19:27 (backup pre-local14-20260909-192659 incl. report-slots.json). Suite 429 files / 5,889 passed. Verification pending: next report_publish must contain report-card/report-summary classes.
 
 ### 2026-09-09 local.15 — vocabulary warning closes the loop (pass); card shape left to owner correction
-
 - 19:59 chat turn published three generic slots → three `[board] slot … without the board vocabulary` warnings in the log and in the tool result → the same turn read the board again and republished at 20:00:43 using the vocabulary (`report-table`, `badge badge-*`); no further warnings. The agent chose tables with status badges rather than report-summary/report-card blocks, which the contract describes as the slot shape. Whether the owner wants cards specifically is a correction for the owner to give (procedure), not a host rule.
 - Test note: one envelope fixture updated to carry a vocabulary class; `agent-situation-api` singleflight failed once under full parallel load and passed twice in isolation (flake, file untouched today).
 - Open: boardPublishedAt min-over-slots made the boot gate read "unpublished" after a judgment-only republish (harmless skip this time).
 
 ### 2026-09-09 local.16 — the contract finally reaches the agent; registry split found
-
 - Root cause of "contract ignored": code-act tool_search/tool_describe read the HostBridge TOOL_REGISTRY (host-bridge.ts), not the gateway registry where local.14 put the vocabulary. The 19:28 child's tool_describe output had no vocabulary. 61 of 62 shared tools have divergent descriptions between the two registries (frozen in tests/agent/tool-registry-parity.test.ts with a todo); report_publish is now single-sourced in both.
 - tool_search matched the whole query as one substring: today 59 multi-word queries, 27 empty (46%). Now token-AND with exact-name-first ranking.
 - Vocabulary warning now requires a structural class (report-summary / report-card / report-section-title / report-table); badges alone no longer pass (the 20:06 invented `card-grid`/`card` shape is a fixture). The warning result carries the full contract once.
@@ -507,49 +497,40 @@
 - Installed 20:23 (backup pre-local16-20260909-202233). Suite 431 files / 5,903 passed, 1 todo. Verification pending: next report_publish must carry report-card/report-summary.
 
 ### 2026-09-09 v0.52.0 released (pass)
-
 - PR #278 (part 1, 40 files) and #277 (part 2, 100 files) squash-merged with the admin account after local CodeRabbit CLI review (14 findings: 13 fixed, 1 deliberately skipped as an insurance guard; follow-up finding on the owner-event brief fixed; final pass "No findings") and remote CodeRabbit on #278 (7/7 addressed). Remote CodeRabbit did not review #277 (rate limit); noted for billing.
 - Release workflow run 34357112416: tags, npm `@jungjaehoon/mama-os@0.52.0` (depends on `^2.4.1`) and `@jungjaehoon/mama-core@2.4.1`, GitHub release v0.52.0, Pages deployed.
 - Live daemon replaced local.16 with npm 0.52.0 at 22:32 (backup pre-npm-0.52.0-20260909-223155); health up in 9s, Telegram connected, boot board decision logged with its reason.
 - Not yet verified on the npm build: a full owner-flow day (scheduled reports at 08/13/18, board delta runs, a chat correction). The local.7-16 evidence covers the same code.
 
 ### 2026-09-10 Claude Sonnet 5 backend trial (local.17-19)
-
-- Switched `agent.backend` to claude / `claude-sonnet-5` / effort low at 09:36 (config backup pre-claude-sonnet5). Found and fixed on the live daemon: (1) scheduled contracts and owner rules asked for a native subagent the Claude runner cannot expose to the host — `IModelRunner.supportsNativeSubagents` (codex true, claude/cline false) now gates that text and the delegated state; (2) the owner saw the model's English tool-call narration in the live-edited Telegram message for 83s — the presenter drops text that precedes a tool call; (3) `--effort` never reached Sonnet 5: the model check matched only claude-\*-4-6 and the adapter did not forward effort to its pool. Verified on the live process (`--effort low` present, no delegation text in contracts or system prompt).
+- Switched `agent.backend` to claude / `claude-sonnet-5` / effort low at 09:36 (config backup pre-claude-sonnet5). Found and fixed on the live daemon: (1) scheduled contracts and owner rules asked for a native subagent the Claude runner cannot expose to the host — `IModelRunner.supportsNativeSubagents` (codex true, claude/cline false) now gates that text and the delegated state; (2) the owner saw the model's English tool-call narration in the live-edited Telegram message for 83s — the presenter drops text that precedes a tool call; (3) `--effort` never reached Sonnet 5: the model check matched only claude-*-4-6 and the adapter did not forward effort to its pool. Verified on the live process (`--effort low` present, no delegation text in contracts or system prompt).
 - Fact correction: on the Claude backend the persona runs with `--tools Agent` (agent-loop-init), not `--tools ""`. Children it may spawn are unobservable to the host, so delegation stays unpromised there.
 - Measured: turns after the fixes 18-26s (chat/event) versus 41-83s in the first minutes; the 83s chat turn had 16 tool calls with 3 failures (guessed report_publish shape twice). Equivalence to Codex: tool loop, permissions, memory, procedures identical; no observable subagents, no in-turn token budget stop.
 
 ### 2026-09-10 incident — test run rewrote the live MCP config (Claude backend lost all tools)
-
 - 10:09 a full `pnpm vitest run` in the worktree reached api-routes-init's code-act MCP merge with the real HOME and wrote `~/.mama/mama-mcp-config.json` pointing at a worktree `src/.../code-act-server.js` that does not exist. The next Claude process (10:3x) had no `mcp__code-act__code_act`; the persona fell back to the native Agent tool, whose child had no gateway tools either; board#… failed "retries exhausted" and a high-severity notice reached the owner at 10:37.
 - Recovery 10:39: daemon restart regenerated the config from the installed package. Fix in progress: vitest global setup that isolates HOME for every test (project rule: tests must isolate $HOME).
 - Codex was never affected because its gateway tools are host-bridged, not MCP. This is a Claude-backend-specific single point of failure worth a loud boot check (MCP server path exists).
 
 ### 2026-09-10 Telegram HTML degrades per span, not per message (fix)
-
 - Finding (live, Claude Sonnet 5 backend): two owner chat replies (11:17, 11:41) reached Telegram with raw markup visible — `<b>`/`<i>` cited as literal text ("Telegram HTML 서식(<b>, <i> 등)"), an unclosed tag, and Markdown `**bold**`. Cause: `formatTelegramMessage` degraded the WHOLE message to literal text on any input outside the subset, so one stray or cited tag made every tag in the answer visible. Codex rarely trips this; Sonnet does.
 - Change: new `sanitizeTelegramHtml` (`packages/standalone/src/gateways/telegram-format.ts`) rewrites the answer into markup the parser can always read, judging each tag on its own — a tag outside the subset, a rejected attribute or link protocol, an orphan/out-of-order closing tag, and a forbidden nesting (verbatim inside anything, repeated self-nesting) are escaped to `&lt;…&gt;` individually; the inner offending tag degrades while the span containing it still renders. A tag left open at the end is closed for the author when it encloses real words, and escaped when the span reads as a citation of the tag (opens on space/comma/bracket, or carries no letter or digit) — which is what keeps `서식(<b>, <i> 등)` and `TELEGRAM_FORMAT_GUIDE` itself visible as text.
 - Deliberately unchanged: no Markdown-to-HTML conversion. `**bold**` is the model's formatting to learn through owner correction, not something the sender rewrites. The subset itself is not loosened: an escaped tag reaches Telegram as characters, never as an entity. Non-empty input still never yields an empty message; offsets stay UTF-16.
 - Tests pinned to the old whole-message fallback and adjusted (they asserted the defect): unclosed tag, mismatched closing tag, markup inside `<code>`, `<code>`/`<pre>` inside another tag, the `TELEGRAM_FORMAT_GUIDE` byte-round-trip (now: every cited tag visible with zero entities; the guide's own `&amp;`/`&lt;` decode as in any answer), and the presenter's "unparseable markup" case (split into auto-close plus a `<div>` literal case). Both live shapes added as fixtures. `pnpm vitest run tests/gateways`: 46 files / 713 passed.
 
 ### 2026-09-10 learning loop evidence on the Claude backend (pass, partial)
-
 - 11:41 owner correction "always use Telegram HTML formatting" → stored as procedure revision 9 (the reply itself cited `<b>, <i>` as text and fell to literal rendering). 11:44 owner correction "task status/deadlines come from the task_list ledger; kagemusha_tasks is reference only" → stored. 11:46 the next owner-facing Telegram report (guesthouse booking) rendered with balanced HTML and no Markdown. Intent criterion met: a correction changed the next relevant output without a prompt edit. Still unverified: non-application to unrelated situations, and continuity across a model switch (check when returning to Codex).
-
 ### 2026-09-10 Claude backend: owner report built from the wrong system of record
-
 - The 11:14 chat "전체 보고" (Sonnet 5) reported 836 tasks / 162 in progress / 126 pending with Kagemusha task ids; the MAMA ledger holds 408 / 12 / 40. The run never called task_list: `tool_search("task query list")` and `("task update create")` returned nothing under token-AND, the agent concluded no task tools exist, and read Kagemusha's personal task app as truth (also saved a checkpoint instead of task_update for a client reply). Judgments on the deltas themselves (5 no-updates, dedup merge, deal progression) were correct.
 - Fix: tool_search ranks by token score (name segment 3, name substring 2, description/category 1) instead of requiring every token; "task update create" now returns task_update/task_create first. Source-of-record preference is left to an owner correction (procedure), not a host rule.
 - 0.52.1 released 11:19 (Release run 34428892537, npm); live replaced with npm 0.52.1 at 11:20 on the Claude backend.
 
 ### 2026-09-10 persona remnants removed; Claude subagents do receive tools
-
 - The live Claude system prompt (17.4K chars) carries no SOUL/IDENTITY/USER or persona file content. Remnants removed: runtime readiness no longer requires the three files; `mama init` no longer writes them; the dashboard persona writer and module are gone; the code-act MCP merge is unconditional on the claude backend (it was gated on legacy dashboard/wiki agents being configured); stale comments and the CLAUDE.md isolation table corrected (`--tools Agent` on claude). Remaining legacy: wiki persona (live input to the wiki contract), os-agent-capabilities.md (legacy viewer mode), assess-live migration check.
 - Experiment (same flags as live: `--mcp-config ~/.mama/mama-mcp-config.json --tools Agent`): a Claude Agent child called `mcp__code-act__code_act` and returned tool names. The 10:46 "child had no tools" was the broken MCP config, not a Claude limit. Remaining gaps vs Codex: no spawn event for host observation (child tool calls already land in the parent's run traces), and background-agent completion semantics for the persistent process.
 - 13:00 scheduled full report (Sonnet 5, 0.52.2): balanced HTML, delta narrative correct, zero tool calls, written from the 24.8K-char prompt buffer; today's ledger deadlines were omitted. Candidate owner correction: "full report checks today's deadlines in task_list".
 
 ### 2026-09-10 Claude delegation observed end to end; a spawn receipt had been killing every board order
-
 - Since 09:55 every `board:full:repair` order failed on arrival (#4805, #4806, #4807, #4817: "owner effect requires reconciliation before replay"). Cause: the Claude `Agent` spawn reached the native effect boundary as an ordinary tool_use and was written as `native_tool|confirmed` under the reused occurrence; the replay predicate blocks any such row forever, and confirmed receipts are immutable. Codex spawns never hit this because they arrive through `onSubagentStart`.
 - Fix (PR #287, local.22 installed 15:08): spawn tool names (`Agent`/`Task`/`spawn_agent`/`send_input`/`resume_agent`) are admissions, not effects — dropped from the boundary's effect set, and both ledger predicates exclude already-written spawn rows by tool name. Claude delegation events (`Agent {run_in_background}` → `onSubagentStart`, `task_notification` → the CLI's own autonomous turn carries the wake, `supportsNativeSubagents = true`) landed from the same branch.
 - Evidence: board#4818 (mode delta, Sonnet 5) `subagent observed` → `delegated` → child `published slots: briefing, action_required, decisions` → `autonomous turn opened` → `delta_verified (obligated tool traces: 1)` → `delegated→done`; the run wrote only a `native_run|confirmed` row. Persona directory no longer re-seeded after #286 (0 files after restart).
@@ -557,9 +538,9 @@
 - Remaining: 53 dead owner-event batches accumulated (trello/chatwork/slack, oldest 08-21) — unexamined; the 18:00 scheduled report on Sonnet 5 is the next live observation.
 
 ### 2026-09-10 0.53.0 released; first post-release defect found and fixed (0.53.1)
-
 - 0.53.0 (mama-os) released 15:50 via the Release action after PR #288; live replaced with npm 0.53.0 at 15:52. Release evidence: board#4818/#4820 and curation#4819 delegated on Claude Sonnet 5 under local.22/.23.
 - Under npm 0.53.0 a forced board (#4822) overlapped the boot board (#4821) on the one owner session. The adapter superseded the lease #4822's child held, so the child's `report_publish` (15:54:43) was traced under #4821's run (`mr_92eec3a3…`); #4821 verified, #4822 stayed `delegated` with `full_unverified` although the slots were published. The same path would run an unattended child under a chat turn's grant. Fix: the next turn waits for the live child (bound = DELEGATED_ATTEMPT_TIMEOUT_MS, logged when passed). Not yet observed live at the time of writing.
+
 
 ## 2026-09-10 18:41 — 설치 환경 정리: 카게무샤 .env 의존 제거 (코드 변경 없음)
 
@@ -575,7 +556,7 @@
 - 사고: 첫 재시작(18:40:11)에서 `MAMA_TRELLO_TOKEN`의 `${KAGEMUSHA_TRELLO_KEY}` 참조가 start.sh `set -u`에 걸려
   auth.env source 실패 → launchd 26회 재시도 실패, 약 71초 다운. 참조를 MAMA 변수로 바꾸고 `bash -u -c 'source …'`로
   검증 후 18:41:22 재시작 성공. 교훈: auth.env/start.sh 편집 후 재시작 전 반드시 `set -u` source 검증.
-- 검증: 데몬 env에 KAGEMUSHA*\* 0개·MAMA*\* 토큰 4개, `[connector] 6 connectors active`, 첫 pollAll에서
+- 검증: 데몬 env에 KAGEMUSHA_* 0개·MAMA_* 토큰 4개, `[connector] 6 connectors active`, 첫 pollAll에서
   chatwork/slack/kagemusha/drive/trello 오류 없음(캘린더 page cap은 기존 결함), Telegram 연결, health 98, runtime 0.53.1.
 - 남은 실패·미확인 / 기준 축소: 토큰 값 자체는 여전히 카게무샤와 같은 계정의 토큰(파일 결합만 끊음). Chatwork는
   `force=0` 서버 읽음 커서를 카게무샤와 공유해 네이티브 수집 굶음 지속 → 소스 수정 또는 별도 계정 필요.
@@ -724,7 +705,7 @@
 - 결과: 원문 저장, revision migration, SQLite 구현과 `NormalizedItem` 소유를 shared core로
   옮기고 standalone 수집·조회 경로는 같은 공개 구현을 사용하도록 연결했다.
 - 근거: 기존 polling/revision/provenance/reopen/isolation 시험 55개, core와 standalone의
-  typecheck/build가 통과했다. packed-package 검증은 stale standalone 산출물 제거, import-only
-  무부작용, workspace link 없는 실제 저장 내용·타입·재개방·두 경로 격리를 확인했다.
+  typecheck/build가 통과했다. packed-package 검증은 stale core/standalone 산출물 제거,
+  import-only 무부작용, workspace link 없는 실제 저장 내용·타입·재개방·두 경로 격리를 확인했다.
 - 판정: I-03/I-06과 TG-03/TG-05/TG-06의 원문 보존 기반은 유지된다. 이 소유권 이동만으로
   agent 자율 판단, immutable observation, 실제 owner 업무 완료가 달성된 것은 아니다.
