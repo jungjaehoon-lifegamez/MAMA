@@ -903,7 +903,7 @@ Implication: [why this absence matters]
 ## Problem
 AC-1.2.3: Server must exit with code 1 when required environment variables are missing.
 
-Required: MAMA_SERVER_TOKEN, MAMA_DB_PATH, MAMA_SERVER_PORT
+Required: MAMA_DB_PATH
 Error format: `{error:{code,message,details}}`
 
 ## Current State
@@ -913,14 +913,14 @@ packages/mcp-server/src/server.js:40:
 ```js
 const { initDB } = require('./mama/db-manager.js');
 
-const requiredEnvVars = ['MAMA_SERVER_TOK
+const requiredEnvVars = ['MAMA_DB_PATH'];
 ````
 
 Array definition incomplete.
 
 ## Verified
 
-- .env.example contains all three required variables
+- .env.example contains the required database variable
 - server.js imports initDB from db-manager
 - No existing env validation in codebase
 
@@ -1020,8 +1020,8 @@ Gemini reaction:
 ✅ With sampling evidence:
 
 ```bash
-$ grep MAMA .env.example
-MAMA_SERVER_TOKEN=...
+$ grep MAMA_DB_PATH .env.example
+MAMA_DB_PATH=...
 ```
 ````
 
@@ -1037,7 +1037,7 @@ LLM reaction:
 
 **독립 주장 (각각 검증 필요):**
 ```markdown
-❌ A: .env.example has TOKEN
+❌ A: .env.example has MAMA_DB_PATH
 ❌ B: server.js imports initDB
 ❌ C: No validation exists
 → 3개 모두 재검증
@@ -1048,12 +1048,12 @@ LLM reaction:
 ```markdown
 ✅ A: Required vars in .env.example
 $ grep MAMA .env.example
-MAMA_SERVER_TOKEN=... (line 3)
+MAMA_DB_PATH=... (line 3)
 
 ✅ B: server.js imports initDB
 $ rg initDB server.js
 Line 39: const { initDB } = require(...)
-Cross-ref: Will validate TOKEN from A before calling this
+Cross-ref: Will validate MAMA_DB_PATH from A before calling this
 
 ✅ C: No validation before initDB
 $ rg "validateEnv" packages/mcp-server/src/
@@ -1090,7 +1090,7 @@ Sample 1/3: Required variables present
 
 ```bash
 $ head -10 .env.example | grep MAMA
-MAMA_SERVER_TOKEN=change_this
+MAMA_DB_PATH=~/.claude/mama-memory.db
 ```
 ````
 
@@ -1162,10 +1162,8 @@ $ cat .env.example
 ```markdown
 ✅ Right amount:
 ```bash
-$ grep "^MAMA_" .env.example | head -3
-MAMA_SERVER_TOKEN=...
+$ grep "^MAMA_DB_PATH" .env.example
 MAMA_DB_PATH=...
-MAMA_SERVER_PORT=...
 ````
 
 Full file: .env.example (13 lines)

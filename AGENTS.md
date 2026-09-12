@@ -169,7 +169,7 @@ if (!data) throw new Error("Data required");
 // Create migration file in packages/*/src/db/migrations/
 
 // ❌ FORBIDDEN: Network calls in core functionality
-// Local-first architecture (exceptions: HTTP embedding server on localhost:3847)
+// Local-first architecture
 
 // ❌ FORBIDDEN: Break backward compatibility
 // Existing decisions must remain valid after updates
@@ -292,14 +292,13 @@ Key code path: `AgentProcessManager` (line 81: `defaultPoolSize: 1`) → `AgentP
 
 Tier degradation happens automatically at runtime (not user-configurable).
 
-### **HTTP Embedding Server (Shared Across All Clients)**
+### **In-Process Embeddings**
 
 ```
-127.0.0.1:3847 (configurable)
-- Model stays loaded in memory
-- ~50ms embedding requests (vs 2-9s cold start)
-- Shared by Claude Code, Desktop, Cursor, Aider, etc.
-- Port discovery via ~/.mama-embedding-port
+@jungjaehoon/mama-core/embeddings
+- Loads the local model inside the process performing semantic search
+- Reuses the process-local model and embedding cache
+- Exposes no network listener or port discovery file
 ```
 
 ### **Subprocess-Based Claude CLI (ToS Compliance)**

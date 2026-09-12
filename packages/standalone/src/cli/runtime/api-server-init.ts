@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 
 import { createApiServer } from '../../api/index.js';
 import type { ApiServer, RuntimeConnectorStatus, RuntimeStatusSnapshot } from '../../api/index.js';
-import { visibleConnectorNames } from '../../connectors/private-connector-policy.js';
+import { AVAILABLE_CONNECTORS } from '../../connectors/index.js';
 import { createPersistentReportStore } from '../../api/report-persistence.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
 import { liveBoundaryChannels } from '../../evidence/read.js';
@@ -65,33 +65,43 @@ export interface InitApiServerResult {
 /**
  * Project the connectors the runtime actually booted with.
  *
- * Only CONFIGURED connectors are listed (so an unconfigured install honestly
- * shows an empty list), filtered through the private-connector visibility
- * policy. `state` reports registration truth, not a guess: a connector the
- * daemon registered is `connected`, one that is switched off is
- * `disconnected`, and one that is enabled in config but absent from the boot
- * registry is `unknown` rather than being claimed as healthy.
+ * Configured, registered, and live-health connectors are listed, filtered
+ * through the private-connector visibility policy. `state` reports registration
+ * truth, not a guess: a connector the daemon registered is `connected`, one that
+ * is switched off is `disconnected`, and one that is enabled in config but
+ * absent from the boot registry is `unknown` rather than being claimed as healthy.
  */
 export function projectRuntimeConnectors(
   connectorConfigLoadResult: ConnectorConfigLoadResult,
-  enabledConnectors: readonly string[]
+  enabledConnectors: readonly string[],
+  gatewayStates: ReadonlyMap<string, 'pass' | 'fail'> = new Map()
 ): RuntimeConnectorStatus[] {
-  const configuredNames = Object.keys(connectorConfigLoadResult.config);
+  const configuredNames = Object.keys(connectorConfigLoadResult.config).filter((name) =>
+    AVAILABLE_CONNECTORS.includes(name as (typeof AVAILABLE_CONNECTORS)[number])
+  );
   const registered = new Set(enabledConnectors);
-  return visibleConnectorNames(configuredNames)
-    .filter((name) => configuredNames.includes(name))
-    .map((name) => {
-      const enabled =
-        (connectorConfigLoadResult.config as Record<string, { enabled?: boolean } | undefined>)[
-          name
-        ]?.enabled ?? false;
-      const state: RuntimeConnectorStatus['state'] = registered.has(name)
-        ? 'connected'
-        : enabled
-          ? 'unknown'
-          : 'disconnected';
-      return { name, enabled, state };
-    });
+  const names = new Set([...configuredNames, ...registered, ...gatewayStates.keys()]);
+  return AVAILABLE_CONNECTORS.filter((name) => names.has(name)).map((name) => {
+    const gatewayState = gatewayStates.get(name);
+    if (gatewayState) {
+      return {
+        name,
+        enabled: true,
+        state: gatewayState === 'pass' ? 'connected' : 'disconnected',
+      };
+    }
+    const enabled =
+      registered.has(name) ||
+      ((connectorConfigLoadResult.config as Record<string, { enabled?: boolean } | undefined>)[name]
+        ?.enabled ??
+        false);
+    const state: RuntimeConnectorStatus['state'] = registered.has(name)
+      ? 'connected'
+      : enabled
+        ? 'unknown'
+        : 'disconnected';
+    return { name, enabled, state };
+  });
 }
 
 export async function initApiServer(params: InitApiServerParams): Promise<InitApiServerResult> {
@@ -157,20 +167,26 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     });
   // --- Authoritative runtime snapshot ---------------------------------
   // Built from what this boot already resolved. It deliberately does NOT read
-  // agents.ts or any stored model registry: the Viewer must show the backend
-  // and model this process is running, not a catalog default.
+  // agents.ts or any stored model registry: clients receive the backend and
+  // model this process is running, not a catalog default.
   const daemonStartedAt = Math.round(Date.now() - process.uptime() * 1000);
   const packageVersion = resolvePackageVersion();
-  const getRuntimeStatus = (): RuntimeStatusSnapshot => {
+  const getRuntimeStatus = async (): Promise<RuntimeStatusSnapshot> => {
     let health: RuntimeStatusSnapshot['health'] = null;
-    if (healthService) {
-      try {
-        const report = healthService.compute();
-        health = { score: report.score, status: report.status };
-      } catch (error) {
-        console.warn('[start] runtime health unavailable:', error);
-        health = null;
+    const gatewayStates = new Map<string, 'pass' | 'fail'>();
+    try {
+      const report = await healthCheckService.check();
+      health = { score: report.score, status: report.status };
+      for (const check of report.checks) {
+        if (
+          AVAILABLE_CONNECTORS.includes(check.name as (typeof AVAILABLE_CONNECTORS)[number]) &&
+          (check.status === 'pass' || check.status === 'fail')
+        ) {
+          gatewayStates.set(check.name, check.status);
+        }
       }
+    } catch (error) {
+      console.warn('[start] runtime health unavailable:', error);
     }
     return {
       running: true,
@@ -179,7 +195,11 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
       model: config.agent.model,
       startedAt: daemonStartedAt,
       health,
-      connectors: projectRuntimeConnectors(connectorConfigLoadResult, enabledConnectors),
+      connectors: projectRuntimeConnectors(
+        connectorConfigLoadResult,
+        enabledConnectors,
+        gatewayStates
+      ),
     };
   };
 

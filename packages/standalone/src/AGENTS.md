@@ -2,13 +2,15 @@
 
 **Package:** @jungjaehoon/mama-os  
 **Language:** TypeScript (compiles to dist/)  
-**Purpose:** Always-on AI agent with gateway integrations, multi-agent swarm, and autonomous capabilities
+**Purpose:** Always-on AI agent with gateway integrations, operational APIs, and autonomous capabilities
 
 ---
 
 ## OVERVIEW
 
-MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant). Runs continuously with Discord/Slack/Telegram bots, multi-agent swarm orchestration, autonomous UltraWork sessions, and web-based management UI.
+MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant). Runs continuously
+with Discord/Slack/Telegram bots, internal worker orchestration, autonomous work sessions, and a
+local operational API.
 
 ---
 
@@ -23,7 +25,6 @@ MAMA OS — Standalone AI agent powered by Claude CLI subprocess (ToS-compliant)
 | **Add skill**                | `skills/*.ts`                 | Pluggable capabilities (image translation, docs)  |
 | **Modify onboarding**        | `onboarding/*.ts`             | CLI contract and live readiness state             |
 | **Add cron job handler**     | `scheduler/*.ts`              | Heartbeat, token keep-alive, job locking          |
-| **Modify web UI**            | `../public/viewer/`           | MAMA OS dashboard (outside src/)                  |
 | **Add MCP tool executor**    | `agent/mcp-executor.ts`       | Tool execution via Claude CLI --mcp-config        |
 | **Modify session pool**      | `agent/session-pool.ts`       | Persistent CLI process management                 |
 | **Add auth provider**        | `auth/oauth-manager.ts`       | OAuth token management (Claude CLI)               |

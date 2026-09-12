@@ -222,6 +222,28 @@ it.each(['/api/discord/cron', '/api/report'])(
   }
 );
 
+it('TG-05 removes direct and proxied viewer sessions from the real Express runtime', async () => {
+  const db = new Database(':memory:');
+  initAgentTables(db);
+  createBoardInputTables(db);
+  const runtime = await registerReconcileRuntime({
+    db,
+    connectorConfigLoadResult: enabledConnectorConfig,
+  });
+
+  try {
+    for (const route of ['/api/sessions', '/api/sessions/last-active']) {
+      expect((await request(runtime.apiServer.app).get(route)).status, route).toBe(404);
+    }
+    expect((await request(runtime.apiServer.app).post('/api/session/create')).status).toBe(404);
+    expect((await request(runtime.apiServer.app).get('/api/report')).status).toBe(200);
+    expect((await request(runtime.apiServer.app).get('/health')).status).toBe(200);
+  } finally {
+    runtime.routeHandle.stop();
+    db.close();
+  }
+});
+
 it.each([
   { reason: 'busy' as const, status: 409 },
   { reason: 'unavailable' as const, status: 503 },

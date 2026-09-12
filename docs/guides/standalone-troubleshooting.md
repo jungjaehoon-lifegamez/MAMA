@@ -348,13 +348,10 @@ sudo chown -R $USER:$USER ~/.mama/
 **Symptoms:**
 
 - Error: "EADDRINUSE: address already in use :::3847"
-- MAMA OS viewer won't start
+- MAMA OS operational API won't start
 - `mama start` fails
 
-**Note:** MAMA OS uses two active ports:
-
-- **3847** - API server (viewer, graph API, sessions)
-- **3849** - Embedding server
+**Note:** MAMA OS uses port **3847** for its operational API.
 
 Port **3848** belonged to the retired setup wizard. Current onboarding uses `mama --help` and
 `mama status` and does not start a listener on that port.
@@ -383,9 +380,9 @@ lsof -i :3847
 kill -9 PID
 ```
 
-**Option 2: Free the fixed default ports**
+**Option 2: Free the fixed default port**
 
-MAMA OS currently uses fixed runtime ports (`3847`, `3849`). Stop conflicting processes, then restart:
+MAMA OS uses the fixed runtime port `3847`. Stop conflicting processes, then restart:
 
 ```bash
 mama stop
@@ -450,7 +447,6 @@ mama start --foreground
 
    ```bash
    lsof -i :3847
-   lsof -i :3849
    # stop or kill conflicting process, then restart mama
    ```
 

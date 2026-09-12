@@ -44,8 +44,6 @@ _Step-by-step instructions for specific tasks_
 - [Installation Guide](guides/installation.md) - Complete installation process
 - [Standalone Setup](guides/standalone-setup.md) - Set up always-on AI agent
 - [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
-- [Mobile Access](guides/mobile-access.md) - Reach the Viewer from any device
-- [Webchat Media](guides/webchat-media.md) - Image upload, TTS/STT voice features
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 - [Standalone Troubleshooting](guides/standalone-troubleshooting.md) - Fix standalone agent issues
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
@@ -70,7 +68,7 @@ _Technical specifications and API documentation_
 _Conceptual explanations and design decisions_
 
 - [Architecture](explanation/architecture.md) - System architecture overview
-- [MAMA OS](explanation/mama-os.md) - The built-in Viewer: Operator, Knowledge, System
+- [MAMA OS](explanation/mama-os.md) - Messenger runtime, operational API, and background work
 - [Work Agent](explanation/work-agent.md) - Why MAMA has one front, scoped Cases, and domain capabilities
 - [Tier System](explanation/tier-system.md) - Tier system design and philosophy
 - [Decision Graph](explanation/decision-graph.md) - Decision evolution tracking

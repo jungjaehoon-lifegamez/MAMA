@@ -41,12 +41,10 @@ export interface MetricsInitResult {
  *
  * @param config   Loaded MAMA configuration
  * @param db       Sessions SQLite database (used by HealthCheckService for token usage queries)
- * @param embeddingPort  Port the embedding server listens on
  */
 export async function initMetrics(
   config: MAMAConfig,
-  db: SQLiteDatabase,
-  embeddingPort: number
+  db: SQLiteDatabase
 ): Promise<MetricsInitResult> {
   // Initialize metrics store (respects config.metrics.enabled)
   const metricsEnabled = config.metrics?.enabled !== false;
@@ -88,7 +86,6 @@ export async function initMetrics(
   // Initialize connection-based health check service (always active, regardless of metrics config)
   const healthCheckDbPath = expandPath(config.database.path);
   const healthCheckService = new HealthCheckService({
-    embeddingPort,
     db,
     sessionPool: getSessionPool(),
     metricsCleanup: metricsCleanup ?? undefined,

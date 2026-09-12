@@ -1,7 +1,7 @@
 ---
-description: View or modify MAMA configuration (database, embedding model, tier status, security settings)
+description: View or modify MAMA configuration (database, embedding model, tier status)
 allowed-tools: Read, Write, Edit
-argument-hint: '[--show] [--model=<name>] [--db-path=<path>] [--disable-http] [--disable-websocket] [--enable-all] [--set-auth-token=<token>]'
+argument-hint: '[--show] [--model=<name>] [--db-path=<path>] [--tier-check]'
 ---
 
 # Configure MAMA Settings
@@ -17,18 +17,12 @@ You are helping the user view or modify MAMA configuration.
    - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-large')
    - `--db-path=X`: Change database location (e.g., '~/.claude/mama-memory.db')
    - `--tier-check`: Re-run tier detection (check SQLite, embeddings availability)
-   - `--disable-http`: Disable the HTTP server (the Viewer and the HTTP API)
-   - `--disable-websocket`: Disable the chat WebSocket API only (keep the Viewer)
-   - `--enable-all`: Enable all features (remove all disable flags)
-   - `--set-auth-token=X`: Set MAMA_AUTH_TOKEN for external access
-   - `--generate-token`: Generate a strong random auth token
 
 2. For `--show` (default):
    - Read configuration from `~/.mama/config.json`
    - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
    - Display tier status (Tier 1 Full vs Tier 2 Degraded)
    - Show embedding model, database path, performance stats
-   - **Show security settings** (HTTP server, WebSocket, auth token status)
    - Include fix instructions if degraded mode
 
 3. For `--model=X`:
@@ -46,41 +40,6 @@ You are helping the user view or modify MAMA configuration.
    - Update config with detected tier
    - Show remediation steps if Tier 2
 
-6. For `--disable-http`:
-   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
-   - Add `"MAMA_DISABLE_HTTP_SERVER": "true"` to mcpServers.mama.env
-   - Save updated plugin.json
-   - Show confirmation message
-   - **Remind user to restart Claude Code** for changes to take effect
-
-7. For `--disable-websocket`:
-   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
-   - Add `"MAMA_DISABLE_WEBSOCKET": "true"` to mcpServers.mama.env
-   - Save updated plugin.json
-   - Show confirmation message
-   - **Remind user to restart Claude Code**
-
-8. For `--enable-all`:
-   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
-   - Remove `MAMA_DISABLE_HTTP_SERVER` and `MAMA_DISABLE_WEBSOCKET` from env
-   - Save updated plugin.json
-   - Show confirmation message
-   - **Remind user to restart Claude Code**
-
-9. For `--set-auth-token=X`:
-   - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
-   - Add `"MAMA_AUTH_TOKEN": "X"` to mcpServers.mama.env
-   - Save updated plugin.json
-   - **Warning:** Show security notice about token storage
-   - **Remind user to restart Claude Code**
-
-10. For `--generate-token`:
-    - Generate a cryptographically secure random token (32 bytes, base64)
-    - Display the generated token
-    - Ask user if they want to save it to plugin config
-    - If yes, update plugin.json as in step 9
-    - **Remind user to save token securely**
-
 ## Example Usage
 
 ```bash
@@ -97,14 +56,6 @@ You are helping the user view or modify MAMA configuration.
 # Check tier status
 /mama:configure --tier-check
 
-# Security settings
-/mama:configure --disable-http              # Disable the Viewer and the HTTP API
-/mama:configure --disable-websocket         # Disable the chat WebSocket API only
-/mama:configure --enable-all                # Enable all features
-
-# Authentication token
-/mama:configure --generate-token            # Generate random token
-/mama:configure --set-auth-token=abc123     # Set specific token
 ```
 
 ## Response Format - Show Configuration
@@ -119,29 +70,6 @@ You are helping the user view or modify MAMA configuration.
 **Embedding Model:** {model_name} ({embedding_dim}-dim)
 **Decision Count:** {total_decisions}
 **Last Updated:** {config_updated_at}
-
----
-
-## Security Settings
-
-**HTTP Server:** {enabled/disabled}
-**Viewer:** {enabled/disabled}
-**Chat WebSocket API:** {enabled/disabled}
-**Auth Token:** {set/not set}
-
-**Quick Actions:**
-
-- Disable all: `/mama:configure --disable-http`
-- Disable the chat WebSocket API: `/mama:configure --disable-websocket`
-- Enable all: `/mama:configure --enable-all`
-- Set auth token: `/mama:configure --generate-token`
-
-**⚠️ Security Notice:**
-
-- HTTP server runs on localhost (127.0.0.1:3847) only
-- External access requires tunnel (ngrok, Cloudflare)
-- **For production:** Use Cloudflare Zero Trust (See [Security Guide](docs/guides/security.md))
-- **For testing:** Set auth token with `/mama:configure --generate-token`
 
 ---
 

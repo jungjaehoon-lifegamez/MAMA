@@ -596,7 +596,7 @@ mama start
 
 1. **Loads configuration** from `~/.mama/config.yaml`
 2. **Initializes database** (creates tables if needed)
-3. **Starts HTTP embedding server** on port 3849
+3. **Starts the operational API** on port 3847
 4. **Connects to gateways** (if configured)
 5. **Begins agent loop** - Ready to receive messages
 
@@ -607,7 +607,7 @@ mama start
 
 설정 로드 중... ✓
 데이터베이스 초기화 중... ✓
-HTTP 임베딩 서버 시작 중 (포트 3849)... ✓
+운영 API 시작 중 (포트 3847)... ✓
 Discord 게이트웨이 연결 중... ✓
 
 ✅ MAMA 에이전트가 시작되었습니다!

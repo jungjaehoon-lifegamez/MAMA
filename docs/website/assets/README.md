@@ -4,16 +4,13 @@ Visual assets for the MAMA landing page and documentation.
 
 ## Product Visuals
 
-| File                              | Description                                     | Source                         |
-| --------------------------------- | ----------------------------------------------- | ------------------------------ |
-| `mama-icon.svg`                   | MAMA logo used by the site nav, favicon, footer | Project brand asset            |
-| `mama-os-hero-evidence-board.png` | Generated demo product screen with fake data    | AI-generated from MAMA UI goal |
+| File            | Description                                     | Source              |
+| --------------- | ----------------------------------------------- | ------------------- |
+| `mama-icon.svg` | MAMA logo used by the site nav, favicon, footer | Project brand asset |
 
 ## Usage
 
-```html
-<img src="assets/mama-os-hero-evidence-board.png" alt="Generated MAMA OS evidence board" />
-```
+Reference the maintained SVG asset directly from the site.
 
 ## Guidelines
 

@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.53.4",
+  "version": "0.54.0",
   "description": "MAMA OS - The local work agent behind your messenger.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -74,8 +74,7 @@
     "multer": "^2.0.2",
     "node-cron": "^3.0.3",
     "quickjs-emscripten": "^0.32.0",
-    "sharp": "^0.34.5",
-    "ws": "^8.18.0"
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -86,7 +85,6 @@
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/supertest": "^6.0.3",
-    "@types/ws": "^8.5.10",
     "@vitest/coverage-v8": "1.6.1",
     "supertest": "^7.2.2",
     "tsx": "^4.20.6",

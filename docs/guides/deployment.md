@@ -11,10 +11,10 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.53.4  |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
-| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.5.0   |
-| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.54.0  |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 2.0.0   |
+| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 3.0.0   |
+| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 2.0.0   |
 
 ---
 
@@ -61,11 +61,11 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.53.4          |
-| `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
-| `packages/mama-core/package.json`                        | `version` | 2.5.0           |
-| `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
-| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.11.0          |
+| `packages/standalone/package.json`                       | `version` | 0.54.0          |
+| `packages/mcp-server/package.json`                       | `version` | 2.0.0           |
+| `packages/mama-core/package.json`                        | `version` | 3.0.0           |
+| `packages/claude-code-plugin/package.json`               | `version` | 2.0.0           |
+| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 2.0.0           |
 
 ### Version Update Example
 
@@ -300,9 +300,6 @@ export MAMA_FORCE_TIER_3=true
 ```ini
 # .env file (user environment)
 MAMA_DB_PATH=~/.claude/mama-memory.db
-MAMA_SERVER_TOKEN=<secure_token>
-# MCP server HTTP mode only; the MAMA OS daemon API remains fixed at 3847.
-MAMA_SERVER_PORT=3000
 MAMA_EMBEDDING_MODEL=Xenova/multilingual-e5-small
 MAMA_ENVELOPE_ISSUANCE=enabled
 MAMA_TEMPORAL_RECONCILE=off
@@ -318,15 +315,13 @@ Use `MAMA_AUTH_TOKEN` for non-Access tunnels and temporary test exposure. Withou
 
 **Environment Variable Reference:**
 
-| Variable                  | Description                                   | Default                        |
-| ------------------------- | --------------------------------------------- | ------------------------------ |
-| `MAMA_DB_PATH`            | SQLite DB file path                           | `~/.claude/mama-memory.db`     |
-| `MAMA_SERVER_TOKEN`       | Auth token (HTTP mode)                        | -                              |
-| `MAMA_SERVER_PORT`        | MCP server HTTP port; does not change MAMA OS | `3000`                         |
-| `MAMA_EMBEDDING_MODEL`    | Embedding model                               | `Xenova/multilingual-e5-small` |
-| `MAMA_ENVELOPE_ISSUANCE`  | Runtime envelope issuance                     | `enabled`                      |
-| `MAMA_TEMPORAL_RECONCILE` | Temporal reconciliation (`off` or `on`)       | `off`                          |
-| `MAMA_FORCE_TIER_3`       | Force Tier 3 mode                             | `false`                        |
+| Variable                  | Description                             | Default                        |
+| ------------------------- | --------------------------------------- | ------------------------------ |
+| `MAMA_DB_PATH`            | SQLite DB file path                     | `~/.claude/mama-memory.db`     |
+| `MAMA_EMBEDDING_MODEL`    | Embedding model                         | `Xenova/multilingual-e5-small` |
+| `MAMA_ENVELOPE_ISSUANCE`  | Runtime envelope issuance               | `enabled`                      |
+| `MAMA_TEMPORAL_RECONCILE` | Temporal reconciliation (`off` or `on`) | `off`                          |
+| `MAMA_FORCE_TIER_3`       | Force Tier 3 mode                       | `false`                        |
 
 The durable workorder pipeline is always on since v0.28.0 (the former
 `MAMA_STAGE2_WORKORDERS` migration flag is retired: unset or `on` boots fine, an explicit

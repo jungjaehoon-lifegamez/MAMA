@@ -18,7 +18,6 @@ import {
 import { homedir } from 'node:os';
 import type { Express, Request, Response } from 'express';
 import path from 'node:path';
-import http from 'node:http';
 
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
@@ -35,7 +34,7 @@ import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
-import { API_PORT, EMBEDDING_PORT } from './utilities.js';
+import { API_PORT } from './utilities.js';
 import { ensureCodeActMcpConfig } from '../../mcp/code-act-mcp-config.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
@@ -1385,40 +1384,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   });
 
-  // ── Session API endpoints ─────────────────────────────────────────────
-  apiServer.app.get('/api/sessions/last-active', requireAuth, async (_req, res) => {
-    try {
-      const sessions = messageRouter.listSessions('viewer');
-      if (sessions.length === 0) {
-        res.json({ session: null });
-        return;
-      }
-      const sorted = sessions.sort((a, b) => b.lastActive - a.lastActive);
-      res.json({ session: sorted[0] });
-    } catch (error) {
-      console.error('[Sessions API] Error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  apiServer.app.get('/api/sessions', requireAuth, async (_req, res) => {
-    try {
-      const viewerSessions = messageRouter.listSessions('viewer');
-      const discordSessions = messageRouter.listSessions('discord');
-      const telegramSessions = messageRouter.listSessions('telegram');
-      const slackSessions = messageRouter.listSessions('slack');
-      res.json({
-        viewer: viewerSessions,
-        discord: discordSessions,
-        telegram: telegramSessions,
-        slack: slackSessions,
-      });
-    } catch (error) {
-      console.error('[Sessions API] Error:', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
   registerKagemushaTaskRoute(apiServer.app, apiServer.privateConnectorPolicy);
 
   // ── Agent Notices endpoint ────────────────────────────────────────────
@@ -1764,41 +1729,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const handled = await graphHandler(req, res);
     if (!handled) next();
   });
-
-  // ── Session proxy middleware ───────────────────────────────────────────
-  apiServer.app.use((req, res, next) => {
-    if (req.path.startsWith('/api/session')) {
-      const bodyData = req.body ? JSON.stringify(req.body) : '';
-      const options = {
-        hostname: 'localhost',
-        port: EMBEDDING_PORT,
-        path: req.url,
-        method: req.method,
-        headers: {
-          ...req.headers,
-          host: `localhost:${EMBEDDING_PORT}`,
-          'content-length': Buffer.byteLength(bodyData),
-        },
-      };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const proxy = http.request(options, (proxyRes: any) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        proxyRes.pipe(res, { end: true });
-      });
-      if (bodyData) {
-        proxy.write(bodyData);
-      }
-      proxy.end();
-      proxy.on('error', (error: Error) => {
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Failed to proxy session API', details: error.message });
-        }
-      });
-    } else {
-      next();
-    }
-  });
-  console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
   // ── Daemon Log API ────────────────────────────────────────────────────
   apiServer.app.get('/api/logs/daemon', requireAuth, (req, res) => {

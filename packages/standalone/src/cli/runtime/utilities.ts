@@ -8,17 +8,14 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path, { join } from 'node:path';
-import type { Server as HttpServer } from 'node:http';
 import http from 'node:http';
 
 import { loadConfig } from '../config/config-manager.js';
-import { getEmbeddingDim, getModelName } from '@jungjaehoon/mama-core/config-loader';
 
 // Port configuration — single source of truth
-/** Public-facing API server port (REST API + Viewer UI) */
+/** Operational REST API port */
 export const API_PORT = 3847;
-/** Internal embedding server port (model inference, chat WebSocket/session API, graph) */
-export const EMBEDDING_PORT = 3849;
+export const RUNTIME_PORTS = [API_PORT] as const;
 
 export interface SecurityAlertTarget {
   gateway: 'discord' | 'slack' | 'telegram';
@@ -58,26 +55,6 @@ export function parseSecurityAlertTargets(config: {
   }
 
   return [];
-}
-
-// MAMA embedding server (keeps model in memory)
-let embeddingServer: HttpServer | null = null;
-let embeddingShutdownToken: string | null = null;
-
-export function getEmbeddingServer(): HttpServer | null {
-  return embeddingServer;
-}
-
-export function setEmbeddingServer(server: HttpServer | null): void {
-  embeddingServer = server;
-}
-
-export function getEmbeddingShutdownToken(): string | null {
-  return embeddingShutdownToken;
-}
-
-export function setEmbeddingShutdownToken(token: string | null): void {
-  embeddingShutdownToken = token;
 }
 
 /**
@@ -177,173 +154,6 @@ export async function waitForPortAvailable(
   }
 
   return false;
-}
-
-/**
- * Check existing embedding server and request takeover if needed
- * Returns true if existing server has chat capability (no takeover needed)
- *
- * SECURITY P1: Uses authenticated shutdown with token
- * SECURITY P1: Validates health response before reuse
- * SECURITY P1: Uses port polling instead of fixed timeout
- */
-export async function checkAndTakeoverExistingServer(
-  port: number,
-  shutdownToken: string | null
-): Promise<boolean> {
-  const targetModel = getModelName();
-  const targetDim = getEmbeddingDim();
-  return new Promise((resolve) => {
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path: '/health',
-        method: 'GET',
-        timeout: 1000,
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk) => (data += chunk));
-        res.on('end', async () => {
-          try {
-            const health = JSON.parse(data);
-            const healthModel = typeof health.model === 'string' ? health.model : null;
-            const healthDim = typeof health.dim === 'number' ? health.dim : null;
-            const metadataMismatch =
-              healthModel !== targetModel || (healthDim !== null && healthDim !== targetDim);
-            const metadataMissing = healthModel === null || healthDim === null;
-            // SECURITY P1: Validate health response before reuse
-            if (
-              health.chatEnabled &&
-              health.status === 'ok' &&
-              health.modelLoaded &&
-              !metadataMismatch &&
-              !metadataMissing
-            ) {
-              // Fully functional server, reuse it
-              console.log('✓ Fully functional embedding server (reusing)');
-              resolve(true);
-              return;
-            }
-
-            if (health.status === 'ok') {
-              // Server healthy but incomplete features
-              if (!health.modelLoaded) {
-                console.warn('[EmbeddingServer] Warning: Model not loaded');
-              }
-              if (metadataMismatch || metadataMissing) {
-                console.warn(
-                  `[EmbeddingServer] Metadata mismatch -> replacing. ` +
-                    `Expected ${targetModel}/${targetDim}, got ${healthModel ?? 'unknown'}/${healthDim ?? 'unknown'}`
-                );
-              }
-              // MCP server running without chat, request shutdown
-              console.log('[EmbeddingServer] MCP server detected, requesting takeover...');
-              const shutdownReq = http.request(
-                {
-                  hostname: '127.0.0.1',
-                  port,
-                  path: '/shutdown',
-                  method: 'POST',
-                  timeout: 2000,
-                  // SECURITY P1: Pass shutdown token
-                  headers: {
-                    'X-Shutdown-Token': shutdownToken || process.env.MAMA_SHUTDOWN_TOKEN || '',
-                  },
-                },
-                async (shutdownRes) => {
-                  if ((shutdownRes.statusCode ?? 0) < 200 || (shutdownRes.statusCode ?? 0) >= 300) {
-                    console.warn(
-                      `[EmbeddingServer] Takeover shutdown rejected with HTTP ${shutdownRes.statusCode ?? 0}`
-                    );
-                    resolve(false);
-                    return;
-                  }
-
-                  console.log('[EmbeddingServer] MCP server shutdown requested');
-                  // SECURITY P1: Use port polling instead of fixed timeout
-                  const portAvailable = await waitForPortAvailable(port, 10000);
-                  if (portAvailable) {
-                    console.log('[EmbeddingServer] Port available, proceeding');
-                  } else {
-                    console.warn(
-                      `[EmbeddingServer] Warning: Port ${port} still in use after 10s. ` +
-                        'Proceeding anyway — Watchdog will retry if needed.'
-                    );
-                  }
-                  resolve(false);
-                }
-              );
-              shutdownReq.on('error', () => resolve(false));
-              shutdownReq.end();
-            } else {
-              // Server unhealthy
-              console.warn('[EmbeddingServer] Server unhealthy, starting fresh');
-              resolve(false);
-            }
-          } catch {
-            resolve(false);
-          }
-        });
-      }
-    );
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.end();
-  });
-}
-
-export async function startEmbeddingServerIfAvailable(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  messageRouter?: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sessionStore?: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  graphHandler?: any
-): Promise<void> {
-  const port = EMBEDDING_PORT;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const embeddingServerModule = require('@jungjaehoon/mama-core/embedding-server');
-    embeddingShutdownToken =
-      typeof embeddingServerModule.SHUTDOWN_TOKEN === 'string'
-        ? embeddingServerModule.SHUTDOWN_TOKEN
-        : null;
-
-    // Check if server already running
-    const existingHasChat = await checkAndTakeoverExistingServer(port, embeddingShutdownToken);
-    if (existingHasChat) {
-      // Another Standalone is running with chat, no need to start
-      return;
-    }
-
-    embeddingServer = await embeddingServerModule.startEmbeddingServer(port, {
-      messageRouter,
-      sessionStore,
-      graphHandler,
-    });
-    if (embeddingServer) {
-      console.log(`✓ Embedding server started (port ${EMBEDDING_PORT})`);
-      if (messageRouter && sessionStore) {
-        // NOTE: 'Mobile Chat' here is the mama-core mobile/ module (session API +
-        // WebSocket handler), which is live. It is not the retired browser chat UI.
-        console.log('✓ Mobile Chat integrated with MessageRouter');
-      }
-      await embeddingServerModule.warmModel();
-      console.log('✓ Embedding model preloaded');
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[EmbeddingServer] Failed to start: ${message}\n` +
-        `  ⚠️  Semantic search (decision recall) UNAVAILABLE this session`
-    );
-  }
 }
 
 /**

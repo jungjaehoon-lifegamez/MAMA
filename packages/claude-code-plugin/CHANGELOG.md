@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-12
+
+### Removed
+
+- Removed retired HTTP, WebSocket, and API-token controls from the configure command. Standalone
+  API authentication remains configured in the daemon environment.
+
+### Kept
+
+- The PreCompact hook continues to send memory-agent ingest requests to the operational API on
+  port 3847.
+
 ## [1.7.11] - 2026-02-14
 
 ### Changed

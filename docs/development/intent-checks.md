@@ -722,3 +722,18 @@
   session continuity, 보고 전달과 운영 API를 유지하면서 사용되지 않는 별도 화면을 줄였다.
   runtime-status의 비동기 supplier와 live gateway-health projection 개선은 저장된 후속 범위로
   보존하며, 이 PR에서 구현·검증했다고 주장하지 않는다.
+
+## 2026-09-12 — localhost embedding/session runtime 제거 후보
+
+- 결과: port 3849의 embedding HTTP server/client, mobile session/WebSocket runtime,
+  MCP opt-in startup, standalone takeover·proxy·shutdown·health 경로를 제거했다. local embedding은
+  core 프로세스 안에서 유지하고 port 3847의 report·raw·graph·upload·health·runtime-status API,
+  messenger 경로와 durable session store를 유지했다.
+- 근거: TG-03/TG-05/TG-06 RED 회귀가 제거 전 core 2건, MCP 2건, standalone 8건 실패했고,
+  제거 후 focused test에서 core 2건, MCP 6건, standalone 56건과 standalone typecheck가 통과했다.
+  최종 전체 검증·package tarball 검사는 이 후보의 validation 기록에 별도로 남긴다.
+- runtime-status: Promise supplier를 await하고, live HealthCheckService의 gateway pass/fail을
+  config보다 우선하며 generic connector 목록을 `AVAILABLE_CONNECTORS`로 제한했다.
+- 판정: I-01/I-02/I-06 및 TG-03/TG-05/TG-06에 **부분 부합**한다. competing runtime과
+  가짜 embedding health 항목은 없어졌지만 실제 messenger 업무·보고 품질이나 설치 동작은
+  이 소스 변경만으로 확인하지 않았다. 최상위 목적은 미완료다.

@@ -159,105 +159,19 @@ Once configured, use MAMA through your MCP client:
 - **Local-First** - All data stored on your device (~/.claude/mama-memory.db)
 - **Multilingual** - Supports English, Korean, and other languages
 - **Shared Database** - One database works across all your MCP clients
-- **Optional HTTP Embedding Server** - Legacy/standalone-less embedding HTTP mode (opt-in)
-
-## HTTP Embedding Server
-
-The MCP server can expose an HTTP embedding API, but this is now opt-in.
-
-- Default: `stdio` MCP only (no HTTP startup)
-- Recommended: run `@jungjaehoon/mama-os` for API/UI (`3847`) + embedding/chat (`3849`)
-- Legacy opt-in for MCP HTTP: `MAMA_MCP_START_HTTP_EMBEDDING=true`
-
-When enabled, the HTTP embedding API keeps the model loaded in memory:
-
-```
-┌─────────────────────────────────────────────────┐
-│              Local Machine                       │
-├─────────────────────────────────────────────────┤
-│  Claude Code  Claude Desktop  Cursor  Aider     │
-│       │            │            │       │        │
-│       └────────────┴────────────┴───────┘        │
-│                      │                           │
-│     ┌────────────────▼────────────────┐         │
-│     │  HTTP Embedding Server          │         │
-│     │  127.0.0.1:3849                 │         │
-│     │  Model stays loaded in memory   │         │
-│     └─────────────────────────────────┘         │
-└─────────────────────────────────────────────────┘
-```
-
-### Endpoints
-
-| Endpoint       | Method | Description                  |
-| -------------- | ------ | ---------------------------- |
-| `/health`      | GET    | Server status and model info |
-| `/embed`       | POST   | Single text embedding        |
-| `/embed/batch` | POST   | Batch text embeddings        |
-
-### Usage Examples
-
-Enable legacy MCP-launched HTTP mode when starting MCP server:
-
-```bash
-MAMA_MCP_START_HTTP_EMBEDDING=true npx @jungjaehoon/mama-server
-```
-
-Then query the HTTP endpoints:
-
-```bash
-# Check server health
-curl http://127.0.0.1:3849/health
-
-# Generate embedding
-curl -X POST http://127.0.0.1:3849/embed \
-  -H "Content-Type: application/json" \
-  -d '{"text": "How does authentication work?"}'
-
-# Batch embeddings
-curl -X POST http://127.0.0.1:3849/embed/batch \
-  -H "Content-Type: application/json" \
-  -d '{"texts": ["query 1", "query 2", "query 3"]}'
-```
-
-### Benefits
-
-- **Fast**: ~50ms embedding requests (vs 2-9 seconds loading model each time)
-- **Shared**: Any local LLM client can use this service
-- **Optional**: Enable only when you explicitly need MCP-launched HTTP mode
-- **Secure**: localhost only (127.0.0.1), no external access
-
-## Viewer
-
-Interactive visualization of your reasoning graph, under **Knowledge > Memory**.
-
-**Access:** `http://localhost:3847/viewer#knowledge/memory` - Standalone only. In legacy MCP
-HTTP mode `http://localhost:3849/viewer` serves a stub telling you to start Standalone; the
-MCP server has no viewer of its own.
-
-**Features:**
-
-- Network graph with physics simulation
-- Decision list sidebar
-- Draggable detail panel
-- Topic filtering, search, and export (JSON / Markdown / CSV)
 
 ## Environment Variables
 
-| Variable                        | Default                    | Description                                  |
-| ------------------------------- | -------------------------- | -------------------------------------------- |
-| `MAMA_DB_PATH`                  | `~/.claude/mama-memory.db` | SQLite database location                     |
-| `MAMA_EMBEDDING_PORT`           | `3849`                     | Embedding HTTP server port                   |
-| `MAMA_HTTP_PORT`                | `3849`                     | Backward-compatible alias for embedding port |
-| `MAMA_MCP_START_HTTP_EMBEDDING` | `false`                    | Start embedding HTTP server from MCP process |
+| Variable       | Default                    | Description              |
+| -------------- | -------------------------- | ------------------------ |
+| `MAMA_DB_PATH` | `~/.claude/mama-memory.db` | SQLite database location |
 
 ## Technical Details
 
 - **Database:** SQLite + pure-TS cosine similarity
 - **Embeddings:** Transformers.js (Xenova/multilingual-e5-large, 1024-dim)
-- **Transport:** stdio-based MCP protocol (default) + optional HTTP embedding server (port 3849)
+- **Transport:** stdio-based MCP protocol
 - **Storage:** ~/.claude/mama-memory.db (configurable via MAMA_DB_PATH)
-- **Port File:** ~/.mama-embedding-port (for client discovery)
 - **Node.js:** >= 22.13.0 required
 - **Disk Space:** ~500MB for embedding model cache
 

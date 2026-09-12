@@ -165,8 +165,8 @@ Messenger already supplies the essential front-end primitives:
 MAMA does not need to become another chat product. Complexity belongs in the runtime and domain
 tools. The front should expose work state and evidence, not an AI organization chart.
 
-The Viewer remains an operator and inspection surface for board, tasks, memory, connectors,
-runtime status, and logs. It is not the primary place a team must visit to delegate work.
+The operational API remains an integration and inspection surface for reports, tasks, memory,
+connectors, runtime status, and logs. Teams delegate work through their existing messengers.
 
 ## What is shipped
 

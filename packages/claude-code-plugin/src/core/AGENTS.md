@@ -27,7 +27,6 @@ src/core/
 ├── relevance-scorer.js      # Semantic similarity scoring
 ├── decision-formatter.js    # Output formatting
 ├── embedding-cache.js       # In-memory embedding cache
-├── embedding-client.js      # HTTP embedding server client
 ├── outcome-tracker.js       # Decision outcome updates
 ├── config-loader.js         # Configuration management
 ├── debug-logger.js          # Logging utilities
@@ -54,10 +53,8 @@ src/core/
 - `ollama-client.js` - Ollama embedding fallback
 - Direct SQLite/db-adapter internals are intentionally not mirrored; the plugin uses its own `db-manager.js` path instead.
 
-**Missing from plugin (mama-core only):**
-
-- HTTP embedding server (`embedding-server/`)
-- WebSocket server components
+**Missing from plugin (mama-core only):** package-only storage and typed runtime modules that are
+not required by hooks.
 
 ---
 

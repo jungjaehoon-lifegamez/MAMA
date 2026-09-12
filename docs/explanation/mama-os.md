@@ -19,17 +19,10 @@ Telegram, Slack, and Discord are where a user normally:
 The user contacts one MAMA identity. Internal models, workers, and domain tools are not exposed as
 a team the user must coordinate.
 
-### Viewer: the operator and inspection surface
+### Operational API
 
-The Viewer at `http://localhost:3847/viewer` opens on the operator board. It groups read-oriented
-views into:
-
-- **Operator:** Board, Tasks, Triggers;
-- **Knowledge:** Memory, Wiki;
-- **System:** Runtime, Connectors, Logs.
-
-The Viewer helps an owner inspect what MAMA knows and what the runtime is doing. It is not a new
-collaboration app and is not required for ordinary messenger delegation.
+The API at `http://localhost:3847` exposes authenticated report, task, source, graph, runtime
+status, upload, and health routes for integrations and operational inspection.
 
 ## Runtime shape
 
@@ -53,7 +46,7 @@ Telegram / Slack / Discord / connector sources
                      ▼
              authorized delivery
 
-Viewer ── HTTP/SSE ── runtime, board, tasks, knowledge, connectors, logs
+API clients ── HTTP/SSE ── runtime, reports, tasks, sources, graph, health
 ```
 
 ## One MAMA, optional internal workers

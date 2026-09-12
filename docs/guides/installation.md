@@ -26,7 +26,7 @@ node --version
 
 ### MAMA Standalone
 
-**Always-on AI agent** with Discord/Slack/Telegram bot support, autonomous loops, and the MAMA OS Viewer.
+**Always-on AI agent** with Discord/Slack/Telegram bot support, autonomous loops, and an operational API.
 
 **Step 1: Install globally**
 
@@ -59,7 +59,7 @@ mama start
 
 - Always-on agent with memory persistence
 - Gateway integrations (Discord, Slack, Telegram)
-- MAMA OS: the web Viewer (operator board, memory graph, wiki, runtime status)
+- MAMA OS: the port 3847 operational API for reports, source evidence, graph data, and runtime status
 - Autonomous agent loops with heartbeat monitoring
 - Full MCP tool access (search, save, update, load_checkpoint)
 
@@ -303,7 +303,7 @@ MAMA uses a **4-package architecture**:
 
 1. **@jungjaehoon/mama-os** (Standalone Agent)
    - Always-on AI agent with gateway support
-   - Built-in MAMA OS Viewer (operator board, memory graph, wiki, runtime status)
+   - Local operational API for reports, source evidence, graph data, and runtime status
    - Autonomous agent loops
    - Depends on @jungjaehoon/mama-core
 

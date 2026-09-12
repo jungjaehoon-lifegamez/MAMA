@@ -37,12 +37,12 @@ standalone config dump. Toggling requires a standalone restart.
 ### #embedding-unavailable
 
 Symptom: `EmbeddingUnavailableError` in logs during candidate generation.
-Cause: embedding server (port 3849) is down or the model file is missing.
+Cause: the in-process embedding provider or model file is unavailable.
 
 Fix:
 
-1. `curl http://127.0.0.1:3849/health`
-2. If unhealthy: restart the daemon. CLI-managed installs: `mama stop && mama start`. launchd-managed installs (`com.mama.server`): `launchctl kickstart -k gui/$(id -u)/com.mama.server`
+1. Inspect the bounded daemon error for the explicit embedding provider failure.
+2. Verify the configured local model is available, then restart the process that performs the audit.
 3. Candidates in `pending` status will be rescored on the next audit run —
    no manual recovery required.
 

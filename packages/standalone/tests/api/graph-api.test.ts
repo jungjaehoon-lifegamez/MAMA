@@ -4,6 +4,7 @@ import request from 'supertest';
 import Database from '../../src/sqlite.js';
 import { createApiServer, type RuntimeStatusSnapshot } from '../../src/api/index.js';
 import { projectRuntimeConnectors } from '../../src/cli/runtime/api-server-init.js';
+import { PRIVATE_CONNECTORS } from '../../src/connectors/index.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
 import { initValidationTables, createValidationSession } from '../../src/validation/store.js';
 import * as validationStore from '../../src/validation/store.js';
@@ -177,6 +178,23 @@ describe('graph api helpers', () => {
         }
       });
 
+      it('awaits an asynchronous runtime snapshot supplier before serialization', async () => {
+        const scheduler = new CronScheduler();
+        try {
+          const apiServer = createApiServer({
+            scheduler,
+            port: 0,
+            getRuntimeStatus: async () => RUNTIME_SNAPSHOT,
+          });
+          const response = await request(apiServer.app).get('/api/runtime/status');
+
+          expect(response.status).toBe(200);
+          expect(response.body).toEqual(RUNTIME_SNAPSHOT);
+        } finally {
+          scheduler.shutdown();
+        }
+      });
+
       it('projects configured connectors with their registration state', () => {
         expect(
           projectRuntimeConnectors(
@@ -202,6 +220,51 @@ describe('graph api helpers', () => {
         expect(
           projectRuntimeConnectors({ ok: true, config: {}, enabledNames: [] } as never, [])
         ).toEqual([]);
+      });
+
+      it('projects a registered connector even when it was auto-enabled outside config', () => {
+        expect(
+          projectRuntimeConnectors({ ok: true, config: {}, enabledNames: [] } as never, [
+            'claude-code',
+          ])
+        ).toEqual([{ name: 'claude-code', enabled: true, state: 'connected' }]);
+      });
+
+      it('uses live gateway health over a stale raw connector setting', () => {
+        expect(
+          projectRuntimeConnectors(
+            {
+              ok: true,
+              config: { telegram: { enabled: false } },
+              enabledNames: [],
+            } as never,
+            [],
+            new Map([['telegram', 'pass']])
+          )
+        ).toEqual([{ name: 'telegram', enabled: true, state: 'connected' }]);
+      });
+
+      it('keeps private and unknown connector names out of generic runtime status', () => {
+        const [privateConnector] = PRIVATE_CONNECTORS;
+        expect(
+          projectRuntimeConnectors(
+            {
+              ok: true,
+              config: {
+                telegram: { enabled: true },
+                [privateConnector]: { enabled: true },
+                unknown_connector: { enabled: true },
+              },
+              enabledNames: ['telegram', privateConnector, 'unknown_connector'],
+            } as never,
+            ['telegram', privateConnector, 'unknown_connector'],
+            new Map([
+              ['telegram', 'fail'],
+              [privateConnector, 'pass'],
+              ['unknown_connector', 'pass'],
+            ])
+          )
+        ).toEqual([{ name: 'telegram', enabled: true, state: 'disconnected' }]);
       });
     });
   });

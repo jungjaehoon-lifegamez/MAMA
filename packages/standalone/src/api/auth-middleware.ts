@@ -23,10 +23,6 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const authLogger = new DebugLogger('AuthSecurity');
 
-interface AuthOptions {
-  allowQueryToken?: boolean;
-}
-
 interface SecurityLogContext {
   clientAddress: string;
   remoteAddress: string | null;
@@ -109,24 +105,10 @@ export function getSecurityLogContext(req: IncomingMessage): SecurityLogContext 
   };
 }
 
-export function logUnauthorizedAttempt(req: IncomingMessage, options: AuthOptions = {}): void {
-  let hasQueryToken = false;
-  if (options.allowQueryToken && req.url) {
-    try {
-      hasQueryToken = new URL(
-        req.url,
-        `http://${req.headers.host || 'localhost'}`
-      ).searchParams.has('token');
-    } catch {
-      hasQueryToken = false;
-    }
-  }
-
+export function logUnauthorizedAttempt(req: IncomingMessage): void {
   const context = getSecurityLogContext(req);
   const details = {
     hasAuthorizationHeader: !!req.headers.authorization,
-    hasQueryToken,
-    allowQueryToken: !!options.allowQueryToken,
   };
   authLogger.warn('[SECURITY] Unauthorized request blocked', { ...context, ...details });
   recordSecurityEvent({
@@ -145,22 +127,11 @@ function safeTokenEqual(token: string, adminToken: string): boolean {
   return timingSafeEqual(Buffer.from(token), Buffer.from(adminToken));
 }
 
-function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): string | null {
+function getRequestToken(req: IncomingMessage): string | null {
   const authHeader = req.headers.authorization;
   if (authHeader) {
     return authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   }
-
-  if (options.allowQueryToken && req.url) {
-    try {
-      const host = req.headers.host || 'localhost';
-      const url = new URL(req.url, `http://${host}`);
-      return url.searchParams.get('token');
-    } catch {
-      return null;
-    }
-  }
-
   return null;
 }
 
@@ -171,7 +142,7 @@ function getRequestToken(req: IncomingMessage, options: AuthOptions = {}): strin
  * - If token configured + real localhost (no tunnel headers): allows without token
  * - If token configured + tunnel/remote: requires Bearer token
  */
-export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {}): boolean {
+export function isAuthenticated(req: IncomingMessage): boolean {
   const adminToken = process.env.MAMA_AUTH_TOKEN || process.env.MAMA_SERVER_TOKEN;
   if (!adminToken) {
     if (isTrustedCloudflareAccessRequest(req)) {
@@ -190,7 +161,7 @@ export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {})
   }
 
   // Remote or tunnel request — require Bearer token
-  const token = getRequestToken(req, options);
+  const token = getRequestToken(req);
   if (!token) {
     return false;
   }

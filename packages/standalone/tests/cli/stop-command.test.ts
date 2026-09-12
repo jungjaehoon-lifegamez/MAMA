@@ -4,12 +4,17 @@ import {
   isStandaloneDaemonCommand,
   isStandaloneWatchdogCommand,
 } from '../../src/cli/commands/stop.js';
+import { RUNTIME_PORTS } from '../../src/cli/runtime/utilities.js';
 
 const PROJECT_STANDALONE_CLI = '/path/to/project/packages/standalone/dist/cli/index.js';
 const INSTALLED_STANDALONE_CLI =
   '/Users/me/app/node_modules/@jungjaehoon/mama-os/dist/cli/index.js';
 
 describe('Story: standalone stop command detection', () => {
+  it('owns only the port 3847 operational API lifecycle', () => {
+    expect(RUNTIME_PORTS).toEqual([3847]);
+  });
+
   describe('AC #1: detect daemon commands', () => {
     it('matches direct standalone daemon node command', () => {
       expect(isStandaloneDaemonCommand(`/usr/bin/node ${PROJECT_STANDALONE_CLI} daemon`)).toBe(

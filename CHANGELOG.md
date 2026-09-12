@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-core [3.0.0] / mcp-server [2.0.0] / mama-os [0.54.0] / plugin [2.0.0] - 2026-09-12
+
+Removed the obsolete localhost embedding and browser-session runtime. Embeddings remain local and
+in process through mama-core, the MCP server remains stdio-only, and MAMA OS keeps its operational
+API on port 3847 for reports, source evidence, graph data, uploads, health, and runtime status.
+Runtime status now awaits live health checks and reports gateway pass/fail state from the running
+process. The plugin configuration command no longer advertises retired HTTP, WebSocket, or API
+token controls for the stdio MCP child.
+
 ## mama-core [2.5.0] / mama-os [0.53.3] - 2026-09-12
 
 Raw evidence storage now has one implementation in `mama-core`. Standalone collection, polling,

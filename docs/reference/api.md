@@ -484,35 +484,26 @@ search({ query: 'caching' });
 # Database location (default: ~/.claude/mama-memory.db)
 export MAMA_DB_PATH="$HOME/.claude/mama-memory.db"
 
-# Server token (for development)
-export MAMA_SERVER_TOKEN="dev-token"
-
-# MCP embedding server port (default: 3000; 3847 is the STANDALONE API port)
-export MAMA_SERVER_PORT="3847"
-
-# Embedding server port (default: 3849)
-export MAMA_EMBEDDING_PORT="3849"
+# Operational API port
+export MAMA_HTTP_PORT="3847"
 ```
 
 ---
 
 ## HTTP API Endpoints
 
-MAMA OS exposes HTTP endpoints for the Viewer (operator board, knowledge, system), the chat
-gateways, and programmatic access. The lists below cover the commonly used surfaces; the routers in
+MAMA OS exposes HTTP endpoints for reports, tasks, source evidence, graph data, runtime status,
+uploads, and health. The lists below cover the commonly used surfaces; the routers in
 `packages/standalone/src/api/` are the source of truth.
 
-**Base URL:** `http://localhost:3847` (configurable via `MAMA_SERVER_PORT`)
-
-**Embedding URL:** `http://127.0.0.1:3849` (configurable via `MAMA_EMBEDDING_PORT`)
+**Base URL:** `http://localhost:3847` (configurable via `MAMA_HTTP_PORT`)
 
 **Compatibility:**
 
-| Feature                | MAMA OS | Claude Desktop (MCP) |
-| ---------------------- | ------- | -------------------- |
-| HTTP Endpoints         | ✅      | ✅                   |
-| Viewer                 | ✅      | ❌                   |
-| **Chat WebSocket API** | ✅      | ❌                   |
+| Feature         | MAMA OS | Claude Desktop (MCP) |
+| --------------- | ------- | -------------------- |
+| HTTP Endpoints  | ✅      | ❌                   |
+| Stdio MCP tools | ❌      | ✅                   |
 
 ---
 
@@ -881,8 +872,8 @@ The same `/api/report` prefix also serves the operator board's report-slot store
 
 #### Operator endpoints
 
-The `/api/operator` router (`operator-handler.ts`) exposes the trigger loop's state to the
-Viewer's `/viewer#operator/triggers` view:
+The `/api/operator` router (`operator-handler.ts`) exposes the trigger loop's state to authenticated
+operational clients:
 
 - `GET /api/operator/summary` — trigger counts (`active`, `disabled`, `fired`, `succeeded`, `failed`)
 - `GET /api/operator/triggers` — full trigger list with stats and provenance
@@ -1003,22 +994,6 @@ Send a message or file to a Slack channel.
 | `message`   | string | No       | Text message to send                           |
 | `filePath`  | string | No       | File to upload (workspace, temp, or /tmp only) |
 | `caption`   | string | No       | Caption for file upload                        |
-
----
-
-### Session API
-
-#### GET /api/sessions/last-active
-
-Return the most recently active session.
-
-**Response:** `{ "session": { ... } }` or `{ "session": null }`
-
-#### GET /api/sessions
-
-List sessions by gateway type.
-
-**Response:** `{ "viewer": [...], "discord": [...], "telegram": [...], "slack": [...] }`
 
 ---
 
@@ -1182,14 +1157,6 @@ Read SKILL.md content for a workspace skill.
 
 ---
 
-### Viewer Routes
-
-| Route     | Description                             |
-| --------- | --------------------------------------- |
-| `/viewer` | The Viewer: Operator, Knowledge, System |
-| `/graph`  | Graph data API                          |
-| `/`       | Redirects to `/viewer`                  |
-
 ### Route Aliases
 
 | Alias                  | Canonical                                       |
@@ -1248,5 +1215,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 
 ---
 
-**Last Updated:** 2026-08-03
-**Version:** mama-server 1.15.0 / mama-os 0.32.3
+**Last Updated:** 2026-09-12
+**Version:** mama-server 2.0.0 / mama-os 0.54.0

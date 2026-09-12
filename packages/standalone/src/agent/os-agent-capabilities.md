@@ -60,7 +60,7 @@ You have complete visibility and control over:
    - API tokens and credentials
 
 4. **Real-Time Monitoring**
-   - System status (embedding server, agents, database)
+   - System status (local embeddings, agents, database)
    - Activity logs
    - Performance metrics
 

@@ -345,7 +345,7 @@ export class SessionStore {
 
   /**
    * Get conversation history by source and channel
-   * Used by WebSocket handler for viewer sessions
+   * Used by messenger and runtime session consumers
    */
   getHistoryByChannel(source: MessageSource, channelId: string): ConversationTurn[] {
     const session = this.db

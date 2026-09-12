@@ -1,10 +1,10 @@
 /**
  * Authoritative runtime status route.
  *
- * The Viewer's System views used to assemble "what is running" from a stale
- * client-side model registry and a config read, which meant the screen could
- * confidently name a backend/model the daemon was not using. This route is the
- * ONE answer: a snapshot supplied by the running daemon, serialized verbatim.
+ * Operational clients used to assemble "what is running" from stale config,
+ * which could name a backend or model the daemon was not using. This route is
+ * the single answer: a snapshot supplied by the running daemon and serialized
+ * verbatim.
  *
  * The handler owns no state and reads no config, PID or credential. Everything
  * it reports comes from the injected supplier, so the route can never invent a
@@ -40,7 +40,7 @@ export interface RuntimeStatusSnapshot {
 }
 
 export interface RuntimeStatusRouterOptions {
-  getRuntimeStatus: () => RuntimeStatusSnapshot;
+  getRuntimeStatus: () => RuntimeStatusSnapshot | Promise<RuntimeStatusSnapshot>;
 }
 
 /**
@@ -68,9 +68,9 @@ function serializeSnapshot(snapshot: RuntimeStatusSnapshot): RuntimeStatusSnapsh
 export function createRuntimeStatusRouter(options: RuntimeStatusRouterOptions): Router {
   const router = Router();
 
-  router.get('/status', requireAuth, (_req, res) => {
+  router.get('/status', requireAuth, async (_req, res) => {
     try {
-      res.json(serializeSnapshot(options.getRuntimeStatus()));
+      res.json(serializeSnapshot(await options.getRuntimeStatus()));
     } catch (error) {
       console.error('[API] /api/runtime/status error:', error);
       res.status(503).json({

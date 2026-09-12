@@ -1,5 +1,5 @@
 /**
- * Upload/Download handler for webchat media
+ * Upload/download handler for operational media
  *
  * - POST /api/upload   — multipart file upload (images)
  * - GET  /api/media/:filename — serve uploaded/generated files
@@ -42,9 +42,10 @@ const ALLOWED_MIME = new Set([
   'application/gzip',
 ]);
 
-// Ensure directories exist
-for (const dir of [INBOUND_DIR, OUTBOUND_DIR]) {
-  fs.mkdirSync(dir, { recursive: true });
+function ensureMediaDirectories(): void {
+  for (const dir of [INBOUND_DIR, OUTBOUND_DIR]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 }
 
 const storage = multer.diskStorage({
@@ -170,18 +171,26 @@ const uploadRateLimit = new Map<string, number[]>();
 const RATE_LIMIT_WINDOW = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 10; // 10 uploads per minute
 
-// Periodically clean up stale rate-limit entries (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, timestamps] of uploadRateLimit) {
-    const active = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW);
-    if (active.length === 0) {
-      uploadRateLimit.delete(ip);
-    } else {
-      uploadRateLimit.set(ip, active);
-    }
+let uploadRateLimitCleanupStarted = false;
+
+function startUploadRateLimitCleanup(): void {
+  if (uploadRateLimitCleanupStarted) {
+    return;
   }
-}, 5 * 60_000).unref(); // unref() prevents this timer from keeping the process alive
+  const interval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, timestamps] of uploadRateLimit) {
+      const active = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW);
+      if (active.length === 0) {
+        uploadRateLimit.delete(ip);
+      } else {
+        uploadRateLimit.set(ip, active);
+      }
+    }
+  }, 5 * 60_000);
+  interval.unref();
+  uploadRateLimitCleanupStarted = true;
+}
 
 function checkUploadRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -193,6 +202,8 @@ function checkUploadRateLimit(ip: string): boolean {
 }
 
 export function createUploadRouter(): Router {
+  ensureMediaDirectories();
+  startUploadRateLimitCleanup();
   const router = Router();
 
   // POST /api/upload

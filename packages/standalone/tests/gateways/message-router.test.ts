@@ -632,8 +632,7 @@ describe('MessageRouter', () => {
 
       const result = await processFixtureMessage(router, message);
 
-      // Context injection is currently disabled (TODO in message-router.ts)
-      // So injectedDecisions will be empty until embedding server is enabled
+      // Context injection is currently disabled in this fixture path.
       expect(result.injectedDecisions).toBeDefined();
       expect(Array.isArray(result.injectedDecisions)).toBe(true);
     });

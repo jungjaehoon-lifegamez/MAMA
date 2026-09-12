@@ -250,12 +250,7 @@ npm run test:coverage
 
 ## 🚀 Performance
 
-**With HTTP Embedding Server (Default):**
-
-- Hook latency: ~150ms (model stays loaded in memory)
-- Embedding requests: ~50ms via HTTP
-
-**Without HTTP Server (Fallback):**
+**In-process embeddings:**
 
 - First query: ~987ms (model load + inference)
 - Subsequent queries: ~89ms (cached)
@@ -291,14 +286,14 @@ MAMA uses a **core-first package structure**:
 │     └─────────────────────────────────┘         │
 │     ┌─────────────────────────────────┐         │
 │     │  Optional Standalone Runtime    │         │
-│     │  API/UI: 3847, Embed: 3849      │         │
+│     │  Operational API: 3847          │         │
 │     └─────────────────────────────────┘         │
 └─────────────────────────────────────────────────┘
 ```
 
 ### 1. MCP Server (@jungjaehoon/mama-server)
 
-Independent npm package shared across all MCP clients. Default mode is pure stdio MCP (no HTTP embedding server startup).
+Independent npm package shared across all MCP clients. It uses the stdio MCP transport.
 
 ### 2. MAMA Core (@jungjaehoon/mama-core)
 
@@ -306,13 +301,13 @@ Shared runtime for embeddings, storage, and graph logic. Owns heavy dependencies
 
 ### 3. Claude Code Plugin (mama-plugin)
 
-Lightweight plugin referencing the MCP server. Hooks can use a shared HTTP embedding endpoint (`127.0.0.1:3849`) for fast context injection when Standalone (or MCP legacy opt-in mode) is running.
+Lightweight plugin referencing the MCP server. Embedding generation remains local and in process.
 
 **Benefits:**
 
 - ✅ One MCP server → Multiple clients (Code, Desktop, etc.)
 - ✅ Heavy runtime centralized in `mama-core`
-- ✅ Shared HTTP embedding endpoint (`3849`) keeps hook latency low (~150ms)
+- ✅ Local embedding generation keeps memory search on device
 - ✅ Shared decision database across all tools
 
 **Guide:** [Developer Playbook](docs/development/developer-playbook.md)
