@@ -34,6 +34,8 @@ const DESTINATION_ID_FIELD_BY_TOOL = {
 const WRITE_OR_SEND_TOOLS = new Set<string>([
   'mama_save',
   'mama_update',
+  'registry_upsert',
+  'registry_correct',
   'context_compile',
   'memory.write',
   'case.create',

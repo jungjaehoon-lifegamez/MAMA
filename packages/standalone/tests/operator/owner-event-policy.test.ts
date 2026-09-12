@@ -29,6 +29,7 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
       const context = buildOwnerEventAgentContext({
         backend,
         model: backend === 'codex' ? 'gpt-5.6-sol' : 'test-model',
+        principalId: 'principal-owner-event-policy',
         ownerRole: DEFAULT_ROLES.definitions.owner_console,
         privateConnectorPolicy: privatePolicy,
       });
@@ -36,6 +37,7 @@ describe('Story TG-03/TG-04: owner-event policy', () => {
       expect(context.source).toBe('owner-event');
       expect(context.roleName).toBe('owner_console');
       expect(context.backend).toBe(backend);
+      expect(context.principalId).toBe('principal-owner-event-policy');
       expect(context.role.allowedTools).toEqual(
         expect.arrayContaining([
           'code_act',

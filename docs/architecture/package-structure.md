@@ -75,7 +75,8 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `embeddings.ts` - Transformers.js embedding generation
 - `db-manager.ts` - SQLite database initialization and scope management
 - `memory-store.js` - Decision CRUD operations (legacy)
-- `registry/` - Explicit work/person/client identity and record bindings
+- `registry/` - Explicit work/person/client identity, record bindings, and correction history
+- `connectors/observation-versions.ts` - Immutable connector and owner input/result versions
 - `operations/owner-action-effects.ts` - Shared effect policy/types/port; no physical receipt store
 - `mama-api.ts` - High-level API interface (wraps memory API)
 - `decision-tracker.js` - Decision graph management
@@ -83,7 +84,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `memory/` - Scoped memory infrastructure:
   - `api.ts` - saveMemory, recallMemory, buildProfile, evolveMemory
   - `truth-store.ts` - Truth projection for recall filtering
-  - `evolution-engine.ts` - Automatic graph edge resolution
+  - `evolution-engine.ts` - Explicit memory relationship application
   - `types.ts` - MemoryRecord, MemoryScopeRef, RecallBundle, ProfileSnapshot
 
 **Dependencies:**
@@ -154,7 +155,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
   per-agent allowlists
 - **Onboarding Wizard:** 9-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat
-- **Operational API:** Reports, tasks, source evidence, graph data, runtime status, and health on port 3847
+- **Operational API:** Reports, tasks, exact source observations, graph data, runtime status, and health on port 3847
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
 - **Runtime Ownership:** Hosts the operational API on `3847`; embeddings run in process
 - **Binaries:** `mama` (main CLI), `mama-code-act-mcp` (Code-Act MCP subprocess)
@@ -257,10 +258,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 3.1.0 (stable API)
-- **mama-server:** 2.1.0 (follows MAMA version)
+- **mama-core:** 3.2.0 (stable API)
+- **mama-server:** 2.2.0 (follows MAMA version)
 - **claude-code-plugin:** 2.0.0 (follows MAMA version)
-- **mama-os:** 0.55.0 (standalone agent)
+- **mama-os:** 0.56.0 (standalone agent)
 
 ## Distribution Strategy
 

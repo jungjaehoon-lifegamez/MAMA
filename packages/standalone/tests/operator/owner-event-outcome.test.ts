@@ -109,6 +109,36 @@ describe('TG-06 owner-event terminal outcome', () => {
     ).toEqual({ status: 'acted', tools: ['drive_upload'], ownerDecisionRequested: false });
   });
 
+  it('treats a successful agent-chosen registry correction as a durable action', () => {
+    expect(
+      classifyOwnerEventOutcome({
+        history: directToolHistory('registry_correct', {
+          success: true,
+          commandId: 'synthetic-correction',
+        }),
+        noUpdateRecorded: false,
+      })
+    ).toEqual({
+      status: 'acted',
+      tools: ['registry_correct'],
+      ownerDecisionRequested: false,
+    });
+  });
+
+  it.each([
+    ['plain text', 'completed'],
+    ['malformed JSON', '{malformed'],
+    ['error-only object', JSON.stringify({ error: 'denied' })],
+  ])('does not acknowledge registry_correct from a %s result', (_label, content) => {
+    const history = directToolHistory('registry_correct', { success: true });
+    history[1]!.content[0]!.content = content;
+    expect(classifyOwnerEventOutcome({ history, noUpdateRecorded: false })).toEqual({
+      status: 'retry',
+      tools: [],
+      reason: 'no durable action or exact no-update receipt',
+    });
+  });
+
   it('a nested Code-Act ledger change from the host ledger completes the turn', () => {
     const history = directToolHistory('mcp__code-act__code_act', {
       protocol: 'mama.code_act.result',

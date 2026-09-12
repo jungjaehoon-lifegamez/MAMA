@@ -44,6 +44,7 @@ describe('TG-03/TG-04/TG-05: ordinary owner business authority', () => {
     const tools = buildOwnerEventAgentContext({
       backend: 'codex',
       model: 'gpt-test',
+      principalId: 'principal-task-creation-authority',
       ownerRole,
       privateConnectorPolicy: privatePolicy,
     }).role.allowedTools;

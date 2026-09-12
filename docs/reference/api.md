@@ -496,6 +496,19 @@ MAMA OS exposes HTTP endpoints for reports, tasks, source evidence, graph data, 
 uploads, and health. The lists below cover the commonly used surfaces; the routers in
 `packages/standalone/src/api/` are the source of truth.
 
+Raw search/detail responses include `observation_ref`, the immutable version captured with that
+row. `GET /api/agent/observations/:observationId` reads that exact version under the same signed
+principal, agent, connector, channel, and memory-scope boundary. Owner runs can progressively query
+their own versions with `GET /api/agent/observations/search?query=...&limit=...&cursor=...`. Search
+returns bounded metadata and content previews; the exact-ID endpoint returns the full body.
+Authorization uses the signed message source/channel pair rather than polling configuration, and
+another principal receives the same not-found response as an unknown reference. Raw search,
+window, history, context, and owner-delta readers order and filter current evidence by the immutable
+observation's `observed_at` capture time. Responses expose that separately from `source_at`, the
+upstream occurrence time; `created_at` is the capture-time compatibility field. A retained legacy
+row may expose `observation_ref: null` and uses source time for recency. Missing schema, corrupt
+stored JSON, and unavailable version bodies return explicit errors.
+
 **Base URL:** `http://localhost:3847` (configurable via `MAMA_HTTP_PORT`)
 
 **Compatibility:**
@@ -1026,6 +1039,13 @@ Execute JavaScript in a sandboxed QuickJS environment.
 
 **Response:** `{ "success": true, "value": { ... }, "logs": [], "metrics": { ... }, "hostToolExecutions": [{ "name": "context_compile", "success": true }], "hostToolsInvoked": ["context_compile"] }`
 
+The owner tool catalog also exposes `registry_correct`. The agent selects an explicit
+`add_alias`, `merge`, `split`, or `assign_refs` command and supplies the expected identity
+revision. The signed envelope asserts the principal and available scopes. Optional `scopes` on the
+tool request can narrow that set, while widening and a runtime-principal mismatch are refused. The
+host commits the correction atomically. Split assignments may name a child created in the same
+command through `target_client_key`. Hidden and unknown targets return the same unavailable result.
+
 **Security:** QuickJS WASM sandbox. A direct request without a host-issued `context_key` fails
 closed unless the resolved `agent_id` exists and has `useCodeAct: true`. That path defaults to Tier
 2 tool injection, applies the resolved agent's gateway allowlist plus request
@@ -1041,8 +1061,8 @@ keys as ephemeral secrets and never log, persist, or copy them into configuratio
 
 `context_compile` requires an active worker envelope because it persists trusted packet
 provenance. Start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` for live packet
-creation; managed dashboard/wiki prompts fall back to `mama_search` when no active envelope is
-available. Model-run audit rows store task, seed-ref, and failure digest references rather than
+creation; a missing active envelope is an explicit authorization failure. Model-run audit rows
+store task, seed-ref, and failure digest references rather than
 the submitted text or raw IDs. Gateway scope audits likewise store model-requested scope IDs as
 stable SHA-256 references while retaining scope kind, mismatch status, and the host-issued
 envelope snapshot. Out-of-scope denials return stable codes without reflecting the
@@ -1216,7 +1236,7 @@ If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 ---
 
 **Last Updated:** 2026-09-12
-**Version:** mama-server 2.1.0 / mama-os 0.55.0
+**Version:** mama-server 2.2.0 / mama-os 0.56.0
 Decision saves may include `item` (a registered item node id) and `actors`
 (`[{ "person": "<registered person id>", "role": "<explicit role>" }]`). These references are
 validated and committed in the same SQLite transaction as the decision, embedding, scopes, events,

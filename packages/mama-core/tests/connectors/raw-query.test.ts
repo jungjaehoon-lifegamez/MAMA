@@ -9,6 +9,7 @@ import {
 import {
   getRawById,
   getRawHistory,
+  getRawWindow,
   searchAllRaw,
   searchRaw,
 } from '../../src/connectors/raw-query.js';
@@ -25,6 +26,7 @@ function seedRawEvent(overrides: {
   author?: string;
   content: string;
   timestampMs: number;
+  observedAt?: number;
   scopeKind?: string | null;
   scopeId?: string | null;
   metadata?: Record<string, unknown>;
@@ -42,6 +44,7 @@ function seedRawEvent(overrides: {
     memory_scope_kind: overrides.scopeKind ?? 'project',
     memory_scope_id: overrides.scopeId ?? 'alpha',
     metadata: overrides.metadata ?? { seeded: true },
+    observation: { observed_at: overrides.observedAt ?? overrides.timestampMs },
   });
 }
 
@@ -72,7 +75,11 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
     const hit = searchAllRaw(getAdapter(), { query: 'deepraw', ...visibility }).hits[0]!;
     expect(hit.content_preview.length).toBeLessThanOrEqual(240);
     expect(hit).not.toHaveProperty('content');
-    expect(getRawById(getAdapter(), hit.raw_id, visibility)?.content).toBe(content);
+    expect(getRawById(getAdapter(), hit.raw_id, visibility)).toMatchObject({
+      content,
+      source_at: hit.source_at,
+      observed_at: hit.observed_at,
+    });
     expect(
       getRawById(getAdapter(), hit.raw_id, {
         ...visibility,
@@ -116,6 +123,8 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
         channel_id: 'general',
         author_label: 'alice',
         created_at: new Date(koreanTime).toISOString(),
+        source_at: new Date(koreanTime).toISOString(),
+        observed_at: new Date(koreanTime).toISOString(),
         metadata: { language: 'ko' },
       });
       expect(korean.hits[0]?.content_preview).toContain(KOREAN_RISK_TOKEN);
@@ -191,6 +200,52 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
       expect(secondPage.hits.map((hit) => hit.source_id)).toEqual(['discord-older']);
       expect(secondPage.next_cursor).toBeNull();
     });
+
+    it('uses current observation capture time for recency while preserving source time', () => {
+      seedRawEvent({
+        connector: 'slack',
+        sourceId: 'old-source-new-capture',
+        content: 'captureorder shared',
+        timestampMs: 100,
+        observedAt: 5_000,
+      });
+      seedRawEvent({
+        connector: 'slack',
+        sourceId: 'new-source-old-capture',
+        content: 'captureorder shared',
+        timestampMs: 4_000,
+        observedAt: 4_500,
+      });
+
+      const result = searchAllRaw(getAdapter(), {
+        query: 'captureorder',
+        connectors: ['slack'],
+        fromMs: 4_400,
+        toMs: 5_100,
+      });
+
+      expect(result.hits.map((hit) => hit.source_id)).toEqual([
+        'old-source-new-capture',
+        'new-source-old-capture',
+      ]);
+      expect(result.hits[0]).toMatchObject({
+        created_at: new Date(5_000).toISOString(),
+        source_at: new Date(100).toISOString(),
+        observed_at: new Date(5_000).toISOString(),
+      });
+
+      const targetId = connectorEventIndexId('slack', 'new-source-old-capture');
+      const window = getRawWindow(getAdapter(), targetId, {
+        connectors: ['slack'],
+        scopes: [{ kind: 'project', id: 'alpha' }],
+        before: 1,
+        after: 1,
+      });
+      expect(window?.items.map((item) => item.source_id)).toEqual([
+        'new-source-old-capture',
+        'old-source-new-capture',
+      ]);
+    });
   });
 
   describe('AC #3: connector, scope, time, and cursor filters happen before LIMIT', () => {
@@ -240,6 +295,7 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
       timestampMs: number;
       connector?: string;
       scopeId?: string;
+      observedAt?: number;
     }): void {
       upsertConnectorEventIndex(getAdapter(), {
         source_connector: o.connector ?? 'calendar',
@@ -254,6 +310,7 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
         source_timestamp_ms: o.timestampMs,
         memory_scope_kind: 'project',
         memory_scope_id: o.scopeId ?? 'alpha',
+        observation: { observed_at: o.observedAt ?? o.timestampMs },
       });
     }
 
@@ -304,6 +361,48 @@ describe('Story M4: Raw unified search over connector_event_index', () => {
         scopes: [{ kind: 'project', id: 'alpha' }],
       });
       expect(res.hits.map((h) => h.source_id)).toEqual(['evt:v1', 'evt:v2']);
+    });
+
+    it('pages history by observation capture time and retains source occurrence time', () => {
+      seedRevision({
+        sourceId: 'evt:v1',
+        entityId: 'evt',
+        content: 'A',
+        timestampMs: 4_000,
+        observedAt: 5_000,
+      });
+      seedRevision({
+        sourceId: 'evt:v2',
+        entityId: 'evt',
+        content: 'B',
+        timestampMs: 100,
+        observedAt: 6_000,
+      });
+      const visibility = {
+        connectors: ['calendar'],
+        scopes: [{ kind: 'project' as const, id: 'alpha' }],
+      };
+
+      const first = getRawHistory(getAdapter(), {
+        entityId: 'evt',
+        ...visibility,
+        fromMs: 4_900,
+        limit: 1,
+      });
+      const second = getRawHistory(getAdapter(), {
+        entityId: 'evt',
+        ...visibility,
+        fromMs: 4_900,
+        limit: 1,
+        cursor: first.next_cursor ?? undefined,
+      });
+
+      expect(first.hits.map((hit) => hit.source_id)).toEqual(['evt:v1']);
+      expect(second.hits.map((hit) => hit.source_id)).toEqual(['evt:v2']);
+      expect(second.hits[0]).toMatchObject({
+        source_at: new Date(100).toISOString(),
+        observed_at: new Date(6_000).toISOString(),
+      });
     });
 
     it('returns nothing for a rawId anchor the caller may not see', () => {

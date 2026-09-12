@@ -178,7 +178,9 @@ export class PollingScheduler {
           this.lastPollTimes.get(name) ??
           new Date(this.initialLookbackMs > 0 ? Date.now() - this.initialLookbackMs : 0);
         try {
+          connector.beginPollHandoff?.();
           const items = await connector.poll(since);
+          let savedItems: NormalizedItem[] = [];
           console.log(
             `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
           );
@@ -191,15 +193,31 @@ export class PollingScheduler {
               const canonical = canonicalChannelKey(item, channelConfigs);
               return canonical === null ? item : { ...item, channel: canonical };
             });
-            const savedItems = this.rawStore.save(name, scopedItems);
-            if (this.rawIndexSink) {
-              await this.rawIndexSink(name, savedItems);
-            }
-            allItems.push(...savedItems);
+            const observedAt = Date.now();
+            savedItems = this.rawStore.save(
+              name,
+              scopedItems.map((item) => ({ ...item, observedAt }))
+            );
           }
+          if (this.rawIndexSink) {
+            const pendingProjections = this.rawStore.listPendingProjections(name);
+            for (const pending of pendingProjections) {
+              await this.rawIndexSink(name, [pending]);
+            }
+            this.rawStore.acknowledgeProjections(
+              name,
+              pendingProjections.map((pending) => ({
+                revisionSourceId: pending.sourceId,
+                pendingProjectionId: pending.pendingProjectionId,
+              }))
+            );
+          }
+          await connector.commitPoll?.();
+          allItems.push(...savedItems);
           // Only advance the cursor after a successful poll+save+index.
           this.lastPollTimes.set(name, new Date());
         } catch (err) {
+          connector.abortPollHandoff?.();
           console.error(`[connector:${name}] poll error:`, err);
         }
       }

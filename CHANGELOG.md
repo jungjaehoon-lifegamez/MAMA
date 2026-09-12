@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-core [3.2.0] / mcp-server [2.2.0] / mama-os [0.56.0] - 2026-09-13
+
+Connector polls and authenticated owner turns now create immutable observation versions and carry
+their exact references through raw, context, case, graph, session, and model-run records. Identity
+corrections are explicit agent-chosen gateway operations under signed principal, agent, scope, and
+revision authority. Graph edges retain their original references and expose a separate current
+identity projection.
+
 ## mama-core [3.1.0] / mcp-server [2.1.0] / mama-os [0.55.0] - 2026-09-13
 
 Registry nodes and conservative aliases now give records explicit item and actor identity across

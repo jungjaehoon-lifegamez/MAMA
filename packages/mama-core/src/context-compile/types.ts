@@ -19,6 +19,8 @@ export type ContextRef =
       connector: string;
       source_id?: string;
       channel_id?: string | null;
+      /** Exact immutable captured version; null only for valid pre-072 rows. */
+      observation_ref?: string | null;
     }
   | { kind: 'entity'; id: string }
   | { kind: 'case'; id: string };

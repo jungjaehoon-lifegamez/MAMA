@@ -370,6 +370,577 @@ describe('Story T4: stamped registry identity migration recovery', () => {
   });
 });
 
+describe('Story PR3B: migrations 072-074 structural recovery', () => {
+  afterEach(cleanupTempDir);
+
+  it('preserves populated observations, custom constraints, indexes, triggers, and FK children', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-observation-'));
+    const dbPath = join(tempDir, 'observation.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 71);
+    setup.exec(`
+      CREATE TABLE observation_versions (
+        observation_id TEXT PRIMARY KEY,
+        source_connector TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        producer_version_id TEXT,
+        body TEXT,
+        body_location_json TEXT,
+        author TEXT,
+        source_at INTEGER,
+        observed_at INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        scope_json TEXT NOT NULL,
+        note TEXT,
+        CHECK ((body IS NOT NULL AND body_location_json IS NULL)
+          OR (body IS NULL AND body_location_json IS NOT NULL)),
+        CHECK (note IS NULL OR note <> 'forbidden'),
+        UNIQUE (source_connector, source_id, note)
+      );
+      ALTER TABLE connector_event_index ADD COLUMN current_observation_id TEXT;
+      INSERT INTO observation_versions VALUES
+        ('obs-kept', 'synthetic', 'source-1', NULL, 'body', NULL, 'author', 1, 2,
+         'hash', '{}', '{}', 'kept');
+      CREATE INDEX observation_custom_note ON observation_versions(note);
+      CREATE TABLE observation_audit (observation_id TEXT);
+      CREATE TRIGGER observation_custom_trigger AFTER INSERT ON observation_versions
+        BEGIN INSERT INTO observation_audit VALUES (NEW.observation_id); END;
+      CREATE TABLE observation_child (
+        observation_id TEXT REFERENCES observation_versions(observation_id) ON DELETE CASCADE
+      );
+      INSERT INTO observation_child VALUES ('obs-kept');
+      INSERT INTO schema_version(version, description) VALUES (72, 'partial observation');
+    `);
+    setup.close();
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const adapter = new NodeSQLiteAdapter({ dbPath });
+      adapter.connect();
+      adapter.runMigrations(MIGRATIONS_DIR);
+      adapter.disconnect();
+    }
+
+    const db = new Database(dbPath);
+    expect(
+      db.prepare("SELECT note FROM observation_versions WHERE observation_id='obs-kept'").get()
+    ).toEqual({ note: 'kept' });
+    expect(indexExists(db, 'observation_custom_note')).toBe(true);
+    expect(triggerExists(db, 'observation_custom_trigger')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM observation_child').get()).toEqual({
+      count: 1,
+    });
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO observation_versions
+        (observation_id,source_connector,source_id,body,observed_at,content_hash,metadata_json,scope_json,note)
+        VALUES ('obs-bad','synthetic','source-2','body',3,'hash-2','{}','{}','forbidden')`
+        )
+        .run()
+    ).toThrow(/constraint/i);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(
+      (
+        db
+          .prepare("SELECT * FROM pragma_foreign_key_list('connector_event_index')")
+          .all() as Array<{
+          from: string;
+          table: string;
+        }>
+      ).some(
+        (foreignKey) =>
+          foreignKey.from === 'current_observation_id' &&
+          foreignKey.table === 'observation_versions'
+      )
+    ).toBe(true);
+    db.close();
+  });
+
+  it('refuses an unsupported observation inline constraint before later migration DDL', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-observation-refuse-'));
+    const dbPath = join(tempDir, 'observation-refuse.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 71);
+    setup.exec(`
+      CREATE TABLE observation_versions (
+        observation_id TEXT PRIMARY KEY, source_connector TEXT NOT NULL, source_id TEXT NOT NULL,
+        producer_version_id TEXT, body TEXT COLLATE NOCASE, body_location_json TEXT, author TEXT,
+        source_at INTEGER, observed_at INTEGER NOT NULL, content_hash TEXT NOT NULL,
+        metadata_json TEXT NOT NULL, scope_json TEXT NOT NULL,
+        CHECK ((body IS NOT NULL AND body_location_json IS NULL)
+          OR (body IS NULL AND body_location_json IS NOT NULL))
+      );
+      ALTER TABLE connector_event_index ADD COLUMN current_observation_id TEXT
+        REFERENCES observation_versions(observation_id);
+      INSERT INTO observation_versions VALUES
+        ('obs-kept', 'synthetic', 'source-1', NULL, 'body', NULL, NULL, NULL, 1, 'hash', '{}', '{}');
+      INSERT INTO schema_version(version, description) VALUES (72, 'unsupported observation');
+    `);
+    const before = tableSql(setup, 'observation_versions');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/inline constraint/);
+    expect(tableExists(adapter as unknown as Database.Database, 'registry_corrections')).toBe(
+      false
+    );
+    expect(
+      (adapter.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+    ).toBe(1);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='observation_versions'")
+          .get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    adapter.disconnect();
+  });
+
+  it('refuses a populated incompatible correction table before graph migration DDL', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-correction-refuse-'));
+    const dbPath = join(tempDir, 'correction-refuse.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 72);
+    setup.exec(`
+      CREATE TABLE registry_corrections (command_id TEXT PRIMARY KEY);
+      INSERT INTO registry_corrections VALUES ('command-kept');
+      INSERT INTO schema_version(version, description) VALUES (73, 'incompatible corrections');
+    `);
+    const before = tableSql(setup, 'registry_corrections');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(
+      /cannot safely repair populated incompatible table registry_corrections/
+    );
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='registry_corrections'")
+          .get() as { sql: string }
+      ).sql
+    ).toBe(before);
+    expect(
+      adapter.prepare('SELECT version FROM schema_version WHERE version=74').get()
+    ).toBeUndefined();
+    expect(
+      (adapter.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+    ).toBe(1);
+    adapter.disconnect();
+  });
+
+  it('refuses all-column weak stamped correction schemas before any mutation', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-correction-weak-'));
+    const dbPath = join(tempDir, 'correction-weak.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 72);
+    setup.exec(`
+      CREATE TABLE registry_identity_state (singleton INTEGER, revision INTEGER);
+      CREATE TABLE registry_corrections (
+        command_id TEXT, operation TEXT, expected_revision INTEGER, committed_revision INTEGER,
+        principal_id TEXT, agent_id TEXT, origin TEXT, payload_json TEXT, reason TEXT,
+        evidence_json TEXT, scope_json TEXT, receipt_json TEXT, created_at INTEGER
+      );
+      CREATE TABLE registry_ref_assignments (
+        command_id TEXT, edge_id TEXT, endpoint TEXT, original_kind TEXT, original_id TEXT,
+        resolved_node_id TEXT, committed_revision INTEGER, created_at INTEGER
+      );
+      CREATE INDEX idx_registry_ref_assignments_current
+        ON registry_ref_assignments(edge_id, endpoint, committed_revision DESC);
+      INSERT INTO schema_version(version, description) VALUES (73, 'weak correction shape');
+    `);
+    const before = tableSql(setup, 'registry_corrections');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/structurally incompatible/);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='registry_corrections'")
+          .get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    expect(
+      adapter.prepare('SELECT version FROM schema_version WHERE version=74').get()
+    ).toBeUndefined();
+    adapter.disconnect();
+  });
+
+  it('refuses an empty malformed correction table with custom objects and FK children', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-correction-objects-'));
+    const dbPath = join(tempDir, 'correction-objects.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 72);
+    setup.exec(`
+      CREATE TABLE registry_corrections (command_id TEXT PRIMARY KEY);
+      CREATE INDEX correction_custom_empty ON registry_corrections(command_id);
+      CREATE TABLE correction_audit (command_id TEXT);
+      CREATE TRIGGER correction_custom_empty_trigger AFTER INSERT ON registry_corrections
+        BEGIN INSERT INTO correction_audit VALUES (NEW.command_id); END;
+      CREATE TABLE correction_external_child (
+        command_id TEXT REFERENCES registry_corrections(command_id)
+      );
+      INSERT INTO schema_version(version, description) VALUES (73, 'empty malformed correction');
+    `);
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/cannot safely replace/);
+    expect(indexExists(adapter as unknown as Database.Database, 'correction_custom_empty')).toBe(
+      true
+    );
+    expect(
+      triggerExists(adapter as unknown as Database.Database, 'correction_custom_empty_trigger')
+    ).toBe(true);
+    expect(tableExists(adapter as unknown as Database.Database, 'correction_external_child')).toBe(
+      true
+    );
+    adapter.disconnect();
+  });
+
+  it('refuses an unsupported graph ref inline constraint before mutating the edge table', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-graph-refuse-'));
+    const dbPath = join(tempDir, 'graph-refuse.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 73);
+    const graphSql = tableSql(setup, 'twin_edges');
+    setup.exec('DROP TABLE twin_edges');
+    setup.exec(
+      graphSql.replace('subject_kind TEXT NOT NULL', 'subject_kind TEXT COLLATE NOCASE NOT NULL')
+    );
+    setup
+      .prepare(
+        `INSERT INTO twin_edges
+          (edge_id,edge_type,subject_kind,subject_id,object_kind,object_id,confidence,source,
+           content_hash,created_at)
+         VALUES ('edge-kept','mentions','memory','memory-1','raw','raw-1',1,'code',?,1)`
+      )
+      .run(Buffer.alloc(32));
+    setup
+      .prepare('INSERT INTO schema_version(version, description) VALUES (74, ?)')
+      .run('incompatible graph');
+    const before = tableSql(setup, 'twin_edges');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(
+      /inline constraint on subject_kind/
+    );
+    expect(
+      (
+        adapter.prepare("SELECT sql FROM sqlite_master WHERE name='twin_edges'").get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    expect(adapter.prepare('SELECT COUNT(*) AS count FROM twin_edges').get()).toEqual({ count: 1 });
+    expect(
+      (adapter.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+    ).toBe(1);
+    adapter.disconnect();
+  });
+
+  it('refuses an extra graph endpoint CHECK before mutating the edge table', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-graph-check-'));
+    const dbPath = join(tempDir, 'graph-check.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 73);
+    const graphSql = tableSql(setup, 'twin_edges');
+    setup.exec('DROP TABLE twin_edges');
+    setup.exec(
+      graphSql.replace(
+        "subject_kind IN ('memory', 'case', 'entity', 'report', 'edge')",
+        "subject_kind IN ('memory', 'case', 'entity', 'report', 'edge') AND subject_kind <> 'report'"
+      )
+    );
+    setup
+      .prepare('INSERT INTO schema_version(version, description) VALUES (74, ?)')
+      .run('extra endpoint check');
+    const before = tableSql(setup, 'twin_edges');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/subject_kind/);
+    expect(
+      (
+        adapter.prepare("SELECT sql FROM sqlite_master WHERE name='twin_edges'").get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    adapter.disconnect();
+  });
+
+  it('refuses stamped 072 when the observation body XOR is weakened with OR 1', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-observation-or-one-'));
+    const dbPath = join(tempDir, 'observation-or-one.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 71);
+    const migration = readFileSync(
+      join(MIGRATIONS_DIR, '072-observation-versions.sql'),
+      'utf8'
+    ).replace(
+      'OR (body IS NULL AND body_location_json IS NOT NULL))',
+      'OR (body IS NULL AND body_location_json IS NOT NULL) OR 1)'
+    );
+    setup.exec(migration);
+    const before = tableSql(setup, 'observation_versions');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/072|observation/i);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='observation_versions'")
+          .get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    adapter.disconnect();
+  });
+
+  it('refuses stamped 073 without the aggregate authority check and nullable assignment target', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-correction-aggregate-'));
+    const dbPath = join(tempDir, 'correction-aggregate.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 72);
+    const migration = readFileSync(join(MIGRATIONS_DIR, '073-registry-corrections.sql'), 'utf8')
+      .replace(/,\n {2}CHECK \(\n {4}\(origin = 'trusted'[\s\S]*?\n {2}\)\n\);/, '\n);')
+      .replace(
+        'resolved_node_id TEXT REFERENCES registry_nodes(id)',
+        'resolved_node_id TEXT NOT NULL REFERENCES registry_nodes(id)'
+      );
+    setup.exec(migration);
+    const beforeCorrection = tableSql(setup, 'registry_corrections');
+    const beforeAssignments = tableSql(setup, 'registry_ref_assignments');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/073|correction/i);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='registry_corrections'")
+          .get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(beforeCorrection);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='registry_ref_assignments'")
+          .get() as { sql: string }
+      ).sql
+    ).toBe(beforeAssignments);
+    adapter.disconnect();
+  });
+
+  it('refuses stamped 074 with a conflicting table-level subject endpoint check', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-graph-table-check-'));
+    const dbPath = join(tempDir, 'graph-table-check.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 73);
+    const migration = readFileSync(
+      join(MIGRATIONS_DIR, '074-work-graph-ref-kinds.sql'),
+      'utf8'
+    ).replace(
+      'created_at INTEGER NOT NULL\n);',
+      "created_at INTEGER NOT NULL,\n  CHECK(subject_kind <> 'observation')\n);"
+    );
+    setup.exec(migration);
+    const before = tableSql(setup, 'twin_edges');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/074|subject_kind/i);
+    expect(
+      (
+        adapter.prepare("SELECT sql FROM sqlite_master WHERE name='twin_edges'").get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(before);
+    adapter.disconnect();
+  });
+
+  it.each([
+    [
+      'edge_type',
+      "edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
+      "edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks') OR 1)",
+    ],
+    ['source', "source IN ('agent','human','code'))", "source IN ('agent','human','code') OR 1)"],
+    [
+      'confidence',
+      'confidence >= 0.0 AND confidence <= 1.0)',
+      'confidence >= 0.0 AND confidence <= 1.0 OR 1)',
+    ],
+    ['content_hash', 'CHECK(length(content_hash)=32)', 'CHECK(length(content_hash)=32 OR 1)'],
+  ])('refuses stamped 074 with weakened %s constraint', (_field, before, after) => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-graph-weakened-'));
+    const dbPath = join(tempDir, 'graph-weakened.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 73);
+    const migration = readFileSync(
+      join(MIGRATIONS_DIR, '074-work-graph-ref-kinds.sql'),
+      'utf8'
+    ).replace(before, after);
+    setup.exec(migration);
+    const stored = tableSql(setup, 'twin_edges');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/074|constraint/i);
+    expect(
+      (
+        adapter.prepare("SELECT sql FROM sqlite_master WHERE name='twin_edges'").get() as {
+          sql: string;
+        }
+      ).sql
+    ).toBe(stored);
+    adapter.disconnect();
+  });
+
+  it.each([
+    ['wrong type', 'current_observation_id BLOB'],
+    ['wrong nullability', "current_observation_id TEXT NOT NULL DEFAULT ''"],
+    ['extra inline check', 'current_observation_id TEXT CHECK(length(current_observation_id) > 0)'],
+  ])('refuses stamped 072 connector observation ref with %s', (_label, column) => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-observation-ref-shape-'));
+    const dbPath = join(tempDir, 'observation-ref-shape.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 71);
+    const migration = readFileSync(
+      join(MIGRATIONS_DIR, '072-observation-versions.sql'),
+      'utf8'
+    ).replace('current_observation_id TEXT\n  REFERENCES', `${column}\n  REFERENCES`);
+    setup.exec(migration);
+    const stored = tableSql(setup, 'connector_event_index');
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(/072|current_observation_id/i);
+    expect(
+      (
+        adapter
+          .prepare("SELECT sql FROM sqlite_master WHERE name='connector_event_index'")
+          .get() as { sql: string }
+      ).sql
+    ).toBe(stored);
+    adapter.disconnect();
+  });
+
+  it('keeps the PR3A alias schema and preserves custom graph objects and FK children', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-correction-graph-'));
+    const dbPath = join(tempDir, 'correction-graph.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 73);
+    const aliasSql = tableSql(setup, 'registry_aliases');
+    setup.exec(`
+      CREATE INDEX registry_alias_custom_display ON registry_aliases(alias_display);
+      CREATE TABLE registry_alias_audit (alias TEXT);
+      CREATE TRIGGER registry_alias_custom_trigger AFTER INSERT ON registry_aliases
+        BEGIN INSERT INTO registry_alias_audit VALUES (NEW.alias); END;
+      ALTER TABLE registry_corrections
+        ADD COLUMN custom_state TEXT CHECK (custom_state IS NULL OR custom_state <> 'bad');
+      INSERT INTO registry_corrections
+        (command_id,operation,expected_revision,committed_revision,principal_id,agent_id,origin,
+         payload_json,reason,evidence_json,scope_json,receipt_json,created_at,custom_state)
+        VALUES ('command-kept','add_alias',0,1,'principal','agent','trusted','{}','kept','[]',
+          '[]','{}',1,'kept');
+      UPDATE registry_identity_state SET revision=1 WHERE singleton=1;
+      CREATE UNIQUE INDEX registry_correction_custom_state
+        ON registry_corrections(custom_state);
+      CREATE TABLE registry_correction_audit (command_id TEXT);
+      CREATE TRIGGER registry_correction_custom_trigger AFTER INSERT ON registry_corrections
+        BEGIN INSERT INTO registry_correction_audit VALUES (NEW.command_id); END;
+      CREATE TABLE registry_correction_child (
+        command_id TEXT REFERENCES registry_corrections(command_id) ON DELETE CASCADE
+      );
+      INSERT INTO registry_correction_child VALUES ('command-kept');
+      INSERT INTO twin_edges
+        (edge_id,edge_type,subject_kind,subject_id,object_kind,object_id,confidence,source,content_hash,created_at)
+        VALUES ('edge-kept','mentions','memory','memory-1','raw','raw-1',1,'code',zeroblob(32),1);
+      ALTER TABLE twin_edges ADD COLUMN custom_note TEXT;
+      UPDATE twin_edges SET custom_note='kept' WHERE edge_id='edge-kept';
+      CREATE INDEX twin_edges_custom_note ON twin_edges(custom_note);
+      CREATE TABLE twin_edge_audit (edge_id TEXT);
+      CREATE TRIGGER twin_edges_custom_trigger AFTER INSERT ON twin_edges
+        BEGIN INSERT INTO twin_edge_audit VALUES (NEW.edge_id); END;
+      CREATE TABLE twin_edge_child (
+        edge_id TEXT REFERENCES twin_edges(edge_id) ON DELETE CASCADE
+      );
+      INSERT INTO twin_edge_child VALUES ('edge-kept');
+      INSERT INTO schema_version(version, description) VALUES (74, 'partial graph refs');
+    `);
+    setup.close();
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const adapter = new NodeSQLiteAdapter({ dbPath });
+      adapter.connect();
+      adapter.runMigrations(MIGRATIONS_DIR);
+      adapter.disconnect();
+    }
+
+    const db = new Database(dbPath);
+    expect(tableSql(db, 'registry_aliases')).toBe(aliasSql);
+    expect(indexExists(db, 'registry_alias_custom_display')).toBe(true);
+    expect(triggerExists(db, 'registry_alias_custom_trigger')).toBe(true);
+    expect(
+      db
+        .prepare("SELECT custom_state FROM registry_corrections WHERE command_id='command-kept'")
+        .get()
+    ).toEqual({ custom_state: 'kept' });
+    expect(indexExists(db, 'registry_correction_custom_state')).toBe(true);
+    expect(triggerExists(db, 'registry_correction_custom_trigger')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM registry_correction_child').get()).toEqual({
+      count: 1,
+    });
+    expect(() =>
+      db
+        .prepare('UPDATE registry_corrections SET custom_state=? WHERE command_id=?')
+        .run('bad', 'command-kept')
+    ).toThrow(/constraint/i);
+    expect(
+      db.prepare("SELECT custom_note FROM twin_edges WHERE edge_id='edge-kept'").get()
+    ).toEqual({
+      custom_note: 'kept',
+    });
+    expect(indexExists(db, 'twin_edges_custom_note')).toBe(true);
+    expect(triggerExists(db, 'twin_edges_custom_trigger')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM twin_edge_child').get()).toEqual({ count: 1 });
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+  });
+});
+
 describe('Story PR3A: adapter cache rollback', () => {
   afterEach(cleanupTempDir);
 
@@ -1124,7 +1695,7 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         evidence_json: null,
       });
       expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 71,
+        version: 74,
       });
       db.close();
     });

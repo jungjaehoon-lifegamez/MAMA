@@ -310,11 +310,11 @@ describe('ToolRegistry', () => {
       expect(definition.inputSchema.properties).not.toHaveProperty('scopes');
     });
 
-    it('publishes closed schemas for registry lookup and upsert', () => {
+    it('TG-04 publishes matching native and Code-Act correction scope/child-key contracts', async () => {
       const definitions = ToolRegistry.getHostToolDefinitions({
-        allowedTools: ['registry_lookup', 'registry_upsert'],
+        allowedTools: ['registry_lookup', 'registry_upsert', 'registry_correct'],
       });
-      expect(definitions).toHaveLength(2);
+      expect(definitions).toHaveLength(3);
       expect(definitions[0].inputSchema).toMatchObject({
         required: ['name'],
         additionalProperties: false,
@@ -323,6 +323,34 @@ describe('ToolRegistry', () => {
         required: ['kind', 'name'],
         additionalProperties: false,
       });
+      expect(definitions[2].inputSchema).toMatchObject({
+        required: ['command_id', 'expected_revision', 'operation', 'reason'],
+        additionalProperties: false,
+      });
+      expect(definitions[2].inputSchema.properties).not.toHaveProperty('principal_id');
+      expect(definitions[2].inputSchema.properties).toMatchObject({
+        scopes: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            required: ['kind', 'id'],
+            additionalProperties: false,
+          },
+        },
+      });
+      const { HostBridge } = await import('../../src/agent/code-act/host-bridge.js');
+      const codeAct = HostBridge.getToolRegistry().find((tool) => tool.name === 'registry_correct');
+      expect(codeAct?.params.map((param) => param.name)).toContain('scopes');
+      expect(codeAct?.params.find((param) => param.name === 'assignments')?.type).toContain(
+        'target_client_key'
+      );
+      expect(
+        (
+          definitions[2].inputSchema.properties.assignments as {
+            items: { properties: Record<string, unknown> };
+          }
+        ).items.properties
+      ).toHaveProperty('target_client_key');
     });
 
     it('should expose the exact native outer code_act input schema', () => {
@@ -376,6 +404,7 @@ describe('ToolRegistry', () => {
         'mama_save',
         'registry_lookup',
         'registry_upsert',
+        'registry_correct',
         'mama_search',
         'mama_recall',
         'mama_provenance',

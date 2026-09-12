@@ -30,7 +30,11 @@ import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
 import { createMemoryProvenanceRouter } from './memory-provenance-handler.js';
-import { createAgentRawRouter, type AgentRawRouterOptions } from './agent-raw-handler.js';
+import {
+  createAgentObservationRouter,
+  createAgentRawRouter,
+  type AgentRawRouterOptions,
+} from './agent-raw-handler.js';
 import {
   createAgentSituationRouter,
   type AgentSituationRouterOptions,
@@ -283,6 +287,18 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         memoryDb,
         envelopeAuthority,
         rawQuery,
+        rawStore,
+        channelGrant: liveBoundaryChannels,
+      })
+    );
+    app.use(
+      '/api/agent/observations',
+      createAgentObservationRouter({
+        memoryDb,
+        envelopeAuthority,
+        rawQuery,
+        rawStore,
+        channelGrant: liveBoundaryChannels,
       })
     );
   }

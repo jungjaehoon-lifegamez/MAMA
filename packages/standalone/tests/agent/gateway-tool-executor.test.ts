@@ -118,6 +118,160 @@ describe('Story PR3A: durable registry trace classification', () => {
       await cleanupTestDB(dbPath);
     }
   });
+
+  it('TG-04 executes registry_correct through a real signed envelope and core transaction', async () => {
+    const { initTestDB, cleanupTestDB } = await import('@jungjaehoon/mama-core/test-utils');
+    const core = await import('@jungjaehoon/mama-core');
+    const mamaApi = (await import('@jungjaehoon/mama-core/mama-api')).default;
+    const dbPath = await initTestDB('registry-correct-executor');
+    try {
+      const scope = { kind: 'project' as const, id: 'scope-correction' };
+      const secondScope = { kind: 'project' as const, id: 'scope-correction-secondary' };
+      const envelope = makeSignedEnvelope({
+        agent_id: 'agent-correction',
+        scope: {
+          project_refs: [],
+          raw_connectors: [],
+          memory_scopes: [scope, secondScope],
+          allowed_destinations: [],
+          principal_id: 'principal-correction',
+        },
+      });
+      const otherPrincipalEnvelope = makeSignedEnvelope({
+        agent_id: envelope.agent_id,
+        instance_id: envelope.instance_id,
+        expires_at: envelope.expires_at,
+        scope: { ...envelope.scope, principal_id: 'principal-other' },
+      });
+      expect(otherPrincipalEnvelope.envelope_hash).not.toBe(envelope.envelope_hash);
+      const nodeId = core.createNode({ kind: 'item', name: 'original label', scopes: [scope] });
+      core
+        .getAdapter()
+        .prepare(
+          `INSERT INTO model_runs (model_run_id, status, created_at)
+           VALUES ('run-registry-correct', 'running', 1)`
+        )
+        .run();
+      const executor = new GatewayToolExecutor({ mamaApi });
+      const ownerContext = {
+        source: 'telegram' as const,
+        platform: 'telegram' as const,
+        roleName: 'owner_console',
+        principalId: 'principal-correction',
+        role: DEFAULT_ROLES.definitions.owner_console,
+        session: {
+          sessionId: 'session-correction',
+          channelId: 'channel-correction',
+          userId: 'principal-correction',
+          startedAt: new Date(0),
+        },
+        capabilities: DEFAULT_ROLES.definitions.owner_console.allowedTools,
+        limitations: [],
+        tier: 1 as const,
+        backend: 'codex' as const,
+      };
+      await executor.withExecutionContext(
+        { envelope, modelRunId: 'run-registry-correct', agentContext: ownerContext },
+        async () => {
+          await expect(
+            executor.execute('registry_correct', {
+              command_id: 'command-correction-1',
+              expected_revision: core.currentIdentityRevision(),
+              operation: 'add_alias',
+              reason: 'explicit owner correction',
+              node_id: nodeId,
+              alias: 'corrected label',
+              scopes: [scope],
+            })
+          ).resolves.toMatchObject({ success: true, commandId: 'command-correction-1' });
+        }
+      );
+      const tierThreeEnvelope = makeSignedEnvelope({
+        agent_id: envelope.agent_id,
+        scope: envelope.scope,
+        tier: 3,
+      });
+      await executor.withExecutionContext(
+        {
+          envelope: tierThreeEnvelope,
+          agentContext: { ...ownerContext, tier: 3 },
+        },
+        async () => {
+          await expect(
+            executor.execute('registry_correct', {
+              command_id: 'command-correction-tier-denied',
+              expected_revision: core.currentIdentityRevision(),
+              operation: 'add_alias',
+              reason: 'tier three cannot correct identity',
+              node_id: nodeId,
+              alias: 'must not be written at tier three',
+              scopes: [scope],
+            })
+          ).resolves.toMatchObject({ success: false, code: 'tier_violation' });
+        }
+      );
+      expect(core.resolveAlias('corrected label', 'item', [scope])?.id).toBe(nodeId);
+      expect(
+        JSON.parse(
+          String(
+            (
+              core
+                .getAdapter()
+                .prepare('SELECT scope_json FROM registry_corrections WHERE command_id = ?')
+                .get('command-correction-1') as { scope_json: string }
+            ).scope_json
+          )
+        )
+      ).toEqual([scope]);
+      await executor.withExecutionContext(
+        { envelope, modelRunId: 'run-registry-correct', agentContext: ownerContext },
+        async () => {
+          await expect(
+            executor.execute('registry_correct', {
+              command_id: 'command-correction-widen',
+              expected_revision: core.currentIdentityRevision(),
+              operation: 'add_alias',
+              reason: 'must not widen signed scope',
+              node_id: nodeId,
+              alias: 'must not widen',
+              scopes: [{ kind: 'project', id: 'scope-outside-envelope' }],
+            })
+          ).resolves.toMatchObject({ success: false, code: 'scope_denied' });
+        }
+      );
+      await executor.withExecutionContext(
+        {
+          envelope,
+          modelRunId: 'run-registry-correct',
+          agentContext: { ...ownerContext, principalId: 'principal-mismatch' },
+        },
+        async () => {
+          await expect(
+            executor.execute('registry_correct', {
+              command_id: 'command-correction-mismatch',
+              expected_revision: core.currentIdentityRevision(),
+              operation: 'add_alias',
+              reason: 'must not use unsigned runtime identity',
+              node_id: nodeId,
+              alias: 'must not be written',
+              scopes: [scope],
+            })
+          ).resolves.toMatchObject({ success: false, code: 'registry_principal_denied' });
+        }
+      );
+      expect(await core.listToolTracesForRun('run-registry-correct')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool_name: 'registry_correct',
+            execution_status: 'completed',
+          }),
+        ])
+      );
+      await expect(executor.runHadDurableWrite('run-registry-correct')).resolves.toBe(true);
+    } finally {
+      await cleanupTestDB(dbPath);
+    }
+  });
 });
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';

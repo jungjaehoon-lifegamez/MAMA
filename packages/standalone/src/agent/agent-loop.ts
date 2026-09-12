@@ -579,6 +579,7 @@ export function buildAgentToolExecutionContext(
       options.envelope === undefined &&
       options.sourceTurnId === undefined &&
       options.sourceMessageRef === undefined &&
+      options.observationRefs === undefined &&
       options.modelRunId === undefined &&
       options.workorderAttemptId === undefined &&
       options.temporalWorkContext === undefined &&
@@ -609,6 +610,9 @@ export function buildAgentToolExecutionContext(
   }
   if (options.sourceMessageRef !== undefined) {
     context.sourceMessageRef = options.sourceMessageRef;
+  }
+  if (options.observationRefs !== undefined) {
+    context.observationRefs = options.observationRefs;
   }
   if (options.modelRunId !== undefined) {
     context.modelRunId = options.modelRunId;
@@ -2748,6 +2752,7 @@ export class AgentLoop {
         entrypoint: 'agent_loop',
         ...(options?.sourceTurnId ? { sourceTurnId: options.sourceTurnId } : {}),
         ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
+        ...(options?.observationRefs ? { observationRefs: options.observationRefs } : {}),
         ...(resolvedCliSessionId ? { cliSessionId: resolvedCliSessionId } : {}),
         ...(options?.workorderAttemptId !== undefined
           ? { workorderAttemptId: options.workorderAttemptId }

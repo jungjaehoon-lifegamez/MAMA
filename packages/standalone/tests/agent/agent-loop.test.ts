@@ -3421,6 +3421,34 @@ Skills provide additional tools.
       );
     });
 
+    it('TG-05 binds exact input observation refs to the same model run and tool context', async () => {
+      const observationRefs = [
+        { eventId: 'evt-synthetic-1', observationRef: 'obs-synthetic-1' },
+        { eventId: 'evt-legacy', observationRef: null },
+      ] as const;
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Inspect exact observations', {
+        source: 'owner-event',
+        channelId: 'synthetic-channel',
+        agentContext: createChatBotContext(),
+        observationRefs,
+      });
+
+      expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input_refs: expect.objectContaining({ observationRefs }),
+        })
+      );
+      const toolContext = gatewayExecutorPrepareProcedureContextMock.mock.calls[0]?.[0];
+      expect(toolContext).toMatchObject({ observationRefs });
+    });
+
     it('should not clear shared gateway executor routing state when agentContext is absent', async () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),

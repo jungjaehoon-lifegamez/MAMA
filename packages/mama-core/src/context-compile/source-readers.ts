@@ -41,6 +41,8 @@ export interface ContextCandidate {
   excerpt: string;
   score: number;
   timestamp_ms: number | null;
+  source_at_ms?: number | null;
+  observed_at_ms?: number | null;
   source: ContextCandidateSource;
   visible: boolean;
   hidden_reason?: string;
@@ -74,6 +76,38 @@ export interface ContextSourceReadInput {
   limit?: number;
   threshold?: number;
   strictness?: SearchStrictness;
+}
+
+function rawObservedAtSql(alias = 'connector_event_index'): string {
+  return `(SELECT observation.observed_at FROM observation_versions observation
+    WHERE observation.observation_id = ${alias}.current_observation_id)`;
+}
+
+function rawCaptureTimestampSql(alias = 'connector_event_index'): string {
+  return `COALESCE(${rawObservedAtSql(alias)}, ${alias}.event_datetime, ${alias}.source_timestamp_ms)`;
+}
+
+function assertNoDanglingRawObservationRefs(
+  adapter: ContextSourceAdapter,
+  clauses: readonly string[],
+  params: readonly unknown[]
+): void {
+  const row = adapter
+    .prepare(
+      `SELECT 1 AS dangling
+         FROM connector_event_index
+        WHERE ${clauses.join(' AND ')}
+          AND current_observation_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM observation_versions observation
+             WHERE observation.observation_id = connector_event_index.current_observation_id
+          )
+        LIMIT 1`
+    )
+    .get(...params) as { dangling?: number } | undefined;
+  if (row?.dangling === 1) {
+    throw new Error('connector_event_index contains a dangling current observation ref');
+  }
 }
 
 export interface ContextSourceReaderDeps {
@@ -760,14 +794,17 @@ export function readRawCandidates(
   }
   clauses.push(`(${scopeMatches.join(' OR ')})`);
   params.push(...scopeParams);
+  assertNoDanglingRawObservationRefs(adapter, clauses, params);
+  const captureTimestampSql = rawCaptureTimestampSql();
+  const observationObservedAtSql = rawObservedAtSql();
   const min = minVisibleTimeMs(effectiveInput);
   const max = maxVisibleTimeMs(effectiveInput);
   if (min !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
+    clauses.push(`${captureTimestampSql} >= ?`);
     params.push(min);
   }
   if (max !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+    clauses.push(`${captureTimestampSql} <= ?`);
     params.push(max);
   }
   params.push(normalizeLimit(effectiveInput.limit));
@@ -776,10 +813,12 @@ export function readRawCandidates(
     .prepare(
       `
         SELECT event_index_id, source_connector, source_id, channel, title, content,
-               event_datetime, source_timestamp_ms
+               event_datetime, source_timestamp_ms, current_observation_id,
+               ${observationObservedAtSql} AS observation_observed_at,
+               ${captureTimestampSql} AS capture_timestamp_ms
         FROM connector_event_index
         WHERE ${clauses.join('\n          AND ')}
-        ORDER BY COALESCE(event_datetime, source_timestamp_ms) DESC, event_index_id ASC
+        ORDER BY capture_timestamp_ms DESC, event_index_id ASC
         LIMIT ?
       `
     )
@@ -826,10 +865,13 @@ function readRawCandidatesWithinGrant(
   }
   const clauses: string[] = [granted.sql];
   const params: unknown[] = [...granted.params];
+  assertNoDanglingRawObservationRefs(adapter, clauses, params);
 
+  const captureTimestampSql = rawCaptureTimestampSql();
+  const observationObservedAtSql = rawObservedAtSql();
   const min = minVisibleTimeMs(effectiveInput);
   if (min !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
+    clauses.push(`${captureTimestampSql} >= ?`);
     params.push(min);
   }
   // EVIDENCE IS WHAT HAS ALREADY HAPPENED, so the window ends now unless the caller named
@@ -846,7 +888,7 @@ function readRawCandidatesWithinGrant(
   // all, so its ordering never mattered. A caller that genuinely wants the future still
   // gets it by setting range.end_ms or as_of past now.
   const max = maxVisibleTimeMs(effectiveInput) ?? nowMs();
-  clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+  clauses.push(`${captureTimestampSql} <= ?`);
   params.push(max);
   params.push(normalizeLimit(effectiveInput.limit));
 
@@ -854,10 +896,12 @@ function readRawCandidatesWithinGrant(
     .prepare(
       `
         SELECT event_index_id, source_connector, source_id, channel, title, content,
-               event_datetime, source_timestamp_ms
+               event_datetime, source_timestamp_ms, current_observation_id,
+               ${observationObservedAtSql} AS observation_observed_at,
+               ${captureTimestampSql} AS capture_timestamp_ms
         FROM connector_event_index
         WHERE ${clauses.join('\n          AND ')}
-        ORDER BY COALESCE(event_datetime, source_timestamp_ms) DESC, event_index_id ASC
+        ORDER BY capture_timestamp_ms DESC, event_index_id ASC
         LIMIT ?
       `
     )
@@ -901,12 +945,13 @@ function countRefusedByGrant(
   }
   const min = minVisibleTimeMs(effectiveInput);
   const max = maxVisibleTimeMs(effectiveInput);
+  const captureTimestampSql = rawCaptureTimestampSql();
   if (min !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
+    clauses.push(`${captureTimestampSql} >= ?`);
     params.push(min);
   }
   if (max !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+    clauses.push(`${captureTimestampSql} <= ?`);
     params.push(max);
   }
 
@@ -938,6 +983,12 @@ function rawRowToCandidate(row: Record<string, unknown>): ContextCandidate {
     typeof row.source_id === 'string' && row.source_id.trim().length > 0
       ? row.source_id
       : undefined;
+  if (
+    row.current_observation_id !== null &&
+    (typeof row.current_observation_id !== 'string' || row.current_observation_id.trim() === '')
+  ) {
+    throw new Error('connector_event_index.current_observation_id is malformed');
+  }
   return {
     ref: {
       kind: 'raw',
@@ -945,11 +996,14 @@ function rawRowToCandidate(row: Record<string, unknown>): ContextCandidate {
       raw_id: String(row.event_index_id),
       ...(sourceId ? { source_id: sourceId } : {}),
       channel_id: typeof row.channel === 'string' ? row.channel : null,
+      observation_ref: row.current_observation_id,
     },
     title: String(row.title ?? 'Raw event'),
     excerpt: String(row.content ?? '').slice(0, 500),
     score: 0.7,
-    timestamp_ms: parseTimestampMs(row.event_datetime ?? row.source_timestamp_ms),
+    timestamp_ms: parseTimestampMs(row.capture_timestamp_ms),
+    source_at_ms: parseTimestampMs(row.event_datetime ?? row.source_timestamp_ms),
+    observed_at_ms: parseTimestampMs(row.observation_observed_at),
     source: 'raw',
     visible: true,
     support: emptySupport('connector_event_index'),
@@ -1057,7 +1111,7 @@ function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): Con
       const row = adapter
         .prepare(
           `
-            SELECT source_connector, source_id, channel
+            SELECT source_connector, source_id, channel, current_observation_id
             FROM connector_event_index
             WHERE event_index_id = ?
             LIMIT 1
@@ -1068,6 +1122,7 @@ function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): Con
             source_connector: unknown;
             source_id: unknown;
             channel: unknown;
+            current_observation_id: unknown;
           }
         | undefined;
       if (!row || typeof row.source_connector !== 'string') {
@@ -1082,6 +1137,13 @@ function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): Con
         contextRef.source_id = row.source_id;
       }
       contextRef.channel_id = typeof row.channel === 'string' ? row.channel : null;
+      if (
+        row.current_observation_id !== null &&
+        (typeof row.current_observation_id !== 'string' || row.current_observation_id.trim() === '')
+      ) {
+        throw new Error('connector_event_index.current_observation_id is malformed');
+      }
+      contextRef.observation_ref = row.current_observation_id;
       return contextRef;
     }
     default:

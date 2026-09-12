@@ -8,8 +8,12 @@ import { existsSync, mkdirSync } from 'fs';
 import { createHash } from 'node:crypto';
 import { join } from 'path';
 
+import { canonicalizeJSON } from '../canonicalize.js';
 import Database from './sqlite.js';
-import { applyRawItemRevisionsMigration } from './migrations/raw-item-revisions.js';
+import {
+  applyPendingProjectionSnapshotsMigration,
+  applyRawItemRevisionsMigration,
+} from './migrations/raw-item-revisions.js';
 
 export interface NormalizedItem {
   source: string;
@@ -43,6 +47,14 @@ export interface NormalizedItem {
    * field for last-seen values that must be tracked.
    */
   metadata?: Record<string, unknown>;
+  /** Host capture time. It is preserved across projection retries. */
+  observedAt?: number;
+  /** Internal exact pending-row identity used to acknowledge one immutable projection. */
+  pendingProjectionId?: number;
+}
+
+export interface PendingProjection extends NormalizedItem {
+  pendingProjectionId: number;
 }
 
 interface ConnectorEventIndexInput {
@@ -63,6 +75,12 @@ interface ConnectorEventIndexInput {
   memory_scope_id: string | null;
   metadata: Record<string, unknown> | null;
   content_hash: Buffer;
+  observation: {
+    producer_version_id: string;
+    body_location: { kind: 'raw'; connectorName: string; revisionSourceId: string };
+    observed_at: number;
+    source_at: number | null;
+  };
 }
 
 interface RawRow {
@@ -84,6 +102,7 @@ interface RawRow {
   project_id: string | null;
   memory_scope_kind: string | null;
   memory_scope_id: string | null;
+  observed_at?: number | null;
 }
 
 const SCHEMA = `
@@ -106,6 +125,17 @@ CREATE TABLE IF NOT EXISTS raw_items (
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
 );
 CREATE INDEX IF NOT EXISTS idx_raw_items_timestamp ON raw_items(timestamp);
+CREATE TABLE IF NOT EXISTS pending_core_projections (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_source_id TEXT NOT NULL REFERENCES raw_items(source_id),
+  payload_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  observed_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  UNIQUE(raw_source_id, payload_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_core_projection_sequence
+  ON pending_core_projections(sequence);
 `;
 
 const CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
@@ -120,6 +150,13 @@ export interface RawStoreBackfillOptions {
 }
 
 export type RawIndexSink = (connectorName: string, items: NormalizedItem[]) => void | Promise<void>;
+
+export interface RawVersionReadResult {
+  status: 'available' | 'version_unavailable';
+  body?: string;
+  contentHash?: string;
+  reason?: 'VERSION_NOT_FOUND' | 'HASH_MISMATCH';
+}
 
 function ensureRawItemsProvenanceColumns(db: Database): void {
   const columns = new Set(
@@ -156,9 +193,12 @@ const OBSERVATION_METADATA_KEYS = new Set(['observedAt']);
 function contentIdentityMetadata(
   metadata: Record<string, unknown> | undefined
 ): Record<string, unknown> | null {
-  if (!metadata) return null;
+  if (!metadata) {
+    return null;
+  }
   const entries = Object.entries(metadata).filter(([key]) => !OBSERVATION_METADATA_KEYS.has(key));
-  return entries.length > 0 ? Object.fromEntries(entries) : null;
+  const stored = JSON.parse(JSON.stringify(Object.fromEntries(entries))) as Record<string, unknown>;
+  return Object.keys(stored).length > 0 ? stored : null;
 }
 
 function canonicalizeRawContent(item: NormalizedItem): string {
@@ -187,6 +227,19 @@ function canonicalizeRawContent(item: NormalizedItem): string {
   );
 }
 
+function canonicalizeProducerPayload(item: NormalizedItem): string {
+  return canonicalizeJSON({
+    source: item.source,
+    sourceId: item.sourceId,
+    channel: item.channel,
+    author: item.author,
+    content: item.content,
+    timestamp: item.timestamp.getTime(),
+    type: item.type,
+    metadata: contentIdentityMetadata(item.metadata),
+  });
+}
+
 function normalizeContentHash(item: NormalizedItem): string {
   if (item.contentHash !== undefined) {
     if (!CONTENT_HASH_PATTERN.test(item.contentHash)) {
@@ -195,6 +248,118 @@ function normalizeContentHash(item: NormalizedItem): string {
     return item.contentHash;
   }
   return createHash('sha256').update(canonicalizeRawContent(item), 'utf8').digest('hex');
+}
+
+function projectionSnapshot(item: NormalizedItem, observedAt: number): string {
+  return canonicalizeJSON({
+    source: item.source,
+    sourceId: item.sourceId,
+    sourceEntityId: item.sourceEntityId ?? item.sourceId,
+    channel: item.channel,
+    author: item.author,
+    content: item.content,
+    timestamp: item.timestamp.getTime(),
+    type: item.type,
+    metadata: item.metadata ?? null,
+    contentHash: item.contentHash ?? null,
+    sourceCursor: item.sourceCursor ?? null,
+    tenantId: item.tenantId ?? null,
+    projectId: item.projectId ?? null,
+    memoryScopeKind: item.memoryScopeKind ?? null,
+    memoryScopeId: item.memoryScopeId ?? null,
+    observedAt,
+  });
+}
+
+function projectionPayloadHash(item: NormalizedItem): string {
+  return createHash('sha256')
+    .update(
+      canonicalizeJSON({
+        source: item.source,
+        sourceId: item.sourceId,
+        sourceEntityId: item.sourceEntityId ?? item.sourceId,
+        channel: item.channel,
+        author: item.author,
+        content: item.content,
+        timestamp: item.timestamp.getTime(),
+        type: item.type,
+        metadata: item.metadata ?? null,
+        contentHash: item.contentHash ?? null,
+        sourceCursor: item.sourceCursor ?? null,
+        tenantId: item.tenantId ?? null,
+        projectId: item.projectId ?? null,
+        memoryScopeKind: item.memoryScopeKind ?? null,
+        memoryScopeId: item.memoryScopeId ?? null,
+      })
+    )
+    .digest('hex');
+}
+
+function parseProjectionSnapshot(payload: string, sequence: number): PendingProjection {
+  let value: unknown;
+  try {
+    value = JSON.parse(payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`pending_core_projections.payload_json is malformed: ${message}`);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('pending_core_projections.payload_json must contain an object');
+  }
+  const row = value as Record<string, unknown>;
+  for (const field of [
+    'source',
+    'sourceId',
+    'sourceEntityId',
+    'channel',
+    'author',
+    'content',
+    'type',
+  ]) {
+    if (typeof row[field] !== 'string') {
+      throw new Error(`pending_core_projections.payload_json.${field} must be text`);
+    }
+  }
+  if (typeof row.timestamp !== 'number' || !Number.isFinite(row.timestamp)) {
+    throw new Error('pending_core_projections.payload_json.timestamp must be finite');
+  }
+  if (typeof row.observedAt !== 'number' || !Number.isFinite(row.observedAt)) {
+    throw new Error('pending_core_projections.payload_json.observedAt must be finite');
+  }
+  const optionalString = (field: string): string | undefined => {
+    const candidate = row[field];
+    if (candidate === null || candidate === undefined) {
+      return undefined;
+    }
+    if (typeof candidate !== 'string') {
+      throw new Error(`pending_core_projections.payload_json.${field} must be text or null`);
+    }
+    return candidate;
+  };
+  if (row.metadata !== null && row.metadata !== undefined) {
+    if (typeof row.metadata !== 'object' || Array.isArray(row.metadata)) {
+      throw new Error('pending_core_projections.payload_json.metadata must be an object or null');
+    }
+  }
+  return {
+    source: row.source as string,
+    sourceId: row.sourceId as string,
+    sourceEntityId: row.sourceEntityId as string,
+    channel: row.channel as string,
+    author: row.author as string,
+    content: row.content as string,
+    timestamp: new Date(row.timestamp),
+    type: row.type as NormalizedItem['type'],
+    metadata: row.metadata as Record<string, unknown> | undefined,
+    contentHash: optionalString('contentHash'),
+    sourceCursor: optionalString('sourceCursor'),
+    tenantId: optionalString('tenantId'),
+    projectId: optionalString('projectId'),
+    memoryScopeKind: optionalString('memoryScopeKind'),
+    memoryScopeId: optionalString('memoryScopeId'),
+    observedAt: row.observedAt,
+    pendingProjectionId: sequence,
+  };
 }
 
 export function mapNormalizedItemsToConnectorEventIndexInputs(
@@ -219,6 +384,19 @@ export function mapNormalizedItemsToConnectorEventIndexInputs(
     memory_scope_id: item.memoryScopeId ?? null,
     metadata: { ...item.metadata, sourceEntityId: item.sourceEntityId ?? item.sourceId },
     content_hash: Buffer.from(normalizeContentHash(item), 'hex'),
+    observation: {
+      producer_version_id:
+        item.pendingProjectionId === undefined
+          ? item.sourceId
+          : `raw-projection:${connectorName}:${item.sourceId}:${item.pendingProjectionId}`,
+      body_location: {
+        kind: 'raw',
+        connectorName,
+        revisionSourceId: item.sourceId,
+      },
+      observed_at: item.observedAt ?? Date.now(),
+      source_at: Number.isFinite(item.timestamp.getTime()) ? item.timestamp.getTime() : null,
+    },
   }));
 }
 
@@ -240,6 +418,7 @@ export class RawStore {
     db.exec(SCHEMA);
     ensureRawItemsProvenanceColumns(db);
     applyRawItemRevisionsMigration(db);
+    applyPendingProjectionSnapshotsMigration(db);
     this.dbs.set(connectorName, db);
     return db;
   }
@@ -266,6 +445,7 @@ export class RawStore {
       memoryScopeId: row.memory_scope_id ?? undefined,
       metadata:
         row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+      observedAt: row.observed_at ?? undefined,
     };
   }
 
@@ -296,6 +476,15 @@ export class RawStore {
         memory_scope_id = COALESCE(?, memory_scope_id)
       WHERE source_id = ?
     `);
+    const enqueue = db.prepare(
+      `INSERT OR IGNORE INTO pending_core_projections
+         (raw_source_id, payload_hash, payload_json, observed_at)
+       VALUES (?, ?, ?, ?)`
+    );
+    const findPending = db.prepare(
+      `SELECT sequence, payload_json FROM pending_core_projections
+       WHERE raw_source_id = ? AND payload_hash = ?`
+    );
     db.exec('BEGIN IMMEDIATE');
     try {
       const saved: NormalizedItem[] = [];
@@ -311,16 +500,16 @@ export class RawStore {
         // versioned address distinct from the entity base (source_id !== origin_source_id) with matching
         // content. Re-inserting it would forge a change. The mutable base row (source_id === origin) is
         // never treated this way, so a genuine A->B->A on one locator is still recorded.
-        if (
-          original &&
-          original.revision_hash === revisionHash &&
-          original.source_id !== originSourceId
-        ) {
+        if (original && original.source_id !== originSourceId) {
+          const originalItem = this.mapRawRowToNormalizedItem(original);
+          if (canonicalizeProducerPayload(originalItem) !== canonicalizeProducerPayload(item)) {
+            throw new Error(`Immutable raw producer replay conflict for ${item.sourceId}`);
+          }
           // Same immutable version re-listed: do not forge a new observation, but advance last-seen
           // provenance (source_cursor / scope) so a re-poll still records that we looked - a missing
           // poll must stay distinguishable from an unchanged one.
           updateProvenance.run(
-            revisionHash,
+            original.revision_hash ?? revisionHash,
             item.sourceEntityId ?? original.source_entity_id,
             contentHash,
             item.sourceCursor ?? null,
@@ -331,8 +520,38 @@ export class RawStore {
             original.source_id
           );
           const refreshed = find.get(original.source_id) as RawRow | undefined;
-          if (!refreshed) throw new Error('Persisted raw revision is missing');
-          saved.push(this.mapRawRowToNormalizedItem(refreshed));
+          if (!refreshed) {
+            throw new Error('Persisted raw revision is missing');
+          }
+          const persistedItem = this.mapRawRowToNormalizedItem(refreshed);
+          const payloadHash = projectionPayloadHash(persistedItem);
+          let existingPending = findPending.get(refreshed.source_id, payloadHash) as
+            | { sequence: number; payload_json: string }
+            | undefined;
+          const provenanceChanged =
+            refreshed.source_cursor !== original.source_cursor ||
+            refreshed.tenant_id !== original.tenant_id ||
+            refreshed.project_id !== original.project_id ||
+            refreshed.memory_scope_kind !== original.memory_scope_kind ||
+            refreshed.memory_scope_id !== original.memory_scope_id;
+          if (provenanceChanged && !existingPending) {
+            const observedAt = item.observedAt ?? Date.now();
+            enqueue.run(
+              refreshed.source_id,
+              payloadHash,
+              projectionSnapshot(persistedItem, observedAt),
+              observedAt
+            );
+            existingPending = findPending.get(refreshed.source_id, payloadHash) as {
+              sequence: number;
+              payload_json: string;
+            };
+          }
+          saved.push(
+            existingPending
+              ? parseProjectionSnapshot(existingPending.payload_json, existingPending.sequence)
+              : persistedItem
+          );
           continue;
         }
         // Existing locators are immutable. A legacy row receives its own hash, never the incoming body's hash.
@@ -396,9 +615,41 @@ export class RawStore {
             sourceId
           );
         }
+        const beforeUpdate = matching;
         const persisted = find.get(sourceId) as RawRow | undefined;
-        if (!persisted) throw new Error('Persisted raw revision is missing');
-        saved.push(this.mapRawRowToNormalizedItem(persisted));
+        if (!persisted) {
+          throw new Error('Persisted raw revision is missing');
+        }
+        const persistedItem = this.mapRawRowToNormalizedItem(persisted);
+        const payloadHash = projectionPayloadHash(persistedItem);
+        let existingPending = findPending.get(sourceId, payloadHash) as
+          | { sequence: number; payload_json: string }
+          | undefined;
+        const provenanceChanged =
+          beforeUpdate !== undefined &&
+          (persisted.source_cursor !== beforeUpdate.source_cursor ||
+            persisted.tenant_id !== beforeUpdate.tenant_id ||
+            persisted.project_id !== beforeUpdate.project_id ||
+            persisted.memory_scope_kind !== beforeUpdate.memory_scope_kind ||
+            persisted.memory_scope_id !== beforeUpdate.memory_scope_id);
+        if ((!matching || provenanceChanged) && !existingPending) {
+          const observedAt = item.observedAt ?? Date.now();
+          enqueue.run(
+            sourceId,
+            payloadHash,
+            projectionSnapshot(persistedItem, observedAt),
+            observedAt
+          );
+          existingPending = findPending.get(sourceId, payloadHash) as {
+            sequence: number;
+            payload_json: string;
+          };
+        }
+        saved.push(
+          existingPending
+            ? parseProjectionSnapshot(existingPending.payload_json, existingPending.sequence)
+            : persistedItem
+        );
       }
       db.exec('COMMIT');
       return saved;
@@ -406,6 +657,74 @@ export class RawStore {
       db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  listPendingProjections(connectorName: string, limit = 100): PendingProjection[] {
+    const rows = this.getDb(connectorName)
+      .prepare(
+        `SELECT sequence, payload_json
+         FROM pending_core_projections
+         ORDER BY sequence ASC LIMIT ?`
+      )
+      .all(Math.min(1000, Math.max(1, Math.floor(limit)))) as Array<{
+      sequence: number;
+      payload_json: string;
+    }>;
+    return rows.map((row) => parseProjectionSnapshot(row.payload_json, row.sequence));
+  }
+
+  acknowledgeProjection(
+    connectorName: string,
+    revisionSourceId: string,
+    pendingProjectionId: number
+  ): void {
+    if (!Number.isSafeInteger(pendingProjectionId) || pendingProjectionId < 1) {
+      throw new Error('An exact pending projection id is required for acknowledgement');
+    }
+    const result = this.getDb(connectorName)
+      .prepare('DELETE FROM pending_core_projections WHERE raw_source_id = ? AND sequence = ?')
+      .run(revisionSourceId, pendingProjectionId) as { changes: number };
+    if (result.changes !== 1) {
+      throw new Error('Pending projection acknowledgement did not match exactly one row');
+    }
+  }
+
+  acknowledgeProjections(
+    connectorName: string,
+    projections: readonly { revisionSourceId: string; pendingProjectionId: number }[]
+  ): void {
+    const db = this.getDb(connectorName);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const projection of projections) {
+        this.acknowledgeProjection(
+          connectorName,
+          projection.revisionSourceId,
+          projection.pendingProjectionId
+        );
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  readVersion(
+    connectorName: string,
+    revisionSourceId: string,
+    expectedContentHash: string
+  ): RawVersionReadResult {
+    const row = this.getDb(connectorName)
+      .prepare('SELECT content, content_hash FROM raw_items WHERE source_id = ? LIMIT 1')
+      .get(revisionSourceId) as { content: string; content_hash: string | null } | undefined;
+    if (!row) {
+      return { status: 'version_unavailable', reason: 'VERSION_NOT_FOUND' };
+    }
+    if (!row.content_hash || row.content_hash !== expectedContentHash) {
+      return { status: 'version_unavailable', reason: 'HASH_MISMATCH' };
+    }
+    return { status: 'available', body: row.content, contentHash: row.content_hash };
   }
 
   /** Stable, bounded traversal of an entity's stored revisions. Cursor is the last row ID. */

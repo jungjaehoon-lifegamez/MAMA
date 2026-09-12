@@ -94,6 +94,12 @@ function validateBuildInput(input: EnvelopeBuildInput): void {
   if (!Array.isArray(input.scope.allowed_destinations)) {
     throw new Error('EnvelopeAuthority.build: scope.allowed_destinations required');
   }
+  if (
+    input.scope.principal_id !== undefined &&
+    (typeof input.scope.principal_id !== 'string' || !input.scope.principal_id.trim())
+  ) {
+    throw new Error('EnvelopeAuthority.build: scope.principal_id must be nonblank if set');
+  }
 }
 
 function parseEnvelopeBuildExpiry(expiresAt: string): number {

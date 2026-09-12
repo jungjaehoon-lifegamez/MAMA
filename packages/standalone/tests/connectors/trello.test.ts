@@ -269,10 +269,7 @@ describe('TrelloConnector', () => {
       expect(items[0]?.channel).toBe('project-board');
     });
 
-    it('stamps first sight at observation time and keeps dateLastActivity in metadata', async () => {
-      // Live incident 2026-07-24: first-sight items stamped with a years-old
-      // dateLastActivity sit below every since-window, making a fresh install's
-      // (or state reset's) only enriched item per card invisible to retrieval.
+    it('keeps first-sight source time stable and leaves capture freshness to observedAt', async () => {
       const activityTime = '2024-06-15T12:00:00.000Z';
       const lists = [
         makeTrelloList('list1', 'Todo', [
@@ -285,9 +282,8 @@ describe('TrelloConnector', () => {
       );
       const connector = new TrelloConnector(makeConfig());
       await connector.init();
-      const before = Date.now();
       const items = await connector.poll(new Date(0));
-      expect(items[0]?.timestamp.getTime()).toBeGreaterThanOrEqual(before);
+      expect(items[0]?.timestamp.toISOString()).toBe(activityTime);
       expect(items[0]?.metadata?.lastActivityAt).toBe(activityTime);
     });
 

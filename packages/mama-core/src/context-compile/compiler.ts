@@ -165,13 +165,20 @@ function rawCanonicalRefForRef(adapter: ContextCompilerAdapter, rawId: string): 
   const row = adapter
     .prepare(
       `
-        SELECT source_connector, source_id, channel
+        SELECT source_connector, source_id, channel, current_observation_id
         FROM connector_event_index
         WHERE event_index_id = ?
         LIMIT 1
       `
     )
-    .get(rawId) as { source_connector: unknown; source_id: unknown; channel: unknown } | undefined;
+    .get(rawId) as
+    | {
+        source_connector: unknown;
+        source_id: unknown;
+        channel: unknown;
+        current_observation_id: unknown;
+      }
+    | undefined;
   if (typeof row?.source_connector !== 'string') {
     return null;
   }
@@ -184,6 +191,13 @@ function rawCanonicalRefForRef(adapter: ContextCompilerAdapter, rawId: string): 
     ref.source_id = row.source_id;
   }
   ref.channel_id = typeof row.channel === 'string' ? row.channel : null;
+  if (
+    row.current_observation_id !== null &&
+    (typeof row.current_observation_id !== 'string' || row.current_observation_id.trim() === '')
+  ) {
+    throw new Error('connector_event_index.current_observation_id is malformed');
+  }
+  ref.observation_ref = row.current_observation_id;
   return ref;
 }
 

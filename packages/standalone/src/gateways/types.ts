@@ -145,6 +145,8 @@ export interface ConversationTurn {
    * binding this turn to its report-consumption receipt.
    */
   sourceMessageRef?: string;
+  sourceObservationRef?: string;
+  resultObservationRef?: string;
   /**
    * TG-05: `provisional` while streaming, `final` after the atomic
    * turn/receipt commit. Legacy turns without a state are treated as final.

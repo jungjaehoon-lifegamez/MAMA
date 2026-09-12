@@ -235,7 +235,7 @@ export class SlackGateway extends BaseGateway {
       ownerUserId: this.teamId ? this.config.ownerUserId : undefined,
       isDirectMessage: isDM,
     });
-    if (principal.class === 'external' && this.principalResolver && this.teamId) {
+    if (this.principalResolver && this.teamId) {
       principal = overlayMemberPrincipal(
         principal,
         this.principalResolver('slack', this.teamId, event.user)
@@ -528,6 +528,12 @@ export class SlackGateway extends BaseGateway {
 
     const authResult = await this.webClient.auth.test();
     this.teamId = authResult.team_id ?? this.teamId;
+    if (this.config.ownerUserId && this.principalResolver && this.teamId) {
+      const owner = this.principalResolver('slack', this.teamId, this.config.ownerUserId);
+      if (owner?.kind !== 'owner' || owner.status !== 'active') {
+        throw new Error('Slack configured owner identity is unavailable');
+      }
+    }
     await this.socketClient.start();
   }
 

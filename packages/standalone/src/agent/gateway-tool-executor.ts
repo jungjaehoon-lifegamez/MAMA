@@ -110,6 +110,7 @@ import {
   handleLoadCheckpoint,
 } from './mama-tool-handlers.js';
 import {
+  handleRegistryCorrect,
   handleRegistryLookup,
   handleRegistryUpsert,
   type RegistryPort,
@@ -323,6 +324,7 @@ type ActiveGatewayExecutionContext = {
   wikiTaskRange?: GatewayToolExecutionContext['wikiTaskRange'];
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
+  observationRefs?: GatewayToolExecutionContext['observationRefs'];
   ownerEventEffects?: GatewayToolExecutionContext['ownerEventEffects'];
   signal?: AbortSignal;
   parentToolName?: string;
@@ -830,7 +832,7 @@ function isExactTelegramDeliveryReceipt(
 
 /** Gateway tools whose completed execution leaves a durable effect (ledger, memory, file, send). */
 const DURABLE_WRITE_TOOL =
-  /_(?:create|update|upsert|publish|send|save|reclassify|retire|observe|bind|reconcile|export|upload|write)$|^console_brief_update$|^Write$|^Bash$/;
+  /_(?:create|update|upsert|publish|send|save|reclassify|retire|observe|bind|reconcile|export|upload|write)$|^registry_correct$|^console_brief_update$|^Write$|^Bash$/;
 
 export class GatewayToolExecutor {
   private procedureRuntime: ProcedureRuntime | null = null;
@@ -1114,6 +1116,7 @@ export class GatewayToolExecutor {
       temporalWorkContext: executionContext?.temporalWorkContext,
       wikiTaskRange: executionContext?.wikiTaskRange,
       causeEventIds: executionContext?.causeEventIds,
+      observationRefs: executionContext?.observationRefs,
       ownerEventEffects: executionContext?.ownerEventEffects,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
@@ -2730,6 +2733,8 @@ export class GatewayToolExecutor {
       listNodes: (filter) => core.listNodes(filter as never),
       mergeNodes: (mergeInput) => core.mergeNodes(mergeInput),
       splitNode: (splitInput) => core.splitNode(splitInput as never),
+      appendIdentityCorrection: (correction, trusted) =>
+        core.appendIdentityCorrection(correction as never, trusted as never),
     };
   }
 
@@ -3470,6 +3475,52 @@ export class GatewayToolExecutor {
             this.getExecutionState().envelope?.scope.memory_scopes
           )) as GatewayToolResult;
           return registryResult;
+        }
+        case 'registry_correct': {
+          const state = this.getExecutionState();
+          const scopes = state.envelope?.scope.memory_scopes;
+          const connectors = state.envelope?.scope.raw_connectors;
+          const principalId = state.agentContext?.principalId;
+          const signedPrincipalId = state.envelope?.scope.principal_id;
+          const agentId = state.envelope?.agent_id;
+          if (
+            !scopes?.length ||
+            !connectors ||
+            !principalId?.trim() ||
+            !signedPrincipalId?.trim() ||
+            !agentId?.trim()
+          ) {
+            return {
+              success: false,
+              code: 'registry_scope_denied',
+              error: 'Registry correction requires signed scope, principal, and agent authority.',
+            };
+          }
+          if (principalId !== signedPrincipalId) {
+            return {
+              success: false,
+              code: 'registry_principal_denied',
+              error: 'Registry correction principal is unavailable.',
+            };
+          }
+          return (await handleRegistryCorrect(
+            await this.getRegistry(),
+            input as Parameters<typeof handleRegistryCorrect>[1],
+            {
+              principalId: signedPrincipalId,
+              agentId,
+              scopes,
+              connectors,
+              ...(state.channelGrantSnapshot
+                ? {
+                    channels: narrowGrantToEnvelope(state.channelGrantSnapshot, {
+                      connectors,
+                      scopes,
+                    }),
+                  }
+                : {}),
+            }
+          )) as GatewayToolResult;
         }
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);

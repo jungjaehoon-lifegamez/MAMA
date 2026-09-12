@@ -173,8 +173,8 @@ describe('Slack ingress principal admission', () => {
       }),
     };
     const principalResolver = vi.fn().mockReturnValue({
-      principalId: 'registry-member-principal',
-      kind: 'member',
+      principalId: 'registry-owner-principal',
+      kind: 'owner',
       status: 'active',
     });
     const gateway = new SlackGateway({
@@ -194,10 +194,11 @@ describe('Slack ingress principal admission', () => {
       class: 'owner',
       lane: 'owner',
       canonicalId: 'slack:team-principal:owner-user',
+      principalId: 'registry-owner-principal',
       consoleEligible: false,
     });
     expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
-    expect(principalResolver).not.toHaveBeenCalled();
+    expect(principalResolver).toHaveBeenCalledWith('slack', 'team-principal', 'owner-user');
   });
 
   it('admits an active member with the real team namespace to the public lane', async () => {
@@ -208,11 +209,11 @@ describe('Slack ingress principal admission', () => {
         return completed();
       }),
     };
-    const principalResolver = vi.fn().mockReturnValue({
-      principalId: 'slack-member-principal',
-      kind: 'member',
-      status: 'active',
-    });
+    const principalResolver = vi.fn((_connector: string, _namespace: string, userId: string) =>
+      userId === 'owner-user'
+        ? { principalId: 'registry-owner-principal', kind: 'owner' as const, status: 'active' }
+        : { principalId: 'slack-member-principal', kind: 'member' as const, status: 'active' }
+    );
     const gateway = new SlackGateway({
       botToken: 'xoxb-synthetic',
       appToken: 'xapp-synthetic',

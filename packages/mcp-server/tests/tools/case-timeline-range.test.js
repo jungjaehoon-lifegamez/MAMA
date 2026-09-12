@@ -80,6 +80,50 @@ function seedTimelineCase(db) {
               'active', 'wiki-compiler', ?, ?, 0)
     `
   ).run(CASE_ID, 'dec-timeline-range', now, now);
+
+  db.prepare(
+    `INSERT INTO observation_versions
+      (observation_id, source_connector, source_id, body, observed_at, content_hash,
+       metadata_json, scope_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    'obs-timeline-artifact',
+    'drive',
+    'artifact-version-1',
+    'artifact body',
+    Date.parse('2026-04-11T12:00:00.000Z'),
+    'artifact-hash',
+    '{}',
+    '{}'
+  );
+  db.prepare(
+    `INSERT INTO connector_event_index
+      (event_index_id, source_connector, source_type, source_id, source_locator, content,
+       event_datetime, source_timestamp_ms, metadata_json, content_hash, indexed_at, updated_at,
+       current_observation_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    'event-timeline-artifact',
+    'drive',
+    'document',
+    'artifact-version-1',
+    'drive:artifact-version-1',
+    'artifact body',
+    Date.parse('2026-04-11T12:00:00.000Z'),
+    Date.parse('2026-04-11T12:00:00.000Z'),
+    '{}',
+    Buffer.alloc(32),
+    now,
+    now,
+    'obs-timeline-artifact'
+  );
+  db.prepare(
+    `INSERT INTO case_memberships (
+       case_id, source_type, source_id, role, confidence, reason, status,
+       added_by, added_at, updated_at, user_locked
+     ) VALUES (?, 'artifact', ?, 'evidence', 0.9, 'captured artifact',
+       'active', 'wiki-compiler', ?, ?, 0)`
+  ).run(CASE_ID, 'event-timeline-artifact', now, now);
 }
 
 describe('case_timeline_range MCP tool', () => {
@@ -113,6 +157,7 @@ describe('case_timeline_range MCP tool', () => {
       to: '2026-04-30T23:59:59.999Z',
       order: 'asc',
       limit: 10,
+      include_connector_enrichments: true,
     });
 
     expect(result).toEqual(
@@ -122,7 +167,7 @@ describe('case_timeline_range MCP tool', () => {
         chain: [CASE_ID],
       })
     );
-    expect(result.items).toHaveLength(1);
+    expect(result.items).toHaveLength(2);
     expect(result.items[0]).toEqual(
       expect.objectContaining({
         item_type: 'decision',
@@ -131,6 +176,14 @@ describe('case_timeline_range MCP tool', () => {
         title: 'timeline/range',
         role: 'primary',
         membership_reason: 'seeded test membership',
+      })
+    );
+    expect(result.items[1]).toEqual(
+      expect.objectContaining({
+        item_type: 'artifact',
+        connector_event: expect.objectContaining({
+          observation_ref: 'obs-timeline-artifact',
+        }),
       })
     );
   });

@@ -3,11 +3,13 @@ import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
 import type { MemoryScope } from '../envelope/types.js';
+import type { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import {
   deriveWorkerEnvelopeVisibility,
   loadWorkerEnvelope,
   WorkerEnvelopeError,
 } from './worker-envelope.js';
+import { narrowGrantToEnvelope } from '../evidence/read.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -70,10 +72,13 @@ interface RawSearchHit {
   channel_id: string | null;
   author_label: string | null;
   created_at: string | null;
+  source_at: string | null;
+  observed_at: string | null;
   content_preview: string;
   score: number;
   source_ref: string | null;
   metadata: Record<string, unknown>;
+  observation_ref: string | null;
 }
 
 interface RawDocument extends RawSearchHit {
@@ -89,6 +94,187 @@ export interface AgentRawRouterOptions {
   memoryDb: RawQueryAdapter;
   envelopeAuthority?: EnvelopeAuthority;
   rawQuery?: RawQueryModule;
+  rawStore?: RawStore;
+  channelGrant?: () => Record<string, readonly string[]>;
+}
+
+interface ObservationModule {
+  isObservationVersionVisible: (
+    adapter: RawQueryAdapter,
+    id: string,
+    authority: {
+      principalId?: string;
+      agentId?: string;
+      scopes?: readonly MemoryScope[];
+      connectors?: readonly string[];
+      channels?: Readonly<Record<string, readonly string[]>>;
+    }
+  ) => boolean;
+  searchOwnerObservationVersions: (
+    adapter: RawQueryAdapter,
+    input: {
+      query: string;
+      principalId: string;
+      agentId: string;
+      connectors?: string[];
+      connectorChannels?: Readonly<Record<string, readonly string[]>>;
+      fromMs?: number;
+      toMs?: number;
+      cursor?: string;
+      limit?: number;
+    }
+  ) => unknown;
+  readObservationVersion: (
+    adapter: RawQueryAdapter,
+    id: string,
+    reader?: {
+      readVersion(input: {
+        connectorName: string;
+        revisionSourceId: string;
+        expectedContentHash: string;
+      }): unknown;
+    }
+  ) =>
+    | { status: 'not_found' }
+    | {
+        status: 'version_unavailable';
+        reason: string;
+        observation: { sourceConnector: string; scope: Record<string, unknown> };
+      }
+    | {
+        status: 'available';
+        body: string;
+        observation: { sourceConnector: string; scope: Record<string, unknown> };
+      };
+}
+
+export function createAgentObservationRouter(options: AgentRawRouterOptions): Router {
+  const router = express.Router();
+  router.get('/search', async (req, res) => {
+    try {
+      const envelope = loadWorkerEnvelope(req, options.envelopeAuthority);
+      const principalId = envelope.scope.principal_id?.trim();
+      if (!principalId) {
+        throw new WorkerEnvelopeError(
+          403,
+          'owner_principal_required',
+          'Owner observation search requires a signed principal.'
+        );
+      }
+      deriveWorkerEnvelopeVisibility(envelope, {
+        connectors: parseConnectors(req),
+        scopes: parseScopes(req),
+      });
+      const observationModule =
+        (await import('@jungjaehoon/mama-core')) as unknown as ObservationModule;
+      const ownerVisibility = signedOwnerObservationVisibility(envelope);
+      res.json(
+        observationModule.searchOwnerObservationVersions(options.memoryDb, {
+          query: firstString(req.query.query) ?? '',
+          principalId,
+          agentId: envelope.agent_id,
+          connectors: [
+            `owner-message:${ownerVisibility.connector}`,
+            `owner-result:${ownerVisibility.connector}`,
+          ],
+          connectorChannels: ownerVisibility.channels,
+          fromMs: parseOptionalTime(req.query.from, 'from'),
+          toMs: parseOptionalTime(req.query.to, 'to'),
+          cursor: firstString(req.query.cursor),
+          limit: parseBoundedInteger(req.query.limit, 'limit'),
+        })
+      );
+    } catch (err) {
+      sendRawError(res, err);
+    }
+  });
+  router.get('/:observationId', async (req, res) => {
+    try {
+      const envelope = loadWorkerEnvelope(req, options.envelopeAuthority);
+      const visibility = deriveWorkerEnvelopeVisibility(envelope, {
+        connectors: parseConnectors(req),
+        scopes: parseScopes(req),
+      });
+      const observationModule =
+        (await import('@jungjaehoon/mama-core')) as unknown as ObservationModule;
+      const header = options.memoryDb
+        .prepare('SELECT source_connector FROM observation_versions WHERE observation_id = ?')
+        .get(req.params.observationId) as { source_connector?: unknown } | undefined;
+      if (!header) {
+        res.status(404).json({ error: true, code: 'observation_not_found' });
+        return;
+      }
+      if (typeof header.source_connector !== 'string' || !header.source_connector.trim()) {
+        throw new Error('observation_versions.source_connector must be nonblank text');
+      }
+      const ownerObservation = header.source_connector.startsWith('owner-');
+      const ownerVisibility = ownerObservation
+        ? signedOwnerObservationVisibility(envelope)
+        : undefined;
+      const channels = ownerVisibility
+        ? ownerVisibility.channels
+        : options.channelGrant
+          ? narrowGrantToEnvelope(options.channelGrant(), {
+              connectors: envelope.scope.raw_connectors,
+              scopes: envelope.scope.memory_scopes,
+            })
+          : undefined;
+      if (
+        !observationModule.isObservationVersionVisible(options.memoryDb, req.params.observationId, {
+          principalId: envelope.scope.principal_id,
+          agentId: envelope.agent_id,
+          scopes: visibility.scopes,
+          connectors: ownerVisibility ? [ownerVisibility.connector] : visibility.connectors,
+          channels,
+        })
+      ) {
+        res.status(404).json({ error: true, code: 'observation_not_found' });
+        return;
+      }
+      const result = observationModule.readObservationVersion(
+        options.memoryDb,
+        req.params.observationId,
+        options.rawStore
+          ? {
+              readVersion: ({ connectorName, revisionSourceId, expectedContentHash }) =>
+                options.rawStore!.readVersion(connectorName, revisionSourceId, expectedContentHash),
+            }
+          : undefined
+      );
+      if (result.status === 'not_found') {
+        res.status(404).json({ error: true, code: 'observation_not_found' });
+        return;
+      }
+      if (result.status === 'version_unavailable') {
+        res.status(409).json({ error: true, code: result.reason });
+        return;
+      }
+      res.json(result);
+    } catch (err) {
+      sendRawError(res, err);
+    }
+  });
+  return router;
+}
+
+function signedOwnerObservationVisibility(envelope: ReturnType<typeof loadWorkerEnvelope>): {
+  connector: string;
+  channels: Record<string, readonly string[]>;
+} {
+  const principalId = envelope.scope.principal_id?.trim();
+  const channelId = envelope.channel_id?.trim();
+  if (!principalId || !channelId || !envelope.agent_id.trim()) {
+    throw new WorkerEnvelopeError(
+      403,
+      'owner_observation_authority_required',
+      'Owner observation access requires signed source, channel, principal, and agent authority.'
+    );
+  }
+  const connector = envelope.source;
+  const stripped = channelId.startsWith(`${connector}:`)
+    ? channelId.slice(connector.length + 1)
+    : channelId;
+  return { connector, channels: { [connector]: [...new Set([channelId, stripped])] } };
 }
 
 export function createAgentRawRouter(options: AgentRawRouterOptions): Router {
@@ -310,6 +496,19 @@ function firstString(value: unknown): string | undefined {
     return typeof first === 'string' ? first : undefined;
   }
   return typeof value === 'string' ? value : undefined;
+}
+
+function parseOptionalTime(value: unknown, name: string): number | undefined {
+  const input = firstString(value)?.trim();
+  if (!input) {
+    return undefined;
+  }
+  const numeric = Number(input);
+  const parsed = Number.isFinite(numeric) ? numeric : Date.parse(input);
+  if (!Number.isFinite(parsed)) {
+    throw new WorkerEnvelopeError(400, 'raw_time_invalid', `${name} must be a timestamp.`);
+  }
+  return Math.floor(parsed);
 }
 
 function stringValues(value: unknown): string[] {

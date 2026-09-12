@@ -59,11 +59,15 @@ export function normalizeContextRef(input: unknown): ContextRef {
       };
       const sourceId = optionalString(record.source_id, 'source_id');
       const channelId = optionalNullableString(record.channel_id, 'channel_id');
+      const observationRef = optionalNullableString(record.observation_ref, 'observation_ref');
       if (sourceId !== undefined) {
         normalized.source_id = sourceId;
       }
       if (channelId !== undefined) {
         normalized.channel_id = channelId;
+      }
+      if (observationRef !== undefined) {
+        normalized.observation_ref = observationRef;
       }
       return normalized;
     }

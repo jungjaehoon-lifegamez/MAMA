@@ -32,6 +32,7 @@ export const LEDGER_EFFECT_TOOLS = new Set([
   'task_reclassify',
   'mama_save',
   'mama_update',
+  'registry_correct',
   'drive_upload',
   'wiki_publish',
   'report_publish',
@@ -63,9 +64,11 @@ function parseObject(value: unknown): Record<string, unknown> | null {
 }
 
 function successfulResult(value: unknown, isError: boolean | undefined): boolean {
-  if (isError === true) return false;
+  if (isError === true) {
+    return false;
+  }
   const parsed = parseObject(value);
-  return parsed?.success !== false && parsed?.code !== 'envelope_missing';
+  return parsed?.success === true && parsed.code !== 'envelope_missing';
 }
 
 function nestedHostTools(value: unknown): string[] {

@@ -116,6 +116,49 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ success: boolean; id?: string; created?: boolean; code?: string }',
     category: 'memory',
   },
+  {
+    name: 'registry_correct',
+    description:
+      'Apply one explicit identity correction under the current signed scopes and expected identity revision. The agent chooses add_alias, merge, split, or assign_refs and supplies observation evidence when available; the host validates authority, CAS, and atomic commit.',
+    params: [
+      { name: 'command_id', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+      {
+        name: 'operation',
+        type: "'add_alias' | 'merge' | 'split' | 'assign_refs'",
+        required: true,
+      },
+      { name: 'reason', type: 'string', required: true },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+      { name: 'node_id', type: 'string', required: false },
+      { name: 'alias', type: 'string', required: false },
+      { name: 'survivor_id', type: 'string', required: false },
+      { name: 'member_ids', type: 'string[]', required: false },
+      { name: 'parent_id', type: 'string', required: false },
+      {
+        name: 'children',
+        type: 'Array<{ client_key?: string; name: string; aliases?: string[] }>',
+        required: false,
+      },
+      {
+        name: 'assignments',
+        type: "Array<{ edge_id: string; endpoint: 'from' | 'to'; target_node_id?: string | null; target_client_key?: string }>",
+        required: false,
+      },
+      {
+        name: 'evidence',
+        type: "Array<{ kind: 'observation'; id: string }>",
+        required: false,
+      },
+    ],
+    returnType:
+      '{ success: boolean; commandId?: string; identityRevision?: number; code?: string }',
+    category: 'memory',
+  },
   // Memory
   {
     name: 'mama_search',
@@ -1285,6 +1328,7 @@ export function isCodeActMutatingTool(toolName: string): boolean {
 export const MEMORY_WRITE_TOOLS = new Set([
   // Declaring identity is a memory write: it changes what every later record joins on.
   'registry_upsert',
+  'registry_correct',
   'procedure_update',
   'procedure_retire',
   'procedure_observe',

@@ -237,7 +237,7 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     expect(row.lines.filter((l) => l === '')).toEqual([]); // never padded (review: positional zip)
   });
 
-  it('TG-05 keeps distinct 200/166-event semantic batches while showing 10 lines each', async () => {
+  it('TG-05 splits 200/166-event groups into four bounded batches without loss', async () => {
     const inbox = new OwnerEventInbox(db);
     const batches = [200, 166].map((count, batchIndex) =>
       Array.from({ length: count }, (_, i) => ({
@@ -273,15 +273,31 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     });
 
     await loop.tick();
-    const first = inbox.claimNext()!;
-    expect(first.eventIds).toHaveLength(200);
-    expect(first.lines).toHaveLength(10);
-    inbox.ack(first.id);
+    const firstChunks = [];
+    for (let index = 0; index < 4; index += 1) {
+      const chunk = inbox.claimNext()!;
+      firstChunks.push(chunk);
+      inbox.ack(chunk.id);
+    }
+    expect(firstChunks.map((chunk) => chunk.eventIds.length)).toEqual([50, 50, 50, 50]);
     await loop.tick();
-    const second = inbox.claimNext()!;
-    expect(second.eventIds).toHaveLength(166);
-    expect(second.lines).toHaveLength(10);
-    expect(new Set([...first.eventIds, ...second.eventIds]).size).toBe(366);
+    const secondChunks = [];
+    for (let index = 0; index < 4; index += 1) {
+      const chunk = inbox.claimNext()!;
+      secondChunks.push(chunk);
+      inbox.ack(chunk.id);
+    }
+    expect(secondChunks.map((chunk) => chunk.eventIds.length)).toEqual([50, 50, 50, 16]);
+    for (const chunk of [...firstChunks, ...secondChunks]) {
+      expect(chunk.lines).toHaveLength(10);
+      expect(chunk.eventRefs).toHaveLength(chunk.eventIds.length);
+      expect(chunk.lines.map((line) => /\[id:([^\]]+)\]/.exec(line)?.[1])).toEqual(
+        chunk.eventIds.slice(-10)
+      );
+    }
+    expect(new Set([...firstChunks, ...secondChunks].flatMap((chunk) => chunk.eventIds)).size).toBe(
+      366
+    );
   });
 
   it('groups per channel and enqueues each group with full event identity', async () => {

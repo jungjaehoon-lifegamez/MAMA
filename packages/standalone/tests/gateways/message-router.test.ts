@@ -5,6 +5,7 @@
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import {
@@ -40,6 +41,7 @@ import {
 import { withOwnerPrincipal } from './helpers/principal-fixture.js';
 import { wrapUntrustedContent } from '../../src/utils/untrusted-content.js';
 import { FileOwnerRuntimeJournal } from '../../src/operator/owner-runtime-journal.js';
+import { getChannelHistory } from '../../src/gateways/channel-history.js';
 
 const originalHome = process.env.HOME;
 const testHome = mkdtempSync(join(tmpdir(), 'mama-message-router-'));
@@ -151,6 +153,397 @@ describe('MessageRouter', () => {
   });
 
   describe('process()', () => {
+    it('TG-05 persists owner input and completed-result observation refs on the conversation turn', async () => {
+      let sequence = 0;
+      const prompts: string[] = [];
+      const runOptions: AgentLoopOptions[] = [];
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (prompt: string, options?: AgentLoopOptions) => {
+            prompts.push(prompt);
+            if (options) {
+              runOptions.push(options);
+            }
+            return { response: 'captured response', modelRunId: 'model-run-1' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        {},
+        undefined,
+        undefined,
+        { recordInlineObservation: () => `obs_${++sequence}` }
+      );
+      const result = await processFixtureMessage(customRouter, {
+        source: 'telegram',
+        channelId: 'synthetic-owner-observation',
+        userId: 'synthetic-owner',
+        text: 'captured input',
+        metadata: { messageId: 'm1' },
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:synthetic-owner',
+          consoleEligible: true,
+        },
+      });
+      const session = sessionStore.getById(result.sessionId);
+      const history = JSON.parse(session!.context) as Array<{
+        sourceObservationRef?: string;
+        resultObservationRef?: string;
+      }>;
+      expect(history.at(-1)).toMatchObject({
+        sourceObservationRef: 'obs_1',
+        resultObservationRef: 'obs_2',
+      });
+      expect(prompts[0]).toContain('observation_ref=obs_1');
+      expect(runOptions[0]?.observationRefs).toEqual([{ eventId: 'm1', observationRef: 'obs_1' }]);
+    });
+
+    it('TG-05 reopens a durable session and processes one owner delivery exactly once', async () => {
+      const core = await import('@jungjaehoon/mama-core');
+      const testUtils = await import('@jungjaehoon/mama-core/test-utils');
+      const corePath = await testUtils.initTestDB('message-router-observation-replay');
+      const dir = mkdtempSync(join(tmpdir(), 'mama-message-replay-'));
+      const sessionPath = join(dir, 'sessions.db');
+      const run = vi.fn(async () => ({ response: 'durable response', modelRunId: 'run-durable' }));
+      const recordInlineObservation = (
+        input: Parameters<
+          NonNullable<ConstructorParameters<typeof MessageRouter>[6]['recordInlineObservation']>
+        >[0]
+      ): string => {
+        const candidate = {
+          ...input,
+          contentHash: createHash('sha256').update(input.body, 'utf8').digest('hex'),
+          producerVersionId: input.sourceId,
+        };
+        const id = core.observationVersionId(candidate);
+        const existing = core.getObservationVersion(core.getAdapter(), id);
+        return core.appendObservationVersion(core.getAdapter(), {
+          ...candidate,
+          observedAt: existing?.observedAt ?? candidate.observedAt,
+        }).observationId;
+      };
+      const readInlineObservationByIdentity = (input: {
+        sourceConnector: string;
+        sourceId: string;
+        producerVersionId: string;
+      }) => {
+        const id = core.observationVersionId({
+          ...input,
+          body: '',
+          observedAt: 0,
+          contentHash: '',
+        });
+        const observation = core.getObservationVersion(core.getAdapter(), id);
+        return observation?.body === null || observation === null
+          ? null
+          : { observationRef: observation.observationId, body: observation.body };
+      };
+      const message: NormalizedMessage = {
+        source: 'telegram',
+        channelId: 'synthetic-durable-channel',
+        userId: 'synthetic-owner',
+        text: 'process this once',
+        metadata: { messageId: 'durable-message-1' },
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:synthetic-owner',
+          principalId: 'principal-durable-owner',
+          consoleEligible: true,
+        },
+      };
+      try {
+        const firstStore = new SessionStore(new Database(sessionPath));
+        const firstRouter = new MessageRouter(
+          firstStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          { recordInlineObservation, readInlineObservationByIdentity }
+        );
+        const first = await processFixtureMessage(firstRouter, message);
+        firstStore.close();
+
+        const reopenedStore = new SessionStore(new Database(sessionPath));
+        const reopenedRouter = new MessageRouter(
+          reopenedStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          { recordInlineObservation, readInlineObservationByIdentity }
+        );
+        const replay = await processFixtureMessage(reopenedRouter, message);
+        expect(replay.response).toBe(first.response);
+        expect(run).toHaveBeenCalledTimes(1);
+        await expect(
+          processFixtureMessage(reopenedRouter, {
+            ...message,
+            text: 'changed payload under the same platform id',
+          })
+        ).rejects.toThrow('Owner message replay conflicts with persisted immutable input');
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(
+          core
+            .getAdapter()
+            .prepare(
+              `SELECT source_connector, COUNT(*) AS count FROM observation_versions
+               WHERE source_connector LIKE 'owner-%' GROUP BY source_connector
+               ORDER BY source_connector`
+            )
+            .all()
+        ).toEqual([
+          { source_connector: 'owner-message:telegram', count: 1 },
+          { source_connector: 'owner-result:telegram', count: 1 },
+        ]);
+        expect(reopenedStore.getHistory(replay.sessionId)).toMatchObject([
+          {
+            state: 'final',
+            sourceMessageRef: 'telegram:synthetic-durable-channel:durable-message-1',
+            sourceObservationRef: expect.stringMatching(/^obs_/),
+            resultObservationRef: expect.stringMatching(/^obs_/),
+          },
+        ]);
+        reopenedStore.close();
+      } finally {
+        await testUtils.cleanupTestDB(corePath);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('TG-05 finalizes a committed result observation after a crash without rerunning the model', async () => {
+      const core = await import('@jungjaehoon/mama-core');
+      const testUtils = await import('@jungjaehoon/mama-core/test-utils');
+      const corePath = await testUtils.initTestDB('message-router-result-finalize-replay');
+      const dir = mkdtempSync(join(tmpdir(), 'mama-result-finalize-replay-'));
+      const sessionPath = join(dir, 'sessions.db');
+      const run = vi.fn(async () => ({
+        response: 'result committed before finalize',
+        modelRunId: 'run-result-finalize',
+      }));
+      const recordInlineObservation = (
+        input: Parameters<
+          NonNullable<ConstructorParameters<typeof MessageRouter>[6]['recordInlineObservation']>
+        >[0]
+      ): string => {
+        const candidate = {
+          ...input,
+          contentHash: createHash('sha256').update(input.body, 'utf8').digest('hex'),
+          producerVersionId: input.sourceId,
+        };
+        const id = core.observationVersionId(candidate);
+        const existing = core.getObservationVersion(core.getAdapter(), id);
+        return core.appendObservationVersion(core.getAdapter(), {
+          ...candidate,
+          observedAt: existing?.observedAt ?? candidate.observedAt,
+        }).observationId;
+      };
+      const readInlineObservationByIdentity = (input: {
+        sourceConnector: string;
+        sourceId: string;
+        producerVersionId: string;
+      }) => {
+        const id = core.observationVersionId({
+          ...input,
+          body: '',
+          observedAt: 0,
+          contentHash: '',
+        });
+        const observation = core.getObservationVersion(core.getAdapter(), id);
+        return observation?.body === null || observation === null
+          ? null
+          : { observationRef: observation.observationId, body: observation.body };
+      };
+      const message: NormalizedMessage = {
+        source: 'telegram',
+        channelId: 'synthetic-finalize-channel',
+        userId: 'synthetic-owner',
+        text: 'survive finalize crash',
+        metadata: { messageId: 'finalize-message-1' },
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:synthetic-owner',
+          principalId: 'principal-finalize-owner',
+          consoleEligible: true,
+        },
+      };
+      try {
+        const firstStore = new SessionStore(new Database(sessionPath));
+        const realFinalize = firstStore.finalizeTurn.bind(firstStore);
+        let failFinalize = true;
+        firstStore.finalizeTurn = (...args) => {
+          if (failFinalize) {
+            failFinalize = false;
+            throw new Error('synthetic finalize crash');
+          }
+          return realFinalize(...args);
+        };
+        const firstRouter = new MessageRouter(
+          firstStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          { recordInlineObservation, readInlineObservationByIdentity }
+        );
+        await expect(processFixtureMessage(firstRouter, message)).rejects.toThrow(
+          'synthetic finalize crash'
+        );
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(
+          core
+            .getAdapter()
+            .prepare(
+              "SELECT COUNT(*) AS count FROM observation_versions WHERE source_connector LIKE 'owner-%'"
+            )
+            .get()
+        ).toEqual({ count: 2 });
+        firstStore.close();
+
+        const reopenedStore = new SessionStore(new Database(sessionPath));
+        const replayRouter = new MessageRouter(
+          reopenedStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          { recordInlineObservation, readInlineObservationByIdentity }
+        );
+        const replay = await processFixtureMessage(replayRouter, message);
+        expect(replay.response).toBe('result committed before finalize');
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(
+          core
+            .getAdapter()
+            .prepare(
+              "SELECT COUNT(*) AS count FROM observation_versions WHERE source_connector LIKE 'owner-%'"
+            )
+            .get()
+        ).toEqual({ count: 2 });
+        expect(reopenedStore.getHistory(replay.sessionId)).toMatchObject([{ state: 'final' }]);
+        reopenedStore.close();
+      } finally {
+        await testUtils.cleanupTestDB(corePath);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('TG-05 recovers a committed result after channel history fails before session staging', async () => {
+      const core = await import('@jungjaehoon/mama-core');
+      const testUtils = await import('@jungjaehoon/mama-core/test-utils');
+      const corePath = await testUtils.initTestDB('message-router-result-prestage-replay');
+      const dir = mkdtempSync(join(tmpdir(), 'mama-result-prestage-replay-'));
+      const sessionPath = join(dir, 'sessions.db');
+      const run = vi
+        .fn()
+        .mockResolvedValueOnce({ response: 'committed result body' })
+        .mockResolvedValueOnce({ response: 'different reproduced body' });
+      const recordInlineObservation = (
+        input: Parameters<
+          NonNullable<ConstructorParameters<typeof MessageRouter>[6]['recordInlineObservation']>
+        >[0]
+      ): string => {
+        const candidate = {
+          ...input,
+          contentHash: createHash('sha256').update(input.body, 'utf8').digest('hex'),
+          producerVersionId: input.sourceId,
+        };
+        const id = core.observationVersionId(candidate);
+        const existing = core.getObservationVersion(core.getAdapter(), id);
+        return core.appendObservationVersion(core.getAdapter(), {
+          ...candidate,
+          observedAt: existing?.observedAt ?? candidate.observedAt,
+        }).observationId;
+      };
+      const readCommittedResult = (input: {
+        sourceConnector: string;
+        sourceId: string;
+        producerVersionId: string;
+      }) => {
+        const id = core.observationVersionId({
+          ...input,
+          body: '',
+          observedAt: 0,
+          contentHash: '',
+        });
+        const observation = core.getObservationVersion(core.getAdapter(), id);
+        return observation?.body === null || observation === null
+          ? null
+          : { observationRef: observation.observationId, body: observation.body };
+      };
+      const message: NormalizedMessage = {
+        source: 'telegram',
+        channelId: 'synthetic-prestage-channel',
+        userId: 'synthetic-owner',
+        text: 'recover committed result',
+        metadata: { messageId: 'prestage-message-1' },
+        principal: {
+          class: 'owner',
+          lane: 'owner',
+          canonicalId: 'telegram:global:synthetic-owner',
+          principalId: 'principal-prestage-owner',
+          consoleEligible: true,
+        },
+      };
+      try {
+        const firstStore = new SessionStore(new Database(sessionPath));
+        const channelHistory = getChannelHistory();
+        if (!channelHistory) {
+          throw new Error('Channel history test fixture is unavailable');
+        }
+        const historyFailure = vi.spyOn(channelHistory, 'record').mockImplementationOnce(() => {
+          throw new Error('synthetic channel history crash');
+        });
+        const firstRouter = new MessageRouter(
+          firstStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          {
+            recordInlineObservation,
+            readInlineObservationByIdentity: readCommittedResult,
+          }
+        );
+        await expect(processFixtureMessage(firstRouter, message)).rejects.toThrow(
+          'synthetic channel history crash'
+        );
+        historyFailure.mockRestore();
+        firstStore.close();
+
+        const reopenedStore = new SessionStore(new Database(sessionPath));
+        const replayRouter = new MessageRouter(
+          reopenedStore,
+          { run },
+          createMockMamaApi(mockDecisions),
+          {},
+          undefined,
+          undefined,
+          {
+            recordInlineObservation,
+            readInlineObservationByIdentity: readCommittedResult,
+          }
+        );
+        const replay = await processFixtureMessage(replayRouter, message);
+        expect(replay.response).toBe('committed result body');
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(reopenedStore.getHistory(replay.sessionId)).toMatchObject([{ state: 'final' }]);
+        reopenedStore.close();
+      } finally {
+        await testUtils.cleanupTestDB(corePath);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('directs blocked gateway credentials to supported local configuration paths', async () => {
       const result = await processFixtureMessage(router, {
         source: 'slack',

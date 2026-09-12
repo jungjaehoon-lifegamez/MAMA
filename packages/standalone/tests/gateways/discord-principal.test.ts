@@ -208,11 +208,12 @@ describe('Discord ingress principal admission', () => {
       }),
     };
     const principalResolver = vi.fn().mockReturnValue({
-      principalId: 'registry-member-principal',
-      kind: 'member',
+      principalId: 'registry-owner-principal',
+      kind: 'owner',
       status: 'active',
     });
-    makeGateway(turnProcessor, principalResolver);
+    const gateway = makeGateway(turnProcessor, principalResolver);
+    await gateway.start();
     const message = makeMessage({ userId: 'owner-user', messageId: 'message-2' });
 
     await deliver(message);
@@ -222,11 +223,13 @@ describe('Discord ingress principal admission', () => {
       class: 'owner',
       lane: 'owner',
       canonicalId: 'discord:guild-principal:owner-user',
+      principalId: 'registry-owner-principal',
       consoleEligible: false,
     });
     expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
     expect(seams.downloadFile).toHaveBeenCalledTimes(1);
-    expect(principalResolver).not.toHaveBeenCalled();
+    expect(principalResolver).toHaveBeenCalledWith('discord', 'guild-principal', 'owner-user');
+    expect(principalResolver).toHaveBeenCalledWith('discord', 'direct', 'owner-user');
   });
 
   it('admits an active member with the guild namespace to the public lane', async () => {

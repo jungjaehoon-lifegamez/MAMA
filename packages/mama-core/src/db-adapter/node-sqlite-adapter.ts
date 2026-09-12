@@ -639,6 +639,31 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       .filter((file) => file.endsWith('.sql'))
       .sort();
 
+    if (
+      currentVersion >= 72 &&
+      this.tableExists('connector_event_index') &&
+      fs.existsSync(path.join(migrationsDir, '072-observation-versions.sql')) &&
+      this.needsObservationVersionsRepair072()
+    ) {
+      this.recoverObservationVersionsMigration072();
+    }
+    if (
+      currentVersion >= 73 &&
+      this.tableExists('registry_nodes') &&
+      fs.existsSync(path.join(migrationsDir, '073-registry-corrections.sql')) &&
+      this.needsRegistryCorrectionsRepair073()
+    ) {
+      this.recoverRegistryCorrectionsMigration073(migrationsDir);
+    }
+    if (
+      currentVersion >= 74 &&
+      this.tableExists('twin_edges') &&
+      fs.existsSync(path.join(migrationsDir, '074-work-graph-ref-kinds.sql')) &&
+      this.needsWorkGraphRefsRepair074()
+    ) {
+      this.recoverWorkGraphRefsMigration074();
+    }
+
     for (const file of migrationFiles) {
       const versionMatch = file.match(/^(\d+)-/);
       if (!versionMatch) {
@@ -675,6 +700,30 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
         this.recoverServiceOperationOriginsMigration071();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      if (version === 72) {
+        if (!this.tableExists('connector_event_index')) {
+          continue;
+        }
+        this.recoverObservationVersionsMigration072();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      if (version === 73) {
+        this.recoverRegistryCorrectionsMigration073(migrationsDir);
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      if (version === 74) {
+        if (!this.tableExists('twin_edges')) {
+          continue;
+        }
+        this.recoverWorkGraphRefsMigration074();
         info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
         continue;
       }
@@ -851,6 +900,32 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       this.recoverServiceOperationOriginsMigration071();
     }
 
+    if (
+      fs.existsSync(path.join(migrationsDir, '072-observation-versions.sql')) &&
+      this.tableExists('connector_event_index') &&
+      this.needsObservationVersionsRepair072()
+    ) {
+      this.recoverObservationVersionsMigration072();
+      info('[node-sqlite-adapter] Repaired skipped observation versions migration');
+    }
+
+    if (
+      fs.existsSync(path.join(migrationsDir, '073-registry-corrections.sql')) &&
+      this.needsRegistryCorrectionsRepair073()
+    ) {
+      this.recoverRegistryCorrectionsMigration073(migrationsDir);
+      info('[node-sqlite-adapter] Repaired skipped registry corrections migration');
+    }
+
+    if (
+      fs.existsSync(path.join(migrationsDir, '074-work-graph-ref-kinds.sql')) &&
+      this.tableExists('twin_edges') &&
+      this.needsWorkGraphRefsRepair074()
+    ) {
+      this.recoverWorkGraphRefsMigration074();
+      info('[node-sqlite-adapter] Repaired skipped work graph ref migration');
+    }
+
     if (this.tableExists('connector_event_index')) {
       const connectorColumns = this.tableColumns('connector_event_index');
       const hasMissingConnectorScopeColumn = [
@@ -921,6 +996,26 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     if (!this.tableExists('twin_edges')) {
       this.applyRepairMigration(migrationsDir, '035-create-twin-edges.sql', 'twin edge ledger');
+    }
+
+    if (
+      this.tableExists('connector_event_index') &&
+      fs.existsSync(path.join(migrationsDir, '072-observation-versions.sql')) &&
+      this.needsObservationVersionsRepair072()
+    ) {
+      this.recoverObservationVersionsMigration072();
+    }
+    if (
+      fs.existsSync(path.join(migrationsDir, '073-registry-corrections.sql')) &&
+      this.needsRegistryCorrectionsRepair073()
+    ) {
+      this.recoverRegistryCorrectionsMigration073(migrationsDir);
+    }
+    if (
+      fs.existsSync(path.join(migrationsDir, '074-work-graph-ref-kinds.sql')) &&
+      this.needsWorkGraphRefsRepair074()
+    ) {
+      this.recoverWorkGraphRefsMigration074();
     }
 
     if (
@@ -1675,6 +1770,1012 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_traces'"
     ).get() as { sql?: string } | undefined;
     return row?.sql ?? '';
+  }
+
+  private tableSql(name: string): string {
+    const row = this.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?").get(
+      name
+    ) as { sql?: string } | undefined;
+    if (!row?.sql) {
+      throw new Error(`Missing CREATE TABLE definition for ${name}`);
+    }
+    return row.sql;
+  }
+
+  private storedObjectsForTable(
+    table: string,
+    excludedIndexes: ReadonlySet<string> = new Set()
+  ): { indexes: string[]; triggers: string[] } {
+    const indexes = (
+      this.prepare(
+        "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name = ? AND sql IS NOT NULL"
+      ).all(table) as Array<{ name: string; sql: string }>
+    )
+      .filter((row) => !excludedIndexes.has(row.name))
+      .map((row) => row.sql);
+    const triggers = (
+      this.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name = ? AND sql IS NOT NULL"
+      ).all(table) as Array<{ sql: string }>
+    ).map((row) => row.sql);
+    return { indexes, triggers };
+  }
+
+  private tablesInForeignKeyGraph(parent: string): string[] {
+    const graph = new Set<string>([parent]);
+    const tables = this.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).all() as Array<{ name: string }>;
+    for (const { name } of tables) {
+      const refs = this.prepare('SELECT "table" AS ref FROM pragma_foreign_key_list(?)').all(
+        name
+      ) as Array<{ ref?: string }>;
+      if (refs.some((ref) => ref.ref === parent)) {
+        graph.add(name);
+      }
+    }
+    return [...graph];
+  }
+
+  private observationVersionsShape072(): boolean {
+    if (!this.tableExists('observation_versions')) {
+      return false;
+    }
+    const required = [
+      'observation_id',
+      'source_connector',
+      'source_id',
+      'producer_version_id',
+      'body',
+      'body_location_json',
+      'author',
+      'source_at',
+      'observed_at',
+      'content_hash',
+      'metadata_json',
+      'scope_json',
+    ];
+    const columns = this.tableColumns('observation_versions');
+    const clauses = splitCreateTableClauses(this.tableSql('observation_versions'));
+    const columnClauses = new Map(
+      clauses
+        .filter((clause) => !clauseIsTableConstraint(clause))
+        .map((clause) => [clauseColumnName(clause), normalizeSqlText(clause)])
+    );
+    const bodyXor = normalizeSqlText(
+      'CHECK ((body IS NOT NULL AND body_location_json IS NULL) OR ' +
+        '(body IS NULL AND body_location_json IS NOT NULL))'
+    );
+    const columnInfo = new Map(
+      (
+        this.prepare('PRAGMA table_info(observation_versions)').all() as Array<{
+          name: string;
+          type: string;
+          notnull: number;
+          pk: number;
+        }>
+      ).map((column) => [column.name, column])
+    );
+    const eventColumns = this.tableColumns('connector_event_index');
+    const eventColumnInfo = new Map(
+      (
+        this.prepare('PRAGMA table_info(connector_event_index)').all() as Array<{
+          name: string;
+          type: string;
+          notnull: number;
+        }>
+      ).map((column) => [column.name, column])
+    );
+    const eventColumnClauses = new Map(
+      splitCreateTableClauses(this.tableSql('connector_event_index'))
+        .filter((clause) => !clauseIsTableConstraint(clause))
+        .map((clause) => [clauseColumnName(clause), normalizeSqlText(clause)])
+    );
+    const currentObservationDef = normalizeSqlText(
+      'current_observation_id TEXT REFERENCES observation_versions(observation_id)'
+    );
+    const eventFks = this.prepare(
+      'SELECT "from" AS from_col, "table" AS target, "to" AS to_col FROM pragma_foreign_key_list(?)'
+    ).all('connector_event_index') as Array<{
+      from_col: string;
+      target: string;
+      to_col: string;
+    }>;
+    return (
+      required.every((column) => columns.has(column)) &&
+      required.every((column) => {
+        const expected = ['source_at', 'observed_at'].includes(column) ? 'INTEGER' : 'TEXT';
+        return columnInfo.get(column)?.type.toUpperCase() === expected;
+      }) &&
+      columnInfo.get('observation_id')?.pk === 1 &&
+      [
+        'source_connector',
+        'source_id',
+        'observed_at',
+        'content_hash',
+        'metadata_json',
+        'scope_json',
+      ].every((column) => columnInfo.get(column)?.notnull === 1) &&
+      columnClauses.get('source_connector') ===
+        normalizeSqlText(
+          'source_connector TEXT NOT NULL CHECK (length(trim(source_connector)) > 0)'
+        ) &&
+      columnClauses.get('source_id') ===
+        normalizeSqlText('source_id TEXT NOT NULL CHECK (length(trim(source_id)) > 0)') &&
+      columnClauses.get('content_hash') ===
+        normalizeSqlText('content_hash TEXT NOT NULL CHECK (length(trim(content_hash)) > 0)') &&
+      clauses.some((clause) => normalizeSqlText(clause) === bodyXor) &&
+      eventColumns.has('current_observation_id') &&
+      eventColumnInfo.get('current_observation_id')?.type.toUpperCase() === 'TEXT' &&
+      eventColumnInfo.get('current_observation_id')?.notnull === 0 &&
+      eventColumnClauses.get('current_observation_id') === currentObservationDef &&
+      eventFks.some(
+        (fk) =>
+          fk.from_col === 'current_observation_id' &&
+          fk.target === 'observation_versions' &&
+          fk.to_col === 'observation_id'
+      ) &&
+      this.indexExists('observation_source_versions') &&
+      normalizeSqlText(this.indexSql('observation_source_versions')).includes(
+        'onobservation_versions(source_connector,source_id,observed_at,observation_id)'
+      )
+    );
+  }
+
+  private needsObservationVersionsRepair072(): boolean {
+    return !this.observationVersionsShape072() || !this.schemaVersionExists(72);
+  }
+
+  private recoverObservationVersionsMigration072(): void {
+    if (!this.tableExists('connector_event_index')) {
+      throw new Error('Migration 072 recovery failed: missing connector_event_index');
+    }
+    if (this.observationVersionsShape072()) {
+      this.transaction(() => {
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(72, 'Immutable connector and owner observation versions');
+      });
+      return;
+    }
+
+    const canonical = new Map<string, string>([
+      ['observation_id', 'observation_id TEXT PRIMARY KEY'],
+      [
+        'source_connector',
+        'source_connector TEXT NOT NULL CHECK (length(trim(source_connector)) > 0)',
+      ],
+      ['source_id', 'source_id TEXT NOT NULL CHECK (length(trim(source_id)) > 0)'],
+      ['producer_version_id', 'producer_version_id TEXT'],
+      ['body', 'body TEXT'],
+      ['body_location_json', 'body_location_json TEXT'],
+      ['author', 'author TEXT'],
+      ['source_at', 'source_at INTEGER'],
+      ['observed_at', 'observed_at INTEGER NOT NULL'],
+      ['content_hash', 'content_hash TEXT NOT NULL CHECK (length(trim(content_hash)) > 0)'],
+      ['metadata_json', 'metadata_json TEXT NOT NULL'],
+      ['scope_json', 'scope_json TEXT NOT NULL'],
+    ]);
+    let existingNames: string[] = [];
+    let columnDefs = [...canonical.values()];
+    let constraints = [
+      'CHECK ((body IS NOT NULL AND body_location_json IS NULL) OR ' +
+        '(body IS NULL AND body_location_json IS NOT NULL))',
+    ];
+    const bodyXor = normalizeSqlText(constraints[0]);
+    let objects = { indexes: [] as string[], triggers: [] as string[] };
+    if (this.tableExists('observation_versions')) {
+      const clauses = splitCreateTableClauses(this.tableSql('observation_versions'));
+      if (clauses.length === 0) {
+        throw new Error('Migration 072 recovery failed: unreadable observation_versions');
+      }
+      const columns = clauses.filter((clause) => !clauseIsTableConstraint(clause));
+      existingNames = columns.map(clauseColumnName);
+      const missing = [...canonical.keys()].filter((name) => !existingNames.includes(name));
+      const count = (
+        this.prepare('SELECT COUNT(*) AS count FROM observation_versions').get() as {
+          count: number;
+        }
+      ).count;
+      if (missing.length > 0 && count > 0) {
+        throw new Error(
+          `Migration 072 cannot preserve populated rows missing columns: ${missing.join(', ')}`
+        );
+      }
+      for (const clause of columns) {
+        const name = clauseColumnName(clause);
+        if (!canonical.has(name)) {
+          continue;
+        }
+        const normalized = normalizeSqlText(clause);
+        const expected = normalizeSqlText(canonical.get(name) as string);
+        const legacyExpected = normalizeSqlText(
+          name === 'observation_id'
+            ? 'observation_id TEXT PRIMARY KEY'
+            : [
+                  'source_connector',
+                  'source_id',
+                  'observed_at',
+                  'content_hash',
+                  'metadata_json',
+                  'scope_json',
+                ].includes(name)
+              ? `${name} ${['observed_at', 'source_at'].includes(name) ? 'INTEGER' : 'TEXT'} NOT NULL`
+              : `${name} ${name === 'source_at' ? 'INTEGER' : 'TEXT'}`
+        );
+        if (
+          normalized !== expected &&
+          normalized !== legacyExpected &&
+          /collate|generated|references|\bunique\b|\bcheck\b/i.test(clause)
+        ) {
+          throw new Error(`Migration 072 cannot safely preserve inline constraint on ${name}`);
+        }
+      }
+      const extras = columns.filter((clause) => !canonical.has(clauseColumnName(clause)));
+      columnDefs = [...canonical.values(), ...extras];
+      const customConstraints = clauses.filter(
+        (clause) =>
+          clauseIsTableConstraint(clause) &&
+          !(
+            normalizeSqlText(clause).includes('bodyisnotnullandbody_location_jsonisnull') &&
+            normalizeSqlText(clause).includes('bodyisnullandbody_location_jsonisnotnull')
+          )
+      );
+      for (const constraint of clauses.filter(clauseIsTableConstraint)) {
+        const normalizedConstraint = normalizeSqlText(constraint);
+        if (
+          (normalizedConstraint.includes('body') ||
+            normalizedConstraint.includes('body_location_json')) &&
+          normalizedConstraint !== bodyXor
+        ) {
+          throw new Error('Migration 072 cannot safely preserve conflicting body CHECK');
+        }
+      }
+      constraints = [...constraints, ...customConstraints];
+      objects = this.storedObjectsForTable(
+        'observation_versions',
+        new Set(['observation_source_versions'])
+      );
+    }
+
+    const eventFks = this.prepare(
+      'SELECT "from" AS from_col, "table" AS target, "to" AS to_col FROM pragma_foreign_key_list(?)'
+    ).all('connector_event_index') as Array<{
+      from_col: string;
+      target: string;
+      to_col: string;
+    }>;
+    const hasObservationFk = eventFks.some(
+      (fk) =>
+        fk.from_col === 'current_observation_id' &&
+        fk.target === 'observation_versions' &&
+        fk.to_col === 'observation_id'
+    );
+    const hasCurrentObservationColumn =
+      this.tableColumns('connector_event_index').has('current_observation_id');
+    const currentObservationDef = normalizeSqlText(
+      'current_observation_id TEXT REFERENCES observation_versions(observation_id)'
+    );
+    const legacyCurrentObservationDef = normalizeSqlText('current_observation_id TEXT');
+    if (hasCurrentObservationColumn) {
+      const eventClauses = splitCreateTableClauses(this.tableSql('connector_event_index'));
+      const currentClause = eventClauses.find(
+        (clause) =>
+          !clauseIsTableConstraint(clause) && clauseColumnName(clause) === 'current_observation_id'
+      );
+      const normalizedCurrentClause = currentClause ? normalizeSqlText(currentClause) : '';
+      if (
+        normalizedCurrentClause !== currentObservationDef &&
+        normalizedCurrentClause !== legacyCurrentObservationDef
+      ) {
+        throw new Error(
+          'Migration 072 cannot safely preserve inline constraint on current_observation_id'
+        );
+      }
+      if (hasObservationFk && normalizedCurrentClause !== currentObservationDef) {
+        throw new Error(
+          'Migration 072 cannot safely preserve inline constraint on current_observation_id'
+        );
+      }
+    }
+    const rebuildEventIndex = hasCurrentObservationColumn && !hasObservationFk;
+    const eventColumns: string[] = [];
+    const eventConstraints: string[] = [];
+    const eventColumnNames: string[] = [];
+    let eventObjects = { indexes: [] as string[], triggers: [] as string[] };
+    if (rebuildEventIndex) {
+      const clauses = splitCreateTableClauses(this.tableSql('connector_event_index'));
+      if (clauses.length === 0) {
+        throw new Error('Migration 072 recovery failed: unreadable connector_event_index');
+      }
+      for (const clause of clauses) {
+        if (clauseIsTableConstraint(clause)) {
+          eventConstraints.push(clause);
+          continue;
+        }
+        const name = clauseColumnName(clause);
+        eventColumnNames.push(name);
+        if (name === 'current_observation_id') {
+          if (normalizeSqlText(clause) !== legacyCurrentObservationDef) {
+            throw new Error(
+              'Migration 072 cannot safely preserve inline constraint on current_observation_id'
+            );
+          }
+          eventColumns.push(
+            'current_observation_id TEXT REFERENCES observation_versions(observation_id)'
+          );
+        } else {
+          eventColumns.push(clause);
+        }
+      }
+      eventObjects = this.storedObjectsForTable('connector_event_index');
+    }
+
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 072 recovery failed: could not disable foreign_keys');
+    }
+    try {
+      this.transaction(() => {
+        if (this.tableExists('observation_versions')) {
+          this.exec(
+            `CREATE TABLE observation_versions_072_new (\n  ${[...columnDefs, ...constraints].join(
+              ',\n  '
+            )}\n)`
+          );
+          if (existingNames.length > 0) {
+            const columns = existingNames.map(quoteSqlIdentifier).join(', ');
+            this.exec(
+              `INSERT INTO observation_versions_072_new (${columns}) SELECT ${columns} FROM observation_versions`
+            );
+          }
+          this.exec('DROP TABLE observation_versions');
+          this.exec('ALTER TABLE observation_versions_072_new RENAME TO observation_versions');
+        } else {
+          this.exec(
+            `CREATE TABLE observation_versions (\n  ${[...columnDefs, ...constraints].join(
+              ',\n  '
+            )}\n)`
+          );
+        }
+        if (!this.tableColumns('connector_event_index').has('current_observation_id')) {
+          this.exec(
+            'ALTER TABLE connector_event_index ADD COLUMN current_observation_id TEXT REFERENCES observation_versions(observation_id)'
+          );
+        } else if (rebuildEventIndex) {
+          this.exec(
+            `CREATE TABLE connector_event_index_072_new (\n  ${[
+              ...eventColumns,
+              ...eventConstraints,
+            ].join(',\n  ')}\n)`
+          );
+          const columns = eventColumnNames.map(quoteSqlIdentifier).join(', ');
+          this.exec(
+            `INSERT INTO connector_event_index_072_new (${columns}) SELECT ${columns} FROM connector_event_index`
+          );
+          this.exec('DROP TABLE connector_event_index');
+          this.exec('ALTER TABLE connector_event_index_072_new RENAME TO connector_event_index');
+          for (const sql of eventObjects.indexes) {
+            this.exec(sql);
+          }
+          for (const sql of eventObjects.triggers) {
+            this.exec(sql);
+          }
+        }
+        for (const sql of objects.indexes) {
+          this.exec(sql);
+        }
+        this.exec(
+          'CREATE INDEX observation_source_versions ON observation_versions(source_connector, source_id, observed_at, observation_id)'
+        );
+        for (const sql of objects.triggers) {
+          this.exec(sql);
+        }
+        if (!this.observationVersionsShape072()) {
+          throw new Error('Migration 072 recovery failed: incomplete observation shape');
+        }
+        for (const table of this.tablesInForeignKeyGraph('observation_versions')) {
+          if (this.prepare('SELECT 1 FROM pragma_foreign_key_check(?)').all(table).length > 0) {
+            throw new Error(
+              `Migration 072 recovery failed: foreign key violations after rebuild (${table})`
+            );
+          }
+        }
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(72, 'Immutable connector and owner observation versions');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+
+  private registryCorrectionsShape073(): boolean {
+    const expected = new Map<string, string[]>([
+      ['registry_identity_state', ['singleton', 'revision']],
+      [
+        'registry_corrections',
+        [
+          'command_id',
+          'operation',
+          'expected_revision',
+          'committed_revision',
+          'principal_id',
+          'agent_id',
+          'origin',
+          'payload_json',
+          'reason',
+          'evidence_json',
+          'scope_json',
+          'receipt_json',
+          'created_at',
+        ],
+      ],
+      [
+        'registry_ref_assignments',
+        [
+          'command_id',
+          'edge_id',
+          'endpoint',
+          'original_kind',
+          'original_id',
+          'resolved_node_id',
+          'committed_revision',
+          'created_at',
+        ],
+      ],
+    ]);
+    if (
+      !(
+        [...expected].every(
+          ([table, columns]) =>
+            this.tableExists(table) &&
+            columns.every((column) => this.tableColumns(table).has(column))
+        ) &&
+        this.indexExists('idx_registry_ref_assignments_current') &&
+        normalizeSqlText(this.indexSql('idx_registry_ref_assignments_current')).includes(
+          'onregistry_ref_assignments(edge_id,endpoint,committed_revisiondesc)'
+        )
+      )
+    ) {
+      return false;
+    }
+    const stateSql = normalizeSqlText(this.tableSql('registry_identity_state'));
+    const correctionsSql = normalizeSqlText(this.tableSql('registry_corrections'));
+    const assignmentsSql = normalizeSqlText(this.tableSql('registry_ref_assignments'));
+    const correctionClauses = splitCreateTableClauses(this.tableSql('registry_corrections'));
+    const aggregateAuthorityCheck = normalizeSqlText(
+      `CHECK (
+        (origin = 'trusted' AND principal_id IS NOT NULL AND length(trim(principal_id)) > 0
+          AND agent_id IS NOT NULL AND length(trim(agent_id)) > 0)
+        OR (origin = 'legacy_unattributed' AND principal_id IS NULL AND agent_id IS NULL)
+      )`
+    );
+    const stateRows = this.prepare(
+      'SELECT singleton, revision FROM registry_identity_state ORDER BY singleton'
+    ).all() as Array<{ singleton: number; revision: number }>;
+    const correctionInfo = new Map(
+      (
+        this.prepare('PRAGMA table_info(registry_corrections)').all() as Array<{
+          name: string;
+          type: string;
+          notnull: number;
+          pk: number;
+        }>
+      ).map((column) => [column.name, column])
+    );
+    const assignmentInfo = new Map(
+      (
+        this.prepare('PRAGMA table_info(registry_ref_assignments)').all() as Array<{
+          name: string;
+          type: string;
+          notnull: number;
+          pk: number;
+        }>
+      ).map((column) => [column.name, column])
+    );
+    const assignmentFks = this.prepare(
+      'SELECT "from" AS from_col, "table" AS target, "to" AS to_col, on_delete FROM pragma_foreign_key_list(?)'
+    ).all('registry_ref_assignments') as Array<{
+      from_col: string;
+      target: string;
+      to_col: string;
+      on_delete: string;
+    }>;
+    return (
+      stateSql.includes('singletonintegerprimarykeycheck(singleton=1)') &&
+      stateSql.includes('revisionintegernotnullcheck(revision>=0)') &&
+      stateRows.length === 1 &&
+      stateRows[0]?.singleton === 1 &&
+      Number.isSafeInteger(stateRows[0]?.revision) &&
+      (stateRows[0]?.revision ?? -1) >= 0 &&
+      correctionInfo.get('command_id')?.pk === 1 &&
+      [
+        'command_id',
+        'operation',
+        'expected_revision',
+        'committed_revision',
+        'principal_id',
+        'agent_id',
+        'origin',
+        'payload_json',
+        'reason',
+        'evidence_json',
+        'scope_json',
+        'receipt_json',
+        'created_at',
+      ].every((name) => {
+        const column = correctionInfo.get(name);
+        return ['expected_revision', 'committed_revision', 'created_at'].includes(name)
+          ? column?.type.toUpperCase() === 'INTEGER'
+          : column?.type.toUpperCase() === 'TEXT';
+      }) &&
+      [
+        'operation',
+        'expected_revision',
+        'committed_revision',
+        'origin',
+        'payload_json',
+        'reason',
+        'evidence_json',
+        'scope_json',
+        'receipt_json',
+        'created_at',
+      ].every((column) => correctionInfo.get(column)?.notnull === 1) &&
+      correctionsSql.includes("operationin('add_alias','merge','split','assign_refs')") &&
+      correctionsSql.includes('expected_revision>=0') &&
+      correctionsSql.includes('committed_revisionintegernotnullunique') &&
+      correctionsSql.includes('committed_revision>expected_revision') &&
+      correctionsSql.includes("originin('trusted','legacy_unattributed')") &&
+      correctionsSql.includes('length(trim(reason))>0') &&
+      correctionClauses.some((clause) => normalizeSqlText(clause) === aggregateAuthorityCheck) &&
+      assignmentInfo.get('command_id')?.pk === 1 &&
+      [
+        'command_id',
+        'edge_id',
+        'endpoint',
+        'original_kind',
+        'original_id',
+        'resolved_node_id',
+        'committed_revision',
+        'created_at',
+      ].every((name) => {
+        const column = assignmentInfo.get(name);
+        return ['committed_revision', 'created_at'].includes(name)
+          ? column?.type.toUpperCase() === 'INTEGER'
+          : column?.type.toUpperCase() === 'TEXT';
+      }) &&
+      assignmentInfo.get('edge_id')?.pk === 2 &&
+      assignmentInfo.get('endpoint')?.pk === 3 &&
+      [
+        'command_id',
+        'edge_id',
+        'endpoint',
+        'original_kind',
+        'original_id',
+        'committed_revision',
+        'created_at',
+      ].every((column) => assignmentInfo.get(column)?.notnull === 1) &&
+      assignmentInfo.get('resolved_node_id')?.notnull === 0 &&
+      assignmentsSql.includes("endpointin('from','to')") &&
+      assignmentFks.some(
+        (fk) =>
+          fk.from_col === 'command_id' &&
+          fk.target === 'registry_corrections' &&
+          fk.to_col === 'command_id' &&
+          fk.on_delete.toUpperCase() === 'CASCADE'
+      ) &&
+      assignmentFks.some(
+        (fk) =>
+          fk.from_col === 'resolved_node_id' && fk.target === 'registry_nodes' && fk.to_col === 'id'
+      )
+    );
+  }
+
+  private needsRegistryCorrectionsRepair073(): boolean {
+    return !this.registryCorrectionsShape073() || !this.schemaVersionExists(73);
+  }
+
+  private recoverRegistryCorrectionsMigration073(migrationsDir: string): void {
+    const tables = ['registry_identity_state', 'registry_corrections', 'registry_ref_assignments'];
+    const malformed = tables.filter(
+      (table) =>
+        this.tableExists(table) &&
+        !(
+          table === 'registry_identity_state'
+            ? ['singleton', 'revision']
+            : table === 'registry_corrections'
+              ? [
+                  'command_id',
+                  'operation',
+                  'expected_revision',
+                  'committed_revision',
+                  'principal_id',
+                  'agent_id',
+                  'origin',
+                  'payload_json',
+                  'reason',
+                  'evidence_json',
+                  'scope_json',
+                  'receipt_json',
+                  'created_at',
+                ]
+              : [
+                  'command_id',
+                  'edge_id',
+                  'endpoint',
+                  'original_kind',
+                  'original_id',
+                  'resolved_node_id',
+                  'committed_revision',
+                  'created_at',
+                ]
+        ).every((column) => this.tableColumns(table).has(column))
+    );
+    const allTablesPresent = tables.every((table) => this.tableExists(table));
+    for (const table of tables) {
+      if (!this.tableExists(table)) {
+        continue;
+      }
+      const requiredColumns =
+        table === 'registry_identity_state'
+          ? ['singleton', 'revision']
+          : table === 'registry_corrections'
+            ? [
+                'command_id',
+                'operation',
+                'expected_revision',
+                'committed_revision',
+                'principal_id',
+                'agent_id',
+                'origin',
+                'payload_json',
+                'reason',
+                'evidence_json',
+                'scope_json',
+                'receipt_json',
+                'created_at',
+              ]
+            : [
+                'command_id',
+                'edge_id',
+                'endpoint',
+                'original_kind',
+                'original_id',
+                'resolved_node_id',
+                'committed_revision',
+                'created_at',
+              ];
+      if (
+        allTablesPresent &&
+        requiredColumns.every((column) => this.tableColumns(table).has(column)) &&
+        !this.registryCorrectionsShape073()
+      ) {
+        throw new Error(
+          `Migration 073 cannot safely repair structurally incompatible table ${table}`
+        );
+      }
+    }
+    for (const table of malformed) {
+      const count = (
+        this.prepare(`SELECT COUNT(*) AS count FROM ${quoteSqlIdentifier(table)}`).get() as {
+          count: number;
+        }
+      ).count;
+      if (count > 0) {
+        throw new Error(`Migration 073 cannot safely repair populated incompatible table ${table}`);
+      }
+      const excluded =
+        table === 'registry_ref_assignments'
+          ? new Set(['idx_registry_ref_assignments_current'])
+          : new Set<string>();
+      const objects = this.storedObjectsForTable(table, excluded);
+      if (
+        objects.indexes.length > 0 ||
+        objects.triggers.length > 0 ||
+        this.tablesInForeignKeyGraph(table).length > 1 ||
+        /\b(?:check|unique|references)\b/i.test(this.tableSql(table))
+      ) {
+        throw new Error(`Migration 073 cannot safely replace incompatible table ${table}`);
+      }
+    }
+    const sql = fs.readFileSync(path.join(migrationsDir, '073-registry-corrections.sql'), 'utf8');
+    this.transaction(() => {
+      if (malformed.includes('registry_ref_assignments')) {
+        this.exec('DROP TABLE registry_ref_assignments');
+      }
+      if (malformed.includes('registry_corrections')) {
+        this.exec('DROP TABLE registry_corrections');
+      }
+      if (malformed.includes('registry_identity_state')) {
+        this.exec('DROP TABLE registry_identity_state');
+      }
+      this.exec(sql);
+      if (!this.registryCorrectionsShape073()) {
+        throw new Error('Migration 073 recovery failed: incomplete correction shape');
+      }
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        73,
+        'Atomic scoped registry correction history'
+      );
+    });
+  }
+
+  private workGraphRefsShape074(): boolean {
+    if (!this.tableExists('twin_edges')) {
+      return false;
+    }
+    const clauses = splitCreateTableClauses(this.tableSql('twin_edges'));
+    const columnClauses = new Map(
+      clauses
+        .filter((clause) => !clauseIsTableConstraint(clause))
+        .map((clause) => [clauseColumnName(clause), normalizeSqlText(clause)])
+    );
+    const exactColumns = new Map<string, string>([
+      [
+        'edge_type',
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
+      ],
+      [
+        'confidence',
+        'confidence REAL NOT NULL DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0)',
+      ],
+      ['source', "source TEXT NOT NULL CHECK (source IN ('agent','human','code'))"],
+      ['content_hash', 'content_hash BLOB NOT NULL CHECK(length(content_hash)=32)'],
+    ]);
+    const required = [
+      'edge_id',
+      'edge_type',
+      'subject_kind',
+      'subject_id',
+      'object_kind',
+      'object_id',
+      'relation_attrs_json',
+      'confidence',
+      'source',
+      'agent_id',
+      'model_run_id',
+      'envelope_hash',
+      'human_actor_id',
+      'human_actor_role',
+      'authority_scope_json',
+      'reason_classification',
+      'reason_text',
+      'evidence_refs_json',
+      'request_idempotency_key',
+      'edge_idempotency_key',
+      'content_hash',
+      'created_at',
+    ];
+    const info = new Map(
+      (
+        this.prepare('PRAGMA table_info(twin_edges)').all() as Array<{
+          name: string;
+          type: string;
+          notnull: number;
+          pk: number;
+        }>
+      ).map((column) => [column.name, column])
+    );
+    return (
+      required.every((column) => info.has(column)) &&
+      required.every((column) => {
+        const expected =
+          column === 'confidence'
+            ? 'REAL'
+            : column === 'created_at'
+              ? 'INTEGER'
+              : column === 'content_hash'
+                ? 'BLOB'
+                : 'TEXT';
+        return info.get(column)?.type.toUpperCase() === expected;
+      }) &&
+      info.get('edge_id')?.pk === 1 &&
+      [
+        'edge_type',
+        'subject_kind',
+        'subject_id',
+        'object_kind',
+        'object_id',
+        'confidence',
+        'source',
+        'content_hash',
+        'created_at',
+      ].every((column) => info.get(column)?.notnull === 1) &&
+      [...exactColumns].every(
+        ([name, definition]) => columnClauses.get(name) === normalizeSqlText(definition)
+      ) &&
+      clauses.some(
+        (clause) =>
+          !clauseIsTableConstraint(clause) &&
+          clauseColumnName(clause) === 'subject_kind' &&
+          normalizeSqlText(clause) ===
+            normalizeSqlText(
+              "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory','case','entity','report','edge','registry','observation'))"
+            )
+      ) &&
+      clauses.some(
+        (clause) =>
+          !clauseIsTableConstraint(clause) &&
+          clauseColumnName(clause) === 'object_kind' &&
+          normalizeSqlText(clause) ===
+            normalizeSqlText(
+              "object_kind TEXT NOT NULL CHECK (object_kind IN ('memory','case','entity','report','edge','raw','registry','observation'))"
+            )
+      ) &&
+      !clauses.some(
+        (clause) =>
+          clauseIsTableConstraint(clause) && /\b(?:subject_kind|object_kind)\b/i.test(clause)
+      ) &&
+      this.indexExists('idx_twin_edges_subject') &&
+      this.indexExists('idx_twin_edges_object') &&
+      this.indexExists('idx_twin_edges_model_run_id') &&
+      this.indexExists('idx_twin_edges_request_idempotency') &&
+      this.indexExists('ux_twin_edges_model_run_edge_idempotency') &&
+      normalizeSqlText(this.indexSql('idx_twin_edges_subject')).includes(
+        'ontwin_edges(subject_kind,subject_id,created_atdesc)'
+      ) &&
+      normalizeSqlText(this.indexSql('idx_twin_edges_object')).includes(
+        'ontwin_edges(object_kind,object_id,created_atdesc)'
+      ) &&
+      normalizeSqlText(this.indexSql('idx_twin_edges_model_run_id')).includes(
+        'ontwin_edges(model_run_id,created_atdesc)'
+      ) &&
+      normalizeSqlText(this.indexSql('idx_twin_edges_request_idempotency')).includes(
+        'ontwin_edges(model_run_id,request_idempotency_key,created_atdesc)wheremodel_run_idisnotnullandrequest_idempotency_keyisnotnull'
+      ) &&
+      normalizeSqlText(this.indexSql('ux_twin_edges_model_run_edge_idempotency')).includes(
+        'uniqueindexux_twin_edges_model_run_edge_idempotencyontwin_edges(model_run_id,edge_idempotency_key)wheremodel_run_idisnotnullandedge_idempotency_keyisnotnull'
+      )
+    );
+  }
+
+  private needsWorkGraphRefsRepair074(): boolean {
+    return !this.workGraphRefsShape074() || !this.schemaVersionExists(74);
+  }
+
+  private recoverWorkGraphRefsMigration074(): void {
+    if (!this.tableExists('twin_edges')) {
+      throw new Error('Migration 074 recovery failed: missing twin_edges');
+    }
+    if (this.workGraphRefsShape074()) {
+      this.transaction(() => {
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(74, 'Registry and observation work graph references');
+      });
+      return;
+    }
+    const clauses = splitCreateTableClauses(this.tableSql('twin_edges'));
+    if (clauses.length === 0) {
+      throw new Error('Migration 074 recovery failed: unreadable twin_edges');
+    }
+    const existingColumns: string[] = [];
+    const columns: string[] = [];
+    const constraints: string[] = [];
+    const subjectDef =
+      "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory','case','entity','report','edge','registry','observation'))";
+    const objectDef =
+      "object_kind TEXT NOT NULL CHECK (object_kind IN ('memory','case','entity','report','edge','raw','registry','observation'))";
+    const legacySubjectDef = normalizeSqlText(
+      "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory','case','entity','report','edge'))"
+    );
+    const legacyObjectDef = normalizeSqlText(
+      "object_kind TEXT NOT NULL CHECK (object_kind IN ('memory','case','entity','report','edge','raw'))"
+    );
+    const exactProtectedColumns = new Map<string, string>([
+      [
+        'edge_type',
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
+      ],
+      [
+        'confidence',
+        'confidence REAL NOT NULL DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0)',
+      ],
+      ['source', "source TEXT NOT NULL CHECK (source IN ('agent','human','code'))"],
+      ['content_hash', 'content_hash BLOB NOT NULL CHECK(length(content_hash)=32)'],
+    ]);
+    for (const clause of clauses) {
+      if (clauseIsTableConstraint(clause)) {
+        if (/\b(?:subject_kind|object_kind)\b/i.test(clause)) {
+          throw new Error('Migration 074 cannot safely preserve conflicting endpoint CHECK');
+        }
+        constraints.push(clause);
+        continue;
+      }
+      const name = clauseColumnName(clause);
+      existingColumns.push(name);
+      if (name === 'subject_kind') {
+        const normalizedClause = normalizeSqlText(clause);
+        if (
+          normalizedClause !== legacySubjectDef &&
+          normalizedClause !== normalizeSqlText(subjectDef)
+        ) {
+          throw new Error('Migration 074 cannot safely preserve inline constraint on subject_kind');
+        }
+        columns.push(subjectDef);
+      } else if (name === 'object_kind') {
+        const normalizedClause = normalizeSqlText(clause);
+        if (
+          normalizedClause !== legacyObjectDef &&
+          normalizedClause !== normalizeSqlText(objectDef)
+        ) {
+          throw new Error('Migration 074 cannot safely preserve inline constraint on object_kind');
+        }
+        columns.push(objectDef);
+      } else if (exactProtectedColumns.has(name)) {
+        if (
+          normalizeSqlText(clause) !== normalizeSqlText(exactProtectedColumns.get(name) as string)
+        ) {
+          throw new Error(`Migration 074 cannot safely preserve inline constraint on ${name}`);
+        }
+        columns.push(clause);
+      } else {
+        columns.push(clause);
+      }
+    }
+    const objects = this.storedObjectsForTable(
+      'twin_edges',
+      new Set([
+        'idx_twin_edges_subject',
+        'idx_twin_edges_object',
+        'idx_twin_edges_model_run_id',
+        'idx_twin_edges_request_idempotency',
+        'ux_twin_edges_model_run_edge_idempotency',
+      ])
+    );
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 074 recovery failed: could not disable foreign_keys');
+    }
+    try {
+      this.transaction(() => {
+        this.exec(
+          `CREATE TABLE twin_edges_074_new (\n  ${[...columns, ...constraints].join(',\n  ')}\n)`
+        );
+        const names = existingColumns.map(quoteSqlIdentifier).join(', ');
+        this.exec(`INSERT INTO twin_edges_074_new (${names}) SELECT ${names} FROM twin_edges`);
+        this.exec('DROP TABLE twin_edges');
+        this.exec('ALTER TABLE twin_edges_074_new RENAME TO twin_edges');
+        for (const sql of objects.indexes) {
+          this.exec(sql);
+        }
+        this.exec(`
+          CREATE INDEX idx_twin_edges_subject
+            ON twin_edges(subject_kind, subject_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_object
+            ON twin_edges(object_kind, object_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_model_run_id
+            ON twin_edges(model_run_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_request_idempotency
+            ON twin_edges(model_run_id, request_idempotency_key, created_at DESC)
+            WHERE model_run_id IS NOT NULL AND request_idempotency_key IS NOT NULL;
+          CREATE UNIQUE INDEX ux_twin_edges_model_run_edge_idempotency
+            ON twin_edges(model_run_id, edge_idempotency_key)
+            WHERE model_run_id IS NOT NULL AND edge_idempotency_key IS NOT NULL;
+        `);
+        for (const sql of objects.triggers) {
+          this.exec(sql);
+        }
+        if (!this.workGraphRefsShape074()) {
+          throw new Error('Migration 074 recovery failed: incomplete work graph shape');
+        }
+        for (const table of this.tablesInForeignKeyGraph('twin_edges')) {
+          if (this.prepare('SELECT 1 FROM pragma_foreign_key_check(?)').all(table).length > 0) {
+            throw new Error(
+              `Migration 074 recovery failed: foreign key violations after rebuild (${table})`
+            );
+          }
+        }
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(74, 'Registry and observation work graph references');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
   }
 
   private toolTracesHasOperationOriginShape(): boolean {
@@ -2510,6 +3611,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       indexName
     ) as { name?: string } | undefined;
     return row?.name === indexName;
+  }
+
+  private indexSql(indexName: string): string {
+    if (!SQLITE_IDENTIFIER_PATTERN.test(indexName)) {
+      throw new Error('Invalid SQLite index identifier');
+    }
+    const row = this.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name = ?").get(
+      indexName
+    ) as { sql?: string } | undefined;
+    return row?.sql ?? '';
   }
 
   private triggerExists(triggerName: string): boolean {

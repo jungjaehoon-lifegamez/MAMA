@@ -28,6 +28,7 @@ export interface ConnectorEventIndexRecord {
   indexed_at: string;
   updated_at: string;
   expires_at: string | null;
+  current_observation_id: string | null;
 }
 
 export interface UpsertConnectorEventIndexInput {
@@ -41,6 +42,13 @@ export interface UpsertConnectorEventIndexInput {
   author?: string | null;
   title?: string | null;
   content: string;
+  /** Immutable observation companion. Direct writers default to inline body. */
+  observation?: {
+    producer_version_id?: string | null;
+    body_location?: { kind: 'raw'; connectorName: string; revisionSourceId: string };
+    observed_at: number;
+    source_at?: number | null;
+  };
   event_datetime?: number | null;
   event_date?: string | null;
   source_timestamp_ms?: number | null;
@@ -108,10 +116,15 @@ export interface RawSearchHit {
   channel_id: string | null;
   author_label: string | null;
   created_at: string | null;
+  /** Source/event occurrence time, distinct from host capture time. */
+  source_at: string | null;
+  /** Current immutable observation capture time; null only for a valid legacy row. */
+  observed_at: string | null;
   content_preview: string;
   score: number;
   source_ref: string | null;
   metadata: Record<string, unknown>;
+  observation_ref: string | null;
 }
 
 /** Explicit detail access includes the complete source; search results remain bounded previews. */

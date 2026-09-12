@@ -392,8 +392,13 @@ beforeAll(() => {
       tenant_id TEXT,
       project_id TEXT,
       memory_scope_kind TEXT,
-      memory_scope_id TEXT
-    )
+      memory_scope_id TEXT,
+      current_observation_id TEXT
+    );
+    CREATE TABLE observation_versions (
+      observation_id TEXT PRIMARY KEY,
+      observed_at INTEGER NOT NULL
+    );
   `);
   const insert = db.prepare(`
     INSERT INTO connector_event_index (

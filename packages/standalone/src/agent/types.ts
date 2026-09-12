@@ -246,6 +246,8 @@ export type GatewayToolExecutionContext = {
    * agent, which is the difference between a fact and a claim.
    */
   causeEventIds?: readonly string[];
+  /** Exact immutable observations handed to this run, paired to their source events. */
+  observationRefs?: readonly { eventId: string; observationRef: string | null }[];
   /** Host-issued semantic action identities for one durable owner-event batch. */
   ownerEventEffects?: OwnerEventEffectAuthority;
   /** Cancellation for the owning model turn. */
@@ -847,6 +849,7 @@ export type GatewayToolName =
   | 'mama_save'
   | 'registry_lookup'
   | 'registry_upsert'
+  | 'registry_correct'
   | 'mama_search'
   | 'mama_recall'
   | 'mama_provenance'
@@ -1164,6 +1167,8 @@ export interface AgentLoopOptions {
   wikiTaskRange?: WikiTaskRangeAuthority;
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
   causeEventIds?: readonly string[];
+  /** Exact immutable observations handed to the same model run. */
+  observationRefs?: readonly { eventId: string; observationRef: string | null }[];
   /** Host-issued semantic action identities for one durable owner-event batch. */
   ownerEventEffects?: OwnerEventEffectAuthority;
   /**

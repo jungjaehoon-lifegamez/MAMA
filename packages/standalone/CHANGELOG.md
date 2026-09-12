@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-09-13
+
+### Added
+
+- Owner messages, completed responses, and connector deltas carry immutable observation references
+  through durable sessions and the same model run.
+- `registry_correct` is available to the owner agent through native and Code-Act catalogs with
+  signed scope, principal, agent, and revision enforcement.
+- Raw observation detail and graph current-projection responses preserve exact evidence identity.
+
 ## [0.55.0] - 2026-09-13
 
 ### Added
