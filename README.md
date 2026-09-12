@@ -39,13 +39,13 @@ In order of importance.
 
 ## Parts
 
-| Name | What it does | Version |
-|---|---|---|
-| `@jungjaehoon/mama-os` | The server: sources, assistant, messenger links, web viewer | 0.52.x |
-| `@jungjaehoon/mama-core` | The memory store: format, search, change log | 2.4.x |
-| `@jungjaehoon/mama-server` | MCP bridge for Claude Desktop and other MCP clients | 1.15.x |
-| Claude Code plugin | Decision memory for coding sessions | 1.11.x |
-| MemoryBench | Measures how accurate memory retrieval is | 1.0.x |
+| Name                       | What it does                                                     | Version |
+| -------------------------- | ---------------------------------------------------------------- | ------- |
+| `@jungjaehoon/mama-os`     | The server: sources, assistant, messenger links, operational API | 0.53.x  |
+| `@jungjaehoon/mama-core`   | The memory store: format, search, change log                     | 2.4.x   |
+| `@jungjaehoon/mama-server` | MCP bridge for Claude Desktop and other MCP clients              | 1.15.x  |
+| Claude Code plugin         | Decision memory for coding sessions                              | 1.11.x  |
+| MemoryBench                | Measures how accurate memory retrieval is                        | 1.0.x   |
 
 ## Getting started
 
@@ -60,7 +60,7 @@ mama status                         # setup is done when the first report arrive
 
 - Messenger: `mama gateway telegram --token-stdin` (Slack and Discord work the same way)
 - Sources: `mama connector add <name>`, then `mama connector status`
-- Web viewer: `http://localhost:3847/viewer` for reports, the task board, and system status
+- Runtime status: `mama status`; operational health: `http://127.0.0.1:3847/health`
 - For scripted installs, follow the `missing` list from `mama status --json` in order; it is
   finished only when `complete: true`.
 
@@ -105,8 +105,8 @@ Each channel gets a role (truth, hub, deliverable, spoke, reference) used in rep
 - Outbound connections go only to the services you connected and the AI CLI you logged into.
   There is no MAMA company server; you run it yourself.
 
-**Running on another host or reaching it from outside.** The viewer and API drive the
-assistant, and the assistant can read and write files and run commands. Exposing the server
+**Running on another host or reaching it from outside.** The operational API can drive the
+assistant, and the assistant can read and write files and run commands. Exposing the API
 exposes that machine. If you open it up:
 
 1. Set `MAMA_AUTH_TOKEN`. Never expose the server without it, and treat the token and tunnel
@@ -120,14 +120,14 @@ Details: [Security guide](docs/guides/security.md), [Remote access](docs/guides/
 
 ## Status and roadmap
 
-| Stage | What | Status |
-|---|---|---|
-| Memory store | Originals kept, decision history, change causes, local search | done |
-| Single-owner assistant | Scheduled reports, board and journal, corrections become rules | done |
+| Stage                    | What                                                               | Status        |
+| ------------------------ | ------------------------------------------------------------------ | ------------- |
+| Memory store             | Originals kept, decision history, change causes, local search      | done          |
+| Single-owner assistant   | Scheduled reports, board and journal, corrections become rules     | done          |
 | Helpers and continuation | Long work to helper agents; reports continue from the last version | done (0.52.0) |
-| Team members | Verified people share the same memory within their own permissions | next |
-| File work | Request → read → new version → approval → delivery → follow-up | next |
-| Extension guide | How to add your own sources, tools, and rules | next |
+| Team members             | Verified people share the same memory within their own permissions | next          |
+| File work                | Request → read → new version → approval → delivery → follow-up     | next          |
+| Extension guide          | How to add your own sources, tools, and rules                      | next          |
 
 Before 1.0, config and storage format changes ship with automatic migration; APIs may change.
 

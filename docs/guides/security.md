@@ -34,12 +34,13 @@ MAMA follows a **localhost-first security model**:
 
 2. **Optional: External Access**
    - Requires manual tunnel setup (ngrok, Cloudflare, etc.)
-   - **Requires either `MAMA_AUTH_TOKEN` or explicit Cloudflare Access trust mode**
+   - **Requires either valid `MAMA_AUTH_TOKEN` bearer auth or validated Cloudflare Access identity
+     from a trusted local proxy**
    - User must explicitly choose to expose MAMA
 
 3. **Defense in Depth**
    - Token-based authentication for external requests
-   - Optional trusted Cloudflare Access integration for Zero Trust deployments
+   - Validated Cloudflare Access identity from trusted proxies for Zero Trust deployments
    - Rate limiting on failed auth attempts
    - Security warnings when external access detected
 
@@ -235,7 +236,7 @@ narrowing is a security boundary.
 By default, MAMA OS listens on:
 
 ```bash
-[MAMA OS] API/UI: http://127.0.0.1:3847
+[MAMA OS] Operational API: http://127.0.0.1:3847
 [EmbeddingHTTP] Running at http://127.0.0.1:3849
 ```
 
@@ -247,15 +248,20 @@ By default, MAMA OS listens on:
 - ✅ Safe for development and local use
 - ✅ Sensitive `/api/*` routes stay blocked from non-local clients unless authenticated
 
-### Accessing from Your Computer
+### Accessing MAMA
 
 ```bash
-# The Viewer (operator board, memory, wiki, runtime status)
-http://localhost:3847/viewer
+# Local runtime and connector status
+mama status
+mama connector status
+
+# Public liveness probe
+curl -fsS http://127.0.0.1:3847/health
 ```
 
-Conversation happens on a chat gateway (Discord, Slack, Telegram, Chatwork), not in the
-browser: the Viewer has no chat surface.
+Conversation, files, reports, and follow-up work use an authenticated messenger gateway such as
+Discord, Slack, Telegram, or Chatwork. Port 3847 retains operational API routes for automation and
+inspection; it does not serve a browser application.
 
 ---
 
@@ -329,16 +335,16 @@ User → Cloudflare Zero Trust → Tunnel → MAMA (localhost)
 
 That statement now has one important caveat for protected API routes:
 
-- Browser/UI access through Cloudflare Access works after login
+- Operational API access can pass through Cloudflare Access after identity verification
 - Protected `/api/*` routes still require MAMA to trust Cloudflare Access identity headers
-- To enable that mode, start MAMA with `MAMA_TRUST_CLOUDFLARE_ACCESS=true`
+- Validated Access identity headers are accepted only from a trusted local proxy; no feature flag
+  or second bearer token is required
 
 ### Cloudflare Access Trust Mode
 
-For Cloudflare Zero Trust deployments, run MAMA like this:
+For Cloudflare Zero Trust deployments, start MAMA normally:
 
 ```bash
-export MAMA_TRUST_CLOUDFLARE_ACCESS=true
 mama start
 ```
 
@@ -347,6 +353,7 @@ What this does:
 - Trusts Cloudflare Access identity headers only when the direct peer is a trusted proxy
 - Allows Access-authenticated tunnel requests to reach protected `/api/*` routes without adding a second Bearer token
 - Keeps direct remote requests, spoofed forwarded headers, and non-Access tunnel traffic blocked
+- `MAMA_TRUST_CLOUDFLARE_ACCESS` remains a legacy compatibility flag but is no longer required
 
 Use `MAMA_AUTH_TOKEN` instead when:
 
@@ -438,13 +445,11 @@ In the Dashboard (after creating tunnel):
 
 #### Step A6: Test
 
-```bash
-# Open in incognito/private browser
-https://mama.yourdomain.com/viewer
-
-# Should redirect to Google/GitHub login
-# After login with allowed email → Access granted
-```
+Request `https://mama.yourdomain.com/api/runtime/status` with an authenticated API client.
+A request from the trusted local proxy carrying validated Cloudflare Access identity headers needs
+no second bearer token. Otherwise, the remote API client reads `MAMA_AUTH_TOKEN` from a protected
+environment or secret store and sends it as bearer authentication, never in the URL. Other
+identities are denied.
 
 ---
 
@@ -545,9 +550,6 @@ Include:
 #### Step 7: Start Tunnel
 
 ```bash
-# Trust Cloudflare Access identity headers from the local tunnel process
-export MAMA_TRUST_CLOUDFLARE_ACCESS=true
-
 # Start MAMA OS
 mama start &
 
@@ -559,17 +561,15 @@ cloudflared tunnel run mama-mobile
 # INF Each HA connection's tunnel IDs will be identified by...
 ```
 
-#### Step 8: Access MAMA
+#### Step 8: Test the Operational API
 
-```bash
-# Open browser
-https://mama.yourdomain.com/viewer
+Request `https://mama.yourdomain.com/api/runtime/status` with an authenticated API client that
+passes the validated Access identity through the trusted local tunnel. That request needs no second
+bearer token. Otherwise, the client reads `MAMA_AUTH_TOKEN` from its protected environment or
+secret store and sends bearer authentication outside the URL.
 
-# Cloudflare shows login screen
-# Login with your Google account
-# If your email is allowed → Access granted
-# If not → Access denied
-```
+Cloudflare Access must admit the configured identity before the request reaches MAMA. Continue to
+use a messenger gateway for conversations and delivered work.
 
 ### Testing Your Setup
 
@@ -604,17 +604,17 @@ https://mama.yourdomain.com/viewer
 
 ### Advantages Over Token Auth
 
-| Feature                | Token Auth            | Cloudflare Zero Trust               |
-| ---------------------- | --------------------- | ----------------------------------- |
-| Brute Force Protection | Manual rate limiting  | ✅ Automatic                        |
-| 2FA Support            | Manual implementation | ✅ Automatic                        |
-| Account-based          | ❌ No                 | ✅ Yes                              |
-| Email restriction      | ❌ No                 | ✅ Yes                              |
-| Session management     | Manual                | ✅ Automatic                        |
-| DDoS protection        | ❌ No                 | ✅ Yes                              |
-| Audit logs             | Manual                | ✅ Built-in                         |
-| Revoke access          | Change token          | ✅ One click                        |
-| MAMA-side config       | `MAMA_AUTH_TOKEN`     | `MAMA_TRUST_CLOUDFLARE_ACCESS=true` |
+| Feature                | Token Auth            | Cloudflare Zero Trust             |
+| ---------------------- | --------------------- | --------------------------------- |
+| Brute Force Protection | Manual rate limiting  | ✅ Automatic                      |
+| 2FA Support            | Manual implementation | ✅ Automatic                      |
+| Account-based          | ❌ No                 | ✅ Yes                            |
+| Email restriction      | ❌ No                 | ✅ Yes                            |
+| Session management     | Manual                | ✅ Automatic                      |
+| DDoS protection        | ❌ No                 | ✅ Yes                            |
+| Audit logs             | Manual                | ✅ Built-in                       |
+| Revoke access          | Change token          | ✅ One click                      |
+| MAMA-side config       | `MAMA_AUTH_TOKEN`     | Validated Access identity headers |
 
 ### Free vs Paid
 
@@ -704,9 +704,6 @@ dig mama.yourdomain.com
 # Generate a strong random token
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 
-# Or set a custom token
-export MAMA_AUTH_TOKEN="your-very-secret-token-here"
-
 # Restart MAMA OS
 mama start
 ```
@@ -714,8 +711,8 @@ mama start
 ### Example: Cloudflare Quick Tunnel
 
 ```bash
-# 1. Set authentication token
-export MAMA_AUTH_TOKEN="my-secret-token-123"
+# 1. Generate an authentication token
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 
 # 2. Start MAMA OS
 mama start &
@@ -723,10 +720,8 @@ mama start &
 # 3. Start tunnel
 cloudflared tunnel --url http://localhost:3847
 
-# 4. Access with authentication
-# Browser: https://xxx.trycloudflare.com/viewer?token=my-secret-token-123
-# Or use Authorization header:
-curl -H "Authorization: Bearer my-secret-token-123" https://xxx.trycloudflare.com/viewer
+# 4. Test /api/runtime/status with an authenticated API client.
+# The client reads MAMA_AUTH_TOKEN from its protected environment or secret store.
 ```
 
 ### Security Warnings
@@ -741,16 +736,11 @@ When MAMA detects external access, it will show warnings:
 ⚠️  Your MAMA server is being accessed from outside localhost.
 ⚠️  This likely means you are using a tunnel (ngrok, Cloudflare, etc.)
 ⚠️
-⚠️  ❌ CRITICAL: Neither MAMA_AUTH_TOKEN nor Cloudflare Access trust mode is set!
-⚠️  Anyone with your tunnel URL can access your:
-⚠️    - Chat sessions with Claude Code
-⚠️    - Decision database (~/.claude/mama-memory.db)
-⚠️    - Local file system (via Claude Code)
+⚠️  Unauthenticated non-local requests are rejected. A tunnel URL alone does not grant access.
 ⚠️
-⚠️  To secure your server, either set MAMA_AUTH_TOKEN:
-⚠️    export MAMA_AUTH_TOKEN="your-secret-token"
-⚠️  Or, if you are using Cloudflare Zero Trust:
-⚠️    export MAMA_TRUST_CLOUDFLARE_ACCESS=true
+⚠️  External API and WebSocket access requires one authenticated path:
+⚠️    - a valid MAMA_AUTH_TOKEN bearer token, or
+⚠️    - validated Cloudflare Access identity headers from a trusted local proxy.
 ⚠️
 ⚠️  ========================================
 ```
@@ -769,36 +759,25 @@ if (req.remoteAddress === '127.0.0.1') {
   return true;
 }
 
-// External request -> Check MAMA_AUTH_TOKEN or trusted Cloudflare Access
-if (!MAMA_AUTH_TOKEN && !MAMA_TRUST_CLOUDFLARE_ACCESS) {
-  return false; // Deny
-}
-
-// Verify token from header or query param
-if (req.headers.authorization === `Bearer ${MAMA_AUTH_TOKEN}`) {
-  return true; // Allow
-}
-
-if (trustedProxyPeer && req.headers['cf-access-jwt-assertion']) {
+// A trusted local proxy plus validated Cloudflare Access identity needs no bearer.
+if (trustedProxyPeer && validatedCloudflareAccessIdentity(req.headers)) {
   return true; // Allow via Cloudflare Access
 }
+
+// Other remote requests require a configured bearer token.
+if (validBearerFromAuthorizationHeader(req, MAMA_AUTH_TOKEN)) {
+  return true;
+}
+
+return false;
 ```
 
 ### Providing the Token
 
 **Method 1: Authorization Header (Recommended)**
 
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" https://xxx.trycloudflare.com/viewer
-```
-
-**Method 2: Query Parameter**
-
-```
-https://xxx.trycloudflare.com/viewer?token=YOUR_TOKEN
-```
-
-⚠️ **Warning:** Query parameters are visible in browser history and server logs. Use Authorization header for sensitive operations.
+Use an authenticated API client for `/api/runtime/status`. It must read `MAMA_AUTH_TOKEN` from a
+protected environment or secret store and send bearer authentication outside the URL.
 
 ### Token Requirements
 
@@ -835,7 +814,7 @@ The easiest way to configure MAMA security settings is using the `/mama-configur
 /mama-configure --show
 
 # Disable features
-/mama-configure --disable-http              # Disable the Viewer and the HTTP API
+/mama-configure --disable-http              # Disable the operational HTTP API
 /mama-configure --disable-websocket         # Disable the chat WebSocket API only
 /mama-configure --enable-all                # Enable all features
 
@@ -886,10 +865,10 @@ For Claude Desktop, edit `claude_desktop_config.json`:
 You can also set environment variables when running the server directly:
 
 ```bash
-# Disable entire HTTP server (the Viewer and the HTTP API)
+# Disable the operational HTTP API
 export MAMA_DISABLE_HTTP_SERVER=true
 
-# Disable only the chat WebSocket API (keep the Viewer)
+# Disable only the compatibility chat WebSocket API
 export MAMA_DISABLE_WEBSOCKET=true
 
 # Legacy alias for the switch above. It still works, but `/mama:configure
@@ -912,10 +891,10 @@ export MAMA_DISABLE_HTTP_SERVER=true
 mama start
 ```
 
-**2. Viewer Only**
+**2. Operational API without the compatibility chat WebSocket**
 
 ```bash
-# The Viewer works, the chat WebSocket API is closed
+# Operational API routes remain available; the chat WebSocket API is closed
 export MAMA_DISABLE_WEBSOCKET=true
 mama start
 ```
@@ -934,14 +913,14 @@ mama start
 ### ✅ DO
 
 1. **Use localhost only** unless you absolutely need external access
-2. **Set strong `MAMA_AUTH_TOKEN`** before using tunnels, unless you are explicitly using Cloudflare Zero Trust trust mode
+2. **Use strong `MAMA_AUTH_TOKEN` for non-Access tunnels; for Cloudflare Zero Trust, validate Access identity through the trusted local proxy**
 3. **Use HTTPS tunnels** (ngrok, Cloudflare provide this automatically)
 4. **Keep tunnel URLs private** - treat them like passwords
 5. **Close tunnels** when not in use
 6. **Rotate tokens** if you suspect compromise
 7. **Monitor logs** for suspicious access attempts
 8. **Use temporary tunnels** (Cloudflare Quick Tunnel expires automatically)
-9. **If using Cloudflare Zero Trust, set `MAMA_TRUST_CLOUDFLARE_ACCESS=true`** in the same environment that starts MAMA
+9. **If using Cloudflare Zero Trust, accept validated Access identity only from the trusted local proxy**
 10. **Review security logs** (`~/.mama/logs/security-events.jsonl`) after any external probing
 11. **Wire alert channels** with `MAMA_SECURITY_ALERT_CHANNELS` before public exposure
 
@@ -992,9 +971,9 @@ cloudflared tunnel --url http://localhost:3847
 **Attack:**
 
 - Attacker finds your URL (leaked in screenshot, shared by mistake)
-- Opens `https://abc123.trycloudflare.com/viewer`
-- Can chat with your Claude Code session
-- Can read your files, execute commands via Claude Code
+- Calls the exposed operational API
+- Can reach powerful authenticated routes that inspect data or trigger local agent work
+- May read files or execute commands when an exposed route grants those capabilities
 
 **Protection:**
 
@@ -1019,7 +998,7 @@ cloudflared tunnel --url http://localhost:3847
 **Attack:**
 
 - Attacker tries common passwords
-- `?token=mama`, `?token=password`, `?token=mama123` ✓
+- Repeatedly guesses the bearer token
 - Gains access
 
 **Protection:**
@@ -1029,29 +1008,15 @@ cloudflared tunnel --url http://localhost:3847
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 ```
 
-### Scenario 3: Token Leaked in URL
+### Scenario 3: Token Leaked in Logs or Command History
 
-**Mistake:**
-
-```bash
-# ❌ Sharing URL with token in query param
-https://abc123.trycloudflare.com/viewer?token=secret123
-
-# Token visible in:
-# - Browser history
-# - Server logs
-# - Network monitoring tools
-# - Screenshots
-```
+**Mistake:** copying a bearer token into a shared script, ticket, command, or URL. The token can
+remain in shared files, chat transcripts, or shell history.
 
 **Protection:**
 
-```bash
-# ✅ Use Authorization header instead
-curl -H "Authorization: Bearer secret123" https://abc123.trycloudflare.com/viewer
-
-# Or use query param temporarily, then rotate token
-```
+Keep the token in a protected environment or secret store. The authenticated API client reads it
+there and sends bearer authentication outside the URL.
 
 ### Scenario 4: Public Repository Exposure
 
@@ -1094,7 +1059,7 @@ echo ".env" >> .gitignore
 ### Quick Security Checklist
 
 - [ ] Using localhost only? → No token needed
-- [ ] Using Cloudflare Zero Trust? → Set `MAMA_TRUST_CLOUDFLARE_ACCESS=true`
+- [ ] Using Cloudflare Zero Trust? → Validate Access identity headers arrive through the trusted local proxy
 - [ ] Using other tunnels? → **MUST set `MAMA_AUTH_TOKEN`**
 - [ ] Token is strong? → Minimum 32 characters, random
 - [ ] Tunnel URL private? → Don't share publicly
@@ -1226,13 +1191,12 @@ The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 
 - Is write-capable for memory surfaces by default via
   `HostBridge.injectInto(sandbox, 2)` only after the request passes token auth
-  (`MAMA_AUTH_TOKEN`) or trusted Cloudflare Access
-  (`MAMA_TRUST_CLOUDFLARE_ACCESS`)
+  (`MAMA_AUTH_TOKEN`) or validated Cloudflare Access identity from a trusted proxy
 - Requires strong perimeter controls before any non-local exposure. Production
   deployments must use Zero Trust access or mTLS/IP allowlisting plus bearer
   token auth; token auth alone is not sufficient for internet exposure.
-- Remains localhost-only when neither token auth (`MAMA_AUTH_TOKEN`) nor trusted
-  Cloudflare Access (`MAMA_TRUST_CLOUDFLARE_ACCESS`) is configured
+- Remains unavailable to remote requests when neither valid bearer auth nor validated Cloudflare
+  Access identity from a trusted proxy is present
 - Can be forced read-only with `MAMA_CODE_ACT_READ_ONLY=1`, which injects
   tier 3 tools instead after the same token-or-Cloudflare perimeter check
 - Has no access to agent persona or conversation context

@@ -11,7 +11,7 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.53.3  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.53.4  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
 | MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.5.0   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
@@ -61,7 +61,7 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.53.3          |
+| `packages/standalone/package.json`                       | `version` | 0.53.4          |
 | `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
 | `packages/mama-core/package.json`                        | `version` | 2.5.0           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
@@ -359,7 +359,8 @@ Verify the following after deployment:
   - [ ] `/mama-resume` - Restore session
 - [ ] GitHub release verification
 - [ ] Release notes published
-- [ ] If temporal reconciliation is being rolled out, verify one non-critical due task in `/viewer#operator/tasks`:
+- [ ] If temporal reconciliation is being rolled out, inspect one non-critical due task through
+      `GET /api/operator/tasks`:
       workflow status remains independent from `temporal_state`, and its temporal workorder reaches a
       receipt-backed terminal result or an explicit bounded deferral.
 ```

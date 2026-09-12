@@ -1,6 +1,5 @@
 packages:
   - packages/*
-  - packages/standalone/ui
 
 enableScripts: true
 

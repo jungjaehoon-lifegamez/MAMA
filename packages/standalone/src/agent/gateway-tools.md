@@ -83,10 +83,6 @@ Call tools via JSON block:
 - **schedule_upcoming**(days? (default 14, max 60), cursor?) — Read the calendar connector local snapshot progressively. Returns ongoing and future intervals, excludes ended and cancelled occurrences, and preserves all-day date ranges with their exclusive end and timezone. Walk nextCursor for whole-situation coverage; coverage distinguishes page completion from unknown upstream snapshot completeness. This reader never calls the calendar API.
 - **contract_no_update**(reason (required), scope (required, e.g. "reconcile:slack:C001")) — Record that a reconcile run judged NOTHING on the board or ledger affected. Silence becomes a verifiable judgment.
 
-## Webchat
-
-- **webchat_send**(message?, file_path?, session_id?) — Send message/file to webchat viewer
-
 ## Code-Act Sandbox
 
 - **code_act**(code, allowedTools?, blockedTools?) — Execute JavaScript in sandboxed QuickJS. Code-Act runs a synchronous script. Host function calls settle before returning. Use plain sequential calls with var and make the desired value the last expression. Do not use top-level return, async, await, Promise, Promise.all, or async IIFEs. That rule covers the code string only: when code_act is invoked from the Codex exec tool, the host call itself is asynchronous, so write const r = await tools.code_act({code}) (an un-awaited call yields an empty {} instead of the result).
@@ -94,34 +90,6 @@ Call tools via JSON block:
 ## System
 
 - **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
-
-## Sending Media to Webchat
-
-To display images in webchat, you MUST include the full file path in your response text.
-The viewer auto-converts paths matching `~/.mama/workspace/media/outbound/<file>` into inline `<img>` tags.
-
-**Steps:**
-
-1. Copy or create the file in `~/.mama/workspace/media/outbound/`
-2. In your response, write the FULL PATH as plain text on its own line:
-
-Example response:
-
-```text
-Here is the image:
-~/.mama/workspace/media/outbound/screenshot.png
-```
-
-**CRITICAL:** You must write the actual path `~/.mama/workspace/media/outbound/filename.ext` in your response text. Do NOT just describe the image — the path IS the display mechanism. Without the path, nothing is shown to the user.
-
-**Workflow for showing any image:**
-
-1. `cp /source/image.png ~/.mama/workspace/media/outbound/image.png` (use Bash tool)
-2. In response text, write: `~/.mama/workspace/media/outbound/image.png`
-
-The user will ONLY see the image if you write the outbound path. Text descriptions alone show NOTHING.
-
-For user-uploaded files: `~/.mama/workspace/media/inbound/<filename>`
 
 ## Cron (Scheduled Jobs)
 

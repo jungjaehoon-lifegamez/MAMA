@@ -14,7 +14,7 @@ describe('owner workspace effect replay', () => {
   afterEach(() =>
     roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))
   );
-  it.each(['discord_send', 'slack_send', 'webchat_send'] as const)(
+  it.each(['discord_send', 'slack_send'] as const)(
     'TG-06 releases a proven preflight failure for %s',
     async (tool) => {
       const db = new Database(':memory:');
@@ -33,7 +33,7 @@ describe('owner workspace effect replay', () => {
           modelRunId: 'mr-preflight',
           sourceMessageRef: 'message:preflight',
         };
-        const input = tool === 'webchat_send' ? {} : { channel_id: 'test' };
+        const input = { channel_id: 'test' };
         expect(await executor.execute(tool, input as never, context)).toMatchObject({
           success: false,
         });

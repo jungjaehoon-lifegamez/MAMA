@@ -159,25 +159,11 @@ MAMA OS runs specialized agents for knowledge management — not coding (that's 
 
 Agents delegate via `delegate()` with skill injection and automatic retry. Configure in `~/.mama/config.yaml`.
 
-## Viewer
+## Operational interfaces
 
-One web console at `http://localhost:3847/viewer` (`/` redirects there), opening on the
-operator board. PWA-enabled for mobile (add to home screen).
-
-Three groups:
-
-| Group         | View       | What it shows                                                                                    |
-| ------------- | ---------- | ------------------------------------------------------------------------------------------------ |
-| **Operator**  | Board      | Four agent-published report slots (briefing, action required, decisions, pipeline) live over SSE |
-| **Operator**  | Tasks      | The task board fed from your channels                                                            |
-| **Operator**  | Triggers   | The trigger loop's library with an owner veto tray                                               |
-| **Knowledge** | Memory     | Interactive reasoning graph (1000+ nodes), search, export                                        |
-| **Knowledge** | Wiki       | Knowledge base (syncs with Obsidian vault)                                                       |
-| **System**    | Runtime    | Read-only runtime truth: backend, model, gateways, health                                        |
-| **System**    | Connectors | Connector status and last poll                                                                   |
-| **System**    | Logs       | Daemon logs with filtering, pinning, stats, WebSocket and polling                                |
-
-Each view has its own hash route, e.g. `/viewer#operator/tasks?task=42`.
+Use `mama status` for local runtime readiness and `mama connector status` for connected sources.
+The authenticated API on port 3847 remains available for health, reports, tasks, raw-source reads,
+graph data, and native runtime operations. MAMA no longer ships a browser Viewer.
 
 ## Gateway Integrations
 
@@ -201,7 +187,7 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
                     |
              +------+------+
              |             |
-        Viewer UI     Claude Code Plugin / MCP
+     Operational API  Claude Code Plugin / MCP
 ```
 
 ## CLI

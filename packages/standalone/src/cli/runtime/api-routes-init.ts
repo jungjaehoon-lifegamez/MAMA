@@ -16,7 +16,7 @@ import {
   closeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import express, { type Express } from 'express';
+import type { Express, Request, Response } from 'express';
 import path from 'node:path';
 import http from 'node:http';
 
@@ -171,7 +171,7 @@ export interface RegisterApiRoutesParams {
   toolExecutor: GatewayToolExecutor;
   discordGateway: DiscordGateway | null;
   slackGateway: SlackGateway | null;
-  graphHandler: (req: express.Request, res: express.Response) => Promise<boolean>;
+  graphHandler: (req: Request, res: Response) => Promise<boolean>;
   /** Immutable boot snapshot. Private connector access must not be rediscovered per delta. */
   privateConnectorPolicy: PrivateConnectorPolicy;
   /** Immutable boot scope used for raw evidence projection in worker envelopes. */
@@ -270,7 +270,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
   // Manual refresh endpoint (kept for compatibility)
   apiServer.app.post('/api/report/refresh', requireAuth, (_req, res) => {
-    res.json({ ok: true, message: 'Viewer now renders data directly from Intelligence API' });
+    res.json({ ok: true, message: 'Reports are read directly from the report API' });
   });
 
   apiServer.app.post('/api/operator/report', requireAuth, (_req, res) => {
@@ -367,7 +367,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   }
 
-  // report_publish is a core surface (feeds the /viewer operator board), not a
+  // report_publish is a core surface used by shared report delivery, not a
   // multi-agent feature: wire it unconditionally. All slot ids are accepted;
   // size/count caps and loud logging live in createReportPublisher.
   {
@@ -1887,18 +1887,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   });
   console.log('✓ Workspace Skills API available at /api/workspace/skills');
 
-  // ── Viewer static assets ──────────────────────────────────────────────
-  const publicDir = path.join(__dirname, '..', '..', '..', 'public');
-  apiServer.app.use(
-    express.static(publicDir, {
-      setHeaders: (res, _filePath) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      },
-    })
-  );
-  console.log('✓ Viewer UI available at /viewer');
   return {
     boardReconcileEnabled,
     requestBoardRepair,

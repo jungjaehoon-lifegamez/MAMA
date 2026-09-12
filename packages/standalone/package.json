@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.53.3",
+  "version": "0.53.4",
   "description": "MAMA OS - The local work agent behind your messenger.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,11 +13,8 @@
     "postinstall": "node scripts/postinstall.js",
     "setup:ocr": "node scripts/setup-ocr.js",
     "check:ocr": "node scripts/setup-ocr.js --check",
-    "build": "node scripts/clean-dist.mjs && tsc && pnpm exec tsx scripts/generate-gateway-tools.ts && rm -rf public/viewer/js && tsc -p public/viewer/tsconfig.viewer.json && pnpm run build:ui",
-    "build:ui": "pnpm --dir ui run bundle",
+    "build": "node scripts/clean-dist.mjs && tsc && pnpm exec tsx scripts/generate-gateway-tools.ts",
     "build:watch": "tsc --watch",
-    "build:viewer": "rm -rf public/viewer/js && tsc -p public/viewer/tsconfig.viewer.json",
-    "build:viewer:watch": "tsc -p public/viewer/tsconfig.viewer.json --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "clean": "rm -rf dist node_modules",
@@ -52,7 +49,6 @@
   "files": [
     "dist",
     "scripts/",
-    "public/",
     "templates/",
     "README.md",
     "CHANGELOG.md"
