@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-12
+
+### Added
+
+- Public source archive and SQLite storage exports, including revision-preserving raw evidence
+  persistence for reusable package consumers.
+
 ## [2.3.0] - 2026-09-04
 
 - Migration 066: `awareness_operational_issues` (the installed shape plus `occurrences`) so the

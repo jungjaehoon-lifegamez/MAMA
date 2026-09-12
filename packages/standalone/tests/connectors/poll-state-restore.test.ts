@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PollingScheduler } from '../../src/connectors/framework/polling-scheduler.js';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 
 describe('PollingScheduler poll-state restore/persist', () => {
   let tmp: string;
@@ -43,7 +43,10 @@ describe('PollingScheduler poll-state restore/persist', () => {
 
   it('migrates legacy nested {lastPollTime, channels} entries', () => {
     writeState({
-      kagemusha: { lastPollTime: '2026-06-15T13:21:39.999Z', channels: { a: '2026-07-07T13:47:55.999Z' } },
+      kagemusha: {
+        lastPollTime: '2026-06-15T13:21:39.999Z',
+        channels: { a: '2026-07-07T13:47:55.999Z' },
+      },
     });
     const s = new PollingScheduler(rawStore, tmp);
     expect(s.getLastPollTime('kagemusha')?.toISOString()).toBe('2026-06-15T13:21:39.999Z');
@@ -52,7 +55,10 @@ describe('PollingScheduler poll-state restore/persist', () => {
   it('REJECTS a future-poisoned cursor (the 2056 calendar case) - loud warn + fresh start', () => {
     const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     writeState({
-      calendar: { lastPollTime: '2056-01-07T23:59:59.999Z', channels: { calendar: '2056-01-07T23:59:59.999Z' } },
+      calendar: {
+        lastPollTime: '2056-01-07T23:59:59.999Z',
+        channels: { calendar: '2056-01-07T23:59:59.999Z' },
+      },
     });
     const s = new PollingScheduler(rawStore, tmp);
     expect(s.getLastPollTime('calendar')).toBeUndefined(); // falls back to default lookback

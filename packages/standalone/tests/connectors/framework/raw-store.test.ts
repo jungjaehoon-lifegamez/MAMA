@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { RawStore } from '../../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import type { NormalizedItem } from '../../../src/connectors/framework/types.js';
 
 function makeItem(overrides: Partial<NormalizedItem> = {}): NormalizedItem {

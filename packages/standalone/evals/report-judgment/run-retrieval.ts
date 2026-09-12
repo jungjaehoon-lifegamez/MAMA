@@ -8,7 +8,7 @@ import { resetConfigCache } from '../../src/cli/config/config-manager.js';
 import { AgentLoop as CandidateLoop } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor as CandidateExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import { SituationReporter } from '../../src/operator/situation-report.js';
 import Database from '../../src/sqlite.js';
 import { makeSignedEnvelope } from '../../tests/envelope/fixtures.js';

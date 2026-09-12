@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 
 describe('RawStore.getRecent', () => {
   let store: RawStore;

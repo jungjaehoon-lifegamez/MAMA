@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.3] - 2026-09-12
+
+### Changed
+
+- Connector collection and raw evidence readers now use the shared core source archive while
+  preserving existing revision, provenance, isolation, and reopen behavior.
+
 ## [0.51.2] - 2026-09-08
 
 ### Fixed

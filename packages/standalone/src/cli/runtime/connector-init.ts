@@ -28,7 +28,7 @@ import {
   mapNormalizedItemsToConnectorEventIndexInputs,
   type RawIndexSink,
   type RawStore,
-} from '../../connectors/framework/raw-store.js';
+} from '@jungjaehoon/mama-core/storage/source-archive';
 import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.js';
 
 const logger = new DebugLogger('connector-init');

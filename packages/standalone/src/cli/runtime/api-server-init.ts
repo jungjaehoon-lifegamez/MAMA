@@ -24,7 +24,7 @@ import type { OwnerRuntimeRunner } from '../../operator/owner-runtime.js';
 import type { CronScheduler } from '../../scheduler/index.js';
 import type { HealthScoreService } from '../../observability/health-score.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
-import type { RawStore } from '../../connectors/framework/raw-store.js';
+import type { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import type { ConnectorConfigLoadResult } from '../../connectors/config-loader.js';
 import type { PrivateConnectorPolicy } from '../../connectors/private-connector-policy.js';
 import type { SQLiteDatabase } from '../../sqlite.js';

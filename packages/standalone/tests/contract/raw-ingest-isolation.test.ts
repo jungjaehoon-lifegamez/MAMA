@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import ts from 'typescript';
 
 import Database from '../../src/sqlite.js';
-import { RawStore } from '../../src/connectors/framework/raw-store.js';
+import { RawStore } from '@jungjaehoon/mama-core/storage/source-archive';
 import { applyAgentStoreTablesMigration } from '../../src/db/migrations/agent-store-tables.js';
 
 describe('Story M0: Raw ingest isolation contract', () => {

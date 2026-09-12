@@ -1075,7 +1075,7 @@ export class GatewayToolExecutor {
   /** Accepted and discarded: the only reader was the delegation executor, which is gone.
    *  The setter stays because its callers are live - delete both together when a second
    *  reader appears or the callers do not. */
-  setRawStore(_store: import('../connectors/framework/raw-store.js').RawStore): void {}
+  setRawStore(_store: import('@jungjaehoon/mama-core/storage/source-archive').RawStore): void {}
   /** Same as setRawStore: the only reader was the delegation executor. */
   setValidationService(
     _svc: import('../validation/session-service.js').ValidationSessionService
