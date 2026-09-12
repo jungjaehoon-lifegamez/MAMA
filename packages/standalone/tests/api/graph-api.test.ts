@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'http';
+import request from 'supertest';
 import Database from '../../src/sqlite.js';
+import { createApiServer, type RuntimeStatusSnapshot } from '../../src/api/index.js';
+import { projectRuntimeConnectors } from '../../src/cli/runtime/api-server-init.js';
+import { CronScheduler } from '../../src/scheduler/index.js';
 import { initValidationTables, createValidationSession } from '../../src/validation/store.js';
 import * as validationStore from '../../src/validation/store.js';
 import { initAgentTables } from '../../src/db/agent-store.js';
@@ -15,6 +19,16 @@ import {
   validateConfigUpdate,
   createGraphHandler,
 } from '../../src/api/graph-api.js';
+
+const RUNTIME_SNAPSHOT: RuntimeStatusSnapshot = {
+  running: true,
+  version: '9.8.7',
+  backend: 'codex',
+  model: 'synthetic-model',
+  startedAt: 1000,
+  health: { score: 98, status: 'healthy' },
+  connectors: [{ name: 'telegram', enabled: true, state: 'connected' }],
+};
 
 describe('graph api helpers', () => {
   let db: Database;
@@ -44,6 +58,150 @@ describe('graph api helpers', () => {
     expect(node.decision).toBeUndefined();
     expect(node.reasoning).toBeUndefined();
     expect(node.decision_preview?.length).toBeLessThanOrEqual(223);
+  });
+
+  describe('retained shared backend routes', () => {
+    it('keeps fixed runtime serialization, report, source, and health routes mounted', async () => {
+      const scheduler = new CronScheduler();
+      const memoryDb = new Database(':memory:');
+      const noisySnapshot = {
+        ...RUNTIME_SNAPSHOT,
+        secret: 'supplier-extra-value',
+        entrypoint: '/synthetic/runtime-entry.js',
+      } as unknown as RuntimeStatusSnapshot;
+
+      try {
+        const apiServer = createApiServer({
+          scheduler,
+          port: 0,
+          memoryDb,
+          getRuntimeStatus: () => noisySnapshot,
+        });
+
+        const runtime = await request(apiServer.app).get('/api/runtime/status');
+        expect(runtime.status).toBe(200);
+        expect(runtime.body).toEqual(RUNTIME_SNAPSHOT);
+        expect(JSON.stringify(runtime.body)).not.toContain('supplier-extra-value');
+        expect((await request(apiServer.app).get('/api/report')).status).toBe(200);
+        expect(
+          (await request(apiServer.app).get('/api/agent/raw/search?query=alpha')).status
+        ).not.toBe(404);
+        expect((await request(apiServer.app).get('/api/metrics/health')).status).toBe(503);
+        expect((await request(apiServer.app).get('/health')).status).toBe(200);
+      } finally {
+        scheduler.shutdown();
+        memoryDb.close();
+      }
+    });
+
+    it('requires authentication for a tunneled runtime-status request', async () => {
+      const originalAuthToken = process.env.MAMA_AUTH_TOKEN;
+      const scheduler = new CronScheduler();
+      process.env.MAMA_AUTH_TOKEN = 'synthetic-test-token';
+      try {
+        const apiServer = createApiServer({
+          scheduler,
+          port: 0,
+          getRuntimeStatus: () => RUNTIME_SNAPSHOT,
+        });
+        const response = await request(apiServer.app)
+          .get('/api/runtime/status')
+          .set('cf-connecting-ip', '198.51.100.7')
+          .set('x-forwarded-for', '198.51.100.7');
+
+        expect(response.status).toBe(401);
+
+        const authenticated = await request(apiServer.app)
+          .get('/api/runtime/status')
+          .set('cf-connecting-ip', '198.51.100.7')
+          .set('x-forwarded-for', '198.51.100.7')
+          .set('Authorization', 'Bearer synthetic-test-token');
+        expect(authenticated.status).toBe(200);
+        expect(authenticated.body).toEqual(RUNTIME_SNAPSHOT);
+      } finally {
+        scheduler.shutdown();
+        if (originalAuthToken === undefined) {
+          delete process.env.MAMA_AUTH_TOKEN;
+        } else {
+          process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+        }
+      }
+    });
+
+    it('does not mount runtime status without an authoritative supplier', async () => {
+      const scheduler = new CronScheduler();
+      try {
+        const response = await request(createApiServer({ scheduler, port: 0 }).app).get(
+          '/api/runtime/status'
+        );
+        expect(response.status).not.toBe(200);
+      } finally {
+        scheduler.shutdown();
+      }
+    });
+
+    it('serializes nullable health without fabricating a score', async () => {
+      const scheduler = new CronScheduler();
+      try {
+        const apiServer = createApiServer({
+          scheduler,
+          port: 0,
+          getRuntimeStatus: () => ({ ...RUNTIME_SNAPSHOT, health: null }),
+        });
+        const response = await request(apiServer.app).get('/api/runtime/status');
+
+        expect(response.status).toBe(200);
+        expect(response.body.health).toBeNull();
+      } finally {
+        scheduler.shutdown();
+      }
+    });
+
+    it('answers 503 with the stable code when the synchronous supplier fails', async () => {
+      const scheduler = new CronScheduler();
+      try {
+        const apiServer = createApiServer({
+          scheduler,
+          port: 0,
+          getRuntimeStatus: () => {
+            throw new Error('synthetic status failure');
+          },
+        });
+        const response = await request(apiServer.app).get('/api/runtime/status');
+
+        expect(response.status).toBe(503);
+        expect(response.body.code).toBe('runtime_status_unavailable');
+      } finally {
+        scheduler.shutdown();
+      }
+    });
+
+    it('projects configured connectors with their registration state', () => {
+      expect(
+        projectRuntimeConnectors(
+          {
+            ok: true,
+            config: {
+              telegram: { enabled: true },
+              slack: { enabled: true },
+              discord: { enabled: false },
+            },
+            enabledNames: ['telegram', 'slack'],
+          } as never,
+          ['telegram']
+        )
+      ).toEqual([
+        { name: 'slack', enabled: true, state: 'unknown' },
+        { name: 'telegram', enabled: true, state: 'connected' },
+        { name: 'discord', enabled: false, state: 'disconnected' },
+      ]);
+    });
+
+    it('projects no connectors when none are configured', () => {
+      expect(
+        projectRuntimeConnectors({ ok: true, config: {}, enabledNames: [] } as never, [])
+      ).toEqual([]);
+    });
   });
 
   it('should default graph limit for overview requests', () => {
@@ -243,24 +401,46 @@ describe('graph api helpers', () => {
     expect(res._body).toContain('trigger_type');
   });
 
-  it('returns 400 for malformed JSON on ui page-context POST', async () => {
-    const handler = createGraphHandler({
-      uiCommandQueue: {
-        setPageContext: () => {},
-        getPageContext: () => null,
-        push: () => ({ id: 1, type: 'navigate', payload: {} }),
-        drain: () => [],
-        ack: () => 0,
-      } as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue,
-    });
-    const req = createBodyReq('/api/ui/page-context', '{bad-json');
+  it.each(['/', '/viewer', '/viewer/viewer.css', '/viewer/js/modules/system.js'])(
+    'does not serve the retired browser route %s',
+    async (pathname) => {
+      const handler = createGraphHandler({});
+      const req = {
+        method: 'GET',
+        url: pathname,
+        headers: { host: 'localhost' },
+        socket: { remoteAddress: '127.0.0.1' },
+      } as IncomingMessage;
+      const res = createMockRes();
+
+      const handled = await handler(req, res as unknown as ServerResponse);
+
+      expect(handled).toBe(false);
+      expect(res._status).not.toBe(200);
+      expect(res._status).not.toBe(302);
+    }
+  );
+
+  it.each([
+    { method: 'GET', pathname: '/api/ui/commands' },
+    { method: 'GET', pathname: '/api/ui/page-context' },
+    { method: 'POST', pathname: '/api/ui/commands' },
+    { method: 'POST', pathname: '/api/ui/commands/ack' },
+    { method: 'POST', pathname: '/api/ui/page-context' },
+  ])('does not handle the retired UI route $method $pathname', async ({ method, pathname }) => {
+    const handler = createGraphHandler({});
+    const req = {
+      method,
+      url: pathname,
+      headers: { host: 'localhost' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage;
     const res = createMockRes();
 
     const handled = await handler(req, res as unknown as ServerResponse);
 
-    expect(handled).toBe(true);
-    expect(res._status).toBe(400);
-    expect(res._body).toContain('Invalid JSON');
+    expect(handled).toBe(false);
+    expect(res._status).not.toBe(200);
   });
 
   describe('Story CODE-ACT-HTTP: /api/code-act runtime contract', () => {
@@ -558,26 +738,6 @@ describe('graph api helpers', () => {
     expect(handled).toBe(true);
     expect(res._status).toBe(400);
     expect(res._body).toContain('Invalid JSON');
-  });
-
-  it('returns 413 for oversized JSON bodies', async () => {
-    const handler = createGraphHandler({
-      uiCommandQueue: {
-        setPageContext: () => {},
-        getPageContext: () => null,
-        push: () => ({ id: 1, type: 'navigate', payload: {} }),
-        drain: () => [],
-        ack: () => 0,
-      } as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue,
-    });
-    const req = createBodyReq('/api/ui/page-context', 'a'.repeat(1_048_577));
-    const res = createMockRes();
-
-    const handled = await handler(req, res as unknown as ServerResponse);
-
-    expect(handled).toBe(true);
-    expect(res._status).toBe(413);
-    expect(res._body).toContain('Request body too large');
   });
 
   it('requires trigger_type for validation summary', async () => {

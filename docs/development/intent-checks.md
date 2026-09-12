@@ -709,3 +709,16 @@
   import-only 무부작용, workspace link 없는 실제 저장 내용·타입·재개방·두 경로 격리를 확인했다.
 - 판정: I-03/I-06과 TG-03/TG-05/TG-06의 원문 보존 기반은 유지된다. 이 소유권 이동만으로
   agent 자율 판단, immutable observation, 실제 owner 업무 완료가 달성된 것은 아니다.
+
+## 2026-09-12 — browser Viewer 제거 후보
+
+- 결과: 사용되지 않는 browser Viewer, UI command/page-context 경로, frontend build와
+  `webchat_send`의 발견·실행 경로를 제거했다. port 3847의 상태·보고·원문·health API,
+  graph, messenger/report/native/CLI 경로와 기존 session·effect 해석 호환성은 유지했다.
+- 근거: 실제 Graph/API/ToolRegistry/Gateway executor를 사용하는 RED 회귀가 제거 전
+  viewer/UI route와 `webchat_send`를 검출했고, 제거 후 focused test·typecheck·build·fresh
+  package 검증을 실행한다. 이 기록은 코드 후보 근거이며 설치·실운영 근거가 아니다.
+- 판정: I-01/I-02/I-06 및 TG-03/TG-04/TG-05/TG-06에 부분 부합한다. MAMA의 도구 선택,
+  session continuity, 보고 전달과 운영 API를 유지하면서 사용되지 않는 별도 화면을 줄였다.
+  runtime-status의 비동기 supplier와 live gateway-health projection 개선은 저장된 후속 범위로
+  보존하며, 이 PR에서 구현·검증했다고 주장하지 않는다.

@@ -23,7 +23,6 @@ export type ToolCategory =
   | 'utility'
   | 'os_management'
   | 'os_monitoring'
-  | 'webchat'
   | 'code_act'
   | 'system';
 
@@ -528,14 +527,6 @@ register({
   viewerOnly: true,
 });
 
-// Webchat
-register({
-  name: 'webchat_send',
-  description: 'Send message/file to webchat viewer',
-  category: 'webchat',
-  params: 'message?, file_path?, session_id?',
-});
-
 // Code-Act sandbox
 register({
   name: 'code_act',
@@ -942,7 +933,6 @@ export class ToolRegistry {
       utility: 'Utility',
       os_management: 'OS Management (viewer-only)',
       os_monitoring: 'OS Monitoring & Operator Console',
-      webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
       system: 'System',
     };

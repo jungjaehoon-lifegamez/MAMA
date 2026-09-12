@@ -33,13 +33,13 @@ MAMA uses a multi-package monorepo (mama-core, mcp-server, standalone/mama-os, c
 │                    │ - Memory Store       │              │
 │                    └──────────┬────────────┘             │
 │                               │                          │
-│  Optional HTTP Server         │ uses                     │
+│  Operational HTTP Server      │ uses                     │
 │  ┌──────────────────┐         │                          │
 │  │ Standalone       │─────────┘                          │
-│  │ - Viewer         │                                    │
+│  │ - Runtime APIs   │                                    │
 │  │ - Chat gateways  │                                    │
 │  │ - Embed API      │                                    │
-│  │ (UI 3847 / Embed 3849)│                               │
+│  │ (API 3847 / Embed 3849)│                              │
 │  └──────────────────┘                                    │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -153,9 +153,9 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
   per-agent allowlists
 - **Onboarding Wizard:** 9-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat
-- **MAMA OS Viewer:** Operator (Board, Tasks, Triggers), Knowledge (Memory, Wiki), System (Runtime, Connectors, Logs)
+- **Operational API:** Reports, tasks, source evidence, graph data, runtime status, and health on port 3847
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
-- **Runtime Ownership:** Hosts API/UI on `3847` and embedding/chat services on `3849`
+- **Runtime Ownership:** Hosts the operational API on `3847` and embedding services on `3849`
 - **Binaries:** `mama` (main CLI), `mama-code-act-mcp` (Code-Act MCP subprocess)
 
 **Dependencies:**
@@ -259,7 +259,7 @@ Each package has independent versioning:
 - **mama-core:** 2.5.0 (stable API)
 - **mama-server:** 1.15.0 (follows MAMA version)
 - **claude-code-plugin:** 1.11.0 (follows MAMA version)
-- **mama-os:** 0.53.3 (standalone agent)
+- **mama-os:** 0.53.4 (standalone agent)
 
 ## Distribution Strategy
 
@@ -307,7 +307,7 @@ npx @jungjaehoon/mama-os
 - **mama-core:** Core logic (no transport)
 - **mcp-server:** MCP protocol (stdio only)
 - **claude-code-plugin:** Claude Code integration (commands/hooks)
-- **standalone:** HTTP features (viewer/chat/embed)
+- **standalone:** Messenger gateways and operational HTTP APIs
 
 ### 2. Code Reuse
 

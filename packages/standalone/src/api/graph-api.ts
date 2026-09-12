@@ -1,9 +1,7 @@
 /**
  * MAMA Graph API
  *
- * HTTP API endpoints for the Viewer.
- * Provides /graph endpoint for fetching decisions and edges data.
- * Provides /viewer endpoint for serving HTML viewer.
+ * HTTP API endpoints for graph, agent, configuration, and validation data.
  */
 
 import fs from 'fs';
@@ -36,11 +34,6 @@ import {
   handleGetActivitySummary,
   handleCompareVersions,
 } from './agent-handler.js';
-import {
-  handleGetUICommands,
-  handlePostPageContext,
-  handlePostUICommand,
-} from './ui-command-handler.js';
 import {
   handleGetEntityCandidate,
   handleListEntityCandidates,
@@ -82,51 +75,6 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Config paths
 const MAMA_CONFIG_PATH = path.join(os.homedir(), '.mama', 'config.yaml');
-const PACKAGE_ROOT_DIR = path.resolve(__dirname, '../..');
-
-// Paths to viewer files (now in public/viewer/). Resolved per request so the
-// MAMA_VIEWER_DIR override works for tests without module-load ordering games.
-function getViewerDirectory(): string {
-  if (process.env.MAMA_VIEWER_DIR) {
-    // resolve() drops trailing slashes; without it the `operatorRoot + path.sep`
-    // traversal guard in the /viewer/operator route would 404 every request for
-    // '/foo/bar/'-style values.
-    return path.resolve(process.env.MAMA_VIEWER_DIR);
-  }
-  const packagePublicViewer = path.join(PACKAGE_ROOT_DIR, 'public', 'viewer');
-  const candidateDirs = [
-    path.join(process.cwd(), 'public', 'viewer'),
-    packagePublicViewer,
-    path.join(__dirname, '../../public/viewer'),
-    path.join(__dirname, '../../../public/viewer'),
-    path.join(process.cwd(), 'packages', 'standalone', 'public', 'viewer'),
-  ];
-
-  for (const candidate of candidateDirs) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-      return candidate;
-    }
-  }
-
-  // Fallback for unusual launch locations.
-  return path.join(process.cwd(), 'public', 'viewer');
-}
-
-const viewerHtmlPath = (): string => path.join(getViewerDirectory(), 'viewer.html');
-const viewerCssPath = (): string => path.join(getViewerDirectory(), 'viewer.css');
-const swJsPath = (): string => path.join(getViewerDirectory(), 'sw.js');
-const manifestJsonPath = (): string => path.join(getViewerDirectory(), 'manifest.json');
-const viewerIconDir = (): string => path.join(getViewerDirectory(), 'icons');
-const viewerFaviconPath = (): string => path.join(getViewerDirectory(), '..', 'favicon.ico');
-const viewerOperatorDir = (): string => path.join(getViewerDirectory(), 'operator');
-
-// Operator bundle assets live under public/viewer/operator/ and are the only
-// extensions that route serves.
-const VIEWER_OPERATOR_MIME: Record<string, string> = {
-  '.js': 'application/javascript',
-  '.css': 'text/css',
-};
-
 const DEFAULT_GRAPH_LIMIT = 300;
 const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
@@ -571,54 +519,6 @@ function filterNodesByTopic(nodes: GraphNode[], topic: string): GraphNode[] {
 function filterEdgesByNodes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[] {
   const nodeIds = new Set(nodes.map((n) => n.id));
   return edges.filter((e) => nodeIds.has(e.from) || nodeIds.has(e.to));
-}
-
-function serveStaticFile(
-  res: ServerResponse,
-  filePath: string,
-  contentType: string,
-  extraHeaders: Record<string, string> = {}
-): void {
-  try {
-    const stats = fs.statSync(filePath);
-    if (!stats.isFile()) {
-      throw new Error('Requested path is not a file');
-    }
-    const isBinary = contentType.startsWith('image/') || contentType === 'application/octet-stream';
-    const content = isBinary ? fs.readFileSync(filePath) : fs.readFileSync(filePath, 'utf8');
-    const etag = `"${Date.now()}"`;
-
-    const fullContentType = isBinary ? contentType : `${contentType}; charset=utf-8`;
-
-    res.writeHead(200, {
-      'Content-Type': fullContentType,
-      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
-      Pragma: 'no-cache',
-      Expires: '0',
-      ETag: etag,
-      ...extraHeaders,
-    });
-    res.end(content);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[GraphAPI] Static file error: ${message}`);
-    const err = error as NodeJS.ErrnoException;
-    if (err?.code === 'ENOENT' || err?.code === 'EISDIR' || /not a file/i.test(message)) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not found');
-      return;
-    }
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Internal server error');
-  }
-}
-
-function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, viewerHtmlPath(), 'text/html');
-}
-
-function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, viewerCssPath(), 'text/css');
 }
 
 async function handleGraphRequest(
@@ -1331,139 +1231,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET / - redirect to /viewer, the ONE public shell. The temporary
-    // /ui SPA route was retired; there is no second face to fall back to.
-    if (pathname === '/' && req.method === 'GET') {
-      console.log('[GraphHandler] Redirecting / to /viewer');
-      res.writeHead(302, { Location: '/viewer' });
-      res.end();
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer or /viewer/ - serve HTML viewer
-    if (
-      (pathname === '/viewer' || pathname === '/viewer/') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      console.log('[GraphHandler] Serving viewer.html');
-      handleViewerRequest(req, res);
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/viewer.css - serve stylesheet
-    if (pathname === '/viewer/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleCssRequest(req, res);
-      return true;
-    }
-
-    // Route: GET/HEAD /sw.js - serve Service Worker
-    if (pathname === '/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, swJsPath(), 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/sw.js - serve Service Worker (alternative path)
-    if (pathname === '/viewer/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, swJsPath(), 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
-    if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, manifestJsonPath(), 'application/json');
-      return true;
-    }
-
-    // Route: GET/HEAD /favicon.ico - serve favicon
-    if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, viewerFaviconPath(), 'image/x-icon');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/operator/*.{js,css} - operator bundle assets.
-    // Traversal-safe and extension-allowlisted: this route must never become a
-    // generic file server rooted at the viewer directory.
-    if (
-      pathname.startsWith('/viewer/operator/') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const operatorRoot = viewerOperatorDir();
-      const resolved = path.resolve(operatorRoot, pathname.slice('/viewer/operator/'.length));
-      const contentType = VIEWER_OPERATOR_MIME[path.extname(resolved)];
-      if (!resolved.startsWith(operatorRoot + path.sep) || !contentType) {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Not found');
-        return true;
-      }
-      serveStaticFile(res, resolved, contentType);
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/icons/*.png - serve PWA icons
-    if (
-      pathname.startsWith('/viewer/icons/') &&
-      pathname.endsWith('.png') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = path.basename(pathname.split('/').pop() || '');
-      const filePath = path.join(viewerIconDir(), fileName);
-      serveStaticFile(res, filePath, 'image/png');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/icons/*.svg - serve SVG icons
-    if (
-      pathname.startsWith('/viewer/icons/') &&
-      pathname.endsWith('.svg') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = path.basename(pathname.split('/').pop() || '');
-      const filePath = path.join(viewerIconDir(), fileName);
-      serveStaticFile(res, filePath, 'image/svg+xml');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/js/utils/*.js - serve utility modules
-    if (
-      pathname.startsWith('/viewer/js/utils/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(getViewerDirectory(), 'js', 'utils', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/js/*.js - serve first-party viewer entry modules
-    if (
-      pathname.startsWith('/viewer/js/') &&
-      !pathname.includes('/modules/') &&
-      !pathname.includes('/utils/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(getViewerDirectory(), 'js', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/js/modules/*.js - serve feature modules
-    if (
-      pathname.startsWith('/viewer/js/modules/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(getViewerDirectory(), 'js', 'modules', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
     // ── Auth gate: all routes below require authentication ──
-    // Static assets (viewer, css, js, icons) are served above without auth.
-    // All data API routes below must pass isAuthenticated().
     // Note: /graph/* write endpoints are also gated in start.ts for defense-in-depth.
     if (!isAuthenticated(req)) {
       logUnauthorizedAttempt(req);
@@ -1789,89 +1557,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET /api/memory/export - export decisions
     if (pathname === '/api/memory/export' && req.method === 'GET') {
       await handleExportRequest(req, res, params);
-      return true;
-    }
-
-    // ── UI Command API (SmartStore bidirectional communication) ──
-
-    // Route: GET /api/ui/commands — viewer polls for pending commands
-    if (pathname === '/api/ui/commands' && req.method === 'GET') {
-      if (options.uiCommandQueue) {
-        handleGetUICommands(res, options.uiCommandQueue);
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ commands: [] }));
-      }
-      return true;
-    }
-
-    // Route: GET /api/ui/page-context — agent reads current viewer state
-    if (pathname === '/api/ui/page-context' && req.method === 'GET') {
-      if (options.uiCommandQueue) {
-        const { handleGetPageContext } = await import('./ui-command-handler.js');
-        handleGetPageContext(res, options.uiCommandQueue);
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, context: null }));
-      }
-      return true;
-    }
-
-    // Route: POST /api/ui/page-context — viewer reports current page state
-    if (pathname === '/api/ui/page-context' && req.method === 'POST') {
-      if (options.uiCommandQueue) {
-        const body = await readBodyOrRespond(req, res);
-        if (!body) {
-          return true;
-        }
-        handlePostPageContext(
-          res,
-          body as unknown as import('./ui-command-handler.js').PageContext,
-          options.uiCommandQueue
-        );
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      }
-      return true;
-    }
-
-    // Route: POST /api/ui/commands — agent pushes UI commands
-    if (pathname === '/api/ui/commands' && req.method === 'POST') {
-      if (options.uiCommandQueue) {
-        const body = await readBodyOrRespond(req, res);
-        if (!body) {
-          return true;
-        }
-        handlePostUICommand(
-          res,
-          body as unknown as import('./ui-command-handler.js').UICommand,
-          options.uiCommandQueue
-        );
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
-      }
-      return true;
-    }
-
-    // Route: POST /api/ui/commands/ack — viewer acknowledges applied commands
-    if (pathname === '/api/ui/commands/ack' && req.method === 'POST') {
-      if (options.uiCommandQueue) {
-        const body = await readBodyOrRespond(req, res);
-        if (!body) {
-          return true;
-        }
-        const { handlePostUICommandAck } = await import('./ui-command-handler.js');
-        handlePostUICommandAck(
-          res,
-          body as unknown as import('./ui-command-handler.js').UICommandAck,
-          options.uiCommandQueue
-        );
-      } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, acknowledged: 0 }));
-      }
       return true;
     }
 
@@ -4215,8 +3900,6 @@ export {
   getUniqueTopics,
   filterNodesByTopic,
   filterEdgesByNodes,
-  viewerHtmlPath,
-  viewerCssPath,
 };
 
 export type {

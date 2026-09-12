@@ -26,10 +26,10 @@ import {
 } from '../operator/procedure-runtime.js';
 import type { ProcedureStore } from '../operator/procedure-store.js';
 import { isCodeActMutatingTool } from './code-act/host-bridge.js';
-import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, realpathSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { AsyncLocalStorage } from 'async_hooks';
 import { createHash, randomUUID } from 'crypto';
-import { join, dirname, resolve, relative, isAbsolute, basename, extname } from 'path';
+import { join, dirname, resolve, relative, isAbsolute, extname } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -434,7 +434,6 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'discord_send',
   'slack_send',
   'telegram_send',
-  'webchat_send',
   'save_integration_token',
 ]);
 const TASK_UPDATE_PUBLIC_FIELDS = [
@@ -3312,12 +3311,6 @@ export class GatewayToolExecutor {
         // Browser tools
         case 'os_get_config':
           return await this.executeGetConfig(input as GetConfigInput);
-        case 'webchat_send':
-          return await this.executeOwnerWorkspaceEffect(
-            'webchat_send',
-            input as Record<string, unknown>,
-            () => this.executeWebchatSend(input as { message?: string; file_path?: string })
-          );
         // Code-Act sandbox execution
         case 'code_act':
           return await this.executeCodeAct(input as CodeActInput);
@@ -5177,7 +5170,7 @@ export class GatewayToolExecutor {
   }
 
   private async executeOwnerWorkspaceEffect(
-    kind: 'Write' | 'Bash' | 'discord_send' | 'slack_send' | 'webchat_send' | 'obsidian',
+    kind: 'Write' | 'Bash' | 'discord_send' | 'slack_send' | 'obsidian',
     intent: Record<string, unknown>,
     execute: () => Promise<{
       success: boolean;
@@ -5902,100 +5895,6 @@ export class GatewayToolExecutor {
     }
 
     return masked;
-  }
-
-  // ============================================================================
-  // ============================================================================
-  // Webchat Tools
-  // ============================================================================
-
-  /**
-   * Execute webchat_send tool — Send message/file to webchat viewer
-   * Copies file to outbound directory and returns the path for viewer rendering
-   *
-   * Note: session_id removed - all files route to shared outbound dir
-   */
-  private async executeWebchatSend(input: { message?: string; file_path?: string }): Promise<{
-    success: boolean;
-    message?: string;
-    outbound_path?: string;
-    error?: string;
-    effectStarted?: false;
-  }> {
-    const { message, file_path } = input;
-
-    if (!message && !file_path) {
-      return {
-        success: false,
-        effectStarted: false,
-        error: 'Either message or file_path is required',
-      };
-    }
-
-    try {
-      const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
-
-      if (file_path) {
-        // Expand ~ to home directory
-        const homeDir = homedir();
-        const expandedPath = file_path.startsWith('~/')
-          ? join(homeDir, file_path.slice(2))
-          : file_path;
-
-        // Check path permission based on role
-        const pathPermission = this.checkPathPermission(expandedPath);
-        if (!pathPermission.allowed) {
-          return { success: false, effectStarted: false, error: pathPermission.error };
-        }
-
-        // Fallback security for contexts without path restrictions:
-        // Only allow reading from ~/.mama/ directory
-        const context = this.getActiveContext();
-        if (!context?.role.allowedPaths?.length) {
-          const mamaDir = resolve(homeDir, '.mama');
-          const resolvedPath = resolve(expandedPath);
-          // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
-          const rel = relative(mamaDir, resolvedPath);
-          if (rel.startsWith('..') || isAbsolute(rel)) {
-            return {
-              success: false,
-              effectStarted: false,
-              error: `Access denied: Can only copy files from ${mamaDir}`,
-            };
-          }
-        }
-
-        if (!existsSync(expandedPath)) {
-          return { success: false, effectStarted: false, error: `File not found: ${expandedPath}` };
-        }
-
-        // Copy file to outbound directory with timestamp prefix
-        const baseName = basename(expandedPath) || 'file';
-        const outName = `${Date.now()}_${baseName}`;
-        const outPath = join(outboundDir, outName);
-        mkdirSync(outboundDir, { recursive: true });
-        copyFileSync(expandedPath, outPath);
-
-        const viewerPath = `~/.mama/workspace/media/outbound/${outName}`;
-
-        return {
-          success: true,
-          message: `${message || 'File ready for download.'}\n\nCRITICAL: Include this EXACT path on its own line in your next response so the viewer renders it as a download link:\n${viewerPath}`,
-          outbound_path: viewerPath,
-        };
-      }
-
-      // Text-only message
-      return {
-        success: true,
-        message: message!,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
   }
 
   /**

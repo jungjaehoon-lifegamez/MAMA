@@ -58,7 +58,6 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
 import { isUntrustedExternalEvidenceTool } from '../../utils/untrusted-content.js';
-import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
 import { ValidationSessionService } from '../../validation/session-service.js';
@@ -1300,20 +1299,13 @@ export async function runAgentLoop(
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
-  // Create singleton UI command queue for Agent↔Viewer communication
-  const uiCommandQueue = new UICommandQueue();
-
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
     sessionsDb: db,
-    uiCommandQueue,
   };
   const codeActRawConnectors = resolveCodeActRawConnectors(connectorConfigLoadResult.enabledNames);
-
-  // Wire uiCommandQueue into messageRouter for page context awareness
-  messageRouter.setUICommandQueue(uiCommandQueue);
 
   // Wire sessionsDb into gateway tool executor
   toolExecutor.setSessionsDb(db);
@@ -2247,7 +2239,7 @@ export async function runAgentLoop(
   if (isOperatorTriggerLoopEnabled(process.env)) {
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
     // DB permission, registry constructor) must not abort the whole daemon before Phase
-    // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
+    // 10/11 - the gateways and agent serve independently of this optional leg. The
     // failure is still surfaced LOUDLY below (console.error), never swallowed silently.
     try {
       const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');

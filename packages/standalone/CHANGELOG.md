@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.4] - 2026-09-12
+
+### Removed
+
+- Removed the unused browser Viewer, frontend workspace, static routes, and UI command queue.
+- Removed the active `webchat_send` tool advertisement and executor while retaining historical
+  stored-effect compatibility.
+
+### Kept
+
+- The shared operational API on port 3847, graph routes, report delivery, messenger and native
+  tool paths, CLI commands, and durable session continuity remain supported.
+
 ## [0.53.3] - 2026-09-12
 
 ### Changed

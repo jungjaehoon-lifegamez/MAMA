@@ -100,7 +100,7 @@ npm install -g @jungjaehoon/mama-os
 - `mama` CLI command
 - Agent loop and gateway integrations
 - Skills system and cron scheduler
-- MAMA OS Viewer (operator board, memory graph, wiki, runtime status)
+- MAMA OS operational API for runtime status, reports, tasks, sources, and health
 
 **Installation time:** 1-2 minutes (package download + model cache warm-up)
 
@@ -355,7 +355,7 @@ mama status
 
 Version 0.24.2 ignores and preserves the newer `workorder:temporal` kind. To re-enable the feature,
 install 0.25.0 or newer, restore both live flags, restart, and confirm health before observing a
-non-critical due task in `/viewer#operator/tasks`:
+non-critical due task through `GET /api/operator/tasks`:
 
 ```bash
 mama stop
@@ -637,17 +637,12 @@ Gateways:
   Telegram: ⚪ Disabled
 
 HTTP Server: http://localhost:3847
-  Viewer: http://localhost:3847/viewer
-  Operator Board: http://localhost:3847/viewer#operator/board
+  Health: http://127.0.0.1:3847/health
 ```
 
-The Operator Board is the primary operating surface: four agent-published report
-slots (briefing, action required, decisions, pipeline) render live over SSE, with
-a Triggers tab showing the trigger loop's library and an owner veto tray. The
-dashboard agent publishes all four slots through the `report_publish` gateway
-tool on a 30-minute cadence, and the scheduled full report publishes the same
-slots. Task state on the board comes from the real task ledger, never guessed
-from chat.
+`mama status` is the primary readiness check. It reports the daemon, configured gateways and
+sources, and the next missing setup action. The operational API on port 3847 retains health,
+runtime status, reports, tasks, source evidence, and graph routes.
 
 ### Step 3: Test the Agent
 
@@ -660,13 +655,14 @@ from chat.
 
 **If no gateway is configured:**
 
-Conversation happens on a chat gateway - the Viewer has no chat surface. Configure Discord,
-Slack, Telegram or Chatwork and test there. Without a gateway you can still confirm the agent
-is alive:
+Conversation happens on an authenticated Discord, Slack, Telegram, or Chatwork gateway. Without a
+gateway you can confirm only local runtime readiness:
 
-1. Open browser: http://localhost:3847/viewer
-2. Check **System > Runtime** for the backend, model and health
-3. Watch **Operator > Board** for the next published report
+1. Run `mama status`.
+2. Run `mama connector status`.
+3. Check `curl -fsS http://127.0.0.1:3847/health`.
+
+Configure a gateway before testing conversation or report delivery.
 
 ---
 
@@ -757,24 +753,23 @@ vim ~/.mama/config.yaml
 mama stop && mama start
 ```
 
-### Accessing MAMA OS Viewer
+### Checking MAMA OS
 
 ```bash
 # Start agent (if not running)
 mama start
 
-# Open browser
-open http://localhost:3847/viewer
-# or visit manually
+# Check runtime and source readiness
+mama status
+mama connector status
+
+# Check the local operational API
+curl -fsS http://127.0.0.1:3847/health
 ```
 
-**MAMA OS features:**
-
-- **Operator** - Board (four live report slots), Tasks, Triggers
-- **Knowledge** - Memory (decision-evolution graph) and Wiki
-- **System** - Runtime status, Connectors, Logs
-
-Mobile-optimized: install it as a PWA from your phone's browser.
+Use an authenticated messenger gateway for conversations, files, reports, and follow-up work.
+Operational API clients can access the retained runtime-status, report, task, source, graph, and
+health routes on port 3847. MAMA OS no longer installs a browser Viewer or PWA.
 
 ---
 
@@ -839,7 +834,7 @@ lsof -i :3847
 kill -9 <PID>
 
 # Or change port in config.yaml
-# (Not recommended - breaks viewer URLs)
+# (Not recommended - changes the operational API address)
 ```
 
 ### Gateway not connecting
@@ -865,7 +860,7 @@ After successful setup:
 2. **Explore skills** - Try `/translate` with an image
 3. **Create custom skills** - Use `/forge` to build new capabilities
 4. **Set up cron jobs** - Schedule automated tasks with `/cron`
-5. **Read the board on the go** - Install the Viewer as a PWA on your phone
+5. **Verify delivery** - Request a report and confirm it arrives through the configured messenger
 
 **Recommended reading:**
 

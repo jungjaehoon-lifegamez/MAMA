@@ -72,7 +72,8 @@ async function verify() {
     console.log('Next steps:');
     console.log('  • Claude Code: /mama-save to save your first decision');
     console.log('  • Claude Desktop: Use mama_save tool');
-    console.log('  • Viewer: http://localhost:3847/viewer');
+    console.log('  • Runtime status: mama status');
+    console.log('  • Operational health: http://127.0.0.1:3847/health');
     console.log();
     process.exit(0);
   } else {

@@ -41,10 +41,9 @@ describe('Per-agent tool filtering', () => {
     });
 
     it('should support mixed exact + wildcard patterns', () => {
-      const prompt = ToolRegistry.generatePrompt(['mama_*', 'Read', 'webchat_*']);
+      const prompt = ToolRegistry.generatePrompt(['mama_*', 'Read']);
       expect(prompt).toContain('mama_save');
       expect(prompt).toContain('Read');
-      expect(prompt).toContain('webchat_send');
       expect(prompt).not.toContain('Write');
       expect(prompt).not.toContain('task_list');
     });

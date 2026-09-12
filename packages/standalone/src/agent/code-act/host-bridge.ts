@@ -741,17 +741,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
       "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { fileId: string; name: string } } }",
     category: 'file',
   },
-  {
-    name: 'webchat_send',
-    description: 'Send message or file to webchat viewer',
-    params: [
-      { name: 'message', type: 'string', required: false },
-      { name: 'file_path', type: 'string', required: false },
-      { name: 'session_id', type: 'string', required: false },
-    ],
-    returnType: '{ message?: string }',
-    category: 'communication',
-  },
   // OS Management
   {
     name: 'os_get_config',

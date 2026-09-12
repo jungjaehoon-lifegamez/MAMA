@@ -325,7 +325,7 @@ export type {
 } from './turn-contract.js';
 
 /**
- * Sensitive patterns that should only be configured via MAMA OS Viewer
+ * Sensitive patterns that should only be configured through local MAMA OS commands
  */
 const SENSITIVE_PATTERNS = [
   /discord.*token/i,
@@ -343,8 +343,6 @@ const SENSITIVE_PATTERNS = [
 ];
 
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
-const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
-const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 /** Wall for a native child's own grant: long delegated work must not expire mid-run. */
 const SUBAGENT_ENVELOPE_WALL_SECONDS = 1800;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
@@ -553,106 +551,9 @@ export class MessageRouter implements TurnProcessor {
     this.sessionsDb = db;
   }
 
-  // UI command queue for page context awareness
-  private uiCommandQueue: import('../api/ui-command-handler.js').UICommandQueue | null = null;
-  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
-    this.uiCommandQueue = queue;
-  }
-
   setValidationService(
     _svc: import('../validation/session-service.js').ValidationSessionService
   ): void {}
-
-  private getPageContextPrefix(message: NormalizedMessage): string {
-    if (!this.uiCommandQueue) {
-      return '';
-    }
-    if (message.source !== 'viewer') {
-      return '';
-    }
-    const ctx = this.uiCommandQueue.getPageContext(message.channelId);
-    if (!ctx || !ctx.currentRoute) {
-      return '';
-    }
-    const data = (ctx.pageData as Record<string, unknown> | null) ?? null;
-
-    // Build rich context that tells MAMA exactly what the user sees
-    const lines: string[] = ['<viewer-context>'];
-    lines.push(`route: ${sanitizeForPrompt(ctx.currentRoute)}`);
-    if (ctx.selectedItem?.type && ctx.selectedItem?.id) {
-      lines.push(
-        `selected_item: ${sanitizeForPrompt(ctx.selectedItem.type)}:${sanitizeForPrompt(ctx.selectedItem.id)}`
-      );
-    }
-    if (data?.summary) {
-      lines.push(`summary: ${sanitizeForPrompt(String(data.summary))}`);
-    }
-
-    if (data?.pageType === 'agent-list' && Array.isArray(data.agents)) {
-      lines.push(`agents:`);
-      const selectedAgentId = ctx.selectedItem?.type === 'agent' ? ctx.selectedItem.id : null;
-      const allAgents = data.agents as Array<Record<string, unknown>>;
-      const shownAgents =
-        selectedAgentId !== null
-          ? allAgents.filter((agent) => String(agent.id ?? '') === selectedAgentId).slice(0, 1)
-          : allAgents.slice(0, VIEWER_CONTEXT_AGENT_LIST_LIMIT);
-      for (const a of shownAgents) {
-        const parts = [`  - ${sanitizeForPrompt(String(a.name || a.id || 'unknown'))}`];
-        if (a.validation) {
-          parts.push(`validation:${sanitizeForPrompt(String(a.validation))}`);
-        }
-        if (a.enabled === false) {
-          parts.push('(disabled)');
-        }
-        if (a.system === true) {
-          parts.push('(system)');
-        }
-        lines.push(parts.join(' '));
-      }
-      const totalAgents = allAgents.length;
-      const enabledAgents = allAgents.filter((agent) => agent.enabled !== false).length;
-      const disabledAgents = totalAgents - enabledAgents;
-      const systemAgents = allAgents.filter((agent) => agent.system === true).length;
-      const hiddenAgents = Math.max(0, totalAgents - shownAgents.length);
-      lines.push(
-        `agent_counts: total=${totalAgents} enabled=${enabledAgents} disabled=${disabledAgents} system=${systemAgents}`
-      );
-      if (hiddenAgents > 0) {
-        lines.push(`(+${hiddenAgents} more agents)`);
-      }
-      if (Array.isArray(data.alerts) && (data.alerts as string[]).length > 0) {
-        const shownAlerts = (data.alerts as string[]).slice(0, VIEWER_CONTEXT_ALERT_LIMIT);
-        lines.push(
-          `alerts: ${shownAlerts.map((item) => sanitizeForPrompt(String(item))).join(', ')}`
-        );
-        const hiddenAlerts = (data.alerts as string[]).length - shownAlerts.length;
-        if (hiddenAlerts > 0) {
-          lines.push(`(+${hiddenAlerts} more alerts)`);
-        }
-      }
-    }
-
-    if (data?.pageType === 'agent-detail') {
-      const agent = data.agent as Record<string, unknown> | null;
-      if (agent) {
-        lines.push(
-          `agent: ${sanitizeForPrompt(String(agent.name))} (${sanitizeForPrompt(String(agent.id))}) v${sanitizeForPrompt(String(agent.version))} tier:${sanitizeForPrompt(String(agent.tier))} model:${sanitizeForPrompt(String(agent.model))}`
-        );
-      }
-      if (data.activeTab) {
-        lines.push(`active_tab: ${sanitizeForPrompt(String(data.activeTab))}`);
-      }
-      const val = data.validation as Record<string, unknown> | null;
-      if (val) {
-        lines.push(
-          `validation: outcome=${sanitizeForPrompt(String(val.outcome))} execution=${sanitizeForPrompt(String(val.execution))} baseline=v${sanitizeForPrompt(String(val.baseline_version ?? 'none'))}`
-        );
-      }
-    }
-
-    lines.push('</viewer-context>');
-    return lines.join('\n') + '\n';
-  }
 
   private gatewayRegistry: GatewayRegistry | null = null;
 
@@ -1039,15 +940,11 @@ export class MessageRouter implements TurnProcessor {
 
 For security reasons, token and API key configuration must be done through MAMA OS.
 
-Please visit: **http://localhost:3847/viewer**
+Use supported local configuration paths:
+- Telegram: \`mama gateway telegram --token-stdin\`
+- Discord, Slack, and Chatwork: configure locally through the MAMA OS config/setup path.
 
-Go to the **Settings** tab to configure:
-- Discord Bot Token
-- Slack Bot/App Tokens
-- Telegram Bot Token
-- Chatwork API Token
-
-This protects your credentials from being exposed in chat logs.`;
+Credentials must not be pasted into chat. This keeps them out of chat logs.`;
 
       return {
         outcome: 'blocked',
@@ -1531,9 +1428,8 @@ This protects your credentials from being exposed in chat logs.`;
             }
           }
 
-          // Add text content (with memory context, skill context, and page context)
-          const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
+          // Add text content with memory and skill context.
+          const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1578,8 +1474,7 @@ This protects your credentials from being exposed in chat logs.`;
           completedOwnerJournalProvenance = result.ownerJournalProvenance;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
-          const pageCtx = isPublicLane ? '' : this.getPageContextPrefix(message);
-          const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
+          const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -1646,12 +1541,12 @@ This protects your credentials from being exposed in chat logs.`;
         }
       }
 
-      // Post-process: auto-copy image paths to outbound for webchat rendering
+      // Preserve compatibility for historical viewer-source sessions until the source union retires.
       if (message.source === 'viewer') {
         response = await this.resolveMediaPaths(response);
       }
 
-      // 5. Record to channel history (for all sources including viewer)
+      // 5. Record to channel history for every admitted source.
       const channelHistory = getChannelHistory();
       if (channelHistory) {
         const now = Date.now();
