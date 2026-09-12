@@ -20,15 +20,16 @@ This prevents you from repeating the same failed experiments.
 
 ## The Right Way to Save Decisions
 
-### ✅ DO: Reuse Topics for Evolution
+### ✅ DO: Reuse Topics for Recall and Link by ID
 
 ```javascript
 // Reuse a topic for exact-topic recall; add relationships explicitly by decision ID.
-// ✅ GOOD: Creates supersedes chain
+// ✅ GOOD: Groups exact-topic recall
 topic: 'auth_strategy'; // Use for ALL auth decisions
 topic: 'auth_strategy'; // Again! Shows evolution
 
-// ❌ BAD: Unique topics break the graph
+// Explicit relationship example: reasoning: "supersedes: decision_previous_id"
+// Unique topics prevent exact-topic grouping.
 topic: 'auth_strategy_v1';
 topic: 'auth_strategy_v2';
 ```
@@ -37,7 +38,7 @@ topic: 'auth_strategy_v2';
 
 - Reusing the same topic groups exact-topic recall but does not create a relationship.
 - This lets you track the evolution from confusion to clarity
-- Unique topic names (v1, v2, etc.) break the graph connections
+- Graph connections require explicit decision IDs in reasoning.
 
 **Learn more:** [Decision Graph Concept](../explanation/decision-graph.md)
 
@@ -62,7 +63,7 @@ Outcome: pending
 /mama-save
 Topic: auth_strategy  # SAME topic!
 Decision: Switch to JWT with refresh tokens
-Reasoning: Session cookies don't scale horizontally, discovered during load testing
+Reasoning: Session cookies don't scale horizontally. supersedes: decision_auth_strategy_001
 Confidence: 0.8
 Outcome: success
 ```
@@ -80,7 +81,7 @@ Outcome: success
    ⚠️ SUPERSEDED by next decision
 
 2. [just now] ✅ Success → JWT with refresh tokens
-   Reasoning: Session cookies don't scale...
+   Reasoning: Session cookies don't scale... supersedes: decision_auth_strategy_001
    🔗 SUPERSEDES: Decision #1
 ```
 

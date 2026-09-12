@@ -105,8 +105,12 @@ function isNodeVisible(id: string, scopes?: readonly RegistryScopeRef[]): boolea
       'SELECT scope_kind AS kind, scope_id AS id FROM registry_scope_bindings WHERE node_id = ?'
     )
     .all(id) as RegistryScopeRef[];
-  if (bindings.length === 0) return true;
-  if (!scopes || scopes.length === 0) return false;
+  if (bindings.length === 0) {
+    return true;
+  }
+  if (!scopes || scopes.length === 0) {
+    return false;
+  }
   return scopes.some((scope) =>
     bindings.some((binding) => binding.kind === scope.kind && binding.id === scope.id)
   );
@@ -153,7 +157,9 @@ function insertAlias(
       )
       .get(kind, normalized, scope.kind, scope.id) as { node_id: string } | undefined;
     if (existing) {
-      if (existing.node_id === nodeId) continue;
+      if (existing.node_id === nodeId) {
+        continue;
+      }
       throw new RegistryError(
         'alias_taken',
         `Alias "${alias}" is already registered in this scope.`
@@ -181,7 +187,9 @@ export function createNode(input: {
   const write = (): string => {
     const kind = requireKind(input.kind);
     const name = input.name.trim();
-    if (!name) throw new RegistryError('empty_name', 'A registry node needs a name');
+    if (!name) {
+      throw new RegistryError('empty_name', 'A registry node needs a name');
+    }
     const id = `reg_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     const now = Date.now();
     db.prepare(
@@ -190,7 +198,9 @@ export function createNode(input: {
     ).run(id, kind, name, input.parentId ?? null, input.note ?? null, now, now);
     // The name is an alias too: asking for a node by the name it displays must work.
     insertAlias(id, kind, name, now, input.scopes);
-    for (const alias of input.aliases ?? []) insertAlias(id, kind, alias, now, input.scopes);
+    for (const alias of input.aliases ?? []) {
+      insertAlias(id, kind, alias, now, input.scopes);
+    }
     for (const scope of input.scopes ?? []) {
       if (!scope.id.trim()) {
         throw new RegistryError('invalid_scope', 'Registry scope id must be nonblank');
@@ -202,8 +212,7 @@ export function createNode(input: {
     }
     return id;
   };
-  const result = db.transaction(write) as unknown;
-  return typeof result === 'function' ? (result as () => string)() : (result as string);
+  return db.transaction(write);
 }
 
 export function addAliases(
@@ -214,16 +223,19 @@ export function addAliases(
   const db = adapter();
   const write = (): void => {
     if (scopes === undefined) {
-      for (const alias of aliases) addAlias(nodeId, alias);
+      for (const alias of aliases) {
+        addAlias(nodeId, alias);
+      }
       return;
     }
     const node = readNode(nodeId);
     if (!node || node.mergedInto)
       throw new RegistryError('unknown_node', 'Registry node unavailable');
-    for (const alias of aliases) insertAlias(nodeId, node.kind, alias, Date.now(), scopes);
+    for (const alias of aliases) {
+      insertAlias(nodeId, node.kind, alias, Date.now(), scopes);
+    }
   };
-  const result = db.transaction(write) as unknown;
-  if (typeof result === 'function') (result as () => void)();
+  db.transaction(write);
 }
 
 export function upsertNode(input: {
@@ -238,6 +250,12 @@ export function upsertNode(input: {
   const write = (): { id: string; created: boolean; children: string[] } => {
     const existing = resolveAlias(input.name, input.kind, input.scopes);
     if (existing) {
+      if (input.children && input.children.length > 0) {
+        throw new RegistryError(
+          'existing_children_unsupported',
+          'Adding children to an existing node requires an explicit correction.'
+        );
+      }
       addAliases(existing.id, input.aliases ?? [], input.scopes);
       return { id: existing.id, created: false, children: [] };
     }
@@ -252,15 +270,14 @@ export function upsertNode(input: {
         : [];
     return { id, created: true, children };
   };
-  const result = db.transaction(write) as unknown;
-  return typeof result === 'function'
-    ? (result as () => { id: string; created: boolean; children: string[] })()
-    : (result as { id: string; created: boolean; children: string[] });
+  return db.transaction(write);
 }
 
 export function addAlias(nodeId: string, alias: string): void {
   const node = readNode(nodeId);
-  if (!node) throw new RegistryError('unknown_node', `No registry node ${nodeId}`);
+  if (!node) {
+    throw new RegistryError('unknown_node', `No registry node ${nodeId}`);
+  }
   if (node.mergedInto) {
     throw new RegistryError(
       'node_merged',
@@ -287,7 +304,9 @@ export function resolveAlias(
   scopes?: readonly RegistryScopeRef[]
 ): RegistryNode | null {
   const normalized = normalizeAlias(alias);
-  if (!normalized) return null;
+  if (!normalized) {
+    return null;
+  }
   const admitted = scopes && scopes.length > 0 ? scopes : [{ kind: 'global' as const, id: '*' }];
   const whereKind = kind ? 'kind = ? AND' : '';
   const rows = adapter()
@@ -326,13 +345,16 @@ export function listNodes(filter?: {
     params.push(requireKind(filter.kind));
   }
   if (filter?.parentId !== undefined) {
-    if (filter.parentId === null) where.push('parent_id IS NULL');
-    else {
+    if (filter.parentId === null) {
+      where.push('parent_id IS NULL');
+    } else {
       where.push('parent_id = ?');
       params.push(filter.parentId);
     }
   }
-  if (filter?.includeMerged !== true) where.push('merged_into IS NULL');
+  if (filter?.includeMerged !== true) {
+    where.push('merged_into IS NULL');
+  }
   if (filter?.scopes && filter.scopes.length > 0) {
     where.push(
       `(NOT EXISTS (SELECT 1 FROM registry_scope_bindings rs WHERE rs.node_id = registry_nodes.id)
@@ -364,8 +386,12 @@ export function mergeNodes(input: { loser: string; survivor: string; reason: str
   }
   const loser = readNode(input.loser);
   const survivor = readNode(input.survivor);
-  if (!loser) throw new RegistryError('unknown_node', `No registry node ${input.loser}`);
-  if (!survivor) throw new RegistryError('unknown_node', `No registry node ${input.survivor}`);
+  if (!loser) {
+    throw new RegistryError('unknown_node', `No registry node ${input.loser}`);
+  }
+  if (!survivor) {
+    throw new RegistryError('unknown_node', `No registry node ${input.survivor}`);
+  }
   if (survivor.mergedInto) {
     throw new RegistryError(
       'survivor_merged',
@@ -376,7 +402,9 @@ export function mergeNodes(input: { loser: string; survivor: string; reason: str
     throw new RegistryError('kind_mismatch', `Cannot merge ${loser.kind} into ${survivor.kind}`);
   }
   const reason = input.reason.trim();
-  if (!reason) throw new RegistryError('missing_reason', 'A merge must record why');
+  if (!reason) {
+    throw new RegistryError('missing_reason', 'A merge must record why');
+  }
   const now = Date.now();
   // Aliases move rather than duplicate: (kind, alias) is unique, and the loser's rows are
   // exactly the spellings that must now reach the survivor.
@@ -410,14 +438,18 @@ export function splitNode(input: {
   const db = adapter();
   const write = (): string[] => {
     const parent = readNode(input.parent);
-    if (!parent) throw new RegistryError('unknown_node', `No registry node ${input.parent}`);
+    if (!parent) {
+      throw new RegistryError('unknown_node', `No registry node ${input.parent}`);
+    }
     if (parent.mergedInto) {
       throw new RegistryError('node_merged', `Node ${input.parent} was merged away`);
     }
     if (input.children.length < 2) {
       throw new RegistryError('split_too_small', 'A split needs at least two children');
     }
-    if (!input.reason.trim()) throw new RegistryError('missing_reason', 'A split must record why');
+    if (!input.reason.trim()) {
+      throw new RegistryError('missing_reason', 'A split must record why');
+    }
     const parentScopes = adapter()
       .prepare(
         'SELECT scope_kind AS kind, scope_id AS id FROM registry_scope_bindings WHERE node_id = ?'
@@ -434,6 +466,5 @@ export function splitNode(input: {
       })
     );
   };
-  const result = db.transaction(write) as unknown;
-  return typeof result === 'function' ? (result as () => string[])() : (result as string[]);
+  return db.transaction(write);
 }

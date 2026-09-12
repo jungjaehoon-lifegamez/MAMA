@@ -1216,7 +1216,7 @@ If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 ---
 
 **Last Updated:** 2026-09-12
-**Version:** mama-server 2.0.0 / mama-os 0.54.0
+**Version:** mama-server 2.1.0 / mama-os 0.55.0
 Decision saves may include `item` (a registered item node id) and `actors`
 (`[{ "person": "<registered person id>", "role": "<explicit role>" }]`). These references are
 validated and committed in the same SQLite transaction as the decision, embedding, scopes, events,

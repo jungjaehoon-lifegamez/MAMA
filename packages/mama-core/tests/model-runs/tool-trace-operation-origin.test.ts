@@ -850,7 +850,9 @@ describe('migration 071 raw SQL companion (applyAll/direct-exec path)', () => {
       db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
     }
     db.exec('DROP TABLE tool_traces');
-    if (extraSetup) extraSetup(db);
+    if (extraSetup) {
+      extraSetup(db);
+    }
     db.exec(`CREATE TABLE tool_traces (\n${bodyClauses}\n)`);
     // Recreate the canonical 033/068 indexes so only the injected deviation differs.
     db.exec(

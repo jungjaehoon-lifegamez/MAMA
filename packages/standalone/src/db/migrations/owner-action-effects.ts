@@ -121,6 +121,29 @@ function tableSql(db: SQLiteDatabase, tableName: string): string {
   return row?.sql ?? '';
 }
 
+function hasUnsupportedOwnerActionConstraints(db: SQLiteDatabase): boolean {
+  let residualSql = normalizeSql(tableSql(db, OWNER_ACTION_EFFECTS_TABLE));
+  for (const known of [
+    'CHECK (length(trim(owner_scope)) > 0)',
+    'CHECK (length(trim(occurrence_key)) > 0)',
+    'CHECK (length(trim(action_key)) > 0)',
+    'CHECK (length(trim(effect_kind)) > 0)',
+    "CHECK (status IN ('transmitting','unknown','confirmed'))",
+    'CHECK (origin_model_run_id IS NULL OR length(trim(origin_model_run_id)) > 0)',
+    'CHECK (origin_operation_id IS NULL OR length(trim(origin_operation_id)) > 0)',
+    'CHECK (length(trim(origin_envelope_hash)) > 0)',
+    AT_LEAST_ONE_ORIGIN_CHECK,
+  ]) {
+    residualSql = residualSql.replace(normalizeSql(known), '');
+  }
+  return (
+    residualSql.includes('check(') ||
+    residualSql.includes('unique') ||
+    residualSql.includes('collate') ||
+    residualSql.includes('references')
+  );
+}
+
 /**
  * True when the existing table already carries the operation-origin shape:
  * both origin columns present, origin_model_run_id nullable, and the
@@ -129,15 +152,34 @@ function tableSql(db: SQLiteDatabase, tableName: string): string {
 function hasOperationOriginShape(db: SQLiteDatabase): boolean {
   const info = tableColumnInfo(db, OWNER_ACTION_EFFECTS_TABLE);
   const names = new Set(info.map((column) => column.name));
+  if ([...names].some((name) => !(REQUIRED_COLUMNS as readonly string[]).includes(name))) {
+    return false;
+  }
+  if (hasUnsupportedOwnerActionConstraints(db)) {
+    return false;
+  }
   if (!names.has('origin_model_run_id') || !names.has('origin_operation_id')) {
     return false;
   }
   const modelRunColumn = info.find((column) => column.name === 'origin_model_run_id');
-  if (!modelRunColumn || modelRunColumn.notnull !== 0) {
+  const operationColumn = info.find((column) => column.name === 'origin_operation_id');
+  if (
+    !modelRunColumn ||
+    modelRunColumn.notnull !== 0 ||
+    !operationColumn ||
+    operationColumn.notnull !== 0
+  ) {
     return false;
   }
-  return normalizeSql(tableSql(db, OWNER_ACTION_EFFECTS_TABLE)).includes(
-    normalizeSql(AT_LEAST_ONE_ORIGIN_CHECK)
+  const sql = normalizeSql(tableSql(db, OWNER_ACTION_EFFECTS_TABLE));
+  return (
+    sql.includes(normalizeSql(AT_LEAST_ONE_ORIGIN_CHECK)) &&
+    sql.includes(
+      normalizeSql('CHECK (origin_model_run_id IS NULL OR length(trim(origin_model_run_id)) > 0)')
+    ) &&
+    sql.includes(
+      normalizeSql('CHECK (origin_operation_id IS NULL OR length(trim(origin_operation_id)) > 0)')
+    )
   );
 }
 
@@ -149,13 +191,27 @@ function hasOperationOriginShape(db: SQLiteDatabase): boolean {
  * model run), and every non-auto index is recreated from its stored DDL.
  */
 function rebuildForOperationOrigins(db: SQLiteDatabase): void {
+  const oldColumns = new Set(
+    tableColumnInfo(db, OWNER_ACTION_EFFECTS_TABLE).map((column) => column.name)
+  );
+  const unknownColumns = [...oldColumns].filter(
+    (column) => !(REQUIRED_COLUMNS as readonly string[]).includes(column)
+  );
+  if (unknownColumns.length > 0) {
+    throw new Error(
+      `${OWNER_ACTION_EFFECTS_TABLE} has unsupported columns: ${unknownColumns.join(', ')}`
+    );
+  }
+  if (hasUnsupportedOwnerActionConstraints(db)) {
+    throw new Error(`${OWNER_ACTION_EFFECTS_TABLE} has unsupported custom constraints`);
+  }
   const previousForeignKeys = db.pragma('foreign_keys', { simple: true });
   db.pragma('foreign_keys = OFF');
+  if (db.pragma('foreign_keys', { simple: true })) {
+    throw new Error(`${OWNER_ACTION_EFFECTS_TABLE} could not disable foreign_keys`);
+  }
   try {
     db.transaction(() => {
-      const oldColumns = new Set(
-        tableColumnInfo(db, OWNER_ACTION_EFFECTS_TABLE).map((column) => column.name)
-      );
       const carried = [
         'owner_scope',
         'occurrence_key',
@@ -167,6 +223,7 @@ function rebuildForOperationOrigins(db: SQLiteDatabase): void {
         'result_json',
         'last_error',
         'origin_model_run_id',
+        'origin_operation_id',
         'origin_envelope_hash',
         'origin_workorder_attempt_id',
         'settled_model_run_id',
@@ -217,7 +274,7 @@ function rebuildForOperationOrigins(db: SQLiteDatabase): void {
       }
       db.exec(protectionTriggersDDL(OWNER_ACTION_EFFECTS_TABLE));
 
-      const violations = db.pragma(`foreign_key_check(${OWNER_ACTION_EFFECTS_TABLE})`) as unknown[];
+      const violations = db.pragma('foreign_key_check') as unknown[];
       if (violations.length > 0) {
         throw new Error(`${OWNER_ACTION_EFFECTS_TABLE} rebuild left foreign key violations`);
       }
@@ -251,13 +308,19 @@ function assertProtectionTriggersPresent(db: SQLiteDatabase): void {
 }
 
 export function applyOwnerActionEffectsMigration(db: SQLiteDatabase): void {
-  // `CREATE TABLE IF NOT EXISTS ...` via the shared DDL builder (the table-name
-  // argument carries the IF NOT EXISTS guard). No-op on an existing table.
-  db.exec(`
-    ${ownerActionEffectsTableDDL(`IF NOT EXISTS ${OWNER_ACTION_EFFECTS_TABLE}`)};
-    CREATE INDEX IF NOT EXISTS idx_owner_action_effects_pending
-      ON ${OWNER_ACTION_EFFECTS_TABLE} (owner_scope, occurrence_key, status, created_at, action_key);
-  `);
+  const exists = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+      .get(OWNER_ACTION_EFFECTS_TABLE)
+  );
+  if (!exists) {
+    db.exec(`
+      ${ownerActionEffectsTableDDL(OWNER_ACTION_EFFECTS_TABLE)};
+      CREATE INDEX idx_owner_action_effects_pending
+        ON ${OWNER_ACTION_EFFECTS_TABLE} (owner_scope, occurrence_key, status, created_at, action_key);
+      ${protectionTriggersDDL(OWNER_ACTION_EFFECTS_TABLE)}
+    `);
+  }
 
   // A database carrying the pre-origin shape is rebuilt before verification.
   if (!hasOperationOriginShape(db)) {
@@ -317,6 +380,10 @@ export function applyOwnerActionEffectsMigration(db: SQLiteDatabase): void {
   if (checks.some((check) => !normalized.includes(check))) {
     throw new Error(`${OWNER_ACTION_EFFECTS_TABLE} is missing a required CHECK constraint`);
   }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_owner_action_effects_pending
+       ON ${OWNER_ACTION_EFFECTS_TABLE} (owner_scope, occurrence_key, status, created_at, action_key)`
+  );
   // The fresh-create path guarantees the protections here (the rebuild path
   // already created them inside its transaction); assert they exist afterwards.
   db.exec(protectionTriggersDDL(OWNER_ACTION_EFFECTS_TABLE));

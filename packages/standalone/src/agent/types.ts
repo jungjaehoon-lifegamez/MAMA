@@ -1433,7 +1433,8 @@ export type AgentErrorCode =
   | 'MCP_COMPLETED_MUTATION_INTERRUPTED'
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
   | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
-  | 'TOOL_CONTRACT_REPEAT';
+  | 'TOOL_CONTRACT_REPEAT'
+  | 'relationship_target_unavailable';
 
 /**
  * Custom error class for agent loop errors
@@ -1543,6 +1544,7 @@ export interface MemoryWriteProvenance {
 export interface TrustedMemoryWriteOptions {
   provenance: MemoryWriteProvenance;
   capability: unknown;
+  authoritativeScopes?: readonly ScopeRef[];
 }
 
 /**

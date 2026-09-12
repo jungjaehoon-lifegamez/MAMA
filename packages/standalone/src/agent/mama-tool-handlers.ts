@@ -44,13 +44,17 @@ export async function handleSave(
       return { success: false, message: 'Decision item must be nonblank' };
     }
     if (
-      d.actors?.some(
-        (actor) =>
-          typeof actor.person !== 'string' ||
-          !actor.person.trim() ||
-          typeof actor.role !== 'string' ||
-          !actor.role.trim()
-      )
+      (d.actors !== undefined && !Array.isArray(d.actors)) ||
+      (Array.isArray(d.actors) &&
+        d.actors.some(
+          (actor) =>
+            !actor ||
+            typeof actor !== 'object' ||
+            typeof actor.person !== 'string' ||
+            !actor.person.trim() ||
+            typeof actor.role !== 'string' ||
+            !actor.role.trim()
+        ))
     ) {
       return { success: false, message: 'Decision actors require nonblank person and role' };
     }

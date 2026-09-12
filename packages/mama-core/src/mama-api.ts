@@ -1564,7 +1564,7 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
       if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
       if (/^\d+$/.test(value.trim())) return toMs(Number(value));
       const normalized = value.includes('T') ? value : value.replace(' ', 'T');
-      return Date.parse(/[Z+-]\d*$/.test(normalized) ? normalized : `${normalized}Z`);
+      return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized) ? normalized : `${normalized}Z`);
     };
     const newest = new Map<string, { id: string; time: number }>();
     for (const candidate of candidates) {

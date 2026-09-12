@@ -475,6 +475,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       throw new Error('Database not connected');
     }
     const depth = this.transactionDepth;
+    const vectorSnapshot = new Map(this.vectorCache);
+    const topicSnapshot = new Map(this.topicCache);
+    const statusSnapshot = new Map(this.statusCache);
     const savepoint = `mama_nested_${depth}`;
     this.exec(depth === 0 ? 'BEGIN TRANSACTION' : `SAVEPOINT ${savepoint}`);
     this.transactionDepth += 1;
@@ -490,6 +493,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       this.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {
+      this.vectorCache = vectorSnapshot;
+      this.topicCache = topicSnapshot;
+      this.statusCache = statusSnapshot;
       this.transactionDepth -= 1;
       try {
         this.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO SAVEPOINT ${savepoint}`);
@@ -1227,12 +1233,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       'FOREIGN KEY (merged_into) REFERENCES registry_nodes(id)',
       'REFERENCES registry_nodes(id) ON DELETE SET NULL',
     ]);
-    const aliasExtras = extraConstraints('registry_aliases', [
-      "CHECK (kind IN ('item', 'person', 'client'))",
-      'PRIMARY KEY (kind, alias, scope_kind, scope_id)',
-      'FOREIGN KEY (node_id) REFERENCES registry_nodes(id)',
-      'REFERENCES registry_nodes(id) ON DELETE CASCADE',
-    ]);
+    const aliasExtras = this.tableExists('registry_aliases')
+      ? extraConstraints('registry_aliases', [
+          "CHECK (kind IN ('item', 'person', 'client'))",
+          'PRIMARY KEY (kind, alias, scope_kind, scope_id)',
+          'FOREIGN KEY (node_id) REFERENCES registry_nodes(id)',
+          'REFERENCES registry_nodes(id) ON DELETE CASCADE',
+        ])
+      : [];
     const scopeExtras = this.tableExists('registry_scope_bindings')
       ? extraConstraints('registry_scope_bindings', [
           "CHECK (scope_kind IN ('global', 'user', 'channel', 'project'))",

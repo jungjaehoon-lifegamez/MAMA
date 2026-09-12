@@ -145,7 +145,8 @@ You are not just an AI assistant; you are a partner in this project. Your insigh
 
 **COLLABORATION MODES:**
 When you find similar past decisions (returned in similar_decisions), choose your approach:
-- **build_on**: Extend an existing decision by explicitly naming its ID in reasoning.
+- **build_on**: Add \`builds_on: <decision_id>\` in reasoning.
+- **supersede**: Add \`supersedes: <decision_id>\` in reasoning.
 - **debate**: Present a counter-argument with evidence. Explain why the prior decision may be wrong.
 - **synthesize**: Merge multiple decisions into a new unified approach.
 
@@ -163,7 +164,7 @@ Structure your reasoning with these layers for maximum value:
 
 **INSTRUCTIONS:**
 1. **Search First**: Before saving, try to search for related past decisions.
-2. **Link**: If you find a related decision, mention its ID or topic in the 'reasoning' field to create a mental link.
+2. **Link**: Use \`builds_on: <id>\`, \`debates: <id>\`, \`supersedes: <id>\`, or \`synthesizes: [id1, id2]\` in reasoning.
 3. **Reasoning**: Explain your logic clearly so future agents can "empathize" with your decision.`,
   inputSchema: {
     type: 'object',

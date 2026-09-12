@@ -81,7 +81,9 @@ export interface RegistryToolResult {
 function errorCode(error: unknown): string | undefined {
   if (typeof error === 'object' && error !== null) {
     const code = (error as { code?: unknown }).code;
-    if (typeof code === 'string') return code;
+    if (typeof code === 'string') {
+      return code;
+    }
   }
   return undefined;
 }
@@ -137,9 +139,14 @@ export async function handleRegistryUpsert(
       error: 'registry_upsert requires kind and name',
     };
   }
-  const aliases = (input.aliases ?? []).filter(
-    (alias): alias is string => typeof alias === 'string' && alias.trim().length > 0
-  );
+  if (
+    input.aliases !== undefined &&
+    (!Array.isArray(input.aliases) ||
+      input.aliases.some((alias) => typeof alias !== 'string' || !alias.trim()))
+  ) {
+    return { success: false, code: 'invalid_alias', error: 'aliases must be nonblank strings' };
+  }
+  const aliases = input.aliases ?? [];
   try {
     const result = registry.upsertNode({
       kind,

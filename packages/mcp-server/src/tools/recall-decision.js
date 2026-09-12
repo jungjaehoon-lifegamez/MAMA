@@ -19,7 +19,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const createRecallDecisionTool = (mamaApi) => ({
   name: 'recall_decision',
   description:
-    'Recall exact-topic decision history and traverse explicit supersedes links. Returns past decisions filtered by scope if provided. Reusing a topic groups recall but does not create a relationship.',
+    'Recall exact-topic decision history without scopes, or semantic memory matches within supplied scopes. Explicit supersedes links are traversed; reusing a topic does not create a relationship.',
   inputSchema: {
     type: 'object',
     properties: {

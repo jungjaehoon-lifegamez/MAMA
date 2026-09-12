@@ -62,8 +62,12 @@ export interface OwnerActionEffectStoragePort {
 const IDENTITY_MAX_LENGTH = 512;
 
 export function canonicalizeOwnerActionValue(value: unknown, path = '$'): unknown {
-  if (value === null) return null;
-  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
       throw new Error(`owner action intent ${path} must be a finite number`);

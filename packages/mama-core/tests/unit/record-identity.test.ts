@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAdapter, queryDecisionGraph } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
-import { createNode } from '../../src/registry/store.js';
+import { createNode, mergeNodes } from '../../src/registry/store.js';
 import {
   RecordIdentityError,
   listActors,
+  listRecordIdsForItem,
   readRecordIdentity,
   setRecordIdentity,
 } from '../../src/registry/record-identity.js';
-import { saveMemory } from '../../src/memory/api.js';
+import { saveLegacyMemory, saveMemory } from '../../src/memory/api.js';
+import { createTrustedProvenanceCapability } from '../../src/memory/provenance.js';
 
 /**
  * A record says what it is about by pointing at a node, not by spelling it in `topic`.
@@ -32,6 +34,7 @@ describe('record identity', () => {
     const adapter = getAdapter();
     adapter.prepare('DELETE FROM record_actors').run();
     adapter.prepare('DELETE FROM memory_events').run();
+    adapter.prepare('DELETE FROM decision_edges').run();
     adapter.prepare('DELETE FROM decisions').run();
     adapter.prepare('DELETE FROM registry_aliases').run();
     adapter.prepare('DELETE FROM registry_nodes').run();
@@ -257,12 +260,134 @@ describe('record identity', () => {
        VALUES (?, ?, ?, '', 1, ?, ?, ?, ?)`
     );
     insert.run('old-cross-topic', 'previous-topic', 'old', null, 'current-topic', 1, 1);
+    db.prepare('UPDATE decisions SET refined_from = ? WHERE id = ?').run(
+      JSON.stringify(['source-a']),
+      'old-cross-topic'
+    );
     insert.run('current-topic', 'exact-topic', 'current', 'old-cross-topic', null, 2, 2);
     insert.run('prefix-only', 'exact-topic-extra', 'prefix', null, null, 3, 3);
 
-    expect((await queryDecisionGraph('exact-topic')).map((row) => row.id)).toEqual([
-      'current-topic',
-      'old-cross-topic',
-    ]);
+    const graph = await queryDecisionGraph('exact-topic');
+    expect(graph.map((row) => row.id)).toEqual(['current-topic', 'old-cross-topic']);
+    expect(graph.find((row) => row.id === 'old-cross-topic')?.refined_from).toEqual(['source-a']);
+  });
+
+  it('deduplicates repeated explicit edges and denies trusted cross-scope supersedes atomically', async () => {
+    const db = getAdapter();
+    db.prepare('DELETE FROM memory_events').run();
+    db.prepare('DELETE FROM decisions').run();
+    const target = await saveMemory({
+      topic: 'target',
+      kind: 'decision',
+      summary: 'target',
+      details: 'target details',
+      scopes: [{ kind: 'project', id: 'b' }],
+      source: { package: 'mama-core', source_type: 'test' },
+    });
+    await saveLegacyMemory(
+      {
+        topic: 'dedupe',
+        kind: 'decision',
+        summary: 'dedupe',
+        details: 'explicit links',
+        scopes: [{ kind: 'project', id: 'a' }],
+        source: { package: 'mama-core', source_type: 'test' },
+      },
+      { relationships: [{ type: 'builds_on', targetIds: [target.id, target.id] }] }
+    );
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM decision_edges WHERE relationship='builds_on'")
+        .get()
+    ).toEqual({ count: 1 });
+
+    const before = db.prepare('SELECT COUNT(*) AS count FROM decisions').get();
+    await expect(
+      saveLegacyMemory(
+        {
+          topic: 'denied',
+          kind: 'decision',
+          summary: 'denied',
+          details: 'cross scope',
+          scopes: [{ kind: 'project', id: 'a' }],
+          source: { package: 'mama-core', source_type: 'test' },
+        },
+        { relationships: [{ type: 'supersedes', targetIds: [target.id] }] },
+        {
+          capability: createTrustedProvenanceCapability(),
+          provenance: { actor: 'main_agent' },
+          authoritativeScopes: [
+            { kind: 'project', id: 'a' },
+            { kind: 'project', id: 'b' },
+          ],
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'relationship_target_unavailable',
+      message: 'Relationship target is unavailable',
+    });
+    await expect(
+      saveLegacyMemory(
+        {
+          topic: 'unknown-denied',
+          kind: 'decision',
+          summary: 'unknown',
+          details: 'same response',
+          scopes: [{ kind: 'project', id: 'a' }],
+          source: { package: 'mama-core', source_type: 'test' },
+        },
+        { relationships: [{ type: 'supersedes', targetIds: ['decision_unknown'] }] },
+        {
+          capability: createTrustedProvenanceCapability(),
+          provenance: { actor: 'main_agent' },
+          authoritativeScopes: [{ kind: 'project', id: 'a' }],
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'relationship_target_unavailable',
+      message: 'Relationship target is unavailable',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM decisions').get()).toEqual(before);
+
+    const targetRow = db.prepare('SELECT rowid FROM decisions WHERE id = ?').get(target.id) as {
+      rowid: number;
+    };
+    db.insertEmbedding(targetRow.rowid, [1, 0]);
+    await saveLegacyMemory(
+      {
+        topic: 'authorized',
+        kind: 'decision',
+        summary: 'authorized',
+        details: 'same scope',
+        scopes: [{ kind: 'project', id: 'b' }],
+        source: { package: 'mama-core', source_type: 'test' },
+      },
+      { relationships: [{ type: 'supersedes', targetIds: [target.id] }] },
+      {
+        capability: createTrustedProvenanceCapability(),
+        provenance: { actor: 'main_agent' },
+        authoritativeScopes: [{ kind: 'project', id: 'b' }],
+      }
+    );
+    expect(db.prepare('SELECT status FROM decisions WHERE id = ?').get(target.id)).toEqual({
+      status: 'superseded',
+    });
+    expect(db.vectorSearch([1, 0], 5, undefined, ['superseded'])).toEqual([]);
+  });
+
+  it('includes records bound to transitive merged losers in the survivor timeline', () => {
+    const db = getAdapter();
+    db.prepare('DELETE FROM decisions').run();
+    const first = createNode({ kind: 'item', name: 'first loser' });
+    const second = createNode({ kind: 'item', name: 'second loser' });
+    const survivor = createNode({ kind: 'item', name: 'timeline survivor' });
+    db.prepare(
+      `INSERT INTO decisions
+       (id, topic, decision, confidence, item_id, created_at, updated_at)
+       VALUES ('timeline-old', 'old', 'old', 1, ?, 1, 1)`
+    ).run(first);
+    mergeNodes({ loser: first, survivor: second, reason: 'explicit' });
+    mergeNodes({ loser: second, survivor, reason: 'explicit' });
+    expect(listRecordIdsForItem(survivor).map((row) => row.id)).toContain('timeline-old');
   });
 });

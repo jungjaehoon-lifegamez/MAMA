@@ -678,6 +678,13 @@ export async function queryDecisionGraph(
       `);
       for (const decision of decisions) {
         decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
+        if (decision.refined_from && typeof decision.refined_from === 'string') {
+          try {
+            decision.refined_from = JSON.parse(decision.refined_from);
+          } catch {
+            decision.refined_from = [];
+          }
+        }
       }
       return decisions;
     }

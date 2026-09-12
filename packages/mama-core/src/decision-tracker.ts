@@ -317,7 +317,9 @@ export function parseReasoningForRelationships(reasoning: string): ParsedRelatio
   if (supersedesMatch) {
     supersedesMatch.forEach((match) => {
       const id = match.replace(/\*{0,2}supersedes\*{0,2}:\*{0,2}\s*/i, '').trim();
-      if (id) relationships.push({ type: 'supersedes', targetIds: [id] });
+      if (id) {
+        relationships.push({ type: 'supersedes', targetIds: [id] });
+      }
     });
   }
 

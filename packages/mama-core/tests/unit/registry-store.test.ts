@@ -210,6 +210,20 @@ describe('registry: item and person nodes with aliases', () => {
     expect(resolveAlias('a-only-alias', 'item', [{ kind: 'project', id: 'b' }])).toBeNull();
   });
 
+  it('rejects children on an existing node without adding aliases or child rows', () => {
+    const existing = createNode({ kind: 'item', name: 'existing parent' });
+    expect(() =>
+      upsertNode({
+        kind: 'item',
+        name: 'existing parent',
+        aliases: ['must-not-stick'],
+        children: [{ name: 'child one' }, { name: 'child two' }],
+      })
+    ).toThrowError(expect.objectContaining({ code: 'existing_children_unsupported' }));
+    expect(resolveAlias('must-not-stick')).toBeNull();
+    expect(listNodes({ parentId: existing })).toEqual([]);
+  });
+
   it('propagates loser scopes on merge so a visible alias never reveals a hidden survivor', () => {
     const loser = createNode({
       kind: 'item',

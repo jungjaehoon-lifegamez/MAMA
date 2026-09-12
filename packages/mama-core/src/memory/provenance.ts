@@ -1,5 +1,6 @@
 import type {
   MemoryEventRecord,
+  MemoryScopeRef,
   MemoryWriteProvenance,
   PublicIngestConversationInput,
   PublicIngestMemoryInput,
@@ -28,6 +29,7 @@ export interface TrustedProvenanceCapability {
 export interface TrustedMemoryWriteOptions {
   provenance: MemoryWriteProvenance;
   capability: TrustedProvenanceCapability;
+  authoritativeScopes?: readonly MemoryScopeRef[];
 }
 
 export interface NormalizedMemoryProvenance {

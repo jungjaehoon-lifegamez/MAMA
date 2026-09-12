@@ -181,15 +181,16 @@ export function setRecordIdentity(input: {
 
   // better-sqlite3 hands back a callable; other adapters run it immediately. The core does
   // the same two-step check wherever it wraps a write (memory/api.ts:349).
-  const result = db.transaction(apply) as unknown;
-  if (typeof result === 'function') (result as () => void)();
+  db.transaction(apply);
 }
 
 export function readRecordIdentity(recordId: string): RecordIdentity | null {
   const row = adapter().prepare('SELECT item_id FROM decisions WHERE id = ?').get(recordId) as
     | { item_id: string | null }
     | undefined;
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
   // Canonicalise on read: a merge moves aliases but rewrites no consumer, so an id stored
   // before the merge still has to answer with the surviving node.
   const itemId = row.item_id ? (resolveNodeById(row.item_id)?.id ?? null) : null;
@@ -221,8 +222,14 @@ export function listRecordIdsForItem(
   const before = options?.before;
   const rows = adapter()
     .prepare(
-      `SELECT id, COALESCE(event_datetime, created_at) AS ts FROM decisions
-        WHERE item_id = ?
+      `WITH RECURSIVE item_ids(id) AS (
+         SELECT ?
+         UNION
+         SELECT registry_nodes.id FROM registry_nodes
+         JOIN item_ids ON registry_nodes.merged_into = item_ids.id
+       )
+       SELECT id, COALESCE(event_datetime, created_at) AS ts FROM decisions
+        WHERE item_id IN (SELECT id FROM item_ids)
           ${before ? 'AND (COALESCE(event_datetime, created_at) < ? OR (COALESCE(event_datetime, created_at) = ? AND id < ?))' : ''}
         ORDER BY ts DESC, id DESC
         LIMIT ?`

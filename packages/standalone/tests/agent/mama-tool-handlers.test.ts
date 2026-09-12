@@ -24,6 +24,24 @@ function createLegacyApi(): MAMAApiInterface {
 
 describe('Story M2.1: MAMA save handler compatibility', () => {
   describe('AC: legacy injected APIs remain writable', () => {
+    it.each([
+      null,
+      'not-an-array',
+      [{}],
+      [{ person: '', role: 'worker' }],
+      [{ person: 'person', role: '' }],
+    ])('rejects malformed actors explicitly: %j', async (actors) => {
+      const api = createLegacyApi();
+      const result = await handleSave(api, {
+        type: 'decision',
+        topic: 'actors',
+        decision: 'validate actors',
+        reasoning: 'runtime boundary',
+        actors,
+      } as never);
+      expect(result).toMatchObject({ success: false });
+      expect(api.save).not.toHaveBeenCalled();
+    });
     it('uses public save when no trusted provenance options are supplied', async () => {
       const api = createLegacyApi();
 

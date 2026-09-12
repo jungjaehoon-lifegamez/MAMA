@@ -25,6 +25,100 @@ import type {
   ModelRunRecord,
   PrincipalRepository,
 } from '../../src/agent/types.js';
+
+describe('Story PR3A: durable registry trace classification', () => {
+  it('counts a completed registry_upsert trace as a durable write', async () => {
+    const { initTestDB, cleanupTestDB } = await import('@jungjaehoon/mama-core/test-utils');
+    const core = await import('@jungjaehoon/mama-core');
+    const mamaApi = (await import('@jungjaehoon/mama-core/mama-api')).default;
+    const dbPath = await initTestDB('registry-durable-trace');
+    try {
+      const envelope = makeSignedEnvelope({
+        scope: {
+          project_refs: [],
+          raw_connectors: [],
+          memory_scopes: [
+            { kind: 'project', id: 'scope-a' },
+            { kind: 'project', id: 'scope-b' },
+          ],
+          allowed_destinations: [],
+        },
+      });
+      const executor = new GatewayToolExecutor({ mamaApi });
+      const bTarget = await core.saveMemory({
+        topic: 'b-target',
+        kind: 'decision',
+        summary: 'scope b target',
+        details: 'target',
+        scopes: [{ kind: 'project', id: 'scope-b' }],
+        source: { package: 'mama-core', source_type: 'test' },
+      });
+      core
+        .getAdapter()
+        .prepare(
+          `INSERT INTO model_runs (model_run_id, status, created_at)
+           VALUES ('run-registry', 'running', 1)`
+        )
+        .run();
+      await executor.withExecutionContext({ envelope, modelRunId: 'run-registry' }, async () => {
+        await expect(
+          executor.execute('registry_upsert', { kind: 'item', name: 'synthetic item' })
+        ).resolves.toMatchObject({ success: true });
+        const inherited = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: 'inherited-scopes',
+          decision: 'inherit envelope scopes',
+          reasoning: 'production authority wiring',
+        });
+        const narrowed = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: 'narrowed-scopes',
+          decision: 'use requested subset',
+          reasoning: 'production authority wiring',
+          scopes: [{ kind: 'project', id: 'scope-a' }],
+        });
+        for (const [saved, expected] of [
+          [inherited, ['scope-a', 'scope-b']],
+          [narrowed, ['scope-a']],
+        ] as const) {
+          const id = String((saved as { id?: string }).id);
+          const rows = core
+            .getAdapter()
+            .prepare(
+              `SELECT s.external_id FROM memory_scope_bindings b
+                 JOIN memory_scopes s ON s.id = b.scope_id
+                 WHERE b.memory_id = ? ORDER BY s.external_id`
+            )
+            .all(id) as Array<{ external_id: string }>;
+          expect(rows.map((row) => row.external_id)).toEqual(expected);
+        }
+        await expect(
+          executor.execute('mama_save', {
+            type: 'decision',
+            topic: 'denied-cross-scope',
+            decision: 'must be denied',
+            reasoning: `supersedes: ${bTarget.id}`,
+            scopes: [{ kind: 'project', id: 'scope-a' }],
+          })
+        ).rejects.toMatchObject({
+          code: 'relationship_target_unavailable',
+          message: 'Relationship target is unavailable',
+        });
+      });
+      expect(await core.listToolTracesForRun('run-registry')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tool_name: 'registry_upsert',
+            execution_status: 'completed',
+          }),
+        ])
+      );
+      await expect(executor.runHadDurableWrite('run-registry')).resolves.toBe(true);
+    } finally {
+      await cleanupTestDB(dbPath);
+    }
+  });
+});
 import type { ConnectorConfigLoadResult } from '../../src/connectors/config-loader.js';
 import { resolvePrivateConnectorPolicy } from '../../src/connectors/private-connector-policy.js';
 import {

@@ -830,7 +830,7 @@ function isExactTelegramDeliveryReceipt(
 
 /** Gateway tools whose completed execution leaves a durable effect (ledger, memory, file, send). */
 const DURABLE_WRITE_TOOL =
-  /_(?:create|update|publish|send|save|reclassify|retire|observe|bind|reconcile|export|upload|write)$|^console_brief_update$|^Write$|^Bash$/;
+  /_(?:create|update|upsert|publish|send|save|reclassify|retire|observe|bind|reconcile|export|upload|write)$|^console_brief_update$|^Write$|^Bash$/;
 
 export class GatewayToolExecutor {
   private procedureRuntime: ProcedureRuntime | null = null;
@@ -2687,6 +2687,14 @@ export class GatewayToolExecutor {
     return {
       options: {
         capability,
+        ...(ctx?.envelope
+          ? {
+              authoritativeScopes:
+                contextPacketScopes ??
+                normalizeMemoryScopes((input as { scopes?: unknown } | undefined)?.scopes) ??
+                ctx.envelope.scope.memory_scopes,
+            }
+          : {}),
         provenance: {
           actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
           agent_id: ctx?.agentId,
@@ -3448,7 +3456,7 @@ export class GatewayToolExecutor {
             input as Parameters<typeof handleRegistryLookup>[1],
             this.getExecutionState().envelope?.scope.memory_scopes
           )) as GatewayToolResult;
-        case 'registry_upsert':
+        case 'registry_upsert': {
           if (!this.getExecutionState().envelope?.scope.memory_scopes.length) {
             return {
               success: false,
@@ -3456,11 +3464,13 @@ export class GatewayToolExecutor {
               error: 'Registry tools require a signed envelope with admitted memory scopes.',
             };
           }
-          return (await handleRegistryUpsert(
+          const registryResult = (await handleRegistryUpsert(
             await this.getRegistry(),
             input as Parameters<typeof handleRegistryUpsert>[1],
             this.getExecutionState().envelope?.scope.memory_scopes
           )) as GatewayToolResult;
+          return registryResult;
+        }
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
@@ -5154,6 +5164,22 @@ export class GatewayToolExecutor {
     } catch (error) {
       if (error instanceof AgentError) {
         throw error;
+      }
+      const propagatedCode =
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        typeof error.code === 'string' &&
+        error.code === 'relationship_target_unavailable'
+          ? error.code
+          : null;
+      if (propagatedCode) {
+        throw new AgentError(
+          error instanceof Error ? error.message : 'Relationship target is unavailable',
+          propagatedCode,
+          error instanceof Error ? error : undefined,
+          false
+        );
       }
 
       throw new AgentError(

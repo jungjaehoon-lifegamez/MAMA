@@ -142,6 +142,34 @@ describe('Story T4: stamped registry identity migration recovery', () => {
     db.close();
   });
 
+  it('repairs a stamped 069 database when registry_nodes exists but registry_aliases is missing', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-missing-aliases-'));
+    const dbPath = join(tempDir, 'missing-aliases.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 68);
+    setup.exec(`
+      CREATE TABLE registry_nodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'person', 'client')),
+        name TEXT NOT NULL,
+        parent_id TEXT REFERENCES registry_nodes(id) ON DELETE SET NULL,
+        merged_into TEXT REFERENCES registry_nodes(id) ON DELETE SET NULL,
+        merge_reason TEXT, note TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      INSERT INTO registry_nodes VALUES ('kept', 'item', 'kept', NULL, NULL, NULL, NULL, 1, 1);
+      INSERT INTO schema_version(version, description) VALUES (69, 'partial');
+    `);
+    setup.close();
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    expect(tableExists(adapter as unknown as Database.Database, 'registry_aliases')).toBe(true);
+    expect(adapter.prepare("SELECT name FROM registry_nodes WHERE id='kept'").get()).toEqual({
+      name: 'kept',
+    });
+    adapter.disconnect();
+  });
+
   it('repairs populated evasive shapes and wrong canonical indexes without losing custom objects', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-malformed-identity-'));
     const dbPath = join(tempDir, 'malformed-identity.db');
@@ -340,6 +368,45 @@ describe('Story T4: stamped registry identity migration recovery', () => {
     });
     adapter.disconnect();
   });
+});
+
+describe('Story PR3A: adapter cache rollback', () => {
+  afterEach(cleanupTempDir);
+
+  it.each(['top-level', 'nested'])(
+    'restores vector/topic/status caches after %s rollback',
+    (mode) => {
+      tempDir = mkdtempSync(join(tmpdir(), 'mama-cache-rollback-'));
+      const dbPath = join(tempDir, 'cache.db');
+      const adapter = new NodeSQLiteAdapter({ dbPath });
+      adapter.connect();
+      adapter.runMigrations(MIGRATIONS_DIR);
+      const insert = (id: string) =>
+        adapter
+          .prepare(
+            `INSERT INTO decisions
+           (id, topic, decision, confidence, status, created_at, updated_at)
+           VALUES (?, ?, 'value', 1, 'active', 1, 1)`
+          )
+          .run(id, id).lastInsertRowid;
+      const failing = () => {
+        const rowid = Number(insert('rolled-back'));
+        adapter.insertEmbedding(rowid, [1, 0]);
+        throw new Error('rollback');
+      };
+      if (mode === 'top-level') {
+        expect(() => adapter.transaction(failing)).toThrow('rollback');
+        insert('replacement');
+      } else {
+        adapter.transaction(() => {
+          expect(() => adapter.transaction(failing)).toThrow('rollback');
+          insert('replacement');
+        });
+      }
+      expect(adapter.vectorSearch([1, 0], 5)).toEqual([]);
+      adapter.disconnect();
+    }
+  );
 });
 
 describe('Story M2.3: Migration 034 duplicate-column recovery', () => {

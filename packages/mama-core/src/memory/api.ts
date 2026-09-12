@@ -729,11 +729,51 @@ async function saveMemoryInternal(
     scopeId: buildMemoryScopeId(scope.kind, scope.id),
     isPrimary: index === 0,
   }));
-  for (const relationship of legacy?.relationships ?? []) {
+  const explicitRelationships = Array.from(
+    new Map(
+      (legacy?.relationships ?? []).flatMap((relationship) =>
+        relationship.targetIds.map((targetId) => [
+          `${relationship.type}:${targetId}`,
+          { type: relationship.type, targetIds: [targetId] },
+        ])
+      )
+    ).values()
+  );
+  for (const relationship of explicitRelationships) {
     for (const targetId of relationship.targetIds) {
-      const target = adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(targetId);
-      if (!target) {
-        throw new Error(`mama.save() relationship target does not exist: ${targetId}`);
+      if (options?.authoritativeScopes) {
+        const envelopeAllowed = new Set(
+          options.authoritativeScopes.map((scope) => buildMemoryScopeId(scope.kind, scope.id))
+        );
+        const effectiveRequested = new Set(
+          input.scopes.map((scope) => buildMemoryScopeId(scope.kind, scope.id))
+        );
+        const allowedScopeIds = [...envelopeAllowed].filter((scopeId) =>
+          effectiveRequested.has(scopeId)
+        );
+        const placeholders = allowedScopeIds.map(() => '?').join(', ');
+        const visibleTarget =
+          allowedScopeIds.length > 0
+            ? adapter
+                .prepare(
+                  `SELECT 1 FROM decisions d
+                   JOIN memory_scope_bindings b ON b.memory_id = d.id
+                   WHERE d.id = ? AND b.scope_id IN (${placeholders}) LIMIT 1`
+                )
+                .get(targetId, ...allowedScopeIds)
+            : undefined;
+        if (!visibleTarget) {
+          const denied = new Error('Relationship target is unavailable') as Error & {
+            code?: string;
+          };
+          denied.code = 'relationship_target_unavailable';
+          throw denied;
+        }
+      } else {
+        const target = adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(targetId);
+        if (!target) {
+          throw new Error(`mama.save() relationship target does not exist: ${targetId}`);
+        }
       }
     }
   }
@@ -821,7 +861,7 @@ async function saveMemoryInternal(
         `INSERT INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`
       );
-      for (const relationship of legacy?.relationships ?? []) {
+      for (const relationship of explicitRelationships) {
         for (const targetId of relationship.targetIds) {
           if (relationship.type === 'supersedes') {
             adapter
@@ -854,7 +894,12 @@ async function saveMemoryInternal(
   // insertEmbedding populated the cache) and any rows just superseded. This makes
   // the vectorSearch pre-filter correct within this session, not only after reload.
   if (adapter.refreshDecisionStatusCache) {
-    const changedIds = [id];
+    const changedIds = [
+      id,
+      ...explicitRelationships
+        .filter((relationship) => relationship.type === 'supersedes')
+        .flatMap((relationship) => relationship.targetIds),
+    ];
     const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
     for (const changedId of changedIds) {
       const ridRow = ridStmt.get(changedId) as { rowid: number } | undefined;
