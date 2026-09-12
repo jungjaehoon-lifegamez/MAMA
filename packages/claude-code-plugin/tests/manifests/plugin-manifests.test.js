@@ -338,5 +338,61 @@ describe('M3.3: Plugin Manifests', () => {
 
       expect(pluginConfig.version).toBe(packageJson.version);
     });
+
+    it('does not advertise retired HTTP or WebSocket runtime switches', () => {
+      const configure = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'configure.md'), 'utf8');
+
+      expect(configure).not.toMatch(/--disable-http|--disable-websocket|--enable-all/);
+      expect(configure).not.toMatch(/MAMA_DISABLE_HTTP_SERVER|MAMA_DISABLE_WEBSOCKET/);
+      expect(configure).not.toMatch(/--set-auth-token|--generate-token/);
+      expect(configure).not.toMatch(/MAMA_AUTH_TOKEN|mcpServers\.mama\.env/);
+    });
+
+    it('keeps PreCompact memory ingest on the port 3847 operational API', () => {
+      const precompact = fs.readFileSync(
+        path.join(PLUGIN_ROOT, 'scripts', 'precompact-hook.js'),
+        'utf8'
+      );
+
+      expect(precompact).toMatch(/MAMA_HTTP_PORT\s*\|\|\s*'3847'/);
+    });
+
+    it('describes exactly the active hook manifest in the shipped context skill', () => {
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      const skill = fs.readFileSync(
+        path.join(PLUGIN_ROOT, 'skills', 'mama-context', 'SKILL.md'),
+        'utf8'
+      );
+
+      expect(Object.keys(pluginConfig.hooks)).toEqual([
+        'SessionStart',
+        'PreToolUse',
+        'PreCompact',
+        'PostToolUse',
+      ]);
+      for (const hookName of Object.keys(pluginConfig.hooks)) {
+        expect(skill).toContain(`**${hookName} Hook**`);
+      }
+      expect(skill).not.toContain('UserPromptSubmit');
+      expect(skill).toMatch(/PreToolUse[\s\S]*matcher:\s*`Read`/);
+      expect(skill).toMatch(/PostToolUse[\s\S]*matchers:\s*`Write`,\s*`Edit`/);
+      expect(skill).not.toMatch(/PreToolUse[^\n]*disabled|PostToolUse[^\n]*disabled/);
+    });
+
+    it('keeps package and marketplace plugin versions synchronized', () => {
+      const packageVersion = JSON.parse(
+        fs.readFileSync(path.join(PLUGIN_ROOT, 'package.json'), 'utf8')
+      ).version;
+      const marketplacePaths = [
+        path.join(PLUGIN_ROOT, '.claude-plugin', 'marketplace.json'),
+        path.resolve(PLUGIN_ROOT, '../..', '.claude-plugin', 'marketplace.json'),
+      ];
+
+      for (const marketplacePath of marketplacePaths) {
+        const marketplace = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
+        const plugin = marketplace.plugins.find((entry) => entry.name === 'mama');
+        expect(plugin?.version).toBe(packageVersion);
+      }
+    });
   });
 });

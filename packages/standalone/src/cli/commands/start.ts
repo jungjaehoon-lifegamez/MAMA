@@ -63,12 +63,11 @@ import { initValidationTables } from '../../validation/store.js';
 import { ValidationSessionService } from '../../validation/session-service.js';
 
 import {
-  EMBEDDING_PORT,
+  RUNTIME_PORTS,
   resolveCodexCommandForStartup,
   hasCodexBackendConfigured,
   resolveClineCommandForStartup,
   hasClineBackendConfigured,
-  startEmbeddingServerIfAvailable,
 } from '../runtime/utilities.js';
 import {
   assessOnboarding,
@@ -1004,7 +1003,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   // Zombie daemons may stay alive via Slack Socket Mode without holding any port.
   await killAllMamaWatchdogs();
   await killAllMamaDaemons();
-  await killProcessesOnPorts([3847, 3849]);
+  await killProcessesOnPorts(RUNTIME_PORTS);
 
   // Check config exists
   if (!configExists()) {
@@ -1178,7 +1177,7 @@ export async function runAgentLoop(
 
   // Initialize metrics store, health score service, and health check service
   const { metricsStore, metricsCleanup, healthService, healthCheckService, metricsInterval } =
-    await initMetrics(config, db, EMBEDDING_PORT);
+    await initMetrics(config, db);
 
   // ── Phase 2: Session + Tool + Agent Loop ──────────────────────────────────
 
@@ -1569,8 +1568,6 @@ export async function runAgentLoop(
     }
     console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
   }
-
-  await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
 

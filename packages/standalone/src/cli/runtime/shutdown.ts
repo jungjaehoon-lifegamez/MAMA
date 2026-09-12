@@ -7,8 +7,6 @@
  * exit timer.
  */
 
-import http from 'node:http';
-
 import type { AgentLoop } from '../../agent/index.js';
 import type { SessionStore } from '../../gateways/session-store.js';
 import type { Stoppable } from './server-start.js';
@@ -19,25 +17,6 @@ import type { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { stopAgentLoops } from '../../cli/shutdown-utils.js';
 import { getSessionPool } from '../../agent/session-pool.js';
-import {
-  EMBEDDING_PORT,
-  getEmbeddingServer,
-  setEmbeddingServer,
-  getEmbeddingShutdownToken,
-  waitForPortAvailable,
-} from './utilities.js';
-
-import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-
-const { DebugLogger } = debugLogger as unknown as {
-  DebugLogger: new (context?: string) => {
-    debug: (...args: unknown[]) => void;
-    info: (...args: unknown[]) => void;
-    warn: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
-  };
-};
-const shutdownLogger = new DebugLogger('shutdown');
 
 export interface ShutdownDeps {
   // Intervals
@@ -181,50 +160,6 @@ export function installShutdownHandlers(deps: ShutdownDeps): void {
       await deps.cronWorker.stop();
       deps.heartbeatScheduler.stop();
       deps.tokenKeepAlive.stop();
-
-      // Close embedding server (port 3849) - drain connections first
-      if (getEmbeddingServer()) {
-        await new Promise<void>((resolve) => {
-          const shutdownReq = http.request(
-            {
-              hostname: '127.0.0.1',
-              port: EMBEDDING_PORT,
-              path: '/shutdown',
-              method: 'POST',
-              timeout: 2000,
-              headers: {
-                'X-Shutdown-Token':
-                  getEmbeddingShutdownToken() || process.env.MAMA_SHUTDOWN_TOKEN || '',
-              },
-            },
-            async (response) => {
-              const statusCode = response.statusCode ?? 0;
-              const released = await waitForPortAvailable(EMBEDDING_PORT, 5000);
-              if (statusCode >= 200 && statusCode < 300 && released) {
-                resolve();
-                return;
-              }
-
-              shutdownLogger.warn(
-                `[EmbeddingServer] Shutdown endpoint did not fully stop server (status=${statusCode}, released=${released})`
-              );
-              const srv = getEmbeddingServer();
-              if (srv) {
-                srv.close(() => resolve());
-                return;
-              }
-              resolve();
-            }
-          );
-          shutdownReq.on('error', () => resolve());
-          shutdownReq.on('timeout', () => {
-            shutdownReq.destroy();
-            resolve();
-          });
-          shutdownReq.end();
-        });
-        setEmbeddingServer(null);
-      }
 
       // Stop all gateways with per-gateway 2s timeout
       const withTimeout = (p: Promise<void>, ms: number) =>

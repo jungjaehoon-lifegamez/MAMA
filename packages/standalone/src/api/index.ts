@@ -140,7 +140,7 @@ export interface ApiServerOptions {
    * it `/api/runtime/status` is simply not mounted, so no caller can be served
    * a guessed backend/model.
    */
-  getRuntimeStatus?: () => RuntimeStatusSnapshot;
+  getRuntimeStatus?: () => RuntimeStatusSnapshot | Promise<RuntimeStatusSnapshot>;
 }
 
 export type ApiEnvelopeMetadata = {
@@ -208,13 +208,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Security headers
   app.disable('x-powered-by');
-  app.use((req, res, next) => {
-    // Allow log viewer to be loaded in iframe (viewer embeds it)
-    if (req.path === '/viewer/log-viewer.html') {
-      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    } else {
-      res.setHeader('X-Frame-Options', 'DENY');
-    }
+  app.use((_req, res, next) => {
+    res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
@@ -356,7 +351,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/wiki', wikiRouter);
   }
 
-  // Authoritative runtime status -- the Viewer's System views read only this.
+  // Authoritative runtime status for operational clients.
   if (getRuntimeStatus) {
     app.use('/api/runtime', createRuntimeStatusRouter({ getRuntimeStatus }));
   }

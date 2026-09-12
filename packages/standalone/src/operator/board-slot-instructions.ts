@@ -3,9 +3,8 @@
  *
  * Every report producer (dashboard agent persona, its scheduled prompt, the
  * trigger loop's scheduled full report) injects THESE lines so the operator
- * board at /viewer#operator/board receives the same 4-slot, card-based HTML regardless of which
- * agent wrote it. The classes are styled by ui/src/styles/global.css --
- * agents write structure, the board owns look.
+ * report store receives the same 4-slot, card-based HTML regardless of which agent wrote it.
+ * Agents write structure while report consumers own presentation.
  *
  * Generic mechanism only: no personal strings, English source; the agent is
  * told to write CONTENT in the owner's language.

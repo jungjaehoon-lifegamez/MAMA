@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-12
+
+### Removed
+
+- Removed the HTTP embedding client, server, mobile session runtime, and their public exports.
+- Removed the direct `ws` runtime and type dependencies.
+
+### Kept
+
+- In-process embedding generation, caching, model configuration, dimensions, and vector search.
+
 ## [2.5.0] - 2026-09-12
 
 ### Added

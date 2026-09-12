@@ -27,7 +27,7 @@ same contract through `mama status`.
 **What you get:**
 
 - Always-on agent with gateway integrations (Discord, Slack, Telegram)
-- Built-in MAMA OS Viewer (operator board, memory graph, wiki, runtime status)
+- Local operational API (reports, source evidence, graph data, runtime status)
 - Autonomous agent loop with heartbeat monitoring
 - Full decision memory across all conversations
 
@@ -65,7 +65,7 @@ same contract through `mama status`.
 - Automatic context injection (UserPromptSubmit hook)
 - Session continuity (`/mama-checkpoint`, `/mama-resume`)
 - Full decision memory in Claude conversations
-- Optional HTTP embedding mode (legacy): `MAMA_MCP_START_HTTP_EMBEDDING=true` (port `3849`)
+- In-process local embeddings for semantic memory search
 
 **→ Continue with this tutorial below**
 

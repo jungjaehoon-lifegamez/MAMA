@@ -142,15 +142,12 @@ contract are defined in
 - **Tier 1:** Transformers.js (ONNX runtime)
 - **Tier 2:** Disabled (fallback to exact match)
 
-### HTTP Embedding Server
+### In-process embeddings
 
-- **Port:** 3849 (localhost only)
-- **Purpose:** Keep embedding model in memory for fast access
-- **Endpoints:** `/health`, `/embed`, `/embed/batch`
-- **Benefit:** ~50ms embedding requests (vs 2-9s model load)
-- **Clients:** Any local LLM tool can use this shared service
-- **Owner (default):** MAMA Standalone (`@jungjaehoon/mama-os`)
-- **MCP mode:** Optional legacy startup via `MAMA_MCP_START_HTTP_EMBEDDING=true`
+- **Model:** Loaded by the core process that performs semantic search
+- **API:** `@jungjaehoon/mama-core/embeddings`
+- **Network surface:** None
+- **Failure behavior:** Explicit provider failures or Tier 2 exact-match degradation
 
 ### Cron Scheduler & Worker
 
@@ -166,7 +163,7 @@ the same standing owner runtime as chat and owner events
 - **Result delivery:** `EventEmitter` (`cron:completed` / `cron:failed`) →
   `CronResultRouter` → gateway `sendMessage()`
   (`packages/standalone/src/cli/runtime/gateway-wiring.ts`)
-- **Channel routing:** Job config `channel` field (`discord:id`, `slack:id`, `viewer:id`)
+- **Channel routing:** Job config `channel` field (`discord:id`, `slack:id`, `telegram:id`)
 - **Permissions:** whatever the owner runtime's current envelope and per-turn policy allow
 
 ```
@@ -174,7 +171,7 @@ CronScheduler ──► CronWorker (queue) ──► owner:runtime ──► Eve
                                                                 │
                                                        CronResultRouter
                                                          │      │      │
-                                                      Discord  Slack  Viewer
+                                                      Discord  Slack  Telegram
 ```
 
 ### Operator Runtime (MAMA OS)
@@ -395,10 +392,10 @@ Gentle Context Hints
 
 ## Performance Characteristics
 
-**With HTTP Embedding Server (Default):**
+**With in-process embeddings:**
 
-- Hook latency: ~150ms (model stays in memory)
-- Embedding requests: ~50ms via HTTP
+- The first semantic request may load the local model.
+- Later requests reuse the process-local model and embedding cache.
 
 ---
 
@@ -410,7 +407,7 @@ Gentle Context Hints
 - **Noise control:** Per-session long/short output reduces repeated guidance.
 - **Safety by default:** Sanitized contract injection mitigates prompt-injection risk.
 
-**Tier 1 (Without HTTP Server):**
+**Tier 1:**
 
 - First query: ~987ms (model load)
 - Subsequent: ~89ms (cached)

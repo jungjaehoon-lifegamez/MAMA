@@ -110,8 +110,8 @@ chmod 600 ~/.claude/mama-memory.db
 - For sensitive decisions, use encrypted filesystem
 
 **Authentication** - the MCP server itself is stdio (no port). The MAMA OS
-daemon is different: it binds HTTP on 3847 and REQUIRES `MAMA_AUTH_TOKEN` for
-remote access - the embedding server logs a CRITICAL warning when unset.
+daemon is different: it binds HTTP on 3847 and requires `MAMA_AUTH_TOKEN` for
+remote access. Embeddings run in process and expose no separate network service.
 
 ---
 

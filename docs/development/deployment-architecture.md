@@ -278,7 +278,7 @@ jobs:
 - **MAMA Core** (@jungjaehoon/mama-core): Database and embeddings runtime (`node:sqlite`, `@huggingface/transformers`)
 - **MCP Server** (@jungjaehoon/mama-server): Stdio MCP transport + tools (defaults to no HTTP)
 - **Claude Code Plugin** (mama): Lightweight (Markdown + JSON configs)
-- **MAMA OS** (@jungjaehoon/mama-os): API/UI (`3847`) + embedding/chat runtime (`3849`)
+- **MAMA OS** (@jungjaehoon/mama-os): messenger runtime + operational API (`3847`)
 
 **Benefits:**
 

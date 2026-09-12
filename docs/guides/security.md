@@ -48,7 +48,7 @@ MAMA follows a **localhost-first security model**:
 
 Recent MAMA OS builds add a defensive monitoring layer for exposed deployments:
 
-- Unauthorized API and WebSocket attempts are logged with client IP context
+- Unauthorized API attempts are logged with client IP context
 - **Honeypot paths trigger immediate IP ban** (15min) — probes to `.git`, `.env`, `wp-login.php`, `mama-memory.db`, etc.
 - **Auth failure tracking** — 5 failures within 5 minutes → automatic IP ban (15min)
 - **Tarpit delays** — suspicious IPs receive escalating response delays (up to 5s)
@@ -237,7 +237,6 @@ By default, MAMA OS listens on:
 
 ```bash
 [MAMA OS] Operational API: http://127.0.0.1:3847
-[EmbeddingHTTP] Running at http://127.0.0.1:3849
 ```
 
 **This means:**
@@ -738,7 +737,7 @@ When MAMA detects external access, it will show warnings:
 ⚠️
 ⚠️  Unauthenticated non-local requests are rejected. A tunnel URL alone does not grant access.
 ⚠️
-⚠️  External API and WebSocket access requires one authenticated path:
+⚠️  External API access requires one authenticated path:
 ⚠️    - a valid MAMA_AUTH_TOKEN bearer token, or
 ⚠️    - validated Cloudflare Access identity headers from a trusted local proxy.
 ⚠️
@@ -790,7 +789,6 @@ protected environment or secret store and send bearer authentication outside the
 
 ```bash
 export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
-# Example: kX9mZ2pL5vQ3nR8sT1yU6wA7bC4dE0fF1gH2iJ3kK4lM5=
 ```
 
 **Bad token:**
@@ -802,111 +800,19 @@ export MAMA_AUTH_TOKEN="mama"         # ❌ Guessable
 
 ---
 
-## Disabling Features
+## Configuring API Authentication
 
-### Easy Way: Using /mama-configure (Claude Code Only)
+### Daemon Environment
 
-The easiest way to configure MAMA security settings is using the `/mama-configure` command:
-
-```bash
-# View current settings
-/mama-configure
-/mama-configure --show
-
-# Disable features
-/mama-configure --disable-http              # Disable the operational HTTP API
-/mama-configure --disable-websocket         # Disable the chat WebSocket API only
-/mama-configure --enable-all                # Enable all features
-
-# Set authentication token
-/mama-configure --generate-token            # Generate random token
-/mama-configure --set-auth-token=abc123     # Set specific token
-```
-
-**After configuration changes, restart Claude Code for changes to take effect.**
-
-### Manual Way: Plugin Configuration
-
-For Claude Code, edit `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`:
-
-```json
-{
-  "mcpServers": {
-    "mama": {
-      "env": {
-        "MAMA_DISABLE_HTTP_SERVER": "true",
-        "MAMA_DISABLE_WEBSOCKET": "true",
-        "MAMA_AUTH_TOKEN": "your-token-here"
-      }
-    }
-  }
-}
-```
-
-For Claude Desktop, edit `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "mama": {
-      "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
-      "env": {
-        "MAMA_DISABLE_HTTP_SERVER": "true",
-        "MAMA_AUTH_TOKEN": "your-token-here"
-      }
-    }
-  }
-}
-```
-
-### Environment Variables (Direct Server Usage)
-
-You can also set environment variables when running the server directly:
+Generate the token in the environment that starts MAMA OS:
 
 ```bash
-# Disable the operational HTTP API
-export MAMA_DISABLE_HTTP_SERVER=true
-
-# Disable only the compatibility chat WebSocket API
-export MAMA_DISABLE_WEBSOCKET=true
-
-# Legacy alias for the switch above. It still works, but `/mama:configure
-# --enable-all` clears only MAMA_DISABLE_HTTP_SERVER and MAMA_DISABLE_WEBSOCKET,
-# so a chat API disabled through this alias stays disabled until you remove it
-# by hand. Use MAMA_DISABLE_WEBSOCKET instead.
-export MAMA_DISABLE_MOBILE_CHAT=true
-
-# Set authentication token
-export MAMA_AUTH_TOKEN="your-secret-token"
-```
-
-### Use Cases
-
-**1. Paranoid Security**
-
-```bash
-# MCP tools only, no HTTP server
-export MAMA_DISABLE_HTTP_SERVER=true
+export MAMA_AUTH_TOKEN="$(openssl rand -base64 32)"
 mama start
 ```
 
-**2. Operational API without the compatibility chat WebSocket**
-
-```bash
-# Operational API routes remain available; the chat WebSocket API is closed
-export MAMA_DISABLE_WEBSOCKET=true
-mama start
-```
-
-**3. Full Features (Default)**
-
-```bash
-# No disable flags = all features enabled
-mama start
-```
-
----
+The stdio MCP server does not own this token. Restart the MAMA OS daemon after changing its
+environment.
 
 ## Security Best Practices
 

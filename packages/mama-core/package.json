@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,8 +8,6 @@
     ".": "./dist/index.js",
     "./embeddings": "./dist/embeddings.js",
     "./embedding-cache": "./dist/embedding-cache.js",
-    "./embedding-client": "./dist/embedding-client.js",
-    "./embedding-server": "./dist/embedding-server/index.js",
     "./memory/types": "./dist/memory/types.js",
     "./memory-store": "./dist/memory-store.js",
     "./db-manager": "./dist/db-manager.js",
@@ -49,7 +47,7 @@
     "./edges/ref-validation": "./dist/edges/ref-validation.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc",
     "build:watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
@@ -84,13 +82,11 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "better-sqlite3": "^12.8.0",
-    "ws": "^8.19.0"
+    "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.18.1",
     "typescript": "^5.9.3",
     "vitest": "^1.0.0"
   },

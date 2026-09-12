@@ -1,17 +1,15 @@
 /**
- * Tests for Story M3.2: Auto-context Skill Wrapper
+ * Tests for Story M3.2: hook-driven MAMA context skill.
  *
- * AC1: Skill declared in plugin manifest and references hook outputs
- * AC2: Skill respects similarity thresholds + token budgets
- * AC3: Skill can be disabled via config
- * AC4: Status indicator shows tier and accuracy
- * AC5: Smoke test - skill fires during normal coding session
+ * The plugin manifest is the authority for active hooks, matchers, commands,
+ * and timeouts. The skill must describe that executable contract without
+ * promising an unwired lifecycle hook or retired embedding server.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,129 +20,147 @@ const PLUGIN_JSON_PATH = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json')
 const SKILL_PATH = path.join(PLUGIN_ROOT, 'skills', 'mama-context', 'SKILL.md');
 const PRE_TOOL_HOOK = path.join(PLUGIN_ROOT, 'scripts', 'pretooluse-hook.js');
 
-describe('M3.2: Auto-context Skill Wrapper', () => {
+function readManifest() {
+  return JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+}
+
+function readSkill() {
+  return fs.readFileSync(SKILL_PATH, 'utf8');
+}
+
+function hookScriptPath(command) {
+  return command.replace('node ${CLAUDE_PLUGIN_ROOT}', PLUGIN_ROOT);
+}
+
+describe('M3.2: MAMA context skill wrapper', () => {
   describe('AC1: Skill declared in plugin manifest', () => {
-    it('should have plugin.json with skill declaration', () => {
+    it('has a mama-context skill declaration', () => {
       expect(fs.existsSync(PLUGIN_JSON_PATH)).toBe(true);
+      const pluginConfig = readManifest();
 
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
-
-      expect(pluginConfig.skills).toBeDefined();
       expect(Array.isArray(pluginConfig.skills)).toBe(true);
-
-      // Skills can be either strings (paths) or objects with name/path
       const mamaContextSkill = pluginConfig.skills.find(
-        (s) =>
-          (typeof s === 'string' && s.includes('mama-context')) ||
-          (typeof s === 'object' && s.name === 'mama-context')
+        (skill) =>
+          (typeof skill === 'string' && skill.includes('mama-context')) ||
+          (typeof skill === 'object' && skill.name === 'mama-context')
       );
       expect(mamaContextSkill).toBeDefined();
-
-      // Validate path whether it's a string or object
       const skillPath =
         typeof mamaContextSkill === 'string' ? mamaContextSkill : mamaContextSkill.path;
       expect(skillPath).toContain('mama-context');
     });
 
-    it('should have SKILL.md file', () => {
+    it('has a coherent hook-driven purpose', () => {
       expect(fs.existsSync(SKILL_PATH)).toBe(true);
+      const skill = readSkill();
 
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-      expect(skillContent).toContain('mama-context');
-      expect(skillContent).toContain('Always-on');
-      expect(skillContent).toContain('background context injection');
+      expect(skill).toContain('name: mama-context');
+      expect(skill).toContain('Hook-driven MAMA context');
+      expect(skill).toMatch(/plugin manifest\s+is the authority/i);
     });
 
-    it('should reference hook outputs in plugin.json', () => {
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+    it('references every hook script registered by the manifest', () => {
+      const pluginConfig = readManifest();
+      const skill = readSkill();
 
-      expect(pluginConfig.hooks).toBeDefined();
-
-      // PreToolUse (contract injection) and PostToolUse (contract detection) are active
-      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
-      expect(pluginConfig.hooks.PostToolUse).toBeDefined();
-
-      // Verify hooks reference correct scripts (3-level nesting)
-      const matcherGroup = pluginConfig.hooks.PreToolUse[0];
-      const hookHandler = matcherGroup.hooks[0];
-      expect(hookHandler.command).toContain('pretooluse-hook.js');
+      for (const matcherGroups of Object.values(pluginConfig.hooks)) {
+        for (const matcherGroup of matcherGroups) {
+          for (const handler of matcherGroup.hooks) {
+            expect(skill).toContain(path.basename(handler.command));
+          }
+        }
+      }
     });
   });
 
-  describe('AC2: Respects similarity thresholds + token budgets', () => {
-    it('should document similarity thresholds in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+  describe('AC2: Manifest hook contract', () => {
+    it('documents exactly the four active hook names', () => {
+      const pluginConfig = readManifest();
+      const skill = readSkill();
+      const hookNames = Object.keys(pluginConfig.hooks);
 
-      // Similarity threshold documented
-      expect(skillContent).toMatch(/70%|0\.7/);
+      expect(hookNames).toEqual(['SessionStart', 'PreToolUse', 'PreCompact', 'PostToolUse']);
+      for (const hookName of hookNames) {
+        expect(skill).toContain(`**${hookName} Hook**`);
+      }
+      expect(skill).not.toContain('UserPromptSubmit');
     });
 
-    it('should document token budgets in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+    it('documents the active matchers and manifest timeouts', () => {
+      const pluginConfig = readManifest();
+      const skill = readSkill();
 
-      // Teaser format: 40 tokens (only active hook)
-      expect(skillContent).toContain('40 tokens');
+      expect(pluginConfig.hooks.PreToolUse.map((group) => group.matcher)).toEqual(['Read']);
+      expect(pluginConfig.hooks.PostToolUse.map((group) => group.matcher)).toEqual([
+        'Write',
+        'Edit',
+      ]);
+      expect(skill).toContain('Active matcher: `Read`');
+      expect(skill).toContain('Active matchers: `Write`, `Edit`');
+      expect(skill).toContain('Manifest timeout: 15 seconds');
+      expect(skill.match(/Manifest timeout: 5 seconds/g)).toHaveLength(2);
+      expect(skill).toContain('Manifest timeout: 10 seconds');
     });
 
-    it('should use teaser format (not full context)', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+    it('uses local in-process embeddings without retired hook or server claims', () => {
+      const skill = readSkill();
 
-      // Verify teaser format is documented
-      expect(skillContent).toContain('Teaser Format');
-      expect(skillContent).toContain('💡 MAMA:');
-      expect(skillContent).toContain('/mama:search');
-      expect(skillContent).toContain('40 tokens');
-
-      // Verify it explains the transition from 250 to 40 tokens
-      expect(skillContent).toContain('250 tokens → 40 tokens');
-    });
-  });
-
-  describe('AC3: Can be disabled via config', () => {
-    it('should document disable mechanism in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-
-      expect(skillContent).toContain('MAMA_DISABLE_HOOKS');
-      expect(skillContent).toContain('disable_hooks');
-      expect(skillContent).toContain('Configuration');
-    });
-
-    it('should show how to disable in config file', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-
-      expect(skillContent).toMatch(/config\.json/);
-      expect(skillContent).toMatch(/disable.*true/);
+      expect(skill).toContain('Embedding generation is local and in process');
+      expect(skill).toContain('There is no embedding HTTP listener');
+      expect(skill).not.toContain('UserPromptSubmit');
+      expect(skill).not.toMatch(/embedding server|HTTP embedding server/i);
+      expect(skill).not.toMatch(/PreToolUse[^\n]*disabled|PostToolUse[^\n]*disabled/);
     });
   });
 
-  describe('AC4: Status indicator confirms tier and accuracy', () => {
-    it('should document Tier 1 status in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+  describe('AC3: Configuration and explicit lookup', () => {
+    it('names the actual hook configuration authorities', () => {
+      const skill = readSkill();
 
-      expect(skillContent).toContain('Tier 1');
-      expect(skillContent).toContain('Full Features');
-      expect(skillContent).toContain('80% accuracy');
-      expect(skillContent).toContain('Vector Search');
+      expect(skill).toContain('.claude-plugin/plugin.json');
+      expect(skill).toContain('src/core/hook-features.js');
+      expect(skill).toMatch(/disable the plugin in\s+Claude Code/i);
+      expect(skill).not.toContain('MAMA_DISABLE_HOOKS');
+      expect(skill).not.toContain('disable_hooks');
     });
 
-    it('should document Tier 2 degraded mode in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+    it('keeps explicit full-memory lookup available', () => {
+      const skill = readSkill();
 
-      expect(skillContent).toContain('Tier 2');
-      expect(skillContent).toContain('DEGRADED');
-      expect(skillContent).toContain('40% accuracy');
-      expect(skillContent).toContain('exact match');
-    });
-
-    it('should show status indicator in teaser format example', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-
-      expect(skillContent).toContain('System Status');
-      expect(skillContent).toMatch(/✅.*Full Features|⚠️.*DEGRADED/);
+      expect(skill).toContain('/mama:search <topic>');
+      expect(skill).toContain('full decision');
+      expect(skill).toContain('evolution chain');
     });
   });
 
-  describe('AC5: Smoke test - fires during normal coding session', () => {
+  describe('AC4: Hook purposes remain coherent', () => {
+    it('describes SessionStart local initialization', () => {
+      const skill = readSkill();
+
+      expect(skill).toContain('Initializes the local memory database');
+      expect(skill).toContain('warms the in-process embedding model');
+    });
+
+    it('describes bounded first-read context injection', () => {
+      const skill = readSkill();
+
+      expect(skill).toContain('first eligible code-file read');
+      expect(skill).toContain('bounded context');
+      expect(skill).toContain('Repeated reads');
+    });
+
+    it('describes write reminders and pre-compaction ingest', () => {
+      const skill = readSkill();
+
+      expect(skill).toContain('first eligible code-file change');
+      expect(skill).toContain('record decisions');
+      expect(skill).toContain('before context compaction');
+      expect(skill).toContain('MAMA_HTTP_PORT');
+      expect(skill).toContain('port 3847');
+    });
+  });
+
+  describe('AC5: Registered hook scripts execute', () => {
     let originalEnv;
 
     beforeEach(() => {
@@ -155,95 +171,101 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       process.env = originalEnv;
     });
 
-    it('should have executable hook scripts', () => {
-      expect(fs.existsSync(PRE_TOOL_HOOK)).toBe(true);
+    it('has executable scripts for every manifest hook', () => {
+      const pluginConfig = readManifest();
+      const commands = Object.values(pluginConfig.hooks).flatMap((matcherGroups) =>
+        matcherGroups.flatMap((matcherGroup) =>
+          matcherGroup.hooks.map((handler) => handler.command)
+        )
+      );
 
-      // Check shebang
-      const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
-      expect(preToolContent.startsWith('#!/usr/bin/env node')).toBe(true);
-
-      // Check executable permissions (Unix only - Windows doesn't use execute bits)
-      if (process.platform !== 'win32') {
-        const preToolStat = fs.statSync(PRE_TOOL_HOOK);
-        expect(preToolStat.mode & 0o111).toBeGreaterThan(0);
+      for (const command of commands) {
+        const scriptPath = hookScriptPath(command);
+        expect(fs.existsSync(scriptPath)).toBe(true);
+        expect(fs.readFileSync(scriptPath, 'utf8').startsWith('#!/usr/bin/env node')).toBe(true);
+        if (process.platform !== 'win32') {
+          expect(fs.statSync(scriptPath).mode & 0o111).toBeGreaterThan(0);
+        }
       }
     });
 
-    it('should trigger PreToolUse hook on file operation', () => {
-      // Simulate file read
+    it('runs the registered PreToolUse script for a Read operation', () => {
       process.env.TOOL_NAME = 'Read';
       process.env.FILE_PATH = 'src/auth.ts';
 
       try {
-        const output = execSync(`node ${PRE_TOOL_HOOK}`, {
+        const output = execFileSync(process.execPath, [PRE_TOOL_HOOK], {
           encoding: 'utf8',
           timeout: 2000,
           stdio: 'pipe',
         });
-
         expect(typeof output).toBe('string');
-      } catch (err) {
-        // Acceptable if hook exits with non-zero code (e.g., exit(2) for message injection)
-        expect(err.status).toBeDefined();
+      } catch (error) {
+        expect(error.status).toBeDefined();
       }
     });
 
-    it('should complete PreToolUse hook within timeout', () => {
+    it('completes a non-matching PreToolUse operation within its bound', () => {
       process.env.TOOL_NAME = 'Grep';
-
-      const startTime = Date.now();
+      const startedAt = Date.now();
 
       try {
-        execSync(`node ${PRE_TOOL_HOOK}`, {
+        execFileSync(process.execPath, [PRE_TOOL_HOOK], {
           encoding: 'utf8',
           timeout: 3000,
           stdio: 'pipe',
         });
-      } catch (err) {
-        if (err.killed && err.signal === 'SIGTERM') {
+      } catch (error) {
+        if (error.killed && error.signal === 'SIGTERM') {
           throw new Error('Hook exceeded timeout requirement');
         }
       }
 
-      const elapsed = Date.now() - startTime;
-      expect(elapsed).toBeLessThan(3000);
+      expect(Date.now() - startedAt).toBeLessThan(3000);
     });
   });
 
-  describe('Integration: Skill + Hooks + Commands', () => {
-    it('should have consistent configuration across skill and hooks', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
-      const preToolContent = fs.readFileSync(PRE_TOOL_HOOK, 'utf8');
+  describe('Integration: Skill, hooks, and developer checks', () => {
+    it('keeps manifest commands and skill hook names aligned', () => {
+      const pluginConfig = readManifest();
+      const skill = readSkill();
 
-      // Verify similarity threshold in skill
-      expect(skillContent).toMatch(/70%|0\.7/);
-
-      // Verify timeout in skill
-      expect(skillContent).toContain('1800ms');
-
-      // PreToolUse handles decision lookup for Read
-      expect(preToolContent).toContain('READ_TOOLS');
+      for (const [hookName, matcherGroups] of Object.entries(pluginConfig.hooks)) {
+        expect(skill).toContain(`**${hookName} Hook**`);
+        for (const matcherGroup of matcherGroups) {
+          for (const handler of matcherGroup.hooks) {
+            expect(skill).toContain(path.basename(handler.command));
+          }
+        }
+      }
     });
 
-    it('should reference related stories in SKILL.md', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+    it('documents focused checks for all four hook scripts', () => {
+      const skill = readSkill();
 
-      expect(skillContent).toContain('M3.2'); // This story
-      expect(skillContent).toContain('M2.2'); // PreToolUse
-      expect(skillContent).toContain('M2.4'); // Transparency banner
+      for (const filename of [
+        'sessionstart-hook.test.js',
+        'pretooluse-hook.test.js',
+        'posttooluse-hook.test.js',
+        'precompact-hook.test.js',
+      ]) {
+        expect(skill).toContain(filename);
+      }
     });
 
-    it('should document architecture decision reference', () => {
-      const skillContent = fs.readFileSync(SKILL_PATH, 'utf8');
+    it('shows each registered boundary in the runtime flow', () => {
+      const skill = readSkill();
 
-      expect(skillContent).toContain('Architecture');
-      expect(skillContent).toContain('Decision 4'); // Hook Implementation decision
+      expect(skill).toContain('Session starts ── SessionStart');
+      expect(skill).toContain('Read tool      ── PreToolUse');
+      expect(skill).toContain('Write/Edit     ── PostToolUse');
+      expect(skill).toContain('Pre-compact    ── PreCompact');
     });
   });
 
   describe('Plugin manifest validity', () => {
-    it('should have valid JSON structure', () => {
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+    it('has the required JSON structure', () => {
+      const pluginConfig = readManifest();
 
       expect(pluginConfig.name).toBe('mama');
       expect(pluginConfig.version).toBeDefined();
@@ -253,32 +275,33 @@ describe('M3.2: Auto-context Skill Wrapper', () => {
       expect(pluginConfig.hooks).toBeDefined();
     });
 
-    it('should have required hook configurations (PreToolUse + PostToolUse for MAMA v2)', () => {
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+    it('has exactly the four required hook configurations', () => {
+      const pluginConfig = readManifest();
 
-      // Inline format
-      expect(pluginConfig.hooks.SessionStart).toBeDefined();
-      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
-      expect(pluginConfig.hooks.PostToolUse).toBeDefined();
+      expect(Object.keys(pluginConfig.hooks)).toEqual([
+        'SessionStart',
+        'PreToolUse',
+        'PreCompact',
+        'PostToolUse',
+      ]);
+      expect(pluginConfig.hooks.PreToolUse[0].matcher).toBe('Read');
+      expect(pluginConfig.hooks.PostToolUse.map((group) => group.matcher)).toEqual([
+        'Write',
+        'Edit',
+      ]);
     });
 
-    it('should use ${CLAUDE_PLUGIN_ROOT} for portable paths', () => {
-      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
-      const hooksConfig = pluginConfig.hooks;
+    it('uses ${CLAUDE_PLUGIN_ROOT} for portable paths', () => {
+      const pluginConfig = readManifest();
+      const commands = Object.values(pluginConfig.hooks).flatMap((matcherGroups) =>
+        matcherGroups.flatMap((matcherGroup) =>
+          matcherGroup.hooks.map((handler) => handler.command)
+        )
+      );
 
-      // All hooks use portable paths (3-level nesting: event -> matcher groups -> hook handlers)
-      const allHookCommands = [];
-      Object.values(hooksConfig).forEach((matcherGroups) => {
-        matcherGroups.forEach((matcherGroup) => {
-          matcherGroup.hooks.forEach((handler) => {
-            allHookCommands.push(handler.command);
-          });
-        });
-      });
-
-      allHookCommands.forEach((cmd) => {
-        expect(cmd).toContain('${CLAUDE_PLUGIN_ROOT}');
-      });
+      for (const command of commands) {
+        expect(command).toContain('${CLAUDE_PLUGIN_ROOT}');
+      }
     });
   });
 });

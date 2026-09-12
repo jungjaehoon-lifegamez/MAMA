@@ -110,7 +110,7 @@ A release is not ready until these are true:
 
 ## Versioning Notes
 
-- `@jungjaehoon/mama-os` is the standalone runtime and viewer release driver
+- `@jungjaehoon/mama-os` is the standalone messenger runtime and operational API release driver
 - `@jungjaehoon/mama-server`, `@jungjaehoon/mama-core`, and `mama-plugin` should only be bumped when their shipped package contents actually changed
 - Keep the root changelog readable even when multiple workspace versions move together
 

@@ -17,7 +17,7 @@
 | Module                  | Lines | Purpose                                           | Notes                                   |
 | ----------------------- | ----- | ------------------------------------------------- | --------------------------------------- |
 | `mama-api.js`           | 2,615 | High-level memory API (save/search/update)        | **SPLIT CANDIDATE** (CC=175, too large) |
-| `embeddings.js`         | 450   | HTTP client + Transformers.js fallback            | Connects to localhost:3847 server       |
+| `embeddings.js`         | 450   | In-process Transformers.js embeddings             | Local model and cache                   |
 | `db-manager.js`         | 380   | SQLite + pure-TS cosine similarity initialization | Handles migrations, tier degradation    |
 | `memory-store.js`       | 520   | CRUD + vector search for decisions                | Tier 1: vector, Tier 2: exact match     |
 | `decision-tracker.js`   | 410   | Graph management (builds_on, debates, etc.)       | Tracks decision evolution chains        |
@@ -31,25 +31,16 @@
 ```
 src/
 ├── db-adapter/          # Adapter pattern for SQLite (PostgreSQL class exists but unused)
-├── embedding-server/    # HTTP server on port 3847 (shared across all clients)
 ├── db/migrations/       # SQLite schema migrations (versioned)
 └── mama/                # Legacy namespace (hook metrics, utilities)
 ```
 
 ---
 
-## HTTP EMBEDDING SERVER ARCHITECTURE
+## EMBEDDING ARCHITECTURE
 
-```
-127.0.0.1:3847 (configurable via MAMA_EMBEDDING_PORT)
-- Model stays loaded in memory (Xenova/multilingual-e5-large, quantized q8)
-- ~50ms embedding requests (vs 2-9s cold start)
-- Shared by Claude Code, Desktop, Cursor, Aider, etc.
-- Port discovery via ~/.mama-embedding-port
-- Fallback: Local Transformers.js if server unavailable
-```
-
-**Why:** Enables fast hook execution (<1200ms target for UserPromptSubmit).
+Embeddings run in process through `embeddings.ts` using
+Xenova/multilingual-e5-large. There is no embedding HTTP listener or client fallback.
 
 ---
 
@@ -79,7 +70,7 @@ Tier degradation happens at runtime (not user-configurable). Check `db-manager.j
 - **Entry Point:** `src/index.js` (exports all public APIs)
 - **Error Handling:** Throw explicit errors (no silent fallbacks)
 - **Database:** SQLite only (PostgreSQL adapter exists but incomplete)
-- **Embeddings:** 1024-dimensional vectors (Xenova/multilingual-e5-large, q8 default) — **dimension MUST stay 1024**
+- **Embeddings:** In-process 1024-dimensional vectors (Xenova/multilingual-e5-large, q8 default) — **dimension MUST stay 1024**
 
 ---
 

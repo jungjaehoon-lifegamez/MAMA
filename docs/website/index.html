@@ -1318,7 +1318,9 @@
       <div class="container">
         <div class="section-head">
           <span class="eyebrow">Getting started</span>
-          <h2>Requires Node 22.13+ and a logged-in <code>claude</code> or <code>codex</code> CLI.</h2>
+          <h2>
+            Requires Node 22.13+ and a logged-in <code>claude</code> or <code>codex</code> CLI.
+          </h2>
         </div>
         <div class="prose">
           <pre class="cc-code">
@@ -1332,11 +1334,11 @@ mama status                         # setup is done when the first report arrive
               Messenger: <code>mama gateway telegram --token-stdin</code> (Slack and Discord work
               the same way)
             </li>
-            <li>Sources: <code>mama connector add &lt;name&gt;</code>, then <code>mama connector status</code></li>
             <li>
-              Web viewer: <code>http://localhost:3847/viewer</code> for reports, the task board, and
-              system status
+              Sources: <code>mama connector add &lt;name&gt;</code>, then
+              <code>mama connector status</code>
             </li>
+            <li>Operational API: <code>http://localhost:3847</code> for runtime integrations</li>
             <li>
               For scripted installs, follow the <code>missing</code> list from
               <code>mama status --json</code> in order; it is finished only when
@@ -1378,16 +1380,27 @@ mama status                         # setup is done when the first report arrive
             </li>
           </ul>
           <p class="mt-md">
-            <strong>Running on another host or reaching it from outside.</strong> The viewer and API
-            drive the assistant, and the assistant can read and write files and run commands.
-            Exposing the server exposes that machine. If you open it up:
+            <strong>Running on another host or reaching it from outside.</strong> The operational
+            API reaches a runtime that can read and write files and run commands. Exposing the
+            server exposes that machine. If you open it up:
           </p>
           <ol class="rule-list">
-          <li>Set <code>MAMA_AUTH_TOKEN</code>. Never expose the server without it, and treat the token and tunnel URL as secrets.</li>
-          <li>For anything beyond a short test, put it behind Cloudflare Zero Trust (or mTLS / IP allow-listing) in addition to the token. Token-only access is for temporary testing.</li>
-          <li>Keep the messenger allow-list, and restrict <code>~/.mama/</code> to the operating account.</li>
-          <li>Back up <code>~/.mama/</code> together with <code>~/.claude/mama-memory.db</code>.</li>
-        </ol>
+            <li>
+              Set <code>MAMA_AUTH_TOKEN</code>. Never expose the server without it, and treat the
+              token and tunnel URL as secrets.
+            </li>
+            <li>
+              For anything beyond a short test, put it behind Cloudflare Zero Trust (or mTLS / IP
+              allow-listing) in addition to the token. Token-only access is for temporary testing.
+            </li>
+            <li>
+              Keep the messenger allow-list, and restrict <code>~/.mama/</code> to the operating
+              account.
+            </li>
+            <li>
+              Back up <code>~/.mama/</code> together with <code>~/.claude/mama-memory.db</code>.
+            </li>
+          </ol>
           <p class="mt-xs">
             Details:
             <a

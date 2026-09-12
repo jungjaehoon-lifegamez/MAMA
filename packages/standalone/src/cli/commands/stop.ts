@@ -8,6 +8,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isDaemonRunning, deletePid, isProcessRunning } from '../utils/pid-manager.js';
+import { RUNTIME_PORTS } from '../runtime/utilities.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -262,10 +263,10 @@ export async function stopCommand(): Promise<void> {
     await stopLingeringDaemonProcesses(pid);
 
     // Best-effort cleanup: kill any processes still holding MAMA ports
-    await killProcessesOnPorts([3847, 3849]);
+    await killProcessesOnPorts(RUNTIME_PORTS);
 
     // Verify ports are actually released (wait up to 3s)
-    await waitForPortsReleased([3847, 3849], 3000);
+    await waitForPortsReleased(RUNTIME_PORTS, 3000);
 
     console.log('MAMA has been stopped.\n');
   } catch (error) {
@@ -292,7 +293,7 @@ async function cleanupOrphanedProcessesSafely(): Promise<{
   orphans: boolean;
 } | null> {
   try {
-    const cleaned = await killProcessesOnPorts([3847, 3849]);
+    const cleaned = await killProcessesOnPorts(RUNTIME_PORTS);
     const orphans = await killAllMamaDaemons();
     return { cleaned, orphans };
   } catch (error) {
@@ -392,7 +393,7 @@ function isPortInUse(port: number): boolean {
  * Kill processes occupying specified ports (cleanup for zombie MAMA processes)
  * @returns true if any processes were killed
  */
-export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
+export async function killProcessesOnPorts(ports: readonly number[]): Promise<boolean> {
   let killed = false;
   const processesByPid = new Map(listProcesses().map((proc) => [proc.pid, proc.command]));
   for (const port of ports) {
@@ -493,7 +494,10 @@ export async function killAllMamaDaemons(): Promise<boolean> {
 /**
  * Wait until all specified ports are released
  */
-async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): Promise<void> {
+async function waitForPortsReleased(
+  ports: readonly number[],
+  maxWaitMs: number = 3000
+): Promise<void> {
   const startTime = Date.now();
   const pollInterval = 200;
 

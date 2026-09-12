@@ -59,7 +59,7 @@ src/
 **Transport:** stdio (standard MCP pattern)  
 **Format:** JSON-RPC 2.0  
 **Handlers:** `ListToolsRequestSchema`, `CallToolRequestSchema`  
-**No HTTP:** MCP uses stdin/stdout only (HTTP embedding server runs separately on port 3847)
+**No HTTP:** MCP uses stdin/stdout only. Embeddings run in process through mama-core.
 
 ---
 
@@ -71,7 +71,7 @@ src/
 - `db-manager.js` — Database initialization
 - `embeddings.js` — Embedding generation
 - `memory-store.js` — Vector search
-- `embedding-server.js` — HTTP embedding API (port 3847)
+- `embeddings.js` — in-process embedding generation
 
 **MCP SDK:** `@modelcontextprotocol/sdk` v1.0.1
 
@@ -81,6 +81,6 @@ src/
 
 - **No business logic here:** All save/search/update logic in mama-core
 - **Hook metrics:** `mama/hook-metrics.js` tracks PreToolUse/PostToolUse timing (Claude Code plugin only)
-- **HTTP server:** Embedding server runs on port 3847 (shared across all MCP clients)
+- **Runtime:** Stdio only; there is no MCP-owned HTTP listener
 - **Database:** `~/.claude/mama-memory.db` (configurable via `MAMA_DB_PATH`)
 - **Node.js:** >= 22.13.0 required

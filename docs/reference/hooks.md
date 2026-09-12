@@ -6,7 +6,8 @@
 
 ## Overview
 
-MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an HTTP embedding server for fast context injection (~150ms).
+MAMA provides hooks that integrate with Claude Code's hook system. Memory search uses local,
+in-process embeddings when semantic search is available.
 
 **Active hooks** (authoritative manifest: `packages/claude-code-plugin/.claude-plugin/plugin.json`):
 
@@ -21,24 +22,11 @@ UserPromptSubmit is NOT wired - the sections below document only hooks that exis
 
 ---
 
-## HTTP Embedding Server
+## Embeddings
 
-Hooks use an HTTP embedding server running on `127.0.0.1:3849` for fast embedding generation:
-
-- Default owner: `@jungjaehoon/mama-os` (Standalone)
-- MCP legacy mode: `MAMA_MCP_START_HTTP_EMBEDDING=true`
-
-- **Model stays in memory**: No 2-9 second model load per hook
-- **~50ms embedding requests**: HTTP call to localhost
-- **Fallback**: If server unavailable, loads model locally
-
-```bash
-# Check if HTTP server is running
-curl http://127.0.0.1:3849/health
-
-# Expected response
-{"status":"ok","modelLoaded":true,"model":"Xenova/multilingual-e5-large","dim":1024}
-```
+The core generates embeddings in the process that performs the search. There is no embedding
+HTTP endpoint or compatibility listener. Tier 2 exact-match behavior remains available when the
+local embedding provider cannot be initialized.
 
 ---
 
@@ -184,8 +172,6 @@ hooks, remove or disable the plugin itself (Claude Code plugin settings).
 - `$CLAUDE_PLUGIN_ROOT` - Plugin directory path
 - `$TOOL_NAME` - Tool being called (Pre/PostToolUse only)
 - `$MAMA_DB_PATH` - Database path
-- `$MAMA_EMBEDDING_PORT` - HTTP embedding server port (default: 3849)
-- `$MAMA_HTTP_PORT` - Legacy alias for embedding port (backward compatibility)
 
 ---
 
@@ -197,9 +183,6 @@ cd ~/.claude/plugins/mama
 # Test PreToolUse (Read matcher)
 export MAMA_DB_PATH=~/.claude/mama-memory.db
 echo '{"tool_name":"Read","tool_input":{"file_path":"src/index.ts"}}' | node scripts/pretooluse-hook.js
-
-# Check HTTP embedding server
-curl http://127.0.0.1:3849/health
 
 # Measure hook latency
 time (echo '{"tool_name":"Read","tool_input":{"file_path":"src/index.ts"}}' | node scripts/pretooluse-hook.js)

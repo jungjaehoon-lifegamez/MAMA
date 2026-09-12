@@ -1,10 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IncomingMessage } from 'node:http';
 import {
   getClientAddress,
   getSecurityLogContext,
   isAuthenticated,
+  logUnauthorizedAttempt,
 } from '../../src/api/auth-middleware.js';
+import { flushSecurityMonitor } from '../../src/security/security-monitor.js';
 
 function createRequest({
   remoteAddress,
@@ -71,13 +75,40 @@ describe('auth-middleware', () => {
     expect(isAuthenticated(req)).toBe(false);
   });
 
-  it('accepts query token when explicitly enabled', () => {
+  it('rejects query tokens', () => {
     const req = createRequest({
       remoteAddress: '203.0.113.10',
       url: '/ws?token=top-secret-token',
     });
 
-    expect(isAuthenticated(req, { allowQueryToken: true })).toBe(true);
+    expect(isAuthenticated(req)).toBe(false);
+  });
+
+  it('records a rejected query token as a generic unauthorized request', async () => {
+    const req = createRequest({
+      remoteAddress: '203.0.113.10',
+      url: '/api/test?token=top-secret-token',
+    });
+
+    expect(isAuthenticated(req)).toBe(false);
+    logUnauthorizedAttempt(req);
+    await flushSecurityMonitor();
+
+    const events = readFileSync(
+      join(process.env.MAMA_SECURITY_LOG_DIR!, 'security-events.jsonl'),
+      'utf8'
+    )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type: string; path: string; details: object });
+    const event = events.at(-1);
+    expect(event).toMatchObject({
+      type: 'unauthorized_request',
+      path: '/api/test',
+      details: { hasAuthorizationHeader: false },
+    });
+    expect(event?.details).not.toHaveProperty('hasQueryToken');
+    expect(event?.details).not.toHaveProperty('allowQueryToken');
   });
 
   it('keeps tunneled localhost requests behind token auth', () => {
@@ -88,7 +119,7 @@ describe('auth-middleware', () => {
     });
 
     expect(isAuthenticated(req)).toBe(false);
-    expect(isAuthenticated(req, { allowQueryToken: true })).toBe(true);
+    expect(isAuthenticated(req)).toBe(false);
   });
 
   it('rejects tunneled localhost requests when no admin token is configured', () => {

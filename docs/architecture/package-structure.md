@@ -38,8 +38,7 @@ MAMA uses a multi-package monorepo (mama-core, mcp-server, standalone/mama-os, c
 │  │ Standalone       │─────────┘                          │
 │  │ - Runtime APIs   │                                    │
 │  │ - Chat gateways  │                                    │
-│  │ - Embed API      │                                    │
-│  │ (API 3847 / Embed 3849)│                              │
+│  │ (API 3847)       │                                    │
 │  └──────────────────┘                                    │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -155,7 +154,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - **Cron Scheduler:** Scheduled task execution with heartbeat
 - **Operational API:** Reports, tasks, source evidence, graph data, runtime status, and health on port 3847
 - **CLI Commands:** `mama init`, `start`, `stop`, `status`, `run`, `setup`
-- **Runtime Ownership:** Hosts the operational API on `3847` and embedding services on `3849`
+- **Runtime Ownership:** Hosts the operational API on `3847`; embeddings run in process
 - **Binaries:** `mama` (main CLI), `mama-code-act-mcp` (Code-Act MCP subprocess)
 
 **Dependencies:**
@@ -163,7 +162,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `@jungjaehoon/mama-core` (workspace:\*) - Core functionality
 - `@anthropic-ai/sdk` - Claude API integration
 - `discord.js`, `@slack/bolt`, `node-telegram-bot-api` - Gateway integrations
-- `express`, `ws` - HTTP/WebSocket server
+- `express` - operational HTTP API server
 - `quickjs-emscripten` - QuickJS sandbox for Code-Act
 
 **Distribution:** npm package (`@jungjaehoon/mama-os`)
@@ -256,10 +255,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 2.5.0 (stable API)
-- **mama-server:** 1.15.0 (follows MAMA version)
-- **claude-code-plugin:** 1.11.0 (follows MAMA version)
-- **mama-os:** 0.53.4 (standalone agent)
+- **mama-core:** 3.0.0 (stable API)
+- **mama-server:** 2.0.0 (follows MAMA version)
+- **claude-code-plugin:** 2.0.0 (follows MAMA version)
+- **mama-os:** 0.54.0 (standalone agent)
 
 ## Distribution Strategy
 

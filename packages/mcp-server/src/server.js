@@ -34,81 +34,16 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 
 // Import core modules from mama-core
 const { initDB } = require('@jungjaehoon/mama-core/db-manager');
-const embeddingServer = require('@jungjaehoon/mama-core/embedding-server');
-const http = require('http');
+const { version: PACKAGE_VERSION } = require('../package.json');
 
-const REQUIRED_ENV_VARS = ['MAMA_SERVER_TOKEN', 'MAMA_DB_PATH', 'MAMA_SERVER_PORT'];
-
-/**
- * Check if embedding server is already running (e.g., started by Standalone)
- * @param {number} port - Port to check
- * @returns {Promise<boolean>} - true if server is running
- */
-async function isEmbeddingServerRunning(port) {
-  return new Promise((resolve) => {
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path: '/health',
-        method: 'GET',
-        timeout: 1000,
-      },
-      (res) => {
-        // Drain the response to free up the socket
-        res.resume();
-        resolve(res.statusCode === 200);
-      }
-    );
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.end();
-  });
-}
+const REQUIRED_ENV_VARS = ['MAMA_DB_PATH'];
 
 // Default values for development
 const ENV_DEFAULTS = {
   MAMA_DB_PATH: process.env.HOME
     ? `${process.env.HOME}/.claude/mama-memory.db`
     : './mama-memory.db',
-  MAMA_SERVER_PORT: '3000',
 };
-
-/**
- * Setup logging with token masking
- */
-function setupLogging() {
-  const token = process.env.MAMA_SERVER_TOKEN;
-  if (!token) {
-    return;
-  }
-
-  const originalConsoleError = console.error;
-  const originalConsoleLog = console.log;
-
-  const maskToken = (args) => {
-    return args.map((arg) => {
-      if (typeof arg === 'string') {
-        return arg.replace(
-          new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
-          '***token***'
-        );
-      }
-      return arg;
-    });
-  };
-
-  console.error = (...args) => {
-    originalConsoleError.apply(console, maskToken(args));
-  };
-
-  console.log = (...args) => {
-    originalConsoleLog.apply(console, maskToken(args));
-  };
-}
 
 /**
  * Validate and set default environment variables if missing.
@@ -129,14 +64,7 @@ function validateEnvironment() {
         missingVars.join(', ')
       );
       missingVars.forEach((key) => {
-        if (key === 'MAMA_SERVER_TOKEN') {
-          const generatedToken = require('crypto').randomBytes(16).toString('hex');
-          process.env[key] = generatedToken;
-          const masked = generatedToken.slice(0, 8) + '...' + generatedToken.slice(-4);
-          console.error(`[MAMA MCP] Generated random dev token: ${masked}`);
-        } else {
-          process.env[key] = ENV_DEFAULTS[key];
-        }
+        process.env[key] = ENV_DEFAULTS[key];
       });
       return;
     }
@@ -163,13 +91,10 @@ function validateEnvironment() {
  */
 class MAMAServer {
   constructor() {
-    this.legacyHttpEmbeddingMode = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
-    this.legacyNoticeEmittedInToolResponse = false;
-
     this.server = new Server(
       {
         name: 'mama-server',
-        version: '1.0.0',
+        version: PACKAGE_VERSION,
       },
       {
         capabilities: {
@@ -181,25 +106,14 @@ class MAMAServer {
     this.setupHandlers();
   }
 
-  getLegacyMigrationNotice() {
-    return (
-      '⚠️ Legacy MCP HTTP embedding mode is enabled via MAMA_MCP_START_HTTP_EMBEDDING=true. ' +
-      'This mode is deprecated. Recommended runtime: `mama start` (API/UI 3847, embedding 3849).'
-    );
-  }
-
   setupHandlers() {
     // Tool definitions come from src/tools/ (single source of truth).
     // Legacy unified tools (save, search, update) kept as wrappers for backward compat.
-    const legacyNotice = this.legacyHttpEmbeddingMode
-      ? `${this.getLegacyMigrationNotice()}\n\n`
-      : '';
-
     const tools = [
       // 1. SAVE — decisions, checkpoints, conversation ingestion
       {
         name: 'save',
-        description: `${legacyNotice}Save to MAMA memory. Use type parameter to choose what to save.
+        description: `Save to MAMA memory. Use type parameter to choose what to save.
 
 **type='decision'** — Save architectural decisions, lessons learned, insights.
   Required: topic, decision, reasoning. Optional: confidence, scopes, event_date.
@@ -446,29 +360,13 @@ After failure → save a NEW decision with same topic to create evolution histor
             }
         }
 
-        const shouldInjectLegacyNotice =
-          this.legacyHttpEmbeddingMode && !this.legacyNoticeEmittedInToolResponse;
-
-        if (shouldInjectLegacyNotice) {
-          this.legacyNoticeEmittedInToolResponse = true;
-        }
-
         console.error(`[MAMA MCP] Tool done: ${name} (${Date.now() - toolStart}ms)`);
 
         return {
           content: [
             {
               type: 'text',
-              text:
-                typeof result === 'string'
-                  ? result
-                  : JSON.stringify(
-                      shouldInjectLegacyNotice
-                        ? { ...result, migration_notice: this.getLegacyMigrationNotice() }
-                        : result,
-                      null,
-                      2
-                    ),
+              text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -736,14 +634,13 @@ After failure → save a NEW decision with same topic to create evolution histor
   async start() {
     try {
       validateEnvironment();
-      setupLogging();
 
       // Initialize database
       console.error('[MAMA MCP] Initializing database...');
       await initDB();
       console.error('[MAMA MCP] Database initialized');
 
-      // Start MCP server FIRST (don't block on HTTP server)
+      // Start the stdio MCP server.
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
 
@@ -751,58 +648,6 @@ After failure → save a NEW decision with same topic to create evolution histor
       console.error('[MAMA MCP] Server started successfully');
       console.error('[MAMA MCP] Listening on stdio transport');
       console.error('[MAMA MCP] Ready to accept connections');
-
-      // HTTP embedding server startup is disabled by default for MCP.
-      // Architecture: Standalone should own HTTP embedding/chat services.
-      // Legacy opt-in: set MAMA_MCP_START_HTTP_EMBEDDING=true.
-      const startHttpEmbedding = process.env.MAMA_MCP_START_HTTP_EMBEDDING === 'true';
-      const rawEmbeddingPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT;
-      const parsedEmbeddingPort = parseInt(rawEmbeddingPort || '', 10);
-      const embeddingPort =
-        Number.isInteger(parsedEmbeddingPort) && parsedEmbeddingPort > 0
-          ? parsedEmbeddingPort
-          : 3849;
-
-      if (!startHttpEmbedding) {
-        console.error('[MAMA MCP] HTTP embedding server startup skipped (default behavior)');
-        console.error('[MAMA MCP] Run Standalone (mama start) for the Viewer');
-        console.error(
-          '[MAMA MCP] To enable legacy MCP-launched HTTP: MAMA_MCP_START_HTTP_EMBEDDING=true'
-        );
-        return;
-      }
-
-      // Check if Standalone (or another instance) already started the embedding server
-      const serverAlreadyRunning = await isEmbeddingServerRunning(embeddingPort);
-
-      if (serverAlreadyRunning) {
-        console.error(`[MAMA MCP] Embedding server already running on port ${embeddingPort}`);
-        console.error('[MAMA MCP] Using existing server (likely started by Standalone)');
-        console.error('[MAMA MCP] Viewer: http://localhost:3847/viewer (served by Standalone)');
-        return;
-      }
-
-      console.error('[MAMA MCP] Starting HTTP embedding server in background (legacy opt-in)...');
-      embeddingServer
-        .startEmbeddingServer(embeddingPort)
-        .then((httpServer) => {
-          if (httpServer) {
-            console.error(`[MAMA MCP] HTTP embedding server running on port ${embeddingPort}`);
-            console.error(
-              `[MAMA MCP] Note: http://localhost:${embeddingPort}/viewer only serves a "Standalone Required" stub`
-            );
-            console.error('[MAMA MCP] Run Standalone (mama start) for the Viewer on port 3847');
-            embeddingServer
-              .warmModel()
-              .catch((err) => console.error('[MAMA MCP] Model warmup error:', err.message));
-          } else {
-            console.error('[MAMA MCP] HTTP embedding server skipped (port unavailable or blocked)');
-          }
-        })
-        .catch((err) => {
-          console.error('[MAMA MCP] HTTP embedding server error:', err.message);
-          console.error('[MAMA MCP] MCP tools will continue to work without the HTTP server');
-        });
     } catch (error) {
       console.error('[MAMA MCP] Failed to start server:', error);
       process.exit(1);
@@ -819,4 +664,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { MAMAServer, validateEnvironment, setupLogging, REQUIRED_ENV_VARS };
+module.exports = { MAMAServer, validateEnvironment, REQUIRED_ENV_VARS };

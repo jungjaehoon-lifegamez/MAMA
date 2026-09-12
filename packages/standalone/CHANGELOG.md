@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-09-12
+
+### Removed
+
+- Removed the second localhost runtime on port 3849, including startup/takeover, shutdown cleanup,
+  health probing, WebSocket proxying, direct viewer-session routes, and query-token authentication.
+- Unauthorized requests no longer parse or record query-token-specific metadata.
+- Removed direct `ws` runtime and type dependencies.
+
+### Changed
+
+- Runtime status awaits live health checks and gives live gateway pass/fail state precedence over
+  stored connector settings while limiting generic output to the public connector catalog.
+
+### Kept
+
+- The port 3847 operational API, reports, raw evidence, graph, uploads, health, messenger delivery,
+  durable session storage, and shutdown ordering.
+
 ## [0.53.4] - 2026-09-12
 
 ### Removed

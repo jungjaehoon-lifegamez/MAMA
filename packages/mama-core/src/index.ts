@@ -22,14 +22,6 @@ export {
 export { EmbeddingCache } from './embedding-cache.js';
 
 export {
-  getServerPort,
-  DEFAULT_PORT,
-  HOST,
-  TIMEOUT_MS,
-  type ServerStatus,
-} from './embedding-client.js';
-
-export {
   initDB,
   getDB,
   getAdapter,

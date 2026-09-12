@@ -56,11 +56,6 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - `embeddingCache.set(key, value)` - Store embedding
   - `embeddingCache.clear()` - Clear cache
 
-- **embedding-client** - HTTP client for embedding server
-  - `isServerRunning()` - Check server availability
-  - `getEmbeddingFromServer(text)` - Get embedding via HTTP
-  - `getServerStatus()` - Server health check
-
 ### Database Modules
 
 - **db-manager** - SQLite database initialization
@@ -156,8 +151,6 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ## Environment Variables
 
 - `MAMA_DB_PATH` - Database file path (default: `~/.claude/mama-memory.db`)
-- `MAMA_EMBEDDING_PORT` - Embedding server port (default: `3849`)
-- `MAMA_HTTP_PORT` - Backward-compatible alias for embedding server port
 
 ## Dependencies
 

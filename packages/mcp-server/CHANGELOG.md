@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-12
+
+### Removed
+
+- Removed the HTTP embedding import, probe, environment opt-in, migration notice, startup branch,
+  and standalone HTTP launcher.
+- Removed unused HTTP token/port requirements, generated token defaults, and process-wide console
+  wrapping. `MAMA_DB_PATH` is the only MCP environment requirement.
+
+### Kept
+
+- Stdio MCP transport, tool handlers, database initialization, and in-process search embeddings.
+
 ## [1.14.0] - 2026-05-01
 
 ### Added

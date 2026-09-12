@@ -15,8 +15,11 @@ import request from 'supertest';
 import { MetricsStore } from '../../src/observability/metrics-store.js';
 import { MetricsCleanup } from '../../src/observability/metrics-cleanup.js';
 import { HealthScoreService } from '../../src/observability/health-score.js';
+import { HealthCheckService } from '../../src/observability/health-check.js';
 import { createApiServer } from '../../src/api/index.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
+import { getSessionPool } from '../../src/agent/session-pool.js';
+import Database from '../../src/sqlite.js';
 
 const TEST_DIR = join(__dirname, '..', '.tmp-metrics-wiring-test');
 let store: MetricsStore;
@@ -76,6 +79,32 @@ describe('FR-006: Observability Runtime Wiring', () => {
   });
 
   describe('/api/metrics/health endpoint', () => {
+    it('reports retained runtime checks without an embedding server row', async () => {
+      const db = new Database(':memory:');
+      const cleanup = new MetricsCleanup(store);
+      cleanup.start();
+      try {
+        const report = await new HealthCheckService({
+          db,
+          sessionPool: getSessionPool(),
+          metricsCleanup: cleanup,
+          healthScoreService: new HealthScoreService(store),
+        }).check();
+
+        expect(report.checks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: 'database', status: 'pass' }),
+            expect.objectContaining({ name: 'cli_sessions', status: 'pass' }),
+            expect.objectContaining({ name: 'metrics_cleanup', status: 'pass' }),
+          ])
+        );
+        expect(report.checks.map((check) => check.name)).not.toContain('embedding');
+      } finally {
+        cleanup.stop();
+        db.close();
+      }
+    });
+
     it('should return HealthReport when healthService is provided', async () => {
       // Seed some metrics so health score has data
       store.record({ name: 'prompt_latency_ms', value: 100, labels: { backend: 'claude' } });

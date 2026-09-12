@@ -102,7 +102,7 @@ export interface MessageMetadata {
   telegramFormatting?: TelegramTextFormatting;
   /** Channel history context (OpenClaw-style) */
   historyContext?: string;
-  /** Session ID (for WebSocket/viewer) */
+  /** Durable runtime session ID */
   sessionId?: string;
   /** OS Agent mode flag */
   osAgentMode?: boolean;

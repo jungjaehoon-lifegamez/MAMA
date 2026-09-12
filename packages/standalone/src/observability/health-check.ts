@@ -2,10 +2,9 @@
  * HealthCheckService — connection-based system health checks
  *
  * Extends the statistics-based HealthScoreService with real connection status checks.
- * Checks gateway connections, embedding server, database, sessions, memory, and schedulers.
+ * Checks gateway connections, database, sessions, memory, and schedulers.
  */
 
-import http from 'node:http';
 import fs from 'node:fs';
 
 // === Types ===
@@ -36,7 +35,6 @@ export interface SystemHealthReport {
 
 export interface HealthCheckDeps {
   gateways?: Map<string, { isConnected(): boolean }>;
-  embeddingPort?: number;
   db?: { prepare(sql: string): { get(): unknown } };
   sessionPool?: { getActiveSessionCount(): number };
   cronScheduler?: {
@@ -94,7 +92,6 @@ export class HealthCheckService {
 
     // Critical
     this.checkGateways(checks);
-    await this.checkEmbeddingServer(checks);
     this.checkDatabase(checks);
     this.checkSessionPool(checks);
 
@@ -129,70 +126,6 @@ export class HealthCheckService {
         message: connected ? 'Connected' : 'Disconnected',
       });
     }
-  }
-
-  private checkEmbeddingServer(checks: HealthCheckResult[]): Promise<void> {
-    const port = this.deps.embeddingPort;
-    if (!port) {
-      checks.push({
-        name: 'embedding',
-        severity: 'critical',
-        status: 'skip',
-        message: 'No embedding port configured',
-      });
-      return Promise.resolve();
-    }
-
-    return new Promise<void>((resolve) => {
-      const req = http.request(
-        { hostname: '127.0.0.1', port, path: '/health', method: 'GET', timeout: 1000 },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            try {
-              const json = JSON.parse(data);
-              const modelLoaded = json.modelLoaded !== false;
-              checks.push({
-                name: 'embedding',
-                severity: 'critical',
-                status: modelLoaded ? 'pass' : 'fail',
-                message: modelLoaded ? 'OK (model loaded)' : 'Model not loaded',
-                detail: json.model ? `Model: ${json.model}` : undefined,
-              });
-            } catch {
-              checks.push({
-                name: 'embedding',
-                severity: 'critical',
-                status: 'warn',
-                message: 'Server responded but invalid JSON',
-              });
-            }
-            resolve();
-          });
-        }
-      );
-      req.on('error', () => {
-        checks.push({
-          name: 'embedding',
-          severity: 'critical',
-          status: 'fail',
-          message: 'Server unreachable',
-        });
-        resolve();
-      });
-      req.on('timeout', () => {
-        req.destroy();
-        checks.push({
-          name: 'embedding',
-          severity: 'critical',
-          status: 'fail',
-          message: 'Server timeout (>1s)',
-        });
-        resolve();
-      });
-      req.end();
-    });
   }
 
   private checkDatabase(checks: HealthCheckResult[]): void {
