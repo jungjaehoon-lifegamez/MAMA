@@ -101,16 +101,20 @@ function collectDivergences(): string[] {
 }
 
 describe('code-act / gateway registry description parity', () => {
-  it('does not advertise or dispatch the retired webchat action', async () => {
-    expect(ToolRegistry.getTool('webchat_send')).toBeUndefined();
-    expect(ToolRegistry.generatePrompt(['*'])).not.toContain('webchat_send');
-    expect(HostBridge.getToolRegistry().map((tool) => tool.name)).not.toContain('webchat_send');
-    expect(
-      readFileSync(join(process.cwd(), 'src', 'agent', 'gateway-tools.md'), 'utf8')
-    ).not.toContain('webchat');
+  describe('Story PR2A: browser surface retirement', () => {
+    describe('AC #1: remove the webchat action from every active tool surface', () => {
+      it('does not advertise or dispatch the retired webchat action', async () => {
+        expect(ToolRegistry.getTool('webchat_send')).toBeUndefined();
+        expect(ToolRegistry.generatePrompt(['*'])).not.toContain('webchat_send');
+        expect(HostBridge.getToolRegistry().map((tool) => tool.name)).not.toContain('webchat_send');
+        expect(
+          readFileSync(join(process.cwd(), 'src', 'agent', 'gateway-tools.md'), 'utf8')
+        ).not.toContain('webchat');
 
-    await expect(new GatewayToolExecutor().execute('webchat_send', {})).rejects.toMatchObject({
-      code: 'UNKNOWN_TOOL',
+        await expect(new GatewayToolExecutor().execute('webchat_send', {})).rejects.toMatchObject({
+          code: 'UNKNOWN_TOOL',
+        });
+      });
     });
   });
 

@@ -736,15 +736,11 @@ When MAMA detects external access, it will show warnings:
 ⚠️  Your MAMA server is being accessed from outside localhost.
 ⚠️  This likely means you are using a tunnel (ngrok, Cloudflare, etc.)
 ⚠️
-⚠️  ❌ CRITICAL: Neither MAMA_AUTH_TOKEN nor validated Cloudflare Access identity is present!
-⚠️  Anyone with your tunnel URL can access your:
-⚠️    - Chat sessions with Claude Code
-⚠️    - Decision database (~/.claude/mama-memory.db)
-⚠️    - Local file system (via Claude Code)
+⚠️  Unauthenticated non-local requests are rejected. A tunnel URL alone does not grant access.
 ⚠️
-⚠️  To secure your server, either set MAMA_AUTH_TOKEN:
-⚠️    export MAMA_AUTH_TOKEN="your-secret-token"
-⚠️  Or use validated Cloudflare Access identity headers through a trusted local proxy.
+⚠️  External API and WebSocket access requires one authenticated path:
+⚠️    - a valid MAMA_AUTH_TOKEN bearer token, or
+⚠️    - validated Cloudflare Access identity headers from a trusted local proxy.
 ⚠️
 ⚠️  ========================================
 ```
