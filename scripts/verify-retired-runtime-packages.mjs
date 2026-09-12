@@ -245,6 +245,14 @@ try {
   assert.equal(corePackage.exports['./embeddings'], './dist/embeddings.js');
   assert.equal(corePackage.exports['./embedding-client'], undefined);
   assert.equal(corePackage.exports['./embedding-server'], undefined);
+  for (const [subpath, target] of Object.entries({
+    './registry/types': './dist/registry/types.js',
+    './registry/store': './dist/registry/store.js',
+    './registry/record-identity': './dist/registry/record-identity.js',
+    './operations/owner-action-effects': './dist/operations/owner-action-effects.js',
+  })) {
+    assert.equal(corePackage.exports[subpath], target, `missing installed core export: ${subpath}`);
+  }
   assert.equal(corePackage.dependencies.ws, undefined);
   assert.equal(corePackage.devDependencies?.['@types/ws'], undefined);
   assert.equal(existsSync(join(coreRoot, 'dist/embedding-client.js')), false);
@@ -326,6 +334,30 @@ try {
     const embeddings = await import(pathToFileURL(coreRoot + '/dist/embeddings.js').href);
     assert.equal(typeof embeddings.generateEmbedding, 'function');
     const core = await import(pathToFileURL(coreRoot + '/dist/index.js').href);
+    assert.equal(typeof core.evolveMemory, 'function');
+    for (const name of [
+      'createNode',
+      'upsertNode',
+      'resolveAlias',
+      'setRecordIdentity',
+      'appendOperationToolTrace',
+      'verifyOwnerActionContext',
+    ]) {
+      assert.equal(typeof core[name], 'function', 'missing core root symbol: ' + name);
+    }
+    const registryTypes = await import('@jungjaehoon/mama-core/registry/types');
+    assert.deepEqual(registryTypes.REGISTRY_KINDS, ['item', 'person', 'client']);
+    const registryStore = await import('@jungjaehoon/mama-core/registry/store');
+    assert.equal(typeof registryStore.createNode, 'function');
+    assert.equal(typeof registryStore.resolveAlias, 'function');
+    const recordIdentity = await import('@jungjaehoon/mama-core/registry/record-identity');
+    assert.equal(typeof recordIdentity.setRecordIdentity, 'function');
+    assert.equal(typeof recordIdentity.validateRecordIdentityReferences, 'function');
+    const ownerActionEffects = await import(
+      '@jungjaehoon/mama-core/operations/owner-action-effects'
+    );
+    assert.equal(typeof ownerActionEffects.verifyOwnerActionContext, 'function');
+    assert.equal(typeof ownerActionEffects.ownerActionOriginMatch, 'function');
     for (const name of ['getServerPort', 'DEFAULT_PORT', 'HOST', 'TIMEOUT_MS']) {
       assert.equal(name in core, false, 'removed core root symbol remains: ' + name);
     }

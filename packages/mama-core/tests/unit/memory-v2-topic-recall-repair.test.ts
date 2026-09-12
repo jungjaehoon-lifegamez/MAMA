@@ -168,6 +168,22 @@ describe('AC3: annotateTopicCurrency marks superseded history', () => {
     expect(annotated.find((r) => r.id === 'text-row')?.superseded_by_newer).toBe(true);
   });
 
+  it.each([
+    ['2026-01-01T10:00:00-05:00', '2026-01-01T14:30:00Z'],
+    ['2026-01-01T20:00:00+05:30', '2026-01-01T14:00:00Z'],
+  ])('preserves explicit ISO offsets when choosing newest: %s', async (offsetTime, utcTime) => {
+    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
+    currencyRows = [
+      { id: 'offset-row', topic: 'offset-topic', created_at: offsetTime },
+      { id: 'utc-row', topic: 'offset-topic', created_at: utcTime },
+    ];
+    const annotated = annotateTopicCurrency([
+      { id: 'offset-row', topic: 'offset-topic' },
+      { id: 'utc-row', topic: 'offset-topic' },
+    ]);
+    expect(annotated.find((row) => row.id === 'offset-row')?.superseded_by_newer).toBe(false);
+  });
+
   it('leaves rows untouched for topics with a single row', async () => {
     currencyRows = [{ id: 'only-row', topic: 'solo_topic', created_at: 1000 }];
     const { annotateTopicCurrency } = await import('../../src/mama-api.js');

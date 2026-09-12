@@ -25,6 +25,14 @@ describe('ToolRegistry', () => {
       expect(tool!.description).toContain('decision');
     });
 
+    it('includes item and actors in the Code-Act mama_save catalog', async () => {
+      const { HostBridge } = await import('../../src/agent/code-act/host-bridge.js');
+      const save = HostBridge.getToolRegistry().find((tool) => tool.name === 'mama_save');
+      expect(save?.params.map((param) => param.name)).toEqual(
+        expect.arrayContaining(['item', 'actors'])
+      );
+    });
+
     it('should return undefined for unknown tool', () => {
       expect(ToolRegistry.getTool('nonexistent')).toBeUndefined();
     });
@@ -268,6 +276,55 @@ describe('ToolRegistry', () => {
       });
     });
 
+    it('publishes a closed native mama_save schema with closed actor objects', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['mama_save'],
+      });
+      expect(definition.inputSchema.additionalProperties).toBe(false);
+      expect(definition.inputSchema.required).toEqual(['type']);
+      expect(definition.inputSchema.oneOf).toEqual([
+        expect.objectContaining({ required: ['type', 'topic', 'decision', 'reasoning'] }),
+        expect.objectContaining({ required: ['type', 'summary'] }),
+      ]);
+      const [decisionBranch, checkpointBranch] = definition.inputSchema.oneOf as Array<{
+        properties: Record<string, unknown>;
+        additionalProperties: boolean;
+      }>;
+      expect(decisionBranch.additionalProperties).toBe(false);
+      expect(decisionBranch.properties).not.toHaveProperty('summary');
+      expect(checkpointBranch.additionalProperties).toBe(false);
+      expect(checkpointBranch.properties).not.toHaveProperty('item');
+      expect(checkpointBranch.properties).not.toHaveProperty('actors');
+      expect(definition.inputSchema.properties).toMatchObject({
+        type: { enum: ['decision', 'checkpoint'] },
+        item: { type: 'string', minLength: 1 },
+        actors: {
+          type: 'array',
+          items: {
+            required: ['person', 'role'],
+            additionalProperties: false,
+          },
+        },
+      });
+      expect(definition.inputSchema.properties).not.toHaveProperty('principal_id');
+      expect(definition.inputSchema.properties).not.toHaveProperty('scopes');
+    });
+
+    it('publishes closed schemas for registry lookup and upsert', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['registry_lookup', 'registry_upsert'],
+      });
+      expect(definitions).toHaveLength(2);
+      expect(definitions[0].inputSchema).toMatchObject({
+        required: ['name'],
+        additionalProperties: false,
+      });
+      expect(definitions[1].inputSchema).toMatchObject({
+        required: ['kind', 'name'],
+        additionalProperties: false,
+      });
+    });
+
     it('should expose the exact native outer code_act input schema', () => {
       const [definition] = ToolRegistry.getHostToolDefinitions({
         allowedTools: ['code_act'],
@@ -317,6 +374,8 @@ describe('ToolRegistry', () => {
       expect(grouped.has('memory')).toBe(true);
       expect(grouped.get('memory')!.map((tool) => tool.name)).toEqual([
         'mama_save',
+        'registry_lookup',
+        'registry_upsert',
         'mama_search',
         'mama_recall',
         'mama_provenance',

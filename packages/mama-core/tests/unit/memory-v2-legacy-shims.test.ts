@@ -32,6 +32,7 @@ vi.mock('../../src/memory/api.js', async (importOriginal) => {
     ...actual,
     saveMemory: saveMemoryMock,
     saveMemoryWithTrustedProvenance: saveMemoryMock,
+    saveLegacyMemory: saveMemoryMock,
     recallMemory: recallMemoryMock,
   };
 });

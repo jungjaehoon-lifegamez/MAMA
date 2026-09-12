@@ -338,7 +338,9 @@ describe('TG-03/04/05: scoped progressive tool evidence', () => {
 
   it('upgrades pre-diagnostic rows without changing their summaries or granting scope', () => {
     const db = new Database(':memory:');
-    for (const file of migrationFiles().filter((file) => !file.startsWith('068-'))) {
+    for (const file of migrationFiles().filter(
+      (file) => !file.startsWith('068-') && !file.startsWith('071-')
+    )) {
       db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
     }
     db.prepare('INSERT INTO model_runs (model_run_id, status, created_at) VALUES (?, ?, ?)').run(

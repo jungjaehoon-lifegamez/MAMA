@@ -82,6 +82,40 @@ const TASK_LIST_RETURN_TYPE =
 
 /** All gateway tool metadata */
 const TOOL_REGISTRY: ToolMeta[] = [
+  // Identity: which item or person a name refers to. Separate from search, because a
+  // spelling that is not registered is not a node - the answer is to register it, not to
+  // search harder.
+  {
+    name: 'registry_lookup',
+    description:
+      "Resolve a name, code or nickname to the item/person/client node it belongs to, with that node's children. Returns found:false when nothing is registered under that spelling - that is the signal to register it, not to search harder.",
+    params: [
+      { name: 'name', type: 'string', required: true, description: 'Spelling to resolve' },
+      { name: 'kind', type: "'item' | 'person' | 'client'", required: false },
+    ],
+    returnType:
+      '{ success: boolean; found: boolean; node?: { id: string; kind: string; name: string; parentId: string | null; children: Array<{ id: string; name: string }> } }',
+    category: 'memory',
+  },
+  {
+    name: 'registry_upsert',
+    description:
+      'Register a node or add spellings to one you already resolved: {kind, name, aliases?, parent_of?, note?}. Adding an alias another node holds is refused with code alias_taken - decide whether the two are the same and ask the owner before merging. Splitting an item into its parts is parent_of.',
+    params: [
+      { name: 'kind', type: "'item' | 'person' | 'client'", required: true },
+      { name: 'name', type: 'string', required: true },
+      { name: 'aliases', type: 'string[]', required: false },
+      {
+        name: 'parent_of',
+        type: 'Array<{ name: string; aliases?: string[] }>',
+        required: false,
+        description: 'Split this node into the parts it really covers',
+      },
+      { name: 'note', type: 'string', required: false },
+    ],
+    returnType: '{ success: boolean; id?: string; created?: boolean; code?: string }',
+    category: 'memory',
+  },
   // Memory
   {
     name: 'mama_search',
@@ -171,6 +205,12 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'decision', type: 'string', required: false },
       { name: 'reasoning', type: 'string', required: false },
       { name: 'confidence', type: 'number', required: false },
+      { name: 'item', type: 'string', required: false },
+      {
+        name: 'actors',
+        type: 'Array<{ person: string; role: string }>',
+        required: false,
+      },
       { name: 'context_packet_id', type: 'string', required: false },
       { name: 'summary', type: 'string', required: false },
       { name: 'next_steps', type: 'string', required: false },
@@ -1032,7 +1072,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_create',
     description:
-      'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts. Records and tasks are SEPARATE: only real work with a concrete, finite completion condition becomes a row. Observations, lessons, principles, aspirations and open questions stay records/memory.',
+      'Create a task-ledger item. Distinct tasks may cite the same source event. Records and tasks are SEPARATE: only real work with a concrete, finite completion condition becomes a row. Observations, lessons, principles, aspirations and open questions stay records/memory.',
     params: [
       { name: 'title', type: 'string', required: true },
       {
@@ -1190,6 +1230,9 @@ const TOOL_REGISTRY: ToolMeta[] = [
 
 /** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
+  // Resolving a name to a node is a read at every tier. A reporting lane that cannot resolve
+  // an alias answers about a spelling instead of an item.
+  'registry_lookup',
   'experience_read',
   'procedure_list',
   'procedure_read',
@@ -1240,6 +1283,8 @@ export function isCodeActMutatingTool(toolName: string): boolean {
 
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
+  // Declaring identity is a memory write: it changes what every later record joins on.
+  'registry_upsert',
   'procedure_update',
   'procedure_retire',
   'procedure_observe',

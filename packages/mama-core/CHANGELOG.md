@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-13
+
+### Added
+
+- Registry node, alias, record-item, and record-actor storage with conservative normalization.
+- Atomic record identity on the canonical save transaction.
+- Operation-backed tool traces and shared owner-action effect policy/types/storage port.
+
 ## [3.0.0] - 2026-09-12
 
 ### Removed

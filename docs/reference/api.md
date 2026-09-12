@@ -1175,7 +1175,7 @@ Decisions connect through explicit relationships. Include patterns in the `reaso
 
 | Edge Type     | Pattern in Reasoning                    | Meaning                      |
 | ------------- | --------------------------------------- | ---------------------------- |
-| `supersedes`  | (automatic for same topic)              | Newer version replaces older |
+| `supersedes`  | explicit referenced decision ID         | Newer version replaces older |
 | `builds_on`   | `builds_on: decision_xxx`               | Extends prior work           |
 | `debates`     | `debates: decision_xxx`                 | Presents alternative view    |
 | `synthesizes` | `synthesizes: [decision_a, decision_b]` | Merges multiple approaches   |
@@ -1216,4 +1216,9 @@ If upgrading from v1.1 (11 tools) to v1.2+ (5 tools):
 ---
 
 **Last Updated:** 2026-09-12
-**Version:** mama-server 2.0.0 / mama-os 0.54.0
+**Version:** mama-server 2.1.0 / mama-os 0.55.0
+Decision saves may include `item` (a registered item node id) and `actors`
+(`[{ "person": "<registered person id>", "role": "<explicit role>" }]`). These references are
+validated and committed in the same SQLite transaction as the decision, embedding, scopes, events,
+and explicit relationship edges. Registry lookup uses conservative case/space normalization; it
+does not infer identity, relationships, or merges from similarity.

@@ -585,6 +585,10 @@ export interface SaveDecisionInput {
   context_packet_id?: string;
   /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
   event_date?: string;
+  /** Registry node id for the work item this record is about. */
+  item?: string;
+  /** Who was involved and in what role. One record routinely has several. */
+  actors?: Array<{ person: string; role: string }>;
 }
 
 export interface SaveDecisionPayload {
@@ -597,6 +601,8 @@ export interface SaveDecisionPayload {
   scopes?: ScopeRef[];
   /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
   event_date?: string;
+  item?: string;
+  actors?: Array<{ person: string; role: string }>;
 }
 
 /**
@@ -839,6 +845,8 @@ export type GatewayToolInput =
  */
 export type GatewayToolName =
   | 'mama_save'
+  | 'registry_lookup'
+  | 'registry_upsert'
   | 'mama_search'
   | 'mama_recall'
   | 'mama_provenance'
@@ -1005,6 +1013,8 @@ export interface SearchResult {
 export interface UpdateResult {
   success: boolean;
   message?: string;
+  code?: string;
+  error?: string;
 }
 
 /**
@@ -1016,6 +1026,8 @@ export interface LoadCheckpointResult {
   next_steps?: string;
   open_files?: string[];
   message?: string;
+  code?: string;
+  error?: string;
 }
 
 export interface EnvelopeDenialResult {
@@ -1421,7 +1433,8 @@ export type AgentErrorCode =
   | 'MCP_COMPLETED_MUTATION_INTERRUPTED'
   | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
   | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
-  | 'TOOL_CONTRACT_REPEAT';
+  | 'TOOL_CONTRACT_REPEAT'
+  | 'relationship_target_unavailable';
 
 /**
  * Custom error class for agent loop errors
@@ -1531,6 +1544,7 @@ export interface MemoryWriteProvenance {
 export interface TrustedMemoryWriteOptions {
   provenance: MemoryWriteProvenance;
   capability: unknown;
+  authoritativeScopes?: readonly ScopeRef[];
 }
 
 /**

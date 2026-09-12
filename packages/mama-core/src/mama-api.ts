@@ -25,7 +25,7 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { createEdgesFromReasoning } from './decision-tracker.js';
+import { parseReasoningForRelationships } from './decision-tracker.js';
 import { DecisionRecord, SemanticEdgeItem, fts5Search, ensureMemoryScope } from './db-manager.js';
 import {
   queryDecisionGraph,
@@ -33,7 +33,6 @@ import {
   getAdapter,
   vectorSearch,
 } from './memory-store.js';
-import { initDB } from './db-manager.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';
@@ -42,6 +41,7 @@ import { warn as logWarn, error as logError } from './debug-logger.js';
 import {
   saveMemory,
   saveMemoryWithTrustedProvenance,
+  saveLegacyMemory,
   recallMemory,
   buildProfile,
   ingestMemory,
@@ -112,6 +112,8 @@ interface SaveParams {
   trust_context?: Record<string, unknown> | null;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
+  item?: string | null;
+  actors?: Array<{ person: string; role: string }>;
   /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
   event_date?: string | null;
   timelineEvent?: {
@@ -561,6 +563,8 @@ async function saveInternal(
     trust_context: _trust_context = null,
     is_static,
     scopes: inputScopes,
+    item,
+    actors,
     event_date,
     timelineEvent,
   }: SaveParams,
@@ -625,107 +629,51 @@ async function saveInternal(
   // Note: Current schema uses user_involvement ('requested', 'approved', 'rejected')
   // Future: Will use decision_type column for proper distinction
   const _userInvolvement = type === 'user_decision' ? 'approved' : null;
+  const outcomeMap = {
+    pending: null,
+    success: 'SUCCESS',
+    failure: 'FAILED',
+    partial: 'PARTIAL',
+    superseded: null,
+  } as const;
+  const dbOutcome =
+    outcome in outcomeMap ? outcomeMap[outcome as keyof typeof outcomeMap] : outcome;
+
+  const explicitRelationships = parseReasoningForRelationships(reasoning);
 
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
   const {
     id: decisionId,
     timeline_event_id: timelineEventId,
     timeline_event_ids: timelineEventIds,
-  } = options
-    ? await saveMemoryWithTrustedProvenance(
-        {
-          topic,
-          kind: is_static === 1 ? 'preference' : 'decision',
-          summary: decision,
-          details: reasoning,
-          confidence,
-          scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
-          source: {
-            package: 'mama-core',
-            source_type: 'legacy_save',
-          },
-          eventDate: event_date ?? undefined,
-          timelineEvent,
-        },
-        options
-      )
-    : await saveMemory({
-        topic,
-        kind: is_static === 1 ? 'preference' : 'decision',
-        summary: decision,
-        details: reasoning,
-        confidence,
-        scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
-        source: {
-          package: 'mama-core',
-          source_type: 'legacy_save',
-        },
-        eventDate: event_date ?? undefined,
-        timelineEvent,
-      });
+  } = await saveLegacyMemory(
+    {
+      topic,
+      kind: is_static === 1 ? 'preference' : 'decision',
+      summary: decision,
+      details: reasoning,
+      confidence,
+      scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
+      source: {
+        package: 'mama-core',
+        source_type: 'legacy_save',
+      },
+      eventDate: event_date ?? undefined,
+      timelineEvent,
+      itemId: item ?? undefined,
+      actors: actors?.map((actor) => ({ personId: actor.person, role: actor.role })),
+    },
+    {
+      userInvolvement: _userInvolvement,
+      outcome: dbOutcome,
+      failureReason: failure_reason ?? null,
+      limitation: limitation ?? null,
+      isStatic: is_static,
+      relationships: explicitRelationships,
+    },
+    options
+  );
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
-
-  // Update user_involvement, outcome, failure_reason, limitation
-  // Note: learnDecision always sets 'requested', we need to override it
-  await initDB();
-  const adapter = getAdapter();
-
-  // Build UPDATE query dynamically based on what fields are provided
-  const updates = [];
-  const values = [];
-
-  // user_involvement based on type
-  if (type === 'assistant_insight') {
-    updates.push('user_involvement = NULL');
-  } else if (type === 'user_decision') {
-    updates.push('user_involvement = ?');
-    values.push('approved');
-  }
-
-  // outcome (always set, default is 'pending')
-  // Story M4.1 fix: Map to DB format (uppercase, pending → NULL)
-  if (outcome) {
-    const outcomeMap = {
-      pending: null,
-      success: 'SUCCESS',
-      failure: 'FAILED',
-      partial: 'PARTIAL',
-      superseded: null,
-    };
-    const dbOutcome = outcomeMap[outcome] !== undefined ? outcomeMap[outcome] : outcome;
-
-    updates.push('outcome = ?');
-    values.push(dbOutcome);
-  }
-
-  // failure_reason (optional)
-  if (failure_reason) {
-    updates.push('failure_reason = ?');
-    values.push(failure_reason);
-  }
-
-  // limitation (optional)
-  if (limitation) {
-    updates.push('limitation = ?');
-    values.push(limitation);
-  }
-
-  // is_static (user profile marker)
-  if (is_static !== undefined) {
-    updates.push('is_static = ?');
-    values.push(is_static);
-  }
-
-  // Execute UPDATE if we have any fields to update
-  if (updates.length > 0) {
-    values.push(decisionId); // WHERE id = ?
-    const stmt = adapter.prepare(`
-      UPDATE decisions
-      SET ${updates.join(', ')}
-      WHERE id = ?
-    `);
-    await stmt.run(...values);
-  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // Story 1.1: Auto-Search on Save
@@ -800,17 +748,6 @@ async function saveInternal(
         logError('Reasoning graph query failed:', errMsg);
       }
     }
-
-    // Story 2.2: Parse reasoning for relationship edges (builds_on, debates, synthesizes)
-    if (reasoning) {
-      try {
-        await createEdgesFromReasoning(decisionId, reasoning);
-      } catch (error: unknown) {
-        // Best-effort - save succeeds even if edge creation fails
-        const errMsg = error instanceof Error ? error.message : String(error);
-        logError('Edge creation from reasoning failed:', errMsg);
-      }
-    }
   }
 
   // Story 1.2: Enhanced response (backward compatible)
@@ -864,7 +801,7 @@ function _generateCollaborationHint(similarDecisions: SimilarDecision[]): string
   }
 
   return `Found ${count} related decision(s). Consider:
-- SUPERSEDE: Same topic replaces prior (automatic)
+- SUPERSEDE: Add "supersedes: <id>" in reasoning to replace a specific prior decision
 - BUILD-ON: Add "builds_on: <id>" in reasoning to extend
 - DEBATE: Add "debates: <id>" in reasoning for alternative view
 - SYNTHESIZE: Add "synthesizes: [id1, id2]" in reasoning to unify`;
@@ -1232,7 +1169,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
 
     // 1. Add supersedes chain (evolution history)
     try {
-      const chain = await queryDecisionGraph(candidate.topic);
+      const chain = await queryDecisionGraph(candidate.topic, candidate.id);
       for (const decision of chain) {
         if (!graphEnhanced.has(decision.id)) {
           graphEnhanced.set(decision.id, {
@@ -1595,15 +1532,6 @@ async function saveWithTrustedProvenance(
   return saveInternal(params, options);
 }
 
-/**
- * Annotate suggest results with topic currency. MAMA semantics treat topic
- * reuse as supersession, so a result row is stale when the DB holds a newer
- * decision row for the same topic - even when its status column still says
- * 'active' (historical chains predate status maintenance). Surfacing
- * `superseded_by_newer` lets consumers (and LLMs) tell current truth from
- * superseded history; delta-bench measured 80% -> 92.5% answer accuracy when
- * the current row is explicitly marked.
- */
 function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
   rows: T[],
   scopes?: Array<{ kind: string; id: string }>
@@ -1611,94 +1539,52 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
   try {
     const topics = [
       ...new Set(
-        rows.map((r) => r.topic).filter((t): t is string => typeof t === 'string' && t.length > 0)
+        rows.map((row) => row.topic).filter((topic): topic is string => typeof topic === 'string')
       ),
     ];
-    if (topics.length === 0) {
-      return rows;
-    }
-    const adapter = getAdapter();
+    if (topics.length === 0) return rows;
     const placeholders = topics.map(() => '?').join(',');
-    // Supersession is scope-isolated (mirrors the save-path same-topic lookup):
-    // a newer row for the same topic in ANOTHER project/channel must not mark
-    // this scope's current truth as stale. When the search ran scoped, the
-    // currency comparison is restricted to the same scopes. Rows with an
-    // excluded status (quarantined etc.) never count as "the newer truth".
-    const statusFilter =
-      "AND (d.status IS NULL OR d.status NOT IN ('superseded','quarantined','contradicted','stale'))";
-    type CurrencyRow = { id: string; topic: string; created_at: number | string | null };
-    let all: CurrencyRow[];
-    if (scopes && scopes.length > 0) {
-      const scopePairs = scopes.flatMap((s) => [s.kind, s.id]);
-      const scopePlaceholders = scopes
-        .map(() => '(ms.kind = ? AND ms.external_id = ?)')
-        .join(' OR ');
-      all = adapter
-        .prepare(
-          `SELECT DISTINCT d.id, d.topic, d.created_at
-           FROM decisions d
-           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+    const adapter = getAdapter();
+    const scopeSql =
+      scopes && scopes.length > 0
+        ? `JOIN memory_scope_bindings msb ON msb.memory_id = d.id
            JOIN memory_scopes ms ON ms.id = msb.scope_id
-           WHERE d.topic IN (${placeholders}) AND (${scopePlaceholders}) ${statusFilter}`
-        )
-        .all(...topics, ...scopePairs) as CurrencyRow[];
-    } else {
-      all = adapter
-        .prepare(
-          `SELECT id, topic, created_at FROM decisions d WHERE topic IN (${placeholders}) ${statusFilter}`
-        )
-        .all(...topics) as CurrencyRow[];
-    }
-    // created_at mixes epoch seconds, epoch ms, and TEXT datetimes in live DBs.
-    const toMs = (v: number | string | null): number => {
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        return v > 1e12 ? v : v * 1000;
-      }
-      if (typeof v === 'string') {
-        const trimmed = v.trim();
-        if (/^\d+$/.test(trimmed)) {
-          return toMs(Number(trimmed));
-        }
-        // Stamp UTC only when the text carries no timezone marker: appending
-        // 'Z' to a value that already ends in 'Z' or an offset yields NaN, and
-        // a bare T-form datetime would otherwise parse as ambiguous local time.
-        const formatted = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
-        const hasTz = formatted.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(formatted);
-        const parsed = Date.parse(hasTz ? formatted : formatted + 'Z');
-        // Unparseable rows are skipped per-row by the caller (NaN), never
-        // thrown: one legacy bad timestamp must not blank the whole annotation.
-        return Number.isFinite(parsed) ? parsed : NaN;
-      }
-      return NaN;
+           WHERE d.topic IN (${placeholders}) AND (${scopes
+             .map(() => '(ms.kind = ? AND ms.external_id = ?)')
+             .join(' OR ')})`
+        : `WHERE d.topic IN (${placeholders})`;
+    const params = [...topics, ...(scopes?.flatMap((scope) => [scope.kind, scope.id]) ?? [])];
+    const candidates = adapter
+      .prepare(
+        `SELECT DISTINCT d.id, d.topic, d.created_at FROM decisions d ${scopeSql}
+         AND (d.status IS NULL OR d.status NOT IN ('superseded','quarantined','contradicted','stale'))`
+      )
+      .all(...params) as Array<{ id: string; topic: string; created_at: number | string }>;
+    const toMs = (value: number | string): number => {
+      if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
+      if (/^\d+$/.test(value.trim())) return toMs(Number(value));
+      const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+      return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized) ? normalized : `${normalized}Z`);
     };
-    const newestByTopic = new Map<string, { ms: number; id: string }>();
-    for (const row of all) {
-      const ms = toMs(row.created_at);
-      if (!Number.isFinite(ms)) {
-        continue;
-      }
-      const cur = newestByTopic.get(row.topic);
-      // Deterministic tiebreak on equal timestamps: higher id wins (ids embed
-      // their creation ms, so lexicographic order is stable and monotonic-ish).
-      if (!cur || ms > cur.ms || (ms === cur.ms && row.id > cur.id)) {
-        newestByTopic.set(row.topic, { ms, id: row.id });
+    const newest = new Map<string, { id: string; time: number }>();
+    for (const candidate of candidates) {
+      const time = toMs(candidate.created_at);
+      if (!Number.isFinite(time)) continue;
+      const current = newest.get(candidate.topic);
+      if (!current || time > current.time || (time === current.time && candidate.id > current.id)) {
+        newest.set(candidate.topic, { id: candidate.id, time });
       }
     }
-    return rows.map((r) => {
-      const newest = typeof r.topic === 'string' ? newestByTopic.get(r.topic) : undefined;
-      if (!newest) {
-        return r;
-      }
-      return { ...r, superseded_by_newer: newest.id !== r.id };
-    });
-  } catch (err) {
-    // Annotation is additive - a failure must degrade to unannotated results,
-    // never break the search itself. But it is logged loudly, not swallowed.
-    logWarn(`[mama.suggest] topic-currency annotation failed: ${String(err)}`);
+    return rows.map((row) => ({
+      ...row,
+      superseded_by_newer:
+        typeof row.topic === 'string' ? newest.get(row.topic)?.id !== row.id : false,
+    }));
+  } catch (error) {
+    logWarn(`[mama.suggest] topic-currency annotation failed: ${String(error)}`);
     return rows;
   }
 }
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function suggest(userQuestion: string, options: SuggestFunctionOptions = {}): Promise<any> {
   if (!userQuestion || typeof userQuestion !== 'string') {
@@ -2393,8 +2279,7 @@ async function listDecisions(
   try {
     const adapter = getAdapter();
     let decisions;
-    const topicPrefix =
-      typeof options.topicPrefix === 'string' ? options.topicPrefix.trim() : '';
+    const topicPrefix = typeof options.topicPrefix === 'string' ? options.topicPrefix.trim() : '';
     // A prefix read keeps superseded rows: they are the item's earlier rounds.
     const currency = topicPrefix ? '' : 'AND d.superseded_by IS NULL';
     const prefixClause = topicPrefix ? "AND d.topic LIKE ? ESCAPE '\\'" : '';

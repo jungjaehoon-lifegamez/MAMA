@@ -40,6 +40,24 @@ export async function handleSave(
     if (!d.topic || !d.decision || !d.reasoning) {
       return { success: false, message: 'Decision requires: topic, decision, reasoning' };
     }
+    if (typeof d.item === 'string' && !d.item.trim()) {
+      return { success: false, message: 'Decision item must be nonblank' };
+    }
+    if (
+      (d.actors !== undefined && !Array.isArray(d.actors)) ||
+      (Array.isArray(d.actors) &&
+        d.actors.some(
+          (actor) =>
+            !actor ||
+            typeof actor !== 'object' ||
+            typeof actor.person !== 'string' ||
+            !actor.person.trim() ||
+            typeof actor.role !== 'string' ||
+            !actor.role.trim()
+        ))
+    ) {
+      return { success: false, message: 'Decision actors require nonblank person and role' };
+    }
     if (isOperationalRunSummaryDecision(d)) {
       return {
         success: true,
@@ -58,17 +76,20 @@ export async function handleSave(
       type: 'user_decision',
       scopes: d.scopes,
       ...(d.event_date && { event_date: d.event_date }),
+      ...(d.item && { item: d.item }),
+      ...(d.actors && { actors: d.actors }),
     };
-    if (options) {
-      if (!api.saveWithTrustedProvenance) {
-        return {
-          success: false,
-          message: 'Trusted provenance save is unavailable.',
-        };
-      }
-      return await api.saveWithTrustedProvenance(payload, options);
+    if (options && !api.saveWithTrustedProvenance) {
+      return {
+        success: false,
+        message: 'Trusted provenance save is unavailable.',
+      };
     }
-    return await api.save(payload);
+    const saved =
+      options && api.saveWithTrustedProvenance
+        ? await api.saveWithTrustedProvenance(payload, options)
+        : await api.save(payload);
+    return saved;
   }
 
   if (input.type === 'checkpoint') {
@@ -299,8 +320,6 @@ export async function handleLoadCheckpoint(
     onRestore(cpRecord.recentConversation);
   }
 
-  // Ensure success field is present (HostBridge checks result.success)
-  // Shallow copy to avoid mutating the original checkpoint object
   const record = { ...(checkpoint as unknown as Record<string, unknown>) };
   if (!('success' in record)) {
     record.success = true;

@@ -45,7 +45,8 @@ export interface ModelRunRecord {
   completed_at: number | null;
 }
 
-export interface AppendToolTraceInput {
+/** Fields shared by model-backed and service-operation trace appends. */
+interface AppendToolTraceCommon {
   /** Host-derived access scope; legacy rows remain unscoped. */
   owner_scope?: string | null;
   project_id?: string | null;
@@ -55,7 +56,6 @@ export interface AppendToolTraceInput {
   catalog_revision?: string | null;
 
   trace_id?: string;
-  model_run_id: string;
   gateway_call_id?: string | null;
   tool_name: string;
   input_summary?: string | null;
@@ -68,6 +68,32 @@ export interface AppendToolTraceInput {
   created_at?: number;
 }
 
+/**
+ * Model-backed append. `model_run_id` names the authorizing model run and stays
+ * required: the existing gateway/tracing callers are unchanged.
+ */
+export interface AppendToolTraceInput extends AppendToolTraceCommon {
+  model_run_id: string;
+}
+
+/**
+ * Service/CLI operation append. A truthful host operation traces itself without
+ * inventing a model run: the row is anchored by a nonempty `operation_id` and
+ * `actor_principal_id`, which stay required.
+ *
+ * `model_run_id` is OPTIONAL causal provenance: when a real completed model run
+ * caused this operation observation, its id may be carried so the association is
+ * queryable (the `model_runs` FK validates that the reference is real). It is
+ * never fabricated, never invented, and never serves as execution authorization
+ * - an operation without a causing run simply omits it and the column stays NULL.
+ */
+export interface AppendOperationToolTraceInput extends AppendToolTraceCommon {
+  operation_id: string;
+  actor_principal_id: string;
+  /** Optional real causal model run. Stored when supplied; absent stays NULL. */
+  model_run_id?: string | null;
+}
+
 export interface ToolTraceRecord {
   /** Host-derived access scope; legacy rows remain unscoped. */
   owner_scope?: string | null;
@@ -78,7 +104,11 @@ export interface ToolTraceRecord {
   catalog_revision?: string | null;
 
   trace_id: string;
-  model_run_id: string;
+  /** NULL only for a service/operation-origin trace; legacy rows keep their model id. */
+  model_run_id: string | null;
+  /** Set (with actor_principal_id) exactly when this is an operation-origin trace. */
+  operation_id: string | null;
+  actor_principal_id: string | null;
   gateway_call_id: string | null;
   tool_name: string;
   input_summary: string | null;

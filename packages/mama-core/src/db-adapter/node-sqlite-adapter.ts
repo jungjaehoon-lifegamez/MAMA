@@ -17,6 +17,135 @@ const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 const SQLITE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// Migration 071 origin invariant, kept in ONE place so the DDL the rebuild
+// writes and the shape verification that admits a table cannot drift. A row is
+// valid only with a model-only origin or a complete operation/actor pair.
+const TOOL_TRACES_ORIGIN_CHECK = `CHECK (
+    (model_run_id IS NOT NULL AND operation_id IS NULL AND actor_principal_id IS NULL)
+    OR (
+      operation_id IS NOT NULL AND length(trim(operation_id)) > 0
+      AND actor_principal_id IS NOT NULL AND length(trim(actor_principal_id)) > 0
+    )
+  )`;
+const TOOL_TRACES_MODEL_FK = 'FOREIGN KEY (model_run_id) REFERENCES model_runs(model_run_id)';
+
+function normalizeSqlText(sql: string): string {
+  return sql.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * Split a CREATE TABLE body (the text between the outermost parentheses) into
+ * its top-level column and table-constraint clauses. Respects nested
+ * parentheses (CHECK expressions), and single/double/backtick/bracket quoted
+ * identifiers and string literals. This is a targeted parser for reconstructing
+ * ONE known table, not a general SQL engine.
+ */
+function splitCreateTableClauses(createSql: string): string[] {
+  const open = createSql.indexOf('(');
+  const close = createSql.lastIndexOf(')');
+  if (open < 0 || close <= open) {
+    return [];
+  }
+  const body = createSql.slice(open + 1, close);
+  const clauses: string[] = [];
+  let depth = 0;
+  let current = '';
+  let quote: string | null = null;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        // Doubled quote is an escaped quote, not a close (SQLite identifier/string rule).
+        if (quote !== ']' && body[i + 1] === quote) {
+          current += body[++i];
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '[') {
+      quote = ']';
+      current += ch;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+      current += ch;
+      continue;
+    }
+    if (ch === ')') {
+      depth--;
+      current += ch;
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      if (current.trim()) {
+        clauses.push(current.trim());
+      }
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    clauses.push(current.trim());
+  }
+  return clauses;
+}
+
+const TABLE_CONSTRAINT_KEYWORDS = new Set(['constraint', 'primary', 'unique', 'check', 'foreign']);
+
+function clauseIsTableConstraint(clause: string): boolean {
+  const firstToken = clause.trimStart().split(/[\s(]/, 1)[0].toLowerCase();
+  return TABLE_CONSTRAINT_KEYWORDS.has(firstToken);
+}
+
+/**
+ * Quote a decoded identifier for safe emission in SQL. Any column/table name we
+ * recovered from a CREATE TABLE clause or sqlite_master (possibly containing a
+ * space, an embedded double quote, or a reserved word) is re-quoted with SQLite
+ * double-quote rules: wrap in double quotes and double any embedded double quote.
+ * clauseColumnName strips quoting, so the INSERT/SELECT column list MUST re-quote
+ * or a name like `runtime note` becomes two bare tokens and breaks the migration.
+ */
+function quoteSqlIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** Column name of a column-definition clause, stripping quotes/brackets. */
+function clauseColumnName(clause: string): string {
+  const trimmed = clause.trimStart();
+  const first = trimmed[0];
+  if (first === '"' || first === '`' || first === "'") {
+    let name = '';
+    for (let i = 1; i < trimmed.length; i++) {
+      if (trimmed[i] === first) {
+        if (trimmed[i + 1] === first) {
+          name += first;
+          i++;
+        } else {
+          break;
+        }
+      } else {
+        name += trimmed[i];
+      }
+    }
+    return name;
+  }
+  if (first === '[') {
+    const end = trimmed.indexOf(']');
+    return end > 0 ? trimmed.slice(1, end) : trimmed.slice(1);
+  }
+  return trimmed.split(/[\s(]/, 1)[0];
+}
+
 interface SQLiteAdapterConfig {
   dbPath?: string;
 }
@@ -116,6 +245,7 @@ class NodeSQLiteConnection {
 }
 
 export class NodeSQLiteAdapter extends DatabaseAdapter {
+  private transactionDepth = 0;
   private config: SQLiteAdapterConfig;
   private db: NodeSQLiteConnection | null = null;
   private _vectorSearchEnabled = true;
@@ -344,7 +474,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    this.exec('BEGIN TRANSACTION');
+    const depth = this.transactionDepth;
+    const vectorSnapshot = new Map(this.vectorCache);
+    const topicSnapshot = new Map(this.topicCache);
+    const statusSnapshot = new Map(this.statusCache);
+    const savepoint = `mama_nested_${depth}`;
+    this.exec(depth === 0 ? 'BEGIN TRANSACTION' : `SAVEPOINT ${savepoint}`);
+    this.transactionDepth += 1;
     try {
       const result = fn();
       if (
@@ -353,13 +489,35 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       ) {
         throw new Error('DatabaseAdapter.transaction() callbacks must be synchronous');
       }
-      this.exec('COMMIT');
+      this.exec(depth === 0 ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`);
+      this.transactionDepth = depth;
       return result;
     } catch (error) {
+      this.vectorCache = vectorSnapshot;
+      this.topicCache = topicSnapshot;
+      this.statusCache = statusSnapshot;
+      this.transactionDepth = depth;
+      let cleanupError: unknown;
       try {
-        this.exec('ROLLBACK');
-      } catch {
-        // Preserve the original transaction failure when rollback also fails.
+        this.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO SAVEPOINT ${savepoint}`);
+        if (depth > 0) {
+          this.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+      } catch (rollbackError) {
+        cleanupError = rollbackError;
+      }
+      if (cleanupError !== undefined) {
+        const failures = [error, cleanupError];
+        try {
+          this.disconnect();
+        } catch (disconnectError) {
+          failures.push(disconnectError);
+          this.db = null;
+        }
+        throw new AggregateError(
+          failures,
+          'Transaction settlement and rollback cleanup both failed; adapter disconnected'
+        );
       }
       throw error;
     }
@@ -505,6 +663,22 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         continue;
       }
 
+      // Relaxing tool_traces.model_run_id to nullable and adding the operation
+      // origin CHECK needs a table rebuild that also preserves any extra runtime
+      // columns/indexes a live database carries - more than the static SQL file
+      // can express. Reconcile with a dynamic rebuild instead of exec'ing the SQL.
+      if (version === 71) {
+        if (!this.tableExists('tool_traces')) {
+          // A legacy ledger may have skipped 033; the structural repair below
+          // creates the table first, then this rebuild reconciles it. Do not
+          // stamp 71 yet.
+          continue;
+        }
+        this.recoverServiceOperationOriginsMigration071();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
       const migrationPath = path.join(migrationsDir, file);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
@@ -622,6 +796,8 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   }
 
   private repairSkippedFeatureMigrations(migrationsDir: string): void {
+    this.repairRegistryIdentityStructures(migrationsDir);
+
     if (this.tableExists('decisions')) {
       const decisionColumns = this.tableColumns('decisions');
       const hasMissingMemoryProvenanceColumn = [
@@ -662,6 +838,17 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       this.needsToolTraceDiagnosticsRepair068()
     ) {
       this.recoverToolTraceDiagnosticsMigration068();
+    }
+
+    // Runs after the 068 repair so tool_traces already carries the diagnostic
+    // columns. Only enters the rebuild when the operation-origin shape is
+    // actually missing - a complete database must not rebuild on every open.
+    if (
+      fs.existsSync(path.join(migrationsDir, '071-service-operation-origins.sql')) &&
+      this.tableExists('tool_traces') &&
+      this.needsServiceOperationOriginsRepair071()
+    ) {
+      this.recoverServiceOperationOriginsMigration071();
     }
 
     if (this.tableExists('connector_event_index')) {
@@ -799,6 +986,531 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     }
     this.assertMigration041Complete();
+  }
+
+  private repairRegistryIdentityStructures(migrationsDir: string): void {
+    type ColumnShape = {
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+      pk: number;
+    };
+    const columnsMatch = (
+      table: string,
+      expected: Array<[string, string, number, string | null, number]>
+    ): boolean => {
+      if (!this.tableExists(table)) {
+        return false;
+      }
+      const rows = this.prepare(`PRAGMA table_info("${table}")`).all() as ColumnShape[];
+      return (
+        rows.length === expected.length &&
+        expected.every(([name, type, notnull, dflt, pk]) => {
+          const row = rows.find((candidate) => candidate.name === name);
+          return Boolean(
+            row &&
+            row.type.toUpperCase() === type &&
+            row.notnull === notnull &&
+            row.pk === pk &&
+            row.dflt_value === dflt
+          );
+        })
+      );
+    };
+    const fkMatch = (table: string, expected: Array<[string, string, string, string]>): boolean => {
+      if (!this.tableExists(table)) {
+        return false;
+      }
+      const rows = this.prepare(`PRAGMA foreign_key_list("${table}")`).all() as Array<{
+        from: string;
+        table: string;
+        to: string;
+        on_delete: string;
+      }>;
+      return expected.every(([from, target, to, onDelete]) =>
+        rows.some(
+          (row) =>
+            row.from === from &&
+            row.table === target &&
+            row.to === to &&
+            row.on_delete.toUpperCase() === onDelete
+        )
+      );
+    };
+    const indexMatch = (name: string, columns: string[]): boolean => {
+      if (!this.indexExists(name)) {
+        return false;
+      }
+      const rows = this.prepare(`PRAGMA index_info("${name}")`).all() as Array<{
+        seqno: number;
+        name: string;
+      }>;
+      return (
+        rows.length === columns.length &&
+        rows.sort((a, b) => a.seqno - b.seqno).every((row, index) => row.name === columns[index])
+      );
+    };
+    const registrySql = this.tableExists('registry_nodes')
+      ? this.prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registry_nodes'"
+        ).get()
+      : undefined;
+    const aliasSql = this.tableExists('registry_aliases')
+      ? String(
+          (
+            this.prepare(
+              "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registry_aliases'"
+            ).get() as { sql?: string } | undefined
+          )?.sql ?? ''
+        )
+      : '';
+    const scopeSql = this.tableExists('registry_scope_bindings')
+      ? String(
+          (
+            this.prepare(
+              "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registry_scope_bindings'"
+            ).get() as { sql?: string } | undefined
+          )?.sql ?? ''
+        )
+      : '';
+    const registryMalformed =
+      Boolean(registrySql) &&
+      (!columnsMatch('registry_nodes', [
+        ['id', 'TEXT', 0, null, 1],
+        ['kind', 'TEXT', 1, null, 0],
+        ['name', 'TEXT', 1, null, 0],
+        ['parent_id', 'TEXT', 0, null, 0],
+        ['merged_into', 'TEXT', 0, null, 0],
+        ['merge_reason', 'TEXT', 0, null, 0],
+        ['note', 'TEXT', 0, null, 0],
+        ['created_at', 'INTEGER', 1, null, 0],
+        ['updated_at', 'INTEGER', 1, null, 0],
+      ]) ||
+        !columnsMatch('registry_aliases', [
+          ['node_id', 'TEXT', 1, null, 0],
+          ['kind', 'TEXT', 1, null, 1],
+          ['alias', 'TEXT', 1, null, 2],
+          ['alias_display', 'TEXT', 1, null, 0],
+          ['scope_kind', 'TEXT', 1, null, 3],
+          ['scope_id', 'TEXT', 1, null, 4],
+          ['created_at', 'INTEGER', 1, null, 0],
+        ]) ||
+        !columnsMatch('registry_scope_bindings', [
+          ['node_id', 'TEXT', 1, null, 1],
+          ['scope_kind', 'TEXT', 1, null, 2],
+          ['scope_id', 'TEXT', 1, null, 3],
+        ]) ||
+        !fkMatch('registry_nodes', [
+          ['parent_id', 'registry_nodes', 'id', 'SET NULL'],
+          ['merged_into', 'registry_nodes', 'id', 'SET NULL'],
+        ]) ||
+        !fkMatch('registry_aliases', [['node_id', 'registry_nodes', 'id', 'CASCADE']]) ||
+        !fkMatch('registry_scope_bindings', [['node_id', 'registry_nodes', 'id', 'CASCADE']]) ||
+        !normalizeSqlText(String((registrySql as { sql?: string }).sql ?? '')).includes(
+          normalizeSqlText("CHECK (kind IN ('item', 'person', 'client'))")
+        ) ||
+        !normalizeSqlText(aliasSql).includes(
+          normalizeSqlText("CHECK (kind IN ('item', 'person', 'client'))")
+        ) ||
+        !normalizeSqlText(scopeSql).includes(
+          normalizeSqlText("CHECK (scope_kind IN ('global', 'user', 'channel', 'project'))")
+        ) ||
+        !indexMatch('idx_registry_nodes_kind', ['kind', 'merged_into']) ||
+        !indexMatch('idx_registry_nodes_parent', ['parent_id']) ||
+        !indexMatch('idx_registry_aliases_node', ['node_id']) ||
+        !indexMatch('idx_registry_aliases_scope', ['kind', 'alias', 'scope_kind', 'scope_id']) ||
+        !indexMatch('idx_registry_scope_lookup', ['scope_kind', 'scope_id', 'node_id']));
+    if (registryMalformed) {
+      this.rebuildRegistry069(migrationsDir);
+    }
+    const registryStructureMissing =
+      !this.tableExists('registry_nodes') ||
+      !this.tableExists('registry_aliases') ||
+      !this.tableExists('registry_scope_bindings') ||
+      !this.indexExists('idx_registry_nodes_kind') ||
+      !this.indexExists('idx_registry_nodes_parent') ||
+      !this.indexExists('idx_registry_aliases_node') ||
+      !this.indexExists('idx_registry_scope_lookup');
+    if (registryStructureMissing) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '069-create-registry-nodes.sql',
+        'registry nodes and aliases'
+      );
+    }
+
+    if (!this.tableExists('decisions')) {
+      return;
+    }
+    if (this.tableColumns('decisions').has('item_id')) {
+      const itemColumn = (
+        this.prepare('PRAGMA table_info("decisions")').all() as ColumnShape[]
+      ).find((column) => column.name === 'item_id');
+      if (
+        !itemColumn ||
+        itemColumn.type.toUpperCase() !== 'TEXT' ||
+        itemColumn.notnull !== 0 ||
+        itemColumn.pk !== 0 ||
+        itemColumn.dflt_value !== null
+      ) {
+        throw new Error('Migration 070 cannot safely repair noncanonical decisions.item_id');
+      }
+    }
+    const actorSql = this.tableExists('record_actors')
+      ? this.prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'record_actors'"
+        ).get()
+      : undefined;
+    const actorMalformed =
+      Boolean(actorSql) &&
+      (!columnsMatch('record_actors', [
+        ['record_id', 'TEXT', 1, null, 1],
+        ['person_id', 'TEXT', 1, null, 2],
+        ['role', 'TEXT', 1, null, 3],
+        ['position', 'INTEGER', 1, '0', 0],
+        ['created_at', 'INTEGER', 1, null, 0],
+      ]) ||
+        !fkMatch('record_actors', [['record_id', 'decisions', 'id', 'CASCADE']]) ||
+        !indexMatch('idx_record_actors_person', ['person_id', 'record_id']));
+    if (actorMalformed) {
+      this.rebuildRecordActors070();
+    }
+    const needsRecordIdentityRepair =
+      !this.tableColumns('decisions').has('item_id') ||
+      !this.tableExists('record_actors') ||
+      !this.indexExists('idx_decisions_item') ||
+      !this.indexExists('idx_record_actors_person');
+    if (!needsRecordIdentityRepair) {
+      return;
+    }
+
+    this.exec('BEGIN TRANSACTION');
+    try {
+      if (!this.tableColumns('decisions').has('item_id')) {
+        this.exec('ALTER TABLE decisions ADD COLUMN item_id TEXT');
+      }
+      this.exec('CREATE INDEX IF NOT EXISTS idx_decisions_item ON decisions(item_id)');
+      this.exec(`CREATE TABLE IF NOT EXISTS record_actors (
+        record_id TEXT NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        person_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (record_id, person_id, role)
+      )`);
+      this.exec(
+        'CREATE INDEX IF NOT EXISTS idx_record_actors_person ON record_actors(person_id, record_id)'
+      );
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        70,
+        'Record identity bindings'
+      );
+      this.exec('COMMIT');
+      info('[node-sqlite-adapter] Repaired skipped record identity migration');
+    } catch (repairError) {
+      this.exec('ROLLBACK');
+      throw repairError;
+    }
+  }
+
+  private rebuildRegistry069(migrationsDir: string): void {
+    const originalTableSql = (table: string): string =>
+      String(
+        (
+          this.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?").get(
+            table
+          ) as { sql?: string } | undefined
+        )?.sql ?? ''
+      );
+    const extraConstraints = (table: string, canonicalFragments: string[]): string[] => {
+      const clauses = splitCreateTableClauses(originalTableSql(table));
+      if (clauses.length === 0) {
+        throw new Error(`Migration 069 cannot parse ${table} definition`);
+      }
+      for (const clause of clauses.filter((candidate) => !clauseIsTableConstraint(candidate))) {
+        const normalized = normalizeSqlText(clause);
+        const hasInlineConstraint = ['check(', 'unique', 'collate', 'references'].some((token) =>
+          normalized.includes(token)
+        );
+        const columnName = clauseColumnName(clause);
+        const managedConstraint =
+          (columnName === 'kind' && normalized.includes('check(')) ||
+          (columnName === 'scope_kind' && normalized.includes('check(')) ||
+          (['parent_id', 'merged_into', 'node_id'].includes(columnName) &&
+            normalized.includes('references'));
+        if (
+          hasInlineConstraint &&
+          !managedConstraint &&
+          !canonicalFragments.some((fragment) => normalized.includes(normalizeSqlText(fragment)))
+        ) {
+          throw new Error(`Migration 069 cannot safely preserve inline constraint in ${table}`);
+        }
+      }
+      return clauses.filter((clause) => {
+        if (!clauseIsTableConstraint(clause)) {
+          return false;
+        }
+        const normalized = normalizeSqlText(clause);
+        return !canonicalFragments.some((fragment) =>
+          normalized.includes(normalizeSqlText(fragment))
+        );
+      });
+    };
+    const nodeExtras = extraConstraints('registry_nodes', [
+      "CHECK (kind IN ('item', 'person', 'client'))",
+      'FOREIGN KEY (parent_id) REFERENCES registry_nodes(id)',
+      'FOREIGN KEY (merged_into) REFERENCES registry_nodes(id)',
+      'REFERENCES registry_nodes(id) ON DELETE SET NULL',
+    ]);
+    const aliasExtras = this.tableExists('registry_aliases')
+      ? extraConstraints('registry_aliases', [
+          "CHECK (kind IN ('item', 'person', 'client'))",
+          'PRIMARY KEY (kind, alias, scope_kind, scope_id)',
+          'FOREIGN KEY (node_id) REFERENCES registry_nodes(id)',
+          'REFERENCES registry_nodes(id) ON DELETE CASCADE',
+        ])
+      : [];
+    const scopeExtras = this.tableExists('registry_scope_bindings')
+      ? extraConstraints('registry_scope_bindings', [
+          "CHECK (scope_kind IN ('global', 'user', 'channel', 'project'))",
+          'PRIMARY KEY (node_id, scope_kind, scope_id)',
+          'FOREIGN KEY (node_id) REFERENCES registry_nodes(id)',
+          'REFERENCES registry_nodes(id) ON DELETE CASCADE',
+        ])
+      : [];
+    const nodes = this.prepare('SELECT * FROM registry_nodes').all() as Array<
+      Record<string, unknown>
+    >;
+    const aliases = this.tableExists('registry_aliases')
+      ? (this.prepare('SELECT * FROM registry_aliases').all() as Array<Record<string, unknown>>)
+      : [];
+    const scopes = this.tableExists('registry_scope_bindings')
+      ? (this.prepare('SELECT * FROM registry_scope_bindings').all() as Array<
+          Record<string, unknown>
+        >)
+      : [];
+    const nodeIds = new Set<string>();
+    for (const row of nodes) {
+      if (
+        typeof row.id !== 'string' ||
+        !row.id ||
+        !['item', 'person', 'client'].includes(String(row.kind)) ||
+        typeof row.name !== 'string' ||
+        !row.name.trim()
+      ) {
+        throw new Error('Migration 069 source row violates registry node contract');
+      }
+      nodeIds.add(row.id);
+    }
+    const aliasKeys = new Set<string>();
+    for (const row of aliases) {
+      const key = `${String(row.kind)}:${String(row.alias)}:${String(row.scope_kind ?? 'global')}:${String(row.scope_id ?? '*')}`;
+      if (
+        !nodeIds.has(String(row.node_id)) ||
+        !['item', 'person', 'client'].includes(String(row.kind)) ||
+        typeof row.alias !== 'string' ||
+        !row.alias ||
+        aliasKeys.has(key)
+      ) {
+        throw new Error('Migration 069 source row violates registry alias contract');
+      }
+      aliasKeys.add(key);
+    }
+    const customObjects = this.prepare(
+      `SELECT sql FROM sqlite_master
+       WHERE type IN ('index', 'trigger')
+         AND tbl_name IN ('registry_nodes', 'registry_aliases', 'registry_scope_bindings')
+         AND sql IS NOT NULL
+         AND name NOT IN (
+           'idx_registry_nodes_kind', 'idx_registry_nodes_parent',
+           'idx_registry_aliases_node', 'idx_registry_aliases_scope',
+           'idx_registry_scope_lookup'
+         )`
+    ).all() as Array<{ sql: string }>;
+    let migrationSQL = fs.readFileSync(
+      path.join(migrationsDir, '069-create-registry-nodes.sql'),
+      'utf8'
+    );
+    const inject = (table: string, extras: string[]): void => {
+      if (extras.length === 0) {
+        return;
+      }
+      const pattern = new RegExp(`(CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?)(\\n\\);)`);
+      if (!pattern.test(migrationSQL)) {
+        throw new Error(`Migration 069 cannot preserve ${table} constraints`);
+      }
+      migrationSQL = migrationSQL.replace(pattern, `$1,\n  ${extras.join(',\n  ')}$2`);
+    };
+    inject('registry_nodes', nodeExtras);
+    inject('registry_aliases', aliasExtras);
+    inject('registry_scope_bindings', scopeExtras);
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 069 could not disable foreign_keys before rebuild');
+    }
+    try {
+      this.transaction(() => {
+        this.exec('DROP TABLE IF EXISTS registry_scope_bindings');
+        this.exec('DROP TABLE IF EXISTS registry_aliases');
+        this.exec('DROP TABLE registry_nodes');
+        this.exec(migrationSQL);
+        const insertNode = this.prepare(
+          `INSERT INTO registry_nodes
+         (id, kind, name, parent_id, merged_into, merge_reason, note, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+        for (const row of nodes) {
+          insertNode.run(
+            row.id,
+            row.kind,
+            row.name,
+            row.parent_id ?? null,
+            row.merged_into ?? null,
+            row.merge_reason ?? null,
+            row.note ?? null,
+            typeof row.created_at === 'number' ? row.created_at : 0,
+            typeof row.updated_at === 'number'
+              ? row.updated_at
+              : typeof row.created_at === 'number'
+                ? row.created_at
+                : 0
+          );
+        }
+        const insertAlias = this.prepare(
+          `INSERT INTO registry_aliases
+         (node_id, kind, alias, alias_display, scope_kind, scope_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        );
+        for (const row of aliases) {
+          insertAlias.run(
+            row.node_id,
+            row.kind,
+            row.alias,
+            typeof row.alias_display === 'string' ? row.alias_display : row.alias,
+            typeof row.scope_kind === 'string' ? row.scope_kind : 'global',
+            typeof row.scope_id === 'string' ? row.scope_id : '*',
+            typeof row.created_at === 'number' ? row.created_at : 0
+          );
+        }
+        const insertScope = this.prepare(
+          'INSERT INTO registry_scope_bindings (node_id, scope_kind, scope_id) VALUES (?, ?, ?)'
+        );
+        for (const row of scopes) {
+          insertScope.run(row.node_id, row.scope_kind, row.scope_id);
+        }
+        for (const object of customObjects) {
+          this.exec(object.sql);
+        }
+        const violations = this.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length > 0) {
+          throw new Error('Migration 069 repair left foreign key violations');
+        }
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+
+  private rebuildRecordActors070(): void {
+    const originalSql = String(
+      (
+        this.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='record_actors'"
+        ).get() as { sql?: string } | undefined
+      )?.sql ?? ''
+    );
+    const actorExtras = splitCreateTableClauses(originalSql).filter((clause) => {
+      if (!clauseIsTableConstraint(clause)) {
+        return false;
+      }
+      const normalized = normalizeSqlText(clause);
+      return ![
+        'PRIMARY KEY (record_id, person_id, role)',
+        'FOREIGN KEY (record_id) REFERENCES decisions(id)',
+      ].some((fragment) => normalized.includes(normalizeSqlText(fragment)));
+    });
+    for (const clause of splitCreateTableClauses(originalSql).filter(
+      (candidate) => !clauseIsTableConstraint(candidate)
+    )) {
+      const normalized = normalizeSqlText(clause);
+      const hasInlineConstraint = ['check(', 'unique', 'collate', 'references'].some((token) =>
+        normalized.includes(token)
+      );
+      const canonicalReference = normalized.includes(
+        'record_idtextnotnullreferencesdecisions(id)ondeletecascade'
+      );
+      if (hasInlineConstraint && !canonicalReference) {
+        throw new Error('Migration 070 cannot safely preserve inline record_actors constraint');
+      }
+    }
+    const rows = this.prepare('SELECT * FROM record_actors').all() as Array<
+      Record<string, unknown>
+    >;
+    const keys = new Set<string>();
+    for (const row of rows) {
+      const key = `${String(row.record_id)}:${String(row.person_id)}:${String(row.role)}`;
+      const decision = this.prepare('SELECT 1 FROM decisions WHERE id = ?').get(row.record_id);
+      if (
+        !decision ||
+        typeof row.person_id !== 'string' ||
+        !row.person_id ||
+        typeof row.role !== 'string' ||
+        !row.role ||
+        keys.has(key)
+      ) {
+        throw new Error('Migration 070 source row violates record actor contract');
+      }
+      keys.add(key);
+    }
+    const customObjects = this.prepare(
+      `SELECT sql FROM sqlite_master
+       WHERE type IN ('index', 'trigger') AND tbl_name = 'record_actors'
+         AND sql IS NOT NULL AND name != 'idx_record_actors_person'`
+    ).all() as Array<{ sql: string }>;
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 070 could not disable foreign_keys before rebuild');
+    }
+    try {
+      this.transaction(() => {
+        this.exec('DROP TABLE record_actors');
+        this.exec(`CREATE TABLE record_actors (
+        record_id TEXT NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        person_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (record_id, person_id, role)
+        ${actorExtras.length > 0 ? `, ${actorExtras.join(', ')}` : ''}
+      )`);
+        this.exec('CREATE INDEX idx_record_actors_person ON record_actors(person_id, record_id)');
+        const insert = this.prepare(
+          `INSERT INTO record_actors
+         (record_id, person_id, role, position, created_at) VALUES (?, ?, ?, ?, ?)`
+        );
+        for (const row of rows) {
+          insert.run(
+            row.record_id,
+            row.person_id,
+            row.role,
+            typeof row.position === 'number' ? row.position : 0,
+            typeof row.created_at === 'number' ? row.created_at : 0
+          );
+        }
+        for (const object of customObjects) {
+          this.exec(object.sql);
+        }
+        const violations = this.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length > 0) {
+          throw new Error('Migration 070 repair left foreign key violations');
+        }
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
   }
 
   private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
@@ -956,6 +1668,258 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
       this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(68);
     });
+  }
+
+  private toolTracesTableSql(): string {
+    const row = this.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='tool_traces'"
+    ).get() as { sql?: string } | undefined;
+    return row?.sql ?? '';
+  }
+
+  private toolTracesHasOperationOriginShape(): boolean {
+    const columns = this.tableColumns('tool_traces');
+    if (!columns.has('operation_id') || !columns.has('actor_principal_id')) {
+      return false;
+    }
+    const modelRunColumn = (
+      this.prepare('PRAGMA table_info(tool_traces)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>
+    ).find((column) => column.name === 'model_run_id');
+    if (!modelRunColumn || modelRunColumn.notnull !== 0) {
+      return false;
+    }
+    const normalized = normalizeSqlText(this.toolTracesTableSql());
+    // The FULL origin CHECK must be present, not merely a prefix: a weakened
+    // `CHECK (model_run_id IS NOT NULL OR 1)` would let a both-null-origin row
+    // exist, so a table carrying it is NOT migrated and must be repaired.
+    if (!normalized.includes(normalizeSqlText(TOOL_TRACES_ORIGIN_CHECK))) {
+      return false;
+    }
+    // The model_runs FK must survive so a legacy/causal model reference is real.
+    if (!normalized.includes(normalizeSqlText(TOOL_TRACES_MODEL_FK))) {
+      return false;
+    }
+    // The origin lookup indexes are part of the shape this migration guarantees.
+    return (
+      this.indexExists('idx_tool_traces_operation_id') &&
+      this.indexExists('idx_tool_traces_actor_principal')
+    );
+  }
+
+  private needsServiceOperationOriginsRepair071(): boolean {
+    if (!this.tableExists('tool_traces')) {
+      // The table itself is missing: let the recovery helper fail loudly.
+      return true;
+    }
+    return !this.toolTracesHasOperationOriginShape() || !this.schemaVersionExists(71);
+  }
+
+  private readForeignKeysEnabled(): boolean {
+    const row = this.prepare('PRAGMA foreign_keys').get() as { foreign_keys?: number } | undefined;
+    return Boolean(row?.foreign_keys);
+  }
+
+  /**
+   * tool_traces plus every table that declares a FK referencing it. This is the
+   * relevant FK graph for the 071 rebuild: tool_traces' own model_runs reference
+   * and any child (e.g. an ON DELETE CASCADE table) whose rows the rebuild must
+   * have preserved. A valid child whose table name needs quoting (a space, an
+   * embedded quote, a reserved word) is inspected correctly too: the name is fed
+   * to the table-valued pragma as a bound argument, not interpolated — so no
+   * referencing child is silently skipped by an identifier regex.
+   */
+  private tablesInToolTracesFkGraph(): string[] {
+    const graph = new Set<string>(['tool_traces']);
+    const tables = this.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).all() as Array<{ name: string }>;
+    for (const { name } of tables) {
+      const fkList = this.prepare('SELECT "table" AS ref FROM pragma_foreign_key_list(?)').all(
+        name
+      ) as Array<{ ref?: string }>;
+      if (fkList.some((fk) => fk.ref === 'tool_traces')) {
+        graph.add(name);
+      }
+    }
+    return [...graph];
+  }
+
+  private recoverServiceOperationOriginsMigration071(): void {
+    if (!this.tableExists('tool_traces')) {
+      throw new Error('Migration 071 recovery failed: missing table tool_traces');
+    }
+
+    // Idempotent: a database already carrying the full operation-origin shape
+    // only needs its schema_version stamped. Never infer health from version.
+    if (this.toolTracesHasOperationOriginShape()) {
+      this.transaction(() => {
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(71, 'Service operation-origin tool traces');
+      });
+      return;
+    }
+
+    // The 071 rebuild recreates the 068 scope indexes, which reference
+    // owner_scope/project_id/channel_id. A legacy ledger stamped 68 but missing
+    // those diagnostic columns (the main loop skips version 68 when it is
+    // already stamped, so the in-loop 071 branch reaches here before the
+    // end-of-run repair) would abort the rebuild with "no such column". Repair
+    // the real 068 prerequisite first, reusing the same structural dependency
+    // the late repair path already orders (068 before 071). This runs before
+    // the FK toggle/transaction below, so no nested transaction is introduced,
+    // and it is a no-op on a healthy database.
+    if (this.needsToolTraceDiagnosticsRepair068()) {
+      this.recoverToolTraceDiagnosticsMigration068();
+    }
+
+    // FK enforcement MUST be toggled OUTSIDE a transaction (SQLite silently
+    // ignores the pragma while one is open). Disabling it before BEGIN is what
+    // stops the DROP TABLE below from CASCADE-deleting real child rows; the
+    // whole-graph foreign_key_check inside the transaction is the honest
+    // preservation proof, never a post-deletion recount. Restore in finally.
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      // A pragma that did not take effect means a transaction is already open;
+      // proceeding would let CASCADE run. Refuse rather than pretend it worked.
+      throw new Error(
+        'Migration 071 recovery failed: could not disable foreign_keys (transaction already open?)'
+      );
+    }
+    try {
+      this.transaction(() => {
+        // Preserve the COMPLETE existing table definition. Every column keeps its
+        // exact declared type, NOT NULL/DEFAULT/CHECK/UNIQUE/COLLATE and quoted
+        // name; only model_run_id is relaxed to nullable and the two origin
+        // columns + origin CHECK are added. Reconstructing from name/type alone
+        // would silently drop constraints and defaults a live database carries.
+        const originalSql = this.toolTracesTableSql();
+        const clauses = splitCreateTableClauses(originalSql);
+        if (clauses.length === 0) {
+          throw new Error('Migration 071 recovery failed: could not read tool_traces definition');
+        }
+
+        const existingColumnNames: string[] = [];
+        const columnDefs: string[] = [];
+        const constraintDefs: string[] = [];
+        for (const clause of clauses) {
+          if (clauseIsTableConstraint(clause)) {
+            constraintDefs.push(clause);
+            continue;
+          }
+          const name = clauseColumnName(clause);
+          existingColumnNames.push(name);
+          if (name === 'model_run_id') {
+            // Relax the single NOT NULL so an operation-origin row (model NULL)
+            // is allowed; everything else about the column is preserved.
+            columnDefs.push(clause.replace(/\s+not\s+null\b/i, ''));
+          } else {
+            columnDefs.push(clause);
+          }
+        }
+
+        const present = new Set(existingColumnNames);
+        if (!present.has('operation_id')) {
+          columnDefs.push('operation_id TEXT');
+        }
+        if (!present.has('actor_principal_id')) {
+          columnDefs.push('actor_principal_id TEXT');
+        }
+
+        const constraints = [...constraintDefs];
+        const hasModelFk = constraints.some((clause) =>
+          normalizeSqlText(clause).includes('referencesmodel_runs(model_run_id)')
+        );
+        if (!hasModelFk) {
+          constraints.push(TOOL_TRACES_MODEL_FK);
+        }
+        constraints.push(TOOL_TRACES_ORIGIN_CHECK);
+
+        // Preserve every custom/existing trigger on the old table; DROP TABLE
+        // drops them, and RENAME does not carry them, so recreate from DDL.
+        const triggerSqls = (
+          this.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name='tool_traces' AND sql IS NOT NULL"
+          ).all() as Array<{ sql: string }>
+        ).map((row) => row.sql);
+
+        // Preserve every non-auto index on the old table (033/061/068 plus any
+        // runtime-created ones) by recreating them from their stored DDL.
+        const indexSqls = (
+          this.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='tool_traces' AND sql IS NOT NULL"
+          ).all() as Array<{ sql: string }>
+        ).map((row) => row.sql);
+
+        this.exec(
+          `CREATE TABLE tool_traces_071_new (\n  ${[...columnDefs, ...constraints].join(',\n  ')}\n)`
+        );
+
+        // Copy every column the old table actually carries (canonical, runtime
+        // extras, and any already-present operation_id/actor_principal_id values
+        // from a partially-repaired shape - never dropping real origin values).
+        // Each name is re-quoted: clauseColumnName decoded it, so a quoted name
+        // carrying a space/embedded-quote/reserved word must be emitted quoted or
+        // it would parse as several bare tokens and abort the rebuild.
+        const columnList = existingColumnNames.map(quoteSqlIdentifier).join(', ');
+        this.exec(
+          `INSERT INTO tool_traces_071_new (${columnList}) SELECT ${columnList} FROM tool_traces`
+        );
+
+        this.exec('DROP TABLE tool_traces');
+        this.exec('ALTER TABLE tool_traces_071_new RENAME TO tool_traces');
+        for (const sql of indexSqls) {
+          this.exec(sql.replace(/^CREATE\s+INDEX/i, 'CREATE INDEX IF NOT EXISTS'));
+        }
+        this.exec(`
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_model_run_id
+            ON tool_traces(model_run_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_gateway_call_id
+            ON tool_traces(gateway_call_id);
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_scope_recency
+            ON tool_traces(owner_scope, project_id, created_at DESC, trace_id DESC);
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_channel_recency
+            ON tool_traces(owner_scope, project_id, channel_id, created_at DESC, trace_id DESC);
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_operation_id
+            ON tool_traces(operation_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_tool_traces_actor_principal
+            ON tool_traces(actor_principal_id, created_at DESC);
+        `);
+        for (const sql of triggerSqls) {
+          this.exec(sql);
+        }
+
+        if (!this.toolTracesHasOperationOriginShape()) {
+          throw new Error(
+            'Migration 071 recovery failed: operation-origin shape missing after rebuild'
+          );
+        }
+        // Validate the RELEVANT FK graph, not merely tool_traces' own FK: check
+        // tool_traces (its model_runs reference - catches a dangling row) AND
+        // every table that references tool_traces (a CASCADE child that the
+        // rebuild must have preserved). Any violation aborts the whole
+        // transaction, so nothing partial or unattributed is ever committed.
+        // Unrelated tables are deliberately NOT checked - a pre-existing
+        // violation elsewhere must not block this upgrade.
+        for (const table of this.tablesInToolTracesFkGraph()) {
+          const violations = this.prepare('SELECT 1 FROM pragma_foreign_key_check(?)').all(table);
+          if (violations.length > 0) {
+            throw new Error(
+              `Migration 071 recovery failed: foreign key violations after rebuild (${table})`
+            );
+          }
+        }
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(71, 'Service operation-origin tool traces');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
   }
 
   private recoverMemoryProvenanceMigration032(): void {

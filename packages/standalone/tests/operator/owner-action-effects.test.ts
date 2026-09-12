@@ -42,6 +42,24 @@ afterEach(() => {
 });
 
 describe('Story TG-04/TG-06: owner action receipts independent of input path', () => {
+  it('does not expose or settle an operation receipt through another operation or model-only cause', () => {
+    const { ledger } = open();
+    const operation = { ...context, modelRunId: 'causal-run', operationId: 'operation-a' };
+    ledger.begin(operation, 'operation-effect', 'telegram_send', intent);
+
+    const otherOperation = { ...operation, operationId: 'operation-b' };
+    expect(ledger.inspect(otherOperation, 'operation-effect', 'telegram_send')).toBeNull();
+    expect(() =>
+      ledger.confirm(otherOperation, 'operation-effect', 'telegram_send', { ok: true })
+    ).toThrow(/not reserved/);
+    expect(ledger.inspect(context, 'operation-effect', 'telegram_send')).toBeNull();
+    expect(() =>
+      ledger.markUnknown(context, 'operation-effect', 'telegram_send', 'causal caller')
+    ).toThrow(/not reserved/);
+
+    ledger.confirm(operation, 'operation-effect', 'telegram_send', { ok: true });
+    expect(ledger.inspect(operation, 'operation-effect', 'telegram_send')?.state).toBe('confirmed');
+  });
   it('AC: only the originating run can release a transmitting no-effect reservation', () => {
     const { ledger } = open();
     ledger.begin(context, 'preflight', 'slack_send', intent);
@@ -317,12 +335,14 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
             effectKind: 'telegram_send',
             state: 'transmitting',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
           {
             actionKey: 'b-write',
             effectKind: 'Write',
             state: 'transmitting',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
         ],
         nextCursor: { createdAt: expect.any(Number), actionKey: 'b-write' },
@@ -336,6 +356,7 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
             effectKind: 'Bash',
             state: 'unknown',
             originModelRunId: 'mr-first',
+            originOperationId: null,
           },
         ],
         nextCursor: null,
@@ -350,6 +371,163 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
   });
 
   describe('AC: additive migration, idempotent open, legacy receipts untouched', () => {
+    it('recreates the pending index only after a valid existing table passes preflight', () => {
+      const { database } = open();
+      database.exec('DROP INDEX idx_owner_action_effects_pending');
+      applyOwnerActionEffectsMigration(database);
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE name='idx_owner_action_effects_pending'"
+          )
+          .get()
+      ).toEqual({ count: 1 });
+    });
+
+    it('refuses a custom table constraint without changing schema, data, or FK state', () => {
+      const { database } = open();
+      const canonical = (
+        database
+          .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+          .get() as {
+          sql: string;
+        }
+      ).sql;
+      database.exec('DROP TABLE owner_action_effects');
+      const custom = canonical.replace(
+        ',\n      PRIMARY KEY (owner_scope, occurrence_key, action_key)',
+        ",\n      CHECK (effect_kind != 'forbidden'),\n      PRIMARY KEY (owner_scope, occurrence_key, action_key)"
+      );
+      database.exec(custom);
+      const before = (
+        database
+          .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+          .get() as {
+          sql: string;
+        }
+      ).sql;
+      expect(() => applyOwnerActionEffectsMigration(database)).toThrow(/custom constraints/);
+      expect(
+        (
+          database
+            .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+            .get() as {
+            sql: string;
+          }
+        ).sql
+      ).toBe(before);
+      expect(
+        (database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+      ).toBe(1);
+    });
+    it('refuses an unknown column before mutation and preserves FK state', () => {
+      const { database } = open();
+      database.exec('ALTER TABLE owner_action_effects ADD COLUMN unknown_value TEXT');
+      database.exec('DROP INDEX idx_owner_action_effects_pending');
+      database
+        .prepare(
+          `INSERT INTO owner_action_effects
+           (owner_scope, occurrence_key, action_key, effect_kind, status, intent_json,
+            intent_sha256, origin_model_run_id, origin_envelope_hash, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'owner:kept',
+          'occurrence',
+          'action',
+          'Write',
+          'transmitting',
+          '{}',
+          'hash',
+          'run',
+          'env',
+          1,
+          1
+        );
+      const schema = database
+        .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+        .get() as { sql: string };
+      expect(() => applyOwnerActionEffectsMigration(database)).toThrow(/unsupported columns/);
+      expect(
+        (database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys
+      ).toBe(1);
+      expect(
+        (
+          database
+            .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+            .get() as {
+            sql: string;
+          }
+        ).sql
+      ).toBe(schema.sql);
+      expect(database.prepare('SELECT COUNT(*) AS count FROM owner_action_effects').get()).toEqual({
+        count: 1,
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE name='idx_owner_action_effects_pending'"
+          )
+          .get()
+      ).toEqual({ count: 0 });
+    });
+
+    it('carries operation origins and preserves external FK children during repair', () => {
+      const { database } = open();
+      const canonical = (
+        database
+          .prepare("SELECT sql FROM sqlite_master WHERE name='owner_action_effects'")
+          .get() as {
+          sql: string;
+        }
+      ).sql;
+      database.exec('DROP TABLE owner_action_effects');
+      database.exec(
+        canonical.replace(
+          'origin_operation_id TEXT CHECK',
+          'origin_operation_id TEXT NOT NULL CHECK'
+        )
+      );
+      database
+        .prepare(
+          `INSERT INTO owner_action_effects
+           (owner_scope, occurrence_key, action_key, effect_kind, status, intent_json,
+            intent_sha256, origin_operation_id, origin_envelope_hash, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'owner:test',
+          'occurrence',
+          'action',
+          'Write',
+          'transmitting',
+          '{}',
+          'hash',
+          'op:kept',
+          'env',
+          1,
+          1
+        );
+      database.exec(`
+        CREATE TABLE owner_action_child (
+          owner_scope TEXT, occurrence_key TEXT, action_key TEXT,
+          FOREIGN KEY (owner_scope, occurrence_key, action_key)
+            REFERENCES owner_action_effects(owner_scope, occurrence_key, action_key)
+            ON DELETE CASCADE
+        );
+        INSERT INTO owner_action_child VALUES ('owner:test', 'occurrence', 'action');
+      `);
+      applyOwnerActionEffectsMigration(database);
+      expect(
+        database
+          .prepare("SELECT origin_operation_id FROM owner_action_effects WHERE action_key='action'")
+          .get()
+      ).toEqual({ origin_operation_id: 'op:kept' });
+      expect(database.prepare('SELECT COUNT(*) AS count FROM owner_action_child').get()).toEqual({
+        count: 1,
+      });
+      expect(database.pragma('foreign_key_check')).toEqual([]);
+    });
     it('rejects a same-column table that omitted receipt identity constraints', () => {
       const { database } = open();
       const schema = database
@@ -443,15 +621,17 @@ describe('interrupted native run does not poison replay', () => {
     expect(ledger.hasUnsafeReplayEffects(occurrence)).toBe(false);
     expect(ledger.hasUnsettledEffects(occurrence)).toBe(false);
     // Replay admits a new marker under the new run id and leaves the old observation.
-    const next: OwnerActionContext = { ...ctx, modelRunId: 'mr-replay', envelopeHash: 'env-replay' };
+    const next: OwnerActionContext = {
+      ...ctx,
+      modelRunId: 'mr-replay',
+      envelopeHash: 'env-replay',
+    };
     expect(ledger.begin(next, 'native-run:def', 'native_run', { admitted: true }).state).toBe(
       'execute'
     );
     expect(
       database
-        .prepare(
-          "SELECT status FROM owner_action_effects WHERE action_key = 'native-run:abc'"
-        )
+        .prepare("SELECT status FROM owner_action_effects WHERE action_key = 'native-run:abc'")
         .get()
     ).toEqual({ status: 'unknown' });
   });

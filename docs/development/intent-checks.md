@@ -737,3 +737,16 @@
 - 판정: I-01/I-02/I-06 및 TG-03/TG-05/TG-06에 **부분 부합**한다. competing runtime과
   가짜 embedding health 항목은 없어졌지만 실제 messenger 업무·보고 품질이나 설치 동작은
   이 소스 변경만으로 확인하지 않았다. 최상위 목적은 미완료다.
+
+## 2026-09-13 — PR3A registry/record identity와 truthful operation origin
+
+- 결과: 항목·사람·거래처 identity를 명시적 registry node/alias로 저장하고, record의 item/actors를
+  decision·embedding·scope binding·event·명시적 edge와 같은 adapter transaction에 넣었다.
+  MCP 두 save 이름, standalone `mama_save`, Code-Act registry lookup/upsert, 유지 중인
+  `/api/mama/save`와 `/api/save`가 이 계약을 전달한다.
+- 근거: temporary SQLite를 쓰는 migration 069-071, registry/record atomic rollback,
+  operation-backed trace, standalone registry/effect focused tests와 core/standalone typecheck다.
+  내부 store/migration/authority를 mock하지 않았다.
+- 판정: I-03/I-04/I-06 및 TG-03/TG-05/TG-06에 부분 부합한다. 이 기록은 source와 test
+  evidence이며 설치된 서비스, 실제 모델 run, Telegram owner 업무 결과는 검증하지 않았다.
+  immutable observation과 identity correction은 PR3B 범위이고 최상위 목적은 미완료다.

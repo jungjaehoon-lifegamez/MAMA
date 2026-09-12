@@ -83,6 +83,8 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - `buildMemoryBootstrap(params)` - Build memory agent bootstrap context
   - `createAuditAck(input)` - Create audit acknowledgment
   - `recordMemoryAudit(input)` - Record channel audit with state management
+- **registry** - Explicit item/person/client nodes, conservative aliases, and atomic record identity
+- **operations** - Shared owner-action effect policy and storage port; hosts retain physical receipts
 
 - **memory/truth-store** - Truth projection layer
   - `projectMemoryTruth(row)` - Write truth projection

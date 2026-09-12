@@ -4,6 +4,7 @@ import { getAdapter, initDB } from '../db-manager.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import type {
   AppendToolTraceInput,
+  AppendOperationToolTraceInput,
   ToolTraceRecord,
   ToolTraceScope,
   ListToolTracesInput,
@@ -90,7 +91,10 @@ function mapToolTraceRow(row: Record<string, unknown>): ToolTraceRecord {
     project_id: nullableString(row.project_id),
     channel_id: nullableString(row.channel_id),
     trace_id: requiredString(row.trace_id, 'trace_id'),
-    model_run_id: requiredString(row.model_run_id, 'model_run_id'),
+    // NULL for operation-origin rows; legacy/model-backed rows keep their id.
+    model_run_id: nullableString(row.model_run_id),
+    operation_id: nullableString(row.operation_id),
+    actor_principal_id: nullableString(row.actor_principal_id),
     gateway_call_id: nullableString(row.gateway_call_id),
     tool_name: requiredString(row.tool_name, 'tool_name'),
     input_summary: nullableString(row.input_summary),
@@ -103,6 +107,11 @@ function mapToolTraceRow(row: Record<string, unknown>): ToolTraceRecord {
   };
 }
 
+/** Columns selected for every full trace read; kept in one place so operation-origin rows are never joined away. */
+const TOOL_TRACE_COLUMNS = `trace_id, model_run_id, operation_id, actor_principal_id, gateway_call_id, tool_name, input_summary,
+          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
+          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id`;
+
 async function initializedAdapter(): Promise<DatabaseAdapter> {
   await initDB();
   return getAdapter();
@@ -113,9 +122,7 @@ function selectToolTrace(adapter: ToolTraceAdapter, id: string): ToolTraceRecord
     .prepare(
       `
         SELECT
-          trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
-          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
-          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
+          ${TOOL_TRACE_COLUMNS}
         FROM tool_traces
         WHERE trace_id = ?
       `
@@ -127,28 +134,37 @@ function selectToolTrace(adapter: ToolTraceAdapter, id: string): ToolTraceRecord
   return mapToolTraceRow(row);
 }
 
-export async function appendToolTrace(input: AppendToolTraceInput): Promise<ToolTraceRecord> {
-  const adapter = await initializedAdapter();
-  const id = nullableString(input.trace_id) ?? traceId();
-  const modelRunId = requiredString(input.model_run_id, 'model_run_id');
-  const toolName = requiredString(input.tool_name, 'tool_name');
+/** Origin + the shared, origin-independent trace body. */
+interface ToolTraceInsertValues {
+  model_run_id: string | null;
+  operation_id: string | null;
+  actor_principal_id: string | null;
+}
 
+function insertToolTraceRow(
+  adapter: ToolTraceAdapter,
+  id: string,
+  origin: ToolTraceInsertValues,
+  input: AppendToolTraceInput | AppendOperationToolTraceInput
+): void {
   adapter
     .prepare(
       `
         INSERT INTO tool_traces (
-          trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
+          trace_id, model_run_id, operation_id, actor_principal_id, gateway_call_id, tool_name, input_summary,
           output_summary, execution_status, duration_ms, envelope_hash, failure_code,
           created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
     .run(
       id,
-      modelRunId,
+      origin.model_run_id,
+      origin.operation_id,
+      origin.actor_principal_id,
       nullableString(input.gateway_call_id),
-      toolName,
+      requiredString(input.tool_name, 'tool_name'),
       nullableString(input.input_summary),
       nullableString(input.output_summary),
       nullableString(input.execution_status),
@@ -163,7 +179,56 @@ export async function appendToolTrace(input: AppendToolTraceInput): Promise<Tool
       nullableString(input.project_id),
       nullableString(input.channel_id)
     );
+}
 
+/** Model-backed append. `model_run_id` is required and validated as before. */
+export async function appendToolTrace(input: AppendToolTraceInput): Promise<ToolTraceRecord> {
+  const adapter = await initializedAdapter();
+  const id = nullableString(input.trace_id) ?? traceId();
+  const modelRunId = requiredString(input.model_run_id, 'model_run_id');
+  insertToolTraceRow(
+    adapter,
+    id,
+    { model_run_id: modelRunId, operation_id: null, actor_principal_id: null },
+    input
+  );
+  return selectToolTrace(adapter, id);
+}
+
+/**
+ * Service/CLI operation append. Records a truthful operation trace anchored by a
+ * nonempty `operation_id` and `actor_principal_id`. No `model_runs` row is
+ * created or required.
+ *
+ * `model_run_id` is optional causal provenance: when a real completed model run
+ * caused this operation observation it is stored (the DB `model_runs` FK rejects
+ * an invalid reference); absent, it stays NULL. It never authorizes execution.
+ */
+export async function appendOperationToolTrace(
+  input: AppendOperationToolTraceInput
+): Promise<ToolTraceRecord> {
+  const adapter = await initializedAdapter();
+  return appendOperationToolTraceInAdapter(adapter, input);
+}
+
+export function appendOperationToolTraceInAdapter(
+  adapter: ToolTraceAdapter,
+  input: AppendOperationToolTraceInput
+): ToolTraceRecord {
+  const id = nullableString(input.trace_id) ?? traceId();
+  const operationId = requiredString(input.operation_id, 'operation_id');
+  const actorPrincipalId = requiredString(input.actor_principal_id, 'actor_principal_id');
+  const causalModelRunId = nullableString(input.model_run_id);
+  insertToolTraceRow(
+    adapter,
+    id,
+    {
+      model_run_id: causalModelRunId,
+      operation_id: operationId,
+      actor_principal_id: actorPrincipalId,
+    },
+    input
+  );
   return selectToolTrace(adapter, id);
 }
 
@@ -174,9 +239,7 @@ export async function listToolTracesForRun(modelRunId: string): Promise<ToolTrac
     .prepare(
       `
         SELECT
-          trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
-          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
-          created_at, diagnostic_json, evidence_json, catalog_revision, owner_scope, project_id, channel_id
+          ${TOOL_TRACE_COLUMNS}
         FROM tool_traces
         WHERE model_run_id = ?
         ORDER BY created_at DESC, rowid DESC
@@ -258,7 +321,7 @@ export async function listToolTraces(input: ListToolTracesInput): Promise<ToolTr
   const adapter = await initializedAdapter();
   const rows = adapter
     .prepare(
-      `SELECT trace_id, model_run_id, gateway_call_id, tool_name,
+      `SELECT trace_id, model_run_id, operation_id, actor_principal_id, gateway_call_id, tool_name,
     input_summary, output_summary, execution_status, duration_ms, envelope_hash, failure_code,
     created_at, diagnostic_json, NULL AS evidence_json, catalog_revision, owner_scope, project_id, channel_id
     FROM tool_traces WHERE ${clauses.join(' AND ')}

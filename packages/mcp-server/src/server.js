@@ -117,7 +117,7 @@ class MAMAServer {
 
 **type='decision'** — Save architectural decisions, lessons learned, insights.
   Required: topic, decision, reasoning. Optional: confidence, scopes, event_date.
-  Triggers: user says "기억해", "remember", "decided". Reuse same topic to create evolution chain.
+  Triggers: user says "기억해", "remember", "decided". Topic reuse alone does not create a relationship.
 
 **type='checkpoint'** — Save session state for resumption.
   Required: summary (4-section: Goal, Evidence, Unfinished, Next Briefing).
@@ -139,7 +139,8 @@ class MAMAServer {
             // Decision fields
             topic: {
               type: 'string',
-              description: '[Decision] Topic identifier. Reuse same topic = supersedes previous.',
+              description:
+                '[Decision] Topic identifier. Relationships require explicit referenced IDs.',
             },
             decision: {
               type: 'string',
@@ -170,6 +171,22 @@ class MAMAServer {
             event_date: {
               type: 'string',
               description: 'ISO 8601 date when event occurred (e.g. "2024-01-15").',
+            },
+            item: {
+              type: 'string',
+              description: '[Decision] Explicit registry item node id.',
+            },
+            actors: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  person: { type: 'string' },
+                  role: { type: 'string' },
+                },
+                required: ['person', 'role'],
+              },
+              description: '[Decision] Explicit registry person nodes and their roles.',
             },
             // Checkpoint fields
             summary: {
@@ -298,7 +315,7 @@ class MAMAServer {
 
 Triggers: "이거 안됐어", "this worked", days later when issues discovered.
 outcome: 'success', 'failed', 'partial' (case-insensitive).
-After failure → save a NEW decision with same topic to create evolution history.`,
+After failure → save a NEW decision and explicitly reference any relationship in its reasoning.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -393,7 +410,16 @@ After failure → save a NEW decision with same topic to create evolution histor
     const { type } = args;
 
     if (type === 'decision') {
-      const { topic, decision, reasoning, confidence = 0.5, scopes, event_date } = args;
+      const {
+        topic,
+        decision,
+        reasoning,
+        confidence = 0.5,
+        scopes,
+        event_date,
+        item,
+        actors,
+      } = args;
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
       }
@@ -405,6 +431,8 @@ After failure → save a NEW decision with same topic to create evolution histor
         confidence,
         ...(scopes && { scopes }),
         ...(event_date && { event_date }),
+        ...(item && { item }),
+        ...(actors && { actors }),
       });
       return {
         success: true,

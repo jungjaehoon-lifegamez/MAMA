@@ -9,6 +9,7 @@
 ## Why Save Decisions?
 
 MAMA is not a note-taking app. It's a **decision evolution tracker** that remembers:
+
 - ❌ What you tried that **didn't work**
 - ✅ What you decided that **did work**
 - 🔄 **Why** you changed your mind later
@@ -19,23 +20,25 @@ This prevents you from repeating the same failed experiments.
 
 ## The Right Way to Save Decisions
 
-### ✅ DO: Reuse Topics for Evolution
+### ✅ DO: Reuse Topics for Recall and Link by ID
 
 ```javascript
-// CRITICAL: Reuse same topic for related decisions
-// ✅ GOOD: Creates supersedes chain
-topic: 'auth_strategy'  // Use for ALL auth decisions
-topic: 'auth_strategy'  // Again! Shows evolution
+// Reuse a topic for exact-topic recall; add relationships explicitly by decision ID.
+// ✅ GOOD: Groups exact-topic recall
+topic: 'auth_strategy'; // Use for ALL auth decisions
+topic: 'auth_strategy'; // Again! Shows evolution
 
-// ❌ BAD: Unique topics break the graph
-topic: 'auth_strategy_v1'
-topic: 'auth_strategy_v2'
+// Explicit relationship example: reasoning: "supersedes: decision_previous_id"
+// Unique topics prevent exact-topic grouping.
+topic: 'auth_strategy_v1';
+topic: 'auth_strategy_v2';
 ```
 
 **Why this matters:**
-- Reusing the same topic automatically creates a "supersedes" graph
+
+- Reusing the same topic groups exact-topic recall but does not create a relationship.
 - This lets you track the evolution from confusion to clarity
-- Unique topic names (v1, v2, etc.) break the graph connections
+- Graph connections require explicit decision IDs in reasoning.
 
 **Learn more:** [Decision Graph Concept](../explanation/decision-graph.md)
 
@@ -44,6 +47,7 @@ topic: 'auth_strategy_v2'
 ## Example: Evolution Over Time
 
 ### Day 1: First Attempt
+
 ```
 /mama-save
 Topic: auth_strategy
@@ -54,16 +58,18 @@ Outcome: pending
 ```
 
 ### Day 3: Discovered Problem
+
 ```
 /mama-save
 Topic: auth_strategy  # SAME topic!
 Decision: Switch to JWT with refresh tokens
-Reasoning: Session cookies don't scale horizontally, discovered during load testing
+Reasoning: Session cookies don't scale horizontally. supersedes: decision_auth_strategy_001
 Confidence: 0.8
 Outcome: success
 ```
 
 ### Day 5: Recall Evolution
+
 ```
 /mama-recall auth_strategy
 
@@ -75,7 +81,7 @@ Outcome: success
    ⚠️ SUPERSEDED by next decision
 
 2. [just now] ✅ Success → JWT with refresh tokens
-   Reasoning: Session cookies don't scale...
+   Reasoning: Session cookies don't scale... supersedes: decision_auth_strategy_001
    🔗 SUPERSEDES: Decision #1
 ```
 
@@ -96,6 +102,7 @@ pending → success
 ```
 
 **Update outcomes:**
+
 ```
 /mama-save
 Topic: auth_strategy
@@ -107,11 +114,13 @@ Outcome: success  # or failure, partial, superseded
 ## Topic Naming Best Practices
 
 ### ✅ Good Topic Names
+
 - `auth_strategy` - Covers all auth decisions
 - `database_choice` - Covers all DB decisions
 - `mama_architecture` - Covers all MAMA arch decisions
 
 ### ❌ Bad Topic Names
+
 - `auth_jwt_2025_01_15` - Too specific, won't reuse
 - `decision_1` - Meaningless
 - `todo` - Too generic
@@ -129,6 +138,7 @@ Outcome: success  # or failure, partial, superseded
 - **0.0-0.2**: Very uncertain, placeholder
 
 **Quick guide:**
+
 - Very certain: 0.9+
 - Pretty confident: 0.7-0.8
 - Unsure: 0.5-0.6
@@ -152,6 +162,7 @@ Failure Reason: Over-engineered for our use case, added 2 weeks of complexity
 ```
 
 **Why record failures:**
+
 - You won't try the same thing twice
 - Team members learn from your mistakes
 - Shows the journey (confusion → clarity)
@@ -167,6 +178,7 @@ Failure Reason: Over-engineered for our use case, added 2 weeks of complexity
 ---
 
 **Related:**
+
 - [Decision Graph Concept](../explanation/decision-graph.md)
 - [Semantic Search Explanation](../explanation/semantic-search.md)
 - [Commands Reference](../reference/commands.md)

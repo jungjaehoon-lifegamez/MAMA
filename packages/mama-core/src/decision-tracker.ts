@@ -311,6 +311,18 @@ export function parseReasoningForRelationships(reasoning: string): ParsedRelatio
 
   const relationships: ParsedRelationship[] = [];
 
+  const supersedesMatch = reasoning.match(
+    /\*{0,2}supersedes\*{0,2}:\*{0,2}\s*(decision_[a-z0-9_]+)/gi
+  );
+  if (supersedesMatch) {
+    supersedesMatch.forEach((match) => {
+      const id = match.replace(/\*{0,2}supersedes\*{0,2}:\*{0,2}\s*/i, '').trim();
+      if (id) {
+        relationships.push({ type: 'supersedes', targetIds: [id] });
+      }
+    });
+  }
+
   // Pattern 1: builds_on: <id> (allows optional markdown **bold**)
   const buildsOnMatch = reasoning.match(
     /\*{0,2}builds_on\*{0,2}:\*{0,2}\s*(decision_[a-z0-9_]+)/gi

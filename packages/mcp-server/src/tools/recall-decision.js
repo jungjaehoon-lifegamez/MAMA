@@ -19,7 +19,7 @@ const mama = require('@jungjaehoon/mama-core/mama-api');
 const createRecallDecisionTool = (mamaApi) => ({
   name: 'recall_decision',
   description:
-    'Recall decision history for a topic using semantic search. Returns past decisions filtered by scope if provided. Use this when you need to review previous decisions, understand decision evolution, or check current position on a topic.\n\n⚡ GRAPH TRAVERSAL: When the same topic is reused across multiple decisions, this tool automatically shows the decision evolution chain (supersedes graph), enabling Learn/Unlearn/Relearn workflows.',
+    'Recall exact-topic decision history without scopes, or semantic memory matches within supplied scopes. Explicit supersedes links are traversed; reusing a topic does not create a relationship.',
   inputSchema: {
     type: 'object',
     properties: {

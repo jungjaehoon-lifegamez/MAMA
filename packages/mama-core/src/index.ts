@@ -150,6 +150,7 @@ export {
   type BeginModelRunInput,
   type ModelRunRecord,
   type AppendToolTraceInput,
+  type AppendOperationToolTraceInput,
   type ToolTraceRecord,
   type ToolTraceScope,
   type ListToolTracesInput,
@@ -167,6 +168,8 @@ export {
 } from './model-runs/store.js';
 export {
   appendToolTrace,
+  appendOperationToolTrace,
+  appendOperationToolTraceInAdapter,
   listToolTracesForRun,
   listToolTraces,
   readToolTrace,
@@ -372,3 +375,7 @@ export * from './search/ranker-features.js';
 export * from './search/ranker-trainer.js';
 export * from './search/ranker-rescore.js';
 export * from './search/search-quality.js';
+export * from './registry/store.js';
+export * from './registry/record-identity.js';
+export * from './registry/types.js';
+export * from './operations/owner-action-effects.js';

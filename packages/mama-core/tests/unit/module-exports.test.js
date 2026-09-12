@@ -108,6 +108,13 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
+  describe('package root memory compatibility exports', () => {
+    it('should retain evolveMemory at the package root', async () => {
+      const core = await import('../../src/index.js');
+      expect(typeof core.evolveMemory).toBe('function');
+    });
+  });
+
   describe('package root agent-situation exports', () => {
     it('should export agent situation packet helpers', async () => {
       const core = await import('../../src/index.js');

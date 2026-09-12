@@ -81,6 +81,7 @@ describe('Task 1: decisions.status is the only current memory authority', () => 
       summary: 'Use the superseded decision',
       details: 'Historical decision details',
       confidence: 0.4,
+      status: 'superseded',
       scopes: [PROJECT_SCOPE],
       source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
     });

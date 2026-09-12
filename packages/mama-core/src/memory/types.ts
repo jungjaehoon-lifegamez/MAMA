@@ -1,5 +1,6 @@
 import type { ConnectorEventSearchHit } from '../connectors/types.js';
 import type { ReadIdentity } from '../entities/read-identity.js';
+import type { RecordActor } from '../registry/types.js';
 import type {
   SearchHitDiagnostics,
   SearchQualityOptions,
@@ -251,6 +252,8 @@ export interface PublicSaveMemoryInput {
   eventDate?: string;
   eventDateTime?: number;
   entityObservationIds?: string[];
+  itemId?: string | null;
+  actors?: RecordActor[];
   timelineEvent?: {
     id?: string;
     entity_id?: string;
