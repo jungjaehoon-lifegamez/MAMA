@@ -89,7 +89,7 @@ describe('memory agent bootstrap builder', () => {
       created_at: Date.now(),
     });
 
-    await createAuditFinding({
+    createAuditFinding(getAdapter(), {
       kind: 'memory_conflict',
       severity: 'high',
       summary: 'conflict found',
