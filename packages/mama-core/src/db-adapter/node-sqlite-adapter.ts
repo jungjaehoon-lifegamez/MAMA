@@ -685,6 +685,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     ) {
       this.recoverLegacyRecordKindMigration077();
     }
+    if (
+      currentVersion >= 79 &&
+      this.tableExists('twin_edges') &&
+      fs.existsSync(path.join(migrationsDir, '079-twin-edge-relations.sql')) &&
+      this.needsTwinEdgeRelationsRepair079()
+    ) {
+      this.recoverTwinEdgeRelationsMigration079();
+    }
 
     for (const file of migrationFiles) {
       const versionMatch = file.match(/^(\d+)-/);
@@ -752,6 +760,18 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
       if (version === 77) {
         this.recoverLegacyRecordKindMigration077();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      // Extending the twin_edges relation CHECK needs the same dynamic rebuild
+      // as 074 so custom columns, indexes, triggers, and FK children survive;
+      // the static SQL file cannot express that. Reconcile instead of exec'ing.
+      if (version === 79) {
+        if (!this.tableExists('twin_edges')) {
+          continue;
+        }
+        this.recoverTwinEdgeRelationsMigration079();
         info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
         continue;
       }
@@ -1044,6 +1064,18 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       this.needsWorkGraphRefsRepair074()
     ) {
       this.recoverWorkGraphRefsMigration074();
+    }
+
+    // A database stamped >= 79 whose twin_edges was rebuilt from 035/074 above
+    // still carries the pre-079 edge_type CHECK; extend it here so the missing
+    // relation list is repaired in the same pass.
+    if (
+      fs.existsSync(path.join(migrationsDir, '079-twin-edge-relations.sql')) &&
+      this.tableExists('twin_edges') &&
+      this.needsTwinEdgeRelationsRepair079()
+    ) {
+      this.recoverTwinEdgeRelationsMigration079();
+      info('[node-sqlite-adapter] Repaired skipped twin edge relations migration');
     }
 
     if (
@@ -2540,11 +2572,18 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         .filter((clause) => !clauseIsTableConstraint(clause))
         .map((clause) => [clauseColumnName(clause), normalizeSqlText(clause)])
     );
-    const exactColumns = new Map<string, string>([
+    // 079 extends the relation list with 'refines','contradicts','amends'; a
+    // table already at that shape satisfies the 074 endpoint contract too.
+    const edgeTypeClause = clauses.find(
+      (clause) => !clauseIsTableConstraint(clause) && clauseColumnName(clause) === 'edge_type'
+    );
+    const edgeTypeOk =
+      edgeTypeClause !== undefined &&
       [
-        'edge_type',
         "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
-      ],
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','refines','contradicts','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks','amends'))",
+      ].some((definition) => normalizeSqlText(edgeTypeClause) === normalizeSqlText(definition));
+    const exactColumns = new Map<string, string>([
       [
         'confidence',
         'confidence REAL NOT NULL DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0)',
@@ -2611,6 +2650,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'content_hash',
         'created_at',
       ].every((column) => info.get(column)?.notnull === 1) &&
+      edgeTypeOk &&
       [...exactColumns].every(
         ([name, definition]) => columnClauses.get(name) === normalizeSqlText(definition)
       ) &&
@@ -2694,16 +2734,20 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     );
     const exactProtectedColumns = new Map<string, string>([
       [
-        'edge_type',
-        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
-      ],
-      [
         'confidence',
         'confidence REAL NOT NULL DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0)',
       ],
       ['source', "source TEXT NOT NULL CHECK (source IN ('agent','human','code'))"],
       ['content_hash', 'content_hash BLOB NOT NULL CHECK(length(content_hash)=32)'],
     ]);
+    // The edge_type CHECK was extended by migration 079; a table carrying the
+    // newer relation list is preserved as-is instead of being rebuilt down.
+    const allowedEdgeTypeDefs = new Set(
+      [
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','refines','contradicts','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks','amends'))",
+      ].map(normalizeSqlText)
+    );
     for (const clause of clauses) {
       if (clauseIsTableConstraint(clause)) {
         if (/\b(?:subject_kind|object_kind)\b/i.test(clause)) {
@@ -2732,6 +2776,11 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           throw new Error('Migration 074 cannot safely preserve inline constraint on object_kind');
         }
         columns.push(objectDef);
+      } else if (name === 'edge_type') {
+        if (!allowedEdgeTypeDefs.has(normalizeSqlText(clause))) {
+          throw new Error('Migration 074 cannot safely preserve inline constraint on edge_type');
+        }
+        columns.push(clause);
       } else if (exactProtectedColumns.has(name)) {
         if (
           normalizeSqlText(clause) !== normalizeSqlText(exactProtectedColumns.get(name) as string)
@@ -2800,6 +2849,151 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         this.prepare(
           'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
         ).run(74, 'Registry and observation work graph references');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+
+  /**
+   * 079 endpoint shape: the 074 work-graph shape plus the extended edge_type
+   * relation list ('refines','contradicts','amends') used by authored record
+   * links. `workGraphRefsShape074` already accepts this edge_type variant, so
+   * the extra check here is the only difference.
+   */
+  private twinEdgeRelationsShape079(): boolean {
+    if (!this.tableExists('twin_edges')) {
+      return false;
+    }
+    const clauses = splitCreateTableClauses(this.tableSql('twin_edges'));
+    const edgeTypeClause = clauses.find(
+      (clause) => !clauseIsTableConstraint(clause) && clauseColumnName(clause) === 'edge_type'
+    );
+    return (
+      this.workGraphRefsShape074() &&
+      edgeTypeClause !== undefined &&
+      normalizeSqlText(edgeTypeClause) ===
+        normalizeSqlText(
+          "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','refines','contradicts','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks','amends'))"
+        ) &&
+      !clauses.some((clause) => clauseIsTableConstraint(clause) && /\bedge_type\b/i.test(clause))
+    );
+  }
+
+  private needsTwinEdgeRelationsRepair079(): boolean {
+    return !this.twinEdgeRelationsShape079() || !this.schemaVersionExists(79);
+  }
+
+  /**
+   * Rebuild twin_edges with the extended relation CHECK while preserving every
+   * existing column (including runtime-added custom columns), index, trigger,
+   * and foreign-key child - the same contract recoverWorkGraphRefsMigration074
+   * honours. Only the edge_type clause is rewritten; a table already carrying
+   * the extended list is just stamped.
+   */
+  private recoverTwinEdgeRelationsMigration079(): void {
+    if (!this.tableExists('twin_edges')) {
+      throw new Error('Migration 079 recovery failed: missing twin_edges');
+    }
+    if (this.twinEdgeRelationsShape079()) {
+      this.transaction(() => {
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(79, 'Twin edge relations for judgment links (refines/contradicts/amends)');
+      });
+      return;
+    }
+    const clauses = splitCreateTableClauses(this.tableSql('twin_edges'));
+    if (clauses.length === 0) {
+      throw new Error('Migration 079 recovery failed: unreadable twin_edges');
+    }
+    const edgeTypeDef =
+      "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','refines','contradicts','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks','amends'))";
+    const allowedEdgeTypeDefs = new Set(
+      [
+        "edge_type TEXT NOT NULL CHECK (edge_type IN ('supersedes','builds_on','debates','synthesizes','mentions','derived_from','case_member','alias_of','next_action_for','blocks'))",
+        edgeTypeDef,
+      ].map(normalizeSqlText)
+    );
+    const existingColumns: string[] = [];
+    const columns: string[] = [];
+    const constraints: string[] = [];
+    for (const clause of clauses) {
+      if (clauseIsTableConstraint(clause)) {
+        if (/\bedge_type\b/i.test(clause)) {
+          throw new Error('Migration 079 cannot safely preserve conflicting edge_type CHECK');
+        }
+        constraints.push(clause);
+        continue;
+      }
+      const name = clauseColumnName(clause);
+      existingColumns.push(name);
+      if (name === 'edge_type') {
+        if (!allowedEdgeTypeDefs.has(normalizeSqlText(clause))) {
+          throw new Error('Migration 079 cannot safely preserve inline constraint on edge_type');
+        }
+        columns.push(edgeTypeDef);
+      } else {
+        columns.push(clause);
+      }
+    }
+    const objects = this.storedObjectsForTable(
+      'twin_edges',
+      new Set([
+        'idx_twin_edges_subject',
+        'idx_twin_edges_object',
+        'idx_twin_edges_model_run_id',
+        'idx_twin_edges_request_idempotency',
+        'ux_twin_edges_model_run_edge_idempotency',
+      ])
+    );
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 079 recovery failed: could not disable foreign_keys');
+    }
+    try {
+      this.transaction(() => {
+        this.exec(
+          `CREATE TABLE twin_edges_079_new (\n  ${[...columns, ...constraints].join(',\n  ')}\n)`
+        );
+        const names = existingColumns.map(quoteSqlIdentifier).join(', ');
+        this.exec(`INSERT INTO twin_edges_079_new (${names}) SELECT ${names} FROM twin_edges`);
+        this.exec('DROP TABLE twin_edges');
+        this.exec('ALTER TABLE twin_edges_079_new RENAME TO twin_edges');
+        for (const sql of objects.indexes) {
+          this.exec(sql);
+        }
+        this.exec(`
+          CREATE INDEX idx_twin_edges_subject
+            ON twin_edges(subject_kind, subject_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_object
+            ON twin_edges(object_kind, object_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_model_run_id
+            ON twin_edges(model_run_id, created_at DESC);
+          CREATE INDEX idx_twin_edges_request_idempotency
+            ON twin_edges(model_run_id, request_idempotency_key, created_at DESC)
+            WHERE model_run_id IS NOT NULL AND request_idempotency_key IS NOT NULL;
+          CREATE UNIQUE INDEX ux_twin_edges_model_run_edge_idempotency
+            ON twin_edges(model_run_id, edge_idempotency_key)
+            WHERE model_run_id IS NOT NULL AND edge_idempotency_key IS NOT NULL;
+        `);
+        for (const sql of objects.triggers) {
+          this.exec(sql);
+        }
+        if (!this.twinEdgeRelationsShape079()) {
+          throw new Error('Migration 079 recovery failed: incomplete twin edge relations shape');
+        }
+        for (const table of this.tablesInForeignKeyGraph('twin_edges')) {
+          if (this.prepare('SELECT 1 FROM pragma_foreign_key_check(?)').all(table).length > 0) {
+            throw new Error(
+              `Migration 079 recovery failed: foreign key violations after rebuild (${table})`
+            );
+          }
+        }
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(79, 'Twin edge relations for judgment links (refines/contradicts/amends)');
       });
     } finally {
       this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);

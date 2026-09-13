@@ -391,29 +391,6 @@ export async function ensureMemoryScope(kind: string, externalId: string): Promi
 }
 
 /**
- * Insert embedding into vector search table
- *
- * Stores embedding in the embeddings table for vector similarity search
- *
- * @param decisionRowid - SQLite rowid
- * @param embedding - 1024-dim embedding vector
- */
-export async function insertEmbedding(
-  decisionRowid: number,
-  embedding: Float32Array | number[]
-): Promise<void> {
-  const adapter = getAdapter();
-
-  try {
-    adapter.insertEmbedding(decisionRowid, embedding);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // Graceful degradation: Log warning but don't fail
-    logError(`[db-manager] Failed to insert embedding (vector search unavailable): ${message}`);
-  }
-}
-
-/**
  * Perform vector similarity search
  *
  * Returns empty array if vector search not available (no keyword fallback)
@@ -546,20 +523,20 @@ export async function prepareDecisionEmbedding(
       `Invalid event_datetime: must be a positive millisecond timestamp (got: ${decision.event_datetime})`
     );
   }
-  const { generateEnhancedEmbedding } = await import('./embeddings.js');
-  try {
-    return await generateEnhancedEmbedding({
-      topic: decision.topic,
-      decision: decision.decision,
-      reasoning: decision.reasoning || undefined,
-      outcome: decision.outcome || undefined,
-      confidence: decision.confidence,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logError(`[db-manager] ⚠️ Embedding generation failed, saving without vector: ${message}`);
+  const { generateEnhancedEmbedding, isForceTier3Enabled } = await import('./embeddings.js');
+  if (isForceTier3Enabled()) {
+    // Tier-3 is an explicit no-vector mode, not an embedder failure.
     return null;
   }
+  // Failure-first: an embedder error aborts the write instead of committing a
+  // decision row without its required vector.
+  return await generateEnhancedEmbedding({
+    topic: decision.topic,
+    decision: decision.decision,
+    reasoning: decision.reasoning || undefined,
+    outcome: decision.outcome || undefined,
+    confidence: decision.confidence,
+  });
 }
 
 /** Insert one decision and its already-prepared vector inside the caller's transaction. */
@@ -619,27 +596,6 @@ export function insertPreparedDecision(
     adapter.insertEmbedding(rowid, embedding);
   }
   return rowid;
-}
-
-/**
- * Insert decision with embedding
- *
- * Combined operation: Insert decision + Generate embedding + Insert embedding
- * SQLite-only implementation
- *
- * @param decision - Decision object
- * @returns Decision ID
- */
-export async function insertDecisionWithEmbedding(decision: DecisionInput): Promise<string> {
-  const adapter = getAdapter();
-  const embedding = await prepareDecisionEmbedding(decision);
-  try {
-    adapter.transaction(() => insertPreparedDecision(adapter, decision, embedding));
-    return decision.id;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to insert decision with embedding: ${message}`);
-  }
 }
 
 /**
@@ -909,30 +865,18 @@ export async function updateDecisionOutcome(
   decisionId: string,
   outcomeData: OutcomeData
 ): Promise<void> {
-  const adapter = getAdapter();
-
   try {
-    const stmt = adapter.prepare(`
-      UPDATE decisions
-      SET
-        outcome = ?,
-        failure_reason = ?,
-        limitation = ?,
-        duration_days = ?,
-        confidence = COALESCE(?, confidence),
-        updated_at = ?
-      WHERE id = ?
-    `);
-
-    stmt.run(
-      outcomeData.outcome ?? null,
-      outcomeData.failure_reason ?? null,
-      outcomeData.limitation ?? null,
-      outcomeData.duration_days ?? null,
-      outcomeData.confidence !== undefined ? outcomeData.confidence : null,
-      Date.now(),
-      decisionId
-    );
+    // Append-only: the outcome change is an authored judgment record; the
+    // maintained decisions projection columns move in the same transaction.
+    // Dynamic import avoids a module cycle with memory/write-adapters.
+    const { appendOutcomeAmendment } = await import('./memory/write-adapters.js');
+    await appendOutcomeAmendment(decisionId, {
+      outcome: outcomeData.outcome ?? null,
+      failureReason: outcomeData.failure_reason ?? null,
+      limitation: outcomeData.limitation ?? null,
+      confidence: outcomeData.confidence ?? null,
+      durationDays: outcomeData.duration_days ?? null,
+    });
 
     info(`[db-manager] Decision outcome updated: ${decisionId} → ${outcomeData.outcome}`);
   } catch (error) {

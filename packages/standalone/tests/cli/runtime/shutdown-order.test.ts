@@ -1,35 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { closeRuntimeDataStores } from '../../../src/cli/runtime/shutdown.js';
 
 describe('TG-05/TG-06: graceful shutdown ordering', () => {
-  it('awaits extraction shutdown before closing any data store', async () => {
+  it('closes every runtime data store in order', async () => {
     const events: string[] = [];
-    let releaseExtraction!: () => void;
-    const closing = closeRuntimeDataStores({
-      stopExtraction: vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            events.push('extraction:start');
-            releaseExtraction = () => {
-              events.push('extraction:stopped');
-              resolve();
-            };
-          })
-      ),
+
+    await closeRuntimeDataStores({
       sessionStore: { close: () => events.push('session:closed') },
       metricsCleanup: { stop: () => events.push('metrics-cleanup:stopped') },
       metricsStore: { close: () => events.push('metrics:closed') },
       db: { close: () => events.push('db:closed') },
     } as Parameters<typeof closeRuntimeDataStores>[0]);
 
-    await Promise.resolve();
-    expect(events).toEqual(['extraction:start']);
-    releaseExtraction();
-    await closing;
     expect(events).toEqual([
-      'extraction:start',
-      'extraction:stopped',
       'session:closed',
       'metrics-cleanup:stopped',
       'metrics:closed',
@@ -37,27 +21,27 @@ describe('TG-05/TG-06: graceful shutdown ordering', () => {
     ]);
   });
 
-  it('TG-05/TG-06 closes every data store when extraction shutdown rejects', async () => {
+  it('TG-05/TG-06 closes every data store when one close throws', async () => {
     const events: string[] = [];
-    const extractionError = new Error('extraction stop failed');
+    const closeError = new Error('session close failed');
 
     const closing = closeRuntimeDataStores({
-      stopExtraction: vi.fn(async () => {
-        events.push('extraction:failed');
-        throw extractionError;
-      }),
-      sessionStore: { close: () => events.push('session:closed') },
+      sessionStore: {
+        close: () => {
+          events.push('session:failed');
+          throw closeError;
+        },
+      },
       metricsCleanup: { stop: () => events.push('metrics-cleanup:stopped') },
       metricsStore: { close: () => events.push('metrics:closed') },
       db: { close: () => events.push('db:closed') },
     } as Parameters<typeof closeRuntimeDataStores>[0]);
 
     await expect(closing).rejects.toMatchObject({
-      errors: [extractionError],
+      errors: [closeError],
     });
     expect(events).toEqual([
-      'extraction:failed',
-      'session:closed',
+      'session:failed',
       'metrics-cleanup:stopped',
       'metrics:closed',
       'db:closed',

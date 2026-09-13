@@ -165,7 +165,7 @@ describe('Story PR4: migration 077 legacy record-kind recovery', () => {
       db.prepare('SELECT record_kind FROM decisions WHERE id = ?').get('explicit-judgment')
     ).toEqual({ record_kind: 'judgment' });
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-      version: 77,
+      version: 80,
     });
     db.close();
   });
@@ -1758,7 +1758,7 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         evidence_json: null,
       });
       expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 77,
+        version: 80,
       });
       db.close();
     });

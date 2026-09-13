@@ -15,8 +15,11 @@
  */
 
 import { info } from './debug-logger.js';
-import { initDB, insertDecisionWithEmbedding, getAdapter } from './memory-store.js';
-import type { DatabaseAdapter, DecisionRecord } from './db-manager.js';
+import { initDB, getAdapter } from './memory-store.js';
+import type { DatabaseAdapter, DecisionInput, DecisionRecord } from './db-manager.js';
+import { appendJudgment } from './knowledge/index.js';
+import { commandEmbedder, unsignedWriteAccess } from './memory/write-adapters.js';
+import type { JudgmentCommand } from './memory/judgment-types.js';
 
 // Re-export DecisionRecord for consumers
 export type { DecisionRecord };
@@ -507,59 +510,78 @@ export async function learnDecision(
     const isAssistantInsight = detection.type === 'assistant_insight';
     const needsValidation = isAssistantInsight ? 1 : 0;
 
-    // AC #1: Decision stored with outcome=NULL, confidence from LLM
-    const decision = {
+    // AC #1: Decision stored with outcome=NULL, confidence from LLM.
+    // One JudgmentCommand carries the record, the supersedes replacement, and
+    // the graph edge; appendJudgment performs them in a single transaction.
+    const adapter = getAdapter() as unknown as DatabaseAdapter;
+    const evidenceText = detection.evidence
+      ? Array.isArray(detection.evidence)
+        ? JSON.stringify(detection.evidence)
+        : detection.evidence
+      : null;
+    const alternativesText = detection.alternatives
+      ? Array.isArray(detection.alternatives)
+        ? JSON.stringify(detection.alternatives)
+        : detection.alternatives
+      : null;
+    const embeddingDecision: DecisionInput = {
       id: decisionId,
       topic: detection.topic,
       decision: detection.decision,
       reasoning: detection.reasoning,
-      outcome: null, // AC #1: outcome=NULL (not yet tracked)
-      failure_reason: null,
-      limitation: null,
-      user_involvement: 'requested', // Inferred from tool execution
-      session_id: sessionContext.session_id,
-      supersedes: previous ? previous.id : null,
-      superseded_by: null,
-      refined_from: refinedFrom, // AC #5: Multi-parent refinement
-      confidence: finalConfidence, // AC #1, AC #5: Confidence from LLM
-      needs_validation: needsValidation, // Story 014.7.6: AC #1 - Validation for assistant insights
-      validation_attempts: 0, // Story 014.7.6: Track skip count
-      usage_count: 0, // Story 014.7.6: Track usage for periodic review
-      created_at: toolExecution.timestamp || Date.now(),
-      updated_at: Date.now(),
-      // Story 014.7.10: Add trust_context for Claude-Friendly Context Formatting
-      trust_context: detection.trust_context ? JSON.stringify(detection.trust_context) : null,
-      // Story 2.1: 5-layer narrative fields
-      evidence: detection.evidence
-        ? Array.isArray(detection.evidence)
-          ? JSON.stringify(detection.evidence)
-          : detection.evidence
-        : null,
-      alternatives: detection.alternatives
-        ? Array.isArray(detection.alternatives)
-          ? JSON.stringify(detection.alternatives)
-          : detection.alternatives
-        : null,
-      risks: detection.risks || null,
+      outcome: null,
+      confidence: finalConfidence,
     };
-
-    // Task 3.7, 3.8: Generate enhanced embedding and store in embeddings table
-    // (Handled by insertDecisionWithEmbedding function)
-    await insertDecisionWithEmbedding(decision);
-
-    // ════════════════════════════════════════════════════════
-    // Task 3.5: Create Supersedes Relationship (if previous exists)
-    // ════════════════════════════════════════════════════════
-    if (previous) {
-      // AC #2: Supersedes relationship creation
-      const reason = `User changed from "${previous.decision}" to "${detection.decision}"`;
-
-      // Create edge: new decision → previous decision
-      await createSupersedesEdge(decisionId, previous.id, reason);
-
-      // Update previous decision's superseded_by field
-      await markSuperseded(previous.id, decisionId);
-    }
+    const supersedesReason = previous
+      ? `User changed from "${previous.decision}" to "${detection.decision}"`
+      : null;
+    const command: JudgmentCommand = {
+      commandId: `learn:${decisionId}`,
+      topic: detection.topic,
+      summary: detection.decision,
+      reasoning: detection.reasoning,
+      recordKind: 'judgment',
+      confidence: finalConfidence,
+      scopes: [],
+      evidence: evidenceText,
+      alternatives: alternativesText,
+      risks: detection.risks || null,
+      // Unsigned write: the learned decision supersedes its predecessor through
+      // the supersedeTargets projection (legacy semantics), not through the
+      // scope-checked `replaces` command field.
+      projections: previous
+        ? {
+            supersedeTargets: [previous.id],
+            decisionEdges: [
+              {
+                targetId: previous.id,
+                relationship: 'supersedes',
+                reason: supersedesReason,
+                weight: 1,
+                createdBy: 'llm',
+                approvedByUser: 1,
+              },
+            ],
+          }
+        : undefined,
+      record: {
+        kind: 'fact',
+        status: 'active',
+        userInvolvement: 'requested', // Inferred from tool execution
+        sessionId: sessionContext.session_id ?? null,
+        refinedFrom: refinedFrom ?? null,
+        supersedes: previous ? previous.id : null,
+        needsValidation, // Story 014.7.6: AC #1 - Validation for assistant insights
+        trustContext: detection.trust_context ? JSON.stringify(detection.trust_context) : null,
+      },
+      recordedAt: toolExecution.timestamp || Date.now(),
+      event: { reason: 'learned decision' },
+    };
+    const receipt = await appendJudgment(command, unsignedWriteAccess([]), {
+      adapter,
+      embedder: commandEmbedder(adapter, embeddingDecision),
+    });
+    const storedDecisionId = receipt.recordId;
 
     // ════════════════════════════════════════════════════════
     // NOTE: Auto-link generation (refines, contradicts) REMOVED
@@ -585,7 +607,7 @@ export async function learnDecision(
     // Task 3.9: Return decision ID (+ notification for Story 014.7.6)
     // ════════════════════════════════════════════════════════
     return {
-      decisionId,
+      decisionId: storedDecisionId,
       notification, // null if no validation needed, notification object otherwise
     };
   } catch (error) {

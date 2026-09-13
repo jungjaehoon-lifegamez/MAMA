@@ -348,13 +348,15 @@ describe('M3.3: Plugin Manifests', () => {
       expect(configure).not.toMatch(/MAMA_AUTH_TOKEN|mcpServers\.mama\.env/);
     });
 
-    it('keeps PreCompact memory ingest on the port 3847 operational API', () => {
+    it('keeps PreCompact free of the retired memory-agent ingest endpoint', () => {
       const precompact = fs.readFileSync(
         path.join(PLUGIN_ROOT, 'scripts', 'precompact-hook.js'),
         'utf8'
       );
 
-      expect(precompact).toMatch(/MAMA_HTTP_PORT\s*\|\|\s*'3847'/);
+      // The /api/memory-agent/ingest endpoint was retired; the hook must not
+      // POST conversation text to any host-side ingest surface.
+      expect(precompact).not.toMatch(/memory-agent\/ingest|MAMA_HTTP_PORT|http\.request/);
     });
 
     it('describes exactly the active hook manifest in the shipped context skill', () => {

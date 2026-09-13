@@ -114,6 +114,10 @@ describe('Story E1.10: Decision provenance query', () => {
           .run(created.id, 'obs_project_alpha_launch', 'support', 1710000001001)
       ).toThrow();
 
+      // The save is bound to a judgment command row; release the command log
+      // references before exercising the decision_entity_sources cascade.
+      adapter.prepare('DELETE FROM judgment_commands WHERE record_id = ?').run(created.id);
+      adapter.prepare('DELETE FROM command_bindings WHERE receipt_key = ?').run(created.id);
       adapter.prepare(`DELETE FROM decisions WHERE id = ?`).run(created.id);
       const remaining = adapter
         .prepare(

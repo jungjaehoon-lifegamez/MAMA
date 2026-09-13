@@ -10,13 +10,15 @@
  *   3. Builds per-source channel config map
  *      (kagemusha channels are distributed by source prefix)
  *   4. Instantiates each enabled connector (loadConnector + init + register)
- *   5. Runs M0 LLM extraction kill switch plus deterministic raw-backed memory indexing
+ *   5. Runs the M0 LLM extraction kill switch plus entity-observation indexing
  *   6. Starts connectorScheduler.startBatch() with unified 60-min polling
  *   7. Returns rawStore + enabledConnectorNames + connectorSchedulerStop for the caller
  *
- * Direct LLM connector-to-memory extraction is disabled in M0. The surviving
- * write paths here are entityObservationStore.upsertEntityObservations() and
- * deterministic raw-backed memory indexing with source evidence links.
+ * Direct LLM connector-to-memory extraction is disabled in M0, and polling never
+ * writes judgment rows: raw facts become decisions only through an explicit
+ * agent save. The surviving write path here is
+ * entityObservationStore.upsertEntityObservations() (raw observation/index
+ * handoff for the runtime read path).
  */
 
 import { homedir } from 'node:os';
@@ -81,15 +83,8 @@ export interface ConnectorInitOptions {
  *
  * Reads ~/.mama/connectors.json, registers enabled connectors,
  * wires connector polling with the M0 LLM extraction kill switch, and starts polling.
- *
- * @deprecated The legacy direct LLM connector-to-memory extraction argument is ignored in M0.
- * Callers should pass null and rely on the raw/entity-observation connector pipeline.
  */
-export async function initConnectors(
-  /** @deprecated Direct LLM connector-to-memory extraction is disabled in M0. */
-  _connectorExtractionFn: ((prompt: string) => Promise<string>) | null,
-  options: ConnectorInitOptions
-): Promise<ConnectorInitResult> {
+export async function initConnectors(options: ConnectorInitOptions): Promise<ConnectorInitResult> {
   // M2.4: unified batch poll cadence. UNSET -> 60 (unchanged default); a bad value fails loud HERE,
   // before any stateful connector init below.
   const pollMinutes = resolvePollMinutes(process.env.MAMA_CONNECTOR_POLL_MINUTES);
@@ -102,8 +97,6 @@ export async function initConnectors(
   const { loadConnector } = await import('../../connectors/index.js');
   const { buildProjectTruth, groupByChannel, buildEntityObservations } =
     await import('../../memory/history-extractor.js');
-  const { ingestRawBackedMemoryCandidates } =
-    await import('../../memory/raw-backed-memory-ingest.js');
   const { MODEL_NAME } = await import('@jungjaehoon/mama-core');
   const mamaCore = (await import('@jungjaehoon/mama-core')) as unknown as {
     getAdapter?: () => Parameters<
@@ -117,39 +110,6 @@ export async function initConnectors(
   type ChannelConfigMap = import('../../connectors/framework/types.js').ChannelConfig;
   type NormalizedItem = import('../../connectors/framework/types.js').NormalizedItem;
   type EntityObservationDraft = import('../../memory/history-extractor.js').EntityObservationDraft;
-
-  const findChannelConfigForGroup = (
-    channelKey: string,
-    channelItems: NormalizedItem[]
-  ): (ChannelConfigMap & Record<string, unknown>) | undefined => {
-    const first = channelItems[0];
-    if (!first) {
-      return undefined;
-    }
-    const sourceConfigs = allChannelConfigs[first.source];
-    const direct = sourceConfigs?.[first.channel] ?? sourceConfigs?.[channelKey];
-    if (direct) {
-      return direct as ChannelConfigMap & Record<string, unknown>;
-    }
-    if (!sourceConfigs) {
-      return undefined;
-    }
-    return Object.values(sourceConfigs).find(
-      (cfg) => cfg.name === first.channel || cfg.name === channelKey
-    ) as (ChannelConfigMap & Record<string, unknown>) | undefined;
-  };
-
-  const mapEntityObservationIdsBySourceId = (
-    observations: EntityObservationDraft[]
-  ): Map<string, string[]> => {
-    const idsBySourceId = new Map<string, string[]>();
-    for (const observation of observations) {
-      const existing = idsBySourceId.get(observation.source_raw_record_id) ?? [];
-      existing.push(observation.id);
-      idsBySourceId.set(observation.source_raw_record_id, existing);
-    }
-    return idsBySourceId;
-  };
 
   // The loader's empty success/failure boundaries are frozen. Connector initialization owns a
   // fresh top-level map because it may auto-enable claude-code; validated nested records remain
@@ -259,26 +219,17 @@ export async function initConnectors(
               );
             }
           }
-          const rawMemoryResult = await ingestRawBackedMemoryCandidates(channelItems, {
-            channelConfig: findChannelConfigForGroup(channelKey, channelItems),
-            entityObservationIdsBySourceId: mapEntityObservationIdsBySourceId(
-              observations as EntityObservationDraft[]
-            ),
-          });
           logger.debug('[m0-kill-switch] direct LLM connector->memory write disabled', {
             label,
             channelKey,
             itemCount: channelItems.length,
-            rawBackedMemorySaved: rawMemoryResult.saved,
-            rawBackedMemorySkippedExisting: rawMemoryResult.skippedExisting,
             reason: 'direct_llm_connector_to_memory_write_disabled',
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new Error(
             `[connector] ${label}:${channelKey} extraction failed while running ` +
-              'buildEntityObservations/entityObservationStore.upsertEntityObservations/' +
-              'ingestRawBackedMemoryCandidates: ' +
+              'buildEntityObservations/entityObservationStore.upsertEntityObservations: ' +
               message,
             { cause: err }
           );

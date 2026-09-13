@@ -1,7 +1,7 @@
 /**
  * MCP Tool: ingest_conversation
  *
- * Ingests conversation messages into MAMA memory with optional extraction.
+ * Ingests conversation messages into MAMA memory as a raw source observation.
  *
  * @module ingest-conversation
  */
@@ -11,7 +11,7 @@ const { ingestConversation } = require('@jungjaehoon/mama-core');
 const createIngestConversationTool = (mamaApi) => ({
   name: 'ingest_conversation',
   description:
-    "Ingest a conversation into MAMA's memory. Stores the raw conversation and optionally extracts structured memories (decisions, facts, preferences) using LLM. Use this to import past conversations or chat logs into memory.",
+    "Ingest a conversation into MAMA's memory. Stores the raw conversation as one source observation without creating decisions. Use this to import past conversations or chat logs into memory.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -43,22 +43,30 @@ const createIngestConversationTool = (mamaApi) => ({
         type: 'string',
         description: 'ISO 8601 date when the conversation occurred (e.g., "2024-01-15").',
       },
-      extract: {
-        type: 'boolean',
-        description: 'Whether to extract structured memories from the conversation. Default: false',
-      },
     },
     required: ['messages'],
   },
 
   async handler(params, _context) {
-    const { messages, scopes, session_date, extract = false } = params || {};
+    const { messages, scopes, session_date, extract } = params || {};
 
     try {
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return {
           success: false,
           message: '❌ Validation error: messages must be a non-empty array',
+        };
+      }
+
+      // Extraction was removed from the write boundary: conversations are
+      // stored as raw source observations only. Fail before any write so a
+      // caller never mistakes a raw observation for an extracted judgment.
+      if (extract !== undefined) {
+        return {
+          success: false,
+          message:
+            '❌ Validation error: ingest_conversation no longer supports the extract option; ' +
+            'conversations are stored as raw source observations without decision writes',
         };
       }
 
@@ -71,18 +79,13 @@ const createIngestConversationTool = (mamaApi) => ({
           source_type: 'mcp_ingest_conversation',
         },
         ...(session_date && { sessionDate: session_date }),
-        ...(extract && { extract: { enabled: true } }),
       });
 
       return {
         success: true,
         raw_id: result.rawId,
         extracted_memories: result.extractedMemories || [],
-        message: `✅ Conversation ingested (ID: ${result.rawId})${
-          result.extractedMemories?.length
-            ? `, extracted ${result.extractedMemories.length} memories`
-            : ''
-        }`,
+        message: `✅ Conversation ingested (ID: ${result.rawId})`,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

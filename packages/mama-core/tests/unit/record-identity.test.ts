@@ -35,7 +35,15 @@ describe('record identity', () => {
     adapter.prepare('DELETE FROM record_actors').run();
     adapter.prepare('DELETE FROM memory_events').run();
     adapter.prepare('DELETE FROM decision_edges').run();
+    adapter.prepare('DELETE FROM commitment_assignments').run();
+    adapter.prepare('DELETE FROM commitments').run();
+    adapter.prepare('DELETE FROM judgment_commands').run();
+    adapter.prepare('DELETE FROM command_bindings').run();
+    adapter.prepare('DELETE FROM twin_edges').run();
+    adapter.prepare('DELETE FROM memory_scope_bindings').run();
     adapter.prepare('DELETE FROM decisions').run();
+    // embeddings rows key on decisions.rowid with no cascade; clear the orphans.
+    adapter.prepare('DELETE FROM embeddings').run();
     adapter.prepare('DELETE FROM registry_aliases').run();
     adapter.prepare('DELETE FROM registry_nodes').run();
     item = createNode({ kind: 'item', name: 'alpha item', aliases: ['a_0001'] });

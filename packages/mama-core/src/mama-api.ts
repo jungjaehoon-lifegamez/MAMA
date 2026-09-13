@@ -25,8 +25,8 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { parseReasoningForRelationships } from './decision-tracker.js';
 import { DecisionRecord, SemanticEdgeItem, fts5Search, ensureMemoryScope } from './db-manager.js';
+import { appendOutcomeAmendment } from './memory/write-adapters.js';
 import {
   queryDecisionGraph,
   querySemanticEdges,
@@ -639,8 +639,9 @@ async function saveInternal(
   const dbOutcome =
     outcome in outcomeMap ? outcomeMap[outcome as keyof typeof outcomeMap] : outcome;
 
-  const explicitRelationships = parseReasoningForRelationships(reasoning);
-
+  // Reasoning text is evidence, not authority: relationships are only written
+  // when the caller names explicit targets (saveLegacyMemory's legacy field or
+  // twin-edge links). Parsing IDs out of prose fabricated edges, so it is gone.
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
   const {
     id: decisionId,
@@ -669,7 +670,6 @@ async function saveInternal(
       failureReason: failure_reason ?? null,
       limitation: limitation ?? null,
       isStatic: is_static,
-      relationships: explicitRelationships,
     },
     options
   );
@@ -1085,32 +1085,14 @@ async function updateOutcome(
   }
 
   try {
-    const adapter = getAdapter();
-
-    // Update outcome and related fields
-    const stmt = adapter.prepare(
-      `
-      UPDATE decisions
-      SET
-        outcome = ?,
-        failure_reason = ?,
-        limitation = ?,
-        updated_at = ?
-      WHERE id = ?
-    `
-    );
-    const result = stmt.run(
-      normalizedOutcome,
-      failure_reason || null,
-      limitation || null,
-      Date.now(),
-      decisionId
-    );
-
-    // Check if decision was found and updated
-    if (result.changes === 0) {
-      throw new Error(`Decision not found: ${decisionId}`);
-    }
+    // Append-only: one judgment record carries the outcome change; the
+    // maintained decisions projection columns move in the same transaction.
+    await appendOutcomeAmendment(decisionId, {
+      outcome: normalizedOutcome,
+      failureReason: failure_reason || null,
+      limitation: limitation || null,
+      eventReason: `mama.updateOutcome(${decisionId})`,
+    });
 
     return;
   } catch (error: unknown) {

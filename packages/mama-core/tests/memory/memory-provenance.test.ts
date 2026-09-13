@@ -13,12 +13,8 @@ import {
   promoteMemoryStatus,
   saveMemory,
   saveMemoryWithTrustedProvenance,
-  setExtractionFn,
 } from '../../src/memory/api.js';
-import {
-  getMemoryProvenance,
-  listMemoriesByGatewayCallId,
-} from '../../src/memory/provenance-query.js';
+import { getMemoryProvenance } from '../../src/memory/provenance-query.js';
 import { createTrustedProvenanceCapability } from '../../src/memory/provenance.js';
 import { listMemoryEventsForMemory } from '../../src/memory/event-store.js';
 import { queryRelevantTruth } from '../../src/memory/truth-store.js';
@@ -50,7 +46,6 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
   });
 
   afterEach(async () => {
-    setExtractionFn(null);
     await closeDB();
     delete process.env.MAMA_DB_PATH;
     if (originalForceTier3 === undefined) {
@@ -392,32 +387,28 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
         provenance: { envelope_hash: 'attacker_env', gateway_call_id: 'attacker_gw' },
       } as never);
 
-      const provenance = await getMemoryProvenance(result.id);
-      expect(provenance?.envelope_hash).toBeNull();
-      expect(provenance?.gateway_call_id).toBeNull();
-      expect(provenance?.latest_event?.actor).toBe('actor:direct_client');
+      // Raw ingest stores an observation, not a judgment: no decisions row
+      // exists for the observation id, so decision provenance stays null.
+      expect(await getMemoryProvenance(result.id)).toBeNull();
+      const events = await listMemoryEventsForMemory(result.id);
+      expect(events[0]?.actor).toBe('actor:direct_client');
+      const observation = getAdapter()
+        .prepare('SELECT metadata_json FROM observation_versions WHERE observation_id = ?')
+        .get(result.id) as { metadata_json: string } | undefined;
+      expect(observation?.metadata_json).toBeDefined();
+      expect(observation!.metadata_json).not.toContain('attacker_env');
+      expect(observation!.metadata_json).not.toContain('attacker_gw');
     });
   });
 
-  describe('AC: ingest conversation provenance covers raw and extracted memories', () => {
-    it('propagates trusted provenance to raw and extracted memories with raw source refs', async () => {
-      setExtractionFn(async () => [
-        {
-          topic: 'extracted_fact',
-          kind: 'fact',
-          summary: 'Extracted fact summary',
-          details: 'Extracted fact details',
-          confidence: 0.7,
-        },
-      ]);
-
+  describe('AC: ingest conversation stores raw observations only', () => {
+    it('stores one observation with trusted provenance and rejects extraction', async () => {
       const capability = createTrustedProvenanceCapability();
       const result = await ingestConversationWithTrustedProvenance(
         {
           messages: [{ role: 'user', content: 'We decided to keep provenance compact.' }],
           scopes: [PROJECT_SCOPE],
           source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
-          extract: { enabled: true, apiKey: 'test-key' },
         },
         {
           capability,
@@ -431,17 +422,56 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
         }
       );
 
-      expect(result.extractedMemories).toHaveLength(1);
-      const rawProvenance = await getMemoryProvenance(result.rawId);
-      const extractedProvenance = await getMemoryProvenance(result.extractedMemories[0].id);
-      expect(rawProvenance?.gateway_call_id).toBe('gw_ingest_1');
-      expect(extractedProvenance?.gateway_call_id).toBe('gw_ingest_1');
-      expect(extractedProvenance?.source_refs).toContain(`raw_memory:${result.rawId}`);
+      expect(result.extractedMemories).toEqual([]);
+      // The raw observation is evidence, not a judgment: no decisions row, so
+      // decision-level provenance queries return nothing for it.
+      expect(await getMemoryProvenance(result.rawId)).toBeNull();
+      expect(
+        getAdapter()
+          .prepare('SELECT COUNT(*) AS n FROM observation_versions WHERE observation_id = ?')
+          .get(result.rawId)
+      ).toEqual({ n: 1 });
+      const events = await listMemoryEventsForMemory(result.rawId);
+      expect(events[0]?.actor).toBe('main_agent');
+      expect(events[0]?.evidence_refs).toEqual(['message:conversation']);
 
-      const byGatewayCall = await listMemoriesByGatewayCallId('gw_ingest_1');
-      expect(byGatewayCall.map((item) => item.memory_id).sort()).toEqual(
-        [result.rawId, result.extractedMemories[0].id].sort()
-      );
+      // The removed extract option is rejected before any write.
+      const before = {
+        observations: (
+          getAdapter().prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as {
+            n: number;
+          }
+        ).n,
+        decisions: (
+          getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get() as {
+            n: number;
+          }
+        ).n,
+      };
+      await expect(
+        ingestConversationWithTrustedProvenance(
+          {
+            messages: [{ role: 'user', content: 'Extract attempt must not write.' }],
+            scopes: [PROJECT_SCOPE],
+            source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+            extract: { enabled: true, apiKey: 'test-key' },
+          },
+          {
+            capability,
+            provenance: { actor: 'main_agent', gateway_call_id: 'gw_ingest_2' },
+          }
+        )
+      ).rejects.toThrow(/extract/);
+      expect(
+        (
+          getAdapter().prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as {
+            n: number;
+          }
+        ).n
+      ).toBe(before.observations);
+      expect(
+        (getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number }).n
+      ).toBe(before.decisions);
     });
 
     it('keeps public ingestConversation caller-supplied provenance out of stored provenance', async () => {
@@ -449,14 +479,18 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
         messages: [{ role: 'user', content: 'Public ingest conversation spoof attempt.' }],
         scopes: [PROJECT_SCOPE],
         source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
-        extract: { enabled: false },
         provenance: { envelope_hash: 'attacker_env', gateway_call_id: 'attacker_gw' },
       } as never);
 
-      const provenance = await getMemoryProvenance(result.rawId);
-      expect(provenance?.envelope_hash).toBeNull();
-      expect(provenance?.gateway_call_id).toBeNull();
-      expect(provenance?.latest_event?.actor).toBe('actor:direct_client');
+      expect(await getMemoryProvenance(result.rawId)).toBeNull();
+      const events = await listMemoryEventsForMemory(result.rawId);
+      expect(events[0]?.actor).toBe('actor:direct_client');
+      const observation = getAdapter()
+        .prepare('SELECT metadata_json FROM observation_versions WHERE observation_id = ?')
+        .get(result.rawId) as { metadata_json: string } | undefined;
+      expect(observation?.metadata_json).toBeDefined();
+      expect(observation!.metadata_json).not.toContain('attacker_env');
+      expect(observation!.metadata_json).not.toContain('attacker_gw');
     });
   });
 

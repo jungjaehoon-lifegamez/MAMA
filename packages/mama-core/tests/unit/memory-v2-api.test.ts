@@ -122,13 +122,16 @@ describe('memory v2 api', () => {
       eventDateTime: Date.parse('2026-04-16T08:45:00.000Z'),
     });
 
+    // Raw ingest now stores one immutable observation, not a decisions row:
+    // the event time lands on source_at / metadata of the observation.
     const row = getAdapter()
-      .prepare('SELECT event_date, event_datetime FROM decisions WHERE id = ?')
-      .get(saved.id) as { event_date: string | null; event_datetime: number | null } | undefined;
+      .prepare('SELECT source_at, metadata_json FROM observation_versions WHERE observation_id = ?')
+      .get(saved.id) as { source_at: number | null; metadata_json: string } | undefined;
 
-    expect(row).toEqual({
-      event_date: '2026-04-16',
-      event_datetime: Date.parse('2026-04-16T08:45:00.000Z'),
+    expect(row?.source_at).toBe(Date.parse('2026-04-16T08:45:00.000Z'));
+    expect(JSON.parse(row!.metadata_json)).toMatchObject({
+      eventDate: '2026-04-16',
+      eventDateTime: Date.parse('2026-04-16T08:45:00.000Z'),
     });
   });
 

@@ -1237,8 +1237,7 @@ export async function runAgentLoop(
 
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
 
-  const { mamaApi, mamaApiClient, connectorExtractionFn, stopExtraction } =
-    await initMamaCore(config);
+  const { mamaApi, mamaApiClient } = await initMamaCore(config);
   // Wire the boot MAMA API onto the shared executor so it never lazily builds a
   // SECOND API/adapter stack against the same DB (initializeMAMAApi). This also
   // lets the memory agent fold into the shared executor (Task 7) instead of
@@ -2259,13 +2258,10 @@ export async function runAgentLoop(
     log: (line) => temporalLogger.info(line),
   });
   temporalRuntime = temporalAssembly.runtime;
-  const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
-    connectorExtractionFn,
-    {
-      connectorConfigLoadResult,
-      nudge: () => triggerLoopNudge.current?.(),
-    }
-  );
+  const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors({
+    connectorConfigLoadResult,
+    nudge: () => triggerLoopNudge.current?.(),
+  });
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {
     toolExecutor.setRawStore(rawStoreForApi);
@@ -2788,7 +2784,6 @@ export async function runAgentLoop(
     gateways,
     pluginLoader,
     agentLoop,
-    stopExtraction,
     sessionStore,
     db,
     metricsStore,

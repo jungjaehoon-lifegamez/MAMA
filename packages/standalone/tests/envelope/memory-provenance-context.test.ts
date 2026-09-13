@@ -8,7 +8,6 @@ import { makeSignedEnvelope } from './fixtures.js';
 
 type ProvenanceAwareApi = MAMAApiInterface & {
   saveWithTrustedProvenance: ReturnType<typeof vi.fn>;
-  ingestWithTrustedProvenance: ReturnType<typeof vi.fn>;
   appendToolTrace: ReturnType<typeof vi.fn>;
 };
 
@@ -50,8 +49,6 @@ function createApi(): ProvenanceAwareApi {
     suggest: vi.fn().mockResolvedValue({ success: true, results: [], count: 0 }),
     updateOutcome: vi.fn().mockResolvedValue({ success: true, message: 'updated' }),
     loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
-    ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'public_ingest' }),
-    ingestWithTrustedProvenance: vi.fn().mockResolvedValue({ success: true, id: 'trusted_ingest' }),
     appendToolTrace: vi.fn().mockResolvedValue({
       trace_id: 'trace_1',
       model_run_id: 'model-run-1',

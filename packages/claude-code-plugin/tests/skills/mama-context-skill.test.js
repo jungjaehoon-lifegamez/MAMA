@@ -149,14 +149,17 @@ describe('M3.2: MAMA context skill wrapper', () => {
       expect(skill).toContain('Repeated reads');
     });
 
-    it('describes write reminders and pre-compaction ingest', () => {
+    it('describes write reminders and pre-compaction checkpoint guidance', () => {
       const skill = readSkill();
 
       expect(skill).toContain('first eligible code-file change');
       expect(skill).toContain('record decisions');
       expect(skill).toContain('before context compaction');
-      expect(skill).toContain('MAMA_HTTP_PORT');
-      expect(skill).toContain('port 3847');
+      // The memory-agent ingest endpoint was retired; the skill must not
+      // describe a host-side ingest submission.
+      expect(skill).not.toContain('memory-agent');
+      expect(skill).not.toContain('MAMA_HTTP_PORT');
+      expect(skill).not.toContain('port 3847');
     });
   });
 

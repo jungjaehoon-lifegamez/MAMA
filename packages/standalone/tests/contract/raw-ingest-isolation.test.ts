@@ -96,8 +96,8 @@ describe('Story M0: Connector extraction kill switch', () => {
     });
   });
 
-  describe('AC #2: observation and raw-backed memory failures surface instead of being swallowed', () => {
-    it('connector observation and raw-backed memory indexing failures are surfaced instead of swallowed', () => {
+  describe('AC #2: observation indexing failures surface instead of being swallowed', () => {
+    it('connector observation indexing failures are surfaced instead of swallowed', () => {
       const source = readFileSync(
         new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
         'utf8'
@@ -106,9 +106,22 @@ describe('Story M0: Connector extraction kill switch', () => {
 
       expect(extractAndSaveBody).toContain('buildEntityObservations');
       expect(extractAndSaveBody).toContain('entityObservationStore.upsertEntityObservations');
-      expect(extractAndSaveBody).toContain('ingestRawBackedMemoryCandidates');
       expect(extractAndSaveBody).not.toContain('console.error');
       expect(extractAndSaveBody).toContain('throw new Error');
+    });
+
+    it('connector polling never writes raw items straight into decisions', () => {
+      const source = readFileSync(
+        new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
+        'utf8'
+      );
+
+      // No polling-to-judgment auto-save: raw evidence reaches memory only via
+      // an explicit agent/CLI save through the command boundary.
+      expect(findCallExpressions(source, 'ingestRawBackedMemoryCandidates')).toEqual([]);
+      expect(findCallExpressions(source, 'saveMemory')).toEqual([]);
+      expect(findCallExpressions(source, 'appendJudgment')).toEqual([]);
+      expect(findCallExpressions(source, 'ingestSource')).toEqual([]);
     });
   });
 });

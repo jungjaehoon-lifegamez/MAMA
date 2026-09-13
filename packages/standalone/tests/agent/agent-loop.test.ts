@@ -37,7 +37,6 @@ import {
   OWNER_SUBAGENT_INSTRUCTIONS,
   ownerSubagentInstructions,
 } from '../../src/operator/owner-runtime.js';
-import { buildMemoryAuditAckFromAgentResult } from '../../src/memory/memory-agent-ack.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import {
@@ -2950,9 +2949,8 @@ describe('AgentLoop', () => {
         channelId: 'memory',
         agentContext: context,
       });
-      const ack = buildMemoryAuditAckFromAgentResult(result, 4, 4);
 
-      expect(ack).toMatchObject({ status: 'failed', action: 'save' });
+      expect(result.response).toBe('Save failed honestly');
       expect(
         result.history.filter(
           (message) =>

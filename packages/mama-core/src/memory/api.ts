@@ -1,15 +1,17 @@
 import crypto from 'node:crypto';
-import {
-  initDB,
-  getAdapter,
-  buildMemoryScopeId,
-  insertPreparedDecision,
-  prepareDecisionEmbedding,
-  ensureMemoryScope,
-  vectorSearch,
-  fts5Search,
-} from '../db-manager.js';
+import { canonicalizeJSON } from '../canonicalize.js';
+import { initDB, getAdapter, ensureMemoryScope, vectorSearch, fts5Search } from '../db-manager.js';
+import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
+import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
+import type { JudgmentCommand, JudgmentReceipt, JsonValue } from './judgment-types.js';
+import {
+  assertRelationshipTargetsVisible,
+  commandEmbedder,
+  relationshipsToCommandFields,
+  unsignedWriteAccess,
+  writeAccessForProvenance,
+} from './write-adapters.js';
 import {
   ftsSearchWikiPages,
   vectorSearchWikiPages,
@@ -20,7 +22,6 @@ import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
-import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import { queryCanonicalEntities } from '../entities/recall-bridge.js';
@@ -43,24 +44,18 @@ import type {
   PublicSaveMemoryInput,
   RecallBundle,
   IngestConversationInput,
-  ExtractedMemoryUnit,
   IngestConversationResult,
   RecallMemoryOptions,
   RecallSearchDiagnostics,
 } from './types.js';
-import { insertMemoryEventInTransaction } from './event-store.js';
 import {
-  appendProvenanceSourceRefs,
   normalizeMemoryWriteProvenance,
   sanitizePublicIngestConversationInput,
   sanitizePublicIngestMemoryInput,
   sanitizePublicSaveMemoryInput,
   type TrustedMemoryWriteOptions,
 } from './provenance.js';
-import {
-  validateRecordIdentityReferences,
-  writeRecordIdentityInAdapter,
-} from '../registry/record-identity.js';
+import { validateRecordIdentityReferences } from '../registry/record-identity.js';
 
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
@@ -301,47 +296,6 @@ function buildTimelineEventForSave(
         topic,
       }),
   };
-}
-
-function insertTimelineEventForSave(
-  adapter: ReturnType<typeof getAdapter>,
-  event: {
-    id: string;
-    entity_id: string;
-    event_type: string;
-    role: string | null;
-    valid_from: number | null;
-    valid_to: number | null;
-    observed_at: number | null;
-    source_ref: string | null;
-    summary: string;
-    details: string | null;
-  },
-  createdAt: number
-): void {
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_timeline_events (
-          id, entity_id, event_type, role, valid_from, valid_to, observed_at,
-          source_ref, summary, details, created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      event.id,
-      event.entity_id,
-      event.event_type,
-      event.role,
-      event.valid_from,
-      event.valid_to,
-      event.observed_at,
-      event.source_ref,
-      event.summary,
-      event.details,
-      createdAt
-    );
 }
 
 function batchLoadScopes(
@@ -677,242 +631,156 @@ async function saveMemoryInternal(
   await initDB();
   const adapter = getAdapter();
 
-  const id = buildDecisionId(input.topic);
-  const now = Date.now();
   const provenance = normalizeMemoryWriteProvenance(options);
   const targetStatus = input.status ?? 'active';
-  // Relationships are persisted only when the caller names their target ids explicitly.
-  // Matching topic text or vector similarity is evidence for retrieval, not identity.
-  const supersedesTarget = null;
+  const requestedScopes = input.scopes ?? [];
+  const trustedEnvelope = options?.authoritativeScopes !== undefined;
+  const access = writeAccessForProvenance(
+    provenance,
+    requestedScopes,
+    options?.authoritativeScopes
+  );
 
   const entityObservationIds = Array.from(new Set(input.entityObservationIds ?? []));
   const eventDateTime =
     typeof input.eventDateTime === 'number'
       ? input.eventDateTime
       : loadEventDateTimeForObservations(adapter, entityObservationIds);
-  const timelineEvent = buildTimelineEventForSave(
-    adapter,
-    id,
-    input.topic,
-    entityObservationIds,
-    input.timelineEvent
-  );
 
+  // Fail before any write: identity references and relationship targets are
+  // checked against the same admitted scopes the command will carry.
   validateRecordIdentityReferences({
     itemId: input.itemId,
     actors: input.actors,
     scopes: input.scopes,
   });
-  const decisionInput = {
-    id,
-    topic: input.topic,
-    decision: input.summary,
-    reasoning: input.details,
-    confidence: input.confidence ?? 0.5,
-    supersedes: supersedesTarget,
-    created_at: now,
-    updated_at: now,
-    trust_context: JSON.stringify({ source: input.source }),
-    event_date: input.eventDate ?? null,
-    event_datetime: eventDateTime,
-    agent_id: provenance.agent_id,
-    model_run_id: provenance.model_run_id,
-    envelope_hash: provenance.envelope_hash,
-    gateway_call_id: provenance.gateway_call_id,
-    source_refs_json: JSON.stringify(provenance.source_refs),
-    provenance_json: JSON.stringify(provenance.provenance),
-  };
-  const embedding = await prepareDecisionEmbedding(decisionInput);
 
-  const resolvedScopes = input.scopes.map((scope, index) => ({
-    ...scope,
-    scopeId: buildMemoryScopeId(scope.kind, scope.id),
-    isPrimary: index === 0,
-  }));
+  const commandId = `save:${buildDecisionId(input.topic)}`;
+  const recordId = judgmentRecordId(commandId);
+  const timelineEvent = buildTimelineEventForSave(
+    adapter,
+    recordId,
+    input.topic,
+    entityObservationIds,
+    input.timelineEvent
+  );
+
+  // Relationships are persisted only when the caller names their target ids
+  // explicitly. Matching topic text or vector similarity is evidence for
+  // retrieval, not identity.
   const explicitRelationships = Array.from(
     new Map(
       (legacy?.relationships ?? []).flatMap((relationship) =>
         relationship.targetIds.map((targetId) => [
           `${relationship.type}:${targetId}`,
-          { type: relationship.type, targetIds: [targetId] },
+          { type: relationship.type, targetId },
         ])
       )
     ).values()
   );
-  for (const relationship of explicitRelationships) {
-    for (const targetId of relationship.targetIds) {
-      if (options?.authoritativeScopes) {
-        const envelopeAllowed = new Set(
-          options.authoritativeScopes.map((scope) => buildMemoryScopeId(scope.kind, scope.id))
-        );
-        const effectiveRequested = new Set(
-          input.scopes.map((scope) => buildMemoryScopeId(scope.kind, scope.id))
-        );
-        const allowedScopeIds = [...envelopeAllowed].filter((scopeId) =>
-          effectiveRequested.has(scopeId)
-        );
-        const placeholders = allowedScopeIds.map(() => '?').join(', ');
-        const visibleTarget =
-          allowedScopeIds.length > 0
-            ? adapter
-                .prepare(
-                  `SELECT 1 FROM decisions d
-                   JOIN memory_scope_bindings b ON b.memory_id = d.id
-                   WHERE d.id = ? AND b.scope_id IN (${placeholders}) LIMIT 1`
-                )
-                .get(targetId, ...allowedScopeIds)
-            : undefined;
-        if (!visibleTarget) {
-          const denied = new Error('Relationship target is unavailable') as Error & {
-            code?: string;
-          };
-          denied.code = 'relationship_target_unavailable';
-          throw denied;
-        }
-      } else {
-        const target = adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(targetId);
-        if (!target) {
-          throw new Error(`mama.save() relationship target does not exist: ${targetId}`);
-        }
-      }
-    }
-  }
-  try {
-    adapter.transaction(() => {
-      insertPreparedDecision(adapter, decisionInput, embedding);
-      adapter
-        .prepare(
-          `
-            UPDATE decisions
-            SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?,
-                user_involvement = ?, outcome = ?, failure_reason = ?, limitation = ?, updated_at = ?
-            WHERE id = ?
-          `
-        )
-        .run(
-          input.kind,
-          targetStatus,
-          input.summary,
-          legacy?.isStatic ?? (input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0),
-          JSON.stringify({ source: input.source }),
-          legacy?.userInvolvement ?? null,
-          legacy?.outcome ?? null,
-          legacy?.failureReason ?? null,
-          legacy?.limitation ?? null,
-          now,
-          id
-        );
+  assertRelationshipTargetsVisible(
+    adapter,
+    explicitRelationships.map((relationship) => relationship.targetId),
+    access.scopes,
+    trustedEnvelope
+  );
+  const { links, replaces, decisionEdges, supersedeTargets } = relationshipsToCommandFields(
+    explicitRelationships,
+    { trusted: trustedEnvelope }
+  );
 
-      for (const { scopeId, kind, id: externalId, isPrimary } of resolvedScopes) {
-        adapter
-          .prepare(
-            `INSERT OR IGNORE INTO memory_scopes (id, kind, external_id)
-             VALUES (?, ?, ?)`
-          )
-          .run(scopeId, kind, externalId);
-        adapter
-          .prepare(
-            `
-              INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
-              VALUES (?, ?, ?)
-            `
-          )
-          .run(id, scopeId, isPrimary ? 1 : 0);
-      }
+  const embeddingDecision: DecisionInput = {
+    id: recordId,
+    topic: input.topic,
+    decision: input.summary,
+    reasoning: input.details,
+    confidence: input.confidence ?? 0.5,
+    event_date: input.eventDate ?? null,
+    event_datetime: eventDateTime,
+  };
 
-      insertMemoryEventInTransaction(adapter, {
-        event_type: 'save',
-        actor: provenance.actor,
-        source_turn_id: provenance.source_turn_id ?? undefined,
-        memory_id: id,
-        topic: input.topic,
-        scope_refs: input.scopes,
-        evidence_refs: provenance.source_refs,
-        reason: buildSaveEventReason(provenance.tool_name, provenance.gateway_call_id),
-        created_at: now,
-      });
-
-      for (const entityObservationId of entityObservationIds) {
-        adapter
-          .prepare(
-            `
-              INSERT OR IGNORE INTO decision_entity_sources (
-                decision_id, entity_observation_id, relation_type, created_at
-              ) VALUES (?, ?, ?, ?)
-            `
-          )
-          .run(id, entityObservationId, 'support', now);
-      }
-
-      if (timelineEvent) {
-        insertTimelineEventForSave(adapter, timelineEvent, now);
-      }
-
-      if (input.itemId !== undefined || input.actors !== undefined) {
-        writeRecordIdentityInAdapter(adapter, {
-          recordId: id,
-          itemId: input.itemId,
-          actors: input.actors,
-          scopes: input.scopes,
-        });
-      }
-
-      const edgeInsert = adapter.prepare(
-        `INSERT INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      );
-      for (const relationship of explicitRelationships) {
-        for (const targetId of relationship.targetIds) {
-          if (relationship.type === 'supersedes') {
-            adapter
-              .prepare(
-                "UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?"
-              )
-              .run(id, now, targetId);
+  const command: JudgmentCommand = {
+    commandId,
+    topic: input.topic,
+    summary: input.summary,
+    reasoning: input.details,
+    recordKind: 'judgment',
+    confidence: input.confidence ?? 0.5,
+    eventDate: input.eventDate ?? null,
+    eventDatetime: eventDateTime,
+    outcome: legacy?.outcome ?? null,
+    failureReason: legacy?.failureReason ?? null,
+    limitation: legacy?.limitation ?? null,
+    sourceRefs: provenance.source_refs,
+    provenance: provenance.provenance as Record<string, JsonValue>,
+    agentId: provenance.agent_id,
+    modelRunId: provenance.model_run_id,
+    envelopeHash: provenance.envelope_hash,
+    gatewayCallId: provenance.gateway_call_id,
+    scopes: [...requestedScopes],
+    links,
+    replaces,
+    record: {
+      kind: input.kind,
+      status: targetStatus,
+      summary: input.summary,
+      isStatic:
+        legacy?.isStatic ?? (input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0),
+      userInvolvement: legacy?.userInvolvement ?? null,
+      trustContext: JSON.stringify({ source: input.source }),
+    },
+    event: {
+      actor: provenance.actor,
+      ...(provenance.source_turn_id ? { sourceTurnId: provenance.source_turn_id } : {}),
+      evidenceRefs: provenance.source_refs,
+      reason: buildSaveEventReason(provenance.tool_name, provenance.gateway_call_id),
+    },
+    projections: {
+      decisionEdges,
+      ...(supersedeTargets.length > 0 ? { supersedeTargets } : {}),
+      ...(entityObservationIds.length > 0 ? { entitySources: entityObservationIds } : {}),
+      ...(timelineEvent
+        ? {
+            timelineEvent: {
+              id: timelineEvent.id,
+              entityId: timelineEvent.entity_id,
+              eventType: timelineEvent.event_type,
+              role: timelineEvent.role,
+              validFrom: timelineEvent.valid_from,
+              validTo: timelineEvent.valid_to,
+              observedAt: timelineEvent.observed_at,
+              sourceRef: timelineEvent.source_ref,
+              summary: timelineEvent.summary,
+              details: timelineEvent.details,
+            },
           }
-          edgeInsert.run(
-            id,
-            targetId,
-            relationship.type,
-            `Explicit ${relationship.type} reference in reasoning`,
-            1,
-            now
-          );
-        }
-      }
+        : {}),
+      ...(input.itemId !== undefined || input.actors !== undefined
+        ? {
+            recordIdentity: { itemId: input.itemId ?? null, actors: input.actors ?? [] },
+          }
+        : {}),
+    },
+  };
+
+  let receipt: JudgmentReceipt;
+  try {
+    receipt = await appendJudgment(command, access, {
+      adapter,
+      embedder: commandEmbedder(adapter, embeddingDecision),
     });
   } catch (error) {
     const rollbackError = (error instanceof Error ? error : new Error(String(error))) as Error & {
       memoryId?: string;
     };
-    rollbackError.memoryId = id;
+    rollbackError.memoryId = recordId;
     throw rollbackError;
-  }
-
-  // Sync the adapter's status cache for every row whose status changed in the
-  // post-insert transaction: the saved row itself (status is written AFTER
-  // insertEmbedding populated the cache) and any rows just superseded. This makes
-  // the vectorSearch pre-filter correct within this session, not only after reload.
-  if (adapter.refreshDecisionStatusCache) {
-    const changedIds = [
-      id,
-      ...explicitRelationships
-        .filter((relationship) => relationship.type === 'supersedes')
-        .flatMap((relationship) => relationship.targetIds),
-    ];
-    const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
-    for (const changedId of changedIds) {
-      const ridRow = ridStmt.get(changedId) as { rowid: number } | undefined;
-      if (ridRow) {
-        adapter.refreshDecisionStatusCache(ridRow.rowid);
-      }
-    }
   }
 
   return {
     success: true,
-    id,
-    saved_decision_id: id,
+    id: receipt.recordId,
+    saved_decision_id: receipt.recordId,
     timeline_event_id: timelineEvent?.id ?? null,
     timeline_event_ids: timelineEvent ? [timelineEvent.id] : [],
   };
@@ -1082,50 +950,73 @@ export async function promoteMemoryStatus(input: {
     evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ??
     (targetStatus === 'active' ? existingSupersedesTarget : null);
 
-  adapter.transaction(() => {
-    const updated = adapter
-      .prepare('UPDATE decisions SET status = ?, supersedes = ?, updated_at = ? WHERE id = ?')
-      .run(targetStatus, supersedesTarget, now, memoryId);
-    if (updated.changes !== 1) {
-      throw new Error(`Cannot promote missing memory ${memoryId}`);
-    }
+  // The status change is an authored amendment: one append-only judgment record
+  // carries it, and the target row's projection columns move in the same
+  // transaction. A replayed command (same id, same payload) returns the stored
+  // receipt instead of rewriting.
+  const commandId = `promote:${memoryId}:${crypto
+    .createHash('sha256')
+    .update(
+      canonicalizeJSON({
+        status: targetStatus,
+        supersedes: supersedesTarget,
+        edges: evolution.edges.map((edge) => `${edge.type}:${edge.to_id}`),
+        now,
+      })
+    )
+    .digest('hex')
+    .slice(0, 16)}`;
 
-    for (const edge of evolution.edges) {
-      if (edge.type === 'supersedes') {
-        adapter
-          .prepare(
-            `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
-          )
-          .run(memoryId, now, edge.to_id);
-      }
-
-      adapter
-        .prepare(
-          `
-            INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `
-        )
-        .run(memoryId, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
-    }
-  });
-
-  // Sync the adapter's status cache for every row whose status changed above.
-  // Without this, a row promoted OUT of an excluded status (e.g. stale->active)
-  // stays invisible to the vectorSearch pre-filter until the next full reload.
-  if (adapter.refreshDecisionStatusCache) {
-    const changedIds = [
-      memoryId,
-      ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
-    ];
-    const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
-    for (const id of changedIds) {
-      const ridRow = ridStmt.get(id) as { rowid: number } | undefined;
-      if (ridRow) {
-        adapter.refreshDecisionStatusCache(ridRow.rowid);
-      }
-    }
-  }
+  const supersedesEdges = evolution.edges.filter((edge) => edge.type === 'supersedes');
+  const command: JudgmentCommand = {
+    commandId,
+    // Audit records link to the amended memory instead of sharing its topic,
+    // keeping them out of the topic's evolution candidate pool.
+    topic: `judgment/${memoryId}`,
+    summary: `Status '${targetStatus}' applied to ${memoryId}`,
+    recordKind: 'judgment',
+    payload: {
+      amended: memoryId,
+      status: targetStatus,
+      supersedes: supersedesTarget,
+      edges: evolution.edges.map((edge) => ({ type: edge.type, to_id: edge.to_id })),
+    },
+    scopes,
+    agentId: null,
+    links: [{ relation: 'amends', target: { kind: 'memory', id: memoryId } }],
+    amends: [
+      // supersedes is included only when a target resolved: applyAmendment
+      // writes a column for every key present, so a null here would clear the
+      // target's predecessor pointer on non-active promotions.
+      {
+        target: { kind: 'memory', id: memoryId },
+        status: targetStatus,
+        ...(supersedesTarget !== null ? { supersedes: supersedesTarget } : {}),
+      },
+      ...supersedesEdges.map((edge) => ({
+        target: { kind: 'memory' as const, id: edge.to_id },
+        supersededBy: memoryId,
+        status: 'superseded',
+      })),
+    ],
+    projections: {
+      decisionEdges: evolution.edges.map((edge) => ({
+        fromId: memoryId,
+        targetId: edge.to_id,
+        relationship: edge.type,
+        reason: edge.reason ?? null,
+        weight: 1,
+      })),
+    },
+    record: {
+      kind: 'fact',
+      status: 'active',
+      summary: `Status '${targetStatus}' applied to ${memoryId}`,
+    },
+    recordedAt: now,
+    event: { reason: `promote ${memoryId} to '${targetStatus}'` },
+  };
+  await appendJudgment(command, unsignedWriteAccess(scopes), { adapter });
 }
 
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {
@@ -2159,25 +2050,60 @@ async function ingestMemoryInternal(
   input: IngestMemoryInput,
   options?: TrustedMemoryWriteOptions
 ): Promise<{ success: boolean; id: string }> {
-  const normalized = input.content.trim();
-  return saveMemoryInternal(
-    {
-      topic:
-        normalized
-          .slice(0, 40)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '_')
-          .replace(/^_+|_+$/g, '') || 'ingested_memory',
-      kind: 'fact',
-      summary: normalized.slice(0, 200),
-      details: normalized,
-      scopes: input.scopes ?? [],
-      source: input.source,
-      eventDate: input.eventDate,
-      eventDateTime: input.eventDateTime,
-    },
-    options
+  // Raw evidence goes through source.ingest: exactly one immutable observation
+  // per request, no judgment row, no extraction.
+  const normalized = input.content;
+  const provenance = normalizeMemoryWriteProvenance(options);
+  const requestedScopes = input.scopes ?? [];
+  const access = writeAccessForProvenance(
+    provenance,
+    requestedScopes,
+    options?.authoritativeScopes
   );
+  const commandId = `source:${crypto
+    .createHash('sha256')
+    .update(
+      canonicalizeJSON({
+        content: normalized,
+        scopes: requestedScopes,
+        source: input.source,
+        eventDate: input.eventDate ?? null,
+        eventDateTime: input.eventDateTime ?? null,
+        provenance: provenance.provenance,
+      })
+    )
+    .digest('hex')
+    .slice(0, 24)}`;
+  const receipt = await ingestSource(
+    {
+      commandId,
+      source: {
+        connector: input.source.source_type ?? 'ingest',
+        id: commandId,
+      },
+      body: normalized,
+      sourceAt:
+        typeof input.eventDateTime === 'number'
+          ? input.eventDateTime
+          : input.eventDate
+            ? Date.parse(input.eventDate)
+            : null,
+      metadata: {
+        source: input.source as unknown as JsonValue,
+        eventDate: input.eventDate ?? null,
+        eventDateTime: input.eventDateTime ?? null,
+      },
+      scopes: [...requestedScopes],
+      event: {
+        actor: provenance.actor,
+        ...(provenance.source_turn_id ? { sourceTurnId: provenance.source_turn_id } : {}),
+        ...(provenance.source_refs.length > 0 ? { evidenceRefs: provenance.source_refs } : {}),
+        reason: 'ingest memory',
+      },
+    },
+    access
+  );
+  return { success: true, id: receipt.observationId };
 }
 
 export async function ingestMemory(
@@ -2221,58 +2147,6 @@ export async function recordMemoryAudit(input: {
   return recordChannelAudit(input);
 }
 
-async function callExtractionLLM(
-  prompt: string,
-  options: NonNullable<IngestConversationInput['extract']>
-): Promise<ExtractedMemoryUnit[]> {
-  const model = options.model ?? 'claude-sonnet-4-6';
-  const baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
-
-  // Security: only send ANTHROPIC_API_KEY to Anthropic's own domain
-  const isAnthropicDomain = /^https?:\/\/([^/]*\.)?anthropic\.com(\/|$)/i.test(baseUrl);
-  const apiKey = isAnthropicDomain
-    ? (options.apiKey ?? process.env.ANTHROPIC_API_KEY)
-    : options.apiKey; // custom baseUrl must supply its own key explicitly
-
-  if (!apiKey) {
-    throw new Error(
-      isAnthropicDomain
-        ? 'ANTHROPIC_API_KEY is required for extraction'
-        : 'apiKey must be provided explicitly when using a custom baseUrl'
-    );
-  }
-
-  const res = await fetch(`${baseUrl}/v1/messages`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!res.ok) {
-    const errorBody = await res.text().catch(() => 'unknown');
-    throw new Error(`Anthropic API error ${res.status}: ${errorBody}`);
-  }
-
-  const data = (await res.json()) as {
-    content?: Array<{ type: string; text?: string }>;
-  };
-  const text = data.content?.find((c) => c.type === 'text')?.text ?? '';
-  return parseExtractionResponse(text);
-}
-
-let extractionFn: typeof callExtractionLLM = callExtractionLLM;
-export function setExtractionFn(fn: typeof callExtractionLLM | null): void {
-  extractionFn = fn ?? callExtractionLLM;
-}
-
 async function ingestConversationInternal(
   input: IngestConversationInput,
   options?: TrustedMemoryWriteOptions
@@ -2280,122 +2154,70 @@ async function ingestConversationInternal(
   if (!input.messages || input.messages.length === 0) {
     throw new Error('messages array must not be empty');
   }
+  // Extraction was removed from the write boundary: conversations are stored as
+  // raw evidence only. The option is rejected before any write so a caller can
+  // never mistake a raw observation for an extracted judgment.
+  if (input.extract !== undefined) {
+    throw new Error(
+      'ingestConversation() no longer supports the extract option; ' +
+        'conversations are stored as raw source observations without judgment writes'
+    );
+  }
 
   const conversationText = input.messages.map((m) => `${m.role}: ${m.content}`).join('\n');
   const topicPrefix = input.topicPrefix || '';
+  const body = topicPrefix ? `${topicPrefix}${conversationText}` : conversationText;
 
-  const rawResult = await ingestMemoryInternal(
+  const provenance = normalizeMemoryWriteProvenance(options);
+  const requestedScopes = input.scopes ?? [];
+  const access = writeAccessForProvenance(
+    provenance,
+    requestedScopes,
+    options?.authoritativeScopes
+  );
+  // No observedAt in the command: it must hash identically on a retry so the
+  // same commandId replays its stored receipt instead of conflicting.
+  const commandId = `source-conv:${crypto
+    .createHash('sha256')
+    .update(
+      canonicalizeJSON({
+        body,
+        scopes: requestedScopes,
+        source: input.source,
+        sessionDate: input.sessionDate ?? null,
+        provenance: provenance.provenance,
+      })
+    )
+    .digest('hex')
+    .slice(0, 24)}`;
+  const receipt = await ingestSource(
     {
-      content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
-      scopes: input.scopes,
-      source: input.source,
-      eventDate: input.sessionDate,
+      commandId,
+      source: {
+        connector: `conversation:${input.source.source_type ?? 'unknown'}`,
+        id: commandId,
+      },
+      body,
+      sourceAt: input.sessionDate ? Date.parse(input.sessionDate) : null,
+      metadata: {
+        message_count: input.messages.length,
+        roles: input.messages.map((m) => m.role),
+        session_date: input.sessionDate ?? null,
+        topic_prefix: topicPrefix || null,
+        source: input.source as unknown as JsonValue,
+      },
+      scopes: [...requestedScopes],
+      event: {
+        actor: provenance.actor,
+        ...(provenance.source_turn_id ? { sourceTurnId: provenance.source_turn_id } : {}),
+        ...(provenance.source_refs.length > 0 ? { evidenceRefs: provenance.source_refs } : {}),
+        reason: 'ingest conversation',
+      },
     },
-    options
+    access
   );
 
-  const result: IngestConversationResult = {
-    rawId: rawResult.id,
-    extractedMemories: [],
-  };
-
-  if (!input.extract?.enabled) {
-    return result;
-  }
-
-  let units: ExtractedMemoryUnit[];
-  try {
-    // Fetch existing topics so LLM can reuse them (enables supersedes edges)
-    await initDB();
-    const adapter = getAdapter();
-    let existingTopics: Array<{ topic: string }>;
-    if (input.scopes && input.scopes.length > 0) {
-      const scopeIds = await Promise.all(
-        input.scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
-      );
-      const placeholders = scopeIds.map(() => '?').join(', ');
-      existingTopics = adapter
-        .prepare(
-          `SELECT DISTINCT d.topic FROM decisions d
-           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-           WHERE msb.scope_id IN (${placeholders})
-             AND (d.status = 'active' OR d.status IS NULL)
-           ORDER BY d.created_at DESC LIMIT 200`
-        )
-        .all(...scopeIds) as Array<{ topic: string }>;
-    } else {
-      existingTopics = adapter
-        .prepare(
-          `SELECT DISTINCT topic FROM decisions
-           WHERE (status = 'active' OR status IS NULL)
-           ORDER BY created_at DESC LIMIT 200`
-        )
-        .all() as Array<{ topic: string }>;
-    }
-    const topicList = existingTopics.map((r) => r.topic);
-
-    const prompt = buildExtractionPrompt(input.messages, topicList);
-    units = await extractionFn(prompt, input.extract);
-  } catch (err) {
-    warn(`[memory] extraction failed: ${err instanceof Error ? err.message : String(err)}`);
-    return result;
-  }
-
-  const adapter = getAdapter();
-  const EXTRACTION_EDGE_RELATIONSHIP = 'builds_on';
-  const EXTRACTION_EDGE_REASON = 'Extracted from conversation';
-
-  // Track IDs saved in this batch so sibling facts don't supersede each other.
-  // Without this, when ingestConversation extracts multiple facts under the same topic,
-  // each subsequent save supersedes the previous one, losing independent information.
-  const batchSavedIds: string[] = [];
-
-  for (const unit of units) {
-    try {
-      const saved = await saveMemoryInternal(
-        {
-          topic: topicPrefix ? `${topicPrefix}${unit.topic}` : unit.topic,
-          kind: unit.kind,
-          summary: unit.summary,
-          details: unit.details,
-          confidence: unit.confidence,
-          scopes: input.scopes,
-          source: input.source,
-          excludeIds: batchSavedIds,
-          eventDate: input.sessionDate,
-        },
-        appendProvenanceSourceRefs(options, [`raw_memory:${rawResult.id}`])
-      );
-
-      const now = Date.now();
-      adapter
-        .prepare(
-          `INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          saved.id,
-          rawResult.id,
-          EXTRACTION_EDGE_RELATIONSHIP,
-          EXTRACTION_EDGE_REASON,
-          1.0,
-          now
-        );
-
-      batchSavedIds.push(saved.id);
-      result.extractedMemories.push({
-        id: saved.id,
-        kind: unit.kind,
-        topic: unit.topic,
-      });
-    } catch (err) {
-      warn(
-        `[memory] failed to save extracted unit topic=${unit.topic} kind=${unit.kind}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  return result;
+  return { rawId: receipt.observationId, extractedMemories: [] };
 }
 
 export async function ingestConversation(

@@ -46,10 +46,6 @@ vi.mock('../../src/memory/history-extractor.js', () => ({
   buildEntityObservations: () => [],
 }));
 
-vi.mock('../../src/memory/raw-backed-memory-ingest.js', () => ({
-  ingestRawBackedMemoryCandidates: async () => ({ saved: 0, skippedExisting: 0 }),
-}));
-
 vi.mock('@jungjaehoon/mama-core', () => ({
   MODEL_NAME: 'test-model',
   getAdapter: undefined,
@@ -557,7 +553,7 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
   it('auto-enables only claude-code when the connector file is missing', async () => {
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null, {
+    const result = await initConnectors({
       connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
     });
 
@@ -570,7 +566,7 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     writeFileSync(join(tempHome, '.mama', 'connectors.json'), '{', 'utf8');
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null, {
+    const result = await initConnectors({
       connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
     });
 
@@ -594,7 +590,7 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     );
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null, {
+    const result = await initConnectors({
       connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
     });
 
@@ -611,7 +607,7 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     );
     const { initConnectors } = await import('../../src/cli/runtime/connector-init.js');
 
-    const result = await initConnectors(null, {
+    const result = await initConnectors({
       connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
     });
 
@@ -634,7 +630,7 @@ describe('Story M1R Task 4: connector initialization uses the strict loader', ()
     let stop: (() => void) | undefined;
 
     try {
-      const result = await initConnectors(null, {
+      const result = await initConnectors({
         connectorConfigLoadResult: loadConnectorConfig(join(tempHome, '.mama', 'connectors.json')),
       });
       stop = result.connectorSchedulerStop;

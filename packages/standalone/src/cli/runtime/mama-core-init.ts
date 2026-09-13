@@ -2,21 +2,21 @@
  * MAMA Core API initialization.
  *
  * Extracted from cli/commands/start.ts to keep the orchestrator thin.
- * All logic and function signatures are unchanged.
  *
  * Responsibilities:
  *   1. Dynamically require mama-core (initDB, getAdapter, mamaCore)
- *   2. Wire up connectorExtractionFn through the configured backend (lazy-init + lifecycle)
- *   3. Normalize the MAMA API shape into mamaApi
- *   4. Build search() / searchForContext() wrapper functions with fallback handling
- *   5. Build loadCheckpointForContext / listDecisionsForContext wrappers
- *   6. Assemble and return the mamaApiClient object
+ *   2. Normalize the MAMA API shape into mamaApi
+ *   3. Build search() / searchForContext() wrapper functions with fallback handling
+ *   4. Build loadCheckpointForContext / listDecisionsForContext wrappers
+ *   5. Assemble and return the mamaApiClient object
+ *
+ * Host-side LLM extraction was removed at the write boundary: mama-core no
+ * longer exposes setExtractionFn, and conversations are stored as raw source
+ * observations only. There is no extraction session to build or stop here.
  */
 
 import type { MAMAConfig } from '../config/types.js';
 import { expandPath } from '../config/config-manager.js';
-import { createBackendModelRunner } from '../../agent/backend-model-runner-factory.js';
-import type { IModelRunner } from '../../agent/model-runner.js';
 import type {
   Checkpoint,
   Decision,
@@ -49,72 +49,15 @@ function assertMAMAApiSetInput(api: MAMAApiShape): asserts api is MAMAApiShape &
 export interface MamaCoreInitResult {
   mamaApi: MAMAApiSetInput;
   mamaApiClient: MamaApiClient;
-  connectorExtractionFn: ((prompt: string) => Promise<string>) | null;
-  stopExtraction: () => Promise<void>;
-}
-
-export interface BackendExtractionSession {
-  extractParsed(prompt: string): Promise<unknown>;
-  extractRaw(prompt: string): Promise<string>;
-  stop(): Promise<void>;
-}
-
-export function createBackendExtractionSession(
-  createRunner: () => IModelRunner,
-  parseResponse: (response: string) => unknown
-): BackendExtractionSession {
-  let runner: IModelRunner | null = null;
-  let stopPromise: Promise<void> | null = null;
-  const getRunner = (): IModelRunner => {
-    if (stopPromise) {
-      throw new Error('Extraction session is stopping');
-    }
-    runner ??= createRunner();
-    return runner;
-  };
-  return {
-    async extractParsed(prompt) {
-      const result = await getRunner().prompt(prompt, undefined, {
-        sessionKey: 'system:memory-extraction',
-        resumeSession: true,
-      });
-      return parseResponse(result.response);
-    },
-    async extractRaw(prompt) {
-      const result = await getRunner().prompt(prompt, undefined, {
-        sessionKey: 'system:connector-extraction',
-        resumeSession: true,
-      });
-      return result.response;
-    },
-    async stop() {
-      if (!stopPromise) {
-        const ownedRunner = runner;
-        runner = null;
-        stopPromise = Promise.resolve(ownedRunner?.stop()).then(() => undefined);
-      }
-      await stopPromise;
-    },
-  };
 }
 
 /**
  * Initialize the MAMA Core API.
  *
- * Reads `config.database.path`, boots the mama-core DB, sets up the
- * connector extraction process (if supported), normalises the API shape,
- * and returns the three values that the rest of runAgentLoop() consumes.
+ * Reads `config.database.path`, boots the mama-core DB, normalises the API
+ * shape, and returns the values that the rest of runAgentLoop() consumes.
  */
-export async function initMamaCore(
-  config: MAMAConfig,
-  createExtractionRunner: () => IModelRunner = () =>
-    createBackendModelRunner(config, {
-      sessionId: crypto.randomUUID(),
-      systemPrompt:
-        'You are a memory extraction assistant. Extract structured memory units from conversations.',
-      allowedTools: [],
-    })
-): Promise<MamaCoreInitResult> {
+export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResult> {
   // Initialize message router with MAMA database
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
@@ -123,27 +66,6 @@ export async function initMamaCore(
 
   // Suppress unused variable warning — getAdapter may be used by mama-core internally
   void getAdapter;
-
-  // Connector extraction function — set when the configured backend runner is ready
-  let connectorExtractionFn: ((prompt: string) => Promise<string>) | null = null;
-  let stopExtraction = async (): Promise<void> => {};
-
-  // Use an isolated runner from the configured primary backend. Cline/Codex-only
-  // installations must never acquire a hidden Claude dependency here.
-  if (mamaCore.setExtractionFn) {
-    const { parseExtractionResponse } = mamaCore;
-    const extractionSession = createBackendExtractionSession(
-      createExtractionRunner,
-      parseExtractionResponse
-    );
-
-    stopExtraction = () => extractionSession.stop();
-
-    mamaCore.setExtractionFn(extractionSession.extractParsed);
-
-    // Expose extraction for connector pipeline
-    connectorExtractionFn = extractionSession.extractRaw;
-  }
 
   const mamaApi = (
     mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore
@@ -279,9 +201,7 @@ export async function initMamaCore(
     listDecisions: listDecisionsForContext,
     save: mamaApi.save,
     recallMemory: mamaApi.recallMemory as MamaApiClient['recallMemory'],
-    saveMemory: (input) => mamaCore.saveMemory(input),
     queryRelevantTruth: (params) => mamaCore.queryRelevantTruth(params),
-    ingestMemory: mamaApi.ingestMemory as MamaApiClient['ingestMemory'],
     buildMemoryBootstrap: mamaApi.buildMemoryBootstrap as MamaApiClient['buildMemoryBootstrap'],
     getChannelSummary: mamaApi.getChannelSummary as MamaApiClient['getChannelSummary'],
     upsertChannelSummary: mamaApi.upsertChannelSummary as MamaApiClient['upsertChannelSummary'],
@@ -290,7 +210,5 @@ export async function initMamaCore(
   return {
     mamaApi,
     mamaApiClient,
-    connectorExtractionFn,
-    stopExtraction,
   };
 }

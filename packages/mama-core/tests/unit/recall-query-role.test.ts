@@ -14,6 +14,7 @@ vi.mock('../../src/embeddings.js', () => ({
     texts.map(() => new Float32Array(1024).fill(0.01))
   ),
   cosineSimilarity: () => 0.5,
+  isForceTier3Enabled: () => false,
   embeddingCache: { clear: () => {}, get: () => undefined, set: () => {} },
   EMBEDDING_DIM: 1024,
   MODEL_NAME: 'x',

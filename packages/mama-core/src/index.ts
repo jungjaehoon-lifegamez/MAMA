@@ -26,10 +26,8 @@ export {
   getDB,
   getAdapter,
   closeDB,
-  insertEmbedding,
   vectorSearch,
   queryVectorSearch,
-  insertDecisionWithEmbedding,
   queryDecisionGraph,
   querySemanticEdges,
   updateDecisionOutcome,
@@ -109,18 +107,19 @@ export {
   recordMemoryAudit,
   ingestConversation,
   ingestConversationWithTrustedProvenance,
-  setExtractionFn,
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
-export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
 export {
   createKnowledge,
   appendJudgment,
+  ingestSource,
   JudgmentError,
   type Knowledge,
   type KnowledgeOptions,
   type JudgmentAccess,
+  type SourceIngestCommand,
+  type SourceIngestReceipt,
 } from './knowledge/index.js';
 export { queryRelevantTruth } from './memory/truth-store.js';
 export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';

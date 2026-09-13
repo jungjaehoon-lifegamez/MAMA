@@ -1321,10 +1321,25 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: POST /api/mama/ingest-conversation - ingest conversation with LLM extraction
+    // Route: POST /api/mama/ingest-conversation - ingest conversation as a raw
+    // source observation (no extraction at the ingest boundary)
     if (pathname === '/api/mama/ingest-conversation' && req.method === 'POST') {
       try {
         const body = await readBody(req);
+
+        // The ingest boundary stores raw evidence only. Extraction was removed
+        // from mama-core; reject the option before any write occurs.
+        if (body.extract !== undefined) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              message:
+                'extract is not supported: ingest-conversation stores a raw source observation only',
+            })
+          );
+          return true;
+        }
 
         // Validate payload at HTTP boundary
         if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -1379,9 +1394,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             id: string;
           }>,
           source: { package: source.package as 'standalone', source_type: source.source_type },
-          extract: body.extract as
-            | { enabled: boolean; model?: string; apiKey?: string }
-            | undefined,
           topicPrefix: (body.topicPrefix as string) || undefined,
           sessionDate: (body.sessionDate as string) || undefined,
         });

@@ -80,19 +80,12 @@ function initMamaCore() {
   process.env.MAMA_DB_PATH = BENCH_DB;
 
   const mamaApi = require('@jungjaehoon/mama-core/mama-api');
-  const mamaCore = require('@jungjaehoon/mama-core');
 
-  // Inject Claude CLI as extraction backend (no API key needed)
-  const { parseExtractionResponse } = mamaCore;
-  mamaCore.setExtractionFn(async (prompt: string) => {
-    const result = execSync(
-      `echo ${JSON.stringify(prompt)} | claude --print --model claude-haiku-4-5-20251001 2>/dev/null`,
-      { timeout: 30000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
-    ).trim();
-    return parseExtractionResponse(result);
-  });
+  // No host-side extraction wiring: mama-core removed setExtractionFn and the
+  // ingest-time `extract` option. Conversations ingest as raw source
+  // observations; judgments are written only through appendJudgment-backed save.
 
-  return { ...mamaApi, ingestConversation: mamaCore.ingestConversation };
+  return { ...mamaApi };
 }
 
 async function closeMamaCore() {
@@ -215,33 +208,28 @@ async function main() {
 
     // Ingest haystack sessions
     const ingestStart = Date.now();
-    const useExtraction = process.env.BENCH_EXTRACT === 'true';
+    if (process.env.BENCH_EXTRACT === 'true') {
+      // Fail loudly: the ingest-time extraction mode no longer exists in
+      // mama-core. Do not silently fall back to a different storage mode.
+      throw new Error(
+        'BENCH_EXTRACT=true is no longer supported: mama-core removed ingest-time ' +
+          'extraction (setExtractionFn / extract option). Conversations now ingest as raw ' +
+          'source observations and judgments are written only via save/appendJudgment.'
+      );
+    }
     for (let si = 0; si < q.haystack_sessions.length; si++) {
       const session = q.haystack_sessions[si];
-      if (useExtraction) {
-        const messages = session.map((m) => ({
-          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: m.content,
-        }));
-        await mamaApi.ingestConversation({
-          messages,
-          scopes: [],
-          source: { package: 'standalone', source_type: 'benchmark' },
-          extract: { enabled: true, model: 'claude-haiku-4-5-20251001' },
-        });
-      } else {
-        // Save each session as a decision (same as memorybench provider)
-        const conversationText = session
-          .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-          .join('\n');
-        await mamaApi.save({
-          topic: `session_${si}`,
-          decision: conversationText.slice(0, 8000),
-          reasoning: `Session ${si}`,
-          confidence: 0.5,
-          type: 'user_decision',
-        });
-      }
+      // Save each session as a decision (same as memorybench provider)
+      const conversationText = session
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+        .join('\n');
+      await mamaApi.save({
+        topic: `session_${si}`,
+        decision: conversationText.slice(0, 8000),
+        reasoning: `Session ${si}`,
+        confidence: 0.5,
+        type: 'user_decision',
+      });
     }
     const ingestMs = Date.now() - ingestStart;
 

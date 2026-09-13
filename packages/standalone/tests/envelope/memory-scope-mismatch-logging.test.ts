@@ -69,10 +69,8 @@ function createMAMAApi(): MAMAApiInterface {
       graph_context: { primary: [], expanded: [], edges: [] },
       search_meta: { query: 'test', scope_order: [], retrieval_sources: [] },
     }),
-    ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'ingested_1' }),
   };
   api.saveWithTrustedProvenance = vi.fn((input) => api.save(input));
-  api.ingestWithTrustedProvenance = vi.fn((input) => api.ingestMemory!(input));
   return api;
 }
 
