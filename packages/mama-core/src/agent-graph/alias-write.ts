@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalizeJSON } from '../canonicalize.js';
 import { assertTwinRefsVisible } from '../edges/ref-validation.js';
-import { mapTwinEdgeRow } from '../edges/store.js';
+import { insertTwinEdge, mapTwinEdgeRow } from '../edges/store.js';
 import {
   TWIN_REF_KINDS,
   type TwinEdgeRecord,
@@ -237,39 +237,22 @@ function insertAliasEdge(
     )
     .digest();
 
-  adapter
-    .prepare(
-      `
-        INSERT INTO twin_edges (
-          edge_id, edge_type, subject_kind, subject_id, object_kind, object_id,
-          relation_attrs_json, confidence, source, agent_id, model_run_id, envelope_hash,
-          request_idempotency_key, edge_idempotency_key, content_hash, created_at
-        )
-        VALUES (?, 'alias_of', 'entity', ?, 'entity', ?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      edgeId,
-      input.entity_id,
-      input.entity_id,
-      relationAttrsJson,
-      confidence,
-      input.agent_id,
-      input.model_run_id,
-      input.envelope_hash,
-      input.request_idempotency_key ?? null,
-      edgeIdempotencyKey ?? null,
-      contentHash,
-      Date.now()
-    );
-
-  const row = adapter.prepare('SELECT * FROM twin_edges WHERE edge_id = ?').get(edgeId) as
-    | Record<string, unknown>
-    | undefined;
-  if (!row) {
-    throw new Error(`Entity alias edge was not written: ${edgeId}`);
-  }
-  return mapTwinEdgeRow(row);
+  return insertTwinEdge(adapter, {
+    edge_id: edgeId,
+    edge_type: 'alias_of',
+    subject_ref: { kind: 'entity', id: input.entity_id },
+    object_ref: { kind: 'entity', id: input.entity_id },
+    relation_attrs: relationAttrs,
+    confidence,
+    source: 'agent',
+    agent_id: input.agent_id,
+    model_run_id: input.model_run_id,
+    envelope_hash: input.envelope_hash,
+    request_idempotency_key: input.request_idempotency_key,
+    edge_idempotency_key: edgeIdempotencyKey,
+    content_hash: contentHash,
+    created_at: Date.now(),
+  });
 }
 
 export function attachEntityAliasWithEdge(

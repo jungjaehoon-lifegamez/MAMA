@@ -7,6 +7,7 @@ import {
   type EntityAlias,
   type EntityNode,
   type EntityObservation,
+  type EntityTimelineEvent,
 } from './types.js';
 
 export interface EntityStoreAdapter {
@@ -37,7 +38,6 @@ const OBSERVATION_CONTEXT_KEY_COLUMNS = [
 const tableColumnCache = new WeakMap<EntityStoreAdapter, Map<string, Set<string>>>();
 
 type CreateEntityNodeInput = Omit<EntityNode, 'created_at' | 'updated_at'>;
-type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
 type ObservationContextKeyColumn = (typeof OBSERVATION_CONTEXT_KEY_COLUMNS)[number];
 type UpsertEntityObservationInput = Omit<EntityObservation, 'created_at'> &
   Partial<Record<ObservationContextKeyColumn, string | null>>;
@@ -303,40 +303,39 @@ export function getEntityNode(
   };
 }
 
-export async function attachEntityAlias(input: AttachEntityAliasInput): Promise<EntityAlias> {
-  await initDB();
-  const adapter = getAdapter();
-  const createdAt = now();
-
+/**
+ * The single write boundary for entity_timeline_events. Both former write sites
+ * (the merge audit event in mergeEntityNodes and the judgment-command
+ * timelineEvent projection) resolve their columns into one row shape and call
+ * here, inside the caller's transaction.
+ */
+export function insertEntityTimelineEvent(
+  adapter: EntityStoreAdapter,
+  event: EntityTimelineEvent
+): void {
   adapter
     .prepare(
       `
-        INSERT INTO entity_aliases (
-          id, entity_id, label, normalized_label, lang, script, label_type,
-          source_type, source_ref, confidence, status, created_at
+        INSERT INTO entity_timeline_events (
+          id, entity_id, event_type, role, valid_from, valid_to, observed_at,
+          source_ref, summary, details, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
     .run(
-      input.id,
-      input.entity_id,
-      input.label,
-      input.normalized_label,
-      input.lang,
-      input.script,
-      input.label_type,
-      input.source_type,
-      input.source_ref,
-      input.confidence,
-      input.status,
-      createdAt
+      event.id,
+      event.entity_id,
+      event.event_type,
+      event.role ?? null,
+      event.valid_from,
+      event.valid_to,
+      event.observed_at,
+      event.source_ref,
+      event.summary,
+      event.details,
+      event.created_at
     );
-
-  return {
-    ...input,
-    created_at: createdAt,
-  };
 }
 
 export function listEntityAliases(
@@ -745,24 +744,19 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
     )
     .run(target_id, mergedAt, source_id);
 
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_timeline_events (
-          id, entity_id, event_type, role, observed_at, source_ref, summary, details, created_at
-        )
-        VALUES (?, ?, 'merged', NULL, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      timelineEventId,
-      source_id,
-      mergedAt,
-      candidate_id,
-      `Merged into ${target_id}`,
-      JSON.stringify({ target_entity_id: target_id, reason, actor_id, actor_type }),
-      mergedAt
-    );
+  insertEntityTimelineEvent(adapter, {
+    id: timelineEventId,
+    entity_id: source_id,
+    event_type: 'merged',
+    role: null,
+    valid_from: null,
+    valid_to: null,
+    observed_at: mergedAt,
+    source_ref: candidate_id,
+    summary: `Merged into ${target_id}`,
+    details: JSON.stringify({ target_entity_id: target_id, reason, actor_id, actor_type }),
+    created_at: mergedAt,
+  });
 
   adapter
     .prepare(

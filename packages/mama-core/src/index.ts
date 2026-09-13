@@ -187,6 +187,7 @@ export {
   TWIN_REF_KINDS,
   type InsertTwinEdgeInput,
   type ListVisibleTwinEdgesOptions,
+  type TwinEdgeInsert,
   type TwinEdgeRecord,
   type TwinEdgeSource,
   type TwinEdgeType,
@@ -194,7 +195,12 @@ export {
   type TwinRefKind,
   type TwinScopeRef,
 } from './edges/types.js';
-export { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './edges/store.js';
+export {
+  getTwinEdge,
+  insertTwinEdge,
+  listTwinEdgesForRefs,
+  mapTwinEdgeRow,
+} from './edges/store.js';
 export { listVisibleTwinEdgesForRefs } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
 export * from './provenance/source-ref.js';

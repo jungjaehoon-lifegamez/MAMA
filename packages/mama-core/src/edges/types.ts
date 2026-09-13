@@ -96,6 +96,17 @@ export interface InsertTwinEdgeInput {
   evidence_refs?: unknown;
 }
 
+/**
+ * One fully resolved twin_edges row to write. Callers own edge_id, content_hash,
+ * and created_at because each write path derives them differently (deterministic
+ * command hashes vs fresh UUIDs); the writer owns the INSERT itself.
+ */
+export interface TwinEdgeInsert extends InsertTwinEdgeInput {
+  edge_id: string;
+  content_hash: Buffer;
+  created_at: number;
+}
+
 export interface TwinEdgeRecord {
   edge_id: string;
   edge_type: TwinEdgeType;

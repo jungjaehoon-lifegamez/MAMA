@@ -374,8 +374,16 @@ export async function closeDB(): Promise<void> {
   }
 }
 
-export async function ensureMemoryScope(kind: string, externalId: string): Promise<string> {
-  const adapter = getAdapter();
+/**
+ * The single write boundary for memory_scopes. Callers inside a transaction
+ * pass their adapter through; the public wrapper resolves the global adapter
+ * for the standalone call sites that predate the adapter-taking boundary.
+ */
+export function ensureMemoryScopeInAdapter(
+  adapter: DatabaseAdapter,
+  kind: string,
+  externalId: string
+): string {
   const id = buildMemoryScopeId(kind, externalId);
 
   adapter
@@ -388,6 +396,10 @@ export async function ensureMemoryScope(kind: string, externalId: string): Promi
     .run(id, kind, externalId);
 
   return id;
+}
+
+export async function ensureMemoryScope(kind: string, externalId: string): Promise<string> {
+  return ensureMemoryScopeInAdapter(getAdapter(), kind, externalId);
 }
 
 /**

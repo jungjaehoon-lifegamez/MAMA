@@ -1,8 +1,15 @@
 import crypto from 'node:crypto';
 
-import { getAdapter, initDB, insertPreparedDecision } from '../db-manager.js';
+import {
+  ensureMemoryScopeInAdapter,
+  getAdapter,
+  initDB,
+  insertPreparedDecision,
+} from '../db-manager.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import { canonicalizeJSON } from '../canonicalize.js';
+import { insertTwinEdge } from '../edges/store.js';
+import { insertEntityTimelineEvent } from '../entities/store.js';
 import { insertMemoryEventInTransaction } from '../memory/event-store.js';
 import { writeRecordIdentityInAdapter } from '../registry/record-identity.js';
 import type {
@@ -382,26 +389,19 @@ function applyProjections(
   }
   if (projections.timelineEvent) {
     const event = projections.timelineEvent;
-    adapter
-      .prepare(
-        `INSERT INTO entity_timeline_events
-         (id, entity_id, event_type, role, valid_from, valid_to, observed_at,
-          source_ref, summary, details, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        event.id,
-        event.entityId,
-        event.eventType,
-        event.role ?? null,
-        event.validFrom ?? null,
-        event.validTo ?? null,
-        event.observedAt ?? null,
-        event.sourceRef ?? null,
-        event.summary,
-        event.details ?? null,
-        now
-      );
+    insertEntityTimelineEvent(adapter, {
+      id: event.id,
+      entity_id: event.entityId,
+      event_type: event.eventType,
+      role: event.role ?? null,
+      valid_from: event.validFrom ?? null,
+      valid_to: event.validTo ?? null,
+      observed_at: event.observedAt ?? null,
+      source_ref: event.sourceRef ?? null,
+      summary: event.summary,
+      details: event.details ?? null,
+      created_at: now,
+    });
   }
   if (projections.recordIdentity) {
     writeRecordIdentityInAdapter(adapter, {
@@ -506,26 +506,19 @@ function insertLink(
     .createHash('sha256')
     .update(canonicalizeJSON({ id, recordId, link }))
     .digest();
-  adapter
-    .prepare(
-      `INSERT INTO twin_edges (
-         edge_id, edge_type, subject_kind, subject_id, object_kind, object_id,
-         relation_attrs_json, confidence, source, agent_id, evidence_refs_json,
-         content_hash, created_at
-       ) VALUES (?, ?, 'memory', ?, ?, ?, ?, 1.0, 'agent', ?, ?, ?, ?)`
-    )
-    .run(
-      id,
-      link.relation,
-      recordId,
-      link.target.kind,
-      link.target.id,
-      canonicalizeJSON(attrs),
-      access.agentId,
-      command.replaces?.length ? canonicalizeJSON(command.replaces) : null,
-      contentHash,
-      now
-    );
+  insertTwinEdge(adapter, {
+    edge_id: id,
+    edge_type: link.relation,
+    subject_ref: { kind: 'memory', id: recordId },
+    object_ref: link.target,
+    relation_attrs: attrs,
+    confidence: 1.0,
+    source: 'agent',
+    agent_id: access.agentId,
+    evidence_refs: command.replaces?.length ? command.replaces : undefined,
+    content_hash: contentHash,
+    created_at: now,
+  });
   return id;
 }
 
@@ -658,9 +651,7 @@ async function appendJudgmentOnAdapter(
       );
     for (const [index, scopeId] of boundScopeIdList.entries()) {
       const scope = effectiveScopes[index]!;
-      adapter
-        .prepare('INSERT OR IGNORE INTO memory_scopes (id, kind, external_id) VALUES (?, ?, ?)')
-        .run(scopeId, scope.kind, scope.id);
+      ensureMemoryScopeInAdapter(adapter, scope.kind, scope.id);
       adapter
         .prepare(
           'INSERT INTO memory_scope_bindings (memory_id, scope_id, is_primary) VALUES (?, ?, ?)'

@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  attachEntityAlias,
   createEntityNode,
   getEntityNode,
   listEntityAliases,
@@ -8,6 +7,7 @@ import {
   upsertEntityObservation,
   upsertEntityObservations,
 } from '../../src/entities/store.js';
+import { attachEntityAliasWithEdge } from '../../src/agent-graph/index.js';
 import { getAdapter } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 
@@ -136,18 +136,19 @@ describe('Story E1.3: Canonical entity persistence', () => {
     });
 
     it('should attach aliases and list them for the entity', async () => {
-      await attachEntityAlias({
-        id: 'alias_project_alpha_ko',
+      attachEntityAliasWithEdge(getAdapter(), {
         entity_id: 'entity_project_alpha',
         label: 'プロジェクトアルファ',
-        normalized_label: 'project-alpha-ja',
+        label_type: 'alt',
         lang: 'ja',
         script: 'Jpan',
-        label_type: 'alt',
+        confidence: 0.9,
         source_type: 'slack',
         source_ref: 'slack:C123:1710000000.000100',
-        confidence: 0.9,
-        status: 'active',
+        agent_id: 'fixture-agent',
+        model_run_id: 'fixture-run',
+        envelope_hash: 'fixture-envelope',
+        source_refs: [{ kind: 'entity', id: 'entity_project_alpha' }],
       });
 
       expect(listEntityAliases('entity_project_alpha')).toEqual(
