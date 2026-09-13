@@ -295,7 +295,8 @@ async function appendJudgmentOnAdapter(
   }
   validateBounds(command);
   const allowedScopeIds = scopeIds(access, command);
-  const hash = commandHash(command);
+  const effectiveCommand = command.scopes ? command : { ...command, scopes: [...access.scopes] };
+  const hash = commandHash(effectiveCommand);
   const replay = assertReplay(adapter, command, access, hash);
   if (replay) {
     validateLinks(adapter, command.links ?? [], allowedScopeIds);

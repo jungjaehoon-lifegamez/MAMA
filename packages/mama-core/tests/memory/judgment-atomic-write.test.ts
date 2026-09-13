@@ -110,6 +110,23 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 1 });
   });
 
+  it('AC #3 binds an implicit access scope into the command replay identity', async () => {
+    const command = {
+      commandId: 'cmd-scope-bound',
+      topic: 'synthetic-topic',
+      summary: 'scope-bound payload',
+      recordKind: 'judgment' as const,
+    };
+    await appendJudgment(command, access);
+    await expect(
+      appendJudgment(command, {
+        ...access,
+        scopes: [{ kind: 'project', id: 'other-scope' }],
+      })
+    ).rejects.toMatchObject({ code: 'COMMAND_CONFLICT' });
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 1 });
+  });
+
   it('AC #3 refuses an embedder failure before opening the judgment transaction', async () => {
     await expect(
       appendJudgment(
