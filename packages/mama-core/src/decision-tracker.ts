@@ -17,7 +17,7 @@
 import { info } from './debug-logger.js';
 import { initDB, getAdapter } from './memory-store.js';
 import type { DatabaseAdapter, DecisionInput, DecisionRecord } from './db-manager.js';
-import { appendJudgment } from './knowledge/index.js';
+import { appendJudgment, upsertDecisionEdge } from './knowledge/index.js';
 import { commandEmbedder, unsignedWriteAccess } from './memory/write-adapters.js';
 import type { JudgmentCommand } from './memory/judgment-types.js';
 
@@ -178,12 +178,17 @@ export async function createEdge(
 
     // Story 2.1: LLM auto-detected edges are approved by default (approved_by_user=1)
     // This allows them to appear in search results via querySemanticEdges
-    const stmt = adapter.prepare(`
-      INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, created_at, created_by, approved_by_user)
-      VALUES (?, ?, ?, ?, ?, 'llm', 1)
-    `);
-
-    stmt.run(fromId, toId, relationship, reason, Date.now());
+    upsertDecisionEdge(adapter, {
+      fromId,
+      toId,
+      relationship,
+      reason,
+      createdBy: 'llm',
+      approvedByUser: 1,
+      decisionId: null,
+      evidence: null,
+      createdAt: Date.now(),
+    });
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -214,32 +219,6 @@ export async function createSupersedesEdge(
   reason: string
 ): Promise<boolean> {
   return createEdge(fromId, toId, 'supersedes', reason);
-}
-
-/**
- * Update previous decision's superseded_by field
- *
- * Task 3.5: Update previous decision's superseded_by field
- * AC #2: Previous decision's superseded_by field updated
- *
- * @param previousId - Previous decision ID
- * @param newId - New decision ID
- */
-export async function markSuperseded(previousId: string, newId: string): Promise<void> {
-  const adapter = getAdapter() as unknown as DatabaseAdapter;
-
-  try {
-    const stmt = adapter.prepare(`
-      UPDATE decisions
-      SET superseded_by = ?, updated_at = ?
-      WHERE id = ?
-    `);
-
-    stmt.run(newId, Date.now(), previousId);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to mark decision as superseded: ${message}`);
-  }
 }
 
 /**

@@ -30,6 +30,17 @@ export type {
 export { JudgmentError, appendJudgment } from './judgments.js';
 export { ingestSource } from './source-ingest.js';
 export type { SourceIngestCommand, SourceIngestReceipt } from './source-ingest.js';
+export {
+  upsertDecisionEdge,
+  proposeDecisionEdge,
+  approveDecisionEdge,
+  rejectDecisionEdge,
+  deprecateAutoDecisionEdges,
+  deleteDecisionEdgesWithAudit,
+  type DecisionEdgeKey,
+  type DecisionEdgeRow,
+  type DecisionEdgeDeleteFailure,
+} from './decision-edges.js';
 
 export interface KnowledgeOptions extends JudgmentKnowledgeOptions {
   adapter: DatabaseAdapter;

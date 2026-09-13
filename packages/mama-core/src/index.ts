@@ -259,7 +259,6 @@ export {
   getPreviousDecision,
   createEdge,
   createSupersedesEdge,
-  markSuperseded,
   calculateCombinedConfidence,
   detectRefinement,
   parseReasoningForRelationships,

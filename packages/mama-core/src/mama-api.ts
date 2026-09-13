@@ -92,6 +92,14 @@ import {
   type SearchHitDiagnostics,
   type SearchQualityOptions,
 } from './search/search-quality.js';
+import {
+  upsertDecisionEdge,
+  proposeDecisionEdge,
+  approveDecisionEdge,
+  rejectDecisionEdge,
+  deprecateAutoDecisionEdges,
+  deleteDecisionEdgesWithAudit,
+} from './knowledge/index.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -2493,30 +2501,14 @@ async function proposeLink({
   try {
     const adapter = getAdapter();
 
-    // Use transaction to ensure atomicity (link + audit log)
-    adapter.transaction(() => {
-      // Insert link with pending approval
-      const stmt = adapter.prepare(`
-        INSERT INTO decision_edges
-          (from_id, to_id, relationship, reason, created_by, approved_by_user, decision_id, evidence, created_at)
-        VALUES (?, ?, ?, ?, 'llm', 0, ?, ?, ?)
-      `);
-      stmt.run(
-        from_id,
-        to_id,
-        relationship,
-        reason,
-        decision_id || null,
-        evidence || null,
-        Date.now()
-      );
-
-      // Log to audit trail
-      const auditStmt = adapter.prepare(`
-        INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
-        VALUES (?, ?, ?, 'proposed', 'llm', ?, ?)
-      `);
-      auditStmt.run(from_id, to_id, relationship, reason, Date.now());
+    // Link insert and audit log commit in one transaction inside the boundary
+    proposeDecisionEdge(adapter, {
+      fromId: from_id,
+      toId: to_id,
+      relationship,
+      reason,
+      decisionId: decision_id || null,
+      evidence: evidence || null,
     });
 
     return;
@@ -2545,20 +2537,8 @@ async function approveLink(from_id: string, to_id: string, relationship: string)
   try {
     const adapter = getAdapter();
 
-    // Update link to approved with timestamp
-    const stmt = adapter.prepare(`
-      UPDATE decision_edges
-      SET approved_by_user = 1, approved_at = ?
-      WHERE from_id = ? AND to_id = ? AND relationship = ?
-    `);
-    stmt.run(Date.now(), from_id, to_id, relationship);
-
-    // Log approval
-    const auditStmt = adapter.prepare(`
-      INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, created_at)
-      VALUES (?, ?, ?, 'approved', 'user', ?)
-    `);
-    auditStmt.run(from_id, to_id, relationship, Date.now());
+    // Approval update and audit log commit in one transaction inside the boundary
+    approveDecisionEdge(adapter, { fromId: from_id, toId: to_id, relationship });
 
     return;
   } catch (error: unknown) {
@@ -2592,19 +2572,12 @@ async function rejectLink(
   try {
     const adapter = getAdapter();
 
-    // Log rejection before deletion
-    const auditStmt = adapter.prepare(`
-      INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
-      VALUES (?, ?, ?, 'rejected', 'user', ?, ?)
-    `);
-    auditStmt.run(from_id, to_id, relationship, reason || 'User rejected', Date.now());
-
-    // Delete the link
-    const stmt = adapter.prepare(`
-      DELETE FROM decision_edges
-      WHERE from_id = ? AND to_id = ? AND relationship = ?
-    `);
-    stmt.run(from_id, to_id, relationship);
+    // Rejection audit row and link delete commit in one transaction inside the boundary
+    rejectDecisionEdge(
+      adapter,
+      { fromId: from_id, toId: to_id, relationship },
+      reason || 'User rejected'
+    );
 
     return;
   } catch (error: unknown) {
@@ -2722,29 +2695,17 @@ async function deprecateAutoLinks(
     const autoLinkRatio = totalLinks > 0 ? (autoLinks.length / totalLinks) * 100 : 0;
 
     if (!dryRun && autoLinks.length > 0) {
-      // Delete auto-generated links
-      const deleteStmt = adapter.prepare(`
-        DELETE FROM decision_edges
-        WHERE created_by = 'user' AND decision_id IS NULL
-      `);
-      await deleteStmt.run();
-
-      // Log deprecation to audit trail
-      const timestamp = Date.now();
-      const auditStmt = adapter.prepare(`
-        INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
-        VALUES (?, ?, ?, 'deprecated', 'system', ?, ?)
-      `);
-
-      for (const link of autoLinks) {
-        await auditStmt.run(
-          link.from_id,
-          link.to_id,
-          link.relationship,
-          'v0 auto-generated link removed during governance migration',
-          timestamp
-        );
-      }
+      // Delete auto-generated links and log each deprecation to the audit
+      // trail in one transaction inside the boundary
+      deprecateAutoDecisionEdges(
+        adapter,
+        autoLinks.map((link) => ({
+          fromId: link.from_id,
+          toId: link.to_id,
+          relationship: link.relationship,
+        })),
+        'v0 auto-generated link removed during governance migration'
+      );
     }
 
     return {
@@ -3031,25 +2992,19 @@ function restoreLinkBackup(backupFile: string): RestoreLinkBackupResult {
   let restored = 0;
   let failed = 0;
 
-  const insertStmt = adapter.prepare(`
-    INSERT OR REPLACE INTO decision_edges
-    (from_id, to_id, relationship, reason, created_by, approved_by_user, decision_id, evidence, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
   for (const link of backupData.links) {
     try {
-      insertStmt.run(
-        link.from_id,
-        link.to_id,
-        link.relationship,
-        link.reason,
-        link.created_by,
-        link.approved_by_user,
-        link.decision_id,
-        link.evidence,
-        link.created_at
-      );
+      upsertDecisionEdge(adapter, {
+        fromId: link.from_id,
+        toId: link.to_id,
+        relationship: link.relationship,
+        reason: link.reason,
+        createdBy: link.created_by,
+        approvedByUser: link.approved_by_user,
+        decisionId: link.decision_id,
+        evidence: link.evidence,
+        createdAt: link.created_at,
+      });
       restored++;
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -3190,48 +3145,24 @@ function deleteAutoLinks(batchSize: number = 100, dryRun: boolean = true): Delet
   let batchesProcessed = 0;
   const errors = [];
 
-  const deleteStmt = adapter.prepare(`
-    DELETE FROM decision_edges
-    WHERE from_id = ? AND to_id = ? AND relationship = ?
-  `);
-
-  const auditStmt = adapter.prepare(`
-    INSERT INTO link_audit_log (from_id, to_id, relationship, action, actor, reason, created_at)
-    VALUES (?, ?, ?, 'deprecated', 'system', ?, ?)
-  `);
-
-  // Process in batches
+  // Process in batches; each batch deletes links and writes their audit rows
+  // in one transaction inside the boundary
   for (let i = 0; i < deletionTargets.length; i += batchSize) {
     const batch = deletionTargets.slice(i, i + batchSize);
 
     try {
-      const processBatch = () => {
-        for (const link of batch) {
-          try {
-            deleteStmt.run(link.from_id, link.to_id, link.relationship);
-            auditStmt.run(
-              link.from_id,
-              link.to_id,
-              link.relationship,
-              'Auto-link cleanup - v1.1 migration',
-              Date.now()
-            );
-            deleted++;
-          } catch (error: unknown) {
-            failed++;
-            errors.push({
-              link: `${link.from_id}->${link.to_id}`,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-      };
-      // Use transaction if available, otherwise run directly
-      if (adapter.transaction) {
-        adapter.transaction(processBatch);
-      } else {
-        processBatch();
-      }
+      const result = deleteDecisionEdgesWithAudit(
+        adapter,
+        batch.map((link) => ({
+          fromId: link.from_id,
+          toId: link.to_id,
+          relationship: link.relationship,
+        })),
+        'Auto-link cleanup - v1.1 migration'
+      );
+      deleted += result.deleted;
+      failed += result.failures.length;
+      errors.push(...result.failures);
       batchesProcessed++;
     } catch (error: unknown) {
       logError(`Batch deletion failed at index ${i}:`, error);
