@@ -566,10 +566,13 @@ export class RawStore {
               projectionSnapshot(persistedItem, observedAt),
               observedAt
             );
-            existingPending = findPending.get(refreshed.source_id, payloadHash) as {
-              sequence: number;
-              payload_json: string;
-            };
+            const insertedPending = findPending.get(refreshed.source_id, payloadHash) as
+              | { sequence: number; payload_json: string }
+              | undefined;
+            if (!insertedPending) {
+              throw new Error('Pending raw projection is missing after enqueue');
+            }
+            existingPending = insertedPending;
           }
           saved.push(
             existingPending
@@ -664,10 +667,13 @@ export class RawStore {
             projectionSnapshot(persistedItem, observedAt),
             observedAt
           );
-          existingPending = findPending.get(sourceId, payloadHash) as {
-            sequence: number;
-            payload_json: string;
-          };
+          const insertedPending = findPending.get(sourceId, payloadHash) as
+            | { sequence: number; payload_json: string }
+            | undefined;
+          if (!insertedPending) {
+            throw new Error('Pending raw projection is missing after enqueue');
+          }
+          existingPending = insertedPending;
         }
         saved.push(
           existingPending

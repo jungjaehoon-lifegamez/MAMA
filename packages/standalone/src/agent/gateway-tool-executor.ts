@@ -3502,7 +3502,7 @@ export class GatewayToolExecutor {
             return {
               success: false,
               code: 'registry_principal_denied',
-              error: 'Registry correction principal is unavailable.',
+              error: 'Registry correction principal does not match signed authority.',
             };
           }
           return (await handleRegistryCorrect(
