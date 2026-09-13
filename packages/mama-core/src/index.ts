@@ -114,6 +114,14 @@ export {
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
+export {
+  createKnowledge,
+  appendJudgment,
+  JudgmentError,
+  type Knowledge,
+  type KnowledgeOptions,
+  type JudgmentAccess,
+} from './knowledge/index.js';
 export { queryRelevantTruth } from './memory/truth-store.js';
 export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
 export {

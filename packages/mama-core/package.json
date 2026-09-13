@@ -51,7 +51,8 @@
     "./registry/store": "./dist/registry/store.js",
     "./registry/record-identity": "./dist/registry/record-identity.js",
     "./registry/corrections": "./dist/registry/corrections.js",
-    "./operations/owner-action-effects": "./dist/operations/owner-action-effects.js"
+    "./operations/owner-action-effects": "./dist/operations/owner-action-effects.js",
+    "./knowledge": "./dist/knowledge/index.js"
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc",

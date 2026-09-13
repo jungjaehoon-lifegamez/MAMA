@@ -777,3 +777,16 @@
   파일·전달 흐름은 아직 완료되지 않았다.
 - 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: PR3B source 후보 구현.
   **최상위 목표 미완료.** 다음 PR은 같은 현재 원장을 지식·업무 writer와 연결한다.
+
+## 2026-09-13 — PR3B CodeRabbit closure와 병합
+
+- 결과: PR #301의 100파일 diff에 대해 immutable observation/correction 경계, pending projection
+  drain·enqueue invariant, owner-event quarantine, Slack principal startup, replay 오류 분류를
+  명시적으로 닫고, 불필요한 null-ref fallback·unused context merge·bulk docstring 확장은 적용하지 않았다.
+- 근거: CodeRabbit 19개 스레드에 각각 수정 근거 또는 타당한 반론을 답변하고 모두 resolve했다. 코어
+  38개와 standalone 233개 집중 테스트, pre-commit 전체 workspace 검증, GitHub PR CI 7개가 통과했다.
+  관리자 계정 squash merge 후 main CI와 Pages도 통과했다.
+- 판정: INTENT v6의 원문·관측 시각·교정·재시작 가능한 Case 경로에 **부분 부합**한다. 설치된
+  서비스, 실제 모델 판단, 실제 Telegram 전달, 장기 raw 평가와 실제 파일 업무는 아직 검증하지 않았다.
+- 다음 단계: PR4에서 현재 원장의 지식 저장·조회와 업무 약속 writer 전환 후보를 main 기준으로
+  failure-first 인벤토리하고, 100파일 이하의 실제 소비자 범위를 확정한다.
