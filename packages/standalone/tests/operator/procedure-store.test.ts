@@ -9,6 +9,8 @@ import {
   procedureScopeKey,
   type ProcedureSaveInput,
 } from '../../src/operator/procedure-store.js';
+import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
+import type { CreateTriggerInput, TriggerRecord } from '../../src/operator/trigger-types.js';
 
 const access = { ownerScope: 'owner:a', projectId: 'project:a', channelId: 'telegram:a' };
 function input(patch: Partial<ProcedureSaveInput> = {}): ProcedureSaveInput {
@@ -31,6 +33,23 @@ function input(patch: Partial<ProcedureSaveInput> = {}): ProcedureSaveInput {
     supersededMemoryIds: ['memory:old'],
     ...patch,
   };
+}
+function seedTrigger(
+  registry: TriggerRegistry,
+  id: string,
+  patch: Partial<CreateTriggerInput> = {}
+): TriggerRecord {
+  return registry.create({
+    id,
+    kind: 'recurring_report_request',
+    memoryQuery: 'report cadence',
+    match: { keywords: ['report'], keywordMode: 'any', minConfidence: 0.7 },
+    procedure: [{ action: 'recall_and_surface', description: 'surface the report memory' }],
+    requiredEvidence: ['current_message'],
+    authoredBy: 'agent',
+    provenance: { createdFrom: 'test', note: '' },
+    ...patch,
+  });
 }
 describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
   let db: Database;
@@ -189,27 +208,14 @@ describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
     ).toBe(2);
   });
   it('updates only active linked trigger references atomically without changing snapshots or stats', () => {
-    db.exec(
-      'CREATE TABLE operator_triggers (id TEXT, status TEXT, revision INTEGER, procedure_ref_json TEXT, fired INTEGER, procedure_json TEXT)'
-    );
+    const registry = new TriggerRegistry(db);
     store.save(input(), access);
-    const ref = JSON.stringify({ id: 'report', revision: 1, scopeKey: procedureScopeKey(access) });
-    db.prepare('INSERT INTO operator_triggers VALUES (?, ?, ?, ?, ?, ?)').run(
-      'active',
-      'active',
-      4,
-      ref,
-      8,
-      'original snapshot'
-    );
-    db.prepare('INSERT INTO operator_triggers VALUES (?, ?, ?, ?, ?, ?)').run(
-      'disabled',
-      'disabled',
-      7,
-      ref,
-      12,
-      'disabled snapshot'
-    );
+    const procedureRef = { id: 'report', revision: 1, scopeKey: procedureScopeKey(access) };
+    const active = seedTrigger(registry, 'active', { procedureRef });
+    seedTrigger(registry, 'disabled', { procedureRef });
+    registry.disable('disabled', 'owner stop');
+    db.prepare('UPDATE operator_triggers SET fired = 8 WHERE id = ?').run('active');
+    db.prepare('UPDATE operator_triggers SET fired = 12 WHERE id = ?').run('disabled');
     store.save(input({ expectedRevision: 1, correctionId: 'linked:2' }), access);
     const rows = db.prepare('SELECT * FROM operator_triggers ORDER BY id').all() as Array<{
       revision: number;
@@ -217,13 +223,17 @@ describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
       fired: number;
       procedure_json: string;
     }>;
-    expect(rows[0]).toMatchObject({ revision: 5, fired: 8, procedure_json: 'original snapshot' });
+    expect(rows[0]).toMatchObject({
+      revision: 2,
+      fired: 8,
+      procedure_json: JSON.stringify(active.procedure),
+    });
     expect(JSON.parse(rows[0].procedure_ref_json)).toEqual({
       id: 'report',
       revision: 2,
       scopeKey: procedureScopeKey(access),
     });
-    expect(rows[1]).toMatchObject({ revision: 7, fired: 12 });
+    expect(rows[1]).toMatchObject({ revision: 2, fired: 12 });
     db.exec(
       "CREATE TRIGGER reject_trigger_update BEFORE UPDATE ON operator_triggers BEGIN SELECT RAISE(ABORT, 'trigger failure'); END"
     );
@@ -277,15 +287,8 @@ describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
     expect(store.read('report', member)?.body).toBe('private:2');
   });
   it('atomically binds a legacy snapshot per channel and refuses disabled trigger admission', () => {
-    db.exec(
-      'CREATE TABLE operator_triggers (id TEXT PRIMARY KEY, status TEXT, revision INTEGER, procedure_ref_json TEXT)'
-    );
-    db.prepare('INSERT INTO operator_triggers VALUES (?, ?, ?, ?)').run(
-      'legacy',
-      'active',
-      1,
-      null
-    );
+    const registry = new TriggerRegistry(db);
+    seedTrigger(registry, 'legacy');
     const imported = store.importLegacyTrigger(input({ id: 'legacy:a' }), access, {
       triggerId: 'legacy',
       snapshotHash: 'original-hash',
@@ -339,22 +342,15 @@ describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
     );
     expect(store.getLegacyTriggerBinding('legacy', access)?.revision).toBe(1);
 
-    db.prepare("UPDATE operator_triggers SET status = 'disabled' WHERE id = ?").run('legacy');
+    registry.disable('legacy', 'owner stop');
     expect(() => store.getLegacyTriggerBinding('legacy', access)).toThrow(/active/);
     expect(() =>
       store.importLegacyTrigger(input(), access, { triggerId: 'legacy', snapshotHash: 'snapshot' })
     ).toThrow(/disabled|active/);
   });
   it('rolls back legacy import when the trigger semantic revision cannot advance', () => {
-    db.exec(
-      'CREATE TABLE operator_triggers (id TEXT PRIMARY KEY, status TEXT, revision INTEGER, procedure_ref_json TEXT)'
-    );
-    db.prepare('INSERT INTO operator_triggers VALUES (?, ?, ?, ?)').run(
-      'legacy',
-      'active',
-      1,
-      null
-    );
+    const registry = new TriggerRegistry(db);
+    seedTrigger(registry, 'legacy');
     db.exec(
       "CREATE TRIGGER reject_legacy_revision BEFORE UPDATE ON operator_triggers BEGIN SELECT RAISE(ABORT, 'legacy update failed'); END"
     );
