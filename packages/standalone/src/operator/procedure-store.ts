@@ -379,7 +379,16 @@ export class ProcedureStore {
         snapshotHash: binding.snapshotHash,
       });
       if (trigger) {
-        this.triggers.bumpActiveRevision(binding.triggerId, trigger.revision);
+        // save() bumps every trigger bound to this scope key and procedure, and
+        // scope keys ignore channel_id - the trigger may already have advanced.
+        // The immediate transaction sees only its own writes, so re-read.
+        const current = this.db
+          .prepare('SELECT revision FROM operator_triggers WHERE id = ?')
+          .get(binding.triggerId) as { revision: number } | undefined;
+        if (!current) {
+          throw new Error('legacy trigger not active');
+        }
+        this.triggers.bumpActiveRevision(binding.triggerId, current.revision);
       }
       return record;
     });

@@ -1002,6 +1002,46 @@ describe('Story PR3B: migrations 072-074 structural recovery', () => {
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     db.close();
   });
+
+  it('rebuilds twin_edges for 079 while preserving a generated column', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-079-generated-'));
+    const dbPath = join(tempDir, 'edge-generated.db');
+    const setup = new Database(dbPath);
+    setup.pragma('foreign_keys = ON');
+    applyThrough(setup, 78);
+    setup.exec(`
+      INSERT INTO twin_edges
+        (edge_id,edge_type,subject_kind,subject_id,object_kind,object_id,confidence,source,content_hash,created_at)
+        VALUES ('edge-kept','mentions','memory','memory-1','raw','raw-1',1,'code',zeroblob(32),1);
+      ALTER TABLE twin_edges
+        ADD COLUMN edge_label TEXT GENERATED ALWAYS AS (subject_kind || ':' || object_kind) VIRTUAL;
+    `);
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    adapter.disconnect();
+
+    const db = new Database(dbPath);
+    expect(db.prepare("SELECT edge_label FROM twin_edges WHERE edge_id='edge-kept'").get()).toEqual(
+      { edge_label: 'memory:raw' }
+    );
+    db.prepare(
+      `INSERT INTO twin_edges
+        (edge_id,edge_type,subject_kind,subject_id,object_kind,object_id,confidence,source,content_hash,created_at)
+       VALUES ('edge-refined','refines','memory','memory-2','memory','memory-1',1,'code',zeroblob(32),2)`
+    ).run();
+    expect(
+      db.prepare("SELECT edge_label FROM twin_edges WHERE edge_id='edge-refined'").get()
+    ).toEqual({ edge_label: 'memory:memory' });
+    const stamped = db.prepare('SELECT version FROM schema_version WHERE version = 79').get() as
+      | { version: number }
+      | undefined;
+    expect(stamped?.version).toBe(79);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+  });
 });
 
 describe('Story PR3A: adapter cache rollback', () => {

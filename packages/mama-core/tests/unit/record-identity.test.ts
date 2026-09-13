@@ -38,6 +38,7 @@ describe('record identity', () => {
     adapter.prepare('DELETE FROM commitment_assignments').run();
     adapter.prepare('DELETE FROM commitments').run();
     adapter.prepare('DELETE FROM judgment_commands').run();
+    adapter.prepare('DELETE FROM source_commands').run();
     adapter.prepare('DELETE FROM command_bindings').run();
     adapter.prepare('DELETE FROM twin_edges').run();
     adapter.prepare('DELETE FROM memory_scope_bindings').run();

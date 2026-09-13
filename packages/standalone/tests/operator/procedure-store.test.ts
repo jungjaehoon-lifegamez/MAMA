@@ -348,6 +348,36 @@ describe('TG-03/TG-05/TG-06 canonical procedure revisions', () => {
       store.importLegacyTrigger(input(), access, { triggerId: 'legacy', snapshotHash: 'snapshot' })
     ).toThrow(/disabled|active/);
   });
+  it('imports the same legacy trigger for a second channel bound to a shared procedure', () => {
+    const registry = new TriggerRegistry(db);
+    seedTrigger(registry, 'legacy');
+    const sharedScope = { ownerScope: access.ownerScope, projectId: access.projectId };
+    store.importLegacyTrigger(input({ id: 'shared', scope: sharedScope }), access, {
+      triggerId: 'legacy',
+      snapshotHash: 'snapshot:a',
+    });
+    const other = { ...access, channelId: 'telegram:b' };
+    const imported = store.importLegacyTrigger(
+      input({
+        id: 'shared',
+        expectedRevision: 1,
+        correctionId: 'legacy:shared:b',
+        scope: sharedScope,
+      }),
+      other,
+      { triggerId: 'legacy', snapshotHash: 'snapshot:b' }
+    );
+    expect(imported.revision).toBe(2);
+    expect(store.getLegacyTriggerBinding('legacy', other)).toMatchObject({
+      id: 'shared',
+      revision: 2,
+      snapshotHash: 'snapshot:b',
+    });
+    // One bump for the moved canonical revision, one for this import.
+    expect(db.prepare('SELECT revision FROM operator_triggers WHERE id = ?').get('legacy')).toEqual(
+      { revision: 4 }
+    );
+  });
   it('rolls back legacy import when the trigger semantic revision cannot advance', () => {
     const registry = new TriggerRegistry(db);
     seedTrigger(registry, 'legacy');

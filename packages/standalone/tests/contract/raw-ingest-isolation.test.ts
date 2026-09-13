@@ -137,9 +137,16 @@ function findCallExpressions(source: string, calleeName: string): number[] {
   const lines: number[] = [];
 
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      if (node.expression.text === calleeName) {
-        const { line } = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart());
+    if (ts.isCallExpression(node)) {
+      // A member-form callee like `memory.ingestSource(...)` must match by its
+      // trailing property name or a reintroduced polling write slips through.
+      const callee = ts.isIdentifier(node.expression)
+        ? node.expression
+        : ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name
+          : null;
+      if (callee !== null && callee.text === calleeName) {
+        const { line } = sourceFile.getLineAndCharacterOfPosition(callee.getStart());
         lines.push(line + 1);
       }
     }

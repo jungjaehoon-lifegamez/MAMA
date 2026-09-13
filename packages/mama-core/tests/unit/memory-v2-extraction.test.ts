@@ -134,21 +134,33 @@ describe('ingestConversation (source.ingest boundary)', () => {
 
   it('stores ingestMemory payloads as one observation with no judgment', async () => {
     const { getAdapter } = await import('../../src/db-manager.js');
+    const adapter = getAdapter();
+    const before = {
+      observations: (
+        adapter.prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as { n: number }
+      ).n,
+      decisions: (adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number }).n,
+    };
     const result = await ingestMemory({
       content: 'Raw ingested evidence body.',
       scopes: [{ kind: 'project', id: 'test:ingest-memory' }],
       source: { package: 'mama-core', source_type: 'test' },
     });
     expect(result.success).toBe(true);
-    const adapter = getAdapter();
     const observation = adapter
       .prepare('SELECT * FROM observation_versions WHERE observation_id = ?')
       .get(result.id) as { body: string } | undefined;
     expect(observation?.body).toBe('Raw ingested evidence body.');
-    const decisions = adapter
-      .prepare('SELECT COUNT(*) AS n FROM decisions WHERE id = ?')
-      .get(result.id) as { n: number };
-    expect(decisions.n).toBe(0);
+    // result.id is an observation id, so matching it against decisions.id can
+    // never fail. Compare whole-table counts instead.
+    const after = {
+      observations: (
+        adapter.prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as { n: number }
+      ).n,
+      decisions: (adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number }).n,
+    };
+    expect(after.observations).toBe(before.observations + 1);
+    expect(after.decisions).toBe(before.decisions);
   });
 
   it('should throw when messages array is empty', async () => {

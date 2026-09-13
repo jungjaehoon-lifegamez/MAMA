@@ -2957,7 +2957,19 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         this.exec(
           `CREATE TABLE twin_edges_079_new (\n  ${[...columns, ...constraints].join(',\n  ')}\n)`
         );
-        const names = existingColumns.map(quoteSqlIdentifier).join(', ');
+        // Generated columns (table_xinfo hidden: 2 = VIRTUAL, 3 = STORED) refuse
+        // direct writes; the rebuilt table recomputes them from its own clause.
+        const generatedColumns = new Set(
+          (
+            this.prepare('SELECT name FROM pragma_table_xinfo(?) WHERE hidden IN (2, 3)').all(
+              'twin_edges'
+            ) as Array<{ name: string }>
+          ).map((row) => row.name)
+        );
+        const names = existingColumns
+          .filter((name) => !generatedColumns.has(name))
+          .map(quoteSqlIdentifier)
+          .join(', ');
         this.exec(`INSERT INTO twin_edges_079_new (${names}) SELECT ${names} FROM twin_edges`);
         this.exec('DROP TABLE twin_edges');
         this.exec('ALTER TABLE twin_edges_079_new RENAME TO twin_edges');
