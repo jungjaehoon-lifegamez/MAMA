@@ -14,7 +14,7 @@ import { TrelloConnector } from '../../src/connectors/trello/index.js';
 import { ConnectorRegistry } from '../../src/connectors/framework/connector-registry.js';
 import { PollingScheduler } from '../../src/connectors/framework/polling-scheduler.js';
 
-describe('real Trello poll to immutable observation replay', () => {
+describe('Story TG-03/TG-04/TG-05/TG-06: real Trello observation replay', () => {
   let corePath = '';
   beforeAll(async () => {
     corePath = await initTestDB('trello-observation-replay');
@@ -25,7 +25,7 @@ describe('real Trello poll to immutable observation replay', () => {
   });
   afterAll(async () => cleanupTestDB(corePath));
 
-  it('commits provider state only after durable raw and core projection handoff', async () => {
+  it('AC #1 commits provider state only after durable raw and core projection handoff', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mama-trello-observation-'));
     const statePath = join(dir, 'state', 'trello-state.json');
     const rawStore = new RawStore(join(dir, 'raw'));
@@ -139,7 +139,7 @@ describe('real Trello poll to immutable observation replay', () => {
     }
   });
 
-  it('retries a failed provider checkpoint in-process and extracts the durable item once', async () => {
+  it('AC #2 retries a failed provider checkpoint and extracts the durable item once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mama-trello-checkpoint-retry-'));
     const blocker = join(dir, 'state-parent');
     const statePath = join(blocker, 'trello-state.json');

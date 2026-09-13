@@ -1866,7 +1866,7 @@ export class GatewayToolExecutor {
     baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const channelGrantSnapshot = baseCtx.envelope
-      ? MIRROR_READABLE_TOOLS.has(toolName)
+      ? MIRROR_READABLE_TOOLS.has(toolName) || toolName === 'registry_correct'
         ? baseCtx.memberScopeRequired
           ? baseCtx.channelGrantSnapshot
           : (baseCtx.channelGrantSnapshot ?? snapshotChannelGrant(this.channelGrantProvider))
@@ -2879,7 +2879,9 @@ export class GatewayToolExecutor {
     if (
       activeState.memberScopeRequired === true &&
       activeState.channelGrantSnapshot === undefined &&
-      (MIRROR_READABLE_TOOLS.has(toolName) || toolName === 'code_act')
+      (MIRROR_READABLE_TOOLS.has(toolName) ||
+        toolName === 'code_act' ||
+        toolName === 'registry_correct')
     ) {
       return {
         success: false,

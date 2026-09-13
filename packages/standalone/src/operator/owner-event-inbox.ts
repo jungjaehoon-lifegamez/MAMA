@@ -69,6 +69,18 @@ export interface InboxRow extends InboxBatch {
 
 export type OwnerEventBatch = InboxRow;
 
+export class OwnerEventInboxCorruptionError extends Error {
+  readonly code = 'OWNER_EVENT_INBOX_CORRUPT';
+
+  constructor(
+    readonly rowId: number,
+    cause: unknown
+  ) {
+    super(`Owner event inbox row ${rowId} is corrupt`, { cause });
+    this.name = 'OwnerEventInboxCorruptionError';
+  }
+}
+
 export interface OwnerEventPriorContextItem {
   observedAt: string;
   completedAt: string;
@@ -438,7 +450,7 @@ export class OwnerEventInbox {
   }
 
   claimNext(): InboxRow | null {
-    const row = this.stmtClaimSelect.get(this.now()) as
+    let row = this.stmtClaimSelect.get(this.now()) as
       | {
           id: number;
           channel_key: string;
@@ -450,24 +462,62 @@ export class OwnerEventInbox {
           created_at: number;
         }
       | undefined;
-    if (!row) {
-      return null;
+    while (row) {
+      const candidate = row;
+      let eventIds: string[];
+      let eventRefs: Array<{ eventId: string; observationRef: string | null }>;
+      let lines: string[];
+      let activations: OwnerEventActivation[];
+      try {
+        eventIds = JSON.parse(candidate.event_ids_json) as string[];
+        if (!Array.isArray(eventIds) || eventIds.some((id) => typeof id !== 'string')) {
+          throw new Error('event_ids_json is invalid');
+        }
+        eventRefs = parseEventRefs(candidate.event_refs_json, eventIds);
+        lines = JSON.parse(candidate.lines_json) as string[];
+        activations = JSON.parse(candidate.activations_json) as OwnerEventActivation[];
+        if (!Array.isArray(lines) || !Array.isArray(activations)) {
+          throw new Error('batch arrays are invalid');
+        }
+      } catch (error) {
+        const diagnostic = new OwnerEventInboxCorruptionError(candidate.id, error);
+        this.db
+          .prepare(
+            `UPDATE owner_event_inbox SET status = 'dead', last_error = ?, claimed_at = NULL
+              WHERE id = ? AND status = 'pending'`
+          )
+          .run(`${diagnostic.code}:local-row-${candidate.id}`, candidate.id);
+        row = this.stmtClaimSelect.get(this.now()) as
+          | {
+              id: number;
+              channel_key: string;
+              event_ids_json: string;
+              event_refs_json: string;
+              lines_json: string;
+              activations_json: string;
+              attempts: number;
+              created_at: number;
+            }
+          | undefined;
+        continue;
+      }
+      const claimed = this.stmtClaimUpdate.run(this.now(), candidate.id);
+      if (claimed.changes !== 1) {
+        return null;
+      }
+      return {
+        id: candidate.id,
+        channelKey: candidate.channel_key,
+        eventIds,
+        eventRefs,
+        lines,
+        activations,
+        status: 'claimed',
+        attempts: candidate.attempts,
+        createdAt: candidate.created_at,
+      };
     }
-    const claimed = this.stmtClaimUpdate.run(this.now(), row.id);
-    if (claimed.changes !== 1) {
-      return null; // lost a race; caller just tries again next tick
-    }
-    return {
-      id: row.id,
-      channelKey: row.channel_key,
-      eventIds: JSON.parse(row.event_ids_json) as string[],
-      eventRefs: parseEventRefs(row.event_refs_json, JSON.parse(row.event_ids_json) as string[]),
-      lines: JSON.parse(row.lines_json) as string[],
-      activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
-      status: 'claimed',
-      attempts: row.attempts,
-      createdAt: row.created_at,
-    };
+    return null;
   }
 
   /** ACK a batch; `unresolvedReason` names why it completed without a ledger change. */

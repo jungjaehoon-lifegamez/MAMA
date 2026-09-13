@@ -225,6 +225,36 @@ describe('atomic identity corrections', () => {
     expect(readIdentityAssignments('edge:visible')[0].originalRef.id).toBe(visible.from);
   });
 
+  it('rejects duplicate edge endpoint assignments before revision or history changes', () => {
+    edge('edge:duplicate-slot');
+    const parent = createNode({ kind: 'item', name: 'duplicate parent', scopes: [scope] });
+    const target = createNode({ kind: 'item', name: 'duplicate target', scopes: [scope] });
+    const revision = currentIdentityRevision();
+    expect(() =>
+      appendIdentityCorrection(
+        {
+          commandId: 'cmd:duplicate-slot',
+          expectedRevision: revision,
+          reason: 'duplicate slot must fail',
+          operation: 'assign_refs',
+          parentId: parent,
+          assignments: [
+            { edgeId: 'edge:duplicate-slot', endpoint: 'from', targetNodeId: target },
+            { edgeId: 'edge:duplicate-slot', endpoint: 'from', targetNodeId: null },
+          ],
+          scopes: [scope],
+        },
+        trusted
+      )
+    ).toThrowError(/same edge endpoint/i);
+    expect(currentIdentityRevision()).toBe(revision);
+    expect(
+      getAdapter()
+        .prepare('SELECT COUNT(*) AS count FROM registry_corrections WHERE command_id = ?')
+        .get('cmd:duplicate-slot')
+    ).toEqual({ count: 0 });
+  });
+
   it('returns the same target error for hidden and unknown nodes without leaking identifiers', () => {
     const hiddenScope = { kind: 'project' as const, id: 'project:hidden-node' };
     const hidden = createNode({ kind: 'item', name: 'hidden label', scopes: [hiddenScope] });

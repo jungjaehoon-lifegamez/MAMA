@@ -1058,11 +1058,19 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
       if (!this.recordInlineObservation) {
         throw new Error('Stored owner observation cannot be revalidated');
       }
+      let returnedRef: string;
       try {
-        if (this.recordInlineObservation(input) !== storedRef) {
-          throw new Error('observation reference mismatch');
+        returnedRef = this.recordInlineObservation(input);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith('Observation replay conflict for ')) {
+          throw new Error('Owner message replay conflicts with persisted immutable input', {
+            cause: error,
+          });
         }
-      } catch {
+        throw new Error('Owner observation replay validation failed', { cause: error });
+      }
+      if (returnedRef !== storedRef) {
         throw new Error('Owner message replay conflicts with persisted immutable input');
       }
     };

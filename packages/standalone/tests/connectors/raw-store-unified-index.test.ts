@@ -145,6 +145,27 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
   });
 
   describe('AC #2: index sink failure keeps cursor unchanged for idempotent retry', () => {
+    it('drains more than 100 pending projections before committing the provider', async () => {
+      const items = Array.from({ length: 101 }, (_, index) =>
+        makeItem({ sourceId: `bulk-${index}`, content: `bulk content ${index}` })
+      );
+      const connector = makeConnector('slack', items);
+      connector.commitPoll = vi.fn().mockResolvedValue(undefined);
+      const sink = vi.fn().mockResolvedValue(undefined);
+      const registry = new ConnectorRegistry();
+      registry.register('slack', connector);
+
+      await new PollingScheduler(rawStore, tmpDir, { rawIndexSink: sink }).pollAll(
+        registry,
+        { slack: { C123: { role: 'hub' } } },
+        vi.fn()
+      );
+
+      expect(sink).toHaveBeenCalledTimes(101);
+      expect(rawStore.listPendingProjections('slack')).toEqual([]);
+      expect(connector.commitPoll).toHaveBeenCalledOnce();
+    });
+
     it('does not commit the provider checkpoint when exact batch acknowledgement fails', async () => {
       const connector = makeConnector('slack', [
         makeItem({ sourceId: 'ack-one' }),

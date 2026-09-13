@@ -522,6 +522,29 @@ describe('TrelloConnector', () => {
   });
 
   describe('healthCheck', () => {
+    it('skips an invalid card timestamp without exposing provider data and keeps valid cards', async () => {
+      const lists = [
+        makeTrelloList('list1', 'Todo', [
+          { id: 'private-card-id', name: 'Invalid', dateLastActivity: 'private-invalid-value' },
+          { id: 'valid-card', name: 'Valid', dateLastActivity: '2026-09-12T00:00:00.000Z' },
+        ]),
+      ];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(lists) })
+      );
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+      const health = await connector.healthCheck();
+
+      expect(items.map((item) => item.metadata?.cardId)).toEqual(['valid-card']);
+      expect(health.healthy).toBe(false);
+      expect(health.error).toBe('Trello board item has an invalid activity timestamp');
+      expect(health.error).not.toContain('private-card-id');
+      expect(health.error).not.toContain('private-invalid-value');
+    });
+
     it('reflects lastPollTime and lastPollCount after poll', async () => {
       vi.stubGlobal(
         'fetch',

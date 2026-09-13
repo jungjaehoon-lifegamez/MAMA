@@ -366,38 +366,43 @@ export function mapNormalizedItemsToConnectorEventIndexInputs(
   connectorName: string,
   items: NormalizedItem[]
 ): ConnectorEventIndexInput[] {
-  return items.map((item) => ({
-    source_connector: connectorName,
-    source_type: item.type,
-    source_id: item.sourceId,
-    source_entity_id: item.sourceEntityId ?? item.sourceId,
-    source_locator: `${connectorName}:${item.channel}:${item.sourceId}`,
-    channel: item.channel,
-    author: item.author,
-    content: item.content,
-    event_datetime: item.timestamp.getTime(),
-    source_timestamp_ms: item.timestamp.getTime(),
-    source_cursor: item.sourceCursor ?? null,
-    tenant_id: item.tenantId ?? null,
-    project_id: item.projectId ?? null,
-    memory_scope_kind: item.memoryScopeKind ?? null,
-    memory_scope_id: item.memoryScopeId ?? null,
-    metadata: { ...item.metadata, sourceEntityId: item.sourceEntityId ?? item.sourceId },
-    content_hash: Buffer.from(normalizeContentHash(item), 'hex'),
-    observation: {
-      producer_version_id:
-        item.pendingProjectionId === undefined
-          ? item.sourceId
-          : `raw-projection:${connectorName}:${item.sourceId}:${item.pendingProjectionId}`,
-      body_location: {
-        kind: 'raw',
-        connectorName,
-        revisionSourceId: item.sourceId,
+  return items.map((item) => {
+    if (typeof item.observedAt !== 'number' || !Number.isFinite(item.observedAt)) {
+      throw new Error('Raw observation projection requires a finite snapshot observedAt');
+    }
+    return {
+      source_connector: connectorName,
+      source_type: item.type,
+      source_id: item.sourceId,
+      source_entity_id: item.sourceEntityId ?? item.sourceId,
+      source_locator: `${connectorName}:${item.channel}:${item.sourceId}`,
+      channel: item.channel,
+      author: item.author,
+      content: item.content,
+      event_datetime: item.timestamp.getTime(),
+      source_timestamp_ms: item.timestamp.getTime(),
+      source_cursor: item.sourceCursor ?? null,
+      tenant_id: item.tenantId ?? null,
+      project_id: item.projectId ?? null,
+      memory_scope_kind: item.memoryScopeKind ?? null,
+      memory_scope_id: item.memoryScopeId ?? null,
+      metadata: { ...item.metadata, sourceEntityId: item.sourceEntityId ?? item.sourceId },
+      content_hash: Buffer.from(normalizeContentHash(item), 'hex'),
+      observation: {
+        producer_version_id:
+          item.pendingProjectionId === undefined
+            ? item.sourceId
+            : `raw-projection:${connectorName}:${item.sourceId}:${item.pendingProjectionId}`,
+        body_location: {
+          kind: 'raw',
+          connectorName,
+          revisionSourceId: item.sourceId,
+        },
+        observed_at: item.observedAt,
+        source_at: Number.isFinite(item.timestamp.getTime()) ? item.timestamp.getTime() : null,
       },
-      observed_at: item.observedAt ?? Date.now(),
-      source_at: Number.isFinite(item.timestamp.getTime()) ? item.timestamp.getTime() : null,
-    },
-  }));
+    };
+  });
 }
 
 export class RawStore {
@@ -428,6 +433,16 @@ export class RawStore {
   }
 
   private mapRawRowToNormalizedItem(row: RawRow): NormalizedItem {
+    let metadata: Record<string, unknown> | undefined;
+    if (row.metadata !== null) {
+      try {
+        metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+      } catch (error) {
+        throw new Error(`raw_items metadata is malformed at local row ${row.id}`, {
+          cause: error,
+        });
+      }
+    }
     return {
       source: row.source,
       sourceId: row.source_id,
@@ -443,8 +458,7 @@ export class RawStore {
       projectId: row.project_id ?? undefined,
       memoryScopeKind: row.memory_scope_kind ?? undefined,
       memoryScopeId: row.memory_scope_id ?? undefined,
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+      metadata,
       observedAt: row.observed_at ?? undefined,
     };
   }
@@ -456,6 +470,16 @@ export class RawStore {
    */
   save(connectorName: string, items: NormalizedItem[]): NormalizedItem[] {
     if (items.length === 0) return [];
+    for (const item of items) {
+      if (item.observedAt !== undefined && !Number.isFinite(item.observedAt)) {
+        throw new Error('Raw observation observedAt must be finite');
+      }
+    }
+    const captureTime = Date.now();
+    const capturedItems = items.map((item) => ({
+      ...item,
+      observedAt: item.observedAt ?? captureTime,
+    }));
     const db = this.getDb(connectorName);
     const find = db.prepare('SELECT * FROM raw_items WHERE source_id = ?');
     const findRevision = db.prepare(
@@ -488,7 +512,7 @@ export class RawStore {
     db.exec('BEGIN IMMEDIATE');
     try {
       const saved: NormalizedItem[] = [];
-      for (const item of items) {
+      for (const item of capturedItems) {
         const contentHash = normalizeContentHash(item);
         const original = find.get(item.sourceId) as RawRow | undefined;
         const originSourceId = item.sourceEntityId ?? original?.origin_source_id ?? item.sourceId;
@@ -535,7 +559,7 @@ export class RawStore {
             refreshed.memory_scope_kind !== original.memory_scope_kind ||
             refreshed.memory_scope_id !== original.memory_scope_id;
           if (provenanceChanged && !existingPending) {
-            const observedAt = item.observedAt ?? Date.now();
+            const observedAt = item.observedAt;
             enqueue.run(
               refreshed.source_id,
               payloadHash,
@@ -633,7 +657,7 @@ export class RawStore {
             persisted.memory_scope_kind !== beforeUpdate.memory_scope_kind ||
             persisted.memory_scope_id !== beforeUpdate.memory_scope_id);
         if ((!matching || provenanceChanged) && !existingPending) {
-          const observedAt = item.observedAt ?? Date.now();
+          const observedAt = item.observedAt;
           enqueue.run(
             sourceId,
             payloadHash,

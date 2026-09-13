@@ -278,7 +278,7 @@ describe('Slack ingress principal admission', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed when the Slack team ID is unknown and logs that condition once', async () => {
+  it('fails before socket start when current Slack auth has no team ID', async () => {
     seams.authTest.mockResolvedValue({ ok: true });
     const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
     const principalResolver = vi.fn().mockReturnValue({
@@ -294,15 +294,8 @@ describe('Slack ingress principal admission', () => {
       principalResolver,
       config: { channels: { 'channel-principal': { requireMention: false } } },
     });
-    const logger = loggerDouble();
-    Reflect.set(gateway, 'logger', logger);
-    await gateway.start();
-
-    await deliver('message', makeEvent({ user: 'owner-user', ts: '1000.0005' }));
-    await deliver('message', makeEvent({ user: 'owner-user', ts: '1000.0006' }));
-
-    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
+    await expect(gateway.start()).rejects.toThrow(/workspace identity is unavailable/i);
     expect(principalResolver).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(seams.socketStart).not.toHaveBeenCalled();
   });
 });

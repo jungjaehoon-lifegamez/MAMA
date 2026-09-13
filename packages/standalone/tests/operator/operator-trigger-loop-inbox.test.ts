@@ -341,6 +341,36 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     // Bare row ids must not collide across channels in the global dedupe PK.
     expect(byKey.get('chat:C2')?.eventIds).toEqual(['raw:chat:C2:2']);
   });
+
+  it('quarantines a malformed refs row and claims the next healthy row', () => {
+    const inbox = new OwnerEventInbox(db);
+    const corruptId = inbox.enqueue({
+      channelKey: 'chat:C1',
+      eventIds: ['corrupt-event'],
+      eventRefs: [{ eventId: 'corrupt-event', observationRef: 'obs-corrupt' }],
+      lines: ['corrupt'],
+      activations: [],
+    })!;
+    db.prepare('UPDATE owner_event_inbox SET event_refs_json = ? WHERE id = ?').run(
+      '{malformed',
+      corruptId
+    );
+    const healthyId = inbox.enqueue({
+      channelKey: 'chat:C1',
+      eventIds: ['healthy-event'],
+      eventRefs: [{ eventId: 'healthy-event', observationRef: 'obs-healthy' }],
+      lines: ['healthy'],
+      activations: [],
+    })!;
+
+    expect(inbox.claimNext()?.id).toBe(healthyId);
+    expect(inbox.depth().dead).toBe(1);
+    const diagnostic = db
+      .prepare('SELECT last_error FROM owner_event_inbox WHERE id = ?')
+      .get(corruptId) as { last_error: string };
+    expect(diagnostic.last_error).toBe(`OWNER_EVENT_INBOX_CORRUPT:local-row-${corruptId}`);
+    expect(diagnostic.last_error).not.toContain('obs-corrupt');
+  });
   it('renders each delta line with the event time, so a saved fact can carry its real event_date', async () => {
     // Measured 2026-09-10 (7-day replay): six facts saved from a batch of 09-04 events all
     // carried event_date 2026-09-10. The line showed id, author and text - no time - so the

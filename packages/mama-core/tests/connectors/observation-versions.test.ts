@@ -302,6 +302,17 @@ describe('immutable observation versions', () => {
     expect(result.items[0]).not.toHaveProperty('scope');
   });
 
+  it.each([null, 7, ['cursor']])('rejects a decoded non-object owner cursor: %j', (decoded) => {
+    expect(() =>
+      searchOwnerObservationVersions(getAdapter(), {
+        query: 'searchable',
+        principalId: 'principal-a',
+        agentId: 'agent-1',
+        cursor: Buffer.from(JSON.stringify(decoded)).toString('base64url'),
+      })
+    ).toThrow('Invalid owner observation cursor.');
+  });
+
   it('enforces connector and channel authority alongside principal, agent, and scope', () => {
     const adapter = getAdapter();
     const raw = appendObservationVersion(adapter, {

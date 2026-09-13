@@ -200,17 +200,20 @@ export class PollingScheduler {
             );
           }
           if (this.rawIndexSink) {
-            const pendingProjections = this.rawStore.listPendingProjections(name);
-            for (const pending of pendingProjections) {
-              await this.rawIndexSink(name, [pending]);
+            let pendingProjections = this.rawStore.listPendingProjections(name, 100);
+            while (pendingProjections.length > 0) {
+              for (const pending of pendingProjections) {
+                await this.rawIndexSink(name, [pending]);
+              }
+              this.rawStore.acknowledgeProjections(
+                name,
+                pendingProjections.map((pending) => ({
+                  revisionSourceId: pending.sourceId,
+                  pendingProjectionId: pending.pendingProjectionId,
+                }))
+              );
+              pendingProjections = this.rawStore.listPendingProjections(name, 100);
             }
-            this.rawStore.acknowledgeProjections(
-              name,
-              pendingProjections.map((pending) => ({
-                revisionSourceId: pending.sourceId,
-                pendingProjectionId: pending.pendingProjectionId,
-              }))
-            );
           }
           await connector.commitPoll?.();
           allItems.push(...savedItems);

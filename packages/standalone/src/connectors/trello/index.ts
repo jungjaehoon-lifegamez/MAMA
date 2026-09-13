@@ -260,6 +260,16 @@ export class TrelloConnector implements IConnector {
 
         for (const list of lists) {
           for (const card of list.cards) {
+            const activityTime = Date.parse(card.dateLastActivity);
+            if (!Number.isFinite(activityTime)) {
+              hadError = true;
+              this.lastError = 'Trello board item has an invalid activity timestamp';
+              const previousState = prevCardState.get(card.id);
+              if (previousState !== undefined) {
+                newCardState.set(card.id, previousState);
+              }
+              continue;
+            }
             const labels = (card.labels ?? []).map((l) => l.name).filter(Boolean);
             const assignees = card.idMembers.map((id) => memberNames.get(id) ?? id);
             const current: CardState = { list: list.name, labels, members: assignees };
@@ -299,14 +309,14 @@ export class TrelloConnector implements IConnector {
 
               items.push({
                 source: 'trello',
-                sourceId: `${boardId}:${card.id}:${new Date(card.dateLastActivity).getTime()}`,
+                sourceId: `${boardId}:${card.id}:${activityTime}`,
                 sourceEntityId: `${boardId}:${card.id}`,
                 channel: channelName,
                 author: 'trello',
                 content,
                 // Source time is the provider version's stable timestamp. Host capture
                 // freshness is recorded separately as observation observedAt by the scheduler.
-                timestamp: new Date(card.dateLastActivity),
+                timestamp: new Date(activityTime),
                 type: 'kanban_card',
                 metadata: {
                   lastActivityAt: card.dateLastActivity,

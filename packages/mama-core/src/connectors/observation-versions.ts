@@ -325,7 +325,14 @@ export function searchOwnerObservationVersions(
     } catch {
       throw new Error('Invalid owner observation cursor.');
     }
-    if (!Number.isFinite(cursor.observedAt) || !cursor.observationId) {
+    if (
+      !cursor ||
+      typeof cursor !== 'object' ||
+      Array.isArray(cursor) ||
+      !Number.isFinite(cursor.observedAt) ||
+      typeof cursor.observationId !== 'string' ||
+      !cursor.observationId
+    ) {
       throw new Error('Invalid owner observation cursor.');
     }
     clauses.push('(observed_at < ? OR (observed_at = ? AND observation_id > ?))');

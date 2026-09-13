@@ -53,6 +53,16 @@ interface LegacyPendingRow {
 }
 
 function legacyPendingPayload(row: LegacyPendingRow): string {
+  let metadata: Record<string, unknown> | undefined;
+  if (row.metadata !== null) {
+    try {
+      metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(`Legacy pending metadata is malformed at local sequence ${row.sequence}`, {
+        cause: error,
+      });
+    }
+  }
   return JSON.stringify({
     source: row.source,
     sourceId: row.source_id,
@@ -62,9 +72,7 @@ function legacyPendingPayload(row: LegacyPendingRow): string {
     content: row.content,
     timestamp: row.timestamp,
     type: row.type,
-    ...(row.metadata === null
-      ? {}
-      : { metadata: JSON.parse(row.metadata) as Record<string, unknown> }),
+    ...(metadata === undefined ? {} : { metadata }),
     ...(row.content_hash === null ? {} : { contentHash: row.content_hash }),
     ...(row.source_cursor === null ? {} : { sourceCursor: row.source_cursor }),
     ...(row.tenant_id === null ? {} : { tenantId: row.tenant_id }),

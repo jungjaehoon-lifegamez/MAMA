@@ -224,7 +224,7 @@ describe('TG-05 immutable owner-event observation flow', () => {
     }
   });
 
-  it('fails explicitly on malformed or inconsistent stored event refs', () => {
+  it('quarantines malformed or inconsistent stored event refs without fabricating refs', () => {
     const db = new Database(':memory:');
     const inbox = new OwnerEventInbox(db, () => 100);
     inbox.enqueue({
@@ -235,11 +235,13 @@ describe('TG-05 immutable owner-event observation flow', () => {
       activations: [],
     });
     db.prepare('UPDATE owner_event_inbox SET event_refs_json = ?').run('{malformed');
-    expect(() => inbox.claimNext()).toThrow(/event_refs_json is malformed/);
+    expect(inbox.claimNext()).toBeNull();
+    expect(inbox.depth().dead).toBe(1);
     db.prepare(
       "UPDATE owner_event_inbox SET status = 'pending', claimed_at = NULL, event_refs_json = ?"
     ).run(JSON.stringify([{ eventId: 'different', observationRef: 'obs-other' }]));
-    expect(() => inbox.claimNext()).toThrow(/do not match event ids/);
+    expect(inbox.claimNext()).toBeNull();
+    expect(inbox.depth().dead).toBe(1);
     db.close();
   });
 });

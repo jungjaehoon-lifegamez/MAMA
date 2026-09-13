@@ -90,7 +90,7 @@ function stable(value: unknown): unknown {
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, item]) => [key, stable(item)])
     );
   }
@@ -305,6 +305,17 @@ function validateCommon(correction: IdentityCorrection): void {
   }
   if (!correction.reason.trim()) {
     throw new RegistryError('missing_reason', 'A correction reason is required');
+  }
+  if (correction.operation === 'split' || correction.operation === 'assign_refs') {
+    const slots = correction.assignments.map(
+      (assignment) => `${assignment.edgeId}\0${assignment.endpoint}`
+    );
+    if (new Set(slots).size !== slots.length) {
+      throw new RegistryError(
+        'invalid_assignment',
+        'A correction cannot assign the same edge endpoint more than once'
+      );
+    }
   }
   if (correction.operation === 'merge' && correction.memberIds.length === 0) {
     throw new RegistryError('invalid_merge', 'A merge requires at least one member');
