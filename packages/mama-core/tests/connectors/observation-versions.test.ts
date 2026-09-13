@@ -38,7 +38,7 @@ function input(sourceId: string, body: string, observedAt: number) {
   };
 }
 
-describe('immutable observation versions', () => {
+describe('Story TG-03/TG-04/TG-05/TG-06: immutable observation versions', () => {
   let path = '';
 
   beforeAll(async () => {
@@ -302,16 +302,19 @@ describe('immutable observation versions', () => {
     expect(result.items[0]).not.toHaveProperty('scope');
   });
 
-  it.each([null, 7, ['cursor']])('rejects a decoded non-object owner cursor: %j', (decoded) => {
-    expect(() =>
-      searchOwnerObservationVersions(getAdapter(), {
-        query: 'searchable',
-        principalId: 'principal-a',
-        agentId: 'agent-1',
-        cursor: Buffer.from(JSON.stringify(decoded)).toString('base64url'),
-      })
-    ).toThrow('Invalid owner observation cursor.');
-  });
+  it.each([null, 7, ['cursor']])(
+    'AC #7 rejects a decoded non-object owner cursor: %j',
+    (decoded) => {
+      expect(() =>
+        searchOwnerObservationVersions(getAdapter(), {
+          query: 'searchable',
+          principalId: 'principal-a',
+          agentId: 'agent-1',
+          cursor: Buffer.from(JSON.stringify(decoded)).toString('base64url'),
+        })
+      ).toThrow('Invalid owner observation cursor.');
+    }
+  );
 
   it('enforces connector and channel authority alongside principal, agent, and scope', () => {
     const adapter = getAdapter();
