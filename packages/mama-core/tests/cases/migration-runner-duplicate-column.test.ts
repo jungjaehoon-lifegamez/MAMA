@@ -1695,7 +1695,7 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         evidence_json: null,
       });
       expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 74,
+        version: 76,
       });
       db.close();
     });
