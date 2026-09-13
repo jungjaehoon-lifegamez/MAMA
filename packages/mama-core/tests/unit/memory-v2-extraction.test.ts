@@ -36,7 +36,15 @@ describe('ingestConversation (source.ingest boundary)', () => {
   });
 
   it('stores exactly one raw observation and zero judgments', async () => {
-    const { getAdapter } = await import('../../src/db-manager.js');
+    const { getAdapter, initDB } = await import('../../src/db-manager.js');
+    await initDB();
+    const adapter = getAdapter();
+    const before = {
+      observations: (
+        adapter.prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as { n: number }
+      ).n,
+      decisions: (adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number }).n,
+    };
     const result = await ingestConversation({
       messages: [
         { role: 'user', content: 'I like using TypeScript.' },
@@ -49,17 +57,21 @@ describe('ingestConversation (source.ingest boundary)', () => {
     expect(result.rawId).toBeTruthy();
     expect(result.extractedMemories).toEqual([]);
 
-    const adapter = getAdapter();
     const observation = adapter
       .prepare('SELECT * FROM observation_versions WHERE observation_id = ?')
       .get(result.rawId) as { body: string; source_connector: string } | undefined;
     expect(observation).toBeDefined();
     expect(observation!.body).toContain('I like using TypeScript.');
-    // One observation, no decision/judgment row for this request.
-    const decisions = adapter
-      .prepare('SELECT COUNT(*) AS n FROM decisions WHERE id = ?')
-      .get(result.rawId) as { n: number };
-    expect(decisions.n).toBe(0);
+    // rawId is an observation id, so matching it against decisions.id can never
+    // fail. Compare whole-table counts instead: one new observation, no new judgment.
+    const after = {
+      observations: (
+        adapter.prepare('SELECT COUNT(*) AS n FROM observation_versions').get() as { n: number }
+      ).n,
+      decisions: (adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number }).n,
+    };
+    expect(after.observations).toBe(before.observations + 1);
+    expect(after.decisions).toBe(before.decisions);
   });
 
   it('rejects the extract option before any write', async () => {
