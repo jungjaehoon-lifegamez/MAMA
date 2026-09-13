@@ -126,7 +126,6 @@ All of it lives in mama-core, as TypeScript. The plugin has no core logic of its
 - **db-manager.ts**: SQLite database operations (WAL mode, migrations)
 - **relevance-scorer.ts**: Hybrid scoring (semantic + recency + importance)
 - **decision-tracker.ts**: Evolution graph & supersedes edges
-- **outcome-tracker.ts**: Success/failure tracking
 - **decision-formatter.ts**: Context formatting with token budgets
 
 **2. MCP Tools (`packages/mcp-server/src/tools/`)**
@@ -436,12 +435,10 @@ Understanding the migration history helps avoid repeating past mistakes and expl
 - mama-api.js (882 LOC)
 - embeddings.js (~400 LOC)
 - decision-tracker.js (~500 LOC)
-- outcome-tracker.js (~300 LOC)
 - decision-formatter.js (1106 LOC)
 - relevance-scorer.js (284 LOC)
 - memory-store.js (90 LOC)
 - time-formatter.js (~100 LOC)
-- query-intent.js (~300 LOC)
 - debug-logger.js (~150 LOC)
 - db-manager.js (~800 LOC)
 
@@ -969,7 +966,6 @@ outcomes (SUCCESS/FAILED/PARTIAL) with failure reasons and
 limitations.
 
 - Validation: decisionId (required), outcome (enum), failure_reason
-- Integration with outcome-tracker.js
 - 14/14 tests passing
 
 Closes #45

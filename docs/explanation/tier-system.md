@@ -269,7 +269,7 @@ function search(query) {
 }
 ```
 
-**Implementation:** `packages/mama-core/src/tier-validator.ts`
+**Implementation:** the tier checks were removed; nothing computed or consumed them.
 
 ---
 
