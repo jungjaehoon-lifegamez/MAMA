@@ -237,7 +237,7 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     expect(row.lines.filter((l) => l === '')).toEqual([]); // never padded (review: positional zip)
   });
 
-  it('TG-05 keeps distinct 200/166-event semantic batches while showing 10 lines each', async () => {
+  it('TG-05 splits 200/166-event groups into four bounded batches without loss', async () => {
     const inbox = new OwnerEventInbox(db);
     const batches = [200, 166].map((count, batchIndex) =>
       Array.from({ length: count }, (_, i) => ({
@@ -273,15 +273,31 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     });
 
     await loop.tick();
-    const first = inbox.claimNext()!;
-    expect(first.eventIds).toHaveLength(200);
-    expect(first.lines).toHaveLength(10);
-    inbox.ack(first.id);
+    const firstChunks = [];
+    for (let index = 0; index < 4; index += 1) {
+      const chunk = inbox.claimNext()!;
+      firstChunks.push(chunk);
+      inbox.ack(chunk.id);
+    }
+    expect(firstChunks.map((chunk) => chunk.eventIds.length)).toEqual([50, 50, 50, 50]);
     await loop.tick();
-    const second = inbox.claimNext()!;
-    expect(second.eventIds).toHaveLength(166);
-    expect(second.lines).toHaveLength(10);
-    expect(new Set([...first.eventIds, ...second.eventIds]).size).toBe(366);
+    const secondChunks = [];
+    for (let index = 0; index < 4; index += 1) {
+      const chunk = inbox.claimNext()!;
+      secondChunks.push(chunk);
+      inbox.ack(chunk.id);
+    }
+    expect(secondChunks.map((chunk) => chunk.eventIds.length)).toEqual([50, 50, 50, 16]);
+    for (const chunk of [...firstChunks, ...secondChunks]) {
+      expect(chunk.lines).toHaveLength(10);
+      expect(chunk.eventRefs).toHaveLength(chunk.eventIds.length);
+      expect(chunk.lines.map((line) => /\[id:([^\]]+)\]/.exec(line)?.[1])).toEqual(
+        chunk.eventIds.slice(-10)
+      );
+    }
+    expect(new Set([...firstChunks, ...secondChunks].flatMap((chunk) => chunk.eventIds)).size).toBe(
+      366
+    );
   });
 
   it('groups per channel and enqueues each group with full event identity', async () => {
@@ -324,6 +340,36 @@ describe('trigger loop feeds the MAMA owner-event inbox before committing the cu
     expect(byKey.get('chat:C1')?.eventIds).toEqual(['evi_1']);
     // Bare row ids must not collide across channels in the global dedupe PK.
     expect(byKey.get('chat:C2')?.eventIds).toEqual(['raw:chat:C2:2']);
+  });
+
+  it('quarantines a malformed refs row and claims the next healthy row', () => {
+    const inbox = new OwnerEventInbox(db);
+    const corruptId = inbox.enqueue({
+      channelKey: 'chat:C1',
+      eventIds: ['corrupt-event'],
+      eventRefs: [{ eventId: 'corrupt-event', observationRef: 'obs-corrupt' }],
+      lines: ['corrupt'],
+      activations: [],
+    })!;
+    db.prepare('UPDATE owner_event_inbox SET event_refs_json = ? WHERE id = ?').run(
+      '{malformed',
+      corruptId
+    );
+    const healthyId = inbox.enqueue({
+      channelKey: 'chat:C1',
+      eventIds: ['healthy-event'],
+      eventRefs: [{ eventId: 'healthy-event', observationRef: 'obs-healthy' }],
+      lines: ['healthy'],
+      activations: [],
+    })!;
+
+    expect(inbox.claimNext()?.id).toBe(healthyId);
+    expect(inbox.depth().dead).toBe(1);
+    const diagnostic = db
+      .prepare('SELECT last_error FROM owner_event_inbox WHERE id = ?')
+      .get(corruptId) as { last_error: string };
+    expect(diagnostic.last_error).toBe(`OWNER_EVENT_INBOX_CORRUPT:local-row-${corruptId}`);
+    expect(diagnostic.last_error).not.toContain('obs-corrupt');
   });
   it('renders each delta line with the event time, so a saved fact can carry its real event_date', async () => {
     // Measured 2026-09-10 (7-day replay): six facts saved from a batch of 09-04 events all

@@ -173,8 +173,8 @@ describe('Slack ingress principal admission', () => {
       }),
     };
     const principalResolver = vi.fn().mockReturnValue({
-      principalId: 'registry-member-principal',
-      kind: 'member',
+      principalId: 'registry-owner-principal',
+      kind: 'owner',
       status: 'active',
     });
     const gateway = new SlackGateway({
@@ -194,10 +194,11 @@ describe('Slack ingress principal admission', () => {
       class: 'owner',
       lane: 'owner',
       canonicalId: 'slack:team-principal:owner-user',
+      principalId: 'registry-owner-principal',
       consoleEligible: false,
     });
     expect(Object.isFrozen(routed[0]?.principal)).toBe(true);
-    expect(principalResolver).not.toHaveBeenCalled();
+    expect(principalResolver).toHaveBeenCalledWith('slack', 'team-principal', 'owner-user');
   });
 
   it('admits an active member with the real team namespace to the public lane', async () => {
@@ -208,11 +209,11 @@ describe('Slack ingress principal admission', () => {
         return completed();
       }),
     };
-    const principalResolver = vi.fn().mockReturnValue({
-      principalId: 'slack-member-principal',
-      kind: 'member',
-      status: 'active',
-    });
+    const principalResolver = vi.fn((_connector: string, _namespace: string, userId: string) =>
+      userId === 'owner-user'
+        ? { principalId: 'registry-owner-principal', kind: 'owner' as const, status: 'active' }
+        : { principalId: 'slack-member-principal', kind: 'member' as const, status: 'active' }
+    );
     const gateway = new SlackGateway({
       botToken: 'xoxb-synthetic',
       appToken: 'xapp-synthetic',
@@ -277,7 +278,7 @@ describe('Slack ingress principal admission', () => {
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed when the Slack team ID is unknown and logs that condition once', async () => {
+  it('fails before socket start when current Slack auth has no team ID', async () => {
     seams.authTest.mockResolvedValue({ ok: true });
     const turnProcessor: TurnProcessor = { processTurn: vi.fn(() => completed()) };
     const principalResolver = vi.fn().mockReturnValue({
@@ -293,15 +294,8 @@ describe('Slack ingress principal admission', () => {
       principalResolver,
       config: { channels: { 'channel-principal': { requireMention: false } } },
     });
-    const logger = loggerDouble();
-    Reflect.set(gateway, 'logger', logger);
-    await gateway.start();
-
-    await deliver('message', makeEvent({ user: 'owner-user', ts: '1000.0005' }));
-    await deliver('message', makeEvent({ user: 'owner-user', ts: '1000.0006' }));
-
-    expect(turnProcessor.processTurn).not.toHaveBeenCalled();
+    await expect(gateway.start()).rejects.toThrow(/workspace identity is unavailable/i);
     expect(principalResolver).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(seams.socketStart).not.toHaveBeenCalled();
   });
 });

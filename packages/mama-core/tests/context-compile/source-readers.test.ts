@@ -543,6 +543,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
       });
 
       const result = readRawCandidates(
@@ -566,6 +567,73 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       });
     });
 
+    it('ranks current raw evidence by observation capture time rather than old source time', () => {
+      const adapter = createAdapter();
+      for (const event of [
+        { id: 'old-source-fresh-capture', sourceAt: 100, observedAt: 5_000 },
+        { id: 'new-source-older-capture', sourceAt: 4_000, observedAt: 4_500 },
+      ]) {
+        upsertConnectorEventIndex(adapter, {
+          source_connector: 'slack',
+          source_type: 'message',
+          source_id: event.id,
+          channel: 'C-eng',
+          content: 'captured recency evidence',
+          event_datetime: event.sourceAt,
+          source_timestamp_ms: event.sourceAt,
+          tenant_id: 'default',
+          project_id: 'repo-a',
+          memory_scope_kind: 'project',
+          memory_scope_id: 'repo-a',
+          observation: {
+            producer_version_id: event.id,
+            body_location: {
+              kind: 'raw',
+              connectorName: 'slack',
+              revisionSourceId: event.id,
+            },
+            observed_at: event.observedAt,
+          },
+        });
+      }
+
+      const result = readRawCandidates(
+        adapter,
+        input({ range: { start_ms: 4_400, end_ms: 5_100 } })
+      );
+      expect(
+        result.candidates.map((candidate) => (candidate.ref as { source_id?: string }).source_id)
+      ).toEqual(['old-source-fresh-capture', 'new-source-older-capture']);
+      expect(result.candidates[0]?.timestamp_ms).toBe(5_000);
+    });
+
+    it('rejects a dangling current observation ref instead of using source time', () => {
+      const adapter = createAdapter();
+      const saved = upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'dangling-context-observation',
+        channel: 'C-eng',
+        content: 'dangling observation evidence',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
+      });
+      adapter.exec('PRAGMA foreign_keys = OFF');
+      adapter
+        .prepare(
+          'UPDATE connector_event_index SET current_observation_id = ? WHERE event_index_id = ?'
+        )
+        .run('obs-missing-context', saved.event_index_id);
+      adapter.exec('PRAGMA foreign_keys = ON');
+
+      expect(() => readRawCandidates(adapter, input())).toThrow(/dangling current observation/i);
+    });
+
     it('uses boundary connector, scope, project, and tenant defaults for direct raw reads', () => {
       const adapter = createAdapter();
       upsertConnectorEventIndex(adapter, {
@@ -581,6 +649,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
       });
 
       const result = readRawCandidates(
@@ -617,6 +686,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
       });
 
       const result = readRawCandidates(
@@ -649,6 +719,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-b',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 2_500 },
       });
 
       const result = readRawCandidates(
@@ -797,6 +868,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
       });
       upsertConnectorEventIndex(adapter, {
         source_connector: 'slack',
@@ -810,6 +882,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 2_500 },
       });
 
       const result = readRawCandidates(
@@ -844,6 +917,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 1_200 },
       });
       upsertConnectorEventIndex(adapter, {
         source_connector: 'slack',
@@ -857,6 +931,7 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         project_id: 'repo-a',
         memory_scope_kind: 'project',
         memory_scope_id: 'repo-a',
+        observation: { observed_at: 2_500 },
       });
 
       const result = readRawCandidates(

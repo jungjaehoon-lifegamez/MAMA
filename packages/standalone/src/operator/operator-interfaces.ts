@@ -25,9 +25,16 @@ export interface OperatorChannelEvent {
   userId: string;
   role: 'user' | 'assistant';
   content: string;
+  /** Capture time used for current-evidence recency. */
   createdAt: number;
+  /** Upstream source occurrence time, retained separately from capture time. */
+  sourceAt?: number;
+  /** Current immutable observation capture time; null only for a valid legacy row. */
+  observedAt?: number | null;
   /** stable provenance id when the source is connector_event_index (TEXT PK); optional. */
   eventIndexId?: string;
+  /** Immutable evidence captured with this delta row. Null means legacy/unavailable. */
+  observationRef?: string | null;
 }
 
 /**

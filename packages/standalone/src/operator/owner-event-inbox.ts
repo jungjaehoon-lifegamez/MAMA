@@ -31,11 +31,14 @@ const PENDING_RETENTION_MS = 7 * 86_400_000;
  */
 const EVENT_RETENTION_MS = 30 * 86_400_000;
 const SEEN_CHUNK = 500; // stay under SQLITE_MAX_VARIABLE_NUMBER
+const MAX_BATCH_EVENTS = 50;
 
 export interface InboxBatch {
   channelKey: string;
   /** Identity + cause: EVERY event in the batch. */
   eventIds: string[];
+  /** Frozen evidence identity for the whole batch, independent of bounded display lines. */
+  eventRefs?: Array<{ eventId: string; observationRef: string | null }>;
   /** Bounded human-readable excerpt - display only, not paired with eventIds. */
   lines: string[];
   /** Immutable trigger contracts matched before the source cursor advanced. */
@@ -56,6 +59,7 @@ export interface OwnerEventActivation {
 }
 
 export interface InboxRow extends InboxBatch {
+  eventRefs: Array<{ eventId: string; observationRef: string | null }>;
   id: number;
   status: 'pending' | 'claimed' | 'acked' | 'dead';
   attempts: number;
@@ -64,6 +68,18 @@ export interface InboxRow extends InboxBatch {
 }
 
 export type OwnerEventBatch = InboxRow;
+
+export class OwnerEventInboxCorruptionError extends Error {
+  readonly code = 'OWNER_EVENT_INBOX_CORRUPT';
+
+  constructor(
+    readonly rowId: number,
+    cause: unknown
+  ) {
+    super(`Owner event inbox row ${rowId} is corrupt`, { cause });
+    this.name = 'OwnerEventInboxCorruptionError';
+  }
+}
 
 export interface OwnerEventPriorContextItem {
   observedAt: string;
@@ -87,6 +103,7 @@ interface StoredOwnerEventRow {
   id: number;
   channel_key: string;
   event_ids_json: string;
+  event_refs_json?: string;
   lines_json: string;
   activations_json: string;
   attempts: number;
@@ -184,12 +201,61 @@ function deadBatch(row: StoredOwnerEventRow, attempts: number): OwnerEventBatch 
     id: row.id,
     channelKey: row.channel_key,
     eventIds: JSON.parse(row.event_ids_json) as string[],
+    eventRefs: parseEventRefs(row.event_refs_json, JSON.parse(row.event_ids_json) as string[]),
     lines: JSON.parse(row.lines_json) as string[],
     activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
     status: 'dead',
     attempts,
     createdAt: row.created_at,
   };
+}
+
+function parseEventRefs(
+  value: string | undefined,
+  eventIds: string[]
+): Array<{ eventId: string; observationRef: string | null }> {
+  if (typeof value !== 'string') {
+    throw new Error('owner_event_inbox.event_refs_json schema is required');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`owner_event_inbox.event_refs_json is malformed: ${message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('owner_event_inbox.event_refs_json must contain an array');
+  }
+  if (parsed.length === 0) {
+    return eventIds.map((eventId) => ({ eventId, observationRef: null }));
+  }
+  const refs = parsed.map((item) => {
+    if (!item || typeof item !== 'object') {
+      throw new Error('owner_event_inbox.event_refs_json contains an invalid entry');
+    }
+    const candidate = item as { eventId?: unknown; observationRef?: unknown };
+    if (
+      typeof candidate.eventId !== 'string' ||
+      candidate.eventId.trim() === '' ||
+      (candidate.observationRef !== null &&
+        (typeof candidate.observationRef !== 'string' || candidate.observationRef.trim() === ''))
+    ) {
+      throw new Error('owner_event_inbox.event_refs_json contains an invalid entry');
+    }
+    return {
+      eventId: candidate.eventId,
+      observationRef: candidate.observationRef as string | null,
+    };
+  });
+  if (
+    refs.length !== eventIds.length ||
+    new Set(refs.map((ref) => ref.eventId)).size !== refs.length ||
+    refs.some((ref) => !eventIds.includes(ref.eventId))
+  ) {
+    throw new Error('owner_event_inbox event refs do not match event ids');
+  }
+  return refs;
 }
 
 export class OwnerEventInbox {
@@ -215,6 +281,7 @@ export class OwnerEventInbox {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         channel_key TEXT NOT NULL,
         event_ids_json TEXT NOT NULL,
+        event_refs_json TEXT NOT NULL DEFAULT '[]',
         lines_json TEXT NOT NULL,
         activations_json TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending'
@@ -246,6 +313,11 @@ export class OwnerEventInbox {
     if (!columns.some((column) => column.name === 'unresolved_reason')) {
       this.db.exec(`ALTER TABLE owner_event_inbox ADD COLUMN unresolved_reason TEXT`);
     }
+    if (!columns.some((column) => column.name === 'event_refs_json')) {
+      this.db.exec(
+        `ALTER TABLE owner_event_inbox ADD COLUMN event_refs_json TEXT NOT NULL DEFAULT '[]'`
+      );
+    }
     // Prepared once: enqueue runs per channel per drain tick and re-preparing
     // statements per call was measurable on backfill drains.
     this.stmtInsertEvent = this.db.prepare(
@@ -253,11 +325,11 @@ export class OwnerEventInbox {
     );
     this.stmtInsertBatch = this.db.prepare(
       `INSERT INTO owner_event_inbox
-         (channel_key, event_ids_json, lines_json, activations_json, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+         (channel_key, event_ids_json, event_refs_json, lines_json, activations_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     );
     this.stmtClaimSelect = this.db.prepare(
-      `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
+      `SELECT id, channel_key, event_ids_json, event_refs_json, lines_json, activations_json, attempts, created_at
          FROM owner_event_inbox
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ?
         ORDER BY id ASC LIMIT 1`
@@ -331,6 +403,9 @@ export class OwnerEventInbox {
    * lies).
    */
   enqueue(batch: InboxBatch): number | null {
+    if (batch.eventIds.length === 0 || batch.eventIds.length > MAX_BATCH_EVENTS) {
+      throw new Error(`Owner event batch must contain 1-${MAX_BATCH_EVENTS} events`);
+    }
     const seenIds = new Set<string>();
     for (let i = 0; i < batch.eventIds.length; i += SEEN_CHUNK) {
       const chunk = batch.eventIds.slice(i, i + SEEN_CHUNK);
@@ -350,11 +425,23 @@ export class OwnerEventInbox {
 
     const run = this.db.transaction(() => {
       const now = this.now();
-      for (const id of fresh) this.stmtInsertEvent.run(id, now);
+      for (const id of fresh) {
+        this.stmtInsertEvent.run(id, now);
+      }
+      const freshSet = new Set(fresh);
+      const freshRefs = parseEventRefs(
+        JSON.stringify(batch.eventRefs ?? []),
+        batch.eventIds
+      ).filter((ref) => freshSet.has(ref.eventId));
+      const hasFramedLines = batch.lines.some((line) => /\[id:[^\]]+\]/.test(line));
+      const freshLines = hasFramedLines
+        ? batch.lines.filter((line) => fresh.some((eventId) => line.includes(`[id:${eventId}]`)))
+        : batch.lines;
       return this.stmtInsertBatch.run(
         batch.channelKey,
         JSON.stringify(fresh),
-        JSON.stringify(batch.lines),
+        JSON.stringify(freshRefs),
+        JSON.stringify(freshLines),
         JSON.stringify(batch.activations),
         now
       );
@@ -363,34 +450,74 @@ export class OwnerEventInbox {
   }
 
   claimNext(): InboxRow | null {
-    const row = this.stmtClaimSelect.get(this.now()) as
+    let row = this.stmtClaimSelect.get(this.now()) as
       | {
           id: number;
           channel_key: string;
           event_ids_json: string;
+          event_refs_json: string;
           lines_json: string;
           activations_json: string;
           attempts: number;
           created_at: number;
         }
       | undefined;
-    if (!row) {
-      return null;
+    while (row) {
+      const candidate = row;
+      let eventIds: string[];
+      let eventRefs: Array<{ eventId: string; observationRef: string | null }>;
+      let lines: string[];
+      let activations: OwnerEventActivation[];
+      try {
+        eventIds = JSON.parse(candidate.event_ids_json) as string[];
+        if (!Array.isArray(eventIds) || eventIds.some((id) => typeof id !== 'string')) {
+          throw new Error('event_ids_json is invalid');
+        }
+        eventRefs = parseEventRefs(candidate.event_refs_json, eventIds);
+        lines = JSON.parse(candidate.lines_json) as string[];
+        activations = JSON.parse(candidate.activations_json) as OwnerEventActivation[];
+        if (!Array.isArray(lines) || !Array.isArray(activations)) {
+          throw new Error('batch arrays are invalid');
+        }
+      } catch (error) {
+        const diagnostic = new OwnerEventInboxCorruptionError(candidate.id, error);
+        this.db
+          .prepare(
+            `UPDATE owner_event_inbox SET status = 'dead', last_error = ?, claimed_at = NULL
+              WHERE id = ? AND status = 'pending'`
+          )
+          .run(`${diagnostic.code}:local-row-${candidate.id}`, candidate.id);
+        row = this.stmtClaimSelect.get(this.now()) as
+          | {
+              id: number;
+              channel_key: string;
+              event_ids_json: string;
+              event_refs_json: string;
+              lines_json: string;
+              activations_json: string;
+              attempts: number;
+              created_at: number;
+            }
+          | undefined;
+        continue;
+      }
+      const claimed = this.stmtClaimUpdate.run(this.now(), candidate.id);
+      if (claimed.changes !== 1) {
+        return null;
+      }
+      return {
+        id: candidate.id,
+        channelKey: candidate.channel_key,
+        eventIds,
+        eventRefs,
+        lines,
+        activations,
+        status: 'claimed',
+        attempts: candidate.attempts,
+        createdAt: candidate.created_at,
+      };
     }
-    const claimed = this.stmtClaimUpdate.run(this.now(), row.id);
-    if (claimed.changes !== 1) {
-      return null; // lost a race; caller just tries again next tick
-    }
-    return {
-      id: row.id,
-      channelKey: row.channel_key,
-      eventIds: JSON.parse(row.event_ids_json) as string[],
-      lines: JSON.parse(row.lines_json) as string[],
-      activations: JSON.parse(row.activations_json) as OwnerEventActivation[],
-      status: 'claimed',
-      attempts: row.attempts,
-      createdAt: row.created_at,
-    };
+    return null;
   }
 
   /** ACK a batch; `unresolvedReason` names why it completed without a ledger change. */
@@ -461,7 +588,7 @@ export class OwnerEventInbox {
     // finite horizon - no table here grows without bound.
     const stalePending = this.db
       .prepare(
-        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
+        `SELECT id, channel_key, event_ids_json, event_refs_json, lines_json, activations_json, attempts, created_at
            FROM owner_event_inbox
           WHERE status = 'pending' AND created_at <= ?
           ORDER BY id ASC`
@@ -473,7 +600,7 @@ export class OwnerEventInbox {
     const cutoff = now - olderThanMs;
     const dying = this.db
       .prepare(
-        `SELECT id, channel_key, event_ids_json, lines_json, activations_json, attempts, created_at
+        `SELECT id, channel_key, event_ids_json, event_refs_json, lines_json, activations_json, attempts, created_at
            FROM owner_event_inbox
           WHERE status = 'claimed' AND attempts + 1 >= ${MAX_ATTEMPTS}
             AND COALESCE(claimed_at, 0) <= ?

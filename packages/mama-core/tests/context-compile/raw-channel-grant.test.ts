@@ -61,7 +61,13 @@ function createAdapter(): DatabaseAdapter {
  * no memory scope. Two thirds of production rows look exactly like this, and every filter
  * the old predicate applies removes them.
  */
-function event(adapter: DatabaseAdapter, connector: string, channel: string, title: string): void {
+function event(
+  adapter: DatabaseAdapter,
+  connector: string,
+  channel: string,
+  title: string,
+  observedAt = 1_200
+): void {
   upsertConnectorEventIndex(adapter, {
     source_connector: connector,
     source_type: 'message',
@@ -71,6 +77,7 @@ function event(adapter: DatabaseAdapter, connector: string, channel: string, tit
     content: `content for ${title}`,
     event_datetime: 1_200,
     source_timestamp_ms: 1_200,
+    observation: { observed_at: observedAt },
   });
 }
 
@@ -197,6 +204,7 @@ describe('raw candidates within a channel grant', () => {
       content: 'x',
       event_datetime: 500,
       source_timestamp_ms: 500,
+      observation: { observed_at: 500 },
     });
     event(adapter, 'chat', 'C001', 'in window');
 
@@ -280,11 +288,7 @@ describe('raw candidates within a channel grant', () => {
     expect(result.hidden.by_reason.channel_not_granted).toBe(1);
   });
 
-  // Found by running the reader against a snapshot of the live index. `event_datetime` is
-  // when an event OCCURS, and a calendar entry occurs in the future - 2,762 live rows are
-  // future-dated, one in 2056 - so ordering by it descending handed them the entire page.
-  // A report asking what happened last week received calendar entries and no messages.
-  it('does not let a future-dated event outrank what has happened', () => {
+  it('orders current evidence by capture while preserving future source occurrence time', () => {
     const adapter = createAdapter();
     setContextSourceClockForTests(() => 2_000);
     try {
@@ -293,23 +297,31 @@ describe('raw candidates within a channel grant', () => {
         source_type: 'message',
         source_id: 'scheduled',
         channel: 'C001',
-        title: 'a meeting in 2056',
+        title: 'a future meeting',
         content: 'x',
         event_datetime: 9_000,
         source_timestamp_ms: 1_200,
+        observation: { observed_at: 1_300 },
       });
-      event(adapter, 'chat', 'C001', 'something that happened');
+      event(adapter, 'chat', 'C001', 'something that happened', 1_500);
 
       const result = readRawCandidates(adapter, input({ boundary: grantBoundary(['chat']) }));
 
-      expect(result.candidates.map((c) => c.title)).toEqual(['something that happened']);
+      expect(result.candidates.map((c) => c.title)).toEqual([
+        'something that happened',
+        'a future meeting',
+      ]);
+      expect(result.candidates[1]).toMatchObject({
+        timestamp_ms: 1_300,
+        source_at_ms: 9_000,
+        observed_at_ms: 1_300,
+      });
     } finally {
       setContextSourceClockForTests(() => Date.now());
     }
   });
 
-  // A caller that genuinely wants the future still gets it by asking.
-  it('includes the future when the caller names an end past it', () => {
+  it('filters current evidence by capture time rather than source occurrence time', () => {
     const adapter = createAdapter();
     setContextSourceClockForTests(() => 2_000);
     try {
@@ -318,18 +330,24 @@ describe('raw candidates within a channel grant', () => {
         source_type: 'message',
         source_id: 'scheduled',
         channel: 'C001',
-        title: 'a meeting in 2056',
+        title: 'a future meeting',
         content: 'x',
         event_datetime: 9_000,
         source_timestamp_ms: 1_200,
+        observation: { observed_at: 1_300 },
       });
 
       const result = readRawCandidates(
         adapter,
-        input({ range: { end_ms: 10_000 }, boundary: grantBoundary(['chat']) })
+        input({ range: { start_ms: 1_250, end_ms: 1_350 }, boundary: grantBoundary(['chat']) })
       );
 
-      expect(result.candidates.map((c) => c.title)).toEqual(['a meeting in 2056']);
+      expect(result.candidates.map((c) => c.title)).toEqual(['a future meeting']);
+      expect(result.candidates[0]).toMatchObject({
+        timestamp_ms: 1_300,
+        source_at_ms: 9_000,
+        observed_at_ms: 1_300,
+      });
     } finally {
       setContextSourceClockForTests(() => Date.now());
     }

@@ -152,6 +152,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       allowedTools: [
         'registry_lookup',
         'registry_upsert',
+        'registry_correct',
         'mama_search',
         'mama_recall',
         'mama_provenance',

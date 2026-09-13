@@ -447,6 +447,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
       raw_id: raw.event_index_id,
       source_id: 'card-42',
       channel_id: 'board-7',
+      observation_ref: raw.current_observation_id,
     };
     expect(value.packet.source_refs).toContainEqual(expectedRef);
     const stored = getContextPacket(adapter, value.packet_id);

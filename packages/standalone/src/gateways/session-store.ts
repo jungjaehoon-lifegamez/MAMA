@@ -6,7 +6,7 @@
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { Session, MessageSource, ConversationTurn } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -229,7 +229,11 @@ export class SessionStore {
   appendMessage(
     sessionId: string,
     msg: { role: 'user' | 'assistant'; content: string; timestamp: number },
-    opts: { sourceMessageRef?: string } = {}
+    opts: {
+      sourceMessageRef?: string;
+      sourceObservationRef?: string;
+      resultObservationRef?: string;
+    } = {}
   ): boolean {
     const session = this.getById(sessionId);
     if (!session) {
@@ -244,6 +248,22 @@ export class SessionStore {
     }
 
     if (msg.role === 'user') {
+      if (opts.sourceMessageRef) {
+        const matches = history.filter((turn) => turn.sourceMessageRef === opts.sourceMessageRef);
+        if (matches.length > 1) {
+          throw new Error('Session contains duplicate source message references');
+        }
+        const existing = matches[0];
+        if (existing) {
+          if (
+            existing.user !== msg.content ||
+            existing.sourceObservationRef !== opts.sourceObservationRef
+          ) {
+            throw new Error('Source message replay conflicts with the persisted turn');
+          }
+          return true;
+        }
+      }
       history.push({
         user: msg.content,
         bot: '',
@@ -253,15 +273,24 @@ export class SessionStore {
         ...(opts.sourceMessageRef
           ? { sourceMessageRef: opts.sourceMessageRef, state: 'provisional' as const }
           : {}),
+        ...(opts.sourceObservationRef ? { sourceObservationRef: opts.sourceObservationRef } : {}),
       });
     } else {
       const lastTurn = history[history.length - 1];
       if (lastTurn && lastTurn.bot === '') {
         lastTurn.bot = msg.content;
         lastTurn.timestamp = msg.timestamp;
+        if (opts.resultObservationRef) {
+          lastTurn.resultObservationRef = opts.resultObservationRef;
+        }
       } else {
         logger.warn(`Creating orphan assistant message for session ${sessionId}`);
-        history.push({ user: '', bot: msg.content, timestamp: msg.timestamp });
+        history.push({
+          user: '',
+          bot: msg.content,
+          timestamp: msg.timestamp,
+          ...(opts.resultObservationRef ? { resultObservationRef: opts.resultObservationRef } : {}),
+        });
       }
     }
 
@@ -274,11 +303,80 @@ export class SessionStore {
     return result.changes > 0;
   }
 
+  findTurnBySourceMessageRef(sessionId: string, sourceMessageRef: string): ConversationTurn | null {
+    const session = this.getById(sessionId);
+    if (!session) {
+      return null;
+    }
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context) as ConversationTurn[];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Session context is malformed JSON: ${message}`);
+    }
+    const matches = history.filter((turn) => turn.sourceMessageRef === sourceMessageRef);
+    if (matches.length > 1) {
+      throw new Error('Session contains duplicate source message references');
+    }
+    return matches[0] ?? null;
+  }
+
+  finalizeTurn(
+    sessionId: string,
+    sourceMessageRef: string,
+    response: string,
+    resultObservationRef?: string
+  ): boolean {
+    const session = this.getById(sessionId);
+    if (!session) {
+      return false;
+    }
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context) as ConversationTurn[];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Session context is malformed JSON: ${message}`);
+    }
+    const matches = history.filter((turn) => turn.sourceMessageRef === sourceMessageRef);
+    if (matches.length !== 1) {
+      throw new Error('Session turn cannot be finalized without one exact source reference');
+    }
+    const turn = matches[0]!;
+    const responseHash = createHash('sha256').update(response, 'utf8').digest('hex');
+    if (turn.state === 'final') {
+      if (
+        turn.bot !== response ||
+        turn.finalResponseSha256 !== responseHash ||
+        turn.resultObservationRef !== resultObservationRef
+      ) {
+        throw new Error('Final source message replay conflicts with the persisted turn');
+      }
+      return true;
+    }
+    turn.bot = response;
+    turn.timestamp = Date.now();
+    turn.state = 'final';
+    turn.finalResponseSha256 = responseHash;
+    if (resultObservationRef) {
+      turn.resultObservationRef = resultObservationRef;
+    }
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(history), Date.now(), sessionId);
+    return result.changes > 0;
+  }
+
   /**
    * Flush streaming response to the last incomplete turn.
    * Called periodically during streaming to persist partial assistant responses.
    */
-  flushStreamingResponse(sessionId: string, accumulatedText: string): boolean {
+  flushStreamingResponse(
+    sessionId: string,
+    accumulatedText: string,
+    resultObservationRef?: string
+  ): boolean {
     const session = this.getById(sessionId);
     if (!session) {
       return false;
@@ -299,6 +397,9 @@ export class SessionStore {
     // Update the bot field with accumulated streaming text
     lastTurn.bot = accumulatedText;
     lastTurn.timestamp = Date.now();
+    if (resultObservationRef) {
+      lastTurn.resultObservationRef = resultObservationRef;
+    }
 
     const result = this.db
       .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
@@ -479,7 +580,10 @@ export class SessionStore {
           .replace(/## Related decisions[\s\S]*$/m, '') // Remove injected decisions footer
           .trim();
         botMsg = botMsg.length > 500 ? botMsg.slice(0, 500) + '...' : botMsg;
-        return `User: ${userMsg}\nAssistant: ${botMsg}`;
+        const refs = [turn.sourceObservationRef, turn.resultObservationRef].filter(Boolean);
+        return `User: ${userMsg}\nAssistant: ${botMsg}${
+          refs.length > 0 ? `\nCaptured observations: ${refs.join(', ')}` : ''
+        }`;
       })
       .join('\n\n');
   }

@@ -1647,3 +1647,25 @@ reviews are clear. No new implementation has been released or installed. See the
 - **TG-06:** service/CLI effects and traces may name a nonblank operation and trusted principal;
   operation origin takes precedence over causal model provenance during release/reconcile.
   Live Telegram delivery and receipt rendering remain unverified.
+
+# PR3B source evidence (2026-09-13)
+
+- **TG-03/TG-04:** polling and message capture expose immutable observation refs and the owner
+  catalog exposes `registry_correct`. The agent chooses retrieval, judgment, and correction; no
+  host action dispatcher or fixed tool order was added.
+- **TG-05:** pending raw projections survive a failed core write and replay after reopen. Exact
+  event-observation pairs reach the same AgentLoop tool context and model-run input refs. Owner
+  input and completed-result refs persist on one final conversation turn. Provider checkpoints
+  commit after raw/core durability, and a reopened session deduplicates the same platform message
+  or completes a result whose observation committed before channel/session history. Per-channel
+  collection splits into at most 50-event durable chunks before cursor commit; each prompt aligns
+  its displayed tail and observation refs, and whole-chunk replay is event-idempotent.
+- **TG-06:** correction execution requires signed scopes plus trusted principal, agent, and
+  revision CAS. Slack, Discord, cron, and owner-event surfaces receive the same durable owner
+  principal in agent context and signed envelopes. The configured owner singleton remains stable
+  when connector identities are added, removed, or rotated.
+  Original graph refs remain immutable while a separate visible projection reflects assignment,
+  merge, and unresolved outcomes. Hidden and unknown targets have one result shape.
+- **Evidence boundary:** temporary SQLite, real core stores, real signed-envelope gateway executor,
+  and scripted external connector/model boundaries only. Package publication, installed service,
+  actual model judgment, live Telegram delivery, and long-window raw behavior remain unverified.

@@ -38,6 +38,26 @@ export class RegistryError extends Error {
   }
 }
 
+export function currentIdentityRevision(): number {
+  const row = adapter()
+    .prepare('SELECT revision FROM registry_identity_state WHERE singleton = 1')
+    .get() as { revision: number } | undefined;
+  if (!row || !Number.isSafeInteger(row.revision) || row.revision < 0) {
+    throw new Error('registry_identity_state is missing or malformed');
+  }
+  return row.revision;
+}
+
+export function rebuildRegistryProjections(): void {
+  const revision = currentIdentityRevision();
+  const row = adapter()
+    .prepare('SELECT MAX(committed_revision) AS revision FROM registry_corrections')
+    .get() as { revision: number | null };
+  if ((row.revision ?? 0) !== revision) {
+    throw new Error('Registry correction projection revision is inconsistent');
+  }
+}
+
 interface NodeRow {
   id: string;
   kind: string;
@@ -304,33 +324,63 @@ export function resolveAlias(
   kind?: RegistryKind | string,
   scopes?: readonly RegistryScopeRef[]
 ): RegistryNode | null {
-  const normalized = normalizeAlias(alias);
-  if (!normalized) {
-    return null;
-  }
-  const admitted = scopes && scopes.length > 0 ? scopes : [{ kind: 'global' as const, id: '*' }];
-  const whereKind = kind ? 'kind = ? AND' : '';
-  const rows = adapter()
-    .prepare(
-      `SELECT DISTINCT node_id FROM registry_aliases
-       WHERE ${whereKind} alias = ?
-         AND ((scope_kind = 'global' AND scope_id = '*')
-           OR (scope_kind || ':' || scope_id) IN (${admitted.map(() => '?').join(', ')}))`
-    )
-    .all(
-      ...(kind ? [requireKind(kind)] : []),
-      normalized,
-      ...admitted.map((scope) => `${scope.kind}:${scope.id}`)
-    ) as Array<{ node_id: string }>;
-  const visible = rows
-    .map((row) => followMerges(row.node_id))
-    .filter((node): node is RegistryNode => node !== null)
-    .filter((node) => isNodeVisible(node.id, admitted));
-  const unique = [...new Map(visible.map((node) => [node.id, node])).values()];
-  if (unique.length > 1) {
+  const candidates = resolveAliasCandidates(alias, { kind, scopes });
+  if (candidates.length > 1) {
     throw new RegistryError('alias_ambiguous', 'Alias resolves to multiple visible nodes.');
   }
-  return unique[0] ?? null;
+  return candidates[0] ?? null;
+}
+
+export function resolveAliasCandidates(
+  alias: string,
+  options?: { kind?: RegistryKind | string; scopes?: readonly RegistryScopeRef[] }
+): RegistryNode[] {
+  const normalized = normalizeAlias(alias);
+  if (!normalized) {
+    return [];
+  }
+  const admitted =
+    options?.scopes && options.scopes.length > 0
+      ? options.scopes
+      : [{ kind: 'global' as const, id: '*' }];
+  const whereKind = options?.kind ? 'kind = ? AND' : '';
+  const rows = adapter()
+    .prepare(
+      `SELECT node_id, alias_display FROM registry_aliases
+       WHERE ${whereKind} alias = ?
+         AND ((scope_kind = 'global' AND scope_id = '*')
+           OR (scope_kind || ':' || scope_id) IN (${admitted.map(() => '?').join(', ')}))
+       ORDER BY created_at, rowid`
+    )
+    .all(
+      ...(options?.kind ? [requireKind(options.kind)] : []),
+      normalized,
+      ...admitted.map((scope) => `${scope.kind}:${scope.id}`)
+    ) as Array<{ node_id: string; alias_display: string }>;
+  const visible = rows
+    .map((row) => {
+      const node = followMerges(row.node_id);
+      if (!node || !isNodeVisible(node.id, admitted)) {
+        return null;
+      }
+      const canonicalVisible = adapter()
+        .prepare(
+          `SELECT 1 FROM registry_aliases
+           WHERE node_id = ? AND alias = ?
+             AND ((scope_kind = 'global' AND scope_id = '*')
+               OR (scope_kind || ':' || scope_id) IN (${admitted.map(() => '?').join(', ')}))
+           LIMIT 1`
+        )
+        .get(
+          node.id,
+          normalizeAlias(node.name),
+          ...admitted.map((scope) => `${scope.kind}:${scope.id}`)
+        );
+      return { ...node, name: canonicalVisible ? node.name : row.alias_display };
+    })
+    .filter((node): node is RegistryNode => node !== null);
+  const unique = [...new Map(visible.map((node) => [node.id, node])).values()];
+  return unique;
 }
 
 export function listNodes(filter?: {

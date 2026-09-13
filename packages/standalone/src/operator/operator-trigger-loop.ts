@@ -46,6 +46,8 @@ import type { ArtifactProvenance, ReportCarryTarget } from './report-carry.js';
 import type { OwnerEventActivation } from './owner-event-inbox.js';
 import type { PersonaReportAsk } from './report-run.js';
 
+const OWNER_EVENT_BATCH_LIMIT = 50;
+
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
   drainNew(limit: number): OperatorChannelEvent[];
@@ -117,6 +119,7 @@ export interface TriggerLoopDeps {
     enqueue(batch: {
       channelKey: string;
       eventIds: string[];
+      eventRefs?: Array<{ eventId: string; observationRef: string | null }>;
       lines: string[];
       activations: OwnerEventActivation[];
     }): number | null;
@@ -601,6 +604,7 @@ export class OperatorTriggerLoop {
       channelKey: string;
       lines: string[];
       inboxEventIds: string[];
+      eventRefs: Array<{ eventId: string; observationRef: string | null }>;
       activations: OwnerEventActivation[];
     }> = [];
     if (events.length > 0 && this.deps.ownerEventInbox) {
@@ -617,47 +621,44 @@ export class OperatorTriggerLoop {
         byChannel.set(key, bucket);
       }
       for (const [channelKey, channelEvents] of byChannel) {
-        // The prompt shows the last 10; the CAUSE is the whole batch. Truncating both
-        // would silently drop events the run acted on from the record of why it acted.
-        // Embedded newlines are collapsed: a message body containing "\n[/UNTRUSTED..."
-        // must not be able to forge line or block framing downstream.
-        // The event time is on the line so a fact saved from it can carry its real
-        // event_date. Measured 2026-09-10: without it, facts from 09-04 events were all
-        // dated the day the batch ran. Minute precision, UTC, no seconds: enough to date a
-        // fact, small enough not to crowd the 200-char excerpt.
-        const shown = channelEvents.slice(-10);
-        const lines = shown.map(
-          (e) =>
-            `- [id:${e.eventIndexId ?? e.id}] [${eventTimeLabel(e.createdAt)}] ${e.userId}: ${e.content
-              .trim()
-              .replace(/[\r\n]+/g, ' ')
-              .slice(0, 200)}`
-        );
-        // Inbox identity must cover EVERY event or dedupe cannot absorb a
-        // redelivery. The fallback is NAMESPACED: bare delta row ids from two
-        // different channels (or after a VACUUM renumbering) must not collide
-        // in the global dedupe PK.
-        const inboxEventIds = channelEvents.map(
-          (e) => e.eventIndexId ?? `raw:${channelKey}:${e.id}`
-        );
-        const activationsById = new Map<string, OwnerEventActivation>();
-        for (const signal of channelEvents.flatMap((event) => signalsByEvent.get(event) ?? [])) {
-          if (!signal.triggerId || activationsById.has(signal.triggerId)) continue;
-          activationsById.set(signal.triggerId, {
-            triggerId: signal.triggerId,
-            kind: signal.kind,
-            memoryQuery: signal.memoryQuery,
-            ...(signal.procedureRef ? { procedureRef: { ...signal.procedureRef } } : {}),
-            procedure: signal.procedure.map((step) => ({ ...step })),
-            requiredEvidence: [...signal.requiredEvidence],
+        for (let offset = 0; offset < channelEvents.length; offset += OWNER_EVENT_BATCH_LIMIT) {
+          const chunk = channelEvents.slice(offset, offset + OWNER_EVENT_BATCH_LIMIT);
+          const shown = chunk.slice(-10);
+          const lines = shown.map(
+            (event) =>
+              `- [id:${event.eventIndexId ?? `raw:${channelKey}:${event.id}`}] [${eventTimeLabel(event.createdAt)}] ${event.userId}: ${event.content
+                .trim()
+                .replace(/[\r\n]+/g, ' ')
+                .slice(0, 200)}`
+          );
+          const inboxEventIds = chunk.map(
+            (event) => event.eventIndexId ?? `raw:${channelKey}:${event.id}`
+          );
+          const activationsById = new Map<string, OwnerEventActivation>();
+          for (const signal of chunk.flatMap((event) => signalsByEvent.get(event) ?? [])) {
+            if (!signal.triggerId || activationsById.has(signal.triggerId)) {
+              continue;
+            }
+            activationsById.set(signal.triggerId, {
+              triggerId: signal.triggerId,
+              kind: signal.kind,
+              memoryQuery: signal.memoryQuery,
+              ...(signal.procedureRef ? { procedureRef: { ...signal.procedureRef } } : {}),
+              procedure: signal.procedure.map((step) => ({ ...step })),
+              requiredEvidence: [...signal.requiredEvidence],
+            });
+          }
+          channelBatches.push({
+            channelKey,
+            lines,
+            inboxEventIds,
+            eventRefs: chunk.map((event, index) => ({
+              eventId: inboxEventIds[index]!,
+              observationRef: event.observationRef ?? null,
+            })),
+            activations: [...activationsById.values()],
           });
         }
-        channelBatches.push({
-          channelKey,
-          lines,
-          inboxEventIds,
-          activations: [...activationsById.values()],
-        });
       }
     }
 
@@ -669,6 +670,7 @@ export class OperatorTriggerLoop {
         this.deps.ownerEventInbox.enqueue({
           channelKey: b.channelKey,
           eventIds: b.inboxEventIds,
+          eventRefs: b.eventRefs,
           lines: b.lines,
           activations: b.activations,
         });

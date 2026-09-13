@@ -1,6 +1,15 @@
 import type { Buffer } from 'node:buffer';
 
-export const TWIN_REF_KINDS = ['memory', 'case', 'entity', 'report', 'edge', 'raw'] as const;
+export const TWIN_REF_KINDS = [
+  'memory',
+  'case',
+  'entity',
+  'report',
+  'edge',
+  'raw',
+  'registry',
+  'observation',
+] as const;
 export type TwinRefKind = (typeof TWIN_REF_KINDS)[number];
 
 export const TWIN_EDGE_SOURCES = ['agent', 'human', 'code'] as const;
@@ -40,6 +49,8 @@ export interface TwinProjectRef {
 }
 
 export interface TwinVisibility {
+  principalId?: string;
+  agentId?: string;
   scopes?: TwinScopeRef[];
   connectors?: string[];
   projectRefs?: TwinProjectRef[];

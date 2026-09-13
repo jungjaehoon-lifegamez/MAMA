@@ -11,9 +11,9 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.55.0  |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 2.1.0   |
-| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 3.1.0   |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.56.0  |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 2.2.0   |
+| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 3.2.0   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 2.0.0   |
 
 ---
@@ -61,9 +61,9 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.55.0          |
-| `packages/mcp-server/package.json`                       | `version` | 2.1.0           |
-| `packages/mama-core/package.json`                        | `version` | 3.1.0           |
+| `packages/standalone/package.json`                       | `version` | 0.56.0          |
+| `packages/mcp-server/package.json`                       | `version` | 2.2.0           |
+| `packages/mama-core/package.json`                        | `version` | 3.2.0           |
 | `packages/claude-code-plugin/package.json`               | `version` | 2.0.0           |
 | `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 2.0.0           |
 

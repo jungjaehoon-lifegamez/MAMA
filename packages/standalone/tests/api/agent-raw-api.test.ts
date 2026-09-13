@@ -1,15 +1,23 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import request from 'supertest';
 import express from 'express';
 
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { upsertConnectorEventIndex } from '../../../mama-core/src/connectors/event-index.js';
+import {
+  appendObservationVersion,
+  getObservationVersion,
+  observationVersionId,
+} from '../../../mama-core/src/connectors/observation-versions.js';
+import { isObservationVersionVisible } from '../../../mama-core/src/connectors/observation-visibility.js';
 import * as rawQuery from '../../../mama-core/src/connectors/raw-query.js';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 
 import Database from '../../src/sqlite.js';
 import { createApiServer } from '../../src/api/index.js';
 import {
+  createAgentObservationRouter,
   createAgentRawRouter,
   type AgentRawRouterOptions,
 } from '../../src/api/agent-raw-handler.js';
@@ -20,6 +28,9 @@ import { EnvelopeAuthority } from '../../src/envelope/authority.js';
 import { EnvelopeStore } from '../../src/envelope/store.js';
 import { signEnvelope } from '../../src/envelope/signature.js';
 import type { Envelope } from '../../src/envelope/types.js';
+import { MessageRouter } from '../../src/gateways/message-router.js';
+import { SessionStore } from '../../src/gateways/session-store.js';
+import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 
 vi.mock('@jungjaehoon/mama-core/debug-logger', () => ({
   DebugLogger: class {
@@ -50,6 +61,7 @@ function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
       channel_id: 'tg:1',
       trigger_context: {},
       scope: {
+        principal_id: 'principal-m4',
         project_refs: [{ kind: 'project', id: 'alpha' }],
         raw_connectors: ['slack'],
         memory_scopes: [{ kind: 'project', id: 'alpha' }],
@@ -72,6 +84,7 @@ function seedRaw(overrides: {
   channel?: string;
   content?: string;
   timestampMs: number;
+  observedAt?: number;
   scopeId?: string;
 }): string {
   const saved = upsertConnectorEventIndex(getAdapter(), {
@@ -88,6 +101,10 @@ function seedRaw(overrides: {
     memory_scope_kind: 'project',
     memory_scope_id: overrides.scopeId ?? 'alpha',
     metadata: { seeded: overrides.sourceId },
+    observation: {
+      producer_version_id: overrides.sourceId,
+      observed_at: overrides.observedAt ?? overrides.timestampMs,
+    },
   });
   return saved.event_index_id;
 }
@@ -136,7 +153,10 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
     await cleanupTestDB(testDbPath);
   });
 
-  function makeServer(rawQueryOverrides: Partial<AgentRawRouterOptions['rawQuery']> = {}) {
+  function makeServer(
+    rawQueryOverrides: Partial<AgentRawRouterOptions['rawQuery']> = {},
+    channelGrant?: () => Record<string, readonly string[]>
+  ) {
     const app = express();
     app.use('/api', requireAuth);
     app.use(
@@ -145,6 +165,16 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
         memoryDb: getAdapter(),
         envelopeAuthority: authority,
         rawQuery: { ...rawQuery, ...rawQueryOverrides },
+        channelGrant,
+      })
+    );
+    app.use(
+      '/api/agent/observations',
+      createAgentObservationRouter({
+        memoryDb: getAdapter(),
+        envelopeAuthority: authority,
+        rawQuery: { ...rawQuery, ...rawQueryOverrides },
+        channelGrant,
       })
     );
     return {
@@ -347,6 +377,34 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
         'slack-alpha',
       ]);
     });
+
+    it('orders matching raw hits by current observation capture time', async () => {
+      seedRaw({
+        sourceId: 'old-source-fresh-capture',
+        content: 'captureorder needle',
+        timestampMs: 100,
+        observedAt: 5_000,
+      });
+      seedRaw({
+        sourceId: 'new-source-older-capture',
+        content: 'captureorder needle',
+        timestampMs: 4_000,
+        observedAt: 4_500,
+      });
+      const response = await authed(
+        request(makeServer().app).get('/api/agent/raw/search-all?query=captureorder')
+      );
+      expect(response.status).toBe(200);
+      expect(response.body.hits.map((hit: { source_id: string }) => hit.source_id)).toEqual([
+        'old-source-fresh-capture',
+        'new-source-older-capture',
+      ]);
+      expect(response.body.hits[0].created_at).toBe(new Date(5_000).toISOString());
+      expect(response.body.hits[0]).toMatchObject({
+        source_at: new Date(100).toISOString(),
+        observed_at: new Date(5_000).toISOString(),
+      });
+    });
   });
 
   describe('AC #3: raw detail and window stay inside envelope visibility', () => {
@@ -388,6 +446,357 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
       expect(
         windowResponse.body.items.map((item: { source_id: string }) => item.source_id)
       ).toEqual(['before', 'target', 'after']);
+    });
+  });
+
+  describe('PR3B exact observation reads', () => {
+    it('returns the exact current observation ref and hides observations outside envelope scope', async () => {
+      const rawId = seedRaw({
+        sourceId: 'observation-visible',
+        content: 'exact observation body',
+        timestampMs: Date.parse('2026-04-20T12:00:00.000Z'),
+      });
+      const hiddenRawId = seedRaw({
+        sourceId: 'observation-hidden',
+        content: 'hidden observation body',
+        timestampMs: Date.parse('2026-04-20T12:01:00.000Z'),
+        scopeId: 'beta',
+      });
+      const visibleRow = getAdapter()
+        .prepare(
+          'SELECT current_observation_id FROM connector_event_index WHERE event_index_id = ?'
+        )
+        .get(rawId) as { current_observation_id: string };
+      const hiddenRow = getAdapter()
+        .prepare(
+          'SELECT current_observation_id FROM connector_event_index WHERE event_index_id = ?'
+        )
+        .get(hiddenRawId) as { current_observation_id: string };
+      const apiServer = makeServer();
+
+      const search = await authed(
+        request(apiServer.app).get('/api/agent/raw/search-all?query=observation')
+      );
+      expect(search.status).toBe(200);
+      expect(search.body.hits).toContainEqual(
+        expect.objectContaining({
+          raw_id: rawId,
+          observation_ref: visibleRow.current_observation_id,
+        })
+      );
+      const visible = await authed(
+        request(apiServer.app).get('/api/agent/observations/' + visibleRow.current_observation_id)
+      );
+      expect(visible.status).toBe(200);
+      expect(visible.body).toMatchObject({
+        status: 'available',
+        body: 'exact observation body',
+        observation: { observationId: visibleRow.current_observation_id },
+      });
+      const hidden = await authed(
+        request(apiServer.app).get('/api/agent/observations/' + hiddenRow.current_observation_id)
+      );
+      expect(hidden.status).toBe(404);
+      expect(JSON.stringify(hidden.body)).not.toContain(hiddenRow.current_observation_id);
+    });
+
+    it('uses signed principal plus agent and connector channel authority before reading a body', async () => {
+      const visibleRawId = seedRaw({
+        sourceId: 'observation-channel-visible',
+        channel: 'C1',
+        timestampMs: Date.parse('2026-04-20T12:02:00.000Z'),
+      });
+      const hiddenRawId = seedRaw({
+        sourceId: 'observation-channel-hidden',
+        channel: 'C2',
+        timestampMs: Date.parse('2026-04-20T12:03:00.000Z'),
+      });
+      const malformedRawId = seedRaw({
+        connector: 'discord',
+        sourceId: 'observation-connector-hidden-malformed',
+        channel: 'C1',
+        timestampMs: Date.parse('2026-04-20T12:04:00.000Z'),
+      });
+      const rows = getAdapter()
+        .prepare(
+          `SELECT event_index_id, current_observation_id FROM connector_event_index
+           WHERE event_index_id IN (?, ?, ?)`
+        )
+        .all(visibleRawId, hiddenRawId, malformedRawId) as Array<{
+        event_index_id: string;
+        current_observation_id: string;
+      }>;
+      const refs = Object.fromEntries(
+        rows.map((row) => [row.event_index_id, row.current_observation_id])
+      );
+      getAdapter()
+        .prepare('UPDATE observation_versions SET metadata_json = ? WHERE observation_id = ?')
+        .run('{malformed', refs[malformedRawId]);
+      expect(
+        isObservationVersionVisible(getAdapter(), refs[hiddenRawId]!, {
+          principalId: 'principal-m4',
+          agentId: 'worker-m4',
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          channels: { slack: ['C1'] },
+        })
+      ).toBe(false);
+      const apiServer = makeServer({}, () => ({ slack: ['C1'] }));
+
+      expect(
+        (await authed(request(apiServer.app).get(`/api/agent/observations/${refs[visibleRawId]}`)))
+          .status
+      ).toBe(200);
+      const hidden = await authed(
+        request(apiServer.app).get(`/api/agent/observations/${refs[hiddenRawId]}`)
+      );
+      const malformedHidden = await authed(
+        request(apiServer.app).get(`/api/agent/observations/${refs[malformedRawId]}`)
+      );
+      const unknown = await authed(
+        request(apiServer.app).get('/api/agent/observations/obs_unknown')
+      );
+      expect([hidden.status, hidden.body]).toEqual([unknown.status, unknown.body]);
+      expect([malformedHidden.status, malformedHidden.body]).toEqual([
+        unknown.status,
+        unknown.body,
+      ]);
+    });
+
+    it('dereferences owner input only for the matching signed principal and agent', async () => {
+      validEnvelope = makeEnvelope({
+        agent_id: 'owner-agent',
+        source: 'slack',
+        channel_id: 'C1',
+        scope: {
+          principal_id: 'principal-owner',
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [],
+        },
+      });
+      authority.persist(validEnvelope);
+      const observation = appendObservationVersion(getAdapter(), {
+        sourceConnector: 'owner-message:slack',
+        sourceId: 'owner-delivery',
+        producerVersionId: 'owner-delivery',
+        body: 'owner input',
+        observedAt: 80,
+        contentHash: 'owner-content-hash',
+        scope: {
+          visibility: 'owner',
+          principalId: 'principal-owner',
+          agentId: 'owner-agent',
+          channel: 'C1',
+        },
+      });
+      const apiServer = makeServer({}, () => ({}));
+      const visible = await authed(
+        request(apiServer.app).get(`/api/agent/observations/${observation.observationId}`)
+      );
+      expect(visible.status).toBe(200);
+      expect(visible.body.body).toBe('owner input');
+      const productionScheduler = new CronScheduler();
+      try {
+        const production = createApiServer({
+          scheduler: productionScheduler,
+          memoryDb: getAdapter(),
+          envelopeAuthority: authority,
+          connectorConfigLoadResult: { ok: true, config: {}, enabledNames: [] },
+        });
+        const productionVisible = await authed(
+          request(production.app).get(`/api/agent/observations/${observation.observationId}`)
+        );
+        expect(productionVisible.status).toBe(200);
+      } finally {
+        productionScheduler.shutdown();
+      }
+      const search = await authed(
+        request(apiServer.app).get('/api/agent/observations/search?query=owner')
+      );
+      expect(search.status).toBe(200);
+      expect(search.body.items).toEqual([
+        expect.objectContaining({ observationRef: observation.observationId }),
+      ]);
+
+      validEnvelope = makeEnvelope({
+        agent_id: 'owner-agent',
+        source: 'slack',
+        channel_id: 'C1',
+        scope: {
+          principal_id: 'principal-other',
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [],
+        },
+      });
+      authority.persist(validEnvelope);
+      const hidden = await authed(
+        request(apiServer.app).get(`/api/agent/observations/${observation.observationId}`)
+      );
+      expect(hidden.status).toBe(404);
+      expect(hidden.body).toEqual({ error: true, code: 'observation_not_found' });
+
+      validEnvelope = makeEnvelope({
+        agent_id: 'owner-agent',
+        source: 'discord',
+        channel_id: 'C2',
+        scope: {
+          principal_id: 'principal-owner',
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack', 'discord'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [],
+        },
+      });
+      authority.persist(validEnvelope);
+      const otherSource = await authed(
+        request(apiServer.app).get(`/api/agent/observations/${observation.observationId}`)
+      );
+      const unknown = await authed(
+        request(apiServer.app).get('/api/agent/observations/obs-owner-unknown')
+      );
+      expect([otherSource.status, otherSource.body]).toEqual([unknown.status, unknown.body]);
+    });
+
+    it('keeps owner search authorization bound to each connector-channel pair', async () => {
+      for (const connector of ['slack', 'discord']) {
+        appendObservationVersion(getAdapter(), {
+          sourceConnector: `owner-message:${connector}`,
+          sourceId: `${connector}-colliding-channel`,
+          producerVersionId: `${connector}-colliding-channel`,
+          body: 'paired channel search',
+          observedAt: connector === 'slack' ? 90 : 91,
+          contentHash: `hash-${connector}-colliding-channel`,
+          scope: {
+            visibility: 'owner',
+            principalId: 'principal-paired',
+            agentId: 'owner-agent',
+            channel: 'C1',
+          },
+        });
+      }
+      validEnvelope = makeEnvelope({
+        agent_id: 'owner-agent',
+        source: 'slack',
+        channel_id: 'C1',
+        scope: {
+          principal_id: 'principal-paired',
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack', 'discord'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [],
+        },
+      });
+      authority.persist(validEnvelope);
+      const response = await authed(
+        request(makeServer().app).get('/api/agent/observations/search?query=paired')
+      );
+      expect(response.status).toBe(200);
+      expect(response.body.items).toMatchObject([{ sourceConnector: 'owner-message:slack' }]);
+    });
+
+    it('pages bounded owner previews and keeps exact GET as the full-body reader', async () => {
+      validEnvelope = makeEnvelope({
+        agent_id: 'worker',
+        source: 'slack',
+        channel_id: 'C1',
+        scope: {
+          principal_id: 'principal-page-owner',
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [],
+        },
+      });
+      authority.persist(validEnvelope);
+      const conversationDb = new Database(':memory:');
+      const conversationStore = new SessionStore(conversationDb);
+      const longResult = `pageable result ${'x'.repeat(700)}`;
+      const recordInlineObservation = (input: {
+        sourceConnector: string;
+        sourceId: string;
+        body: string;
+        author: string | null;
+        observedAt: number;
+        metadata: Record<string, unknown>;
+        scope: Record<string, unknown>;
+      }): string => {
+        const candidate = {
+          ...input,
+          contentHash: createHash('sha256').update(input.body, 'utf8').digest('hex'),
+          producerVersionId: input.sourceId,
+        };
+        const id = observationVersionId(candidate);
+        const existing = getObservationVersion(getAdapter(), id);
+        return appendObservationVersion(getAdapter(), {
+          ...candidate,
+          observedAt: existing?.observedAt ?? candidate.observedAt,
+        }).observationId;
+      };
+      const router = new MessageRouter(
+        conversationStore,
+        { run: async () => ({ response: longResult }) },
+        createMockMamaApi([]),
+        {},
+        undefined,
+        undefined,
+        { recordInlineObservation }
+      );
+      const principal = {
+        class: 'owner' as const,
+        lane: 'owner' as const,
+        canonicalId: 'slack:workspace:page-owner',
+        principalId: 'principal-page-owner',
+        consoleEligible: true,
+      };
+      try {
+        for (const messageId of ['page-message-1', 'page-message-2']) {
+          await router.processTurn({
+            source: 'slack',
+            channelId: 'C1',
+            userId: 'page-owner',
+            text: `pageable input ${messageId}`,
+            metadata: { messageId },
+            principal,
+          });
+        }
+        const apiServer = makeServer({}, () => ({}));
+        const first = await authed(
+          request(apiServer.app).get(
+            `/api/agent/observations/search?query=pageable&limit=1&from=0&to=${Date.now() + 1_000}`
+          )
+        );
+        expect(first.status).toBe(200);
+        expect(first.body.items).toHaveLength(1);
+        expect(first.body.items[0]).not.toHaveProperty('body');
+        expect(first.body.items[0].contentPreview.length).toBeLessThanOrEqual(500);
+        expect(first.body.nextCursor).toEqual(expect.any(String));
+        const second = await authed(
+          request(apiServer.app).get(
+            `/api/agent/observations/search?query=pageable&limit=1&cursor=${encodeURIComponent(
+              first.body.nextCursor
+            )}`
+          )
+        );
+        expect(second.status).toBe(200);
+        expect(second.body.items).toHaveLength(1);
+        expect(second.body.items[0].observationRef).not.toBe(first.body.items[0].observationRef);
+
+        const session = conversationStore.getOrCreate('slack', 'C1', 'page-owner');
+        const resultRef = conversationStore.getHistory(session.id).at(-1)?.resultObservationRef;
+        expect(resultRef).toEqual(expect.any(String));
+        const exact = await authed(
+          request(apiServer.app).get(`/api/agent/observations/${resultRef}`)
+        );
+        expect(exact.status).toBe(200);
+        expect(exact.body.body).toBe(longResult);
+        expect(exact.body.body.length).toBeGreaterThan(500);
+      } finally {
+        conversationStore.close();
+      }
     });
   });
 

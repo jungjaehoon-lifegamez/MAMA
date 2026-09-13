@@ -821,6 +821,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       project_id: 'repo-a',
       memory_scope_kind: 'project',
       memory_scope_id: 'repo-a',
+      observation: { observed_at: 1_200 },
     }).event_index_id;
     const hiddenRawId = upsertConnectorEventIndex(adapter, {
       source_connector: 'slack',
@@ -835,6 +836,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       project_id: 'repo-b',
       memory_scope_kind: 'project',
       memory_scope_id: 'repo-b',
+      observation: { observed_at: 1_200 },
     }).event_index_id;
     const oldRawId = upsertConnectorEventIndex(adapter, {
       source_connector: 'slack',
@@ -849,6 +851,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       project_id: 'repo-a',
       memory_scope_kind: 'project',
       memory_scope_id: 'repo-a',
+      observation: { observed_at: 900 },
     }).event_index_id;
     const boundary = {
       scopes: [{ kind: 'project' as const, id: 'repo-a' }],
@@ -903,12 +906,16 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       })
     );
 
+    const visibleObservation = adapter
+      .prepare('SELECT current_observation_id FROM connector_event_index WHERE event_index_id = ?')
+      .get(visibleRawId) as { current_observation_id: string };
     expect(packet.source_refs).toContainEqual({
       kind: 'raw',
       connector: 'slack',
       raw_id: visibleRawId,
       source_id: 'm-visible-seed',
       channel_id: 'C-eng',
+      observation_ref: visibleObservation.current_observation_id,
     });
   });
 
@@ -980,6 +987,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       project_id: 'repo-a',
       memory_scope_kind: 'project',
       memory_scope_id: 'repo-a',
+      observation: { observed_at: 1_200 },
     }).event_index_id;
 
     const packet = await compileContext(
@@ -1007,12 +1015,16 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       })
     );
 
+    const currentObservation = adapter
+      .prepare('SELECT current_observation_id FROM connector_event_index WHERE event_index_id = ?')
+      .get(rawId) as { current_observation_id: string };
     expect(packet.source_refs).toContainEqual({
       kind: 'raw',
       connector: 'slack',
       raw_id: rawId,
       source_id: 'm-canonical',
       channel_id: 'C-canonical',
+      observation_ref: currentObservation.current_observation_id,
     });
     expect(JSON.stringify(packet.source_refs)).not.toContain('forged');
   });

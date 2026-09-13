@@ -29,6 +29,7 @@ interface OwnerEventRunner {
       agentContext: AgentContext;
       prepareEnvelope: () => Promise<Envelope>;
       causeEventIds: readonly string[];
+      observationRefs: readonly { eventId: string; observationRef: string | null }[];
       sourceMessageRef: string;
       ownerJournalPrompt: string;
       procedureRefs?: ProcedureRef[];
@@ -199,15 +200,14 @@ export class OwnerEventLoop {
             return this.deps.issueEnvelope(batch);
           },
           causeEventIds: batch.eventIds,
+          observationRefs: batch.eventRefs,
           sourceMessageRef: `owner-event:${batch.id}`,
           ownerJournalPrompt: batch.lines.join('\n'),
           procedureRefs: procedureRefs(),
           prepareContent: async () => {
             await resolveActivations();
             await this.deps.assertActiveActivations?.(batch);
-            const content = [
-              { type: 'text' as const, text: await this.deps.buildPrompt(batch) },
-            ];
+            const content = [{ type: 'text' as const, text: await this.deps.buildPrompt(batch) }];
             modelReached = true;
             return { content, procedureRefs: procedureRefs() };
           },

@@ -49,6 +49,16 @@ function activationLines(batch: OwnerEventBatch): string[] {
  * the owner runtime's system prompt carries once per thread.
  */
 export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
+  const observationRefs =
+    input.batch.eventRefs ??
+    input.batch.eventIds.map((eventId) => ({ eventId, observationRef: null }));
+  const capturedObservationRefs = observationRefs.filter((ref) => ref.observationRef !== null);
+  const displayedIds = new Set(
+    input.batch.lines
+      .map((line) => /\[id:([^\]]+)\]/.exec(line)?.[1])
+      .filter((eventId): eventId is string => typeof eventId === 'string')
+  );
+  const displayedObservationRefs = observationRefs.filter((ref) => displayedIds.has(ref.eventId));
   const scope = `owner-event:${input.batch.id}`;
   const effectAuthority = buildOwnerEventEffectAuthority(input.batch);
   const effectKeyLines = [
@@ -82,6 +92,9 @@ export function buildOwnerEventPrompt(input: OwnerEventPromptInput): string {
     ...ownerTarget,
     '',
     '## Current connector delta',
+    `Observation refs: total=${observationRefs.length} available=${capturedObservationRefs.length} legacy_null=${observationRefs.length - capturedObservationRefs.length}`,
+    `Available observation refs: ${JSON.stringify(capturedObservationRefs)}`,
+    `Displayed tail refs: ${JSON.stringify(displayedObservationRefs)}`,
     UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
     wrapUntrustedContent(`owner-event:${input.batch.channelKey}`, input.batch.lines.join('\n')),
   ].join('\n');

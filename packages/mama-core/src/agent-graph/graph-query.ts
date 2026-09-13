@@ -1,4 +1,8 @@
-import { assertTwinRefsVisible, listVisibleTwinEdgesForRefs } from '../edges/ref-validation.js';
+import {
+  assertTwinRefsVisible,
+  listVisibleTwinEdgesForRefs,
+  visibleTwinRefKeysRecursive,
+} from '../edges/ref-validation.js';
 import type { TwinEdgeRecord, TwinRef, TwinVisibility } from '../edges/types.js';
 import { getEntityNode } from '../entities/store.js';
 import type {
@@ -14,6 +18,7 @@ import type {
   GraphTimelineResult,
 } from './types.js';
 import { AgentGraphValidationError } from './errors.js';
+import type { AgentGraphCurrentProjection } from './types.js';
 
 const DEFAULT_GRAPH_LIMIT = 100;
 const DEFAULT_PATH_LIMIT = 10;
@@ -138,14 +143,145 @@ function graphVisibility(input: {
   project_refs?: TwinVisibility['projectRefs'];
   tenant_id?: TwinVisibility['tenantId'];
   channels?: TwinVisibility['channels'];
+  principal_id?: string;
+  agent_id?: string;
 }): TwinVisibility {
   return {
     scopes: input.scopes,
     connectors: input.connectors,
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
+    principalId: input.principal_id,
+    agentId: input.agent_id,
     ...(input.channels ? { channels: input.channels } : {}),
   };
+}
+
+function projectCurrentEdges(
+  adapter: AgentGraphAdapter,
+  edges: readonly TwinEdgeRecord[],
+  visibility: TwinVisibility
+): AgentGraphCurrentProjection[] {
+  if (edges.length === 0) {
+    return [];
+  }
+  const edgeIds = [...new Set(edges.map((edge) => edge.edge_id))];
+  const placeholders = edgeIds.map(() => '?').join(', ');
+  const assignmentRows = adapter
+    .prepare(
+      `SELECT edge_id, endpoint, resolved_node_id
+         FROM registry_ref_assignments assignment
+        WHERE edge_id IN (${placeholders})
+          AND committed_revision = (
+            SELECT MAX(current_assignment.committed_revision)
+              FROM registry_ref_assignments current_assignment
+             WHERE current_assignment.edge_id = assignment.edge_id
+               AND current_assignment.endpoint = assignment.endpoint
+          )`
+    )
+    .all(...edgeIds) as Array<{
+    edge_id: string;
+    endpoint: 'from' | 'to';
+    resolved_node_id: string | null;
+  }>;
+  const assignments = new Map(
+    assignmentRows.map((row) => [
+      `${row.edge_id}\0${row.endpoint}`,
+      row.resolved_node_id === null
+        ? null
+        : ({ kind: 'registry', id: row.resolved_node_id } as TwinRef),
+    ])
+  );
+  const projections = edges.flatMap((edge) =>
+    (['from', 'to'] as const).map((endpoint) => {
+      const original = endpoint === 'from' ? edge.subject_ref : edge.object_ref;
+      const key = `${edge.edge_id}\0${endpoint}`;
+      return {
+        edge_id: edge.edge_id,
+        endpoint,
+        original_ref: original,
+        current_ref: assignments.has(key) ? (assignments.get(key) ?? null) : original,
+      };
+    })
+  );
+  const registryIds = [
+    ...new Set(
+      projections
+        .map((projection) => projection.current_ref)
+        .filter((ref): ref is Extract<TwinRef, { kind: 'registry' }> => ref?.kind === 'registry')
+        .map((ref) => ref.id)
+    ),
+  ];
+  const resolvedRegistry = new Map<string, string | null>();
+  if (registryIds.length > 0) {
+    const registryPlaceholders = registryIds.map(() => '?').join(', ');
+    const rows = adapter
+      .prepare(
+        `WITH RECURSIVE registry_chain(origin_id, id, merged_into, depth) AS (
+           SELECT id, id, merged_into, 0 FROM registry_nodes WHERE id IN (${registryPlaceholders})
+           UNION ALL
+           SELECT chain.origin_id, node.id, node.merged_into, chain.depth + 1
+             FROM registry_chain chain
+             JOIN registry_nodes node ON node.id = chain.merged_into
+            WHERE chain.depth < 100
+         )
+         SELECT origin_id, id, merged_into, depth FROM registry_chain ORDER BY origin_id, depth`
+      )
+      .all(...registryIds) as Array<{
+      origin_id: string;
+      id: string;
+      merged_into: string | null;
+      depth: number;
+    }>;
+    for (const id of registryIds) {
+      const chain = rows.filter((row) => row.origin_id === id);
+      const last = chain.at(-1);
+      resolvedRegistry.set(id, last && last.merged_into === null ? last.id : null);
+    }
+    const currentIds = [
+      ...new Set([...resolvedRegistry.values()].filter((id): id is string => !!id)),
+    ];
+    const visibleIds = new Set<string>();
+    if (!visibility.scopes || visibility.scopes.length === 0) {
+      currentIds.forEach((id) => visibleIds.add(id));
+    } else if (currentIds.length > 0) {
+      const currentPlaceholders = currentIds.map(() => '?').join(', ');
+      const scopeClauses = visibility.scopes
+        .map(() => '(scope_kind = ? AND scope_id = ?)')
+        .join(' OR ');
+      const bindings = adapter
+        .prepare(
+          `SELECT DISTINCT node_id FROM registry_scope_bindings
+           WHERE node_id IN (${currentPlaceholders}) AND (${scopeClauses})`
+        )
+        .all(
+          ...currentIds,
+          ...visibility.scopes.flatMap((scope) => [scope.kind, scope.id])
+        ) as Array<{ node_id: string }>;
+      bindings.forEach((row) => visibleIds.add(row.node_id));
+    }
+    for (const projection of projections) {
+      if (projection.current_ref?.kind === 'registry') {
+        const resolved = resolvedRegistry.get(projection.current_ref.id) ?? null;
+        projection.current_ref =
+          resolved && visibleIds.has(resolved) ? { kind: 'registry', id: resolved } : null;
+      }
+    }
+  }
+  const nonRegistryRefs = projections
+    .map((projection) => projection.current_ref)
+    .filter((ref): ref is TwinRef => ref !== null && ref.kind !== 'registry');
+  const visibleNonRegistry = visibleTwinRefKeysRecursive(adapter, nonRegistryRefs, visibility);
+  for (const projection of projections) {
+    const current = projection.current_ref;
+    if (!current || current.kind === 'registry') {
+      continue;
+    }
+    if (!visibleNonRegistry.has(`${current.kind}\0${current.id}`)) {
+      projection.current_ref = null;
+    }
+  }
+  return projections;
 }
 
 function numberMs(value: unknown, field: string, refId: string): number {
@@ -255,6 +391,7 @@ function loadTimelineRecordEvent(
           SELECT
             event_index_id, source_connector, source_type, source_id, source_locator,
             title, event_datetime, source_timestamp_ms
+            , current_observation_id
           FROM connector_event_index
           WHERE event_index_id = ?
           LIMIT 1
@@ -270,6 +407,7 @@ function loadTimelineRecordEvent(
           title: string | null;
           event_datetime: number | null;
           source_timestamp_ms: number;
+          current_observation_id: string | null;
         }
       | undefined;
     if (!row) {
@@ -298,6 +436,7 @@ function loadTimelineRecordEvent(
         title: row.title,
         event_datetime: eventDatetime,
         source_timestamp_ms: sourceTimestampMs,
+        observation_ref: row.current_observation_id,
       },
     };
   }
@@ -392,7 +531,7 @@ export function getGraphNeighborhood(
     frontier = nextFrontier;
   }
 
-  return { nodes, edges };
+  return { nodes, edges, current_projection: projectCurrentEdges(adapter, edges, visibility) };
 }
 
 export function getGraphPaths(
@@ -443,7 +582,13 @@ export function getGraphPaths(
     }
   }
 
-  return { paths };
+  const pathEdges = [
+    ...new Map(paths.flatMap((path) => path.edges).map((edge) => [edge.edge_id, edge])).values(),
+  ];
+  return {
+    paths,
+    current_projection: projectCurrentEdges(adapter, pathEdges, visibility),
+  };
 }
 
 export function getGraphTimeline(
@@ -491,5 +636,6 @@ export function getGraphTimeline(
           eventKey(left).localeCompare(eventKey(right))
       )
       .slice(0, limit),
+    current_projection: projectCurrentEdges(adapter, edges, visibility),
   };
 }

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import Database from 'better-sqlite3';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,6 +30,10 @@ import {
 import { SessionStore } from '../../src/gateways/session-store.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import StandaloneDatabase from '../../src/sqlite.js';
+import { applyEnvelopeTablesMigration } from '../../src/db/migrations/envelope-tables.js';
+import { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import { EnvelopeStore } from '../../src/envelope/store.js';
+import { createConfiguredOwnerPrincipalResolver } from '../../src/operator/owner-event-policy.js';
 import { NodeSQLiteAdapter } from '../../../mama-core/src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter as CoreDatabaseAdapter } from '../../../mama-core/src/db-manager.js';
 import { createPrincipalRepository } from '../../../mama-core/src/identity/principal-repository.js';
@@ -126,6 +131,232 @@ describe('P2a principal registry completion matrix', () => {
   });
 
   describe('TG-04 Acceptance Criteria: role-bound registry and owner tools', () => {
+    it.each([
+      ['slack', 'workspace-cold', 'slack-cold-owner'],
+      ['discord', 'guild-cold', 'discord-cold-owner'],
+    ] as const)(
+      'establishes the durable owner before %s gateway namespace resolution',
+      (connector, namespace, externalId) => {
+        const configured = createConfiguredOwnerPrincipalResolver({
+          repository,
+          ownerExternalIds: { [connector]: externalId },
+          now: () => 390,
+        });
+        const coldPrincipalId = configured.requireOwnerPrincipalId();
+        expect(coldPrincipalId).toMatch(/^principal_/);
+        expect(repository.resolveByExternal(connector, namespace, externalId)).toBeNull();
+
+        expect(configured.resolve(connector, namespace, externalId)).toMatchObject({
+          principalId: coldPrincipalId,
+          kind: 'owner',
+          status: 'active',
+        });
+        expect(configured.requireOwnerPrincipalId()).toBe(coldPrincipalId);
+      }
+    );
+
+    it('keeps one configured owner across connector additions, removals, and rotation', () => {
+      const first = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: { slack: 'first-owner' },
+        now: () => 391,
+      });
+      const principalId = first.requireOwnerPrincipalId();
+      first.resolve('slack', 'workspace-first', 'first-owner');
+      const second = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: { discord: 'rotated-owner' },
+        now: () => 392,
+      });
+      expect(second.requireOwnerPrincipalId()).toBe(principalId);
+      expect(second.resolve('discord', 'guild-rotated', 'rotated-owner')?.principalId).toBe(
+        principalId
+      );
+      const removed = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: {},
+        now: () => 393,
+      });
+      expect(removed.requireOwnerPrincipalId()).toBe(principalId);
+      const third = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: { telegram: ['telegram-owner'] },
+        now: () => 394,
+      });
+      expect(third.requireOwnerPrincipalId()).toBe(principalId);
+      expect(third.resolve('telegram', 'global', 'telegram-owner')?.principalId).toBe(principalId);
+    });
+
+    it('fails when the singleton is stale while another active owner exists', () => {
+      const first = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: { slack: 'first-owner' },
+        now: () => 394,
+      });
+      adapter
+        .prepare(
+          "UPDATE principals SET status = 'suspended', updated_at = ? WHERE principal_id = ?"
+        )
+        .run(395, first.requireOwnerPrincipalId());
+      expect(
+        repository.ensureOwner({
+          connector: 'telegram',
+          namespace: 'global',
+          externalId: 'replacement-active-owner',
+          now: 396,
+        })
+      ).toBe('created');
+      expect(() =>
+        createConfiguredOwnerPrincipalResolver({
+          repository,
+          ownerExternalIds: { discord: 'new-configured-owner' },
+          now: () => 397,
+        })
+      ).toThrow(/active owner principal/i);
+    });
+
+    it('TG-03/TG-04 carries Slack and Discord owner ingress through observations and signed correction', async () => {
+      const core = await import('@jungjaehoon/mama-core');
+      const testUtils = await import('@jungjaehoon/mama-core/test-utils');
+      const corePath = await testUtils.initTestDB('p2a-owner-ingress-correction');
+      const runtimeDb = new StandaloneDatabase(':memory:');
+      applyEnvelopeTablesMigration(runtimeDb);
+      const signingKey = {
+        key_id: 'p2a-owner-ingress',
+        key_version: 1,
+        key: Buffer.from('p2a-owner-ingress-key-32-bytes!!'),
+      };
+      const authority = new EnvelopeAuthority(
+        new EnvelopeStore(runtimeDb),
+        signingKey,
+        (keyId, version) =>
+          keyId === signingKey.key_id && version === signingKey.key_version
+            ? signingKey.key
+            : undefined
+      );
+      const sessionStore = new SessionStore(runtimeDb);
+      const scope = { kind: 'project' as const, id: 'project-owner-ingress' };
+      const nodeId = core.createNode({ kind: 'item', name: 'owner ingress node', scopes: [scope] });
+      let ownerBindingNow = 400;
+      const configuredOwners = createConfiguredOwnerPrincipalResolver({
+        repository,
+        ownerExternalIds: {
+          slack: 'slack-owner-external',
+          discord: 'discord-owner-external',
+        },
+        now: () => ownerBindingNow++,
+      });
+      const ownerRow = configuredOwners.resolve('slack', 'workspace-owner', 'slack-owner-external');
+      expect(ownerRow?.principalId).toBeTruthy();
+      const discordOwnerRow = configuredOwners.resolve(
+        'discord',
+        'guild-owner',
+        'discord-owner-external'
+      );
+      expect(discordOwnerRow?.principalId).toBe(ownerRow!.principalId);
+      expect(configuredOwners.requireOwnerPrincipalId()).toBe(ownerRow!.principalId);
+      const executor = new GatewayToolExecutor({
+        mamaApi: (await import('@jungjaehoon/mama-core/mama-api')).default,
+      });
+      const seenPrincipals: string[] = [];
+      const router = new MessageRouter(
+        sessionStore,
+        {
+          run: async (_prompt, options) => {
+            const envelope = options?.envelope;
+            const agentContext = options?.agentContext;
+            expect(envelope?.scope.principal_id).toBe(ownerRow!.principalId);
+            expect(agentContext?.principalId).toBe(ownerRow!.principalId);
+            seenPrincipals.push(envelope!.scope.principal_id!);
+            await executor.withExecutionContext({ envelope, agentContext }, async () => {
+              await expect(
+                executor.execute('registry_correct', {
+                  command_id: `owner-ingress-${options?.source}`,
+                  expected_revision: core.currentIdentityRevision(),
+                  operation: 'add_alias',
+                  reason: 'agent selected correction from owner ingress',
+                  node_id: nodeId,
+                  alias: `owner alias ${options?.source}`,
+                  scopes: [scope],
+                })
+              ).resolves.toMatchObject({ success: true });
+            });
+            return { response: `corrected ${options?.source}` };
+          },
+        },
+        createMockMamaApi([]),
+        {},
+        {
+          projectRefsFor: () => [{ kind: 'project', id: scope.id }],
+          rawConnectorsFor: (message) => [message.source],
+          memoryScopesFor: () => [scope],
+          reactiveBudgetSeconds: 30,
+        },
+        authority,
+        {
+          recordInlineObservation: (input) => {
+            const candidate = {
+              ...input,
+              contentHash: createHash('sha256').update(input.body, 'utf8').digest('hex'),
+              producerVersionId: input.sourceId,
+            };
+            const id = core.observationVersionId(candidate);
+            const existing = core.getObservationVersion(core.getAdapter(), id);
+            return core.appendObservationVersion(core.getAdapter(), {
+              ...candidate,
+              observedAt: existing?.observedAt ?? candidate.observedAt,
+            }).observationId;
+          },
+        }
+      );
+      try {
+        for (const connector of ['slack', 'discord'] as const) {
+          const namespace = connector === 'slack' ? 'workspace-owner' : 'guild-owner';
+          const externalId =
+            connector === 'slack' ? 'slack-owner-external' : 'discord-owner-external';
+          const base = resolveConnectorPrincipal({
+            connector,
+            namespace,
+            userId: externalId,
+            ownerUserId: externalId,
+            isDirectMessage: true,
+          });
+          const principal = overlayMemberPrincipal(
+            base,
+            repository.resolveByExternal(connector, namespace, externalId)
+          );
+          await router.processTurn({
+            source: connector,
+            channelId: `${connector}-owner-dm`,
+            userId: externalId,
+            text: `correct ${connector} alias`,
+            metadata: { messageId: `${connector}-owner-message` },
+            principal,
+          });
+          expect(core.resolveAlias(`owner alias ${connector}`, 'item', [scope])?.id).toBe(nodeId);
+        }
+        expect(seenPrincipals).toEqual([ownerRow!.principalId, ownerRow!.principalId]);
+        expect(
+          core
+            .getAdapter()
+            .prepare(
+              `SELECT source_connector, COUNT(*) AS count FROM observation_versions
+               WHERE source_connector LIKE 'owner-%'
+               GROUP BY source_connector ORDER BY source_connector`
+            )
+            .all()
+        ).toEqual([
+          { source_connector: 'owner-message:discord', count: 1 },
+          { source_connector: 'owner-message:slack', count: 1 },
+          { source_connector: 'owner-result:discord', count: 1 },
+          { source_connector: 'owner-result:slack', count: 1 },
+        ]);
+      } finally {
+        sessionStore.close();
+        await testUtils.cleanupTestDB(corePath);
+      }
+    });
+
     it('admits active members through one public lane while preserving connector identity isolation', () => {
       const externalId = '12345';
       const scenarios = [

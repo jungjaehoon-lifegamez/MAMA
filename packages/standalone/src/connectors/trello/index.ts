@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { homedir } from 'os';
 
 import type {
@@ -95,17 +95,16 @@ export class TrelloConnector implements IConnector {
 
   /** boardId → (cardId → encoded card state) */
   private lastCardStates: Map<string, Map<string, string>> = new Map();
+  private pendingCardStates: Map<string, Map<string, string>> | null = null;
+  private pollCommitDeferred = false;
 
-  private readonly stateFilePath = join(
-    homedir(),
-    '.mama',
-    'connectors',
-    'trello',
-    'trello-state.json'
-  );
+  private readonly stateFilePath: string;
 
-  constructor(config: ConnectorConfig) {
+  constructor(config: ConnectorConfig, options?: { stateFilePath?: string }) {
     this.config = config;
+    this.stateFilePath =
+      options?.stateFilePath ??
+      join(homedir(), '.mama', 'connectors', 'trello', 'trello-state.json');
   }
 
   private loadState(): void {
@@ -121,11 +120,11 @@ export class TrelloConnector implements IConnector {
     }
   }
 
-  private saveState(): void {
-    const dir = join(homedir(), '.mama', 'connectors', 'trello');
+  private saveState(states: Map<string, Map<string, string>> = this.lastCardStates): void {
+    const dir = dirname(this.stateFilePath);
     mkdirSync(dir, { recursive: true });
     const obj: Record<string, Record<string, string>> = {};
-    for (const [board, cards] of this.lastCardStates) {
+    for (const [board, cards] of states) {
       obj[board] = Object.fromEntries(cards);
     }
     writeFileSync(this.stateFilePath, JSON.stringify({ lastCardStates: obj }));
@@ -152,6 +151,8 @@ export class TrelloConnector implements IConnector {
     this.apiKey = null;
     this.token = null;
     this.lastCardStates.clear();
+    this.pendingCardStates = null;
+    this.pollCommitDeferred = false;
   }
 
   async healthCheck(): Promise<ConnectorHealth> {
@@ -220,6 +221,9 @@ export class TrelloConnector implements IConnector {
 
     const items: NormalizedItem[] = [];
     let hadError = false;
+    const pendingCardStates = new Map(
+      [...this.lastCardStates].map(([boardId, states]) => [boardId, new Map(states)])
+    );
 
     for (const [channelKey, channelCfg] of Object.entries(this.config.channels)) {
       if (channelCfg.role === 'ignore') continue;
@@ -256,6 +260,16 @@ export class TrelloConnector implements IConnector {
 
         for (const list of lists) {
           for (const card of list.cards) {
+            const activityTime = Date.parse(card.dateLastActivity);
+            if (!Number.isFinite(activityTime)) {
+              hadError = true;
+              this.lastError = 'Trello board item has an invalid activity timestamp';
+              const previousState = prevCardState.get(card.id);
+              if (previousState !== undefined) {
+                newCardState.set(card.id, previousState);
+              }
+              continue;
+            }
             const labels = (card.labels ?? []).map((l) => l.name).filter(Boolean);
             const assignees = card.idMembers.map((id) => memberNames.get(id) ?? id);
             const current: CardState = { list: list.name, labels, members: assignees };
@@ -272,18 +286,18 @@ export class TrelloConnector implements IConnector {
               prev !== undefined &&
               !prev.legacy &&
               !isMoved &&
-              (prev.state.labels.join(' ') !== labels.join(' ') ||
-                prev.state.members.join(' ') !== assignees.join(' '));
+              (prev.state.labels.join('\u0000') !== labels.join('\u0000') ||
+                prev.state.members.join('\u0000') !== assignees.join('\u0000'));
 
             if (isNew || isMoved || isUpdated) {
               let content = `${card.name} | ${list.name}`;
               if (isMoved) {
                 content += ` (from: ${prev!.state.list})`;
               }
-              if (isUpdated && prev!.state.labels.join(' ') !== labels.join(' ')) {
+              if (isUpdated && prev!.state.labels.join('\u0000') !== labels.join('\u0000')) {
                 content += ` (labels: ${prev!.state.labels.join(', ') || 'none'} -> ${labels.join(', ') || 'none'})`;
               }
-              if (isUpdated && prev!.state.members.join(' ') !== assignees.join(' ')) {
+              if (isUpdated && prev!.state.members.join('\u0000') !== assignees.join('\u0000')) {
                 content += ` (assignees changed)`;
               }
               if (labels.length > 0) {
@@ -295,18 +309,14 @@ export class TrelloConnector implements IConnector {
 
               items.push({
                 source: 'trello',
-                sourceId: `${boardId}:${card.id}:${Date.now()}`,
+                sourceId: `${boardId}:${card.id}:${activityTime}`,
                 sourceEntityId: `${boardId}:${card.id}`,
                 channel: channelName,
                 author: 'trello',
                 content,
-                // First sight is an OBSERVATION, stamped now: on install (or a
-                // state reset) dateLastActivity can be years old, which parks
-                // the card's only enriched item below every since-window and
-                // makes it invisible to retrieval (live incident 2026-07-24).
-                // Moves/updates keep the card's own activity time - the change
-                // just happened, so it is both fresh and semantically exact.
-                timestamp: isNew ? new Date() : new Date(card.dateLastActivity),
+                // Source time is the provider version's stable timestamp. Host capture
+                // freshness is recorded separately as observation observedAt by the scheduler.
+                timestamp: new Date(activityTime),
                 type: 'kanban_card',
                 metadata: {
                   lastActivityAt: card.dateLastActivity,
@@ -327,19 +337,44 @@ export class TrelloConnector implements IConnector {
         }
 
         // Update card state snapshot for this board
-        this.lastCardStates.set(boardId, newCardState);
+        pendingCardStates.set(boardId, newCardState);
       } catch (err) {
         hadError = true;
         this.lastError = err instanceof Error ? err.message : String(err);
       }
     }
 
-    this.saveState();
+    this.pendingCardStates = pendingCardStates;
+    if (!this.pollCommitDeferred) {
+      this.commitPoll();
+    }
     this.lastPollTime = new Date();
     this.lastPollCount = items.length;
     // lastError was set in catch blocks; clear only if no error occurred this pass
     if (!hadError) this.lastError = undefined;
 
     return items;
+  }
+
+  commitPoll(): void {
+    if (this.pendingCardStates === null) {
+      throw new Error('Trello poll state is unavailable to commit');
+    }
+    this.saveState(this.pendingCardStates);
+    this.lastCardStates = this.pendingCardStates;
+    this.pendingCardStates = null;
+    this.pollCommitDeferred = false;
+  }
+
+  beginPollHandoff(): void {
+    if (this.pollCommitDeferred || this.pendingCardStates !== null) {
+      throw new Error('Trello poll handoff is already active');
+    }
+    this.pollCommitDeferred = true;
+  }
+
+  abortPollHandoff(): void {
+    this.pendingCardStates = null;
+    this.pollCommitDeferred = false;
   }
 }

@@ -63,6 +63,7 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
     const adapter = getAdapter();
     adapter.prepare('DELETE FROM connector_event_index_cursors').run();
     adapter.prepare('DELETE FROM connector_event_index').run();
+    adapter.prepare('DELETE FROM observation_versions').run();
   });
 
   afterEach(() => {
@@ -85,7 +86,11 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
         rawIndexSink: async (name, items) => {
           const stored = rawStore.query(name, new Date(0));
           for (const item of items) {
-            expect(stored.find((row) => row.sourceId === item.sourceId)).toEqual(item);
+            const { pendingProjectionId: _pendingProjectionId, ...persistedItem } = item;
+            expect(stored.find((row) => row.sourceId === item.sourceId)).toEqual({
+              ...persistedItem,
+              observedAt: undefined,
+            });
           }
           for (const row of mapNormalizedItemsToConnectorEventIndexInputs(name, items)) {
             upsertConnectorEventIndex(getAdapter(), row);
@@ -140,6 +145,49 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
   });
 
   describe('AC #2: index sink failure keeps cursor unchanged for idempotent retry', () => {
+    it('drains more than 100 pending projections before committing the provider', async () => {
+      const items = Array.from({ length: 101 }, (_, index) =>
+        makeItem({ sourceId: `bulk-${index}`, content: `bulk content ${index}` })
+      );
+      const connector = makeConnector('slack', items);
+      connector.commitPoll = vi.fn().mockResolvedValue(undefined);
+      const sink = vi.fn().mockResolvedValue(undefined);
+      const registry = new ConnectorRegistry();
+      registry.register('slack', connector);
+
+      await new PollingScheduler(rawStore, tmpDir, { rawIndexSink: sink }).pollAll(
+        registry,
+        { slack: { C123: { role: 'hub' } } },
+        vi.fn()
+      );
+
+      expect(sink).toHaveBeenCalledTimes(101);
+      expect(rawStore.listPendingProjections('slack')).toEqual([]);
+      expect(connector.commitPoll).toHaveBeenCalledOnce();
+    });
+
+    it('does not commit the provider checkpoint when exact batch acknowledgement fails', async () => {
+      const connector = makeConnector('slack', [
+        makeItem({ sourceId: 'ack-one' }),
+        makeItem({ sourceId: 'ack-two', content: 'second pending projection' }),
+      ]);
+      connector.commitPoll = vi.fn().mockResolvedValue(undefined);
+      const registry = new ConnectorRegistry();
+      registry.register('slack', connector);
+      vi.spyOn(rawStore, 'acknowledgeProjections').mockImplementation(() => {
+        throw new Error('synthetic exact acknowledgement failure');
+      });
+      const scheduler = new PollingScheduler(rawStore, tmpDir, {
+        rawIndexSink: async () => {},
+      });
+
+      await scheduler.pollAll(registry, { slack: { C123: { role: 'hub' } } }, vi.fn());
+
+      expect(connector.commitPoll).not.toHaveBeenCalled();
+      expect(rawStore.listPendingProjections('slack')).toHaveLength(2);
+      expect(scheduler.getLastPollTime('slack')).toBeUndefined();
+    });
+
     it('does not advance lastPollTimes until poll, raw save, and index sink all succeed', async () => {
       const onExtract = vi.fn();
       const indexError = new Error('index unavailable');
@@ -161,6 +209,49 @@ describe('Story M4: RawStore to unified connector_event_index indexing', () => {
       expect(sink).toHaveBeenCalledTimes(2);
       expect(scheduler.getLastPollTime('slack')).toBeInstanceOf(Date);
       expect(onExtract).toHaveBeenCalledOnce();
+    });
+
+    it('TG-05 replays retained raw after the provider becomes unchanged', async () => {
+      let pollNumber = 0;
+      const connector = makeConnector('trello', []);
+      connector.poll = async () => {
+        pollNumber += 1;
+        return pollNumber === 1
+          ? [makeItem({ source: 'trello', sourceId: 'card-1', type: 'kanban_card' })]
+          : [];
+      };
+      const registry = new ConnectorRegistry();
+      registry.register('trello', connector);
+      let fail = true;
+      const scheduler = new PollingScheduler(rawStore, tmpDir, {
+        rawIndexSink: async (connectorName, items) => {
+          if (fail) {
+            fail = false;
+            throw new Error('forced core failure');
+          }
+          for (const input of mapNormalizedItemsToConnectorEventIndexInputs(connectorName, items)) {
+            upsertConnectorEventIndex(getAdapter(), input);
+          }
+        },
+      });
+
+      await scheduler.pollAll(registry, { trello: { C123: { role: 'hub' } } }, vi.fn());
+      const pending = rawStore.listPendingProjections('trello');
+      expect(pending).toHaveLength(1);
+      const capturedAt = pending[0]!.observedAt;
+      await scheduler.pollAll(registry, { trello: { C123: { role: 'hub' } } }, vi.fn());
+
+      expect(rawStore.listPendingProjections('trello')).toEqual([]);
+      const row = getAdapter()
+        .prepare(
+          `SELECT o.observed_at
+             FROM connector_event_index e
+             JOIN observation_versions o ON o.observation_id = e.current_observation_id
+            WHERE e.source_connector = 'trello' AND e.source_id = 'card-1'`
+        )
+        .get() as { observed_at: number };
+      expect(row.observed_at).toBe(capturedAt);
+      expect(pollNumber).toBe(2);
     });
   });
 });

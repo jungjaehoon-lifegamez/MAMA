@@ -92,6 +92,20 @@ export interface MessageRouterDependencies {
   privateConnectorPolicy?: PrivateConnectorPolicy;
   /** Resolve exactly one detached authority snapshot for each admitted member turn. */
   memberScopeResolver?: MemberScopeResolver;
+  recordInlineObservation?: (input: {
+    sourceConnector: string;
+    sourceId: string;
+    body: string;
+    author: string | null;
+    observedAt: number;
+    metadata: Record<string, unknown>;
+    scope: Record<string, unknown>;
+  }) => string;
+  readInlineObservationByIdentity?: (input: {
+    sourceConnector: string;
+    sourceId: string;
+    producerVersionId: string;
+  }) => { observationRef: string; body: string } | null;
 }
 
 export type MemberScopeResolver = (
@@ -410,6 +424,7 @@ function buildReactiveEnvelopeInput(
     channel_id: message.channelId,
     trigger_context: { user_text: message.text },
     scope: {
+      ...(message.principal?.principalId ? { principal_id: message.principal.principalId } : {}),
       project_refs: memberMemoryScopes
         ? memberMemoryScopes
             .filter((scope): scope is { kind: 'project'; id: string } => scope.kind === 'project')
@@ -516,6 +531,8 @@ function normalizeTranslationTargetLanguage(
  * Central hub for processing messages from all messenger platforms.
  */
 export class MessageRouter implements TurnProcessor {
+  private readonly recordInlineObservation?: MessageRouterDependencies['recordInlineObservation'];
+  private readonly readInlineObservationByIdentity?: MessageRouterDependencies['readInlineObservationByIdentity'];
   private procedureStore?: ProcedureStore;
   setProcedureStore(store: ProcedureStore): void {
     this.procedureStore = store;
@@ -647,6 +664,8 @@ export class MessageRouter implements TurnProcessor {
     this.privateConnectorPolicy =
       dependencies.privateConnectorPolicy ?? DEFAULT_PRIVATE_CONNECTOR_POLICY;
     this.memberScopeResolver = dependencies.memberScopeResolver;
+    this.recordInlineObservation = dependencies.recordInlineObservation;
+    this.readInlineObservationByIdentity = dependencies.readInlineObservationByIdentity;
     if (this.envelopeConfig && !this.envelopeAuthority) {
       throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
     }
@@ -1000,6 +1019,158 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
     const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
       .filter(Boolean)
       .join(':');
+    const existingSourceTurn = this.sessionStore.findTurnBySourceMessageRef(
+      session.id,
+      sourceMessageRef
+    );
+    const inputObservation = () => ({
+      sourceConnector: `owner-message:${message.source}`,
+      sourceId: sourceMessageRef,
+      body: message.text,
+      author: message.userId,
+      observedAt: Date.now(),
+      metadata: { messageId: sourceTurnId },
+      scope: {
+        visibility: 'owner',
+        agentId: 'worker',
+        channel: message.channelId,
+        principalId: message.principal?.principalId ?? null,
+      },
+    });
+    const resultObservation = (body: string) => ({
+      sourceConnector: `owner-result:${message.source}`,
+      sourceId: `${sourceMessageRef}:result`,
+      body,
+      author: 'mama',
+      observedAt: Date.now(),
+      metadata: { sourceMessageRef },
+      scope: {
+        visibility: 'owner',
+        agentId: 'worker',
+        channel: message.channelId,
+        principalId: message.principal?.principalId ?? null,
+      },
+    });
+    const validateStoredObservation = (
+      storedRef: string,
+      input: Parameters<NonNullable<MessageRouterDependencies['recordInlineObservation']>>[0]
+    ): void => {
+      if (!this.recordInlineObservation) {
+        throw new Error('Stored owner observation cannot be revalidated');
+      }
+      let returnedRef: string;
+      try {
+        returnedRef = this.recordInlineObservation(input);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith('Observation replay conflict for ')) {
+          throw new Error('Owner message replay conflicts with persisted immutable input', {
+            cause: error,
+          });
+        }
+        throw new Error('Owner observation replay validation failed', { cause: error });
+      }
+      if (returnedRef !== storedRef) {
+        throw new Error('Owner message replay conflicts with persisted immutable input');
+      }
+    };
+    if (existingSourceTurn?.state === 'final') {
+      if (existingSourceTurn.sourceObservationRef) {
+        validateStoredObservation(existingSourceTurn.sourceObservationRef, inputObservation());
+      }
+      if (existingSourceTurn.resultObservationRef) {
+        validateStoredObservation(
+          existingSourceTurn.resultObservationRef,
+          resultObservation(existingSourceTurn.bot)
+        );
+      }
+      return {
+        outcome: 'completed',
+        response: existingSourceTurn.bot,
+        sessionId: session.id,
+        injectedDecisions: [],
+        duration: Date.now() - startTime,
+        provenance: { status: 'unavailable' as const, reason: 'backend_no_run' as const },
+        sourceTurnId,
+        sourceMessageRef,
+      };
+    }
+    const sourceObservationRef =
+      existingSourceTurn?.sourceObservationRef ??
+      (agentContext.roleName === 'owner_console' && this.recordInlineObservation
+        ? this.recordInlineObservation(inputObservation())
+        : undefined);
+    const recoveredResult =
+      existingSourceTurn &&
+      !existingSourceTurn.resultObservationRef &&
+      agentContext.roleName === 'owner_console'
+        ? this.readInlineObservationByIdentity?.({
+            sourceConnector: `owner-result:${message.source}`,
+            sourceId: `${sourceMessageRef}:result`,
+            producerVersionId: `${sourceMessageRef}:result`,
+          })
+        : null;
+    if (existingSourceTurn && recoveredResult) {
+      validateStoredObservation(sourceObservationRef!, inputObservation());
+      validateStoredObservation(
+        recoveredResult.observationRef,
+        resultObservation(recoveredResult.body)
+      );
+      if (
+        !this.sessionStore.flushStreamingResponse(
+          session.id,
+          recoveredResult.body,
+          recoveredResult.observationRef
+        ) ||
+        !this.sessionStore.finalizeTurn(
+          session.id,
+          sourceMessageRef,
+          recoveredResult.body,
+          recoveredResult.observationRef
+        )
+      ) {
+        throw new Error('Unable to recover committed result observation');
+      }
+      return {
+        outcome: 'completed',
+        response: recoveredResult.body,
+        sessionId: session.id,
+        injectedDecisions: [],
+        duration: Date.now() - startTime,
+        provenance: { status: 'unavailable' as const, reason: 'backend_no_run' as const },
+        sourceTurnId,
+        sourceMessageRef,
+      };
+    }
+    if (
+      existingSourceTurn?.resultObservationRef &&
+      existingSourceTurn.bot.trim().length > 0 &&
+      agentContext.roleName === 'owner_console'
+    ) {
+      validateStoredObservation(existingSourceTurn.sourceObservationRef!, inputObservation());
+      const storedResultRef = existingSourceTurn.resultObservationRef;
+      validateStoredObservation(storedResultRef, resultObservation(existingSourceTurn.bot));
+      if (
+        !this.sessionStore.finalizeTurn(
+          session.id,
+          sourceMessageRef,
+          existingSourceTurn.bot,
+          storedResultRef
+        )
+      ) {
+        throw new Error('Unable to recover final assistant response');
+      }
+      return {
+        outcome: 'completed',
+        response: existingSourceTurn.bot,
+        sessionId: session.id,
+        injectedDecisions: [],
+        duration: Date.now() - startTime,
+        provenance: { status: 'unavailable' as const, reason: 'backend_no_run' as const },
+        sourceTurnId,
+        sourceMessageRef,
+      };
+    }
 
     // Track lock ownership for proper cleanup in finally block
     let acquiredLock = !runtimeOwnsSession && !busy;
@@ -1063,13 +1234,17 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
       // plain messages and non-Telegram sources are byte-identical to before.
       const formattingSuffix = buildTelegramFormattingSuffix(message);
       // Save user message immediately for crash/refresh resilience.
-      this.sessionStore.appendMessage(session.id, {
-        role: 'user',
-        content: [`${message.text}${formattingSuffix}`, mediaInstructions]
-          .filter(Boolean)
-          .join('\n\n'),
-        timestamp: Date.now(),
-      });
+      this.sessionStore.appendMessage(
+        session.id,
+        {
+          role: 'user',
+          content: [`${message.text}${formattingSuffix}`, mediaInstructions]
+            .filter(Boolean)
+            .join('\n\n'),
+          timestamp: Date.now(),
+        },
+        { sourceMessageRef, sourceObservationRef }
+      );
 
       let response = '';
       let context: InjectedContext = { prompt: '', decisions: [], hasContext: false };
@@ -1222,6 +1397,9 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
         // Skill descriptions and source paths come from the common admission catalog.
         // Keyword coincidence must not promote a whole unrelated skill into an instruction.
         const skillPrefix = '';
+        const observationPrefix = sourceObservationRef
+          ? `[captured_input]\nobservation_ref=${sourceObservationRef}\n[/captured_input]\n\n`
+          : '';
 
         // NEW sessions may receive implicit memory/context prefixes. CONTINUE turns
         // keep using CLI conversation state and only prepend queued audit notices.
@@ -1284,6 +1462,11 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
             : {}),
           sourceTurnId,
           sourceMessageRef,
+          ...(sourceObservationRef
+            ? {
+                observationRefs: [{ eventId: sourceTurnId, observationRef: sourceObservationRef }],
+              }
+            : {}),
           ...(runtimeSessionKey === OWNER_RUNTIME_SESSION_KEY
             ? {
                 ownerJournalPrompt: `${message.text}${formattingSuffix}`,
@@ -1429,7 +1612,7 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
           }
 
           // Add text content with memory and skill context.
-          const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}${formattingSuffix}`;
+          const effectiveMessageText = `${memoryPrefix}${skillPrefix}${observationPrefix}${messageText || ''}${formattingSuffix}`;
           if (effectiveMessageText) {
             contentBlocks.push({ type: 'text', text: effectiveMessageText });
           }
@@ -1474,7 +1657,7 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
           completedOwnerJournalProvenance = result.ownerJournalProvenance;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
         } else {
-          const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}${formattingSuffix}`;
+          const effectiveText = `${memoryPrefix}${skillPrefix}${observationPrefix}${message.text}${formattingSuffix}`;
           const turnStart = Date.now();
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
@@ -1546,6 +1729,11 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
         response = await this.resolveMediaPaths(response);
       }
 
+      const resultObservationRef =
+        agentContext.roleName === 'owner_console' && this.recordInlineObservation
+          ? this.recordInlineObservation(resultObservation(response))
+          : undefined;
+
       // 5. Record to channel history for every admitted source.
       const channelHistory = getChannelHistory();
       if (channelHistory) {
@@ -1571,13 +1759,15 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
       }
 
       // 6. Update session context — finalize assistant response
-      const persisted =
-        this.sessionStore.flushStreamingResponse(session.id, response) ||
-        this.sessionStore.appendMessage(session.id, {
-          role: 'assistant',
-          content: response,
-          timestamp: Date.now(),
-        });
+      if (!this.sessionStore.flushStreamingResponse(session.id, response, resultObservationRef)) {
+        throw new Error('Unable to stage final assistant response');
+      }
+      const persisted = this.sessionStore.finalizeTurn(
+        session.id,
+        sourceMessageRef,
+        response,
+        resultObservationRef
+      );
       if (!persisted) {
         throw new Error('Unable to persist final assistant response');
       }

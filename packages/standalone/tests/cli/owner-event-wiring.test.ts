@@ -18,10 +18,13 @@ import type { Envelope } from '../../src/envelope/types.js';
 import { deriveMemoryScopes } from '../../src/memory/scope-context.js';
 
 describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
+  const ownerPrincipalId = 'principal-owner-event-wiring';
+
   function ownerContext() {
     return buildOwnerEventAgentContext({
       backend: 'codex',
       model: 'gpt-5.6-sol',
+      principalId: ownerPrincipalId,
       ownerRole: DEFAULT_ROLES.definitions.owner_console,
       privateConnectorPolicy: resolvePrivateConnectorPolicy({
         ok: true,
@@ -33,7 +36,10 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
 
   function envelope(): Envelope {
     return {
-      scope: { allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }] },
+      scope: {
+        principal_id: ownerPrincipalId,
+        allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }],
+      },
     } as Envelope;
   }
 
@@ -154,11 +160,15 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     const context = buildOwnerEventAgentContext({
       backend: 'codex',
       model: 'gpt-5.6-sol',
+      principalId: ownerPrincipalId,
       ownerRole: DEFAULT_ROLES.definitions.owner_console,
       privateConnectorPolicy: privatePolicy,
     });
     const envelope = {
-      scope: { allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }] },
+      scope: {
+        principal_id: ownerPrincipalId,
+        allowed_destinations: [{ kind: 'telegram', id: 'owner-chat' }],
+      },
     } as Envelope;
     let runOptions: Record<string, unknown> | undefined;
     const ownerLoop = new OwnerEventLoop({
@@ -287,6 +297,79 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
     db.close();
   });
 
+  it('TG-05 chunks 200 channel events without losing refs across ACK and replay', async () => {
+    const db = new Database(':memory:');
+    const inbox = new OwnerEventInbox(db);
+    const registry = new TriggerRegistry(db);
+    const events = Array.from({ length: 200 }, (_, index) => ({
+      id: index + 1,
+      eventIndexId: `evt-chunk-${index + 1}`,
+      observationRef: index % 5 === 0 ? null : `obs-chunk-${index + 1}`,
+      channel: 'slack',
+      channelId: 'C-chunk',
+      userId: 'synthetic-member',
+      role: 'user' as const,
+      content: `chunk content ${index + 1}`,
+      createdAt: index + 1,
+    }));
+    let drains = 0;
+    const commit = vi.fn();
+    const loop = new OperatorTriggerLoop({
+      delta: {
+        drainNew: () => (drains++ < 2 ? events : []),
+        commit,
+      },
+      memory: { save: async () => {}, recall: async () => [] },
+      registry,
+      ownerEventInbox: inbox,
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 250,
+        authorEveryNTicks: 999,
+        reviewEveryNTicks: 999,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await loop.tick();
+    expect(commit).toHaveBeenCalledWith(events);
+    expect(inbox.depth().pending).toBe(4);
+    const seenIds: string[] = [];
+    for (let chunk = 0; chunk < 4; chunk += 1) {
+      const batch = inbox.claimNext();
+      expect(batch).not.toBeNull();
+      expect(batch!.eventIds).toHaveLength(50);
+      expect(batch!.eventRefs).toHaveLength(50);
+      expect(batch!.lines).toHaveLength(10);
+      seenIds.push(...batch!.eventIds);
+      const displayedIds = batch!.lines.map((line) => /\[id:([^\]]+)\]/.exec(line)?.[1]);
+      expect(displayedIds).toEqual(batch!.eventIds.slice(-10));
+      const prompt = buildOwnerEventPrompt({
+        batch: batch!,
+        ownerBrief: 'brief',
+        ownerTelegramChatId: 'owner-chat',
+      });
+      const available = batch!.eventRefs.filter((ref) => ref.observationRef !== null);
+      expect(prompt).toContain(
+        `Observation refs: total=50 available=${available.length} legacy_null=${50 - available.length}`
+      );
+      for (const ref of available) {
+        expect(prompt).toContain(ref.observationRef!);
+      }
+      inbox.ack(batch!.id, 'no_update');
+    }
+    expect(new Set(seenIds).size).toBe(200);
+    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+
+    await loop.tick();
+    expect(inbox.depth()).toEqual({ pending: 0, claimed: 0, dead: 0 });
+    expect(commit).toHaveBeenCalledTimes(2);
+    db.close();
+  });
+
   it('terminal receipt: a confirmed deliverable counts, a confirmed notification alone does not', () => {
     const db = new Database(':memory:');
     const taskLedger = new TaskLedger(db);
@@ -374,7 +457,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       new TaskLedger(firstDb, { now: () => now });
       const oldId = firstInbox.enqueue({
         channelKey: 'chatwork:feedback',
-        eventIds: Array.from({ length: 200 }, (_, i) => `old-event-${i + 1}`),
+        eventIds: Array.from({ length: 50 }, (_, i) => `old-event-${i + 1}`),
         lines: Array.from({ length: 10 }, (_, i) => `old visible line ${i + 1}`),
         activations: [],
       })!;
@@ -406,7 +489,7 @@ describe('TG-03/TG-04/TG-05/TG-06 production owner-event seam', () => {
       const taskLedger = new TaskLedger(reopenedDb, { now: () => now });
       const currentId = inbox.enqueue({
         channelKey: 'chatwork:feedback',
-        eventIds: Array.from({ length: 166 }, (_, i) => `current-event-${i + 1}`),
+        eventIds: Array.from({ length: 50 }, (_, i) => `current-event-${i + 1}`),
         lines: Array.from({ length: 10 }, (_, i) => `current visible line ${i + 1}`),
         activations: [],
       })!;

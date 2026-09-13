@@ -179,6 +179,7 @@ function connectorEventSnapshot(row: ConnectorEventIndexRecord | null) {
     content: row.content,
     event_datetime: row.event_datetime,
     event_date: row.event_date,
+    observation_ref: row.current_observation_id,
   };
 }
 

@@ -183,6 +183,83 @@ register({
   },
 });
 register({
+  name: 'registry_correct',
+  description:
+    'Apply one explicit identity correction under the current signed scopes and expected identity revision. The agent chooses add_alias, merge, split, or assign_refs and supplies observation evidence when available; the host validates authority, CAS, and atomic commit.',
+  category: 'memory',
+  params:
+    'command_id, expected_revision, operation, reason, scopes?, node_id?, alias?, survivor_id?, member_ids?, parent_id?, children?, assignments?, evidence?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command_id: { type: 'string', minLength: 1 },
+      expected_revision: { type: 'integer', minimum: 0 },
+      operation: { type: 'string', enum: ['add_alias', 'merge', 'split', 'assign_refs'] },
+      reason: { type: 'string', minLength: 1 },
+      scopes: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['global', 'user', 'channel', 'project'] },
+            id: { type: 'string', minLength: 1 },
+          },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        },
+      },
+      node_id: { type: 'string', minLength: 1 },
+      alias: { type: 'string', minLength: 1 },
+      survivor_id: { type: 'string', minLength: 1 },
+      member_ids: { type: 'array', items: { type: 'string', minLength: 1 } },
+      parent_id: { type: 'string', minLength: 1 },
+      children: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            client_key: { type: 'string', minLength: 1 },
+            name: { type: 'string', minLength: 1 },
+            aliases: { type: 'array', items: { type: 'string', minLength: 1 } },
+          },
+          required: ['name'],
+          additionalProperties: false,
+        },
+      },
+      assignments: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            edge_id: { type: 'string', minLength: 1 },
+            endpoint: { type: 'string', enum: ['from', 'to'] },
+            target_node_id: { type: ['string', 'null'] },
+            target_client_key: { type: 'string', minLength: 1 },
+          },
+          required: ['edge_id', 'endpoint'],
+          oneOf: [{ required: ['target_node_id'] }, { required: ['target_client_key'] }],
+          additionalProperties: false,
+        },
+      },
+      evidence: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['observation'] },
+            id: { type: 'string', minLength: 1 },
+          },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['command_id', 'expected_revision', 'operation', 'reason'],
+    additionalProperties: false,
+  },
+});
+register({
   name: 'mama_search',
   description:
     'Search decisions. SCOPES: OMIT to read everything this run is allowed (recommended); if provided, ids must exactly match granted forms such as channel:<connector>:<channelId> or global:system - guessed ids are denied.',

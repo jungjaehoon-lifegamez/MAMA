@@ -1,5 +1,9 @@
 import type { DatabaseAdapter } from '../db-manager.js';
-import { getTwinEdge, listTwinEdgesForRefs } from './store.js';
+import {
+  isObservationVersionVisible,
+  isObservationVisibilityRowVisible,
+} from '../connectors/observation-visibility.js';
+import { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './store.js';
 import { isChannelGranted } from '../context-compile/channel-grant.js';
 import type {
   ListVisibleTwinEdgesOptions,
@@ -21,6 +25,13 @@ const tableColumnCache = new WeakMap<TwinRefVisibilityAdapter, Map<string, Set<s
 // Keep memory-truth quarantine semantics excluded for legacy/backcompat rows even though the
 // current decisions.status CHECK only admits superseded/contradicted/stale terminal states.
 const EXCLUDED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
+
+export class TwinRefNotVisibleError extends Error {
+  constructor(ref: TwinRef) {
+    super(`Twin ref is not visible to requested visibility: ${ref.kind}:${ref.id}`);
+    this.name = 'TwinRefNotVisibleError';
+  }
+}
 
 function scopeKey(scope: TwinScopeRef): string {
   return `${scope.kind}\0${scope.id}`;
@@ -240,24 +251,9 @@ function isCaseVisible(
   return false;
 }
 
-/**
- * The time bound, shared by both branches so a grant cannot skip it.
- *
- * DELIBERATELY STRICTER THAN THE READER, and a review flagged the difference as a
- * divergence between two delegates of one rule. It is not. A row with no usable timestamp
- * is refused here even when no bound is set, while the reader - whose clause is on
- * `COALESCE(event_datetime, source_timestamp_ms)` - leaves such a row alone when there is
- * no bound to apply.
- *
- * The direction is what makes it correct: this gate guards refs reached INDIRECTLY, through
- * a seed the caller named or an edge the graph walked. Refusing what cannot be shown to sit
- * inside any window keeps the indirect path no wider than the direct one, which is the
- * invariant the whole design rests on. Relaxing it to match the reader would have made
- * citation reach further than reading for exactly the rows whose position in time is
- * unknown. `fails closed for raw endpoints with blank timestamps` states the intent.
- */
+/** Current rows use immutable observation capture time; valid legacy rows use source time. */
 function isRawWithinTime(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
-  const rawTs = row.event_datetime ?? row.source_timestamp_ms;
+  const rawTs = row.observation_observed_at ?? row.event_datetime ?? row.source_timestamp_ms;
   if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
     return false;
   }
@@ -271,12 +267,27 @@ function isRawVisible(
   visibility: TwinVisibility
 ): boolean {
   const row = adapter
-    .prepare('SELECT * FROM connector_event_index WHERE event_index_id = ? LIMIT 1')
+    .prepare(
+      `SELECT event.*, observation.observation_id AS joined_observation_id,
+              observation.observed_at AS observation_observed_at
+         FROM connector_event_index event
+         LEFT JOIN observation_versions observation
+           ON observation.observation_id = event.current_observation_id
+        WHERE event.event_index_id = ?
+        LIMIT 1`
+    )
     .get(id) as Record<string, unknown> | undefined;
   if (!row) {
     return false;
   }
+  if (row.current_observation_id !== null && row.joined_observation_id === null) {
+    throw new Error('connector_event_index contains a dangling current observation ref');
+  }
 
+  return isRawRowVisible(row, visibility);
+}
+
+function isRawRowVisible(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
   if (
     Array.isArray(visibility.connectors) &&
     !visibility.connectors.includes(String(row.source_connector))
@@ -354,13 +365,304 @@ function isEntityVisible(
   return scopes.some((scope) => row.scope_kind === scope.kind && row.scope_id === scope.id);
 }
 
+function refVisibilityKey(ref: TwinRef): string {
+  return `${ref.kind}\0${ref.id}`;
+}
+
+function placeholders(count: number): string {
+  if (count < 1) {
+    throw new Error('Visibility batch requires at least one identifier');
+  }
+  return Array.from({ length: count }, () => '?').join(', ');
+}
+
+export function visibleTwinRefKeys(
+  adapter: TwinRefVisibilityAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility
+): Set<string> {
+  const unique = [...new Map(refs.map((ref) => [refVisibilityKey(ref), ref])).values()];
+  const visible = new Set<string>();
+  const ids = (kind: TwinRef['kind']) =>
+    unique.filter((ref) => ref.kind === kind).map((ref) => ref.id);
+
+  const rawIds = ids('raw');
+  if (rawIds.length > 0) {
+    const rows = adapter
+      .prepare(
+        `SELECT event.*, observation.observation_id AS joined_observation_id,
+                observation.observed_at AS observation_observed_at
+           FROM connector_event_index event
+           LEFT JOIN observation_versions observation
+             ON observation.observation_id = event.current_observation_id
+          WHERE event.event_index_id IN (${placeholders(rawIds.length)})`
+      )
+      .all(...rawIds) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      if (row.current_observation_id !== null && row.joined_observation_id === null) {
+        throw new Error('connector_event_index contains a dangling current observation ref');
+      }
+      if (isRawRowVisible(row, visibility)) {
+        visible.add(refVisibilityKey({ kind: 'raw', id: String(row.event_index_id) }));
+      }
+    }
+  }
+
+  const observationIds = ids('observation');
+  if (observationIds.length > 0) {
+    const rows = adapter
+      .prepare(
+        `SELECT observation_id, source_connector, scope_json, observed_at
+           FROM observation_versions
+          WHERE observation_id IN (${placeholders(observationIds.length)})`
+      )
+      .all(...observationIds) as Array<{
+      observation_id: string;
+      source_connector: unknown;
+      scope_json: unknown;
+      observed_at: number;
+    }>;
+    for (const row of rows) {
+      if (
+        isWithinVisibilityTime(row.observed_at, visibility) &&
+        isObservationVisibilityRowVisible(row, {
+          principalId: visibility.principalId,
+          agentId: visibility.agentId,
+          scopes: visibility.scopes,
+          connectors: visibility.connectors,
+          channels: visibility.channels,
+        })
+      ) {
+        visible.add(refVisibilityKey({ kind: 'observation', id: row.observation_id }));
+      }
+    }
+  }
+
+  const entityIds = ids('entity');
+  if (entityIds.length > 0) {
+    const rows = adapter
+      .prepare(
+        `SELECT id, scope_kind, scope_id, created_at FROM entity_nodes
+          WHERE status = 'active' AND id IN (${placeholders(entityIds.length)})`
+      )
+      .all(...entityIds) as Array<{
+      id: string;
+      scope_kind: string | null;
+      scope_id: string | null;
+      created_at: number;
+    }>;
+    for (const row of rows) {
+      if (
+        isWithinVisibilityTime(row.created_at, visibility) &&
+        (!hasScopes(visibility.scopes) ||
+          visibility.scopes.some(
+            (scope) => row.scope_kind === scope.kind && row.scope_id === scope.id
+          ))
+      ) {
+        visible.add(refVisibilityKey({ kind: 'entity', id: row.id }));
+      }
+    }
+  }
+
+  const caseIds = ids('case');
+  if (caseIds.length > 0) {
+    const rows = adapter
+      .prepare(`SELECT * FROM case_truth WHERE case_id IN (${placeholders(caseIds.length)})`)
+      .all(...caseIds) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const timestamp = parseTimestamp(row.last_activity_at) ?? parseTimestamp(row.updated_at);
+      const scopeVisible =
+        !hasScopes(visibility.scopes) ||
+        parseCaseScopeRefs(row.scope_refs).some((scope) =>
+          new Set(visibility.scopes?.map(scopeKey) ?? []).has(scopeKey(scope))
+        ) ||
+        visibility.scopes.some(
+          (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
+        );
+      if (
+        typeof row.case_id === 'string' &&
+        isWithinVisibilityTime(timestamp, visibility) &&
+        scopeVisible
+      ) {
+        visible.add(refVisibilityKey({ kind: 'case', id: row.case_id }));
+      }
+    }
+  }
+
+  const memoryIds = ids('memory');
+  if (memoryIds.length > 0) {
+    const columns = tableColumns(adapter, 'decisions');
+    const rows = adapter
+      .prepare(`SELECT * FROM decisions WHERE id IN (${placeholders(memoryIds.length)})`)
+      .all(...memoryIds) as Array<Record<string, unknown>>;
+    const admittedBindings = new Set<string>();
+    if (hasScopes(visibility.scopes)) {
+      const scopeClauses = visibility.scopes
+        .map(() => '(ms.kind = ? AND ms.external_id = ?)')
+        .join(' OR ');
+      const bindings = adapter
+        .prepare(
+          `SELECT msb.memory_id FROM memory_scope_bindings msb
+             JOIN memory_scopes ms ON ms.id = msb.scope_id
+            WHERE msb.memory_id IN (${placeholders(memoryIds.length)})
+              AND (${scopeClauses})`
+        )
+        .all(
+          ...memoryIds,
+          ...visibility.scopes.flatMap((scope) => [scope.kind, scope.id])
+        ) as Array<{ memory_id: string }>;
+      bindings.forEach((row) => admittedBindings.add(row.memory_id));
+    }
+    for (const row of rows) {
+      const id = String(row.id);
+      const status = typeof row.status === 'string' ? row.status : 'active';
+      const retired =
+        EXCLUDED_MEMORY_STATUSES.has(status) ||
+        (typeof row.superseded_by === 'string' && row.superseded_by.length > 0);
+      const scopeVisible =
+        !hasScopes(visibility.scopes) ||
+        admittedBindings.has(id) ||
+        (columns.has('memory_scope_kind') &&
+          columns.has('memory_scope_id') &&
+          visibility.scopes.some(
+            (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
+          ));
+      if (
+        !retired &&
+        isWithinVisibilityTime(
+          parseTimestamp(row.event_datetime) ?? parseTimestamp(row.created_at),
+          visibility
+        ) &&
+        scopeVisible
+      ) {
+        visible.add(refVisibilityKey({ kind: 'memory', id }));
+      }
+    }
+  }
+
+  const registryIds = ids('registry');
+  if (registryIds.length > 0) {
+    const rows = adapter
+      .prepare(`SELECT id FROM registry_nodes WHERE id IN (${placeholders(registryIds.length)})`)
+      .all(...registryIds) as Array<{ id: string }>;
+    const admitted = new Set<string>();
+    if (hasScopes(visibility.scopes)) {
+      const scopeClauses = visibility.scopes
+        .map(() => '(scope_kind = ? AND scope_id = ?)')
+        .join(' OR ');
+      const bindings = adapter
+        .prepare(
+          `SELECT DISTINCT node_id FROM registry_scope_bindings
+            WHERE node_id IN (${placeholders(registryIds.length)}) AND (${scopeClauses})`
+        )
+        .all(
+          ...registryIds,
+          ...visibility.scopes.flatMap((scope) => [scope.kind, scope.id])
+        ) as Array<{ node_id: string }>;
+      bindings.forEach((row) => admitted.add(row.node_id));
+    }
+    for (const row of rows) {
+      if (!hasScopes(visibility.scopes) || admitted.has(row.id)) {
+        visible.add(refVisibilityKey({ kind: 'registry', id: row.id }));
+      }
+    }
+  }
+
+  for (const ref of unique) {
+    if (ref.kind === 'report' && !hasScopes(visibility.scopes)) {
+      visible.add(refVisibilityKey(ref));
+    }
+  }
+  return visible;
+}
+
+function preloadRecursiveEdgeVisibility(
+  adapter: TwinRefVisibilityAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility
+): {
+  edgeCache: Map<string, TwinEdgeRecord | null>;
+  precomputed: Set<string>;
+} {
+  const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  const rootEdgeIds = [...new Set(refs.filter((ref) => ref.kind === 'edge').map((ref) => ref.id))];
+  const nestedRefs: TwinRef[] = refs.filter((ref) => ref.kind !== 'edge');
+  if (rootEdgeIds.length > 0) {
+    const rows = adapter
+      .prepare(
+        `WITH RECURSIVE edge_tree(edge_id, path, depth) AS (
+           SELECT CAST(value AS TEXT), char(0) || CAST(value AS TEXT) || char(0), 0
+             FROM json_each(?)
+           UNION ALL
+           SELECT CAST(child.value AS TEXT),
+                  tree.path || CAST(child.value AS TEXT) || char(0),
+                  tree.depth + 1
+             FROM edge_tree tree
+             JOIN twin_edges parent ON parent.edge_id = tree.edge_id
+             JOIN json_each(json_array(
+               CASE WHEN parent.subject_kind = 'edge' THEN parent.subject_id END,
+               CASE WHEN parent.object_kind = 'edge' THEN parent.object_id END
+             )) child
+            WHERE child.value IS NOT NULL
+              AND tree.depth < 255
+              AND instr(
+                tree.path,
+                char(0) || CAST(child.value AS TEXT) || char(0)
+              ) = 0
+         )
+         SELECT DISTINCT edge.*
+           FROM edge_tree
+           JOIN twin_edges edge ON edge.edge_id = edge_tree.edge_id`
+      )
+      .all(JSON.stringify(rootEdgeIds)) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const edge = mapTwinEdgeRow(row);
+      edgeCache.set(edge.edge_id, edge);
+      if (edge.subject_ref.kind !== 'edge') {
+        nestedRefs.push(edge.subject_ref);
+      }
+      if (edge.object_ref.kind !== 'edge') {
+        nestedRefs.push(edge.object_ref);
+      }
+    }
+    for (const edgeId of rootEdgeIds) {
+      if (!edgeCache.has(edgeId)) {
+        edgeCache.set(edgeId, null);
+      }
+    }
+  }
+  return {
+    edgeCache,
+    precomputed: visibleTwinRefKeys(adapter, nestedRefs, visibility),
+  };
+}
+
+export function visibleTwinRefKeysRecursive(
+  adapter: TwinRefVisibilityAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility
+): Set<string> {
+  const { edgeCache, precomputed } = preloadRecursiveEdgeVisibility(adapter, refs, visibility);
+  const visible = new Set<string>();
+  for (const ref of refs) {
+    if (isTwinRefVisible(adapter, ref, visibility, new Set(), edgeCache, precomputed)) {
+      visible.add(refVisibilityKey(ref));
+    }
+  }
+  return visible;
+}
+
 function isTwinRefVisible(
   adapter: TwinRefVisibilityAdapter,
   ref: TwinRef,
   visibility: TwinVisibility,
   visitedEdges: Set<string>,
-  edgeCache: Map<string, TwinEdgeRecord | null>
+  edgeCache: Map<string, TwinEdgeRecord | null>,
+  precomputed?: Set<string>
 ): boolean {
+  if (precomputed && ref.kind !== 'edge') {
+    return precomputed.has(refVisibilityKey(ref));
+  }
   if (ref.kind === 'entity') {
     return isEntityVisible(adapter, ref.id, visibility);
   }
@@ -375,6 +677,42 @@ function isTwinRefVisible(
   }
   if (ref.kind === 'raw') {
     return isRawVisible(adapter, ref.id, visibility);
+  }
+  if (ref.kind === 'registry') {
+    const node = adapter.prepare('SELECT id FROM registry_nodes WHERE id = ?').get(ref.id);
+    if (!node) {
+      return false;
+    }
+    if (!hasScopes(visibility.scopes)) {
+      return true;
+    }
+    return visibility.scopes.some((scope) =>
+      Boolean(
+        adapter
+          .prepare(
+            'SELECT 1 FROM registry_scope_bindings WHERE node_id = ? AND scope_kind = ? AND scope_id = ?'
+          )
+          .get(ref.id, scope.kind, scope.id)
+      )
+    );
+  }
+  if (ref.kind === 'observation') {
+    const row = adapter
+      .prepare('SELECT scope_json, observed_at FROM observation_versions WHERE observation_id = ?')
+      .get(ref.id) as { scope_json: string; observed_at: number } | undefined;
+    if (!row || !isWithinVisibilityTime(row.observed_at, visibility)) {
+      return false;
+    }
+    return isObservationVersionVisible(adapter, ref.id, {
+      principalId: visibility.principalId,
+      agentId: visibility.agentId,
+      scopes: visibility.scopes,
+      connectors: visibility.connectors,
+      channels: visibility.channels,
+    });
+  }
+  if (ref.kind !== 'edge') {
+    throw new Error(`UNSUPPORTED_REFERENCE_KIND: ${(ref as { kind: string }).kind}`);
   }
 
   if (visitedEdges.has(ref.id)) {
@@ -394,8 +732,22 @@ function isTwinRefVisible(
   const pathWithCurrent = new Set(visitedEdges);
   pathWithCurrent.add(ref.id);
   return (
-    isTwinRefVisible(adapter, edge.subject_ref, visibility, new Set(pathWithCurrent), edgeCache) &&
-    isTwinRefVisible(adapter, edge.object_ref, visibility, new Set(pathWithCurrent), edgeCache)
+    isTwinRefVisible(
+      adapter,
+      edge.subject_ref,
+      visibility,
+      new Set(pathWithCurrent),
+      edgeCache,
+      precomputed
+    ) &&
+    isTwinRefVisible(
+      adapter,
+      edge.object_ref,
+      visibility,
+      new Set(pathWithCurrent),
+      edgeCache,
+      precomputed
+    )
   );
 }
 
@@ -404,10 +756,25 @@ export function assertTwinRefsVisible(
   refs: readonly TwinRef[],
   visibility: TwinVisibility = {}
 ): void {
-  const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  const supportedKinds = new Set([
+    'memory',
+    'case',
+    'entity',
+    'report',
+    'edge',
+    'raw',
+    'registry',
+    'observation',
+  ]);
   for (const ref of refs) {
-    if (!isTwinRefVisible(adapter, ref, visibility, new Set(), edgeCache)) {
-      throw new Error(`Twin ref is not visible to requested visibility: ${ref.kind}:${ref.id}`);
+    if (!supportedKinds.has(ref.kind)) {
+      throw new Error(`UNSUPPORTED_REFERENCE_KIND: ${(ref as { kind: string }).kind}`);
+    }
+  }
+  const { edgeCache, precomputed } = preloadRecursiveEdgeVisibility(adapter, refs, visibility);
+  for (const ref of refs) {
+    if (!isTwinRefVisible(adapter, ref, visibility, new Set(), edgeCache, precomputed)) {
+      throw new TwinRefNotVisibleError(ref);
     }
   }
 }
@@ -417,15 +784,20 @@ export function listVisibleTwinEdgesForRefs(
   refs: readonly TwinRef[],
   options: ListVisibleTwinEdgesOptions = {}
 ): TwinEdgeRecord[] {
-  const edgeCache = new Map<string, TwinEdgeRecord | null>();
   const edgeTypes = normalizeEdgeTypes(options.edgeTypes);
-  const edges = listTwinEdgesForRefs(adapter, refs).filter(
+  const candidateEdges = listTwinEdgesForRefs(adapter, refs);
+  const { edgeCache, precomputed } = preloadRecursiveEdgeVisibility(
+    adapter,
+    candidateEdges.flatMap((edge) => [edge.subject_ref, edge.object_ref]),
+    options
+  );
+  const edges = candidateEdges.filter(
     (edge) =>
       (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
       (typeof options.startMs !== 'number' || edge.created_at >= options.startMs) &&
       (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
-      isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache) &&
-      isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache)
+      isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache, precomputed) &&
+      isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache, precomputed)
   );
   const limit =
     typeof options.limit === 'number' && Number.isFinite(options.limit)

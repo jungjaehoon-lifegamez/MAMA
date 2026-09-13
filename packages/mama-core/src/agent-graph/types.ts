@@ -56,6 +56,8 @@ export interface GraphNeighborhoodInput {
    */
   channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
+  principal_id?: string;
+  agent_id?: string;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
   limit?: number;
@@ -64,6 +66,14 @@ export interface GraphNeighborhoodInput {
 export interface AgentGraphResult {
   nodes: TwinRef[];
   edges: TwinEdgeRecord[];
+  current_projection: AgentGraphCurrentProjection[];
+}
+
+export interface AgentGraphCurrentProjection {
+  edge_id: string;
+  endpoint: 'from' | 'to';
+  original_ref: TwinRef;
+  current_ref: TwinRef | null;
 }
 
 export interface GraphPathsInput {
@@ -80,6 +90,8 @@ export interface GraphPathsInput {
    */
   channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
+  principal_id?: string;
+  agent_id?: string;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
   limit?: number;
@@ -92,6 +104,7 @@ export interface AgentGraphPath {
 
 export interface GraphPathsResult {
   paths: AgentGraphPath[];
+  current_projection: AgentGraphCurrentProjection[];
 }
 
 export interface GraphTimelineInput {
@@ -106,6 +119,8 @@ export interface GraphTimelineInput {
    */
   channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
+  principal_id?: string;
+  agent_id?: string;
   edge_filters?: AgentGraphEdgeFilters;
   from_ms?: number;
   to_ms?: number;
@@ -160,6 +175,7 @@ export interface AgentGraphTimelineRawEvent {
     title: string | null;
     event_datetime: number | null;
     source_timestamp_ms: number;
+    observation_ref: string | null;
   };
 }
 
@@ -179,6 +195,7 @@ export type AgentGraphTimelineEvent =
 export interface GraphTimelineResult {
   ref: TwinRef;
   events: AgentGraphTimelineEvent[];
+  current_projection: AgentGraphCurrentProjection[];
 }
 
 export interface AttachEntityAliasWithEdgeInput {

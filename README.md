@@ -41,10 +41,10 @@ In order of importance.
 
 | Name                       | What it does                                                     | Version |
 | -------------------------- | ---------------------------------------------------------------- | ------- |
-| `@jungjaehoon/mama-os`     | The server: sources, assistant, messenger links, operational API | 0.55.x  |
-| `@jungjaehoon/mama-core`   | The memory store: format, search, change log                     | 2.4.x   |
-| `@jungjaehoon/mama-server` | MCP bridge for Claude Desktop and other MCP clients              | 1.15.x  |
-| Claude Code plugin         | Decision memory for coding sessions                              | 1.11.x  |
+| `@jungjaehoon/mama-os`     | The server: sources, assistant, messenger links, operational API | 0.56.x  |
+| `@jungjaehoon/mama-core`   | The memory store: format, search, change log                     | 3.2.x   |
+| `@jungjaehoon/mama-server` | MCP bridge for Claude Desktop and other MCP clients              | 2.2.x   |
+| Claude Code plugin         | Decision memory for coding sessions                              | 2.0.x   |
 | MemoryBench                | Measures how accurate memory retrieval is                        | 1.0.x   |
 
 ## Getting started

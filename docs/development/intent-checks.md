@@ -750,3 +750,30 @@
 - 판정: I-03/I-04/I-06 및 TG-03/TG-05/TG-06에 부분 부합한다. 이 기록은 source와 test
   evidence이며 설치된 서비스, 실제 모델 run, Telegram owner 업무 결과는 검증하지 않았다.
   immutable observation과 identity correction은 PR3B 범위이고 최상위 목적은 미완료다.
+
+## 2026-09-13 — PR3B 불변 관측·교정·현재 graph projection
+
+- 작업 / 인텐트 버전 / 연결 시나리오: INTENT v6의 데이터·변경 이력·Case 지속성·판단 자유.
+  TG-03/TG-04/TG-05/TG-06.
+- 기대한 사용자 행동 변화: polling과 owner message/result가 정확한 불변 관측 참조를 남기고,
+  재시작 뒤에도 같은 참조가 현재 reader와 같은 model run에 도달한다. MAMA가 필요한 조회와
+  `registry_correct`를 선택하며 host는 서명된 principal·agent·scope와 revision·transaction만
+  검증한다.
+- 실제 결과와 증거 수준·위치: source archive pending projection, observation 072,
+  correction 073, graph ref 074, raw/context/case/graph/session/model-run 연결을 temporary SQLite와
+  실제 core/gateway executor 경계로 검증했다. graph edge 원본은 바꾸지 않고 현재 visible
+  projection을 별도로 반환한다. Trello checkpoint는 raw/core handoff 뒤에만 확정되며,
+  Slack·Discord owner도 registry principal을 서명된 envelope와 observation/correction 경로에
+  전달한다. unattended cron/owner-event도 같은 durable owner principal을 사용한다. 같은 platform
+  message 재전달과 channel/session 저장 중단은 재시작 뒤 model을 다시 실행하지 않고 복구한다.
+  동일 채널의 대량 수집은 cursor 확정 전에 최대 50개 단위 inbox batch로 나누며, 각 batch의
+  표시 tail·관측 ref·원인 event를 정렬하고 전체 재전달을 event 단위로 dedupe한다.
+  Trello source time은 provider 시각을 보존하고, 현재 raw/context/delta의 freshness는 observation
+  capture time으로 판정한다.
+- 남은 실패·미확인 조건 / 기준 축소 여부: 패키지 공개, 설치, 서비스 재시작, 실제 모델 판단,
+  실제 Telegram 전달과 장기 raw 평가는 수행하지 않았다. 이 항목을 source 검증의 성공으로
+  대체하지 않는다.
+- 의도 판정: **부분 부합**. 관측·교정·재시작 가능한 근거 경로를 연결했지만 전체 실제 업무와
+  파일·전달 흐름은 아직 완료되지 않았다.
+- 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: PR3B source 후보 구현.
+  **최상위 목표 미완료.** 다음 PR은 같은 현재 원장을 지식·업무 writer와 연결한다.

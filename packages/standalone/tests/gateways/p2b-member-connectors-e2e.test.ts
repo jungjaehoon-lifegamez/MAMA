@@ -296,12 +296,16 @@ const scenarios: readonly ConnectorScenario[] = [
     async deliver(turnProcessor, principalResolver, input = {}) {
       const externalId = input.externalId ?? '777';
       const sequence = input.sequence ?? 1;
+      const configuredResolver: PrincipalResolver = (connector, namespace, userId) =>
+        userId === 'owner'
+          ? { principalId: 'principal-configured-owner', kind: 'owner', status: 'active' }
+          : principalResolver(connector, namespace, userId);
       const gateway = new SlackGateway({
         botToken: 'xoxb-synthetic',
         appToken: 'xapp-synthetic',
         ownerUserId: 'owner',
         turnProcessor,
-        principalResolver,
+        principalResolver: configuredResolver,
         config: { channels: { 'channel-p2b': { requireMention: false } } },
       });
       await gateway.start();
@@ -394,7 +398,7 @@ describe('Phase 2b Task 5b connector member E2E', () => {
     const dbPath = join(tempDir, 'principals.db');
     const migrationDb = new Database(dbPath);
     migrationDb.pragma('foreign_keys = ON');
-    applyMigrationsThrough(migrationDb, 67);
+    applyMigrationsThrough(migrationDb, 74);
     migrationDb.close();
     adapter = new NodeSQLiteAdapter({ dbPath }) as unknown as DatabaseAdapter;
     adapter.connect();
@@ -638,7 +642,9 @@ describe('Phase 2b Task 5b connector member E2E', () => {
         await expect(
           ownerExecutor.execute('member_scope_revoke', scopeInput)
         ).resolves.toMatchObject({ success: true, status: 'revoked' });
-        await scenario.deliver(harness.router, repository.resolveByExternal.bind(repository));
+        await scenario.deliver(harness.router, repository.resolveByExternal.bind(repository), {
+          sequence: 2,
+        });
 
         expect(harness.observations).toHaveLength(2);
         const revoked = harness.observations[1]!;

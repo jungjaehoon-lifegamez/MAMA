@@ -74,7 +74,13 @@ export interface IConnector {
   healthCheck(): Promise<ConnectorHealth>;
   getAuthRequirements(): AuthRequirement[];
   authenticate(): Promise<boolean>;
+  /** Enter scheduler-managed durability so poll state is staged until the handoff succeeds. */
+  beginPollHandoff?(): void;
   poll(since: Date): Promise<NormalizedItem[]>;
+  /** Commit provider-side poll state after durable raw capture and core projection. */
+  commitPoll?(): void | Promise<void>;
+  /** Discard staged provider state after a failed durable handoff. */
+  abortPollHandoff?(): void;
 }
 
 export type ConnectorsConfig = Record<string, ConnectorConfig>;

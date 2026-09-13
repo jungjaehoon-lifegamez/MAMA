@@ -100,12 +100,15 @@ import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
 import { RoleManager } from '../../agent/role-manager.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   beginModelRunInAdapter,
   commitModelRunInAdapter,
   failModelRunInAdapter,
+  appendObservationVersion,
+  getObservationVersion,
+  observationVersionId,
   type PrincipalScopeGrantRecord,
 } from '@jungjaehoon/mama-core';
 import * as mamaCore from '@jungjaehoon/mama-core';
@@ -178,6 +181,7 @@ import {
   ADMINISTRATION_TOOLS,
   UNATTENDED_BLOCKED_TOOLS,
   buildOwnerEventAgentContext,
+  createConfiguredOwnerPrincipalResolver,
   resolveOwnerEventExecution,
 } from '../../operator/owner-event-policy.js';
 import { initLegCadence, getLegCadence, getLegPageNotifier } from '../../operator/leg-cadence.js';
@@ -195,6 +199,7 @@ import {
 } from '../../operator/workorder-consumer.js';
 import { backfillTelegramOwner, type OwnerBackfillRegistry } from '../runtime/owner-backfill.js';
 import type { EnvelopeAuthority } from '../../envelope/authority.js';
+import { deriveTelegramOwnerId } from '../../gateways/principal.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -1261,7 +1266,18 @@ export async function runAgentLoop(
     now: Date.now(),
     logger: principalRegistryLogger,
   });
-  const principalResolver = principalRegistry.resolveByExternal.bind(principalRegistry);
+  const configuredTelegramOwnerId = deriveTelegramOwnerId(config.telegram ?? {});
+  const configuredOwnerPrincipals = createConfiguredOwnerPrincipalResolver({
+    repository: principalRegistry,
+    ownerExternalIds: {
+      telegram:
+        config.telegram?.owner_user_ids ??
+        (configuredTelegramOwnerId ? [configuredTelegramOwnerId] : []),
+      slack: config.slack?.owner_user_id,
+      discord: config.discord?.owner_user_id,
+    },
+  });
+  const principalResolver = configuredOwnerPrincipals.resolve;
   const contextCompileService = createContextCompileService({
     memoryAdapter: coreAdapter,
     // Raw visibility comes from the owner's connector config, not from the derived scope
@@ -1284,6 +1300,36 @@ export async function runAgentLoop(
     memberGrantReader: principalRegistry,
     dependencies: {
       privateConnectorPolicy,
+      recordInlineObservation: (input) => {
+        const contentHash = createHash('sha256').update(input.body, 'utf8').digest('hex');
+        const candidate = {
+          ...input,
+          contentHash,
+          producerVersionId: input.sourceId,
+        };
+        const observationId = observationVersionId(candidate);
+        const existing = getObservationVersion(coreAdapter, observationId);
+        return appendObservationVersion(coreAdapter, {
+          ...candidate,
+          observedAt: existing?.observedAt ?? candidate.observedAt,
+        }).observationId;
+      },
+      readInlineObservationByIdentity: (input) => {
+        const observationId = observationVersionId({
+          ...input,
+          body: '',
+          observedAt: 0,
+          contentHash: '',
+        });
+        const observation = getObservationVersion(coreAdapter, observationId);
+        if (!observation) {
+          return null;
+        }
+        if (observation.body === null) {
+          throw new Error('Owner result observation must store an inline body');
+        }
+        return { observationRef: observation.observationId, body: observation.body };
+      },
       // Report delivery is receipted by the delivery ledger. Conversation
       // recovery belongs only to the owner-runtime journal.
     },
@@ -1571,12 +1617,14 @@ export async function runAgentLoop(
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
 
-  const backgroundOwnerContext = buildOwnerEventAgentContext({
-    backend: runtimeBackend,
-    model: config.agent.model,
-    ownerRole,
-    privateConnectorPolicy,
-  });
+  const backgroundOwnerContext = () =>
+    buildOwnerEventAgentContext({
+      backend: runtimeBackend,
+      model: config.agent.model,
+      principalId: configuredOwnerPrincipals.requireOwnerPrincipalId(),
+      ownerRole,
+      privateConnectorPolicy,
+    });
   const issueOwnerRuntimeEnvelope = async (channelId: string, wallSeconds: number) => {
     if (!envelopeBootstrap.envelopeAuthority || envelopeBootstrap.metadata.issuance === 'off') {
       return undefined;
@@ -1589,6 +1637,7 @@ export async function runAgentLoop(
       channel_id: channelId,
       trigger_context: { user_text: `<owner runtime ${channelId} stimulus>` },
       scope: {
+        principal_id: configuredOwnerPrincipals.requireOwnerPrincipalId(),
         project_refs: [{ kind: 'project', id: projectId }],
         raw_connectors: [
           ...privateConnectorPolicy.projectRawConnectors('owner_console', codeActRawConnectors),
@@ -1626,7 +1675,7 @@ export async function runAgentLoop(
       source: 'operator',
       channelId,
       sourceMessageRef: `owner-stimulus:${channelId}:${randomUUID()}`,
-      agentContext: backgroundOwnerContext,
+      agentContext: backgroundOwnerContext(),
       sessionPolicyRole: ownerRole,
       prepareEnvelope: () => requireOwnerRuntimeEnvelope(channelId, 600),
       prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope(channelId),
@@ -1641,7 +1690,7 @@ export async function runAgentLoop(
       sessionKey: OWNER_RUNTIME_SESSION_KEY,
       source: 'operator',
       channelId: 'subagent',
-      agentContext: backgroundOwnerContext,
+      agentContext: backgroundOwnerContext(),
       sessionPolicyRole: ownerRole,
       // Same fail-loud rule as every sibling owner path: issuance off must stop the turn,
       // never let it run unauthorised.
@@ -1720,7 +1769,7 @@ export async function runAgentLoop(
     healthCheckService,
     async () => {
       return {
-        agentContext: backgroundOwnerContext,
+        agentContext: backgroundOwnerContext(),
         sessionPolicyRole: ownerRole,
         prepareEnvelope: () => issueOwnerRuntimeEnvelope('heartbeat', 300),
         prepareSubagentEnvelope: () => issueOwnerSubagentEnvelope('heartbeat'),
@@ -2319,7 +2368,7 @@ export async function runAgentLoop(
           sessionKey: OWNER_RUNTIME_SESSION_KEY,
           source: 'operator',
           channelId: 'trigger-maintenance',
-          agentContext: backgroundOwnerContext,
+          agentContext: backgroundOwnerContext(),
           sessionPolicyRole: ownerRole,
           prepareEnvelope: async () => {
             const envelope = await issueOwnerRuntimeEnvelope('trigger-maintenance', 600);
@@ -2468,6 +2517,7 @@ export async function runAgentLoop(
         const ownerEventContext = buildOwnerEventAgentContext({
           backend: runtimeBackend,
           model: config.agent.model,
+          principalId: configuredOwnerPrincipals.requireOwnerPrincipalId(),
           ownerRole,
           privateConnectorPolicy,
         });
@@ -2503,6 +2553,7 @@ export async function runAgentLoop(
             channel_id: batch.channelKey,
             trigger_context: { user_text: '<MAMA owner event turn>' },
             scope: {
+              principal_id: configuredOwnerPrincipals.requireOwnerPrincipalId(),
               project_refs: readScope.projectRefs,
               raw_connectors: readScope.rawConnectors,
               memory_scopes: readScope.memoryScopes,

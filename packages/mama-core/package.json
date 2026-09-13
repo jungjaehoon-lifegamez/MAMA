@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,6 +34,8 @@
     "./cases/wiki-page-index": "./dist/cases/wiki-page-index.js",
     "./connectors": "./dist/connectors/event-index.js",
     "./connectors/event-index": "./dist/connectors/event-index.js",
+    "./connectors/observation-versions": "./dist/connectors/observation-versions.js",
+    "./connectors/observation-visibility": "./dist/connectors/observation-visibility.js",
     "./connectors/raw-query": "./dist/connectors/raw-query.js",
     "./connectors/types": "./dist/connectors/types.js",
     "./storage/source-archive": "./dist/storage/source-archive.js",
@@ -48,6 +50,7 @@
     "./registry/types": "./dist/registry/types.js",
     "./registry/store": "./dist/registry/store.js",
     "./registry/record-identity": "./dist/registry/record-identity.js",
+    "./registry/corrections": "./dist/registry/corrections.js",
     "./operations/owner-action-effects": "./dist/operations/owner-action-effects.js"
   },
   "scripts": {

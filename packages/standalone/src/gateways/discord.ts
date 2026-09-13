@@ -266,7 +266,7 @@ export class DiscordGateway extends BaseGateway {
       ownerUserId: this.config.ownerUserId,
       isDirectMessage: isDM,
     });
-    if (principal.class === 'external' && this.principalResolver) {
+    if (this.principalResolver) {
       principal = overlayMemberPrincipal(
         principal,
         this.principalResolver('discord', namespace, message.author.id)
@@ -886,6 +886,15 @@ export class DiscordGateway extends BaseGateway {
       return;
     }
 
+    if (this.config.ownerUserId && this.principalResolver) {
+      const namespaces = new Set(['direct', ...Object.keys(this.config.guilds ?? {})]);
+      for (const namespace of namespaces) {
+        const owner = this.principalResolver('discord', namespace, this.config.ownerUserId);
+        if (owner?.kind !== 'owner' || owner.status !== 'active') {
+          throw new Error(`Discord configured owner identity is unavailable for ${namespace}`);
+        }
+      }
+    }
     await this.client.login(this.token);
   }
 

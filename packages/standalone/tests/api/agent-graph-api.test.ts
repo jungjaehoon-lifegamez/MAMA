@@ -56,6 +56,7 @@ function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
       channel_id: 'slack:C1',
       trigger_context: {},
       scope: {
+        principal_id: 'principal-m6',
         project_refs: [{ kind: 'project', id: 'alpha' }],
         raw_connectors: ['slack'],
         memory_scopes: [{ kind: 'project', id: 'alpha' }],
@@ -336,7 +337,7 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
           )
         );
 
-        expect(response.status).toBe(200);
+        expect(response.status, JSON.stringify(response.body)).toBe(200);
         expect(response.body.nodes).toContainEqual({ kind: 'entity', id: 'entity_project_alpha' });
       } finally {
         scheduler.shutdown();

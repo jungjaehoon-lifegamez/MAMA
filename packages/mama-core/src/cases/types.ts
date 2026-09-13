@@ -295,6 +295,7 @@ export interface CaseTimelineRangeItem {
     content: string;
     event_datetime: number | null;
     event_date: string | null;
+    observation_ref: string | null;
   } | null;
 }
 

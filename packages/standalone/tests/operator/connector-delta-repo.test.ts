@@ -23,7 +23,13 @@ function seedSchema(db: SQLiteDatabase): void {
       author TEXT,
       content TEXT NOT NULL,
       source_timestamp_ms INTEGER NOT NULL,
-      operator_ingest_seq INTEGER
+      operator_ingest_seq INTEGER,
+      current_observation_id TEXT
+    );
+    CREATE TABLE observation_versions (
+      observation_id TEXT PRIMARY KEY,
+      observed_at INTEGER NOT NULL,
+      body_location_json TEXT
     );
   `);
 }
@@ -73,6 +79,40 @@ describe('ConnectorDeltaRepo', () => {
     expect(events.every((e) => e.channel === 'slack' && e.role === 'user')).toBe(true);
     expect(events.find((e) => e.content === 'first in b')?.eventIndexId).toBe('e3');
     expect(typeof events[0].id).toBe('number');
+  });
+
+  it('TG-05 carries the captured observation ref while legacy rows remain explicitly null', () => {
+    seedRow(db, 'legacy', 'slack', 'ch-a', 1, 'legacy');
+    seedRow(db, 'captured', 'slack', 'ch-a', 2, 'captured');
+    db.prepare(
+      "UPDATE connector_event_index SET current_observation_id = 'obs-captured' WHERE event_index_id = 'captured'"
+    ).run();
+    db.prepare("INSERT INTO observation_versions VALUES ('obs-captured', 2500, '{}')").run();
+    const events = new ConnectorDeltaRepo(db, cursorPath).drainNew(10);
+    expect(events.map((event) => [event.eventIndexId, event.observationRef])).toEqual([
+      ['legacy', null],
+      ['captured', 'obs-captured'],
+    ]);
+    expect(events.find((event) => event.eventIndexId === 'captured')?.createdAt).toBe(2500);
+    expect(events.find((event) => event.eventIndexId === 'captured')).toMatchObject({
+      sourceAt: 1000,
+      observedAt: 2500,
+    });
+    expect(events.find((event) => event.eventIndexId === 'legacy')).toMatchObject({
+      createdAt: 1000,
+      sourceAt: 1000,
+      observedAt: null,
+    });
+  });
+
+  it('rejects a dangling current observation ref instead of using source time', () => {
+    seedRow(db, 'dangling', 'slack', 'ch-a', 1, 'dangling');
+    db.prepare(
+      "UPDATE connector_event_index SET current_observation_id = 'obs-missing' WHERE event_index_id = 'dangling'"
+    ).run();
+    expect(() => new ConnectorDeltaRepo(db, cursorPath).drainNew(10)).toThrow(
+      /dangling current observation/i
+    );
   });
 
   it('commit advances per-partition cursors: no replay, no cross-channel skip', () => {

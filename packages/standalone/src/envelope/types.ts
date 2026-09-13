@@ -62,6 +62,8 @@ export interface Envelope {
   channel_id?: string;
   trigger_context: TriggerContext;
   scope: {
+    /** Signed owner/member identity assertion for principal-bound tools and observations. */
+    principal_id?: string;
     project_refs: ProjectRef[];
     raw_connectors: string[];
     memory_scopes: MemoryScope[];

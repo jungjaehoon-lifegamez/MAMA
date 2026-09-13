@@ -20,6 +20,8 @@ interface RawCursor {
 
 interface RawSearchRow extends Record<string, unknown> {
   rank: number;
+  capture_timestamp_ms: number;
+  observation_observed_at: number | null;
 }
 
 interface RawWindowInput {
@@ -34,6 +36,20 @@ const MAX_RAW_LIMIT = 100;
 const DEFAULT_WINDOW_SIZE = 5;
 const MAX_WINDOW_SIZE = 50;
 const VALID_SCOPE_KINDS = new Set<string>(MEMORY_SCOPE_KINDS);
+
+function observationObservedAtSql(alias: string): string {
+  return `(SELECT observation.observed_at FROM observation_versions observation
+    WHERE observation.observation_id = ${alias}.current_observation_id)`;
+}
+
+function captureTimestampSql(alias: string): string {
+  return `COALESCE(${observationObservedAtSql(alias)}, ${alias}.event_datetime, ${alias}.source_timestamp_ms)`;
+}
+
+function timingSelectSql(alias: string): string {
+  return `${observationObservedAtSql(alias)} AS observation_observed_at,
+    ${captureTimestampSql(alias)} AS capture_timestamp_ms`;
+}
 
 function placeholders(values: readonly unknown[]): string {
   if (values.length === 0) {
@@ -62,13 +78,13 @@ function escapeFtsQuery(query: string): string {
 
 function encodeCursor(row: {
   rank: number;
-  source_timestamp_ms: number;
+  capture_timestamp_ms: number;
   event_index_id: string;
 }): string {
   return Buffer.from(
     JSON.stringify({
       rank: row.rank,
-      timestampMs: row.source_timestamp_ms,
+      timestampMs: row.capture_timestamp_ms,
       rawId: row.event_index_id,
     }),
     'utf8'
@@ -124,7 +140,8 @@ function appendFilters(
   clauses: string[],
   params: unknown[],
   input: RawSearchInput,
-  alias = 'e'
+  alias = 'e',
+  timestampSql = `${alias}.source_timestamp_ms`
 ): void {
   const connectors = normalizeConnectors(input.connectors);
   if (connectors.length > 0) {
@@ -143,11 +160,11 @@ function appendFilters(
   }
 
   if (input.fromMs !== undefined) {
-    clauses.push(`${alias}.source_timestamp_ms >= ?`);
+    clauses.push(`${timestampSql} >= ?`);
     params.push(input.fromMs);
   }
   if (input.toMs !== undefined) {
-    clauses.push(`${alias}.source_timestamp_ms <= ?`);
+    clauses.push(`${timestampSql} <= ?`);
     params.push(input.toMs);
   }
 }
@@ -157,8 +174,8 @@ function appendCursorFilter(clauses: string[], params: unknown[], cursor: RawCur
     return;
   }
   clauses.push(
-    `(rank > ? OR (rank = ? AND source_timestamp_ms < ?) OR ` +
-      `(rank = ? AND source_timestamp_ms = ? AND event_index_id > ?))`
+    `(rank > ? OR (rank = ? AND capture_timestamp_ms < ?) OR ` +
+      `(rank = ? AND capture_timestamp_ms = ? AND event_index_id > ?))`
   );
   params.push(
     cursor.rank,
@@ -176,11 +193,13 @@ function parseMetadata(metadataJson: string | null): Record<string, unknown> {
   }
   try {
     const parsed = JSON.parse(metadataJson) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('expected a JSON object');
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`connector_event_index.metadata_json is malformed: ${message}`);
   }
 }
 
@@ -208,12 +227,46 @@ function toRawHit(row: RawSearchRow): RawSearchHit {
     source_id: record.source_id,
     channel_id: record.channel,
     author_label: record.author,
-    created_at: timestampToIso(record.event_datetime ?? record.source_timestamp_ms),
+    created_at: timestampToIso(
+      typeof row.capture_timestamp_ms === 'number'
+        ? row.capture_timestamp_ms
+        : (record.event_datetime ?? record.source_timestamp_ms)
+    ),
+    source_at: timestampToIso(record.event_datetime ?? record.source_timestamp_ms),
+    observed_at: timestampToIso(
+      typeof row.observation_observed_at === 'number' ? row.observation_observed_at : null
+    ),
     content_preview: contentPreview(record.content),
     score: scoreFromRank(Number(row.rank)),
     source_ref: record.source_locator ?? record.artifact_locator,
     metadata: parseMetadata(record.metadata_json),
+    observation_ref: record.current_observation_id,
   };
+}
+
+function assertObservationRefsConsistent(
+  adapter: RawQueryAdapter,
+  rows: readonly RawSearchRow[]
+): void {
+  const refs = [
+    ...new Set(
+      rows
+        .map((row) => row.current_observation_id)
+        .filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+    ),
+  ];
+  if (refs.length === 0) {
+    return;
+  }
+  const found = adapter
+    .prepare(
+      `SELECT observation_id FROM observation_versions
+       WHERE observation_id IN (${placeholders(refs)})`
+    )
+    .all(...refs) as Array<{ observation_id: string }>;
+  if (found.length !== refs.length) {
+    throw new Error('connector_event_index contains an inconsistent current observation ref');
+  }
 }
 
 function runSearch(adapter: RawQueryAdapter, input: RawSearchInput): RawSearchResult {
@@ -229,7 +282,8 @@ function runSearch(adapter: RawQueryAdapter, input: RawSearchInput): RawSearchRe
 
   const params: unknown[] = [escapeFtsQuery(query)];
   const clauses: string[] = [];
-  appendFilters(clauses, params, input);
+  const captureTime = captureTimestampSql('e');
+  appendFilters(clauses, params, input, 'e', captureTime);
   const cursor = decodeCursor(input.cursor);
 
   const outerClauses: string[] = [];
@@ -241,23 +295,28 @@ function runSearch(adapter: RawQueryAdapter, input: RawSearchInput): RawSearchRe
     .prepare(
       `
         WITH ranked AS (
-          SELECT e.*, bm25(connector_event_index_fts) AS rank
+          SELECT e.*, o.observed_at AS observation_observed_at,
+                 ${captureTime} AS capture_timestamp_ms,
+                 bm25(connector_event_index_fts) AS rank
           FROM connector_event_index_fts
           JOIN connector_event_index e
             ON e.event_index_id = connector_event_index_fts.event_index_id
+          LEFT JOIN observation_versions o
+            ON o.observation_id = e.current_observation_id
           WHERE connector_event_index_fts MATCH ?
             ${whereSql}
         )
         SELECT *
         FROM ranked
         ${cursorSql}
-        ORDER BY rank ASC, source_timestamp_ms DESC, event_index_id ASC
+        ORDER BY rank ASC, capture_timestamp_ms DESC, event_index_id ASC
         LIMIT ?
       `
     )
     .all(...params, ...outerParams, limit + 1) as RawSearchRow[];
 
   const pageRows = rows.slice(0, limit);
+  assertObservationRefsConsistent(adapter, pageRows);
   const nextRow = rows.length > limit ? pageRows[pageRows.length - 1] : undefined;
 
   return {
@@ -265,7 +324,7 @@ function runSearch(adapter: RawQueryAdapter, input: RawSearchInput): RawSearchRe
     next_cursor: nextRow
       ? encodeCursor({
           rank: Number(nextRow.rank),
-          source_timestamp_ms: Number(nextRow.source_timestamp_ms),
+          capture_timestamp_ms: Number(nextRow.capture_timestamp_ms),
           event_index_id: String(nextRow.event_index_id),
         })
       : null,
@@ -295,7 +354,7 @@ export function getRawById(
   const row = adapter
     .prepare(
       `
-        SELECT e.*, 0 AS rank
+        SELECT e.*, 0 AS rank, ${timingSelectSql('e')}
         FROM connector_event_index e
         WHERE ${clauses.join(' AND ')}
         LIMIT 1
@@ -303,7 +362,11 @@ export function getRawById(
     )
     .get(...params) as RawSearchRow | undefined;
 
-  return row ? { ...toRawHit(row), content: String(row.content) } : null;
+  if (!row) {
+    return null;
+  }
+  assertObservationRefsConsistent(adapter, [row]);
+  return { ...toRawHit(row), content: String(row.content) };
 }
 
 export function getRawWindow(
@@ -321,7 +384,7 @@ export function getRawWindow(
   const targetRow = adapter
     .prepare(
       `
-        SELECT e.*, 0 AS rank
+        SELECT e.*, 0 AS rank, ${timingSelectSql('e')}
         FROM connector_event_index e
         WHERE ${targetClauses.join(' AND ')}
         LIMIT 1
@@ -333,11 +396,11 @@ export function getRawWindow(
     return null;
   }
 
-  const target = mapConnectorEventIndexRecord(targetRow);
   const before = normalizeWindowSize(input.before);
   const after = normalizeWindowSize(input.after);
-  const beforeRows = beforeWindowRows(adapter, target, input, before);
-  const afterRows = afterWindowRows(adapter, target, input, after);
+  const beforeRows = beforeWindowRows(adapter, targetRow, input, before);
+  const afterRows = afterWindowRows(adapter, targetRow, input, after);
+  assertObservationRefsConsistent(adapter, [targetRow, ...beforeRows, ...afterRows]);
   const targetHit = toRawHit(targetRow);
 
   return {
@@ -348,18 +411,27 @@ export function getRawWindow(
 
 function beforeWindowRows(
   adapter: RawQueryAdapter,
-  target: ConnectorEventIndexRecord,
+  target: RawSearchRow,
   input: RawWindowInput,
   limit: number
 ): RawSearchRow[] {
   if (limit === 0) {
     return [];
   }
-  const params: unknown[] = [target.source_connector, target.channel, target.source_timestamp_ms];
+  const targetRecord = mapConnectorEventIndexRecord(target);
+  const captureTime = captureTimestampSql('e');
+  const targetCaptureTime = Number(target.capture_timestamp_ms);
+  const params: unknown[] = [
+    targetRecord.source_connector,
+    targetRecord.channel,
+    targetCaptureTime,
+    targetCaptureTime,
+    targetRecord.event_index_id,
+  ];
   const clauses = [
     'e.source_connector = ?',
-    target.channel === null ? 'e.channel IS ?' : 'e.channel = ?',
-    'e.source_timestamp_ms < ?',
+    targetRecord.channel === null ? 'e.channel IS ?' : 'e.channel = ?',
+    `(${captureTime} < ? OR (${captureTime} = ? AND e.event_index_id < ?))`,
   ];
   appendFilters(clauses, params, {
     query: '*',
@@ -369,10 +441,10 @@ function beforeWindowRows(
   return adapter
     .prepare(
       `
-        SELECT e.*, 0 AS rank
+        SELECT e.*, 0 AS rank, ${timingSelectSql('e')}
         FROM connector_event_index e
         WHERE ${clauses.join(' AND ')}
-        ORDER BY e.source_timestamp_ms DESC, e.event_index_id DESC
+        ORDER BY capture_timestamp_ms DESC, e.event_index_id DESC
         LIMIT ?
       `
     )
@@ -381,18 +453,27 @@ function beforeWindowRows(
 
 function afterWindowRows(
   adapter: RawQueryAdapter,
-  target: ConnectorEventIndexRecord,
+  target: RawSearchRow,
   input: RawWindowInput,
   limit: number
 ): RawSearchRow[] {
   if (limit === 0) {
     return [];
   }
-  const params: unknown[] = [target.source_connector, target.channel, target.source_timestamp_ms];
+  const targetRecord = mapConnectorEventIndexRecord(target);
+  const captureTime = captureTimestampSql('e');
+  const targetCaptureTime = Number(target.capture_timestamp_ms);
+  const params: unknown[] = [
+    targetRecord.source_connector,
+    targetRecord.channel,
+    targetCaptureTime,
+    targetCaptureTime,
+    targetRecord.event_index_id,
+  ];
   const clauses = [
     'e.source_connector = ?',
-    target.channel === null ? 'e.channel IS ?' : 'e.channel = ?',
-    'e.source_timestamp_ms > ?',
+    targetRecord.channel === null ? 'e.channel IS ?' : 'e.channel = ?',
+    `(${captureTime} > ? OR (${captureTime} = ? AND e.event_index_id > ?))`,
   ];
   appendFilters(clauses, params, {
     query: '*',
@@ -402,10 +483,10 @@ function afterWindowRows(
   return adapter
     .prepare(
       `
-        SELECT e.*, 0 AS rank
+        SELECT e.*, 0 AS rank, ${timingSelectSql('e')}
         FROM connector_event_index e
         WHERE ${clauses.join(' AND ')}
-        ORDER BY e.source_timestamp_ms ASC, e.event_index_id ASC
+        ORDER BY capture_timestamp_ms ASC, e.event_index_id ASC
         LIMIT ?
       `
     )
@@ -470,9 +551,12 @@ function singleConnector(connectors: string[] | undefined): string | null {
   return normalized.length === 1 ? normalized[0]! : null;
 }
 
-function encodeHistoryCursor(row: { source_timestamp_ms: number; event_index_id: string }): string {
+function encodeHistoryCursor(row: {
+  capture_timestamp_ms: number;
+  event_index_id: string;
+}): string {
   return Buffer.from(
-    JSON.stringify({ timestampMs: row.source_timestamp_ms, rawId: row.event_index_id }),
+    JSON.stringify({ timestampMs: row.capture_timestamp_ms, rawId: row.event_index_id }),
     'utf8'
   ).toString('base64url');
 }
@@ -532,42 +616,48 @@ export function getRawHistory(adapter: RawQueryAdapter, input: RawHistoryInput):
 
   const clauses = ['e.source_entity_id = ?'];
   const params: unknown[] = [anchor.entityId];
-  appendFilters(clauses, params, {
-    query: '*',
-    connectors: [anchor.connector],
-    scopes: input.scopes,
-    fromMs: input.fromMs,
-    toMs: input.toMs,
-  });
+  const captureTime = captureTimestampSql('e');
+  appendFilters(
+    clauses,
+    params,
+    {
+      query: '*',
+      connectors: [anchor.connector],
+      scopes: input.scopes,
+      fromMs: input.fromMs,
+      toMs: input.toMs,
+    },
+    'e',
+    captureTime
+  );
 
   const cursor = decodeHistoryCursor(input.cursor);
   if (cursor) {
-    clauses.push(
-      '(e.source_timestamp_ms > ? OR (e.source_timestamp_ms = ? AND e.event_index_id > ?))'
-    );
+    clauses.push(`(${captureTime} > ? OR (${captureTime} = ? AND e.event_index_id > ?))`);
     params.push(cursor.timestampMs, cursor.timestampMs, cursor.rawId);
   }
 
   const rows = adapter
     .prepare(
       `
-        SELECT e.*, 0 AS rank
+        SELECT e.*, 0 AS rank, ${timingSelectSql('e')}
         FROM connector_event_index e
         WHERE ${clauses.join(' AND ')}
-        ORDER BY e.source_timestamp_ms ASC, e.event_index_id ASC
+        ORDER BY capture_timestamp_ms ASC, e.event_index_id ASC
         LIMIT ?
       `
     )
     .all(...params, limit + 1) as RawSearchRow[];
 
   const pageRows = rows.slice(0, limit);
+  assertObservationRefsConsistent(adapter, pageRows);
   const nextRow = rows.length > limit ? pageRows[pageRows.length - 1] : undefined;
 
   return {
     hits: pageRows.map(toRawHit),
     next_cursor: nextRow
       ? encodeHistoryCursor({
-          source_timestamp_ms: Number(nextRow.source_timestamp_ms),
+          capture_timestamp_ms: Number(nextRow.capture_timestamp_ms),
           event_index_id: String(nextRow.event_index_id),
         })
       : null,

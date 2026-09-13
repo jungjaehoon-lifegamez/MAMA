@@ -53,6 +53,10 @@ export interface RegistryPort {
     children: ReadonlyArray<{ name: string; aliases?: readonly string[] }>;
     reason: string;
   }): string[];
+  appendIdentityCorrection(
+    correction: RegistryCorrectionCommand,
+    trusted: RegistryCorrectionAuthority
+  ): RegistryCorrectionReceiptView;
 }
 
 export interface RegistryScopeRef {
@@ -72,6 +76,96 @@ export interface RegistryUpsertInput {
   parent_of?: ReadonlyArray<{ name: string; aliases?: readonly string[] }>;
   note?: string;
 }
+
+export interface RegistryCorrectionAuthority {
+  principalId: string;
+  agentId: string;
+  scopes: readonly RegistryScopeRef[];
+  connectors: readonly string[];
+  channels?: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface RegistryCorrectionReceiptView {
+  commandId: string;
+  identityRevision: number;
+  children: Array<{ clientKey: string; ref: { kind: 'registry'; id: string } }>;
+  changedSlots: Array<{ edgeId: string; endpoint: 'from' | 'to' }>;
+  unresolved: Array<{ edgeId: string; endpoint: 'from' | 'to' }>;
+}
+
+export interface RegistryCorrectionInput {
+  command_id?: string;
+  expected_revision?: number;
+  reason?: string;
+  operation?: 'add_alias' | 'merge' | 'split' | 'assign_refs';
+  node_id?: string;
+  alias?: string;
+  survivor_id?: string;
+  member_ids?: readonly string[];
+  parent_id?: string;
+  children?: ReadonlyArray<{ client_key?: string; name: string; aliases?: readonly string[] }>;
+  assignments?: ReadonlyArray<{
+    edge_id: string;
+    endpoint: 'from' | 'to';
+    target_node_id?: string | null;
+    target_client_key?: string;
+  }>;
+  evidence?: ReadonlyArray<{ kind: 'observation'; id: string }>;
+  scopes?: readonly RegistryScopeRef[];
+}
+
+export type RegistryCorrectionCommand =
+  | {
+      commandId: string;
+      expectedRevision: number;
+      reason: string;
+      operation: 'add_alias';
+      nodeId: string;
+      alias: string;
+      scopes: readonly RegistryScopeRef[];
+      evidence?: ReadonlyArray<{ kind: 'observation'; id: string }>;
+    }
+  | {
+      commandId: string;
+      expectedRevision: number;
+      reason: string;
+      operation: 'merge';
+      survivorId: string;
+      memberIds: readonly string[];
+      scopes: readonly RegistryScopeRef[];
+      evidence?: ReadonlyArray<{ kind: 'observation'; id: string }>;
+    }
+  | {
+      commandId: string;
+      expectedRevision: number;
+      reason: string;
+      operation: 'split';
+      parentId: string;
+      children: ReadonlyArray<{ clientKey?: string; name: string; aliases?: readonly string[] }>;
+      assignments: ReadonlyArray<{
+        edgeId: string;
+        endpoint: 'from' | 'to';
+        targetNodeId?: string | null;
+        targetClientKey?: string;
+      }>;
+      scopes: readonly RegistryScopeRef[];
+      evidence?: ReadonlyArray<{ kind: 'observation'; id: string }>;
+    }
+  | {
+      commandId: string;
+      expectedRevision: number;
+      reason: string;
+      operation: 'assign_refs';
+      parentId: string;
+      assignments: ReadonlyArray<{
+        edgeId: string;
+        endpoint: 'from' | 'to';
+        targetNodeId?: string | null;
+        targetClientKey?: string;
+      }>;
+      scopes: readonly RegistryScopeRef[];
+      evidence?: ReadonlyArray<{ kind: 'observation'; id: string }>;
+    };
 
 export interface RegistryToolResult {
   success: boolean;
@@ -164,6 +258,81 @@ export async function handleRegistryUpsert(
       children: result.children,
       added: aliases,
     };
+  } catch (error) {
+    return { success: false, code: errorCode(error) ?? 'registry_error', error: message(error) };
+  }
+}
+
+export async function handleRegistryCorrect(
+  registry: RegistryPort,
+  input: RegistryCorrectionInput,
+  trusted: RegistryCorrectionAuthority
+): Promise<RegistryToolResult> {
+  const commandId = typeof input.command_id === 'string' ? input.command_id.trim() : '';
+  const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+  if (!commandId || !reason || !Number.isSafeInteger(input.expected_revision)) {
+    return {
+      success: false,
+      code: 'invalid_correction',
+      error: 'registry_correct requires command_id, expected_revision, operation, and reason',
+    };
+  }
+  const common = {
+    commandId,
+    expectedRevision: input.expected_revision as number,
+    reason,
+    scopes: input.scopes ?? trusted.scopes,
+    evidence: input.evidence,
+  };
+  let command: RegistryCorrectionCommand;
+  if (input.operation === 'add_alias') {
+    command = {
+      ...common,
+      operation: input.operation,
+      nodeId: input.node_id ?? '',
+      alias: input.alias ?? '',
+    };
+  } else if (input.operation === 'merge') {
+    command = {
+      ...common,
+      operation: input.operation,
+      survivorId: input.survivor_id ?? '',
+      memberIds: input.member_ids ?? [],
+    };
+  } else if (input.operation === 'split') {
+    command = {
+      ...common,
+      operation: input.operation,
+      parentId: input.parent_id ?? '',
+      children: (input.children ?? []).map((child) => ({
+        clientKey: child.client_key,
+        name: child.name,
+        aliases: child.aliases,
+      })),
+      assignments: (input.assignments ?? []).map((assignment) => ({
+        edgeId: assignment.edge_id,
+        endpoint: assignment.endpoint,
+        ...(assignment.target_client_key === undefined
+          ? { targetNodeId: assignment.target_node_id }
+          : { targetClientKey: assignment.target_client_key }),
+      })),
+    };
+  } else if (input.operation === 'assign_refs') {
+    command = {
+      ...common,
+      operation: input.operation,
+      parentId: input.parent_id ?? '',
+      assignments: (input.assignments ?? []).map((assignment) => ({
+        edgeId: assignment.edge_id,
+        endpoint: assignment.endpoint,
+        targetNodeId: assignment.target_node_id,
+      })),
+    };
+  } else {
+    return { success: false, code: 'invalid_correction', error: 'Unknown correction operation' };
+  }
+  try {
+    return { success: true, ...registry.appendIdentityCorrection(command, trusted) };
   } catch (error) {
     return { success: false, code: errorCode(error) ?? 'registry_error', error: message(error) };
   }

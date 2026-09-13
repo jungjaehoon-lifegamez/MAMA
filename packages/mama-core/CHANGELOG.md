@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-13
+
+### Added
+
+- Immutable connector and owner observation versions with exact current references and durable raw
+  projection replay.
+- Atomic scoped identity correction history and separate current graph identity projections.
+- Observation references on raw, context, case timeline, and graph timeline results.
+
 ## [3.1.0] - 2026-09-13
 
 ### Added
