@@ -47,7 +47,7 @@ export type WorkAssignment = {
   set?: OwnerWorkPatch;
   clear?: Array<keyof OwnerWorkPatch>;
 } & (
-  | { operation: 'create'; creationKey: string }
+  | { operation: 'create' }
   | { operation: 'revise' | 'withdraw'; commitmentId: string; expectedRevision: number }
 );
 
@@ -133,7 +133,7 @@ export interface WorkGraphQuery {
 export type WorkGraphNodeData =
   | {
       kind: 'memory';
-      recordKind: 'judgment' | 'commitment';
+      recordKind: 'legacy' | 'judgment' | 'commitment';
       topic: string;
       summary: string;
       recordedAt: number;

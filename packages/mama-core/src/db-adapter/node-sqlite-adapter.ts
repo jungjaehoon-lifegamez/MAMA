@@ -471,6 +471,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   }
 
   transaction<T>(fn: () => T): T {
+    return this.runTransaction(fn, 'deferred');
+  }
+
+  transactionImmediate<T>(fn: () => T): T {
+    return this.runTransaction(fn, 'immediate');
+  }
+
+  private runTransaction<T>(fn: () => T, mode: 'deferred' | 'immediate'): T {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
@@ -479,7 +487,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     const topicSnapshot = new Map(this.topicCache);
     const statusSnapshot = new Map(this.statusCache);
     const savepoint = `mama_nested_${depth}`;
-    this.exec(depth === 0 ? 'BEGIN TRANSACTION' : `SAVEPOINT ${savepoint}`);
+    this.exec(
+      depth === 0
+        ? mode === 'immediate'
+          ? 'BEGIN IMMEDIATE'
+          : 'BEGIN TRANSACTION'
+        : `SAVEPOINT ${savepoint}`
+    );
     this.transactionDepth += 1;
     try {
       const result = fn();
@@ -663,6 +677,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     ) {
       this.recoverWorkGraphRefsMigration074();
     }
+    if (
+      currentVersion >= 77 &&
+      this.tableExists('decisions') &&
+      fs.existsSync(path.join(migrationsDir, '077-legacy-record-kind.sql')) &&
+      !this.legacyRecordKindShape077()
+    ) {
+      this.recoverLegacyRecordKindMigration077();
+    }
 
     for (const file of migrationFiles) {
       const versionMatch = file.match(/^(\d+)-/);
@@ -724,6 +746,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
         this.recoverWorkGraphRefsMigration074();
+        info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      if (version === 77) {
+        this.recoverLegacyRecordKindMigration077();
         info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
         continue;
       }
@@ -2772,6 +2800,115 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         this.prepare(
           'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
         ).run(74, 'Registry and observation work graph references');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+
+  private legacyRecordKindShape077(): boolean {
+    if (!this.tableExists('decisions')) {
+      return false;
+    }
+    const clauses = splitCreateTableClauses(this.tableSql('decisions'));
+    const recordKindClause = clauses.find(
+      (clause) => !clauseIsTableConstraint(clause) && clauseColumnName(clause) === 'record_kind'
+    );
+    return Boolean(
+      recordKindClause &&
+      normalizeSqlText(recordKindClause) ===
+        normalizeSqlText(
+          "record_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (record_kind IN ('legacy', 'judgment', 'commitment'))"
+        ) &&
+      !clauses.some((clause) => clauseIsTableConstraint(clause) && /\brecord_kind\b/i.test(clause))
+    );
+  }
+
+  private recoverLegacyRecordKindMigration077(): void {
+    if (!this.tableExists('decisions')) {
+      throw new Error('Migration 077 recovery failed: missing decisions');
+    }
+    if (this.legacyRecordKindShape077()) {
+      this.transaction(() => {
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(77, 'Distinguish legacy memory records from agent judgments');
+      });
+      return;
+    }
+
+    const clauses = splitCreateTableClauses(this.tableSql('decisions'));
+    if (clauses.length === 0) {
+      throw new Error('Migration 077 recovery failed: unreadable decisions');
+    }
+    const existingColumns: string[] = [];
+    const columns: string[] = [];
+    const constraints: string[] = [];
+    let hasRecordKind = false;
+    for (const clause of clauses) {
+      if (clauseIsTableConstraint(clause)) {
+        if (/\brecord_kind\b/i.test(clause)) {
+          throw new Error('Migration 077 cannot safely preserve conflicting record_kind CHECK');
+        }
+        constraints.push(clause);
+        continue;
+      }
+      const name = clauseColumnName(clause);
+      existingColumns.push(name);
+      if (name === 'record_kind') {
+        hasRecordKind = true;
+        columns.push(
+          "record_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (record_kind IN ('legacy', 'judgment', 'commitment'))"
+        );
+      } else {
+        columns.push(clause);
+      }
+    }
+    if (!hasRecordKind) {
+      throw new Error('Migration 077 recovery failed: record_kind column is missing');
+    }
+
+    const objects = this.storedObjectsForTable('decisions');
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled()) {
+      throw new Error('Migration 077 recovery failed: could not disable foreign_keys');
+    }
+    try {
+      this.transaction(() => {
+        this.exec(
+          `CREATE TABLE decisions_077_new (\n  ${[...columns, ...constraints].join(',\n  ')}\n)`
+        );
+        const names = existingColumns.map(quoteSqlIdentifier).join(', ');
+        const source = existingColumns
+          .map((name) =>
+            name === 'record_kind'
+              ? `CASE WHEN ${this.tableExists('judgment_commands') ? 'EXISTS (SELECT 1 FROM judgment_commands jc WHERE jc.record_id = decisions.id)' : '0'} THEN record_kind ELSE 'legacy' END`
+              : quoteSqlIdentifier(name)
+          )
+          .join(', ');
+        this.exec(`INSERT INTO decisions_077_new (${names}) SELECT ${source} FROM decisions`);
+        this.exec('DROP TABLE decisions');
+        this.exec('ALTER TABLE decisions_077_new RENAME TO decisions');
+        for (const sql of objects.indexes) {
+          this.exec(sql);
+        }
+        for (const sql of objects.triggers) {
+          this.exec(sql);
+        }
+        if (!this.legacyRecordKindShape077()) {
+          throw new Error('Migration 077 recovery failed: incomplete record_kind shape');
+        }
+        for (const table of this.tablesInForeignKeyGraph('decisions')) {
+          if (this.prepare('SELECT 1 FROM pragma_foreign_key_check(?)').all(table).length > 0) {
+            throw new Error(
+              `Migration 077 recovery failed: foreign key violations after rebuild (${table})`
+            );
+          }
+        }
+        this.prepare(
+          'INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)'
+        ).run(77, 'Distinguish legacy memory records from agent judgments');
       });
     } finally {
       this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);

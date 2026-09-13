@@ -790,3 +790,20 @@
   서비스, 실제 모델 판단, 실제 Telegram 전달, 장기 raw 평가와 실제 파일 업무는 아직 검증하지 않았다.
 - 다음 단계: PR4에서 현재 원장의 지식 저장·조회와 업무 약속 writer 전환 후보를 main 기준으로
   failure-first 인벤토리하고, 100파일 이하의 실제 소비자 범위를 확정한다.
+
+## 2026-09-13 — PR4A CodeRabbit CLI 리뷰와 judgment writer closure
+
+- 리뷰 범위 / 근거: CodeRabbit CLI의 `--agent --base origin/main --type committed` 실행으로
+  PR4A의 Core judgment foundation을 검토했다. CLI가 반환한 구조화 지적은 현재 소스·계약·실제
+  Core 테스트와 대조했으며, 결과가 없는 외부 효과나 개인정보를 리뷰 입력·기록에 넣지 않았다.
+- 유효한 결함과 수정: 알 수 없는 reference kind의 허용, 기존 decisions의 judgment 오인, 같은
+  commandId의 동시 경쟁, 철회 후 revise 허용, create의 clear 유실을 수정했다. 계획에서 제거한
+  creationKey도 타입·테스트에서 제거했다. 기존 DB는 새 077 recovery에서 명시적 `legacy`로
+  분류하고 command receipt가 있는 기록은 보존한다. 별도 fallback runtime·승인 큐·업무 원장은
+  추가하지 않았다.
+- 검증: migration recovery 42개와 atomic judgment 9개를 포함한 Core 전체 825개 테스트와
+  typecheck/build가 통과했다. 저장·재시도·scope·약속 revision은 실제 SQLite adapter를 사용했다.
+  전체 workspace lint/format에는 이번 범위 밖 기존 오류가 남아 있어 성공 근거로 사용하지 않았다.
+- 의도 판정: **부분 부합**. 한 거래의 명령·판단·약속 경계와 legacy 구분은 강화됐지만, 공개
+  save/ingest writer 전환, 조회 graph, runtime/CLI/MCP 연결, 실제 모델·Telegram·파일 업무는
+  후속 PR에서 검증해야 한다. 최상위 목표는 미완료다.

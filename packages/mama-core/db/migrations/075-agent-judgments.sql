@@ -1,8 +1,8 @@
 -- Core-owned judgment and commitment command bindings.
 -- Existing decisions, registry, observations, edges, and effect receipts remain authoritative.
 
-ALTER TABLE decisions ADD COLUMN record_kind TEXT NOT NULL DEFAULT 'judgment'
-  CHECK (record_kind IN ('judgment', 'commitment'));
+ALTER TABLE decisions ADD COLUMN record_kind TEXT NOT NULL DEFAULT 'legacy'
+  CHECK (record_kind IN ('legacy', 'judgment', 'commitment'));
 ALTER TABLE decisions ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'
   CHECK (json_valid(payload_json));
 ALTER TABLE decisions ADD COLUMN applies_from INTEGER;

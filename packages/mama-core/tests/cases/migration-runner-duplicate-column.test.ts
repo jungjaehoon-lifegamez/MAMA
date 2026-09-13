@@ -108,6 +108,69 @@ describe('Story M2.1: Migration 032 duplicate-column recovery', () => {
   });
 });
 
+describe('Story PR4: migration 077 legacy record-kind recovery', () => {
+  afterEach(cleanupTempDir);
+
+  it('relabels pre-command decisions while preserving explicit judgment records', () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-077-'));
+    const dbPath = join(tempDir, 'legacy-record-kind.db');
+    const setup = new Database(dbPath);
+    applyThrough(setup, 74);
+    setup
+      .prepare(
+        `INSERT INTO decisions (id, topic, decision, status, created_at, updated_at)
+         VALUES ('legacy-memory', 'legacy', 'historical', 'active', 1, 1)`
+      )
+      .run();
+    const legacy075 = readFileSync(join(MIGRATIONS_DIR, '075-agent-judgments.sql'), 'utf8')
+      .replace("DEFAULT 'legacy'", "DEFAULT 'judgment'")
+      .replace("('legacy', 'judgment', 'commitment')", "('judgment', 'commitment')");
+    setup.exec(legacy075);
+    setup.exec(readFileSync(join(MIGRATIONS_DIR, '076-scoped-checkpoint-bindings.sql'), 'utf8'));
+    setup
+      .prepare('INSERT INTO schema_version (version, description) VALUES (77, ?)')
+      .run('legacy record-kind stamp');
+    setup
+      .prepare(
+        `INSERT INTO decisions (id, topic, decision, status, created_at, updated_at, record_kind)
+         VALUES ('explicit-judgment', 'new', 'new judgment', 'active', 2, 2, 'judgment')`
+      )
+      .run();
+    setup
+      .prepare(
+        `INSERT INTO command_bindings
+         (command_id, principal_id, action, payload_hash, receipt_kind, receipt_key, created_at)
+         VALUES ('explicit-command', 'principal', 'judgment.append', 'hash', 'judgment', 'explicit-judgment', 2)`
+      )
+      .run();
+    setup
+      .prepare(
+        `INSERT INTO judgment_commands
+         (command_id, record_id, committed_watermark, receipt_json, created_at)
+         VALUES ('explicit-command', 'explicit-judgment', 2, '{}', 2)`
+      )
+      .run();
+    setup.close();
+
+    const adapter = new NodeSQLiteAdapter({ dbPath });
+    adapter.connect();
+    adapter.runMigrations(MIGRATIONS_DIR);
+    adapter.disconnect();
+
+    const db = new Database(dbPath);
+    expect(
+      db.prepare('SELECT record_kind FROM decisions WHERE id = ?').get('legacy-memory')
+    ).toEqual({ record_kind: 'legacy' });
+    expect(
+      db.prepare('SELECT record_kind FROM decisions WHERE id = ?').get('explicit-judgment')
+    ).toEqual({ record_kind: 'judgment' });
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
+      version: 77,
+    });
+    db.close();
+  });
+});
+
 describe('Story T4: stamped registry identity migration recovery', () => {
   afterEach(cleanupTempDir);
 
@@ -1695,7 +1758,7 @@ describe('TG-03/04/05: migration 068 runtime scope overlap recovery', () => {
         evidence_json: null,
       });
       expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get()).toEqual({
-        version: 76,
+        version: 77,
       });
       db.close();
     });

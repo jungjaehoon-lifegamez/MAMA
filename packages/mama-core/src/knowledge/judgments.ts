@@ -148,7 +148,7 @@ function referenceExists(
       adapter.prepare('SELECT 1 FROM twin_edges WHERE edge_id = ?').get(reference.id) !== undefined
     );
   }
-  return true;
+  return false;
 }
 
 function validateLinks(
@@ -316,7 +316,25 @@ async function appendJudgmentOnAdapter(
     : null;
   const edgeIds: string[] = [];
   let workReceipt: JudgmentReceipt['work'];
-  adapter.transaction(() => {
+  let replayedReceipt: JudgmentReceipt | null = null;
+  const transaction = adapter.transactionImmediate
+    ? adapter.transactionImmediate.bind(adapter)
+    : adapter.transaction.bind(adapter);
+  transaction(() => {
+    const bindingResult = adapter
+      .prepare(
+        `INSERT OR IGNORE INTO command_bindings
+         (command_id, principal_id, action, payload_hash, receipt_kind, receipt_key, created_at)
+         VALUES (?, ?, 'judgment.append', ?, 'judgment', ?, ?)`
+      )
+      .run(command.commandId, access.principalId, hash, recordId, now);
+    if (bindingResult.changes === 0) {
+      replayedReceipt = assertReplay(adapter, command, access, hash);
+      if (!replayedReceipt) {
+        throw new Error('Command binding was not readable after a conflict-free insert');
+      }
+      return;
+    }
     const decisionRowId = insertPreparedDecision(
       adapter,
       {
@@ -395,19 +413,31 @@ async function appendJudgmentOnAdapter(
           .prepare(
             `INSERT INTO commitment_assignments
              (commitment_id, revision, record_id, operation, set_json, clear_json, created_at)
-             VALUES (?, 1, ?, 'create', ?, '[]', ?)`
+            VALUES (?, 1, ?, 'create', ?, ?, ?)`
           )
-          .run(commitmentId, recordId, canonicalizeJSON(workPatch(work)), now);
+          .run(
+            commitmentId,
+            recordId,
+            canonicalizeJSON(workPatch(work)),
+            canonicalizeJSON(work.clear ?? []),
+            now
+          );
         workReceipt = { commitmentId, revision: 1 };
       } else {
         const current = adapter
-          .prepare('SELECT current_revision FROM commitments WHERE commitment_id = ?')
-          .get(work.commitmentId) as { current_revision: number } | undefined;
+          .prepare('SELECT current_revision, withdrawn FROM commitments WHERE commitment_id = ?')
+          .get(work.commitmentId) as { current_revision: number; withdrawn: number } | undefined;
         if (!current) {
           throw new JudgmentError('REFERENCE_NOT_FOUND', 'Commitment is unavailable');
         }
         if (current.current_revision !== work.expectedRevision) {
           throw new JudgmentError('STALE_REVISION', 'Commitment revision is stale');
+        }
+        if (work.operation === 'revise' && current.withdrawn === 1) {
+          throw new JudgmentError(
+            'COMMITMENT_WITHDRAWN',
+            'Withdrawn commitments cannot be revised'
+          );
         }
         const revision = current.current_revision + 1;
         adapter
@@ -425,9 +455,6 @@ async function appendJudgmentOnAdapter(
             canonicalizeJSON(work.clear ?? []),
             now
           );
-        if (work.operation === 'withdraw') {
-          adapter.prepare("UPDATE decisions SET status = 'withdrawn' WHERE id = ?").run(recordId);
-        }
         adapter
           .prepare(
             'UPDATE commitments SET current_revision = ?, head_record_id = ?, withdrawn = ?, updated_at = ? WHERE commitment_id = ?'
@@ -456,18 +483,14 @@ async function appendJudgmentOnAdapter(
     };
     adapter
       .prepare(
-        `INSERT INTO command_bindings
-         (command_id, principal_id, action, payload_hash, receipt_kind, receipt_key, created_at)
-         VALUES (?, ?, 'judgment.append', ?, ?, ?, ?)`
-      )
-      .run(command.commandId, access.principalId, hash, 'judgment', recordId, now);
-    adapter
-      .prepare(
         `INSERT INTO judgment_commands (command_id, record_id, committed_watermark, receipt_json, created_at)
          VALUES (?, ?, ?, ?, ?)`
       )
       .run(command.commandId, recordId, receipt.watermark, canonicalizeJSON(receipt), now);
   });
+  if (replayedReceipt) {
+    return replayedReceipt;
+  }
   return {
     status: 'committed',
     recordId,
