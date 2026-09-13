@@ -39,10 +39,6 @@ export interface Decision {
  * allowing for easy mocking in tests.
  */
 export interface MamaApiClient {
-  /** Full memory save (host callers only; the turn observer writes policy:/lesson: rows). */
-  saveMemory?: (
-    input: import('@jungjaehoon/mama-core/memory/types').PublicSaveMemoryInput
-  ) => Promise<{ success: boolean; id: string }>;
   /** Current claims in scope (decisions.status is the authority); used for learning injection. */
   queryRelevantTruth?: (params: {
     query: string;
@@ -75,11 +71,6 @@ export interface MamaApiClient {
     query: string,
     options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
   ): Promise<RecallBundle>;
-
-  /**
-   * Ingest raw content into memory v2
-   */
-  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
 
   /**
    * Build compact bootstrap packet for memory agents
@@ -427,13 +418,6 @@ export function createMockMamaApi(decisions: SearchResult[] = []): MamaApiClient
           scope_order: ['project', 'channel', 'user', 'global'],
           retrieval_sources: ['mock'],
         },
-      };
-    },
-    async ingestMemory(input: Record<string, unknown>): Promise<unknown> {
-      return {
-        success: true,
-        id: 'ingested_mock_memory',
-        ...input,
       };
     },
     async buildMemoryBootstrap(input): Promise<MemoryAgentBootstrap> {

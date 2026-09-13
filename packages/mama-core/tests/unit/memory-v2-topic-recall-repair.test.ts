@@ -16,6 +16,8 @@ let currencyRows: Array<{ id: string; topic: string; created_at: number | string
 
 vi.mock('../../src/embeddings.js', () => ({
   generateEmbedding: generateEmbeddingMock,
+  generateEnhancedEmbedding: generateEmbeddingMock,
+  isForceTier3Enabled: () => false,
 }));
 
 vi.mock('../../src/db-manager.js', async (importOriginal) => {

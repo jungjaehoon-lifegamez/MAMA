@@ -3,8 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
+import { attachEntityAliasWithEdge } from '../../../mama-core/src/agent-graph/index.js';
 import {
-  attachEntityAlias,
   createEntityNode,
   upsertEntityObservation,
 } from '../../../mama-core/src/entities/store.js';
@@ -79,6 +79,23 @@ function createMockResponse(): MockResponse {
     getStatus: () => statusCode,
     readJson: () => JSON.parse(payload),
   };
+}
+
+function seedEntityAlias(entityId: string, label: string, labelType: 'pref' | 'alt'): string {
+  return attachEntityAliasWithEdge(getAdapter(), {
+    entity_id: entityId,
+    label,
+    label_type: labelType,
+    lang: 'en',
+    script: 'Latn',
+    confidence: 0.9,
+    source_type: 'synthetic',
+    source_ref: 'synthetic:test',
+    agent_id: 'fixture-agent',
+    model_run_id: 'fixture-run',
+    envelope_hash: 'fixture-envelope',
+    source_refs: [{ kind: 'entity', id: entityId }],
+  }).alias.id;
 }
 
 async function seedCandidate(input: {
@@ -315,19 +332,11 @@ describe('Story E1.8: Entity review API', () => {
         scope_id: 'C558',
         merged_into: null,
       });
-      await attachEntityAlias({
-        id: 'alias_runtime_target',
-        entity_id: 'entity_alias_target',
-        label: 'Alias Runtime Target',
-        normalized_label: 'alias runtime target',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'alt',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:alias',
-        confidence: 0.9,
-        status: 'active',
-      });
+      const runtimeTargetAliasId = seedEntityAlias(
+        'entity_alias_target',
+        'Alias Runtime Target',
+        'alt'
+      );
       await upsertEntityObservation({
         id: 'obs_alias_right',
         observation_type: 'generic',
@@ -362,7 +371,7 @@ describe('Story E1.8: Entity review API', () => {
         .run(
           'candidate_alias_ref',
           'alias_to_entity',
-          'alias_runtime_target',
+          runtimeTargetAliasId,
           'obs_alias_right',
           'pending',
           0.81,
@@ -573,32 +582,8 @@ describe('Story E1.8: Entity review API', () => {
         scope_id: scopeId,
         merged_into: null,
       });
-      await attachEntityAlias({
-        id: 'alias_source_79',
-        entity_id: sourceEntityId,
-        label: 'Project 79 Source',
-        normalized_label: 'project 79 source',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
-      await attachEntityAlias({
-        id: 'alias_target_79',
-        entity_id: targetEntityId,
-        label: 'Project 79 Target',
-        normalized_label: 'project 79 target',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
+      const sourceAliasId = seedEntityAlias(sourceEntityId, 'Project 79 Source', 'pref');
+      const targetAliasId = seedEntityAlias(targetEntityId, 'Project 79 Target', 'pref');
 
       const candidateId = 'candidate_issue79';
       getAdapter()
@@ -615,8 +600,8 @@ describe('Story E1.8: Entity review API', () => {
         .run(
           candidateId,
           'entity_to_entity',
-          'alias_source_79',
-          'alias_target_79',
+          sourceAliasId,
+          targetAliasId,
           'pending',
           0.92,
           0.9,
@@ -758,32 +743,8 @@ describe('Story E1.8: Entity review API', () => {
         scope_id: 'C_cycle',
         merged_into: null,
       });
-      await attachEntityAlias({
-        id: 'alias_cycle_a',
-        entity_id: 'entity_cycle_a',
-        label: 'Cycle A',
-        normalized_label: 'cycle a',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
-      await attachEntityAlias({
-        id: 'alias_cycle_target',
-        entity_id: 'entity_cycle_target',
-        label: 'Cycle Target',
-        normalized_label: 'cycle target',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
+      const cycleAAliasId = seedEntityAlias('entity_cycle_a', 'Cycle A', 'pref');
+      const cycleTargetAliasId = seedEntityAlias('entity_cycle_target', 'Cycle Target', 'pref');
       getAdapter()
         .prepare(
           `
@@ -798,8 +759,8 @@ describe('Story E1.8: Entity review API', () => {
         .run(
           'candidate_cycle_broken',
           'entity_to_entity',
-          'alias_cycle_a',
-          'alias_cycle_target',
+          cycleAAliasId,
+          cycleTargetAliasId,
           'pending',
           0.9,
           0.9,
@@ -852,32 +813,8 @@ describe('Story E1.8: Entity review API', () => {
         scope_id: 'C_scope_b',
         merged_into: null,
       });
-      await attachEntityAlias({
-        id: 'alias_scope_a',
-        entity_id: 'entity_scope_a',
-        label: 'Scope A',
-        normalized_label: 'scope a',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
-      await attachEntityAlias({
-        id: 'alias_scope_b',
-        entity_id: 'entity_scope_b',
-        label: 'Scope B',
-        normalized_label: 'scope b',
-        lang: 'en',
-        script: 'Latn',
-        label_type: 'pref',
-        source_type: 'synthetic',
-        source_ref: 'synthetic:test',
-        confidence: 0.9,
-        status: 'active',
-      });
+      const scopeAAliasId = seedEntityAlias('entity_scope_a', 'Scope A', 'pref');
+      const scopeBAliasId = seedEntityAlias('entity_scope_b', 'Scope B', 'pref');
       getAdapter()
         .prepare(
           `
@@ -892,8 +829,8 @@ describe('Story E1.8: Entity review API', () => {
         .run(
           'candidate_cross_scope',
           'entity_to_entity',
-          'alias_scope_a',
-          'alias_scope_b',
+          scopeAAliasId,
+          scopeBAliasId,
           'pending',
           0.85,
           0.9,

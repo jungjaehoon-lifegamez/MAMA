@@ -39,9 +39,7 @@ below; explicit memory lookup remains available through `/mama:search`.
 **PreCompact Hook** (`scripts/precompact-hook.js`)
 
 - Runs before context compaction.
-- Examines bounded recent transcript content for unsaved decisions, emits checkpoint guidance, and
-  submits bounded conversation ingest to the MAMA OS memory-agent endpoint when available.
-- The ingest request uses `MAMA_HTTP_PORT`, defaulting to the operational API on port 3847.
+- Examines bounded recent transcript content for unsaved decisions and emits checkpoint guidance.
 - Manifest timeout: 10 seconds.
 
 ## How to use the context
@@ -83,5 +81,5 @@ The manifest test must continue to match the active hook names and `Read`/`Write
 Session starts ── SessionStart ── local database/model warmup
 Read tool      ── PreToolUse   ── bounded related-decision context
 Write/Edit     ── PostToolUse  ── decision-recording reminder
-Pre-compact    ── PreCompact   ── checkpoint guidance and bounded ingest
+Pre-compact    ── PreCompact   ── checkpoint guidance
 ```

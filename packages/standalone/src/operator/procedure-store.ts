@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { applyOperatorProceduresMigration } from '../db/migrations/operator-procedures.js';
+import { TriggerRegistry } from './trigger-registry.js';
 
 /** Host-derived authority only; sourceRefs and model input never confer access. */
 export interface ProcedureAccess {
@@ -103,9 +104,14 @@ function required(value: string, name: string): void {
 
 /** TG-03/TG-05/TG-06: authorized heads, immutable instructions and receipt observations. */
 export class ProcedureStore {
+  private readonly triggers: TriggerRegistry;
+
   constructor(private readonly db: SQLiteDatabase) {
     db.pragma('busy_timeout = 5000');
     applyOperatorProceduresMigration(db);
+    // TriggerRegistry owns the operator_triggers schema; its constructor ran
+    // runMigration() against this db, so procedure_ref_json and revision exist.
+    this.triggers = new TriggerRegistry(db);
   }
 
   /** Keep projection file publication serialized with every canonical writer. */
@@ -292,29 +298,9 @@ export class ProcedureStore {
           );
       }
       this.append(record, intentHash);
-      // Legacy operator DBs may not have trigger references yet. Never create a second truth.
-      const triggerColumns = this.db.prepare('PRAGMA table_info(operator_triggers)').all() as {
-        name: string;
-      }[];
-      if (
-        triggerColumns.some((column) => column.name === 'procedure_ref_json') &&
-        triggerColumns.some((column) => column.name === 'revision')
-      ) {
-        this.db
-          .prepare(
-            "UPDATE operator_triggers SET procedure_ref_json = ?, revision = revision + 1 WHERE status = 'active' AND json_extract(procedure_ref_json, '$.id') = ? AND json_extract(procedure_ref_json, '$.scopeKey') = ?"
-          )
-          .run(
-            JSON.stringify({ id: record.id, revision: record.revision, scopeKey: record.scopeKey }),
-            record.id,
-            record.scopeKey
-          );
-        this.db
-          .prepare(
-            "UPDATE operator_triggers SET revision = revision + 1 WHERE status = 'active' AND id IN (SELECT trigger_id FROM operator_trigger_procedure_bindings WHERE scope_key = ? AND procedure_id = ?) AND NOT (COALESCE(json_extract(procedure_ref_json, '$.id'), '') = ? AND COALESCE(json_extract(procedure_ref_json, '$.scopeKey'), '') = ?)"
-          )
-          .run(record.scopeKey, record.id, record.id, record.scopeKey);
-      }
+      // Never create a second truth: trigger rows move only through the registry.
+      this.triggers.advanceProcedureRef(record.id, record.revision, record.scopeKey);
+      this.triggers.bumpBoundTriggerRevisions(record.scopeKey, record.id);
       return record;
     }, 'immediate')();
   }
@@ -328,14 +314,9 @@ export class ProcedureStore {
     scopeKey: string;
     snapshotHash: string;
   } | null {
-    const triggerTable = this.db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operator_triggers'")
-      .get();
-    const trigger = triggerTable
-      ? (this.db.prepare('SELECT status FROM operator_triggers WHERE id = ?').get(triggerId) as
-          | { status: string }
-          | undefined)
-      : undefined;
+    const trigger = this.db
+      .prepare('SELECT status FROM operator_triggers WHERE id = ?')
+      .get(triggerId) as { status: string } | undefined;
     if (trigger && trigger.status !== 'active') {
       throw new Error('legacy trigger not active');
     }
@@ -372,14 +353,9 @@ export class ProcedureStore {
     required(binding.snapshotHash, 'snapshotHash');
     required(access.channelId ?? '', 'legacy channelId');
     return this.withWriteTransaction(() => {
-      const triggerTable = this.db
-        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operator_triggers'")
-        .get();
-      const trigger = triggerTable
-        ? (this.db
-            .prepare('SELECT status, revision FROM operator_triggers WHERE id = ?')
-            .get(binding.triggerId) as { status: string; revision: number } | undefined)
-        : undefined;
+      const trigger = this.db
+        .prepare('SELECT status, revision FROM operator_triggers WHERE id = ?')
+        .get(binding.triggerId) as { status: string; revision: number } | undefined;
       if (trigger && trigger.status !== 'active') {
         throw new Error('legacy trigger not active');
       }
@@ -392,29 +368,27 @@ export class ProcedureStore {
         return record;
       }
       const record = this.save(input, access);
-      this.db
-        .prepare(
-          'INSERT INTO operator_trigger_procedure_bindings (trigger_id, owner_scope, project_id, channel_id, procedure_id, procedure_revision, scope_key, snapshot_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        )
-        .run(
-          binding.triggerId,
-          access.ownerScope,
-          access.projectId,
-          access.channelId,
-          record.id,
-          record.revision,
-          record.scopeKey,
-          binding.snapshotHash
-        );
+      this.triggers.insertProcedureBinding({
+        triggerId: binding.triggerId,
+        ownerScope: access.ownerScope,
+        projectId: access.projectId,
+        channelId: access.channelId ?? '',
+        procedureId: record.id,
+        procedureRevision: record.revision,
+        scopeKey: record.scopeKey,
+        snapshotHash: binding.snapshotHash,
+      });
       if (trigger) {
-        const changed = this.db
-          .prepare(
-            "UPDATE operator_triggers SET revision = revision + 1 WHERE id = ? AND status = 'active' AND revision = ?"
-          )
-          .run(binding.triggerId, trigger.revision);
-        if (changed.changes !== 1) {
-          throw new Error('legacy trigger revision conflict');
+        // save() bumps every trigger bound to this scope key and procedure, and
+        // scope keys ignore channel_id - the trigger may already have advanced.
+        // The immediate transaction sees only its own writes, so re-read.
+        const current = this.db
+          .prepare('SELECT revision FROM operator_triggers WHERE id = ?')
+          .get(binding.triggerId) as { revision: number } | undefined;
+        if (!current) {
+          throw new Error('legacy trigger not active');
         }
+        this.triggers.bumpActiveRevision(binding.triggerId, current.revision);
       }
       return record;
     });

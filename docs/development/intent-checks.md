@@ -807,3 +807,21 @@
 - 의도 판정: **부분 부합**. 한 거래의 명령·판단·약속 경계와 legacy 구분은 강화됐지만, 공개
   save/ingest writer 전환, 조회 graph, runtime/CLI/MCP 연결, 실제 모델·Telegram·파일 업무는
   후속 PR에서 검증해야 한다. 최상위 목표는 미완료다.
+
+## 2026-09-14 — PR4B bounded writer/ingest boundary (mama-core)
+
+- 작업 / 연결 시나리오: INTENT v6의 원문 보존·변경 이력 축적·Case 지속성·재시작 후 맥락 이어가기. TG-03/TG-05/TG-06. 공개 writer를 단일 명령 경계(`appendJudgment` / `source.ingest`)의 adapter로 수렴하는 것이 목표였다.
+- 기대한 사용자 행동 변화: 어떤 공개 쓰기 경로로 들어와도 원문 관측과 authored 판단이 분리되어 기록되고, 결과(outcome)·상태 변경이 덮어쓰기가 아닌 append-only 판단 이력으로 남아, 다음 대화·보고가 현재 projection과 누적 이력을 함께 추적할 수 있다. 재시도는 같은 receipt를 재생하고 다른 payload의 재사용은 거부된다.
+- 실제 결과와 증거 수준·위치: `saveMemory`/`saveLegacyMemory`/`ingestMemory`/`promoteMemoryStatus`/`mama.save`/`mama.updateOutcome`/`learnDecision`/`updateDecisionOutcome`을 명령 adapter로 전환했다. `source.ingest`는 한 요청에 정확히 하나의 `observation_versions` 행과 provenance event를 쓰고 `command_bindings`로 replay/conflict를 구분한다. `ingestConversation`은 `extract` 옵션을 쓰기 전에 거부하고 `rawId`만 반환한다. outcome 갱신은 새 judgment 기록을 append하면서 같은 transaction 안에서 대상의 현재 projection을 갱신한다. 저수준 writer(`insertDecisionWithEmbedding`/`insertPreparedDecision`/`insertEmbedding`)와 extraction prompt/parser export는 공개 표면에서 제거했다. `twin_edges` 관계 확장은 사용자 정의 column·index·trigger·FK를 보존하는 동적 079 recovery로 적용하고, 025 rebuild가 빠뜨린 `duration_days`는 080 migration으로 복원했다. mama-core 827 tests와 typecheck가 통과했으며 failure-first 검증(command conflict replay, fail-closed reference, embedder rollback, conversation ingest zero-judgments)을 포함한다.
+- 남은 실패·미확인 조건 / 기준 축소 여부: unsigned caller의 명시적 relationship은 legacy 호환을 위해 existence-only 확인과 projection-only supersede(`decisionEdges`/`supersedeTargets`)를 유지한다 — scope-admitted `replaces`/`links`는 trusted envelope에만 적용된다. 이는 fail-closed를 약화한 것이 아니라 기존 계약의 보존이며, 경계 자체의 참조 검사는 유지된다. mcp-server·standalone·claude-code-plugin 호출부 전환, 설치된 서비스, 실제 모델 판단, Telegram 전달과 파일 업무는 다른 에이전트 범위이거나 후속 PR 검증 대상이다.
+- 의도 판정: **부분 부합**. 쓰기 경계 수렴과 append-only 이력은 입증됐지만 전체 업무·전달 흐름의 실제 입증은 남아 있다.
+- 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: PR4B mama-core 범위 구현·검증 완료. **최상위 목표 미완료.** 다음 PR은 공개 패키지의 writer 호출부를 이 경계에 연결하고 조회 graph·실제 runtime 경로를 검증해야 한다.
+
+## 2026-09-14 — PR4B bounded writer/ingest boundary (adapters)
+
+- 작업 / 연결 시나리오: INTENT v6의 원문 보존·변경 이력 축적·Case 지속성·재시작 후 맥락 이어가기. TG-03/TG-05/TG-06. PR4B의 mama-core 명령 경계를 공개 패키지 호출부에 연결하는 것이 목표였다 — mcp-server, standalone, claude-code-plugin만 범위다.
+- 기대한 사용자 행동 변화: MCP 도구·에이전트 mama_save·operator trigger·connector polling·plugin PreCompact hook이 모두 같은 bounded write 의미를 공유한다. 어떤 호출부도 저수준 insert·host 추출·폴링-to-decision 자동 저장으로 경계를 우회하지 않는다.
+- 실제 결과와 증거 수준·위치: mcp-server의 ingest-conversation schema/forwarding에서 `extract`를 제거하고 unified save 설명을 raw observation 계약으로 갱신했다. standalone은 host extraction session·`setExtractionFn`·`connectorExtractionFn`·`stopExtraction` 수명 주기를 제거하고, raw-backed polling auto-save(`raw-backed-memory-ingest.ts`)와 퇴역한 memory-agent ack 헬퍼를 삭제했다. `POST /api/mama/ingest-conversation`은 `extract`를 쓰기 전에 400으로 거부한다. `MAMAApiInterface`에서 무호출 `ingestMemory`/`ingestWithTrustedProvenance`/`saveMemoryWithTrustedProvenance`/`ingestConversationWithTrustedProvenance` 멤버와 executor 바인딩을 제거해 `saveWithTrustedProvenance`(envelope authoritativeScopes+capability)와 unsigned `save` 두 경로만 남겼다 — 둘 다 Core가 `writeAccessForProvenance`로 정직한 접근을 유도하고 `appendJudgment`에 도달한다. plugin PreCompact hook은 `/api/memory-agent/ingest` fire-and-forget POST를 제거하고 compaction 안내와 후보 추출만 유지한다.
+- 남은 실패·미확인 조건 / 기준 축소 여부: unsigned public save의 principal 라벨은 Core fallback(`actor:direct_client`)이며 `unsigned-local`은 어댑터가 직접 access를 구성할 때만 사용된다 — standalone 어댑터는 직접 access를 만들지 않으므로 정직한 unsigned 쓰기는 유지된다. `extractAndSave` 이름은 contract test가 참조하므로 유지했다. 설치된 서비스, 실제 모델 판단, Telegram 전달과 파일 업무는 후속 PR 검증 대상이다.
+- 의도 판정: **부분 부합**. 세 어댑터 패키지가 같은 명령 경계에 연결됐지만 전체 업무·전달 흐름의 실제 입증은 남아 있다.
+- 하위 작업 상태 / 최상위 목표 상태 / 다음 작업의 연결 이유: PR4B 어댑터 범위 구현·검증 완료(mcp-server 201, standalone 5910, plugin 184 테스트 통과 + typecheck). **최상위 목표 미완료.** 다음 PR은 조회 graph와 실제 runtime 경로를 검증해야 한다.

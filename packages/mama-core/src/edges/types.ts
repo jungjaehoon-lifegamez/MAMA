@@ -17,6 +17,8 @@ export type TwinEdgeSource = (typeof TWIN_EDGE_SOURCES)[number];
 
 export const TWIN_EDGE_TYPES = [
   'supersedes',
+  'refines',
+  'contradicts',
   'builds_on',
   'debates',
   'synthesizes',
@@ -26,6 +28,7 @@ export const TWIN_EDGE_TYPES = [
   'alias_of',
   'next_action_for',
   'blocks',
+  'amends',
 ] as const;
 export type TwinEdgeType = (typeof TWIN_EDGE_TYPES)[number];
 
@@ -91,6 +94,17 @@ export interface InsertTwinEdgeInput {
     | 'other';
   reason_text?: string;
   evidence_refs?: unknown;
+}
+
+/**
+ * One fully resolved twin_edges row to write. Callers own edge_id, content_hash,
+ * and created_at because each write path derives them differently (deterministic
+ * command hashes vs fresh UUIDs); the writer owns the INSERT itself.
+ */
+export interface TwinEdgeInsert extends InsertTwinEdgeInput {
+  edge_id: string;
+  content_hash: Buffer;
+  created_at: number;
 }
 
 export interface TwinEdgeRecord {

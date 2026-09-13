@@ -11,6 +11,7 @@ vi.mock('../../src/embeddings.js', () => ({
   generateEnhancedEmbedding: vi.fn(async () => FIXED()),
   generateBatchEmbeddings: vi.fn(async (texts: string[]) => texts.map(() => FIXED())),
   cosineSimilarity: () => 1,
+  isForceTier3Enabled: () => false,
   embeddingCache: { clear: () => {}, get: () => undefined, set: () => {} },
   EMBEDDING_DIM: 1024,
   MODEL_NAME: 'x',

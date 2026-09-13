@@ -92,18 +92,29 @@ describe('Story PR3A: durable registry trace classification', () => {
             .all(id) as Array<{ external_id: string }>;
           expect(rows.map((row) => row.external_id)).toEqual(expected);
         }
-        await expect(
-          executor.execute('mama_save', {
-            type: 'decision',
-            topic: 'denied-cross-scope',
-            decision: 'must be denied',
-            reasoning: `supersedes: ${bTarget.id}`,
-            scopes: [{ kind: 'project', id: 'scope-a' }],
-          })
-        ).rejects.toMatchObject({
-          code: 'relationship_target_unavailable',
-          message: 'Relationship target is unavailable',
+        // Reasoning prose is evidence, not authority: "supersedes: <id>" text
+        // no longer mints a relationship, so a cross-scope target named only in
+        // prose cannot be denied — it is simply never bound. The save lands as
+        // an ordinary judgment and the prose-named target stays untouched.
+        const proseSave = await executor.execute('mama_save', {
+          type: 'decision',
+          topic: 'prose-not-authority',
+          decision: 'reasoning text carries no relationship authority',
+          reasoning: `supersedes: ${bTarget.id}`,
+          scopes: [{ kind: 'project', id: 'scope-a' }],
         });
+        expect(proseSave).toMatchObject({ success: true });
+        const targetRow = core
+          .getAdapter()
+          .prepare(`SELECT status, superseded_by FROM decisions WHERE id = ?`)
+          .get(bTarget.id) as { status: string | null; superseded_by: string | null };
+        expect(targetRow.status ?? 'active').not.toBe('superseded');
+        expect(targetRow.superseded_by).toBeNull();
+        const edgeCount = core
+          .getAdapter()
+          .prepare(`SELECT COUNT(*) AS n FROM decision_edges WHERE to_id = ?`)
+          .get(bTarget.id) as { n: number };
+        expect(edgeCount.n).toBe(0);
       });
       expect(await core.listToolTracesForRun('run-registry')).toEqual(
         expect.arrayContaining([
@@ -356,16 +367,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         graph_context: { primary: [], expanded: [], edges: [] },
         search_meta: { query: 'test', scope_order: ['project'], retrieval_sources: ['mock'] },
       }),
-      ingestMemory: vi.fn().mockResolvedValue({
-        success: true,
-        id: 'ingested_123',
-      }),
     };
     api.saveWithTrustedProvenance = vi.fn((input) => api.save(input));
-    api.ingestWithTrustedProvenance = vi.fn().mockResolvedValue({
-      success: true,
-      id: 'trusted_ingest_123',
-    });
     api.appendToolTrace = vi.fn().mockResolvedValue({});
     return api;
   };

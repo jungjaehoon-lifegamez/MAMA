@@ -1504,9 +1504,6 @@ export class GatewayToolExecutor {
         listDecisions: mama.list.bind(mama), // Note: mama exports listDecisions as 'list'
         suggest: mama.suggest.bind(mama),
         recallMemory: mama.recallMemory?.bind(mama),
-        saveMemoryWithTrustedProvenance: mama.saveMemoryWithTrustedProvenance?.bind(mama),
-        ingestConversationWithTrustedProvenance:
-          mama.ingestConversationWithTrustedProvenance?.bind(mama),
         getMemoryProvenance: mama.getMemoryProvenance?.bind(mama),
         listMemoriesByEnvelopeHash: mama.listMemoriesByEnvelopeHash?.bind(mama),
         listMemoriesByGatewayCallId: mama.listMemoriesByGatewayCallId?.bind(mama),

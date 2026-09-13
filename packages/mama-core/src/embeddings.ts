@@ -47,7 +47,7 @@ let embeddingPipeline: PipelineFunction | null = null;
 let currentModelName: string | null = null;
 let modelLoadFailed = false; // Cache load failures to avoid repeated slow retries
 
-function isForceTier3Enabled(): boolean {
+export function isForceTier3Enabled(): boolean {
   return TIER3_ENV_VALUES.has(String(process.env.MAMA_FORCE_TIER_3 || '').toLowerCase());
 }
 

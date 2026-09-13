@@ -7,7 +7,7 @@ import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js'
 import { attachEntityAliasWithEdge } from '../../../mama-core/src/agent-graph/index.js';
 import { upsertConnectorEventIndex } from '../../../mama-core/src/connectors/event-index.js';
 import { normalizeEntityLabel } from '../../../mama-core/src/entities/normalization.js';
-import { attachEntityAlias, createEntityNode } from '../../../mama-core/src/entities/store.js';
+import { createEntityNode } from '../../../mama-core/src/entities/store.js';
 import {
   beginModelRunInAdapter,
   commitModelRunInAdapter,
@@ -157,20 +157,21 @@ function insertEdge(input: {
     );
 }
 
-async function seedAlias(entityId: string, label: string, aliasId: string): Promise<void> {
+function seedAlias(entityId: string, label: string): void {
   const normalized = normalizeEntityLabel(label);
-  await attachEntityAlias({
-    id: aliasId,
+  attachEntityAliasWithEdge(getAdapter(), {
     entity_id: entityId,
     label,
-    normalized_label: normalized.normalized,
+    label_type: 'alt',
     lang: normalized.script === 'Hang' ? 'ko' : normalized.script === 'Jpan' ? 'ja' : 'en',
     script: normalized.script,
-    label_type: 'alt',
+    confidence: 0.95,
     source_type: 'fixture',
     source_ref: 'fixture:m6',
-    confidence: 0.95,
-    status: 'active',
+    agent_id: 'fixture-agent',
+    model_run_id: 'fixture-run',
+    envelope_hash: 'fixture-envelope',
+    source_refs: [{ kind: 'entity', id: entityId }],
   });
 }
 
@@ -356,8 +357,8 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
-      await seedAlias('entity_person_jaehoon', '\uC815\uC7AC\uD6C8', 'alias_jaehoon_ko');
-      await seedAlias('entity_person_jaehoon', '\u30B8\u30A7\u30D5\u30F3', 'alias_jaehoon_ja');
+      seedAlias('entity_person_jaehoon', '\uC815\uC7AC\uD6C8');
+      seedAlias('entity_person_jaehoon', '\u30B8\u30A7\u30D5\u30F3');
       const apiServer = makeServer();
 
       for (const label of ['Jaehoon Jung', '\uC815\uC7AC\uD6C8', '\u30B8\u30A7\u30D5\u30F3']) {

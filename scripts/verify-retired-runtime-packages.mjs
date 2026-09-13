@@ -321,7 +321,14 @@ try {
     /--disable-http|--disable-websocket|--enable-all|--set-auth-token|--generate-token|MAMA_AUTH_TOKEN/
   );
   const precompact = readFileSync(join(pluginRoot, 'scripts/precompact-hook.js'), 'utf8');
-  assert.match(precompact, /MAMA_HTTP_PORT\s*\|\|\s*'3847'/);
+  // The hook used to POST /api/memory-agent/ingest on 3847, and this guard pinned that
+  // port so retiring 3849 could not take the shared API with it. The relay itself is now
+  // retired: the hook reads the database directly and makes no request at all, so assert
+  // the stronger property instead of the port it no longer needs.
+  assert.doesNotMatch(
+    precompact,
+    /fetch\(|node:http|require\('http|MAMA_HTTP_PORT|3847|3849|\/api\//
+  );
 
   const importProbe = `
     import assert from 'node:assert/strict';

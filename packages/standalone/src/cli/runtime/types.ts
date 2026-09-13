@@ -119,12 +119,6 @@ export interface MAMARuntime {
    */
   mamaApiClient: MamaApiClient;
 
-  /**
-   * Optional extraction function wired up when a connector process is
-   * available. Used by the connector pipeline to extract structured facts.
-   */
-  connectorExtractionFn: ((prompt: string) => Promise<string>) | null;
-
   // ── Routing ───────────────────────────────────────────────────────────────
 
   /** Cross-platform message router */

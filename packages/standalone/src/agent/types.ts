@@ -1592,21 +1592,6 @@ export interface MAMAApiInterface {
     query: string,
     options?: { scopes?: ScopeRef[]; includeProfile?: boolean }
   ): Promise<unknown>;
-  // mama-core surface used by the context-injector ingestion path (NOT by
-  // gateway tools - mama_add/mama_ingest were culled 2026-07-30).
-  ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
-  ingestWithTrustedProvenance?(
-    input: Record<string, unknown>,
-    options: TrustedMemoryWriteOptions
-  ): Promise<unknown>;
-  saveMemoryWithTrustedProvenance?(
-    input: Record<string, unknown>,
-    options: TrustedMemoryWriteOptions
-  ): Promise<unknown>;
-  ingestConversationWithTrustedProvenance?(
-    input: Record<string, unknown>,
-    options: TrustedMemoryWriteOptions
-  ): Promise<unknown>;
   getMemoryProvenance?(memoryId: string, options?: Record<string, unknown>): Promise<unknown>;
   listMemoriesByEnvelopeHash?(
     envelopeHash: string,

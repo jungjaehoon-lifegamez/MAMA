@@ -123,8 +123,8 @@ class MAMAServer {
   Required: summary (4-section: Goal, Evidence, Unfinished, Next Briefing).
   Optional: next_steps, open_files. Triggers: session ending, "체크포인트", "save progress".
 
-**type='ingest'** — Import conversation messages into memory with optional extraction.
-  Required: messages (array of {role, content}). Optional: scopes, session_date, extract.
+**type='ingest'** — Import conversation messages into memory as a raw source observation.
+  Required: messages (array of {role, content}). Optional: scopes, session_date.
 
 **Scopes**: Isolate memories per project/channel. Example: [{"kind":"project","id":"/my/app"}]
 **event_date**: ISO 8601 date when event occurred (e.g. "2024-01-15"), not when saved.`,
@@ -218,10 +218,6 @@ class MAMAServer {
             session_date: {
               type: 'string',
               description: '[Ingest] ISO 8601 date when conversation occurred.',
-            },
-            extract: {
-              type: 'boolean',
-              description: '[Ingest] Extract structured memories via LLM. Default: false',
             },
           },
           required: ['type'],

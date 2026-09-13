@@ -34,6 +34,18 @@ interface TriggerRow {
   reviewed_fired: number;
 }
 
+/** Row shape for operator_trigger_procedure_bindings, owned by this module. */
+export interface TriggerProcedureBinding {
+  triggerId: string;
+  ownerScope: string;
+  projectId: string;
+  channelId: string;
+  procedureId: string;
+  procedureRevision: number;
+  scopeKey: string;
+  snapshotHash: string;
+}
+
 const REVIEW_RETRY_BASE_MS = 6 * 60 * 60 * 1000;
 const REVIEW_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 const AUTHOR_RETRY_BASE_MS = 6 * 60 * 60 * 1000;
@@ -359,6 +371,66 @@ export class TriggerRegistry {
         .prepare('SELECT 1 FROM operator_trigger_procedure_bindings WHERE trigger_id = ? LIMIT 1')
         .get(id) !== undefined
     );
+  }
+
+  /**
+   * A saved procedure revision is the new head: active triggers whose
+   * procedureRef follows that procedure re-point at the head and advance their
+   * own revision. Bare statement - joins the caller's transaction.
+   */
+  advanceProcedureRef(procedureId: string, revision: number, scopeKey: string): void {
+    this.db
+      .prepare(
+        "UPDATE operator_triggers SET procedure_ref_json = ?, revision = revision + 1 WHERE status = 'active' AND json_extract(procedure_ref_json, '$.id') = ? AND json_extract(procedure_ref_json, '$.scopeKey') = ?"
+      )
+      .run(JSON.stringify({ id: procedureId, revision, scopeKey }), procedureId, scopeKey);
+  }
+
+  /**
+   * Bound triggers that do not already reference this procedure keep their own
+   * snapshot ref but still advance revision so a stale view cannot pass as
+   * current. Bare statement - joins the caller's transaction.
+   */
+  bumpBoundTriggerRevisions(scopeKey: string, procedureId: string): void {
+    this.db
+      .prepare(
+        "UPDATE operator_triggers SET revision = revision + 1 WHERE status = 'active' AND id IN (SELECT trigger_id FROM operator_trigger_procedure_bindings WHERE scope_key = ? AND procedure_id = ?) AND NOT (COALESCE(json_extract(procedure_ref_json, '$.id'), '') = ? AND COALESCE(json_extract(procedure_ref_json, '$.scopeKey'), '') = ?)"
+      )
+      .run(scopeKey, procedureId, procedureId, scopeKey);
+  }
+
+  /** Record which queued procedure revision a trigger bound to. */
+  insertProcedureBinding(binding: TriggerProcedureBinding): void {
+    this.db
+      .prepare(
+        'INSERT INTO operator_trigger_procedure_bindings (trigger_id, owner_scope, project_id, channel_id, procedure_id, procedure_revision, scope_key, snapshot_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        binding.triggerId,
+        binding.ownerScope,
+        binding.projectId,
+        binding.channelId,
+        binding.procedureId,
+        binding.procedureRevision,
+        binding.scopeKey,
+        binding.snapshotHash
+      );
+  }
+
+  /**
+   * Optimistic-concurrency bump: the trigger must still be active at the
+   * revision the caller read, otherwise exactly zero rows change and this
+   * throws inside the caller's transaction, rolling it back.
+   */
+  bumpActiveRevision(id: string, expectedRevision: number): void {
+    const changed = this.db
+      .prepare(
+        "UPDATE operator_triggers SET revision = revision + 1 WHERE id = ? AND status = 'active' AND revision = ?"
+      )
+      .run(id, expectedRevision);
+    if (changed.changes !== 1) {
+      throw new Error('legacy trigger revision conflict');
+    }
   }
 
   /** Disable the original and insert its replacement as one rollback-safe decision. */

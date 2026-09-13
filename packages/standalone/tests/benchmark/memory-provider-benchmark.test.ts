@@ -25,6 +25,7 @@ interface MamaApi {
     type?: string;
     scopes?: Array<{ kind: string; id: string }>;
   }): Promise<{ success: boolean; id?: string }>;
+  promoteMemoryStatus(input: { memoryId: string; status: string }): Promise<void>;
   suggest(
     query: string,
     options?: { limit?: number }
@@ -61,7 +62,9 @@ describe('Memory Provider Benchmark: Save → Recall', () => {
       }
     });
     process.env.MAMA_DB_PATH = TEST_DB;
-    mamaApi = require('@jungjaehoon/mama-core/mama-api');
+    const mamaModule = require('@jungjaehoon/mama-core/mama-api');
+    const mamaCore = require('@jungjaehoon/mama-core');
+    mamaApi = { ...mamaModule, promoteMemoryStatus: mamaCore.promoteMemoryStatus };
   });
 
   afterAll(async () => {
@@ -166,18 +169,25 @@ describe('Memory Provider Benchmark: Save → Recall', () => {
         const save1Ms = Date.now() - save1Start;
         expect(save1.success).toBe(true);
 
-        // Save second decision (supersedes)
+        // Save second decision, then supersede the first via the authored
+        // amendment path. Reasoning prose is evidence, not authority: the
+        // boundary no longer parses "supersedes: <id>" out of free text, so
+        // promoteMemoryStatus resolves the same-topic evolution explicitly.
         const save2Start = Date.now();
         const save2 = await mamaApi.save({
           topic: scenario.secondSave.topic,
           decision: scenario.secondSave.decision,
-          reasoning: `${scenario.secondSave.reasoning}. supersedes: ${save1.id}`,
+          reasoning: scenario.secondSave.reasoning,
           confidence: 0.9,
           type: 'user_decision',
           scopes: SCOPES,
         });
         const save2Ms = Date.now() - save2Start;
         expect(save2.success).toBe(true);
+        await mamaApi.promoteMemoryStatus({
+          memoryId: String(save2.id),
+          status: 'active',
+        });
 
         // Recall — should find the latest
         const recallStart = Date.now();

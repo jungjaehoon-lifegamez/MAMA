@@ -26,10 +26,8 @@ export {
   getDB,
   getAdapter,
   closeDB,
-  insertEmbedding,
   vectorSearch,
   queryVectorSearch,
-  insertDecisionWithEmbedding,
   queryDecisionGraph,
   querySemanticEdges,
   updateDecisionOutcome,
@@ -109,18 +107,19 @@ export {
   recordMemoryAudit,
   ingestConversation,
   ingestConversationWithTrustedProvenance,
-  setExtractionFn,
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
-export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
 export {
   createKnowledge,
   appendJudgment,
+  ingestSource,
   JudgmentError,
   type Knowledge,
   type KnowledgeOptions,
   type JudgmentAccess,
+  type SourceIngestCommand,
+  type SourceIngestReceipt,
 } from './knowledge/index.js';
 export { queryRelevantTruth } from './memory/truth-store.js';
 export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
@@ -188,6 +187,7 @@ export {
   TWIN_REF_KINDS,
   type InsertTwinEdgeInput,
   type ListVisibleTwinEdgesOptions,
+  type TwinEdgeInsert,
   type TwinEdgeRecord,
   type TwinEdgeSource,
   type TwinEdgeType,
@@ -195,7 +195,12 @@ export {
   type TwinRefKind,
   type TwinScopeRef,
 } from './edges/types.js';
-export { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './edges/store.js';
+export {
+  getTwinEdge,
+  insertTwinEdge,
+  listTwinEdgesForRefs,
+  mapTwinEdgeRow,
+} from './edges/store.js';
 export { listVisibleTwinEdgesForRefs } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
 export * from './provenance/source-ref.js';
@@ -260,7 +265,6 @@ export {
   getPreviousDecision,
   createEdge,
   createSupersedesEdge,
-  markSuperseded,
   calculateCombinedConfidence,
   detectRefinement,
   parseReasoningForRelationships,

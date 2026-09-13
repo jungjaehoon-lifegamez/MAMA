@@ -82,8 +82,15 @@ describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-
   beforeEach(async () => {
     // Clear all decisions before each test
     const adapter = getAdapter();
-    // Delete in correct order due to foreign key constraints
+    // Delete in correct order due to foreign key constraints: the judgment
+    // command tables (075) and source ingest receipts (078) hold RESTRICT
+    // references into decisions/command_bindings and must go first.
     try {
+      await adapter.prepare('DELETE FROM commitment_assignments').run();
+      await adapter.prepare('DELETE FROM commitments').run();
+      await adapter.prepare('DELETE FROM judgment_commands').run();
+      await adapter.prepare('DELETE FROM source_commands').run();
+      await adapter.prepare('DELETE FROM command_bindings').run();
       await adapter.prepare('DELETE FROM decision_edges').run();
       await adapter.prepare('DELETE FROM decisions').run();
       // Clear vector embeddings to prevent rowid conflicts

@@ -1,8 +1,10 @@
+import { canonicalizeJSON } from '../canonicalize.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import {
   TWIN_EDGE_SOURCES,
   TWIN_EDGE_TYPES,
   TWIN_REF_KINDS,
+  type TwinEdgeInsert,
   type TwinEdgeRecord,
   type TwinEdgeSource,
   type TwinEdgeType,
@@ -113,6 +115,67 @@ export function mapTwinEdgeRow(row: Record<string, unknown>): TwinEdgeRecord {
     content_hash: toBuffer(row.content_hash),
     created_at: Number(row.created_at),
   };
+}
+
+function jsonColumn(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return typeof value === 'string' ? value : canonicalizeJSON(value);
+}
+
+/**
+ * The single write boundary for twin_edges. Both former write sites (the
+ * alias_of edge inside the alias write and the judgment-command link insert)
+ * now resolve their columns into a TwinEdgeInsert and call here, inside the
+ * caller's transaction. The row is read back so callers get the stored record.
+ */
+export function insertTwinEdge(
+  adapter: TwinEdgeReadAdapter,
+  input: TwinEdgeInsert
+): TwinEdgeRecord {
+  adapter
+    .prepare(
+      `
+        INSERT INTO twin_edges (
+          edge_id, edge_type, subject_kind, subject_id, object_kind, object_id,
+          relation_attrs_json, confidence, source, agent_id, model_run_id, envelope_hash,
+          human_actor_id, human_actor_role, authority_scope_json, reason_classification,
+          reason_text, evidence_refs_json, request_idempotency_key, edge_idempotency_key,
+          content_hash, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.edge_id,
+      input.edge_type,
+      input.subject_ref.kind,
+      input.subject_ref.id,
+      input.object_ref.kind,
+      input.object_ref.id,
+      jsonColumn(input.relation_attrs),
+      input.confidence ?? 1,
+      input.source,
+      input.agent_id ?? null,
+      input.model_run_id ?? null,
+      input.envelope_hash ?? null,
+      input.human_actor_id ?? null,
+      input.human_actor_role ?? null,
+      jsonColumn(input.authority_scope_json),
+      input.reason_classification ?? null,
+      input.reason_text ?? null,
+      jsonColumn(input.evidence_refs),
+      input.request_idempotency_key ?? null,
+      input.edge_idempotency_key ?? null,
+      input.content_hash,
+      input.created_at
+    );
+  const record = getTwinEdge(adapter, input.edge_id);
+  if (!record) {
+    throw new Error(`Twin edge was not written: ${input.edge_id}`);
+  }
+  return record;
 }
 
 export function getTwinEdge(adapter: TwinEdgeReadAdapter, edgeId: string): TwinEdgeRecord | null {

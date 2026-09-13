@@ -1,9 +1,11 @@
 /**
  * createMamaMemoryPort - the real OperatorMemoryPort binding (M1-T0).
  *
- * recall -> mama-core recallMemory (memory/api.ts:1118), mapping RecallBundle.memories
+ * recall -> mama-core recallMemory (memory/api.ts), mapping RecallBundle.memories
  * (MemoryRecord: topic + summary) into the port's {topic, content} shape.
- * save -> mama-core saveMemory (operator-authored notes; decision kind, global scope).
+ * save -> mama-core saveMemory, the bounded writer adapter: every save funnels
+ * through appendJudgment with honest unsigned-local access (no signed envelope
+ * here), never a low-level insert.
  *
  * Pure adapter: no judgment, no filtering beyond the mechanical mapping. The agent's
  * memoryQuery decides what is recalled (trigger-fire.ts).

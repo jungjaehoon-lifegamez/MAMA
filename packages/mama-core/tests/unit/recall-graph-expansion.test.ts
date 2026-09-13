@@ -6,6 +6,8 @@ const expandWithGraphMock = vi.fn();
 
 vi.mock('../../src/embeddings.js', () => ({
   generateEmbedding: generateEmbeddingMock,
+  generateEnhancedEmbedding: generateEmbeddingMock,
+  isForceTier3Enabled: () => false,
 }));
 
 vi.mock('../../src/db-manager.js', () => ({

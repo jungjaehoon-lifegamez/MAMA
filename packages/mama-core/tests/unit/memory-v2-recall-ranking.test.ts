@@ -7,6 +7,8 @@ let decisionRows: Array<Record<string, unknown>> = [];
 
 vi.mock('../../src/embeddings.js', () => ({
   generateEmbedding: generateEmbeddingMock,
+  generateEnhancedEmbedding: generateEmbeddingMock,
+  isForceTier3Enabled: () => false,
 }));
 
 vi.mock('../../src/db-manager.js', () => ({
