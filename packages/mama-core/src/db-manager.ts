@@ -39,6 +39,7 @@ export interface DatabaseAdapter {
   runMigrations: (dir: string) => void;
   prepare: (sql: string) => PreparedStatement;
   transaction: <T>(fn: () => T) => T;
+  transactionImmediate?: <T>(fn: () => T) => T;
   insertEmbedding: (rowid: number, embedding: Float32Array | number[]) => void;
   vectorSearch: (
     embedding: Float32Array | number[],

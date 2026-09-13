@@ -48,6 +48,26 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
   });
 
+  it('AC #1 rejects an unsupported reference kind instead of accepting it', async () => {
+    const unsupported = { kind: 'case', id: 'case-not-implemented' } as unknown as {
+      kind: 'memory';
+      id: string;
+    };
+    await expect(
+      appendJudgment(
+        {
+          commandId: 'cmd-unsupported-ref',
+          topic: 'synthetic-topic',
+          summary: 'unsupported reference',
+          recordKind: 'judgment',
+          links: [{ relation: 'mentions', target: unsupported }],
+        },
+        access
+      )
+    ).rejects.toMatchObject({ code: 'REFERENCE_NOT_FOUND' });
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
+  });
+
   it('AC #2 commits explicit links and returns the original receipt on replay', async () => {
     const db = getAdapter();
     db.prepare(
@@ -77,7 +97,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
     const receipt = await appendJudgment(command, access);
     expect(await appendJudgment(command, access)).toEqual(receipt);
     expect(
-      db
+      getAdapter()
         .prepare(
           'SELECT edge_type, object_id FROM twin_edges WHERE subject_id = ? ORDER BY edge_type'
         )
@@ -153,6 +173,25 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
     });
   });
 
+  it('AC #3 returns one receipt for concurrent retries of the same command', async () => {
+    const command = {
+      commandId: 'cmd-concurrent-retry',
+      topic: 'synthetic-topic',
+      summary: 'concurrent payload',
+      recordKind: 'judgment' as const,
+      scopes: access.scopes,
+    };
+    const embedder = {
+      embed: async () => new Float32Array(384),
+    };
+    const [first, second] = await Promise.all([
+      appendJudgment(command, access, { embedder }),
+      appendJudgment(command, access, { embedder }),
+    ]);
+    expect(second).toEqual(first);
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 1 });
+  });
+
   it('AC #4 advances a commitment revision and rejects stale CAS', async () => {
     const create = await appendJudgment(
       {
@@ -162,8 +201,8 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         recordKind: 'commitment',
         work: {
           operation: 'create',
-          creationKey: 'synthetic-launch-task',
           set: { title: 'Launch', roles: [] },
+          clear: ['status'],
         },
         scopes: access.scopes,
       },
@@ -187,6 +226,13 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
       access
     );
     expect(revised.work?.revision).toBe(2);
+    expect(
+      getAdapter()
+        .prepare(
+          'SELECT clear_json FROM commitment_assignments WHERE commitment_id = ? AND revision = 1'
+        )
+        .get(commitmentId)
+    ).toEqual({ clear_json: '["status"]' });
     await expect(
       appendJudgment(
         {
@@ -206,5 +252,44 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
       )
     ).rejects.toMatchObject({ code: 'STALE_REVISION' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 2 });
+  });
+
+  it('AC #4 rejects revising a withdrawn commitment', async () => {
+    const create = await appendJudgment(
+      {
+        commandId: 'cmd-withdraw-create',
+        topic: 'synthetic-task',
+        summary: 'create then withdraw',
+        recordKind: 'commitment',
+        work: { operation: 'create', set: { title: 'Withdraw me' } },
+        scopes: access.scopes,
+      },
+      access
+    );
+    const commitmentId = create.work!.commitmentId;
+    await appendJudgment(
+      {
+        commandId: 'cmd-withdraw',
+        topic: 'synthetic-task',
+        summary: 'withdraw',
+        recordKind: 'commitment',
+        work: { operation: 'withdraw', commitmentId, expectedRevision: 1 },
+        scopes: access.scopes,
+      },
+      access
+    );
+    await expect(
+      appendJudgment(
+        {
+          commandId: 'cmd-after-withdraw',
+          topic: 'synthetic-task',
+          summary: 'revise after withdraw',
+          recordKind: 'commitment',
+          work: { operation: 'revise', commitmentId, expectedRevision: 2 },
+          scopes: access.scopes,
+        },
+        access
+      )
+    ).rejects.toMatchObject({ code: 'COMMITMENT_WITHDRAWN' });
   });
 });
