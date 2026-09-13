@@ -8,7 +8,7 @@
 
 /**
  * Role configuration for agent permissions
- * Each source (viewer, discord, telegram, etc.) maps to a role
+ * Each source (discord, telegram, etc.) maps to a role
  */
 export interface RoleConfig {
   /**
@@ -59,7 +59,7 @@ export interface RoleConfig {
 
 /**
  * Source-to-role mapping
- * Keys: source identifiers (viewer, discord, telegram, slack, chatwork)
+ * Keys: source identifiers (discord, telegram, slack, chatwork)
  * Values: role names defined in roles
  */
 export type SourceRoleMapping = Record<string, string>;
@@ -77,7 +77,7 @@ export interface RolesConfig {
 
   /**
    * Source-to-role mapping
-   * @example { viewer: "os_agent", discord: "discord_bot" }
+   * @example { discord: "discord_bot" }
    */
   sourceMapping: SourceRoleMapping;
 }
@@ -208,7 +208,6 @@ export const DEFAULT_ROLES: RolesConfig = {
     },
   },
   sourceMapping: {
-    viewer: 'os_agent',
     discord: 'chat_bot',
     telegram: 'chat_bot',
     slack: 'chat_bot',

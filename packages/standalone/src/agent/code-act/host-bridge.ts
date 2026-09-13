@@ -824,14 +824,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
       "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { fileId: string; name: string } } }",
     category: 'file',
   },
-  // OS Management
-  {
-    name: 'os_get_config',
-    description: 'Get MAMA configuration',
-    params: [{ name: 'section', type: 'string', required: false }],
-    returnType: 'object',
-    category: 'os',
-  },
   // System — agent activity notices
   {
     name: 'agent_notices',
@@ -1290,7 +1282,6 @@ export const READ_ONLY_TOOLS = new Set([
   'audit_findings_read',
   'wiki_read',
   'Read',
-  'os_get_config',
   'agent_notices',
   // Kagemusha bridge queries: pure reads of the business-data db. Without these
   // the tier-2 dashboard agent cannot see real task lifecycle state and falls

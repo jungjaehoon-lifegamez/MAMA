@@ -157,7 +157,6 @@ describe('Story private connector isolation: immutable Kagemusha policy boundary
     expect(resolvePrivatePrincipalSurface(trustedContext('operator-report'))).toBe(
       'operator-report'
     );
-    expect(resolvePrivatePrincipalSurface(trustedContext('os_agent', 'viewer'))).toBe('os_agent');
     expect(resolvePrivatePrincipalSurface(trustedContext('chat_bot'))).toBe('multi-agent-generic');
   });
 

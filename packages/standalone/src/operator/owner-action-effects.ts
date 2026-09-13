@@ -433,7 +433,7 @@ export class OwnerActionEffectLedger implements OwnerActionEffectStoragePort {
         .prepare(
           `SELECT DISTINCT effect_kind FROM ${OWNER_ACTION_EFFECTS_TABLE}
       WHERE occurrence_key = ? AND status = 'confirmed' AND effect_kind NOT IN
-      ('native_run', 'native_tool', 'telegram_send', 'slack_send', 'discord_send', 'webchat_send')`
+      ('native_run', 'native_tool', 'telegram_send', 'slack_send', 'discord_send')`
         )
         .all(requireIdentity(occurrenceKey, 'occurrenceKey')) as Array<{ effect_kind: string }>
     ).map((row) => row.effect_kind);

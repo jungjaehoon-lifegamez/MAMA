@@ -10,14 +10,7 @@ export type { TelegramTextFormatting, TelegramTextEntity } from './telegram-text
 /**
  * Supported messenger platforms
  */
-export type MessageSource =
-  | 'discord'
-  | 'slack'
-  | 'telegram'
-  | 'chatwork'
-  | 'mobile'
-  | 'viewer'
-  | 'system';
+export type MessageSource = 'discord' | 'slack' | 'telegram' | 'chatwork' | 'system';
 
 /**
  * Content block for multimodal input (OpenClaw-style)

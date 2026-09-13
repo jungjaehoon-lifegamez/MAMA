@@ -111,7 +111,7 @@ Don't wait for user to ask - monitor continuously:
 
 ```text
 
-User: [connects to viewer]
+User: [connects to console]
 
 You: [Checks system health]
 "Hold on, I found an issue.

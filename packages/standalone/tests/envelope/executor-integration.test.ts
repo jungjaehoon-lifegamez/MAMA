@@ -120,7 +120,7 @@ describe('gateway-tool-executor envelope integration', () => {
       {},
       {
         agentId: 'direct-test',
-        source: 'viewer',
+        source: 'system',
         channelId: 'direct',
         executionSurface: 'direct',
       }
@@ -177,7 +177,7 @@ describe('gateway-tool-executor envelope integration', () => {
       {},
       {
         agentId: 'direct-test',
-        source: 'viewer',
+        source: 'system',
         channelId: 'direct',
         executionSurface: 'direct',
       }

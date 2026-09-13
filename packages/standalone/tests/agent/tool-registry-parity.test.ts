@@ -21,7 +21,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
-import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { buildReportPublishToolContract } from '../../src/operator/board-slot-instructions.js';
 
@@ -63,7 +62,6 @@ const KNOWN_DESCRIPTION_DIVERGENCES: readonly string[] = [
   'member_suspend',
   'obsidian',
   'ocr_image',
-  'os_get_config',
   'procedure_list',
   'procedure_observe',
   'procedure_read',
@@ -101,23 +99,6 @@ function collectDivergences(): string[] {
 }
 
 describe('code-act / gateway registry description parity', () => {
-  describe('Story PR2A: browser surface retirement', () => {
-    describe('AC #1: remove the webchat action from every active tool surface', () => {
-      it('does not advertise or dispatch the retired webchat action', async () => {
-        expect(ToolRegistry.getTool('webchat_send')).toBeUndefined();
-        expect(ToolRegistry.generatePrompt(['*'])).not.toContain('webchat_send');
-        expect(HostBridge.getToolRegistry().map((tool) => tool.name)).not.toContain('webchat_send');
-        expect(
-          readFileSync(join(process.cwd(), 'src', 'agent', 'gateway-tools.md'), 'utf8')
-        ).not.toContain('webchat');
-
-        await expect(new GatewayToolExecutor().execute('webchat_send', {})).rejects.toMatchObject({
-          code: 'UNKNOWN_TOOL',
-        });
-      });
-    });
-  });
-
   it('report_publish carries the identical board contract in both registries', () => {
     const host = hostByName.get('report_publish');
     const gateway = ToolRegistry.getTool('report_publish');
@@ -149,4 +130,19 @@ describe('code-act / gateway registry description parity', () => {
   it.todo(
     `close ${KNOWN_DESCRIPTION_DIVERGENCES.length} remaining description divergences one by one, starting with the tools whose gateway text carries contract vocabulary the code-act copy omits (task_list, board_read, wiki_publish, file_export)`
   );
+
+  // Replaces the retired-webchat guard this branch removed. That test named one
+  // dead tool; removing webchat_send from the tool-name union now makes naming it
+  // a compile error, but nothing stopped the catalog from advertising a tool the
+  // registry does not have - which is exactly how os_get_config stayed documented
+  // while it was unreachable. Ask the registry rather than parsing its source:
+  // some tools are registered from a loop and carry no literal name.
+  it('gateway-tools.md advertises only tools the registry actually registers', () => {
+    const catalog = readFileSync(join(process.cwd(), 'src', 'agent', 'gateway-tools.md'), 'utf8');
+    const advertised = [
+      ...new Set([...catalog.matchAll(/^- \*\*([a-z][a-z0-9_]+)\*\*\(/gm)].map((m) => m[1])),
+    ];
+    expect(advertised.length).toBeGreaterThan(0);
+    expect(advertised.filter((name) => ToolRegistry.getTool(name) === undefined)).toEqual([]);
+  });
 });

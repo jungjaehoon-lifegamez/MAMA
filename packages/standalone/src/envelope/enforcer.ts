@@ -18,7 +18,6 @@ const SEND_TOOLS_TO_DESTINATION_KIND = {
   slack_send: 'slack',
   chatwork_send: 'chatwork',
   discord_send: 'discord',
-  webchat_send: 'webchat',
   drive_upload: 'drive',
 } as const;
 
@@ -27,7 +26,6 @@ const DESTINATION_ID_FIELD_BY_TOOL = {
   slack_send: 'channel_id',
   chatwork_send: 'channel_id',
   discord_send: 'channel_id',
-  webchat_send: 'session_id',
   drive_upload: 'folderId',
 } satisfies Record<keyof typeof SEND_TOOLS_TO_DESTINATION_KIND, string>;
 
@@ -46,7 +44,6 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'slack_send',
   'chatwork_send',
   'discord_send',
-  'webchat_send',
   'report.publish',
   'report_publish',
   'wiki_publish',
