@@ -59,6 +59,22 @@ function insertOpaqueObjectEdge(id: string, objectKind: 'entity' | 'report'): vo
     .run(id, objectKind, `${objectKind}-1`, Buffer.alloc(32, id.length));
 }
 
+function insertRegistryNode(
+  id: string,
+  createdAt: number,
+  options: { mergedInto?: string } = {}
+): void {
+  const adapter = getAdapter();
+  adapter
+    .prepare(
+      `
+        INSERT INTO registry_nodes (id, kind, name, merged_into, created_at, updated_at)
+        VALUES (?, 'item', ?, ?, ?, ?)
+      `
+    )
+    .run(id, `name-${id}`, options.mergedInto ?? null, createdAt, createdAt);
+}
+
 describe('Story M3.1: Twin Edge Visibility', () => {
   let testDbPath = '';
 
@@ -73,6 +89,7 @@ describe('Story M3.1: Twin Edge Visibility', () => {
     adapter.prepare('DELETE FROM memory_scope_bindings').run();
     adapter.prepare('DELETE FROM memory_scopes').run();
     adapter.prepare('DELETE FROM decisions').run();
+    adapter.prepare('DELETE FROM registry_nodes').run();
   });
 
   afterAll(async () => {
@@ -88,6 +105,82 @@ describe('Story M3.1: Twin Edge Visibility', () => {
           scopes: [{ kind: 'project', id: 'alpha' }],
         })
       ).toThrow(/not visible/i);
+    });
+
+    /**
+     * A registry ref must have existed at the requested `as_of`, the same rule memory, raw
+     * and observation refs obey. The entity branch this replaced applied it; the registry
+     * branch that replaced it did not, so a packet could cite a node created after the
+     * boundary it was compiled against.
+     */
+    it('rejects a registry node created after the requested as_of', () => {
+      insertRegistryNode('reg-late', 5_000);
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'registry', id: 'reg-late' }], {
+          asOfMs: 1_000,
+        })
+      ).toThrow(/not visible/i);
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'registry', id: 'reg-late' }], {
+          asOfMs: 9_000,
+        })
+      ).not.toThrow();
+    });
+
+    it('rejects a registry node created before the requested window start', () => {
+      insertRegistryNode('reg-early', 1_000);
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'registry', id: 'reg-early' }], {
+          startMs: 5_000,
+        })
+      ).toThrow(/not visible/i);
+    });
+
+    /**
+     * Merging redirects identity; it does not retire the node. The graph projection keeps the
+     * ORIGINAL ref and resolves the current one beside it, so a merged-away node stays citable.
+     * A first version of this fix excluded `merged_into IS NOT NULL` and broke that contract -
+     * agent-graph.test.ts caught it. Pinned here so the exclusion is not reintroduced.
+     */
+    it('keeps a merged-away registry node citable as an original ref', () => {
+      insertRegistryNode('reg-survivor', 1_000);
+      insertRegistryNode('reg-merged', 1_000, { mergedInto: 'reg-survivor' });
+
+      expect(() =>
+        assertTwinRefsVisible(
+          getAdapter(),
+          [
+            { kind: 'registry', id: 'reg-merged' },
+            { kind: 'registry', id: 'reg-survivor' },
+          ],
+          {}
+        )
+      ).not.toThrow();
+    });
+
+    it('applies the as_of bound to a batch of registry refs', () => {
+      insertRegistryNode('reg-ok', 1_000);
+      insertRegistryNode('reg-future', 5_000);
+
+      expect(() =>
+        assertTwinRefsVisible(
+          getAdapter(),
+          [
+            { kind: 'registry', id: 'reg-ok' },
+            { kind: 'registry', id: 'reg-future' },
+          ],
+          { asOfMs: 2_000 }
+        )
+      ).toThrow(/not visible/i);
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'registry', id: 'reg-ok' }], {
+          asOfMs: 2_000,
+        })
+      ).not.toThrow();
     });
 
     it('keeps report endpoints unscoped-only', () => {
