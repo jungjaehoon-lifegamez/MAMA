@@ -1,7 +1,7 @@
 import type { TwinRef } from '../edges/types.js';
 import type { ContextRef } from './types.js';
 
-const SUPPORTED_KINDS = new Set(['memory', 'raw', 'entity', 'case']);
+const SUPPORTED_KINDS = new Set(['memory', 'raw', 'case']);
 const UNSUPPORTED_KINDS = new Set(['decision', 'wiki_page', 'context_packet', 'report']);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -72,7 +72,6 @@ export function normalizeContextRef(input: unknown): ContextRef {
       return normalized;
     }
     case 'memory':
-    case 'entity':
     case 'case':
       return {
         kind,

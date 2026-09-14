@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import { saveMemory, recallMemory, buildProfile, ingestMemory } from '../../src/memory/api.js';
-import { createEntityNode } from '../../src/entities/store.js';
-import { getAdapter, initDB } from '../../src/db-manager.js';
+import { getAdapter } from '../../src/db-manager.js';
 
 const TEST_DB = '/tmp/test-memory-v2-api.db';
 
@@ -132,102 +131,6 @@ describe('memory v2 api', () => {
       eventDate: '2026-04-16',
       eventDateTime: Date.parse('2026-04-16T08:45:00.000Z'),
     });
-  });
-
-  it('should persist connector timeline events inside saveMemory', async () => {
-    await createEntityNode({
-      id: 'entity_project_timeline_contract',
-      kind: 'project',
-      preferred_label: 'Timeline Contract',
-      status: 'active',
-      scope_kind: 'project',
-      scope_id: 'repo:test',
-      merged_into: null,
-    });
-
-    const saved = await saveMemory({
-      topic: 'timeline_contract/kickoff',
-      kind: 'decision',
-      summary: 'Kickoff moved forward',
-      details: 'Connector-originated timeline change',
-      confidence: 0.8,
-      scopes: [{ kind: 'project', id: 'repo:test' }],
-      source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
-      timelineEvent: {
-        entity_id: 'entity_project_timeline_contract',
-        event_type: 'project_update',
-        role: 'implementer',
-        observed_at: Date.parse('2026-04-15T10:00:00.000Z'),
-        source_ref: '/tmp/test/raw.db',
-        summary: 'Kickoff moved forward',
-        details: JSON.stringify({ topic: 'timeline_contract/kickoff' }),
-      },
-    });
-
-    const row = getAdapter()
-      .prepare(
-        `
-          SELECT entity_id, event_type, role, source_ref, summary
-          FROM entity_timeline_events
-          WHERE entity_id = ?
-          ORDER BY created_at DESC
-          LIMIT 1
-        `
-      )
-      .get('entity_project_timeline_contract') as
-      | {
-          entity_id: string;
-          event_type: string;
-          role: string | null;
-          source_ref: string | null;
-          summary: string;
-        }
-      | undefined;
-
-    expect(saved.success).toBe(true);
-    expect(row).toEqual({
-      entity_id: 'entity_project_timeline_contract',
-      event_type: 'project_update',
-      role: 'implementer',
-      source_ref: '/tmp/test/raw.db',
-      summary: 'Kickoff moved forward',
-    });
-  });
-
-  it('should refuse a timeline event that does not name its entity', async () => {
-    await initDB();
-    const countRows = (table: string) =>
-      (getAdapter().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-    const before = {
-      decisions: countRows('decisions'),
-      timelineEvents: countRows('entity_timeline_events'),
-      memoryEvents: countRows('memory_events'),
-    };
-
-    await expect(
-      saveMemory({
-        topic: 'timeline_contract/missing_entity',
-        kind: 'decision',
-        summary: 'Timeline event without a target entity',
-        details: 'The host must not pick the entity for the caller',
-        confidence: 0.8,
-        scopes: [{ kind: 'project', id: 'repo:test' }],
-        source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
-        timelineEvent: {
-          event_type: 'project_update',
-          observed_at: Date.parse('2026-04-15T12:00:00.000Z'),
-          summary: 'Timeline event without a target entity',
-        },
-      })
-    ).rejects.toMatchObject({
-      name: 'RecordIdentityError',
-      code: 'missing_entity_id',
-      message: expect.stringContaining('entity_id'),
-    });
-
-    expect(countRows('decisions')).toBe(before.decisions);
-    expect(countRows('entity_timeline_events')).toBe(before.timelineEvents);
-    expect(countRows('memory_events')).toBe(before.memoryEvents);
   });
 
   it('should return status-gated recall by default', async () => {

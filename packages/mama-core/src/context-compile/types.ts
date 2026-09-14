@@ -1,6 +1,6 @@
 import type { MemoryScopeRef } from '../memory/types.js';
 
-export const CONTEXT_REF_KINDS = ['memory', 'raw', 'entity', 'case'] as const;
+export const CONTEXT_REF_KINDS = ['memory', 'raw', 'case'] as const;
 export type ContextRefKind = (typeof CONTEXT_REF_KINDS)[number];
 
 export const UNSUPPORTED_CONTEXT_REF_KINDS = [
@@ -22,7 +22,6 @@ export type ContextRef =
       /** Exact immutable captured version; null only for valid pre-072 rows. */
       observation_ref?: string | null;
     }
-  | { kind: 'entity'; id: string }
   | { kind: 'case'; id: string };
 
 export interface ContextRange {

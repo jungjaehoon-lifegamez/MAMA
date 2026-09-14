@@ -12,10 +12,6 @@ describe('Story V0.21: Context compile refs - AC1', () => {
       kind: 'memory',
       id: 'mem-1',
     });
-    expect(normalizeContextRef({ kind: 'entity', id: ' entity-1 ' })).toEqual({
-      kind: 'entity',
-      id: 'entity-1',
-    });
     expect(normalizeContextRef({ kind: 'case', id: ' case-1 ' })).toEqual({
       kind: 'case',
       id: 'case-1',
@@ -72,10 +68,6 @@ describe('Story V0.21: Context compile refs - AC1', () => {
 
   it('AC: maps only truthful V0 refs to TwinRef values', () => {
     expect(toTwinRef({ kind: 'memory', id: 'mem-1' })).toEqual({ kind: 'memory', id: 'mem-1' });
-    expect(toTwinRef({ kind: 'entity', id: 'entity-1' })).toEqual({
-      kind: 'entity',
-      id: 'entity-1',
-    });
     expect(toTwinRef({ kind: 'case', id: 'case-1' })).toEqual({ kind: 'case', id: 'case-1' });
     expect(toTwinRef({ kind: 'raw', raw_id: 'event-1', connector: 'slack' })).toEqual({
       kind: 'raw',

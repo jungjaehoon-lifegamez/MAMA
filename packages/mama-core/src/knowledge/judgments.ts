@@ -9,7 +9,6 @@ import {
 import type { DatabaseAdapter } from '../db-manager.js';
 import { canonicalizeJSON } from '../canonicalize.js';
 import { insertTwinEdge } from '../edges/store.js';
-import { insertEntityTimelineEvent } from '../entities/store.js';
 import { insertMemoryEventInTransaction } from '../memory/event-store.js';
 import { writeRecordIdentityInAdapter } from '../registry/record-identity.js';
 import type {
@@ -224,16 +223,6 @@ function validateCommandFields(command: JudgmentCommand): void {
     requireText(edge.targetId, 'projection edge target');
     requireText(edge.relationship, 'projection edge relationship');
   }
-  for (const entitySourceId of command.projections?.entitySources ?? []) {
-    requireText(entitySourceId, 'projection entity source id');
-  }
-  if (command.projections?.timelineEvent) {
-    const event = command.projections.timelineEvent;
-    requireText(event.id, 'timeline event id');
-    requireText(event.entityId, 'timeline event entity id');
-    requireText(event.eventType, 'timeline event type');
-    requireText(event.summary, 'timeline event summary');
-  }
 }
 
 function referenceExists(
@@ -378,31 +367,6 @@ function applyProjections(
 ): void {
   const projections = command.projections;
   if (!projections) return;
-  for (const entityObservationId of projections.entitySources ?? []) {
-    adapter
-      .prepare(
-        `INSERT OR IGNORE INTO decision_entity_sources
-         (decision_id, entity_observation_id, relation_type, created_at)
-         VALUES (?, ?, 'support', ?)`
-      )
-      .run(recordId, entityObservationId, now);
-  }
-  if (projections.timelineEvent) {
-    const event = projections.timelineEvent;
-    insertEntityTimelineEvent(adapter, {
-      id: event.id,
-      entity_id: event.entityId,
-      event_type: event.eventType,
-      role: event.role ?? null,
-      valid_from: event.validFrom ?? null,
-      valid_to: event.validTo ?? null,
-      observed_at: event.observedAt ?? null,
-      source_ref: event.sourceRef ?? null,
-      summary: event.summary,
-      details: event.details ?? null,
-      created_at: now,
-    });
-  }
   if (projections.recordIdentity) {
     writeRecordIdentityInAdapter(adapter, {
       recordId,

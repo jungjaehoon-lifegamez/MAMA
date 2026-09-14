@@ -25,8 +25,6 @@ import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
-import { queryCanonicalEntities } from '../entities/recall-bridge.js';
-import { loadDecisionReadIdentityIndex, resolveReadIdentity } from '../entities/read-identity.js';
 import {
   normalizeSearchQualityOptions,
   type SearchHitDiagnostics,
@@ -56,10 +54,7 @@ import {
   sanitizePublicSaveMemoryInput,
   type TrustedMemoryWriteOptions,
 } from './provenance.js';
-import {
-  RecordIdentityError,
-  validateRecordIdentityReferences,
-} from '../registry/record-identity.js';
+import { validateRecordIdentityReferences } from '../registry/record-identity.js';
 
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
@@ -149,89 +144,6 @@ function toMemoryRecord(
       typeof row.event_datetime === 'number' && Number.isFinite(row.event_datetime)
         ? row.event_datetime
         : null,
-  };
-}
-
-function loadEventDateTimeForObservations(
-  adapter: ReturnType<typeof getAdapter>,
-  observationIds: string[]
-): number | null {
-  const uniqueIds = Array.from(new Set(observationIds.filter(Boolean)));
-  if (uniqueIds.length === 0) {
-    return null;
-  }
-
-  const placeholders = uniqueIds.map(() => '?').join(', ');
-  const row = adapter
-    .prepare(
-      `
-        SELECT MAX(COALESCE(timestamp_observed, created_at)) AS event_datetime
-        FROM entity_observations
-        WHERE id IN (${placeholders})
-      `
-    )
-    .get(...uniqueIds) as { event_datetime?: number | null } | undefined;
-
-  return typeof row?.event_datetime === 'number' && Number.isFinite(row.event_datetime)
-    ? row.event_datetime
-    : null;
-}
-
-function buildTimelineEventForSave(
-  memoryId: string,
-  topic: string,
-  timelineEvent:
-    | {
-        id?: string;
-        entity_id?: string;
-        event_type: string;
-        role?: string | null;
-        valid_from?: number | null;
-        valid_to?: number | null;
-        observed_at?: number | null;
-        source_ref?: string | null;
-        summary: string;
-        details?: string | null;
-      }
-    | undefined
-): {
-  id: string;
-  entity_id: string;
-  event_type: string;
-  role: string | null;
-  valid_from: number | null;
-  valid_to: number | null;
-  observed_at: number | null;
-  source_ref: string | null;
-  summary: string;
-  details: string | null;
-} | null {
-  if (!timelineEvent) {
-    return null;
-  }
-  if (!timelineEvent.entity_id) {
-    throw new RecordIdentityError(
-      'missing_entity_id',
-      'timelineEvent.entity_id is required: the caller chooses which entity the event is about.'
-    );
-  }
-
-  return {
-    id: timelineEvent.id ?? `et_${crypto.randomUUID()}`,
-    entity_id: timelineEvent.entity_id,
-    event_type: timelineEvent.event_type,
-    role: timelineEvent.role ?? null,
-    valid_from: timelineEvent.valid_from ?? null,
-    valid_to: timelineEvent.valid_to ?? null,
-    observed_at: timelineEvent.observed_at ?? null,
-    source_ref: timelineEvent.source_ref ?? `decision:${memoryId}`,
-    summary: timelineEvent.summary,
-    details:
-      timelineEvent.details ??
-      JSON.stringify({
-        memory_id: memoryId,
-        topic,
-      }),
   };
 }
 
@@ -578,11 +490,7 @@ async function saveMemoryInternal(
     options?.authoritativeScopes
   );
 
-  const entityObservationIds = Array.from(new Set(input.entityObservationIds ?? []));
-  const eventDateTime =
-    typeof input.eventDateTime === 'number'
-      ? input.eventDateTime
-      : loadEventDateTimeForObservations(adapter, entityObservationIds);
+  const eventDateTime = typeof input.eventDateTime === 'number' ? input.eventDateTime : null;
 
   // Fail before any write: identity references and relationship targets are
   // checked against the same admitted scopes the command will carry.
@@ -594,7 +502,6 @@ async function saveMemoryInternal(
 
   const commandId = `save:${buildDecisionId(input.topic)}`;
   const recordId = judgmentRecordId(commandId);
-  const timelineEvent = buildTimelineEventForSave(recordId, input.topic, input.timelineEvent);
 
   // Relationships are persisted only when the caller names their target ids
   // explicitly. Matching topic text or vector similarity is evidence for
@@ -669,23 +576,6 @@ async function saveMemoryInternal(
     projections: {
       decisionEdges,
       ...(supersedeTargets.length > 0 ? { supersedeTargets } : {}),
-      ...(entityObservationIds.length > 0 ? { entitySources: entityObservationIds } : {}),
-      ...(timelineEvent
-        ? {
-            timelineEvent: {
-              id: timelineEvent.id,
-              entityId: timelineEvent.entity_id,
-              eventType: timelineEvent.event_type,
-              role: timelineEvent.role,
-              validFrom: timelineEvent.valid_from,
-              validTo: timelineEvent.valid_to,
-              observedAt: timelineEvent.observed_at,
-              sourceRef: timelineEvent.source_ref,
-              summary: timelineEvent.summary,
-              details: timelineEvent.details,
-            },
-          }
-        : {}),
       ...(input.itemId !== undefined || input.actors !== undefined
         ? {
             recordIdentity: { itemId: input.itemId ?? null, actors: input.actors ?? [] },
@@ -712,8 +602,6 @@ async function saveMemoryInternal(
     success: true,
     id: receipt.recordId,
     saved_decision_id: receipt.recordId,
-    timeline_event_id: timelineEvent?.id ?? null,
-    timeline_event_ids: timelineEvent ? [timelineEvent.id] : [],
   };
 }
 
@@ -973,7 +861,6 @@ export async function recallMemory(
     candidate_counts: {
       vector: 0,
       lexical: 0,
-      entity: 0,
       graph_expanded: 0,
       vector_only: 0,
       rejected_by_strictness: 0,
@@ -985,10 +872,8 @@ export async function recallMemory(
   let matched: MemoryRecord[] = [];
   let fusedHits: FusedHit[] = [];
   let retrievalSource = 'none';
-  const projectionMode = process.env.MAMA_ENTITY_PROJECTION_MODE ?? 'shadow';
   const vectorSimilarityById = new Map<string, number>();
   const lexicalScoreById = new Map<string, number>();
-  const entitySupportIds = new Set<string>();
   let _lexicalRecords: MemoryRecord[] | null = null;
   const loadLexical = async () => {
     if (_lexicalRecords === null) {
@@ -1394,35 +1279,6 @@ export async function recallMemory(
     retrievalSource = 'lexical_search';
   }
 
-  let canonicalMatched: MemoryRecord[] = [];
-  if (projectionMode !== 'off') {
-    try {
-      canonicalMatched = await queryCanonicalEntities(query, options.scopes ?? [], { limit: 10 });
-      diagnostics.candidate_counts.entity = canonicalMatched.length;
-      for (const canonical of canonicalMatched) {
-        entitySupportIds.add(canonical.id);
-      }
-      if (projectionMode === 'dual-write' && canonicalMatched.length > 0) {
-        const seenIds = new Set(matched.map((item) => item.id));
-        for (const canonical of canonicalMatched) {
-          if (!seenIds.has(canonical.id)) {
-            matched.push(canonical);
-            seenIds.add(canonical.id);
-          }
-        }
-        retrievalSource =
-          retrievalSource === 'none' ? 'entity_canonical' : `${retrievalSource}+entity_canonical`;
-      } else if (projectionMode === 'shadow' && canonicalMatched.length > 0) {
-        retrievalSource =
-          retrievalSource === 'none' ? 'shadow_entity_probe' : `${retrievalSource}+shadow_probe`;
-      }
-    } catch (canonicalErr) {
-      warn(
-        `[recallMemory] Canonical entity recall failed: ${canonicalErr instanceof Error ? canonicalErr.message : String(canonicalErr)}`
-      );
-    }
-  }
-
   const requestedScopeKeys = new Set(
     (options.scopes ?? []).map((scope) => `${scope.kind}:${scope.id}`)
   );
@@ -1616,12 +1472,10 @@ export async function recallMemory(
   ): SearchHitDiagnostics => {
     const vectorSimilarity = vectorSimilarityById.get(record.id) ?? null;
     const lexicalSupport = lexicalScoreById.has(record.id);
-    const entitySupport = entitySupportIds.has(record.id);
     const exactTopicSupport = hasExactTopicSupport(record);
     const scopeSupport = hasRequestedScopeSupport(record);
     const confirmationSignals = [
       lexicalSupport ? 'lexical' : null,
-      entitySupport ? 'entity' : null,
       exactTopicSupport ? 'exact_topic' : null,
     ].filter((signal): signal is string => signal !== null);
     const metadataSignals = [
@@ -1636,15 +1490,12 @@ export async function recallMemory(
           ? 'vector_search'
           : lexicalSupport
             ? 'lexical_search'
-            : entitySupport
-              ? 'entity_canonical'
-              : String(record.source.source_type || 'unknown');
+            : String(record.source.source_type || 'unknown');
 
     return {
       retrieval_source: retrievalSourceForRecord,
       vector_similarity: vectorSimilarity,
       lexical_support: lexicalSupport,
-      entity_support: entitySupport,
       scope_support: scopeSupport,
       graph_source: graphSource,
       is_vector_only: vectorSimilarity !== null && confirmationSignals.length === 0,
@@ -1681,7 +1532,6 @@ export async function recallMemory(
       retrieval_source: retrievalSourceForRecord,
       vector_similarity: entry.vectorSimilarity,
       lexical_support: lexicalSupport,
-      entity_support: false,
       scope_support: scopeSupport,
       graph_source: 'primary',
       is_vector_only: entry.vectorSimilarity !== null && confirmationSignals.length === 0,
@@ -1701,9 +1551,7 @@ export async function recallMemory(
       return true;
     }
     return (
-      hitDiagnostics.lexical_support ||
-      hitDiagnostics.entity_support ||
-      hitDiagnostics.confirmation_signals.includes('exact_topic')
+      hitDiagnostics.lexical_support || hitDiagnostics.confirmation_signals.includes('exact_topic')
     );
   };
 
@@ -1775,18 +1623,6 @@ export async function recallMemory(
 
   if (hasWikiHits) {
     retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
-  }
-
-  if (matched.length > 0) {
-    const readIdentityIndex = await loadDecisionReadIdentityIndex(
-      matched.filter((record) => !record.read_identity).map((record) => record.id)
-    );
-    for (const record of matched) {
-      if (record.read_identity) {
-        continue;
-      }
-      record.read_identity = resolveReadIdentity(record, readIdentityIndex.get(record.id) ?? []);
-    }
   }
 
   // Enrich active records with summaries from their superseded predecessors.

@@ -1,22 +1,13 @@
-import { createHash } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AgentGraphValidationError,
-  attachEntityAliasWithEdge,
-  beginModelRunInAdapter,
-  commitModelRunInAdapter,
-  failModelRunInAdapter,
   getGraphNeighborhood,
   getGraphPaths,
   getGraphTimeline,
-  getModelRunInAdapter,
-  resolveEntity,
-  ENTITY_ALIAS_LABEL_TYPES,
   TWIN_EDGE_TYPES,
   TWIN_REF_KINDS,
   type AgentGraphAdapter,
-  type EntityAliasLabelType,
   type TwinEdgeType,
   type TwinRef,
   type TwinRefKind,
@@ -59,32 +50,11 @@ const NUMERIC_QUERY_PATTERN = /^\d+$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const EDGE_TYPES = new Set<string>(TWIN_EDGE_TYPES);
 const REF_KINDS = new Set<string>(TWIN_REF_KINDS);
-const LABEL_TYPES = new Set<string>(ENTITY_ALIAS_LABEL_TYPES);
 const MAX_GRAPH_DEPTH = 5;
 const MAX_GRAPH_LIMIT = 100;
 
 export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router {
   const router = express.Router();
-
-  router.get('/entities/resolve', async (req, res) => {
-    await handleGraphRequest(req, res, options, (visibility, envelope) => {
-      const label = firstString(req.query.label)?.trim();
-      if (!label) {
-        throw invalidQuery('label is required.');
-      }
-      const contextRefs = parseRefs(req.query.context_ref ?? req.query.context_refs);
-      return resolveEntity(options.memoryAdapter, {
-        label,
-        context_refs: contextRefs,
-        scopes: visibility.scopes,
-        connectors: visibility.connectors,
-        project_refs: visibility.projectRefs,
-        tenant_id: visibility.tenantId,
-        channels: visibility.channels,
-        as_of_ms: parseAsOf(req, envelope.scope.as_of),
-      });
-    });
-  });
 
   router.get('/graph/neighborhood', async (req, res) => {
     await handleGraphRequest(req, res, options, (visibility, envelope) =>
@@ -143,10 +113,6 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
       })
     );
-  });
-
-  router.post('/entities/:entityId/aliases', async (req, res) => {
-    await handleAliasWrite(req, res, options);
   });
 
   return router;
@@ -208,264 +174,12 @@ async function handleGraphRequest(
   }
 }
 
-async function handleAliasWrite(
-  req: Request,
-  res: Response,
-  options: AgentGraphRouterOptions
-): Promise<void> {
-  let ownedModelRunId: string | null = null;
-  try {
-    const envelope = loadWorkerEnvelope(req, options.envelopeAuthority);
-    const visibility = deriveWorkerEnvelopeVisibility(envelope, {
-      connectors: parseRequestedConnectors(req),
-      scopes: parseRequestedScopes(req),
-    });
-    const aliasChannels = withChannelGrant(visibility, envelope, options.channelGrant).channels;
-    const body = bodyObject(req.body);
-    const entityId = paramString(req.params.entityId, 'entityId');
-    const label = stringBody(body, 'label');
-    const requestIdempotencyKey = stringBody(body, 'request_idempotency_key');
-    const sourceRefs = optionalSourceRefsBody(body, 'source_refs');
-    if (!sourceRefs || sourceRefs.length === 0) {
-      throw new AgentGraphValidationError('source_refs must include at least one visible source.');
-    }
-    const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
-    const modelRun = suppliedModelRunId
-      ? requireMatchingModelRun(options.memoryAdapter, {
-          modelRunId: suppliedModelRunId,
-          envelope,
-          entityId,
-          requestIdempotencyKey,
-          sourceRefs,
-        })
-      : beginDirectAliasModelRun(options.memoryAdapter, {
-          model_run_id: directAliasModelRunId(
-            envelope.envelope_hash,
-            entityId,
-            requestIdempotencyKey
-          ),
-          agent_id: envelope.agent_id,
-          instance_id: envelope.instance_id,
-          envelope_hash: envelope.envelope_hash,
-          input_snapshot_ref: `entity-alias:${entityId}:${requestIdempotencyKey}`,
-          input_refs: {
-            tool: 'entity.alias',
-            entity_id: entityId,
-            request_idempotency_key: requestIdempotencyKey,
-            source_refs: sourceRefs,
-            scopes: visibility.scopes,
-            connectors: visibility.connectors,
-            project_refs: visibility.projectRefs,
-            tenant_id: visibility.tenantId,
-          },
-        });
-    if (!suppliedModelRunId) {
-      ownedModelRunId = modelRun.model_run_id;
-    }
-
-    const result = attachEntityAliasWithEdge(options.memoryAdapter, {
-      entity_id: entityId,
-      label,
-      label_type: optionalLabelTypeBody(body, 'label_type'),
-      lang: optionalStringBody(body, 'lang'),
-      script: optionalStringBody(body, 'script'),
-      confidence: optionalNumberBody(body, 'confidence'),
-      source_type: 'agent',
-      source_ref: `model_run:${modelRun.model_run_id}`,
-      agent_id: envelope.agent_id,
-      model_run_id: modelRun.model_run_id,
-      envelope_hash: envelope.envelope_hash,
-      request_idempotency_key: requestIdempotencyKey,
-      source_refs: sourceRefs,
-      scopes: visibility.scopes,
-      connectors: visibility.connectors,
-      project_refs: visibility.projectRefs,
-      tenant_id: visibility.tenantId,
-      // source_refs are caller-supplied: without the grant, naming a raw id from an
-      // ungranted channel would bind it to an entity the caller can then read back.
-      channels: aliasChannels,
-    });
-
-    if (ownedModelRunId) {
-      try {
-        commitModelRunInAdapter(
-          options.memoryAdapter,
-          ownedModelRunId,
-          `entity alias ${result.alias.id}`
-        );
-      } catch (error) {
-        removeOwnedAliasWrite(options.memoryAdapter, ownedModelRunId, requestIdempotencyKey);
-        throw error;
-      }
-    }
-    res.json(result);
-  } catch (error) {
-    if (ownedModelRunId) {
-      try {
-        failModelRunInAdapter(options.memoryAdapter, ownedModelRunId, getErrorMessage(error));
-      } catch (failError) {
-        graphApiLogger.error('Failed to mark agent graph model run as failed:', failError);
-      }
-    }
-    sendGraphError(res, error);
-  }
-}
-
-interface SuppliedAliasModelRunInput {
-  modelRunId: string;
-  envelope: ReturnType<typeof loadWorkerEnvelope>;
-  entityId: string;
-  requestIdempotencyKey: string;
-  sourceRefs: readonly TwinRef[];
-}
-
-function requireMatchingModelRun(adapter: AgentGraphAdapter, input: SuppliedAliasModelRunInput) {
-  const modelRun = getModelRunInAdapter(adapter, input.modelRunId);
-  if (!modelRun) {
-    throw new WorkerEnvelopeError(
-      404,
-      'agent_graph_model_run_not_found',
-      'The supplied model run was not found.'
-    );
-  }
-  if (modelRun.envelope_hash !== input.envelope.envelope_hash) {
-    throw new WorkerEnvelopeError(
-      403,
-      'agent_graph_model_run_denied',
-      'The supplied model run is outside the worker envelope.'
-    );
-  }
-  if (modelRun.status !== 'running') {
-    throw new WorkerEnvelopeError(
-      409,
-      'agent_graph_model_run_not_running',
-      'The supplied model run is no longer running.'
-    );
-  }
-  if (
-    modelRun.agent_id !== input.envelope.agent_id ||
-    modelRun.instance_id !== input.envelope.instance_id
-  ) {
-    throw new WorkerEnvelopeError(
-      403,
-      'agent_graph_model_run_denied',
-      'The supplied model run belongs to a different worker instance.'
-    );
-  }
-  const expectedSnapshotRef = `entity-alias:${input.entityId}:${input.requestIdempotencyKey}`;
-  if (modelRun.input_snapshot_ref !== expectedSnapshotRef) {
-    throw new WorkerEnvelopeError(
-      403,
-      'agent_graph_model_run_denied',
-      'The supplied model run is not for this entity alias request.'
-    );
-  }
-  const inputRefs = modelRun.input_refs;
-  if (
-    inputRefs?.tool !== 'entity.alias' ||
-    inputRefs.entity_id !== input.entityId ||
-    inputRefs.request_idempotency_key !== input.requestIdempotencyKey ||
-    !sameRefs(inputRefs.source_refs, input.sourceRefs)
-  ) {
-    throw new WorkerEnvelopeError(
-      403,
-      'agent_graph_model_run_denied',
-      'The supplied model run does not match this entity alias request.'
-    );
-  }
-  return modelRun;
-}
-
-function sameRefs(left: unknown, right: readonly TwinRef[]): boolean {
-  if (!Array.isArray(left)) {
-    return right.length === 0;
-  }
-  if (left.length !== right.length) {
-    return false;
-  }
-  const leftKeys = left.map((item) => {
-    if (
-      item === null ||
-      typeof item !== 'object' ||
-      typeof (item as Record<string, unknown>).kind !== 'string' ||
-      typeof (item as Record<string, unknown>).id !== 'string'
-    ) {
-      return '';
-    }
-    return `${(item as { kind: string }).kind}:${(item as { id: string }).id}`;
-  });
-  const rightKeys = right.map((ref) => `${ref.kind}:${ref.id}`);
-  return leftKeys.sort().join('\0') === rightKeys.sort().join('\0');
-}
-
-function removeOwnedAliasWrite(
-  adapter: AgentGraphAdapter,
-  modelRunId: string,
-  requestIdempotencyKey: string
-): void {
-  const edgeResult = adapter
-    .prepare('DELETE FROM twin_edges WHERE model_run_id = ? AND request_idempotency_key = ?')
-    .run(modelRunId, requestIdempotencyKey);
-  const aliasResult = adapter
-    .prepare('DELETE FROM entity_aliases WHERE source_ref = ?')
-    .run(`model_run:${modelRunId}`);
-  if (edgeResult.changes < 1 || aliasResult.changes < 1) {
-    throw new Error(`Failed to remove uncommitted entity alias write for ${modelRunId}`);
-  }
-}
-
-function beginDirectAliasModelRun(
-  adapter: AgentGraphAdapter,
-  input: Parameters<typeof beginModelRunInAdapter>[1]
-) {
-  try {
-    return beginModelRunInAdapter(adapter, input);
-  } catch (error) {
-    const message = getErrorMessage(error);
-    if (message.startsWith('Model run already exists')) {
-      throw new WorkerEnvelopeError(409, 'agent_graph_idempotency_conflict', message);
-    }
-    throw error;
-  }
-}
-
 function parseRequiredRef(value: unknown, name: string): TwinRef {
   const raw = firstString(value)?.trim();
   if (!raw) {
     throw invalidQuery(`${name} is required.`);
   }
   return parseRef(raw, name);
-}
-
-function parseRefs(value: unknown): TwinRef[] {
-  const refs: TwinRef[] = [];
-  for (const rawValue of stringValues(value)) {
-    const raw = rawValue.trim();
-    if (!raw) {
-      continue;
-    }
-    if (raw.startsWith('[')) {
-      const parsed = parseJsonValue(raw, 'context_refs');
-      if (!Array.isArray(parsed)) {
-        throw invalidQuery('context_refs JSON must be an array.');
-      }
-      for (const item of parsed) {
-        refs.push(parseJsonRefValue(item, `context_refs[${refs.length}]`));
-      }
-      continue;
-    }
-    if (raw.startsWith('{')) {
-      refs.push(parseJsonRef(raw, `context_refs[${refs.length}]`));
-      continue;
-    }
-    for (const item of raw
-      .split(',')
-      .map((piece) => piece.trim())
-      .filter(Boolean)) {
-      refs.push(parseRef(item, `context_refs[${refs.length}]`));
-    }
-  }
-  return refs;
 }
 
 function parseRef(raw: string, name: string): TwinRef {
@@ -585,131 +299,6 @@ function parseBoundedInteger(
     throw invalidQuery(`${name} must be between ${min} and ${max}.`);
   }
   return parsed;
-}
-
-function directAliasModelRunId(
-  envelopeHash: string,
-  entityId: string,
-  requestIdempotencyKey: string
-): string {
-  const hash = createHash('sha256')
-    .update(`${envelopeHash}\0${entityId}\0${requestIdempotencyKey}`, 'utf8')
-    .digest('hex')
-    .slice(0, 32);
-  return `mr_direct_alias_${hash}`;
-}
-
-function bodyObject(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      'Request body must be a JSON object.'
-    );
-  }
-  return value as Record<string, unknown>;
-}
-
-function stringBody(body: Record<string, unknown>, field: string): string {
-  const value = body[field];
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      `${field} must be a non-empty string.`
-    );
-  }
-  return value.trim();
-}
-
-function paramString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      `${field} must be a non-empty string.`
-    );
-  }
-  return value.trim();
-}
-
-function optionalStringBody(body: Record<string, unknown>, field: string): string | null {
-  const value = body[field];
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (typeof value !== 'string') {
-    throw new WorkerEnvelopeError(400, 'agent_graph_body_invalid', `${field} must be a string.`);
-  }
-  return value.trim().length > 0 ? value.trim() : null;
-}
-
-function optionalLabelTypeBody(
-  body: Record<string, unknown>,
-  field: string
-): EntityAliasLabelType | undefined {
-  const value = optionalStringBody(body, field);
-  if (value === null) {
-    return undefined;
-  }
-  if (!LABEL_TYPES.has(value)) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      `${field} must be one of: ${ENTITY_ALIAS_LABEL_TYPES.join(', ')}.`
-    );
-  }
-  return value as EntityAliasLabelType;
-}
-
-function optionalNumberBody(body: Record<string, unknown>, field: string): number | null {
-  const value = body[field];
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new WorkerEnvelopeError(400, 'agent_graph_body_invalid', `${field} must be a number.`);
-  }
-  return value;
-}
-
-function optionalSourceRefsBody(
-  body: Record<string, unknown>,
-  field: string
-): TwinRef[] | undefined {
-  const value = body[field];
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    throw new WorkerEnvelopeError(400, 'agent_graph_body_invalid', `${field} must be an array.`);
-  }
-  return value.map((item, index) => parseBodyRefValue(item, `${field}[${index}]`));
-}
-
-function parseBodyRefValue(value: unknown, name: string): TwinRef {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    typeof (value as Record<string, unknown>).kind !== 'string' ||
-    typeof (value as Record<string, unknown>).id !== 'string'
-  ) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      `${name} must be an object with string kind and id.`
-    );
-  }
-  const kind = (value as { kind: string }).kind;
-  const id = (value as { id: string }).id.trim();
-  if (!REF_KINDS.has(kind) || id.length === 0) {
-    throw new WorkerEnvelopeError(
-      400,
-      'agent_graph_body_invalid',
-      `${name} must contain a supported kind and non-empty id.`
-    );
-  }
-  return { kind: kind as TwinRefKind, id } as TwinRef;
 }
 
 function invalidQuery(message: string): WorkerEnvelopeError {

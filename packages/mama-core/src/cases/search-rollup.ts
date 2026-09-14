@@ -64,7 +64,6 @@ function searchHitDiagnostics(value: unknown): SearchHitDiagnostics | undefined 
     !(object.vector_similarity === null || typeof object.vector_similarity === 'number') ||
     typeof object.is_vector_only !== 'boolean' ||
     typeof object.lexical_support !== 'boolean' ||
-    typeof object.entity_support !== 'boolean' ||
     typeof object.scope_support !== 'boolean' ||
     (object.graph_source !== 'primary' &&
       object.graph_source !== 'expanded' &&
@@ -89,9 +88,6 @@ function diagnosticsRank(diagnostics: SearchHitDiagnostics): number {
   let rank = 0;
   rank += diagnostics.confirmation_signals.length * 100;
   if (diagnostics.lexical_support) {
-    rank += 20;
-  }
-  if (diagnostics.entity_support) {
     rank += 20;
   }
   if (diagnostics.graph_source === 'primary') {

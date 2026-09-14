@@ -25,7 +25,6 @@ export interface SearchHitDiagnostics {
   retrieval_source: string;
   vector_similarity: number | null;
   lexical_support: boolean;
-  entity_support: boolean;
   scope_support: boolean;
   graph_source: 'primary' | 'expanded' | null;
   is_vector_only: boolean;

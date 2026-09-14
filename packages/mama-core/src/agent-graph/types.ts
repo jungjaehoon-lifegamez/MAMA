@@ -1,5 +1,4 @@
 import type { DatabaseAdapter } from '../db-manager.js';
-import type { EntityAlias, EntityAliasLabelType, EntityNode } from '../entities/types.js';
 import type {
   TwinEdgeRecord,
   TwinEdgeType,
@@ -29,18 +28,6 @@ export interface ResolveEntityInput {
   context_refs?: TwinRef[];
   limit?: number;
   as_of_ms?: number | null;
-}
-
-export interface ResolvedEntityCandidate {
-  entity: EntityNode;
-  matched_label: string;
-  match_source: 'preferred_label' | 'alias' | 'observation';
-  score: number;
-}
-
-export interface ResolveEntityResult {
-  entity: EntityNode | null;
-  candidates: ResolvedEntityCandidate[];
 }
 
 export interface GraphNeighborhoodInput {
@@ -155,13 +142,6 @@ export interface AgentGraphTimelineCaseEvent {
   };
 }
 
-export interface AgentGraphTimelineEntityEvent {
-  kind: 'entity';
-  at_ms: number;
-  ref: Extract<TwinRef, { kind: 'entity' }>;
-  entity: EntityNode;
-}
-
 export interface AgentGraphTimelineRawEvent {
   kind: 'raw';
   at_ms: number;
@@ -188,7 +168,6 @@ export interface AgentGraphTimelineEdgeEvent {
 export type AgentGraphTimelineEvent =
   | AgentGraphTimelineMemoryEvent
   | AgentGraphTimelineCaseEvent
-  | AgentGraphTimelineEntityEvent
   | AgentGraphTimelineRawEvent
   | AgentGraphTimelineEdgeEvent;
 
@@ -196,36 +175,4 @@ export interface GraphTimelineResult {
   ref: TwinRef;
   events: AgentGraphTimelineEvent[];
   current_projection: AgentGraphCurrentProjection[];
-}
-
-export interface AttachEntityAliasWithEdgeInput {
-  entity_id: string;
-  label: string;
-  label_type?: EntityAliasLabelType;
-  lang?: string | null;
-  script?: string | null;
-  confidence?: number | null;
-  source_type: string;
-  source_ref?: string | null;
-  source_refs?: TwinRef[];
-  agent_id: string;
-  model_run_id: string;
-  envelope_hash: string;
-  request_idempotency_key?: string;
-  edge_idempotency_key?: string;
-  scopes?: TwinScopeRef[];
-  connectors?: string[];
-  project_refs?: TwinProjectRef[];
-  /**
-   * Which channels of each connector may be read. Carried on every graph input for the
-   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
-   * must satisfy the same rule as a row the reader would have returned.
-   */
-  channels?: Record<string, readonly string[]>;
-  tenant_id?: string | null;
-}
-
-export interface AttachEntityAliasWithEdgeResult {
-  alias: EntityAlias;
-  edge: TwinEdgeRecord;
 }

@@ -1,5 +1,4 @@
 import type { ConnectorEventSearchHit } from '../connectors/types.js';
-import type { ReadIdentity } from '../entities/read-identity.js';
 import type { RecordActor } from '../registry/types.js';
 import type {
   SearchHitDiagnostics,
@@ -88,7 +87,6 @@ export interface MemoryRecord {
   event_date?: string | null;
   /** Source event timestamp in milliseconds when known. Null if not set. */
   event_datetime?: number | null;
-  read_identity?: ReadIdentity;
   retrieval_diagnostics?: SearchHitDiagnostics;
 }
 
@@ -104,7 +102,6 @@ export interface RecallSearchDiagnostics {
   candidate_counts: {
     vector: number;
     lexical: number;
-    entity: number;
     graph_expanded: number;
     vector_only: number;
     rejected_by_strictness: number;
