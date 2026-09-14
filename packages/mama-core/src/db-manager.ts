@@ -18,11 +18,7 @@
  * @source-of-truth packages/mama-core/src/db-manager.js (mama-core)
  */
 
-import path from 'path';
-import os from 'os';
 import { info } from './debug-logger.js';
-import { logComplete, logSearching } from './progress-indicator.js';
-import { createAdapter } from './db-adapter/index.js';
 import { openDatabase, resolveAdapterDbPath, type DatabaseHandle } from './storage/database.js';
 export { assertTestProcessIsNotUsingRealDb, isTestMode } from './storage/database.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
@@ -213,17 +209,21 @@ export async function initDB(): Promise<unknown> {
     return (await openingPromise).connection;
   }
 
-  openingPromise = openDatabase().finally(() => {
-    openingPromise = null;
-  });
+  // The handle is stored inside the chain, before `openingPromise` is cleared.
+  // Assigning it after the await left one microtask in which both guards read
+  // null, and a concurrent caller landing there would open a second adapter and
+  // run migrations again on the same file.
+  openingPromise = openDatabase()
+    .then((opened) => {
+      handle = opened;
+      return opened;
+    })
+    .finally(() => {
+      openingPromise = null;
+    });
 
-  handle = await openingPromise;
-  return handle.connection;
+  return (await openingPromise).connection;
 }
-
-
-
-
 
 /**
  * Get database connection (singleton pattern)
