@@ -70,7 +70,6 @@ src/
 - `mama-api.js` — High-level API (save/search/update/checkpoint)
 - `db-manager.js` — Database initialization
 - `embeddings.js` — Embedding generation
-- `memory-store.js` — Vector search
 - `embeddings.js` — in-process embedding generation
 
 **MCP SDK:** `@modelcontextprotocol/sdk` v1.0.1

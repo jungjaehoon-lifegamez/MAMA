@@ -22,7 +22,7 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
-const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/memory-store');
+const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/db-manager');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited } = require('./session-state');
 const { shouldProcessFile } = require('./hook-file-filter');

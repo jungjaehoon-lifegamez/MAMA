@@ -11,7 +11,7 @@
  */
 
 import { info } from './debug-logger.js';
-import { getDB, updateDecisionOutcome } from './memory-store.js';
+import { getDB, updateDecisionOutcome } from './db-manager.js';
 import { updateConfidence, type EvidenceItem } from './decision-tracker.js';
 
 /**

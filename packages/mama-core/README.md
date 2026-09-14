@@ -67,10 +67,6 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - `createAdapter(type)` - Create SQLite adapter
   - Supports prepared statements and transactions
 
-- **memory-store** - Decision storage operations
-  - CRUD operations for decisions
-  - Vector similarity search
-
 ### Memory API
 
 - **memory/api** - Scoped memory operations

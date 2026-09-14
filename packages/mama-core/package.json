@@ -9,7 +9,6 @@
     "./embeddings": "./dist/embeddings.js",
     "./embedding-cache": "./dist/embedding-cache.js",
     "./memory/types": "./dist/memory/types.js",
-    "./memory-store": "./dist/memory-store.js",
     "./db-manager": "./dist/db-manager.js",
     "./db-adapter": "./dist/db-adapter/index.js",
     "./mama-api": "./dist/mama-api.js",

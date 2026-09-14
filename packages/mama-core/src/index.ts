@@ -27,18 +27,15 @@ export {
   getAdapter,
   closeDB,
   vectorSearch,
-  queryVectorSearch,
   queryDecisionGraph,
   querySemanticEdges,
   updateDecisionOutcome,
-  getPreparedStmt,
   getDbPath,
   fts5Search,
   type DatabaseAdapter as DBManagerAdapter,
   type PreparedStatement,
   type DecisionRecord,
   type OutcomeData,
-  type VectorSearchParams,
   type SemanticEdges,
   type SemanticEdgeItem,
   type DecisionInput,
@@ -53,14 +50,6 @@ export {
   type VectorSearchResult,
   type RunResult,
 } from './db-adapter/index.js';
-
-export {
-  traverseDecisionChain,
-  DB_PATH,
-  DB_DIR,
-  LEGACY_DB_PATH,
-  DEFAULT_DB_PATH,
-} from './memory-store.js';
 
 import mama from './mama-api.js';
 export { mama };

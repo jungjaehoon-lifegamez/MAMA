@@ -73,9 +73,9 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('memory-store.js exports', () => {
+  describe('db-manager.js exports', () => {
     it('should export required functions', async () => {
-      const store = await import('@jungjaehoon/mama-core/memory-store');
+      const store = await import('@jungjaehoon/mama-core/db-manager');
 
       expect(store.queryDecisionGraph).toBeDefined();
       expect(store.getDB).toBeDefined();
