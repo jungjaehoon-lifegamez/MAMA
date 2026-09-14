@@ -8,7 +8,8 @@
  */
 
 const path = require('path');
-const { initDB, vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
+const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
 /**
@@ -48,16 +49,19 @@ const searchDecisionsAndContractsTool = {
       let decisionResults = [];
       let contractResults = [];
 
-      // Decision search
+      // Decision search. A failure here is not an empty result: it reaches the
+      // outer catch and the caller gets success:false, which is the only way it
+      // can tell "nothing matched" from "the search did not run".
       if (decisionLimit > 0 && query) {
-        try {
-          const queryEmbedding = await generateEmbedding(query, 'query');
-          const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
-          if (Array.isArray(results)) {
-            decisionResults = results.slice(0, decisionLimit);
-          }
-        } catch (err) {
-          console.error('[MAMA MCP] Decision search failed:', err.message);
+        const queryEmbedding = await generateEmbedding(query, 'query');
+        const results = await vectorSearch(
+          getAdapter(),
+          queryEmbedding,
+          decisionLimit,
+          similarityThreshold
+        );
+        if (Array.isArray(results)) {
+          decisionResults = results.slice(0, decisionLimit);
         }
       }
 
@@ -77,16 +81,17 @@ const searchDecisionsAndContractsTool = {
         const contractQuery = `contract api ${keywords.join(' ')}`.trim();
 
         if (contractQuery) {
-          try {
-            const contractEmbedding = await generateEmbedding(contractQuery, 'query');
-            const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
-            if (Array.isArray(contractMatches)) {
-              contractResults = contractMatches
-                .filter((r) => r.topic && r.topic.startsWith('contract_'))
-                .slice(0, contractLimit);
-            }
-          } catch (err) {
-            console.error('[MAMA MCP] Contract search failed:', err.message);
+          const contractEmbedding = await generateEmbedding(contractQuery, 'query');
+          const contractMatches = await vectorSearch(
+            getAdapter(),
+            contractEmbedding,
+            10,
+            similarityThreshold
+          );
+          if (Array.isArray(contractMatches)) {
+            contractResults = contractMatches
+              .filter((r) => r.topic && r.topic.startsWith('contract_'))
+              .slice(0, contractLimit);
           }
         }
       }

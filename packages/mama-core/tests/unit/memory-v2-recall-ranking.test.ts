@@ -29,8 +29,12 @@ vi.mock('../../src/db-manager.js', () => ({
     },
   })),
   insertDecisionWithEmbedding: vi.fn(),
-  ensureMemoryScope: vi.fn(async () => 1),
+  ensureMemoryScopeInAdapter: vi.fn(() => 1),
+}));
+
+vi.mock('../../src/knowledge/search.js', () => ({
   vectorSearch: vectorSearchMock,
+  fts5Search: vi.fn(async () => []),
 }));
 
 describe('memory v2 recall ranking', () => {
@@ -119,6 +123,7 @@ describe('memory v2 recall ranking', () => {
     });
 
     expect(vectorSearchMock).toHaveBeenCalledWith(
+      expect.anything(),
       expect.any(Float32Array),
       20,
       0.6,

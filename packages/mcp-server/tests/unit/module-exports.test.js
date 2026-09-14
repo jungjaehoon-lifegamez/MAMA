@@ -66,12 +66,25 @@ describe('Story M1.1: Core Module Exports', () => {
     it('should export required functions', async () => {
       const store = await import('@jungjaehoon/mama-core/db-manager');
 
-      expect(store.queryDecisionGraph).toBeDefined();
       expect(store.getDB).toBeDefined();
       expect(store.getAdapter).toBeDefined();
-      expect(typeof store.queryDecisionGraph).toBe('function');
       expect(typeof store.getDB).toBe('function');
       expect(typeof store.getAdapter).toBe('function');
+    });
+  });
+
+  describe('knowledge read surface exports', () => {
+    it('should export the decision read queries', async () => {
+      const queries = await import('@jungjaehoon/mama-core/knowledge');
+
+      for (const name of [
+        'vectorSearch',
+        'queryDecisionGraph',
+        'querySemanticEdges',
+        'fts5Search',
+      ]) {
+        expect(typeof queries[name]).toBe('function');
+      }
     });
   });
 

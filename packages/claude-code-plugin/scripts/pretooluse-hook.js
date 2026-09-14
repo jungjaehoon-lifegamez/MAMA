@@ -22,7 +22,8 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('module').globalPaths.push(CORE_PATH);
 
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
-const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/db-manager');
+const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
+const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited } = require('./session-state');
 const { shouldProcessFile } = require('./hook-file-filter');
@@ -134,7 +135,12 @@ async function main() {
     }
 
     // Search for related decisions
-    const results = await vectorSearch(embedding, SEARCH_LIMIT * 2, SIMILARITY_THRESHOLD);
+    const results = await vectorSearch(
+      getAdapter(),
+      embedding,
+      SEARCH_LIMIT * 2,
+      SIMILARITY_THRESHOLD
+    );
 
     if (!results || results.length === 0) {
       // No decisions found - mark file as processed and silent pass

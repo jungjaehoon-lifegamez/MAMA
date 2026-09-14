@@ -34,8 +34,15 @@ vi.mock('../../src/db-manager.js', () => ({
     },
   })),
   insertDecisionWithEmbedding: vi.fn(),
-  ensureMemoryScope: vi.fn(async () => 1),
+  ensureMemoryScopeInAdapter: vi.fn(() => 1),
+}));
+
+vi.mock('../../src/knowledge/search.js', () => ({
   vectorSearch: vectorSearchMock,
+  fts5Search: vi.fn(async () => []),
+}));
+
+vi.mock('../../src/knowledge/graph-query.js', () => ({
   queryDecisionGraph: vi.fn(async () => []),
   querySemanticEdges: vi.fn(async () => []),
 }));

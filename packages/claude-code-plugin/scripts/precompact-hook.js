@@ -84,14 +84,15 @@ async function getSavedTopicsFromDB() {
   const topics = new Set();
 
   try {
-    const { vectorSearch, initDB } = require('@jungjaehoon/mama-core/db-manager');
+    const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
+    const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
     await initDB();
 
     // Get recent decisions (no embedding needed, just list recent)
     const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
     const embedding = await generateEmbedding('recent decisions architecture', 'query');
     if (embedding) {
-      const results = await vectorSearch(embedding, 20, 0.3);
+      const results = await vectorSearch(getAdapter(), embedding, 20, 0.3);
       if (results && Array.isArray(results)) {
         for (const item of results) {
           if (item.topic) {

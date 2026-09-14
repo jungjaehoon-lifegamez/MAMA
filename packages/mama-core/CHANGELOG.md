@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+Breaking. The unified-core refactor removed published surface that no in-repo caller
+uses. Callers outside this repository must move before upgrading.
+
+- Subpaths `./memory-store`, `./outcome-tracker` and `./query-intent`. `./memory-store`
+  held no implementation - twelve lines of `export const X = dbManager.X`, a duplicate
+  `DatabaseAdapter` declaration, and four display constants nothing imported, one of
+  which named a different database than the adapter it shadowed. Import
+  `./db-manager` directly.
+- `db-manager`: `vectorSearch`, `queryDecisionGraph`, `querySemanticEdges`, `fts5Search`
+  and `ensureMemoryScope`. The four queries now live in `./knowledge` and take the
+  adapter they read through as their first argument; `ensureMemoryScope` is replaced by
+  `ensureMemoryScopeInAdapter`, which db-manager already exported. The package root no
+  longer re-exports the four queries.
+- `db-manager`: `queryVectorSearch` and `getPreparedStmt`, which had no callers.
+  `getPreparedStmt` returned a silently non-functional statement when preparation
+  failed.
+- `registry/record-identity`: `setRecordIdentity`. Record identity is written only
+  inside the transaction that appends the record it belongs to.
+
+### Changed
+
+- Breaking. `vectorSearch` and `fts5Search` no longer answer a failed read with an
+  empty array. An empty result now means the corpus held no match, and a database or
+  adapter failure reaches the caller. `queryDecisionGraph` reports an unreadable
+  `refined_from` by naming the decision instead of returning it with empty ancestry.
+
 ## [3.2.0] - 2026-09-13
 
 ### Added
