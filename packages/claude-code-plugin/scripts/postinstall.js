@@ -2,22 +2,22 @@
 /**
  * MAMA Plugin Postinstall Script
  *
- * Story M3.4: Installation & Tier Detection
+ * Story M3.4: Installation & readiness reporting
  *
  * Checks:
  * 1. Node.js version (>=22.13.0)
  * 2. Disk space (>=100MB)
  * 3. SQLite support (node:sqlite)
  * 4. Embedding support (via @jungjaehoon/mama-core)
- * 5. Tier detection and reporting
+ * 5. Readiness reporting
+ *
+ * Either requirement 3 or 4 being absent makes the plugin unusable. There is no
+ * degraded mode to fall back to, so the report says so rather than calling the
+ * install successful.
  *
  * Exit codes:
- * 0 - Installation successful
+ * 0 - the package is installed; the report says whether it can run
  * 1 - Critical failure (Node version, disk space)
- *
- * Tier levels:
- * Tier 1 - Full features (SQLite + mama-core embedding stack)
- * Tier 2 - Degraded (exact match only, no vector search)
  */
 
 const fs = require('fs');
@@ -134,7 +134,7 @@ function checkDiskSpace() {
 
 /**
  * Check SQLite support
- * AC2: Attempt to load node:sqlite, enable Tier 2 on failure
+ * AC2: Attempt to load node:sqlite; the database cannot open without it
  */
 function checkSQLite() {
   log(colors.cyan, '🔍 Checking SQLite support (node:sqlite)...');
@@ -146,25 +146,20 @@ function checkSQLite() {
     db.close();
 
     log(colors.green, '✅ SQLite support available via node:sqlite\n');
-    return { available: true, tier: 1, driver: 'node:sqlite' };
+    return { available: true, driver: 'node:sqlite' };
   } catch (nodeSqliteError) {
-    const nodeSqliteMessage =
-      nodeSqliteError instanceof Error ? nodeSqliteError.message : String(nodeSqliteError);
-    log(colors.yellow, `⚠️  SQLite support unavailable: node:sqlite failed (${nodeSqliteMessage})`);
-    log(colors.yellow, `\nFalling back to Tier 2 (degraded mode)`);
-    log(colors.yellow, `\nTo fix: use Node 22.13+ with built-in node:sqlite`);
-    log(colors.yellow, `\nTier 2 features:`);
-    log(colors.yellow, `  - Exact match search only (no vector search)`);
-    log(colors.yellow, `  - 40% accuracy (vs 80% in Tier 1)`);
-    log(colors.yellow, `  - All data still saved and retrievable\n`);
+    const nodeSqliteMessage = String(
+      nodeSqliteError instanceof Error ? nodeSqliteError.message : nodeSqliteError
+    ).split('\n')[0];
+    log(colors.red, `❌ SQLite support unavailable: node:sqlite failed (${nodeSqliteMessage})`);
+    log(colors.red, `\nMAMA cannot open its database without it. Nothing will be saved or read.`);
+    log(colors.red, `\nTo fix: use Node 22.13+, which has node:sqlite built in.\n`);
 
     return {
       available: false,
-      tier: 2,
-      reason: 'SQLite support unavailable',
-      details: {
-        nodeSqlite: nodeSqliteMessage,
-      },
+      reason: `node:sqlite unavailable (${nodeSqliteMessage})`,
+      breaks: 'the database cannot be opened; no memory is saved or read',
+      fix: 'use Node 22.13 or newer, which ships node:sqlite',
     };
   }
 }
@@ -183,127 +178,83 @@ function checkEmbeddings() {
     log(colors.green, '✅ Embedding support available\n');
     return { available: true };
   } catch (error) {
-    log(colors.yellow, `⚠️  Embedding stack not available via mama-core: ${error.message}`);
-    log(colors.yellow, `   Vector search will be disabled (Tier 2 mode)\n`);
-    return { available: false, reason: 'Embedding stack unavailable via mama-core' };
-  }
-}
-
-/**
- * Detect final tier
- * AC3: Report detected tier
- */
-function detectTier(sqliteCheck, embeddingsCheck) {
-  if (sqliteCheck.available && embeddingsCheck.available) {
+    const firstLine = String(error.message).split('\n')[0];
+    log(colors.red, `❌ Embedding stack not available via mama-core: ${firstLine}`);
+    log(colors.red, `   Every save and search will fail; there is no non-embedding search path.\n`);
     return {
-      tier: 1,
-      name: 'Full Features',
-      accuracy: '80%',
-      features: [
-        '✅ Vector search (semantic similarity)',
-        '✅ Graph search (decision evolution)',
-        '✅ Recency weighting',
-        '✅ Multi-language support (Korean-English)',
-        '✅ Auto-context injection',
-      ],
-      performance: {
-        embedding: '~3ms',
-        search: '~50ms',
-        hookLatency: '~100ms',
-      },
-    };
-  } else {
-    const reasons = [];
-    if (!sqliteCheck.available) {
-      reasons.push(sqliteCheck.reason);
-    }
-    if (!embeddingsCheck.available) {
-      reasons.push(embeddingsCheck.reason);
-    }
-
-    return {
-      tier: 2,
-      name: 'Degraded Mode',
-      accuracy: '40%',
-      features: [
-        '⚠️  Exact match search only',
-        '❌ No vector search',
-        '❌ No semantic similarity',
-        '✅ Graph search (decision evolution)',
-        '✅ All data saved and retrievable',
-      ],
-      limitations: reasons,
-      performance: {
-        search: '~10ms (exact match)',
-        hookLatency: '~50ms',
-      },
+      available: false,
+      reason: `embedding stack unavailable via mama-core (${firstLine})`,
+      breaks: 'every save and search throws; there is no exact-match fallback',
+      fix: 'reinstall so @huggingface/transformers resolves from @jungjaehoon/mama-core',
     };
   }
 }
 
 /**
- * Print tier status
- * AC3: Successful install message with tier
+ * Assess whether this install can actually run.
+ *
+ * There is no degraded mode. If a requirement is missing, the corresponding
+ * feature does not fall back to something weaker - it throws at first use. So
+ * this reports readiness and what is missing, not a quality level.
  */
-function printTierStatus(tierInfo) {
-  const color = tierInfo.tier === 1 ? colors.green : colors.yellow;
-  const icon = tierInfo.tier === 1 ? '✅' : '⚠️';
+function assessReadiness(sqliteCheck, embeddingsCheck) {
+  const missing = [];
+  if (!sqliteCheck.available) {
+    missing.push(sqliteCheck);
+  }
+  if (!embeddingsCheck.available) {
+    missing.push(embeddingsCheck);
+  }
+  return { ready: missing.length === 0, missing };
+}
+
+/**
+ * Print the readiness report
+ * AC3: Say plainly whether this install can run
+ */
+function clip(line, width = 58) {
+  return line.length <= width ? line : `${line.slice(0, width - 1)}\u2026`;
+}
+
+function printReadiness(readiness) {
+  if (readiness.ready) {
+    printBox(
+      '\u2705 MAMA Plugin Installed',
+      [
+        ``,
+        `Vector search over the local embedding model,`,
+        `with FTS5 alongside it.`,
+        ``,
+        `First query loads the model (~1s).`,
+        `Later queries reuse it (~89ms).`,
+      ],
+      colors.green
+    );
+    log(colors.cyan, 'Next steps:');
+    log(colors.cyan, '  1. Restart Claude Code (plugin will auto-load)');
+    log(colors.cyan, '  2. Try: /mama-list to see recent decisions');
+    log(colors.cyan, '  3. Try: /mama-save to save your first decision\n');
+    return;
+  }
 
   printBox(
-    `${icon} MAMA Plugin Installed Successfully`,
+    '\u274c MAMA Plugin Installed But Not Usable',
     [
       ``,
-      `Tier: ${tierInfo.tier} (${tierInfo.name})`,
-      `Accuracy: ${tierInfo.accuracy}`,
+      `The package is on disk, but a requirement is`,
+      `missing. MAMA has no degraded mode: the affected`,
+      `calls throw rather than returning less.`,
       ``,
-      `Features:`,
-      ...tierInfo.features.map((f) => `  ${f}`),
-      ``,
-      `Performance:`,
-      ...Object.entries(tierInfo.performance).map(([k, v]) => `  • ${k}: ${v}`),
+      `Missing:`,
+      ...readiness.missing.flatMap((item) => [
+        clip(`  \u2022 ${item.reason}`),
+        clip(`      breaks: ${item.breaks}`),
+        clip(`      fix:    ${item.fix}`),
+      ]),
     ],
-    color
+    colors.red
   );
-
-  if (tierInfo.tier === 2) {
-    log(colors.yellow, "ℹ️  You're running in Tier 2 (degraded mode)");
-    log(colors.yellow, '   This is fully functional but with reduced accuracy.');
-    log(colors.yellow, '   See installation instructions above to upgrade to Tier 1.\n');
-  }
-
-  log(colors.cyan, 'Next steps:');
-  log(colors.cyan, '  1. Restart Claude Code (plugin will auto-load)');
-  log(colors.cyan, '  2. Try: /mama-list to see recent decisions');
-  log(colors.cyan, '  3. Try: /mama-save to save your first decision');
-  log(colors.cyan, '  4. Docs: See README.md for full guide\n');
-}
-
-/**
- * Save tier configuration
- */
-function saveTierConfig(tierInfo) {
-  const configDir = path.join(process.env.HOME || process.env.USERPROFILE, '.mama');
-  const configPath = path.join(configDir, 'config.json');
-
-  try {
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-
-    let config = {};
-    if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    }
-
-    config.tier = tierInfo.tier;
-    config.tier_detected_at = new Date().toISOString();
-    config.tier_name = tierInfo.name;
-
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    log(colors.green, `✅ Tier configuration saved to ${configPath}\n`);
-  } catch (error) {
-    log(colors.yellow, `⚠️  Could not save tier config: ${error.message}\n`);
-  }
+  log(colors.red, 'Fix the above and reinstall before using the plugin.\n');
 }
 
 /**
@@ -327,14 +278,11 @@ function main() {
     // AC2: Embeddings check
     const embeddingsCheck = checkEmbeddings();
 
-    // AC3: Tier detection
-    const tierInfo = detectTier(sqliteCheck, embeddingsCheck);
+    // AC3: Readiness
+    const readiness = assessReadiness(sqliteCheck, embeddingsCheck);
 
-    // Save tier config
-    saveTierConfig(tierInfo);
-
-    // AC3: Print success message with tier
-    printTierStatus(tierInfo);
+    // AC3: Say plainly whether this install can run
+    printReadiness(readiness);
   } catch (error) {
     log(colors.red, `\n❌ Installation failed: ${error.message}`);
     log(colors.red, `   Stack: ${error.stack}\n`);
@@ -353,5 +301,5 @@ module.exports = {
   checkDiskSpace,
   checkSQLite,
   checkEmbeddings,
-  detectTier,
+  assessReadiness,
 };

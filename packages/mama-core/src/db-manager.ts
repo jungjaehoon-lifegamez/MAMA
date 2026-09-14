@@ -47,7 +47,6 @@ export interface DatabaseAdapter {
     topicPrefix?: string,
     excludeStatuses?: readonly string[]
   ) => Promise<VectorSearchResult[] | null> | VectorSearchResult[] | null;
-  vectorSearchEnabled: boolean;
   reloadVectorCache?: () => void;
   refreshDecisionStatusCache?: (rowid: number) => void;
   getDbPath?: () => string;
@@ -596,7 +595,7 @@ export function insertPreparedDecision(
     decision.provenance_json ?? null
   );
   const rowid = Number(result.lastInsertRowid);
-  if (adapter.vectorSearchEnabled && embedding) {
+  if (embedding) {
     adapter.insertEmbedding(rowid, embedding);
   }
   return rowid;

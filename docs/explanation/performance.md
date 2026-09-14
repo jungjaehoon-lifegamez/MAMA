@@ -47,17 +47,6 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 - Recency scoring: ~10ms
 - Formatting: ~6ms
 
-### Tier 2 Performance (Exact Match)
-
-**All queries:**
-
-- ~12ms (exact match only)
-- No model loading required
-- Simple SQL query with LIKE operator
-
-**Trade-offs:**
-
-- ✅ 7x faster than Tier 1
 - ❌ 40% accuracy (vs 80% in Tier 1)
 - ❌ No semantic understanding
 
@@ -73,7 +62,7 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 - Early timeout: Hooks abort at 1200ms
 - Asynchronous operations: No synchronous waits
-- Fail-fast: If local embeddings are unavailable, use Tier 2 exact matching
+- Fail-fast: if local embeddings are unavailable, the search fails explicitly
 
 **Result:** ~150ms actual latency (8x better than target)
 
@@ -86,7 +75,7 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 - The process performing semantic search loads the local model on demand
 - The process-local cache reuses embeddings
 - No embedding listener, proxy, or port discovery is involved
-- Provider initialization failures are explicit; Tier 2 uses exact matching
+- Provider initialization failures are explicit
 
 **Result:** Semantic search remains local without a second runtime to start or monitor.
 
@@ -205,14 +194,6 @@ Subsequent queries (89ms total):
 └── Formatting:         6ms (7%)
 ```
 
-### Where Time is Spent (Tier 2)
-
-```
-All queries (12ms total):
-├── SQL query:        10ms (83%)
-└── Formatting:        2ms (17%)
-```
-
 **Optimization:** Not needed. Already optimal for exact match use case.
 
 ---
@@ -259,7 +240,6 @@ npm run test:performance
 
 ✅ **Hook latency < 1200ms (p95):** Enforced by the hook timeout
 ✅ **No blocking operations:** All I/O is asynchronous
-✅ **Graceful degradation:** Tier 2 remains available if local embeddings are unavailable
 
 ### What MAMA Does NOT Guarantee
 
@@ -272,8 +252,9 @@ npm run test:performance
 
 ### Q: What if local embeddings cannot initialize?
 
-**A:** The semantic path reports its provider failure. Search can degrade to Tier 2 exact matching
-where that contract applies; it does not contact a fallback HTTP service.
+**A:** The failure is explicit and loud. There is no exact-match fallback mode and no fallback
+HTTP service; a search that cannot embed its query fails rather than returning weaker results
+silently.
 
 ### Q: Does database size affect performance?
 
@@ -283,12 +264,6 @@ where that contract applies; it does not contact a fallback HTTP service.
 - 1,000-10,000 decisions: ~70ms search time
 - > 10,000 decisions: May exceed 100ms (consider archiving old decisions)
 
-### Q: Why is Tier 2 so much faster?
-
-**A:** Tier 2 uses exact SQL LIKE matching. No vector search, no model loading, no embedding generation. Just a simple database query.
-
-**Trade-off:** 40% accuracy vs 80% in Tier 1.
-
 ---
 
 ## See Also
@@ -296,4 +271,3 @@ where that contract applies; it does not contact a fallback HTTP service.
 - [Configuration Guide](../guides/configuration.md) - How to tune performance settings
 - [Performance Tuning Guide](../guides/performance-tuning.md) - Detailed optimization strategies
 - [Architecture](architecture.md) - System design decisions
-- [Tier System](tier-system.md) - Why Tier 2 is faster but less accurate

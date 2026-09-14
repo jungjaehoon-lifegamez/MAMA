@@ -43,13 +43,12 @@ Xenova/multilingual-e5-large. There is no embedding HTTP listener or client fall
 
 ---
 
-## TIER SYSTEM (AUTOMATIC DEGRADATION)
+## EMBEDDINGS OFF-SWITCH (`MAMA_FORCE_TIER_3`)
 
-- **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires pure-TS cosine similarity implementation
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when `vectorSearch()` throws (e.g., missing `embeddings` table)
-- **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
-
-Tier degradation happens at runtime (not user-configurable). Check `db-manager.js` for logic.
+Search is vector search (pure-TS cosine similarity) with FTS5 alongside it. Setting
+`MAMA_FORCE_TIER_3=true` makes `assertEmbeddingsEnabled()` in `embeddings.ts` throw before the
+model loads, so embedding work is skipped entirely - a test switch, not a degraded search mode.
+Nothing degrades automatically; there is no exact-match path to fall back to.
 
 ---
 

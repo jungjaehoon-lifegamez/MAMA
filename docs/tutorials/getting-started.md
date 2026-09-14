@@ -158,15 +158,6 @@ Expected output shows tier badge:
 🔍 System Status: 🟢 Tier 1 (Full Features Active)
 ```
 
-**Tier Meanings:**
-
-- **🟢 Tier 1**: Full vector search + semantic matching (80% accuracy)
-- **🟡 Tier 2**: Fallback exact match only (40% accuracy)
-
-**If Tier 2 detected:** See [Tier 2 Remediation Guide](../guides/tier-2-remediation.md)
-
----
-
 ## Step 4: Test Automatic Context 🤖
 
 MAMA automatically injects context when relevant:

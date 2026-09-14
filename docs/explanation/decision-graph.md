@@ -170,5 +170,4 @@ Relearn:  Better decision (confidence: 0.9, outcome: success)
 
 - [First Decision Tutorial](../tutorials/first-decision.md)
 - [Semantic Search](semantic-search.md)
-- [Tier System](tier-system.md)
 - [Architecture](architecture.md)

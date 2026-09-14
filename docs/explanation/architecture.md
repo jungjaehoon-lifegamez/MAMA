@@ -67,12 +67,6 @@ Selected prompts and compiled context are transmitted to the configured provider
 model is used. “Local-first” describes durable storage and local memory operations, not an offline
 claim for every model run.
 
-### 3. Tier-Based Graceful Degradation
-
-- Tier 1: Full features (vector search + graph)
-- Tier 2: Fallback (exact match only)
-- Always transparent about current state
-
 ### 4. Case and decision evolution
 
 - Supersedes graph for decision chains
@@ -139,15 +133,14 @@ contract are defined in
 ### Embeddings
 
 - **Model:** Xenova/multilingual-e5-large (~560MB, quantized q8, 1024-dim)
-- **Tier 1:** Transformers.js (ONNX runtime)
-- **Tier 2:** Disabled (fallback to exact match)
+- **Runtime:** Transformers.js (ONNX)
 
 ### In-process embeddings
 
 - **Model:** Loaded by the core process that performs semantic search
 - **API:** `@jungjaehoon/mama-core/embeddings`
 - **Network surface:** None
-- **Failure behavior:** Explicit provider failures or Tier 2 exact-match degradation
+- **Failure behavior:** Explicit provider failure; no exact-match degradation path exists
 
 ### Cron Scheduler & Worker
 
@@ -379,7 +372,7 @@ File Read (plugin session)
     ↓
 PreToolUse Hook
     ↓
-Semantic Search (Tier 1) or Exact Match (Tier 2)
+Semantic Search
     ↓
 Hybrid Scoring (similarity × recency)
     ↓
@@ -407,22 +400,13 @@ Gentle Context Hints
 - **Noise control:** Per-session long/short output reduces repeated guidance.
 - **Safety by default:** Sanitized contract injection mitigates prompt-injection risk.
 
-**Tier 1:**
-
 - First query: ~987ms (model load)
 - Subsequent: ~89ms (cached)
-- Accuracy: 80%
-
-**Tier 2:**
-
-- All queries: ~12ms
-- Accuracy: 40%
 
 ---
 
 **Related:**
 
-- [Tier System Explanation](tier-system.md)
 - [Decision Graph Concept](decision-graph.md)
 - [Performance Details](performance.md)
 - [Data Privacy](data-privacy.md)
