@@ -13,8 +13,8 @@
 import os from 'os';
 import path from 'path';
 import { info } from './debug-logger.js';
-import { logComplete, logLoading } from './progress-indicator.js';
 import { embeddingCache } from './embedding-cache.js';
+import { createEmbedder, type Embedder } from './embedding/embedder.js';
 import { loadConfig, getModelName, getEmbeddingDim, getQuantized } from './config-loader.js';
 
 // Shared cache directory (not in node_modules)
@@ -37,15 +37,11 @@ const TOKENISH_SEGMENT_PATTERN =
   /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|\S+/gu;
 
 // Type for pipeline function from @huggingface/transformers
-type PipelineFunction = (
-  text: string | string[],
-  options?: { pooling?: string; normalize?: boolean; truncation?: boolean; max_length?: number }
-) => Promise<{ data: Float32Array }>;
 
-// Singleton pattern for model loading
-let embeddingPipeline: PipelineFunction | null = null;
-let currentModelName: string | null = null;
-let modelLoadFailed = false; // Cache load failures to avoid repeated slow retries
+// One process-wide embedder for callers that have not been given one of their
+// own. `createEmbedder` owns the pipeline and its cache; this module only holds
+// the instance and rebuilds it when the configured model changes.
+let embedder: Embedder | null = null;
 
 export function isForceTier3Enabled(): boolean {
   return TIER3_ENV_VALUES.has(String(process.env.MAMA_FORCE_TIER_3 || '').toLowerCase());
@@ -99,64 +95,34 @@ export interface DecisionForEmbedding {
  *
  * @returns Embedding pipeline
  */
-async function loadModel(): Promise<PipelineFunction> {
+function resolveEmbedder(): Embedder {
   assertEmbeddingsEnabled();
 
   const modelName = getModelName();
 
-  // Check if model has changed (Story M1.4 AC #3)
-  if (embeddingPipeline && currentModelName && currentModelName !== modelName) {
-    info('[MAMA] ⚠️  Embedding model changed - resetting pipeline');
-    info(`[MAMA] Old model: ${currentModelName}`);
+  // Story M1.4 AC #3: a configured model change resets the pipeline and cache.
+  if (embedder && embedder.modelName !== modelName) {
+    info('[MAMA] Embedding model changed - resetting pipeline');
+    info(`[MAMA] Old model: ${embedder.modelName}`);
     info(`[MAMA] New model: ${modelName}`);
-
-    // Reset pipeline and cache
-    embeddingPipeline = null;
-    currentModelName = null;
     embeddingCache.clear();
-
-    info('[MAMA] ⚡ Model cache cleared');
+    embedder = null;
+    info('[MAMA] Model cache cleared');
   }
 
-  // Fail fast if a previous load attempt already failed (avoid repeated slow retries)
-  if (modelLoadFailed) {
-    throw new Error('Embedding model previously failed to load — skipping retry');
+  if (!embedder) {
+    embedder = createEmbedder({
+      modelName,
+      dimension: getEmbeddingDim(),
+      quantized: getQuantized(),
+      maxLength: EMBEDDING_MODEL_MAX_LENGTH,
+      cacheDir: process.env.HF_HOME || process.env.TRANSFORMERS_CACHE || DEFAULT_CACHE_DIR,
+      // The shared cache: consumers already clear it and read its stats.
+      cache: embeddingCache,
+    });
   }
 
-  // Load model if not already loaded
-  if (!embeddingPipeline) {
-    logLoading(`Loading embedding model: ${modelName}...`);
-    const startTime = Date.now();
-
-    try {
-      // Dynamic import for ES Module compatibility (Railway deployment)
-      const transformers = await import('@huggingface/transformers');
-      const { pipeline, env } = transformers;
-
-      // Set shared cache directory (not in node_modules)
-      // This prevents re-downloading models on every npm install
-      const cacheDir = process.env.HF_HOME || process.env.TRANSFORMERS_CACHE || DEFAULT_CACHE_DIR;
-      env.cacheDir = cacheDir;
-      info(`[MAMA] Model cache directory: ${cacheDir}`);
-
-      const quantized = getQuantized();
-      embeddingPipeline = (await pipeline('feature-extraction', modelName, {
-        dtype: quantized ? 'q8' : 'fp32',
-      })) as PipelineFunction;
-      currentModelName = modelName;
-
-      const loadTime = Date.now() - startTime;
-      const config = loadConfig();
-      logComplete(
-        `Embedding model ready (${loadTime}ms, ${config.embeddingDim}-dim, ${quantized ? 'q8' : 'fp32'})`
-      );
-    } catch (loadErr) {
-      modelLoadFailed = true;
-      throw loadErr;
-    }
-  }
-
-  return embeddingPipeline;
+  return embedder;
 }
 
 /**
@@ -182,41 +148,10 @@ export async function generateEmbedding(
   const preparedText = prepareEmbeddingText(text);
   const modelInput = applyRolePrefix(preparedText, role); // e5 instruction prefix
 
-  // Cache key is the PREFIXED input: a passage vector can never be served for a query.
-  const cached = embeddingCache.get(modelInput);
-  if (cached) {
-    return cached;
-  }
-
-  const startTime = Date.now();
-
+  // The embedder keys its cache on the PREFIXED input, so a passage vector can
+  // never be served to a query.
   try {
-    const model = await loadModel();
-    const expectedDim = getEmbeddingDim();
-
-    // Generate embedding
-    const output = await model(modelInput, {
-      pooling: 'mean', // Mean pooling over tokens
-      normalize: true, // L2 normalization
-      truncation: true,
-      max_length: EMBEDDING_MODEL_MAX_LENGTH,
-    });
-
-    // Extract Float32Array
-    const embedding = output.data;
-
-    // Verify dimensions match config
-    if (embedding.length !== expectedDim) {
-      throw new Error(`Expected ${expectedDim}-dim, got ${embedding.length}-dim`);
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _latency = Date.now() - startTime;
-
-    // Task 2: Store in cache (AC #3)
-    embeddingCache.set(modelInput, embedding);
-
-    return embedding;
+    return await resolveEmbedder().embed(modelInput);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to generate embedding: ${message}`);
