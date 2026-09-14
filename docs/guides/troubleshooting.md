@@ -287,7 +287,6 @@ rm ~/.claude/mama-memory.db
 
 - Stuck at "Downloading model..."
 - Network timeout errors
-- Falls back to Tier 2 permanently
 
 ### Check 1: Internet Connection
 
@@ -420,6 +419,5 @@ emb.generateEmbedding('test').then(v => console.log('✅ Embeddings OK', v.lengt
 **Related:**
 
 - [Installation Guide](installation.md)
-- [Tier 2 Remediation Guide](tier-2-remediation.md)
 - [Configuration Guide](configuration.md)
 - [Performance Tuning](performance-tuning.md)

@@ -284,13 +284,12 @@ multi_agent:
 
 Key code path: `AgentProcessManager` (line 81: `defaultPoolSize: 1`) → `AgentProcessPool.getAvailableProcess()` → `PersistentClaudeProcess`
 
-### **Tier System (Automatic, Not User-Selected)**
+### **Embeddings off-switch (`MAMA_FORCE_TIER_3`)**
 
-- **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires embedding model
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when `vectorSearch()` throws (e.g., missing `embeddings` table or no embeddings stored)
-- **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
-
-Tier degradation happens automatically at runtime (not user-configurable).
+Search is vector search over the local embedding model. Setting `MAMA_FORCE_TIER_3=true` makes
+`assertEmbeddingsEnabled()` throw before the model loads, so embedding work is skipped entirely -
+it is a test switch, not a degraded search mode. Nothing degrades automatically at runtime; there
+is no exact-match path to fall back to.
 
 ### **In-Process Embeddings**
 

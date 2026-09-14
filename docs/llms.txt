@@ -21,7 +21,6 @@ principal grants and shared Work Cases without exposing a user-facing AI team.
 
 /tutorials/getting-started.md - Quick start guide
 /tutorials/first-decision.md - Save your first decision
-/tutorials/understanding-tiers.md - Tier system explained
 /tutorials/hook-setup.md - Configure auto-recall hooks
 
 ### Guides
@@ -51,7 +50,6 @@ principal grants and shared Work Cases without exposing a user-facing AI team.
 /explanation/work-agent.md - One-front work agent, human team, Case and artifact model
 /explanation/decision-graph.md - Decision evolution
 /explanation/semantic-search.md - How search works
-/explanation/tier-system.md - Tier design
 /explanation/data-privacy.md - Privacy principles
 
 ### Development

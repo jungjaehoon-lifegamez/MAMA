@@ -248,7 +248,6 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   private transactionDepth = 0;
   private config: SQLiteAdapterConfig;
   private db: NodeSQLiteConnection | null = null;
-  private _vectorSearchEnabled = true;
   private vectorCache: Map<number, Float32Array> = new Map();
   private topicCache: Map<number, string> = new Map();
   // Effective status (status, falling back to outcome) per decision rowid. Used as a
@@ -261,10 +260,6 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
     this.config = config;
-  }
-
-  get vectorSearchEnabled(): boolean {
-    return this._vectorSearchEnabled;
   }
 
   getDbPath(): string {

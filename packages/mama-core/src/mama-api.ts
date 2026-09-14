@@ -1648,11 +1648,6 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     let searchMethod = 'vector';
 
     try {
-      // Check if vector search is available
-      if (!getAdapter().vectorSearchEnabled) {
-        throw new Error('Vector search not available');
-      }
-
       // Generate query embedding
       const queryEmbedding = await generateEmbedding(userQuestion, 'query');
 
