@@ -1468,6 +1468,7 @@ function buildTurnKindBody(
       return [
         '## Turn: curation',
         'Promote durable, source-backed claims with mama_save; supersede stale ones with mama_update. Secrets are refused by the host.',
+        'Resolve the names you rely on: registry_lookup a spelling, and found:false is the signal to registry_upsert it, not to search harder. A spelling another node already holds comes back alias_taken - decide whether the two are the same and record that with registry_correct, or ask the owner. Nothing infers identity for you.',
         `If nothing qualifies, call ${noUpdateCall}.`,
       ].join('\n');
     case 'self-check':

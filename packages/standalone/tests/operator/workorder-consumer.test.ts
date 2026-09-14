@@ -1427,6 +1427,23 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       }
     });
 
+    // #314 removed the host's own guess at which entity a record is about, which leaves the
+    // work with the agent. The lane had the registry tools all along and was never told to
+    // use them, and agent-initiated identity work measured zero for two months.
+    it('tells the curation turn that resolving the names is its job', () => {
+      const section = buildTurnKindSection('memory-curation');
+
+      expect(section).toContain('registry_lookup');
+      expect(section).toContain('registry_upsert');
+      expect(section).toContain('registry_correct');
+      // The two host answers the agent has to act on, quoted from the tool contracts
+      // rather than paraphrased - a wrong code here would send it down the wrong branch.
+      expect(section).toContain('found:false');
+      expect(section).toContain('alias_taken');
+      // And the part that is now true because the host stopped guessing.
+      expect(section).toContain('Nothing infers identity for you');
+    });
+
     it('keeps the two turn-kind sections that were already outcome contracts', () => {
       expect(buildTurnKindSection('memory-curation')).toContain('mama_save');
       expect(buildTurnKindSection('self-check')).toContain('repair_request({issue_id');
