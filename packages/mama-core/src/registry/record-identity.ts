@@ -6,9 +6,12 @@
  * registry node id, and the people are rows with their roles.
  *
  * Everything this module refuses, it refuses loudly. An unknown node, a person id in the item
- * slot, a record that does not exist: all raise. A dangling reference stored quietly would
- * surface later as a timeline that is missing history, which is the failure mode this whole
- * design exists to remove.
+ * slot, an empty role: all raise. A dangling reference stored quietly would surface later as a
+ * timeline that is missing history, which is the failure mode this whole design exists to remove.
+ *
+ * The binding is written only inside the transaction that appends the record it belongs to, so
+ * this module offers no standalone entry point that rewrites the identity of a record already
+ * stored. Changing what a stored record is about is a correction, not an overwrite.
  */
 
 import { getAdapter } from '../db-manager.js';
@@ -133,55 +136,6 @@ export function writeRecordIdentityInAdapter(
        VALUES (?, ?, ?, ?, ?)`
     ).run(input.recordId, actor.personId, actor.role, actor.position, now);
   }
-}
-
-export function setRecordIdentity(input: {
-  recordId: string;
-  itemId?: string | null;
-  actors?: readonly RecordActor[];
-  scopes?: readonly RegistryScopeRef[];
-}): void {
-  const db = adapter();
-  const exists = db.prepare('SELECT id FROM decisions WHERE id = ?').get(input.recordId) as
-    | { id: string }
-    | undefined;
-  if (!exists) {
-    throw new RecordIdentityError(
-      'unknown_record',
-      `No record ${input.recordId} to bind identity to.`
-    );
-  }
-
-  // Resolve everything before writing anything: a half-applied identity is worse than a
-  // refused one, because the record would then claim an item without its people.
-  const itemId =
-    input.itemId === undefined || input.itemId === null
-      ? null
-      : requireNode(input.itemId, 'item', 'item_id', input.scopes);
-  const actors = (input.actors ?? []).map((actor, index) => {
-    const role = actor.role.trim();
-    if (!role) {
-      throw new RecordIdentityError('empty_role', 'An actor needs a role.');
-    }
-    return {
-      personId: requireNode(actor.personId, 'person', 'actor', input.scopes),
-      role,
-      position: index,
-    };
-  });
-
-  const apply = (): void => {
-    writeRecordIdentityInAdapter(db, {
-      recordId: input.recordId,
-      itemId,
-      actors: actors.map((actor) => ({ personId: actor.personId, role: actor.role })),
-      scopes: input.scopes,
-    });
-  };
-
-  // better-sqlite3 hands back a callable; other adapters run it immediately. The core does
-  // the same two-step check wherever it wraps a write (memory/api.ts:349).
-  db.transaction(apply);
 }
 
 export function readRecordIdentity(recordId: string): RecordIdentity | null {

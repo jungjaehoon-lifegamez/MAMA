@@ -7,7 +7,6 @@ import {
   listActors,
   listRecordIdsForItem,
   readRecordIdentity,
-  setRecordIdentity,
 } from '../../src/registry/record-identity.js';
 import { saveLegacyMemory, saveMemory } from '../../src/memory/api.js';
 import { createTrustedProvenanceCapability } from '../../src/memory/provenance.js';
@@ -58,9 +57,27 @@ describe('record identity', () => {
       .run('rec_1');
   });
 
-  it('binds a record to an item node and to several people with their roles', () => {
-    setRecordIdentity({
-      recordId: 'rec_1',
+  /**
+   * Identity is bound in the transaction that appends the record, so every case below goes
+   * through the save that production uses. There is no entry point that rebinds a record that
+   * is already stored: doing that is a correction, and corrections carry their own command.
+   */
+  const save = (fields: {
+    itemId?: string | null;
+    actors?: Array<{ personId: string; role: string }>;
+  }) =>
+    saveMemory({
+      topic: 'alpha item',
+      kind: 'decision',
+      summary: 'a fact',
+      details: 'the record states what it is about by pointing at a node',
+      scopes: [],
+      source: { package: 'mama-core', source_type: 'test' },
+      ...fields,
+    });
+
+  it('binds a record to an item node and to several people with their roles', async () => {
+    const saved = await save({
       itemId: item,
       actors: [
         { personId: worker, role: 'worker' },
@@ -68,16 +85,15 @@ describe('record identity', () => {
       ],
     });
 
-    expect(readRecordIdentity('rec_1')?.itemId).toBe(item);
-    expect(listActors('rec_1')).toEqual([
+    expect(readRecordIdentity(saved.id)?.itemId).toBe(item);
+    expect(listActors(saved.id)).toEqual([
       { personId: worker, role: 'worker' },
       { personId: contact, role: 'client contact' },
     ]);
   });
 
-  it('keeps one person in two roles on the same record', () => {
-    setRecordIdentity({
-      recordId: 'rec_1',
+  it('keeps one person in two roles on the same record', async () => {
+    const saved = await save({
       itemId: item,
       actors: [
         { personId: worker, role: 'worker' },
@@ -85,59 +101,28 @@ describe('record identity', () => {
       ],
     });
 
-    expect(listActors('rec_1')).toHaveLength(2);
+    expect(listActors(saved.id)).toHaveLength(2);
   });
 
-  it('refuses an item id that is not a registered item, instead of storing a dangling string', () => {
-    expect(() =>
-      setRecordIdentity({ recordId: 'rec_1', itemId: 'reg_nonexistent', actors: [] })
-    ).toThrow(RecordIdentityError);
-    expect(readRecordIdentity('rec_1')?.itemId).toBeNull();
-  });
-
-  it('refuses a person node in the item slot, and an item node in an actor slot', () => {
-    expect(() => setRecordIdentity({ recordId: 'rec_1', itemId: worker, actors: [] })).toThrow(
-      RecordIdentityError
-    );
-    expect(() =>
-      setRecordIdentity({
-        recordId: 'rec_1',
-        itemId: item,
-        actors: [{ personId: item, role: 'worker' }],
-      })
-    ).toThrow(RecordIdentityError);
-  });
-
-  it('refuses an unknown record rather than writing an orphan actor row', () => {
-    expect(() => setRecordIdentity({ recordId: 'rec_missing', itemId: item, actors: [] })).toThrow(
-      RecordIdentityError
-    );
+  it('refuses an item id that is not a registered item, instead of storing a dangling string', async () => {
+    await expect(save({ itemId: 'reg_nonexistent' })).rejects.toThrow(RecordIdentityError);
     expect(getAdapter().prepare('SELECT COUNT(*) c FROM record_actors').get()).toEqual({ c: 0 });
   });
 
+  it('refuses a person node in the item slot, and an item node in an actor slot', async () => {
+    await expect(save({ itemId: worker })).rejects.toThrow(RecordIdentityError);
+    await expect(
+      save({ itemId: item, actors: [{ personId: item, role: 'worker' }] })
+    ).rejects.toThrow(RecordIdentityError);
+  });
+
   it('resolves a merged node to its survivor, so old references keep answering', async () => {
-    const { mergeNodes } = await import('../../src/registry/store.js');
     const survivor = createNode({ kind: 'item', name: 'alpha item canonical' });
     mergeNodes({ loser: item, survivor, reason: 'owner confirmed same item' });
 
-    setRecordIdentity({ recordId: 'rec_1', itemId: item, actors: [] });
+    const saved = await save({ itemId: item });
 
-    expect(readRecordIdentity('rec_1')?.itemId).toBe(survivor);
-  });
-
-  it('replaces the actor set on a second write rather than accumulating stale roles', () => {
-    setRecordIdentity({
-      recordId: 'rec_1',
-      itemId: item,
-      actors: [{ personId: worker, role: 'worker' }],
-    });
-    setRecordIdentity({
-      recordId: 'rec_1',
-      itemId: item,
-      actors: [{ personId: contact, role: 'worker' }],
-    });
-
-    expect(listActors('rec_1')).toEqual([{ personId: contact, role: 'worker' }]);
+    expect(readRecordIdentity(saved.id)?.itemId).toBe(survivor);
   });
 
   it('saves the decision, embedding, scope, item and actors in one adapter transaction', async () => {
