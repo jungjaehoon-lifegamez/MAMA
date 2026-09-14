@@ -346,7 +346,6 @@ try {
       'createNode',
       'upsertNode',
       'resolveAlias',
-      'setRecordIdentity',
       'appendOperationToolTrace',
       'verifyOwnerActionContext',
     ]) {
@@ -358,14 +357,17 @@ try {
     assert.equal(typeof registryStore.createNode, 'function');
     assert.equal(typeof registryStore.resolveAlias, 'function');
     const recordIdentity = await import('@jungjaehoon/mama-core/registry/record-identity');
-    assert.equal(typeof recordIdentity.setRecordIdentity, 'function');
+    assert.equal(typeof recordIdentity.writeRecordIdentityInAdapter, 'function');
     assert.equal(typeof recordIdentity.validateRecordIdentityReferences, 'function');
+    // Identity is bound inside the transaction that appends the record. There is no entry
+    // point that rebinds a record already stored; that is a correction, not an overwrite.
+    assert.equal('setRecordIdentity' in recordIdentity, false);
     const ownerActionEffects = await import(
       '@jungjaehoon/mama-core/operations/owner-action-effects'
     );
     assert.equal(typeof ownerActionEffects.verifyOwnerActionContext, 'function');
     assert.equal(typeof ownerActionEffects.ownerActionOriginMatch, 'function');
-    for (const name of ['getServerPort', 'DEFAULT_PORT', 'HOST', 'TIMEOUT_MS']) {
+    for (const name of ['getServerPort', 'DEFAULT_PORT', 'HOST', 'TIMEOUT_MS', 'setRecordIdentity']) {
       assert.equal(name in core, false, 'removed core root symbol remains: ' + name);
     }
     const require = createRequire(import.meta.url);
