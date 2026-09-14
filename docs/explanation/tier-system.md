@@ -15,6 +15,10 @@ this page. There is no `getTier()`, no tier detection, no exact-match fallback, 
 indicator in results. Search is vector search over the local embedding model, with FTS5 alongside
 it - see [Semantic Search](semantic-search.md).
 
+`MAMA_FORCE_TIER_3` keeps its name but is not part of any tier system: it makes
+`assertEmbeddingsEnabled()` throw before the model loads, so tests skip embedding work. It fails
+loudly rather than degrading, which is why it is not a search mode.
+
 The tutorial and the remediation guide that taught readers to diagnose and escape Tier 2 are
 removed with it; they described a state that cannot occur.
 

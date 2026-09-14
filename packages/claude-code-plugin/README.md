@@ -125,12 +125,11 @@ MAMA Plugin includes two specialized agents (planned, not yet registered):
 
 ---
 
-## 🎯 Tier System
+## 🔍 Search
 
-MAMA operates in **two tiers** with full transparency:
-
-Search is vector search over the local embedding model, with FTS5 alongside it. There is no
-tiered fallback: the model ships with the package and is always loaded.
+Vector search over the local embedding model, with FTS5 alongside it. There is no tiered
+fallback and no degraded mode. The model ships with the package and loads on the first
+semantic request (~1s); later requests reuse it (~89ms).
 
 ---
 

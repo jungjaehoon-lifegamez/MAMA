@@ -25,8 +25,8 @@ UserPromptSubmit is NOT wired - the sections below document only hooks that exis
 ## Embeddings
 
 The core generates embeddings in the process that performs the search. There is no embedding
-HTTP endpoint or compatibility listener. The
-local embedding provider cannot be initialized.
+HTTP endpoint or compatibility listener. When the local embedding provider cannot be
+initialized, semantic search fails explicitly; there is no exact-match path to fall back to.
 
 ---
 

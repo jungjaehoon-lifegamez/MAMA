@@ -68,7 +68,7 @@ _Conceptual explanations and design decisions_
 - [Architecture](explanation/architecture.md) - System architecture overview
 - [MAMA OS](explanation/mama-os.md) - Messenger runtime, operational API, and background work
 - [Work Agent](explanation/work-agent.md) - Why MAMA has one front, scoped Cases, and domain capabilities
-- [Tier System](explanation/tier-system.md) - Tier system design and philosophy
+- [Worker Tool Tiers](explanation/tier-system.md) - Which native tools a worker subprocess may use
 - [Decision Graph](explanation/decision-graph.md) - Decision evolution tracking
 - [Semantic Search](explanation/semantic-search.md) - How semantic search works
 - [Data Privacy](explanation/data-privacy.md) - Privacy-first design principles

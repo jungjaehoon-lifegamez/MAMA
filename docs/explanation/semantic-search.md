@@ -333,7 +333,7 @@ For each decision:
 
 ## See Also
 
-- [Tier System](tier-system.md) - Fallback to exact match when embeddings unavailable
+- [Worker Tool Tiers](tier-system.md) - Which native tools a worker subprocess may use
 - [Decision Graph](decision-graph.md) - Graph expansion for supersedes relationships
 - [Configuration Guide](../guides/configuration.md) - Change embedding model
 - [Performance Tuning](../guides/performance-tuning.md) - Optimize for your use case
