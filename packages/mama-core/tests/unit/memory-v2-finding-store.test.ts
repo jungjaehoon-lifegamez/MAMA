@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 
+import { getAdapter, initDB } from '../../src/db-manager.js';
 import { createAuditFinding, listOpenAuditFindings } from '../../src/memory/finding-store.js';
 
 const TEST_DB = '/tmp/test-memory-v2-finding-store.db';
 
 describe('audit finding store', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
         fs.unlinkSync(file);
@@ -16,6 +17,7 @@ describe('audit finding store', () => {
     });
 
     process.env.MAMA_DB_PATH = TEST_DB;
+    await initDB();
   });
 
   afterAll(async () => {
@@ -33,7 +35,7 @@ describe('audit finding store', () => {
   });
 
   it('should persist unresolved findings', async () => {
-    await createAuditFinding({
+    createAuditFinding(getAdapter(), {
       kind: 'memory_conflict',
       severity: 'high',
       summary: 'conflict found',

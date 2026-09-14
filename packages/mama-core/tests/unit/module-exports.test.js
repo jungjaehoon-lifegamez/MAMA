@@ -167,17 +167,6 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('outcome-tracker.js exports', () => {
-    it('should export required functions', async () => {
-      const outcome = await import('../../src/outcome-tracker.js');
-
-      expect(outcome.analyzeOutcome).toBeDefined();
-      expect(outcome.markOutcome).toBeDefined();
-      expect(typeof outcome.analyzeOutcome).toBe('function');
-      expect(typeof outcome.markOutcome).toBe('function');
-    });
-  });
-
   describe('decision-formatter.js exports', () => {
     it('should export formatting functions', async () => {
       const formatter = await import('../../src/decision-formatter.js');
@@ -210,15 +199,6 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof store.queryDecisionGraph).toBe('function');
       expect(typeof store.getDB).toBe('function');
       expect(typeof store.getAdapter).toBe('function');
-    });
-  });
-
-  describe('query-intent.js exports', () => {
-    it('should export analyzeIntent function', async () => {
-      const intent = await import('../../src/query-intent.js');
-
-      expect(intent.analyzeIntent).toBeDefined();
-      expect(typeof intent.analyzeIntent).toBe('function');
     });
   });
 

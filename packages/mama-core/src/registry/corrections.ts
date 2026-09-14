@@ -344,11 +344,12 @@ function validateCommon(correction: IdentityCorrection): void {
 }
 
 export function appendIdentityCorrection(
+  adapter: Db,
   correction: IdentityCorrection,
   trusted: TrustedIdentityCorrectionContext
 ): IdentityCorrectionReceipt {
   validateCommon(correction);
-  const db = getAdapter();
+  const db = adapter;
   const requestedScopes = effectiveScopes(correction, trusted);
   const payloadJson = canonicalJson(correction);
 

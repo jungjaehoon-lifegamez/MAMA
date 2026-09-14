@@ -73,11 +73,11 @@ describe('atomic identity corrections', () => {
       alias: 'a-1',
       scopes: [scope],
     };
-    const receipt = appendIdentityCorrection(command, trusted);
-    expect(appendIdentityCorrection(command, trusted)).toEqual(receipt);
-    expect(() => appendIdentityCorrection({ ...command, alias: 'changed' }, trusted)).toThrowError(
-      /different authority or payload/
-    );
+    const receipt = appendIdentityCorrection(getAdapter(), command, trusted);
+    expect(appendIdentityCorrection(getAdapter(), command, trusted)).toEqual(receipt);
+    expect(() =>
+      appendIdentityCorrection(getAdapter(), { ...command, alias: 'changed' }, trusted)
+    ).toThrowError(/different authority or payload/);
     expect(
       getAdapter().prepare('SELECT COUNT(*) AS count FROM registry_corrections').get()
     ).toEqual({ count: 1 });
@@ -93,9 +93,9 @@ describe('atomic identity corrections', () => {
       nodeId: node,
       alias: 'revoked alias',
     };
-    appendIdentityCorrection(command, trusted);
+    appendIdentityCorrection(getAdapter(), command, trusted);
     expect(() =>
-      appendIdentityCorrection(command, {
+      appendIdentityCorrection(getAdapter(), command, {
         principalId: trusted.principalId,
         agentId: trusted.agentId,
         scopes: [],
@@ -123,6 +123,7 @@ describe('atomic identity corrections', () => {
     const revision = currentIdentityRevision();
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:merge-denied',
           expectedRevision: revision,
@@ -138,6 +139,7 @@ describe('atomic identity corrections', () => {
     expect(currentIdentityRevision()).toBe(revision);
     expect(
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:merge-full',
           expectedRevision: revision,
@@ -196,6 +198,7 @@ describe('atomic identity corrections', () => {
     const revision = currentIdentityRevision();
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:hidden-edge',
           expectedRevision: revision,
@@ -211,6 +214,7 @@ describe('atomic identity corrections', () => {
     expect(currentIdentityRevision()).toBe(revision);
     const visible = edge('edge:visible');
     appendIdentityCorrection(
+      getAdapter(),
       {
         commandId: 'cmd:visible-edge',
         expectedRevision: currentIdentityRevision(),
@@ -232,6 +236,7 @@ describe('atomic identity corrections', () => {
     const revision = currentIdentityRevision();
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:duplicate-slot',
           expectedRevision: revision,
@@ -261,6 +266,7 @@ describe('atomic identity corrections', () => {
     const errors = [hidden, 'reg_unknown_synthetic'].map((nodeId, index) => {
       try {
         appendIdentityCorrection(
+          getAdapter(),
           {
             commandId: `cmd:opaque:${index}`,
             expectedRevision: currentIdentityRevision(),
@@ -296,15 +302,15 @@ describe('atomic identity corrections', () => {
       alias: 'authority alias',
       scopes: [scope],
     };
-    expect(() => appendIdentityCorrection(command, { ...trusted, principalId: '' })).toThrowError(
-      /principal/i
-    );
-    expect(() => appendIdentityCorrection(command, { ...trusted, agentId: '' })).toThrowError(
-      /agent/i
-    );
-    expect(() => appendIdentityCorrection(command, { ...trusted, scopes: [] })).toThrowError(
-      /scope/i
-    );
+    expect(() =>
+      appendIdentityCorrection(getAdapter(), command, { ...trusted, principalId: '' })
+    ).toThrowError(/principal/i);
+    expect(() =>
+      appendIdentityCorrection(getAdapter(), command, { ...trusted, agentId: '' })
+    ).toThrowError(/agent/i);
+    expect(() =>
+      appendIdentityCorrection(getAdapter(), command, { ...trusted, scopes: [] })
+    ).toThrowError(/scope/i);
   });
 
   it('revalidates a non-null assignment target before replaying its receipt', () => {
@@ -322,10 +328,10 @@ describe('atomic identity corrections', () => {
       ],
       scopes: [scope],
     };
-    const receipt = appendIdentityCorrection(command, trusted);
-    expect(appendIdentityCorrection(command, trusted)).toEqual(receipt);
+    const receipt = appendIdentityCorrection(getAdapter(), command, trusted);
+    expect(appendIdentityCorrection(getAdapter(), command, trusted)).toEqual(receipt);
     getAdapter().prepare('DELETE FROM registry_scope_bindings WHERE node_id=?').run(target);
-    expect(() => appendIdentityCorrection(command, trusted)).toThrowError(
+    expect(() => appendIdentityCorrection(getAdapter(), command, trusted)).toThrowError(
       /Registry target is unavailable/
     );
   });
@@ -338,6 +344,7 @@ describe('atomic identity corrections', () => {
     const second = createNode({ kind: 'item', name: 'second', scopes: [scope] });
     for (const [index, target] of [first, second, null].entries()) {
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: `cmd:${index}`,
           expectedRevision: currentIdentityRevision(),
@@ -373,6 +380,7 @@ describe('atomic identity corrections', () => {
     for (const [index, children] of [[], [{ clientKey: 'only', name: 'only child' }]].entries()) {
       expect(() =>
         appendIdentityCorrection(
+          getAdapter(),
           {
             commandId: `cmd:invalid-split:${index}`,
             expectedRevision: revision,
@@ -400,6 +408,7 @@ describe('atomic identity corrections', () => {
     const original = edge('edge:split-client');
     const parent = createNode({ kind: 'item', name: 'split parent', scopes: [scope] });
     const receipt = appendIdentityCorrection(
+      getAdapter(),
       {
         commandId: 'cmd:split-client',
         expectedRevision: currentIdentityRevision(),
@@ -452,6 +461,7 @@ describe('atomic identity corrections', () => {
     ].entries()) {
       expect(() =>
         appendIdentityCorrection(
+          getAdapter(),
           {
             commandId: `cmd:split-invalid:${index}`,
             expectedRevision: revision,
@@ -489,6 +499,7 @@ describe('atomic identity corrections', () => {
     });
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:foreign',
           expectedRevision: currentIdentityRevision(),
@@ -504,6 +515,7 @@ describe('atomic identity corrections', () => {
     ).toThrowError(/Correction evidence is unavailable/);
     expect(
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:valid',
           expectedRevision: currentIdentityRevision(),
@@ -543,6 +555,7 @@ describe('atomic identity corrections', () => {
       observation: { observed_at: 3 },
     });
     const receipt = appendIdentityCorrection(
+      getAdapter(),
       {
         commandId: 'cmd:visible-evidence',
         expectedRevision: currentIdentityRevision(),
@@ -574,6 +587,7 @@ describe('atomic identity corrections', () => {
     });
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:channel-evidence-denied',
           expectedRevision: currentIdentityRevision(),
@@ -606,6 +620,7 @@ describe('atomic identity corrections', () => {
     });
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:wrong-owner',
           expectedRevision: currentIdentityRevision(),
@@ -621,6 +636,7 @@ describe('atomic identity corrections', () => {
     ).toThrowError(/Correction evidence is unavailable/);
     expect(
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:owner',
           expectedRevision: currentIdentityRevision(),
@@ -641,6 +657,7 @@ describe('atomic identity corrections', () => {
     getAdapter().prepare('DROP TABLE observation_versions').run();
     expect(() =>
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:evidence',
           expectedRevision: currentIdentityRevision(),
@@ -673,6 +690,7 @@ describe('atomic identity corrections', () => {
     let failure: unknown;
     try {
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:missing-edge-schema',
           expectedRevision: revision,
@@ -698,6 +716,7 @@ describe('atomic identity corrections', () => {
     ).toEqual({ count: 0 });
     expect(
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'cmd:after-schema-failure',
           expectedRevision: revision,

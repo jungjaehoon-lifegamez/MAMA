@@ -25,7 +25,13 @@ import os from 'os';
 import crypto from 'crypto';
 
 // Internal modules
-import { DecisionRecord, SemanticEdgeItem, fts5Search, ensureMemoryScope } from './db-manager.js';
+import {
+  DecisionRecord,
+  SemanticEdgeItem,
+  fts5Search,
+  ensureMemoryScope,
+  initDB,
+} from './db-manager.js';
 import { appendOutcomeAmendment } from './memory/write-adapters.js';
 import {
   queryDecisionGraph,
@@ -55,7 +61,10 @@ import {
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
-import { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
+import {
+  createAuditFinding as createAuditFindingInAdapter,
+  listOpenAuditFindings,
+} from './memory/finding-store.js';
 import { listMemoryEventsForMemory, listRecentMemoryEvents } from './memory/event-store.js';
 import type { TrustedMemoryWriteOptions } from './memory/provenance.js';
 import {
@@ -3874,6 +3883,18 @@ function formatQualityReportMarkdown(report: {
   }
 
   return markdown;
+}
+
+/**
+ * Public write boundary for audit findings. The store writer takes the adapter
+ * from its caller; this edge resolves the ambient adapter so the
+ * MAMAApiInterface signature stays (input) => Promise<string>.
+ */
+async function createAuditFinding(
+  input: Parameters<typeof createAuditFindingInAdapter>[1]
+): Promise<string> {
+  await initDB();
+  return createAuditFindingInAdapter(getAdapter(), input);
 }
 
 /**

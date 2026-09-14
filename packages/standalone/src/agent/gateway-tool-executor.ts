@@ -2724,7 +2724,7 @@ export class GatewayToolExecutor {
       mergeNodes: (mergeInput) => core.mergeNodes(mergeInput),
       splitNode: (splitInput) => core.splitNode(splitInput as never),
       appendIdentityCorrection: (correction, trusted) =>
-        core.appendIdentityCorrection(correction as never, trusted as never),
+        core.appendIdentityCorrection(core.getAdapter(), correction as never, trusted as never),
     };
   }
 
