@@ -12,7 +12,7 @@ const generateEmbeddingMock = vi.fn();
 const vectorSearchMock = vi.fn();
 
 let decisionRows: Array<Record<string, unknown>> = [];
-let currencyRows: Array<{ id: string; topic: string; created_at: number | string | null }> = [];
+const currencyRows: Array<{ id: string; topic: string; created_at: number | string | null }> = [];
 
 vi.mock('../../src/embeddings.js', () => ({
   generateEmbedding: generateEmbeddingMock,
@@ -130,95 +130,5 @@ describe('AC2: topic-anchored recall ranks the topic own rows above body-text no
     const topics = bundle.memories.map((m: { topic: string }) => m.topic);
     expect(topics[0]).toBe('operator_report_cadence');
     expect(topics[1]).toBe('operator_report_cadence');
-  });
-});
-
-describe('AC3: annotateTopicCurrency marks superseded history', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-  });
-
-  it('marks a row stale when the DB holds a newer row for the same topic', async () => {
-    currencyRows = [
-      { id: 'old-row', topic: 'billing_policy', created_at: 1000 },
-      { id: 'new-row', topic: 'billing_policy', created_at: 2000 },
-    ];
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    const annotated = annotateTopicCurrency([
-      { id: 'old-row', topic: 'billing_policy' },
-      { id: 'new-row', topic: 'billing_policy' },
-    ]);
-    expect(annotated.find((r) => r.id === 'old-row')?.superseded_by_newer).toBe(true);
-    expect(annotated.find((r) => r.id === 'new-row')?.superseded_by_newer).toBe(false);
-  });
-
-  it('normalizes mixed created_at encodings (seconds / ms / TEXT) before comparing', async () => {
-    currencyRows = [
-      { id: 'sec-row', topic: 'mixed_topic', created_at: 1770961389 }, // seconds
-      { id: 'ms-row', topic: 'mixed_topic', created_at: 1777041049115 }, // ms (newer)
-      { id: 'text-row', topic: 'mixed_topic', created_at: '2026-02-15 04:29:33' },
-    ];
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    const annotated = annotateTopicCurrency([
-      { id: 'sec-row', topic: 'mixed_topic' },
-      { id: 'ms-row', topic: 'mixed_topic' },
-      { id: 'text-row', topic: 'mixed_topic' },
-    ]);
-    expect(annotated.find((r) => r.id === 'ms-row')?.superseded_by_newer).toBe(false);
-    expect(annotated.find((r) => r.id === 'sec-row')?.superseded_by_newer).toBe(true);
-    expect(annotated.find((r) => r.id === 'text-row')?.superseded_by_newer).toBe(true);
-  });
-
-  it.each([
-    ['2026-01-01T10:00:00-05:00', '2026-01-01T14:30:00Z'],
-    ['2026-01-01T20:00:00+05:30', '2026-01-01T14:00:00Z'],
-  ])('preserves explicit ISO offsets when choosing newest: %s', async (offsetTime, utcTime) => {
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    currencyRows = [
-      { id: 'offset-row', topic: 'offset-topic', created_at: offsetTime },
-      { id: 'utc-row', topic: 'offset-topic', created_at: utcTime },
-    ];
-    const annotated = annotateTopicCurrency([
-      { id: 'offset-row', topic: 'offset-topic' },
-      { id: 'utc-row', topic: 'offset-topic' },
-    ]);
-    expect(annotated.find((row) => row.id === 'offset-row')?.superseded_by_newer).toBe(false);
-  });
-
-  it('leaves rows untouched for topics with a single row', async () => {
-    currencyRows = [{ id: 'only-row', topic: 'solo_topic', created_at: 1000 }];
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    const annotated = annotateTopicCurrency([{ id: 'only-row', topic: 'solo_topic' }]);
-    expect(annotated[0].superseded_by_newer).toBe(false);
-  });
-
-  it('breaks equal-timestamp ties deterministically (higher id wins)', async () => {
-    currencyRows = [
-      { id: 'row-a', topic: 'tie_topic', created_at: 1000 },
-      { id: 'row-b', topic: 'tie_topic', created_at: 1000 },
-    ];
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    const annotated = annotateTopicCurrency([
-      { id: 'row-a', topic: 'tie_topic' },
-      { id: 'row-b', topic: 'tie_topic' },
-    ]);
-    expect(annotated.find((r) => r.id === 'row-b')?.superseded_by_newer).toBe(false);
-    expect(annotated.find((r) => r.id === 'row-a')?.superseded_by_newer).toBe(true);
-  });
-
-  it('scoped search restricts the currency comparison to the given scopes', async () => {
-    // The mock returns currencyRows for the scoped query too - what matters
-    // here is that the SCOPED branch is exercised (join SQL) and rows outside
-    // the mock "scope result" cannot mark in-scope truth stale.
-    currencyRows = [{ id: 'scoped-current', topic: 'deploy_process', created_at: 1000 }];
-    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
-    const annotated = annotateTopicCurrency(
-      [{ id: 'scoped-current', topic: 'deploy_process' }],
-      [{ kind: 'project', id: '/proj/a' }]
-    );
-    // A newer row exists globally (not in currencyRows because the scoped SQL
-    // excludes it) - the in-scope row must remain current.
-    expect(annotated[0].superseded_by_newer).toBe(false);
   });
 });

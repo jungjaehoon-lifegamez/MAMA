@@ -28,7 +28,6 @@ const { listDecisionsTool } = require('./list-decisions.js');
 const { updateOutcomeTool } = require('./update-outcome.js');
 const { saveCheckpointTool, loadCheckpointTool } = require('./checkpoint-tools.js');
 const { searchNarrativeTool } = require('./search-narrative.js');
-const { generateQualityReportTool, getRestartMetricsTool } = require('./quality-metrics-tools.js');
 const { ingestConversationTool } = require('./ingest-conversation.js');
 const { searchDecisionsAndContractsTool } = require('./search-decisions-and-contracts.js');
 const { caseTimelineRangeTool } = require('./case-timeline-range.js');
@@ -50,8 +49,6 @@ function createMemoryTools() {
     save_checkpoint: saveCheckpointTool,
     load_checkpoint: loadCheckpointTool,
     search_narrative: searchNarrativeTool,
-    generate_quality_report: generateQualityReportTool,
-    get_restart_metrics: getRestartMetricsTool,
     ingest_conversation: ingestConversationTool,
     search_decisions_and_contracts: searchDecisionsAndContractsTool,
     case_timeline_range: caseTimelineRangeTool,
@@ -69,8 +66,6 @@ module.exports = {
   saveCheckpointTool,
   loadCheckpointTool,
   searchNarrativeTool,
-  generateQualityReportTool,
-  getRestartMetricsTool,
   ingestConversationTool,
   searchDecisionsAndContractsTool,
   caseTimelineRangeTool,
