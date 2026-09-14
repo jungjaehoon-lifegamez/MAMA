@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 
 import { getAdapter, initDB } from '../db-manager.js';
-import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
-import { appendMemoryEvent } from './event-store.js';
+import { getChannelSummary, upsertChannelSummaryInAdapter } from './channel-summary-store.js';
+import { insertMemoryEventInTransaction } from './event-store.js';
 import { createAuditFinding } from './finding-store.js';
 import type { ChannelSummaryStateRecord, MemoryAuditAck, MemoryScopeRef } from './types.js';
 
@@ -218,41 +218,12 @@ export async function recordChannelAudit(input: {
     (legacySummary
       ? createLegacySeedState(input.channelKey, legacySummary)
       : createEmptyState(input.channelKey));
-  const eventIds: string[] = [];
-  const findingIds: string[] = [];
-
   const eventType =
     input.ack.status === 'failed'
       ? 'audit_failed'
       : input.ack.action === 'no_op'
         ? 'no_op'
         : input.ack.action;
-
-  eventIds.push(
-    await appendMemoryEvent({
-      event_type: eventType,
-      actor: 'memory_agent',
-      source_turn_id: input.turnId,
-      memory_id: input.savedMemories?.[0]?.id,
-      topic: input.topic,
-      scope_refs: input.scopeRefs,
-      reason: input.ack.reason,
-      created_at: timestamp,
-    })
-  );
-
-  if (input.ack.status === 'failed') {
-    findingIds.push(
-      createAuditFinding(adapter, {
-        kind: 'unsupported_claim',
-        severity: 'high',
-        summary: input.ack.reason ?? `memory audit failed for ${input.topic}`,
-        evidence_refs: eventIds,
-        affected_memory_ids: input.savedMemories?.map((memory) => memory.id) ?? [],
-        recommended_action: 'consult_memory',
-      })
-    );
-  }
 
   const state = reduceState(previous, {
     topic: input.topic,
@@ -261,34 +232,71 @@ export async function recordChannelAudit(input: {
     timestamp,
   });
 
-  adapter
-    .prepare(
-      `
-        INSERT OR REPLACE INTO channel_summary_state (
-          channel_key,
-          state_json,
-          state_hash,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?)
-      `
-    )
-    .run(
-      input.channelKey,
-      JSON.stringify({
-        active_topic: state.active_topic,
-        active_decisions: state.active_decisions,
-        recent_milestones: state.recent_milestones,
-        recent_audit_outcomes: state.recent_audit_outcomes,
-      } satisfies ChannelSummaryStatePayload),
-      state.state_hash,
-      timestamp
+  // One audit produces an event, its finding, the reduced state and the legacy
+  // summary. Written separately, a failure after the first leaves an event whose
+  // finding never existed - a record asserting something with nothing behind it.
+  const { eventIds, findingIds } = adapter.transaction(() => {
+    const events: string[] = [];
+    const findings: string[] = [];
+
+    events.push(
+      insertMemoryEventInTransaction(adapter, {
+        event_type: eventType,
+        actor: 'memory_agent',
+        source_turn_id: input.turnId,
+        memory_id: input.savedMemories?.[0]?.id,
+        topic: input.topic,
+        scope_refs: input.scopeRefs,
+        reason: input.ack.reason,
+        created_at: timestamp,
+      })
     );
 
-  await upsertChannelSummary({
-    channelKey: input.channelKey,
-    summaryMarkdown: renderChannelSummaryMarkdown(state),
-    deltaHash: state.state_hash,
+    if (input.ack.status === 'failed') {
+      findings.push(
+        createAuditFinding(adapter, {
+          kind: 'unsupported_claim',
+          severity: 'high',
+          summary: input.ack.reason ?? `memory audit failed for ${input.topic}`,
+          evidence_refs: events,
+          affected_memory_ids: input.savedMemories?.map((memory) => memory.id) ?? [],
+          recommended_action: 'consult_memory',
+        })
+      );
+    }
+
+    adapter
+      .prepare(
+        `
+          INSERT OR REPLACE INTO channel_summary_state (
+            channel_key,
+            state_json,
+            state_hash,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?)
+        `
+      )
+      .run(
+        input.channelKey,
+        JSON.stringify({
+          active_topic: state.active_topic,
+          active_decisions: state.active_decisions,
+          recent_milestones: state.recent_milestones,
+          recent_audit_outcomes: state.recent_audit_outcomes,
+        } satisfies ChannelSummaryStatePayload),
+        state.state_hash,
+        timestamp
+      );
+
+    upsertChannelSummaryInAdapter(adapter, {
+      channelKey: input.channelKey,
+      summaryMarkdown: renderChannelSummaryMarkdown(state),
+      deltaHash: state.state_hash,
+      updatedAt: timestamp,
+    });
+
+    return { eventIds: events, findingIds: findings };
   });
 
   return { eventIds, findingIds, state };

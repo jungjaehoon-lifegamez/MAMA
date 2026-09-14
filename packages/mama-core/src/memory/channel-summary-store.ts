@@ -1,4 +1,4 @@
-import { getAdapter, initDB } from '../db-manager.js';
+import { getAdapter, initDB, type DatabaseAdapter } from '../db-manager.js';
 import type { ChannelSummaryRecord } from './types.js';
 
 function toChannelSummary(row: Record<string, unknown>): ChannelSummaryRecord {
@@ -10,14 +10,15 @@ function toChannelSummary(row: Record<string, unknown>): ChannelSummaryRecord {
   };
 }
 
-export async function upsertChannelSummary(input: {
-  channelKey: string;
-  summaryMarkdown: string;
-  deltaHash?: string;
-}): Promise<void> {
-  await initDB();
-  const adapter = getAdapter();
-
+export function upsertChannelSummaryInAdapter(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  input: {
+    channelKey: string;
+    summaryMarkdown: string;
+    deltaHash?: string;
+    updatedAt?: number;
+  }
+): void {
   adapter
     .prepare(
       `
@@ -30,7 +31,22 @@ export async function upsertChannelSummary(input: {
         VALUES (?, ?, ?, ?)
       `
     )
-    .run(input.channelKey, input.summaryMarkdown, input.deltaHash ?? null, Date.now());
+    .run(
+      input.channelKey,
+      input.summaryMarkdown,
+      input.deltaHash ?? null,
+      input.updatedAt ?? Date.now()
+    );
+}
+
+export async function upsertChannelSummary(input: {
+  channelKey: string;
+  summaryMarkdown: string;
+  deltaHash?: string;
+  updatedAt?: number;
+}): Promise<void> {
+  await initDB();
+  upsertChannelSummaryInAdapter(getAdapter(), input);
 }
 
 export async function getChannelSummary(channelKey: string): Promise<ChannelSummaryRecord | null> {
