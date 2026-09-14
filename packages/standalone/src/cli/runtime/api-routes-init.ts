@@ -862,8 +862,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
     });
 
-    // Owner/host IANA time zone - the same source the temporal runtime and the
-    // TaskLedger derive the owner day from.
+    // Owner/host IANA time zone - the same source the TaskLedger derives the
+    // owner day from.
     const wikiTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     // The wiki source watermark covers connector observation, native owner tasks

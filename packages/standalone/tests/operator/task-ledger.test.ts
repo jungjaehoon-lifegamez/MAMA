@@ -8,9 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
-import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { promotionKey } from '../../src/operator/workorder-publishers.js';
-import { selectTemporalCandidates } from '../../src/operator/temporal-reconcile.js';
 
 describe('TaskLedger', () => {
   let db: SQLiteDatabase;
@@ -174,16 +172,6 @@ describe('TaskLedger', () => {
     expect(review.reviewAnchorSourceChannel).toBe('slack:C002');
     expect(review.sourceChannel).toBe('slack:C001');
     expect(review.dueAt).toBe(submittedAt + 14 * 24 * 60 * 60 * 1000);
-    const candidates = selectTemporalCandidates([review], new Set(), {
-      now: review.dueAt!,
-      timeZone: 'Asia/Seoul',
-    });
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({
-      sourceChannel: 'slack:C002',
-      sourceEventId: 'event-index-1',
-    });
-    expect(() => ledger.enqueueTemporalGeneration(candidates[0])).not.toThrow();
 
     const reopened = ledger.update(review.id, {
       status: 'in_progress',
@@ -198,37 +186,6 @@ describe('TaskLedger', () => {
       deadlineIso: null,
       deadlineOffsetMinutes: null,
     });
-  });
-
-  it('TG-05/TG-06 refuses temporal ownership for a legacy review row without verified anchors', () => {
-    // A legacy row predates the verified-review migration; the current API refuses to
-    // create one, so the fixture writes the pre-migration shape directly.
-    const seeded = ledger.create({
-      title: 'legacy review without submission proof',
-      due_at: '2026-09-01T00:00:00Z',
-      source_channel: 'slack:C001',
-      source_event_id: 'legacy-event',
-    });
-    db.prepare(`UPDATE operator_tasks SET status = 'review' WHERE id = ?`).run(seeded.id);
-    const legacy = ledger.getById(seeded.id)!;
-    expect(legacy).toMatchObject({
-      status: 'review',
-      reviewStartedAt: null,
-      reviewAnchorEventId: null,
-    });
-    const occurrenceKey = occurrenceKeyForTask(legacy)!;
-
-    expect(() =>
-      ledger.enqueueTemporalGeneration({
-        generationKey: temporalGenerationKey(legacy.id, occurrenceKey, legacy.dueAt!),
-        taskId: legacy.id,
-        temporalEpoch: legacy.temporalEpoch,
-        occurrenceKey,
-        checkAt: legacy.dueAt!,
-        sourceChannel: legacy.sourceChannel,
-        sourceEventId: legacy.sourceEventId,
-      })
-    ).toThrow(/verified review anchor/i);
   });
 
   it('deadline can be cleared with null', () => {
@@ -904,7 +861,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
     });
 
     it('ignores and preserves pending workorders owned by a future version', () => {
-      const futureId = insertFutureWorkOrder('pending', 'temporal:slot-1');
+      const futureId = insertFutureWorkOrder('pending', 'future:slot-1');
       const known = ledger.enqueueWorkOrder({
         workKind: 'board',
         idempotencyKey: 'board:slot-1',
@@ -922,7 +879,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
     });
 
     it('ignores stale claims owned by a future version', () => {
-      insertFutureWorkOrder('in_progress', 'temporal:slot-2');
+      insertFutureWorkOrder('in_progress', 'future:slot-2');
       const known = ledger.enqueueWorkOrder({
         workKind: 'wiki',
         idempotencyKey: 'wiki:slot-2',

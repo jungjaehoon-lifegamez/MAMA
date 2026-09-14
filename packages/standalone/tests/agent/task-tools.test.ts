@@ -98,7 +98,7 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
       expect(result.nextCursor).toBeNull();
     });
 
-    it('accepts exact due_at and returns the normalized temporal projection', async () => {
+    it('accepts exact due_at and returns the normalized due projection', async () => {
       const created = (await executor.execute('task_create', {
         title: 'exact',
         completion_criteria: 'c',
@@ -111,7 +111,6 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
         deadlineIso: '2026-07-22',
         deadline_offset_minutes: 540,
         revision: 1,
-        temporal_epoch: 1,
         temporal_state: 'exact_upcoming',
       });
 

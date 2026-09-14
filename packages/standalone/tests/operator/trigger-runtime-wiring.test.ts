@@ -54,20 +54,14 @@ describe('trigger runtime provider wiring', () => {
     expect(startSource).not.toContain('operator:trigger-author');
   });
 
-  it('preflights temporal compatibility before initializing timer-bearing services', () => {
+  it('resolves the runtime backend before initializing timer-bearing services', () => {
     const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
-    const preflight = startSource.indexOf('preflightTemporalStartup(process.env');
+    const backend = startSource.indexOf('const runtimeBackend = requireRuntimeBackend');
 
-    expect(preflight).toBeGreaterThan(0);
-    expect(preflight).toBeLessThan(startSource.indexOf('await initMetrics('));
-    expect(startSource.indexOf('const runtimeBackend = requireRuntimeBackend')).toBeLessThan(
-      startSource.indexOf('await initMetrics(')
-    );
-    expect(startSource.indexOf('const temporalEffectiveTools = temporalPolicy')).toBeLessThan(
-      startSource.indexOf('await initMetrics(')
-    );
-    expect(preflight).toBeLessThan(startSource.indexOf('initCronScheduler('));
-    expect(preflight).toBeLessThan(startSource.indexOf('initHeartbeat('));
-    expect(preflight).toBeLessThan(startSource.indexOf('triggerLoop.start()'));
+    expect(backend).toBeGreaterThan(0);
+    expect(backend).toBeLessThan(startSource.indexOf('await initMetrics('));
+    expect(backend).toBeLessThan(startSource.indexOf('initCronScheduler('));
+    expect(backend).toBeLessThan(startSource.indexOf('initHeartbeat('));
+    expect(backend).toBeLessThan(startSource.indexOf('triggerLoop.start()'));
   });
 });

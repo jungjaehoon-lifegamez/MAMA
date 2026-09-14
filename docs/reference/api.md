@@ -922,49 +922,13 @@ PATCH clear/update combinations are intentional:
 - changing `due_date` without `due_at` clears exact-time precision but preserves the captured
   offset unless the date itself is set to `null`;
 - setting only `due_at: null` preserves the current `due_date` and captured offset;
-- setting `due_date: null` clears the date, exact instant, and captured offset; and
-- changing the schedule or reopening a terminal task increments `temporal_epoch` and clears the
-  previous reconciled/deferred/attempt markers.
+- setting `due_date: null` clears the date, exact instant, and captured offset.
 
-Every serialized task includes these read-only temporal fields:
+Every serialized task includes this read-only derived field:
 
-| Field                                | Type           | Meaning                                                                                                                                                                                                         |
-| ------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `temporal_state`                     | string         | Separate read-time projection: `closed`, `exact_upcoming`, `exact_overdue`, `date_upcoming`, `date_due`, `date_overdue`, or `unscheduled`; it never mutates lifecycle, and `closed` reflects `done`/`cancelled` |
-| `temporal_epoch`                     | number         | Host-owned occurrence version, incremented by a reschedule/reopen                                                                                                                                               |
-| `temporal_reconciled_occurrence_key` | string or null | Occurrence finalized by a trusted receipt                                                                                                                                                                       |
-| `last_temporal_checked_at`           | number or null | Epoch milliseconds of the last committed check                                                                                                                                                                  |
-| `next_temporal_check_at`             | number or null | Epoch milliseconds of a deferred follow-up                                                                                                                                                                      |
-| `last_temporal_attempt_id`           | number or null | Host-issued workorder attempt that committed the latest check                                                                                                                                                   |
-
-The internal gateway tool `task_temporal_reconcile` is not a general task mutation endpoint. It is
-available only inside a host-issued active temporal work context and accepts one of three outcomes:
-an evidence-backed workflow change (`resolved`), evidence-backed final confirmation with no
-workflow change (`final_no_update`), or a strictly future follow-up (`deferred`). The native task,
-generation, receipt, and workorder terminal state commit atomically. Reports or explanation text do
-not satisfy this contract, and stale attempts are denied after rescheduling and immediately before
-and after every gateway read or write. Context packets are host-bound to the task generation; every
-raw reference in a returned packet must match the task source event/channel, so one matching Trello
-card cannot authorize unrelated card evidence. Receipts created before source-bound attestation
-remain readable but quarantined and never become authoritative through migration shape checks.
-
-All calls require `context_packet_id`, `expected_revision` (a non-negative integer equal to the
-host-bound revision), `outcome`, and a 1-500 character `reason`. A deferred result may use a fresh
-host-bound packet with no raw references when evidence is not yet available; final outcomes remain
-source-backed. Outcome-specific fields are closed schemas:
-
-| Outcome           | Additional fields                               | Contract                                                                                                                                                            |
-| ----------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resolved`        | optional `status`, optional `due_at`            | Must produce an actual status or exact-due change. `status` is an owner lifecycle state, never system-only `failed`; non-null `due_at` requires an explicit offset. |
-| `final_no_update` | required `evidence_summary` (1-1000 characters) | Fresh evidence proves the current workflow fields remain correct and finalizes the occurrence without changing lifecycle state.                                     |
-| `deferred`        | required `next_temporal_check_at`               | Must be explicit-offset RFC 3339 and strictly later than the effect commit time; schedules a distinct future generation.                                            |
-
-Fields belonging to another outcome, model-supplied task/generation/attempt identifiers, and unknown
-fields are rejected.
-
-The returned receipt `reason` is an audit reference, not an echo of the submitted prose. It records
-the outcome plus SHA-256 digest and character length for `reason` and, when applicable,
-`evidence_summary`; raw model/connector text is not copied into temporal audit rows.
+| Field            | Type   | Meaning                                                                                                                                                                                                         |
+| ---------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `temporal_state` | string | Separate read-time projection: `closed`, `exact_upcoming`, `exact_overdue`, `date_upcoming`, `date_due`, `date_overdue`, or `unscheduled`; it never mutates lifecycle, and `closed` reflects `done`/`cancelled` |
 
 #### Memory promotion
 

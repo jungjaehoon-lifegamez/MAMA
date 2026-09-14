@@ -55,7 +55,7 @@ describe('Story TASK-RECAL-2: public task tool boundary', () => {
         connectorEventAdapter: db,
         channelGrantProvider: () => ({ slack: channels }),
         mamaApi: { appendToolTrace: async () => undefined } as never,
-        temporalContextPacketLookup: async () =>
+        contextPacketLookup: async () =>
           ({
             packet_id: 'ctxp-cross-source',
             packet_json: JSON.stringify({
@@ -115,7 +115,7 @@ describe('Story TASK-RECAL-2: public task tool boundary', () => {
     });
     const executor = new GatewayToolExecutor({
       mamaApi: { appendToolTrace: async () => undefined } as never,
-      temporalContextPacketLookup: async () =>
+      contextPacketLookup: async () =>
         ({
           packet_id: 'ctxp-no-raw',
           packet_json: JSON.stringify({ selected_evidence: [] }),

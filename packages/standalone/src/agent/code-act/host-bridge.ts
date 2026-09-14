@@ -32,23 +32,6 @@ export interface ToolMeta {
   readonly inputType?: string;
 }
 
-const TEMPORAL_RECONCILE_COMMON_FIELDS =
-  'context_packet_id: string,expected_revision: number,reason: string';
-const TEMPORAL_RECONCILE_STATUS_TYPE =
-  "'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled'";
-/**
- * Mirrors TemporalReconcileInput (operator/temporal-effect.ts) and the ledger
- * validator: each outcome accepts ONLY its own extra fields, and the field an
- * outcome names without `?` is required there. A flat optional list advertised
- * evidence_summary/next_temporal_check_at on every outcome, and the host
- * rejected those calls with a hashed error the model could not read.
- */
-const TEMPORAL_RECONCILE_INPUT_TYPE =
-  `{${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'resolved',status: ${TEMPORAL_RECONCILE_STATUS_TYPE},due_at?: string | null}` +
-  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'resolved',status?: ${TEMPORAL_RECONCILE_STATUS_TYPE},due_at: string | null}` +
-  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'final_no_update',evidence_summary: string}` +
-  ` | {${TEMPORAL_RECONCILE_COMMON_FIELDS},outcome: 'deferred',next_temporal_check_at: string}`;
-
 /**
  * task_list is a view-discriminated read. `items` (the default) and `overview`
  * share the same filter set; `detail` takes explicit ids and its own text
@@ -963,7 +946,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; due_bucket filters that same missing/overdue/upcoming/closed partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, temporal observation time, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled unless status is explicit.',
+      'Read YOUR task board progressively (you maintain it; the owner only views it). view:overview = counts and due buckets; due_bucket filters that same missing/overdue/upcoming/closed partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50), with total/returned/nextCursor and observedAt/readVersion. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids, with title/latestEvent paged by text_offset/text_limit. A cursor is bound to its filter, observation time, order and read generation: a changed filter or an intervening write is rejected, restart from page one. Order: deadline asc nulls-last, then priority. include_terminal:false hides done/cancelled unless status is explicit.',
     params: [
       {
         name: 'view',
@@ -1219,48 +1202,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
       '{ task: { status: string; resolutionKind: string | null; latestEvent: string | null; revision: number; [key: string]: unknown } }',
     category: 'memory',
   },
-  {
-    name: 'task_temporal_reconcile',
-    description:
-      "Commit this temporal result; host context supplies identity. The input is a union keyed by outcome: pass ONLY that outcome's fields (resolved: status and/or due_at with an actual change; final_no_update: evidence_summary; deferred: a strictly future next_temporal_check_at). A field that belongs to another outcome is rejected, never stripped.",
-    params: [
-      { name: 'context_packet_id', type: 'string', required: true },
-      { name: 'expected_revision', type: 'number', required: true },
-      {
-        name: 'outcome',
-        type: "'resolved' | 'final_no_update' | 'deferred'",
-        required: true,
-      },
-      { name: 'reason', type: 'string', required: true },
-      {
-        name: 'status',
-        type: TEMPORAL_RECONCILE_STATUS_TYPE,
-        required: false,
-        description: 'resolved only',
-      },
-      {
-        name: 'due_at',
-        type: 'string | null',
-        required: false,
-        description: 'resolved only; RFC 3339 with explicit offset, or null to clear',
-      },
-      {
-        name: 'evidence_summary',
-        type: 'string',
-        required: false,
-        description: 'final_no_update only, and required there (1-1000 chars)',
-      },
-      {
-        name: 'next_temporal_check_at',
-        type: 'string',
-        required: false,
-        description: 'deferred only, and required there; RFC 3339, strictly in the future',
-      },
-    ],
-    inputType: TEMPORAL_RECONCILE_INPUT_TYPE,
-    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
-    category: 'memory',
-  },
 ];
 
 /** Read-only tool names for Tier 3 (strictest) */
@@ -1341,7 +1282,6 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'task_reclassify',
   'task_external_bind',
   'task_lifecycle_reconcile',
-  'task_temporal_reconcile',
   'contract_no_update',
   'member_register',
   'member_suspend',

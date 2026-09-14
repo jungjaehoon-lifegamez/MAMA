@@ -1,3 +1,73 @@
+/**
+ * Task deadlines: the date arithmetic and the due state read off a task row.
+ *
+ * A deadline is a date, not an instant: "due Tuesday" means the start of that
+ * day where the owner is, and an explicit offset overrides the zone when one
+ * was recorded.
+ *
+ * This is what the retired temporal reconciliation subsystem was built ON, not
+ * part of it. Reading whether a task is overdue is an ordinary read that
+ * `task_list due_bucket`, the board renderer and the wiki continuity reader all
+ * perform; deciding to re-check an occurrence and file a receipt for it was the
+ * machinery, and that machinery is gone. The vocabulary is renamed accordingly
+ * so nothing here reads as a surviving piece of it.
+ *
+ * @module operator/task-dates
+ */
+
+export function dateInIanaZone(epochMs: number, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    calendar: 'gregory',
+    numberingSystem: 'latn',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(epochMs));
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const year = values.get('year');
+  const month = values.get('month');
+  const day = values.get('day');
+  if (!year || !month || !day) {
+    throw new Error(`could not derive local date in time zone: ${timeZone}`);
+  }
+  return `${year}-${month}-${day}`;
+}
+
+export function startOfTaskDate(
+  deadlineIso: string,
+  offsetMinutes: number | null,
+  timeZone: string
+): number {
+  const utcMidnight = Date.parse(`${deadlineIso}T00:00:00Z`);
+  if (!Number.isFinite(utcMidnight)) {
+    throw new Error(`invalid task deadline date: ${deadlineIso}`);
+  }
+  if (offsetMinutes !== null) {
+    if (!Number.isInteger(offsetMinutes) || offsetMinutes < -840 || offsetMinutes > 840) {
+      throw new Error(`invalid task deadline offset: ${offsetMinutes}`);
+    }
+    return utcMidnight - offsetMinutes * 60_000;
+  }
+
+  // Find the first UTC millisecond that formats as the requested local date.
+  // This remains correct across DST changes where a fixed 24-hour subtraction does not.
+  let low = utcMidnight - 36 * 60 * 60 * 1000;
+  let high = utcMidnight + 36 * 60 * 60 * 1000;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (dateInIanaZone(middle, timeZone) < deadlineIso) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  if (dateInIanaZone(low, timeZone) !== deadlineIso) {
+    throw new Error(`task deadline date ${deadlineIso} does not exist in time zone ${timeZone}`);
+  }
+  return low;
+}
+
 const RFC3339_EXACT_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|([+-])(\d{2}):(\d{2}))$/;
 
@@ -7,7 +77,7 @@ export interface ParsedExactDueAt {
   offsetMinutes: number;
 }
 
-export type TemporalState =
+export type DueState =
   | 'closed'
   | 'exact_upcoming'
   | 'exact_overdue'
@@ -19,14 +89,14 @@ export type TemporalState =
 export const DUE_BUCKETS = ['missing', 'overdue', 'upcoming', 'closed'] as const;
 export type DueBucket = (typeof DUE_BUCKETS)[number];
 
-export function dueBucketForTemporalState(state: TemporalState): DueBucket {
+export function dueBucketForState(state: DueState): DueBucket {
   if (state === 'closed') return 'closed';
   if (state === 'unscheduled') return 'missing';
   if (state === 'exact_overdue' || state === 'date_overdue') return 'overdue';
   return 'upcoming';
 }
 
-export interface TemporalStateInput {
+export interface DueStateInput {
   status: string;
   dueAt: number | null;
   deadlineIso: string | null;
@@ -40,32 +110,9 @@ function dateAtFixedOffset(now: number, offsetMinutes: number): string {
   return new Date(now + offsetMinutes * 60_000).toISOString().slice(0, 10);
 }
 
-function dateInTimeZone(now: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    calendar: 'gregory',
-    numberingSystem: 'latn',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date(now));
-  const values = new Map(parts.map((part) => [part.type, part.value]));
-  const year = values.get('year');
-  const month = values.get('month');
-  const day = values.get('day');
-  if (!year || !month || !day) {
-    throw new Error(`could not derive a calendar date in time zone: ${timeZone}`);
-  }
-  return `${year}-${month}-${day}`;
-}
-
-export function deriveTemporalState(
-  task: TemporalStateInput,
-  now: number,
-  daemonTimeZone: string
-): TemporalState {
+export function deriveDueState(task: DueStateInput, now: number, daemonTimeZone: string): DueState {
   if (!Number.isFinite(now)) {
-    throw new Error(`temporal state clock must be a finite epoch millisecond value, got: ${now}`);
+    throw new Error(`due state clock must be a finite epoch millisecond value, got: ${now}`);
   }
   if (task.status === 'done' || task.status === 'cancelled') {
     return 'closed';
@@ -78,7 +125,7 @@ export function deriveTemporalState(
   }
   const today =
     task.deadlineOffsetMinutes === null
-      ? dateInTimeZone(now, daemonTimeZone)
+      ? dateInIanaZone(now, daemonTimeZone)
       : dateAtFixedOffset(now, task.deadlineOffsetMinutes);
   if (task.deadlineIso > today) {
     return 'date_upcoming';
@@ -136,35 +183,4 @@ export function parseExactDueAt(value: string): ParsedExactDueAt {
     deadline: `${yearText}-${monthText}-${dayText}`,
     offsetMinutes,
   };
-}
-
-export function occurrenceKeyForTask(task: {
-  temporalEpoch: number;
-  dueAt: number | null;
-  deadlineIso: string | null;
-}): string | null {
-  if (task.dueAt !== null) {
-    return `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-  }
-  if (task.deadlineIso !== null) {
-    return `epoch:${task.temporalEpoch}:date:${task.deadlineIso}`;
-  }
-  return null;
-}
-
-export function temporalGenerationKey(
-  taskId: number,
-  occurrenceKey: string,
-  checkAt: number
-): string {
-  if (!Number.isSafeInteger(taskId) || taskId < 1) {
-    throw new Error(`temporal generation task id must be a positive integer, got: ${taskId}`);
-  }
-  if (occurrenceKey.length === 0) {
-    throw new Error('temporal generation occurrence key must be non-empty');
-  }
-  if (!Number.isSafeInteger(checkAt)) {
-    throw new Error(`temporal generation check must be an integer, got: ${checkAt}`);
-  }
-  return `task:${taskId}:${occurrenceKey}:check:${checkAt}`;
 }

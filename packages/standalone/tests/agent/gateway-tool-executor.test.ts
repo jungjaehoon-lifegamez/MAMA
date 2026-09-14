@@ -2865,12 +2865,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('returns four complete selected contracts without slicing the largest declarations', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext(createOsAgentContext());
-          const names = [
-            'task_temporal_reconcile',
-            'context_compile',
-            'mama_search',
-            'task_update',
-          ];
+          const names = ['task_list', 'context_compile', 'mama_search', 'task_update'];
 
           const result = await executor.execute('code_act', {
             code: `tool_describe({ names: ${JSON.stringify(names)} })`,
@@ -2906,7 +2901,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
           const narrowed = await executor.execute('code_act', {
             code: `tool_search({ query: 'task', cursor: ${JSON.stringify(firstPage.nextCursor)} })`,
-            allowedTools: ['task_temporal_reconcile'],
+            allowedTools: ['task_lifecycle_reconcile'],
           });
           expect(narrowed).toMatchObject({
             success: false,

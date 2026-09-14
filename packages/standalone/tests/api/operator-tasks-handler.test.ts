@@ -235,11 +235,6 @@ describe('Operator tasks API', () => {
       due_at: null,
       deadline_offset_minutes: null,
       revision: 1,
-      temporal_epoch: 1,
-      temporal_reconciled_occurrence_key: null,
-      last_temporal_checked_at: null,
-      next_temporal_check_at: null,
-      last_temporal_attempt_id: null,
       temporal_state: 'date_overdue',
       created_at: created.createdAt,
       updated_at: created.updatedAt,
@@ -290,7 +285,7 @@ describe('Operator tasks API', () => {
     });
   });
 
-  it('normalizes exact due_at, exposes bounded temporal fields, and preserves no-op revision', async () => {
+  it('normalizes exact due_at, exposes the derived due state, and preserves no-op revision', async () => {
     const created = ledger.create({ title: 'Exact owner task' });
 
     const first = await request(app).patch(`/api/operator/tasks/${created.id}`).send({
@@ -303,7 +298,6 @@ describe('Operator tasks API', () => {
       due_date: '2026-07-22',
       deadline_offset_minutes: 540,
       revision: 2,
-      temporal_epoch: 1,
       temporal_state: 'exact_upcoming',
     });
 

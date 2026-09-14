@@ -20,9 +20,7 @@ const SHADOW_VIEW = `
   CREATE TEMP VIEW operator_tasks AS SELECT
     id, title, status, priority, kind, payload, assignee, deadline, source_channel,
     source_event_id, latest_event, auto_created, confirmed, due_at,
-    deadline_offset_minutes, probe(revision) AS revision, temporal_epoch,
-    temporal_reconciled_occurrence_key, last_temporal_checked_at,
-    next_temporal_check_at, last_temporal_attempt_id, review_started_at,
+    deadline_offset_minutes, probe(revision) AS revision, review_started_at,
     review_anchor_event_id, created_at, updated_at
   FROM main.operator_tasks`;
 

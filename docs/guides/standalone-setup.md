@@ -271,36 +271,7 @@ Production notes:
   shared verifier access to the issuer secret unless M7/M8 move to an asymmetric
   capability format such as Biscuit-style tokens.
 
-### Temporal Reconciliation (Opt-In)
-
-Temporal reconciliation is disabled by default (the workorder pipeline itself is always on
-since v0.28.0):
-
-```bash
-export MAMA_ENVELOPE_ISSUANCE=enabled
-export MAMA_TEMPORAL_RECONCILE=on
-mama start
-```
-
-The daemon validates the complete path before starting the scanner. `on` requires:
-
-- signed envelope issuance enabled (the default, or `MAMA_ENVELOPE_ISSUANCE=enabled|required`);
-- a Claude, Codex, or Cline backend;
-- the built-in temporal worker policy with `task_temporal_reconcile` available through the
-  active transport; and
-- a working Stage-2 consumer.
-
-Malformed flags fail before timer-bearing daemon services start. With the
-flag unset or `off`, MAMA starts normally, creates no temporal worker/timer, and pauses existing
-open temporal attempts so they can be resumed safely after re-enabling the feature.
-
-The scanner runs once per minute. It pages through all open scheduled owner tasks, then selects at
-most four due exact/deferred occurrences and one due date-only occurrence, and never allows more
-than ten temporal workorders to remain open.
-Each occurrence has a three-attempt budget. A daemon restart recovers a stale pre-transaction
-claim through that same budget; an already committed receipt is not rerun. Exhausted generations
-remain exhausted across later scans. Owner alarms for stale claims and exhaustion are best-effort
-and deduplicated, not exactly-once delivery.
+### Task Deadlines
 
 Time precision and workflow state are separate:
 
@@ -308,69 +279,13 @@ Time precision and workflow state are separate:
   instant and retains the source offset separately.
 - Existing `due_date`/`deadline` values remain `YYYY-MM-DD` date-only values. MAMA adds an exact
   `due_at` only when fresh evidence supplies both a time and time zone.
-- `temporal_state` is derived for display and scanning; overdue never means `blocked`, and elapsed
-  time alone never means `done`.
+- `temporal_state` is derived for display; overdue never means `blocked`, and elapsed time alone
+  never means `done`.
 
 Trello and configured private connectors provide read-only evidence. Owner chat and Board turns
-can use granted live Trello readers; `context_compile` supplies scoped polled evidence for
-Temporal rechecks and other turns. The native task ledger owns owner-console workflow state,
-which the agent judges from that evidence. A missing calendar event alone does not prove
-completion, and these tools do not write to external connectors.
-
-Temporal model responses are not written to daemon logs. Receipt reason/evidence and worker-error
-diagnostics are stored as bounded length/SHA-256 references, so operational rows support correlation
-without retaining the original connector or model text.
-
-#### Roll Back Temporal Reconciliation
-
-Pause temporal work before installing an older MAMA OS binary. Do not delete temporal tables,
-generations, or receipts; they are needed for safe resume and audit history.
-
-```bash
-# 1. Stop cleanly, then preserve the operator database before changing versions.
-mama stop
-cp -p ~/.mama/operator/triggers.db \
-  ~/.mama/operator/triggers.db.pre-temporal-rollback-$(date +%Y%m%d-%H%M%S)
-
-# 2. Restart 0.25.x once with temporal reconciliation disabled.
-export MAMA_TEMPORAL_RECONCILE=off
-mama start
-mama status
-
-# 3. Prove that no temporal attempt is still pending or claimed.
-sqlite3 ~/.mama/operator/triggers.db \
-  "SELECT COUNT(*) FROM operator_tasks WHERE source_channel='workorder:temporal' AND status IN ('pending','in_progress');"
-```
-
-The final command must return `0`. If it does not, stop and investigate before downgrading. Once the
-pause is verified, install the pinned prior version and keep temporal reconciliation off:
-
-```bash
-mama stop
-npm install -g @jungjaehoon/mama-os@0.24.2
-export MAMA_TEMPORAL_RECONCILE=off
-mama start
-mama status
-```
-
-Version 0.24.2 ignores and preserves the newer `workorder:temporal` kind. To re-enable the feature,
-install 0.25.0 or newer, restore both live flags, restart, and confirm health before observing a
-non-critical due task through `GET /api/operator/tasks`:
-
-```bash
-mama stop
-npm install -g @jungjaehoon/mama-os@0.25.0
-export MAMA_STAGE2_WORKORDERS=on
-export MAMA_ENVELOPE_ISSUANCE=enabled
-export MAMA_TEMPORAL_RECONCILE=on
-mama start
-mama status
-curl -fsS http://127.0.0.1:3847/health
-```
-
-On re-enable, paused generations resume through the existing retry budget. Verify that workflow
-status remains independent from `temporal_state` and that a temporal workorder reaches a
-receipt-backed terminal result or an explicit bounded deferral.
+can use granted live Trello readers; `context_compile` supplies scoped polled evidence. The native
+task ledger owns owner-console workflow state, which the agent judges from that evidence. A missing
+calendar event alone does not prove completion, and these tools do not write to external connectors.
 
 ---
 

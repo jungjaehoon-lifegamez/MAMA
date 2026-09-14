@@ -11,7 +11,6 @@ import {
   type SeededExternalLifecycleAttempt,
 } from './external-lifecycle-fixtures.js';
 import { listEffects } from '../../src/evidence/effects.js';
-import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import { externalLifecycleCandidateId } from '../../src/operator/external-lifecycle-candidates.js';
 
 const origin = (eventId: string, workOrderAttemptId: number) => ({
@@ -528,74 +527,6 @@ describe('Story EL4: receipted external lifecycle transitions (TG-01/TG-05/TG-06
       seeded.candidate.operatorObservationSeq
     );
   });
-
-  it.each([
-    ['open-to-terminal', 'pending', 'done'],
-    ['terminal-to-open', 'done', 'pending'],
-  ] as const)(
-    'uses the canonical temporal generation transition for %s lifecycle apply',
-    (_name, initialStatus, proposedStatus) => {
-      const seeded = seedLifecycleCandidateAttempt({
-        taskInput: {
-          title: 'scheduled native task',
-          status: initialStatus,
-          due_at: '2026-08-03T09:00:00+09:00',
-        },
-        proposedStatus,
-      });
-      databases.push(seeded);
-      if (seeded.candidate.kind !== 'lifecycle') throw new Error('lifecycle fixture required');
-      const scheduled = seeded.ledger.getById(seeded.task.id);
-      if (!scheduled || !scheduled.dueAt) throw new Error('scheduled lifecycle task required');
-      const generation =
-        initialStatus === 'pending'
-          ? seeded.ledger.enqueueTemporalGeneration({
-              generationKey: temporalGenerationKey(
-                scheduled.id,
-                occurrenceKeyForTask(scheduled)!,
-                scheduled.dueAt
-              ),
-              taskId: scheduled.id,
-              temporalEpoch: scheduled.temporalEpoch,
-              occurrenceKey: occurrenceKeyForTask(scheduled)!,
-              checkAt: scheduled.dueAt,
-              sourceChannel: scheduled.sourceChannel,
-              sourceEventId: scheduled.sourceEventId,
-            })
-          : null;
-
-      const updated = seeded.ledger.applyExternalLifecycleDecision(
-        seeded.attempt.id,
-        {
-          candidate_id: seeded.candidate.candidateId,
-          decision: 'apply',
-          reason: 'exact external lifecycle observation',
-          expected_revision: seeded.candidate.taskRevision,
-        },
-        origin(seeded.candidate.eventId, seeded.attempt.id)
-      );
-
-      expect(updated.outcome).toBe('applied');
-      expect(seeded.ledger.getById(seeded.task.id)?.resolutionKind).toBe(
-        proposedStatus === 'done' ? 'completed_evidence' : null
-      );
-      if (generation) {
-        expect(
-          seeded.ledger.getTemporalGeneration(generation.generation.generationKey)
-        ).toMatchObject({
-          disposition: 'superseded',
-        });
-        expect(seeded.ledger.getWorkOrderById(generation.workOrder.id)).toMatchObject({
-          status: 'cancelled',
-        });
-      }
-      if (initialStatus === 'done') {
-        expect(seeded.ledger.getById(seeded.task.id)?.temporalEpoch).toBe(
-          scheduled.temporalEpoch + 1
-        );
-      }
-    }
-  );
 
   it('uses connector-wide ordinals for equal-timestamp cross-channel observations', () => {
     const seeded = seedLifecycleCandidateAttempt();
