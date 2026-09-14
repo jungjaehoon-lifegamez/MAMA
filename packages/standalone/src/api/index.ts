@@ -36,10 +36,6 @@ import {
   type AgentRawRouterOptions,
 } from './agent-raw-handler.js';
 import {
-  createAgentSituationRouter,
-  type AgentSituationRouterOptions,
-} from './agent-situation-handler.js';
-import {
   createAgentContextRouter,
   type AgentContextRouterOptions,
 } from './agent-context-handler.js';
@@ -98,9 +94,8 @@ export interface ApiServerOptions {
   db?: SQLiteDatabase;
   /** Memory database instance (for intelligence queries -- mama-memory.db) */
   memoryDb?: SQLiteDatabase;
-  /** Transaction-capable mama-core adapter for worker situation packets */
-  memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'] &
-    AgentGraphRouterOptions['memoryAdapter'] &
+  /** Transaction-capable mama-core adapter for graph and context reads */
+  memoryAdapter?: AgentGraphRouterOptions['memoryAdapter'] &
     AgentContextRouterOptions['memoryAdapter'];
   /** Wiki directory path (for wiki API) */
   wikiPath?: string;
@@ -128,10 +123,6 @@ export interface ApiServerOptions {
   envelopeAuthority?: import('../envelope/authority.js').EnvelopeAuthority;
   /** Test seam for raw query functions; production loads mama-core raw-query lazily */
   rawQuery?: AgentRawRouterOptions['rawQuery'];
-  /** Test seam for agent situation packet building */
-  situationBuilder?: AgentSituationRouterOptions['buildPacket'];
-  /** Test seam for agent situation timestamps */
-  situationNow?: AgentSituationRouterOptions['now'];
   /** Shared context compile service for HTTP/gateway packet compilation */
   contextCompileService?: AgentContextRouterOptions['contextCompileService'];
   /** Validated connector configuration captured once during runtime boot. */
@@ -200,8 +191,6 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     envelope = { issuance: 'off' },
     envelopeAuthority,
     rawQuery,
-    situationBuilder,
-    situationNow,
     contextCompileService,
     connectorConfigLoadResult = { ok: true, config: {}, enabledNames: [] },
     privateConnectorPolicy = resolvePrivateConnectorPolicy(connectorConfigLoadResult),
@@ -304,15 +293,6 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   }
 
   if (memoryAdapter) {
-    app.use(
-      '/api/agent/situation',
-      createAgentSituationRouter({
-        memoryAdapter,
-        envelopeAuthority,
-        buildPacket: situationBuilder,
-        now: situationNow,
-      })
-    );
     app.use(
       '/api/agent/context',
       createAgentContextRouter({

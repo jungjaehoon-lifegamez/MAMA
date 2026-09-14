@@ -110,7 +110,6 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
   - Query raw connector rows through scope-aware filters
   - Preserve raw source ids for downstream provenance
 
-- **agent-situation** - Worker situation packets
   - Build, rank, cache, insert, and read append-only situation packets for worker context
 
 - **agent-graph** - Worker graph/entity helpers
@@ -212,7 +211,6 @@ packages/mama-core/
 │   ├── model-runs/           # Model run + tool trace lineage
 │   ├── connectors/           # Raw connector query/index helpers
 │   ├── edges/                # Twin edge ledger
-│   ├── agent-situation/      # Worker situation packets
 │   ├── agent-graph/          # Worker graph/entity helpers
 │   └── search/               # Search quality option normalization
 ├── db/migrations/            # SQLite migrations (001-036)

@@ -10,10 +10,14 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 import { createApiServer } from '../../api/index.js';
-import type { ApiServer, RuntimeConnectorStatus, RuntimeStatusSnapshot } from '../../api/index.js';
+import type {
+  ApiServer,
+  ApiServerOptions,
+  RuntimeConnectorStatus,
+  RuntimeStatusSnapshot,
+} from '../../api/index.js';
 import { AVAILABLE_CONNECTORS } from '../../connectors/index.js';
 import { createPersistentReportStore } from '../../api/report-persistence.js';
-import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
 import { liveBoundaryChannels } from '../../evidence/read.js';
 import {
   createContextCompileService,
@@ -50,8 +54,8 @@ export interface InitApiServerParams {
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
   contextCompileService?: ContextCompileService;
-  /** mama-core getAdapter() — used to create the memoryDb shim */
-  getAdapter: () => AgentSituationAdapter & {
+  /** mama-core getAdapter() - used to create the memoryDb shim */
+  getAdapter: () => ApiServerOptions['memoryAdapter'] & {
     exec: (sql: string) => void;
   };
 }
