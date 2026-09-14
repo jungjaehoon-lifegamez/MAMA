@@ -2,8 +2,8 @@
  * Tests for Story M3.4: Installation & Tier Detection
  *
  * AC1: engines.node >=22 check with descriptive errors
- * AC2: Attempt to load node:sqlite, Tier 2 fallback on failure
- * AC3: Success message with detected tier
+ * AC2: Attempt to load node:sqlite and the embedding stack
+ * AC3: Readiness report
  * AC4: Disk space checks, OS-specific instructions
  * AC5: CI smoke test - npm install assertions
  */
@@ -56,7 +56,7 @@ describe('M3.4: Installation & Tier Detection', () => {
     });
   });
 
-  describe('AC2: SQLite check and Tier 2 fallback', () => {
+  describe('AC2: SQLite and embedding stack checks', () => {
     it('should export checkSQLite function', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
       expect(postinstall.checkSQLite).toBeDefined();
@@ -69,14 +69,16 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty('available');
-      expect(result).toHaveProperty('tier');
 
       if (result.available) {
-        expect(result.tier).toBe(1);
         expect(result.driver).toBe('node:sqlite');
       } else {
-        expect(result.tier).toBe(2);
+        // A failed check has to carry what it breaks and how to fix it, because
+        // the report is the only thing standing between a broken install and a
+        // user who thinks it worked.
         expect(result.reason).toBeDefined();
+        expect(result.breaks).toBeDefined();
+        expect(result.fix).toBeDefined();
       }
     });
 
@@ -99,68 +101,78 @@ describe('M3.4: Installation & Tier Detection', () => {
     });
   });
 
-  describe('AC3: Tier detection and success message', () => {
-    it('should export detectTier function', () => {
+  describe('AC3: readiness reporting', () => {
+    it('should export assessReadiness function', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
-      expect(postinstall.detectTier).toBeDefined();
-      expect(typeof postinstall.detectTier).toBe('function');
+      expect(postinstall.assessReadiness).toBeDefined();
+      expect(typeof postinstall.assessReadiness).toBe('function');
     });
 
-    it('should detect Tier 1 when all features available', () => {
+    it('reports ready when both requirements are present', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
 
-      const sqliteCheck = { available: true };
-      const embeddingsCheck = { available: true };
+      const readiness = postinstall.assessReadiness({ available: true }, { available: true });
 
-      const tierInfo = postinstall.detectTier(sqliteCheck, embeddingsCheck);
-
-      expect(tierInfo.tier).toBe(1);
-      expect(tierInfo.name).toBe('Full Features');
-      expect(tierInfo.accuracy).toBe('80%');
-      expect(tierInfo.features).toBeDefined();
-      expect(Array.isArray(tierInfo.features)).toBe(true);
-      expect(tierInfo.performance).toBeDefined();
+      expect(readiness.ready).toBe(true);
+      expect(readiness.missing).toEqual([]);
     });
 
-    it('should detect Tier 2 when SQLite unavailable', () => {
+    // There is no degraded mode. Without node:sqlite the database cannot open;
+    // without the embedding stack every save and search throws. An install
+    // missing either one is not usable, and the report has to say so.
+    it('reports not ready, and why, when SQLite is unavailable', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
 
-      const sqliteCheck = { available: false, tier: 2, reason: 'SQLite failed' };
-      const embeddingsCheck = { available: true };
+      const sqliteCheck = {
+        available: false,
+        reason: 'node:sqlite unavailable (boom)',
+        breaks: 'the database cannot be opened; no memory is saved or read',
+        fix: 'use Node 22.13 or newer, which ships node:sqlite',
+      };
 
-      const tierInfo = postinstall.detectTier(sqliteCheck, embeddingsCheck);
+      const readiness = postinstall.assessReadiness(sqliteCheck, { available: true });
 
-      expect(tierInfo.tier).toBe(2);
-      expect(tierInfo.name).toBe('Degraded Mode');
-      expect(tierInfo.accuracy).toBe('40%');
-      expect(tierInfo.limitations).toBeDefined();
-      expect(Array.isArray(tierInfo.limitations)).toBe(true);
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing).toHaveLength(1);
+      expect(readiness.missing[0].reason).toContain('node:sqlite');
+      expect(readiness.missing[0].breaks).toBeTruthy();
+      expect(readiness.missing[0].fix).toBeTruthy();
     });
 
-    it('should detect Tier 2 when embeddings unavailable', () => {
+    it('reports not ready, and why, when the embedding stack is unavailable', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
 
-      const sqliteCheck = { available: true };
-      const embeddingsCheck = { available: false, reason: 'Transformers.js failed' };
+      const embeddingsCheck = {
+        available: false,
+        reason: 'embedding stack unavailable via mama-core (boom)',
+        breaks: 'every save and search throws; there is no exact-match fallback',
+        fix: 'reinstall so @huggingface/transformers resolves from @jungjaehoon/mama-core',
+      };
 
-      const tierInfo = postinstall.detectTier(sqliteCheck, embeddingsCheck);
+      const readiness = postinstall.assessReadiness({ available: true }, embeddingsCheck);
 
-      expect(tierInfo.tier).toBe(2);
-      expect(tierInfo.name).toBe('Degraded Mode');
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing[0].breaks).toContain('throws');
     });
 
-    it('should include performance metrics in tier info', () => {
+    it('lists both requirements when both are missing', () => {
       const postinstall = require(POSTINSTALL_SCRIPT);
 
-      const sqliteCheck = { available: true };
-      const embeddingsCheck = { available: true };
+      const readiness = postinstall.assessReadiness(
+        { available: false, reason: 'a', breaks: 'b', fix: 'c' },
+        { available: false, reason: 'd', breaks: 'e', fix: 'f' }
+      );
 
-      const tierInfo = postinstall.detectTier(sqliteCheck, embeddingsCheck);
+      expect(readiness.ready).toBe(false);
+      expect(readiness.missing).toHaveLength(2);
+    });
 
-      expect(tierInfo.performance).toBeDefined();
-      expect(tierInfo.performance.embedding).toBeDefined();
-      expect(tierInfo.performance.search).toBeDefined();
-      expect(tierInfo.performance.hookLatency).toBeDefined();
+    it('never advertises a degraded mode or an accuracy number', () => {
+      const script = fs.readFileSync(POSTINSTALL_SCRIPT, 'utf8');
+
+      expect(script).not.toMatch(/40%/);
+      expect(script).not.toMatch(/fully functional/i);
+      expect(script).not.toMatch(/Tier 2/);
     });
   });
 
@@ -213,28 +225,23 @@ describe('M3.4: Installation & Tier Detection', () => {
       expect(output).toContain('MAMA Plugin');
       expect(output).toContain('Installation');
 
-      // Should show tier detection
-      expect(output).toMatch(/Tier: [12]/);
+      // Should say plainly whether this install can run
+      expect(output).toMatch(/MAMA Plugin Installed( But Not Usable)?/);
 
       // Should not contain critical errors
       expect(output).not.toContain('Installation failed');
     });
 
-    it('should output tier information', () => {
+    it('describes what search does rather than a quality level', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
         cwd: PLUGIN_ROOT,
       });
 
-      // Should show tier name
-      expect(output).toMatch(/Full Features|Degraded Mode/);
-
-      // Should show accuracy
-      expect(output).toMatch(/Accuracy:.*%/);
-
-      // Should show features
-      expect(output).toContain('Features:');
+      expect(output).toContain('Vector search');
+      expect(output).not.toMatch(/Accuracy:/);
+      expect(output).not.toMatch(/Tier: [12]/);
     });
 
     it('should show next steps', () => {
@@ -261,32 +268,6 @@ describe('M3.4: Installation & Tier Detection', () => {
 
       // Should complete within 5 seconds
       expect(elapsed).toBeLessThan(5000);
-    });
-
-    it('should save tier configuration', () => {
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      const configPath = path.join(homeDir, '.mama', 'config.json');
-
-      // Run postinstall
-      execSync(`node ${POSTINSTALL_SCRIPT}`, {
-        encoding: 'utf8',
-        stdio: 'pipe',
-        cwd: PLUGIN_ROOT,
-      });
-
-      // Check if config was created
-      if (fs.existsSync(configPath)) {
-        const raw = fs.readFileSync(configPath, 'utf8').trim();
-        if (raw) {
-          const config = JSON.parse(raw);
-
-          expect(config.tier).toBeDefined();
-          expect([1, 2]).toContain(config.tier);
-          expect(config.tier_name).toBeDefined();
-          expect(config.tier_detected_at).toBeDefined();
-        }
-      }
-      // If config doesn't exist or is empty, that's okay (permissions issue)
     });
   });
 
