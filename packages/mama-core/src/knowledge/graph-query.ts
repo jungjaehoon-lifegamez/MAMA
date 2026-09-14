@@ -17,6 +17,26 @@ import type {
 } from '../db-manager.js';
 
 /**
+ * `refined_from` is stored as a JSON array of decision ids.
+ *
+ * Both branches of queryDecisionGraph used to answer a parse failure with an
+ * empty array, which reads downstream as "this decision refines nothing" - the
+ * same sentence a decision with no ancestry produces. Corruption is not
+ * ancestry, so it is reported instead. The stored value is left alone.
+ */
+function parseRefinedFrom(decision: DecisionRecord): string | string[] | null | undefined {
+  if (!decision.refined_from || typeof decision.refined_from !== 'string') {
+    return decision.refined_from;
+  }
+  try {
+    return JSON.parse(decision.refined_from);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`decision ${decision.id} has unreadable refined_from: ${message}`);
+  }
+}
+
+/**
  * Walk a topic's supersedes chain with a recursive CTE.
  *
  * @param adapter - Database to read through
@@ -51,13 +71,7 @@ export async function queryDecisionGraph(
       `);
       for (const decision of decisions) {
         decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
-        if (decision.refined_from && typeof decision.refined_from === 'string') {
-          try {
-            decision.refined_from = JSON.parse(decision.refined_from);
-          } catch {
-            decision.refined_from = [];
-          }
-        }
+        decision.refined_from = parseRefinedFrom(decision);
       }
       return decisions;
     }
@@ -91,17 +105,7 @@ export async function queryDecisionGraph(
     for (const decision of decisions) {
       decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
 
-      // Parse refined_from JSON if exists
-      if (decision.refined_from) {
-        try {
-          decision.refined_from =
-            typeof decision.refined_from === 'string'
-              ? JSON.parse(decision.refined_from)
-              : decision.refined_from;
-        } catch {
-          decision.refined_from = [];
-        }
-      }
+      decision.refined_from = parseRefinedFrom(decision);
     }
 
     return decisions;

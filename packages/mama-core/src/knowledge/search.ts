@@ -83,15 +83,11 @@ export async function fts5Search(
   query: string,
   limit = 10
 ): Promise<{ id: string; rank: number }[]> {
-  // Check if FTS5 table exists (swallow errors - table may not exist yet)
-  let tableCheck: { name: string } | undefined;
-  try {
-    tableCheck = adapter
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_fts'")
-      .get() as { name: string } | undefined;
-  } catch {
-    return [];
-  }
+  // An absent FTS table is a real answer - no rows. A failing adapter is not,
+  // so this lookup is left unguarded and its errors reach the caller.
+  const tableCheck = adapter
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decisions_fts'")
+    .get() as { name: string } | undefined;
   if (!tableCheck) return [];
 
   // Query execution - let errors propagate to the caller

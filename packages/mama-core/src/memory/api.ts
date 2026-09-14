@@ -828,7 +828,7 @@ export async function promoteMemoryStatus(input: {
         // Same exclusion as saveMemoryInternal's fallback: superseded history must
         // not crowd out the prior ACTIVE decision from the 3 candidate slots.
         const semanticResults = await vectorSearch(
-          getAdapter(),
+          adapter,
           embedding,
           3,
           0.82,
@@ -1021,6 +1021,9 @@ export async function recallMemory(
 
   // Hybrid search: vector + BM25/lexical in parallel, fused with RRF
   await initDB();
+  // One adapter for the whole retrieval: generateEmbedding yields, and a reset
+  // between two getAdapter() calls would fuse candidates from two databases.
+  const searchAdapter = getAdapter();
 
   // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
@@ -1032,7 +1035,7 @@ export async function recallMemory(
         primaryQueryEmbedding = queryEmbedding;
       }
       const vectorResults = await vectorSearch(
-        getAdapter(),
+        searchAdapter,
         queryEmbedding,
         vectorLimit,
         searchOptions.threshold,
@@ -1161,9 +1164,9 @@ export async function recallMemory(
         .map((t) => stemToken(t))
         .filter((t) => !FTS5_NOISE_WORDS.has(t));
       const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
-      const ftsResults = await fts5Search(getAdapter(), ftsQuery, lexicalLimit);
+      const ftsResults = await fts5Search(searchAdapter, ftsQuery, lexicalLimit);
       if (ftsResults.length > 0) {
-        const adapter = getAdapter();
+        const adapter = searchAdapter;
         const fallbackSource: SaveMemoryInput['source'] = {
           package: 'mama-core',
           source_type: 'fts5',
