@@ -1,5 +1,5 @@
 ---
-description: View or modify MAMA configuration (database, embedding model, tier status)
+description: View or modify MAMA configuration (database, embedding model, requirements)
 allowed-tools: Read, Write, Edit
 argument-hint: '[--show] [--model=<name>] [--db-path=<path>] [--tier-check]'
 ---
@@ -16,14 +16,14 @@ You are helping the user view or modify MAMA configuration.
    - `--show` (default): Display current configuration
    - `--model=X`: Change embedding model (e.g., 'Xenova/multilingual-e5-large')
    - `--db-path=X`: Change database location (e.g., '~/.claude/mama-memory.db')
-   - `--tier-check`: Re-run tier detection (check SQLite, embeddings availability)
+   - `--tier-check`: Re-run the requirement checks (SQLite, embedding stack)
 
 2. For `--show` (default):
    - Read configuration from `~/.mama/config.json`
    - Read plugin config from `~/.claude/plugins/repos/mama/.claude-plugin/plugin.json`
-   - Display tier status (Tier 1 Full vs Tier 2 Degraded)
+   - Display whether both requirements are present
    - Show embedding model, database path, performance stats
-   - Include fix instructions if degraded mode
+   - Include fix instructions when a requirement is missing
 
 3. For `--model=X`:
    - Update `~/.mama/config.json` with new model name
@@ -36,9 +36,9 @@ You are helping the user view or modify MAMA configuration.
    - Note: Does NOT migrate existing data
 
 5. For `--tier-check`:
-   - Re-run tier detection (node:sqlite is built into supported Node 22.13+ runtimes; verify Transformers.js availability)
-   - Update config with detected tier
-   - Show remediation steps if Tier 2
+   - Re-run the requirement checks (node:sqlite is built into supported Node 22.13+ runtimes; verify Transformers.js availability)
+   - Create `~/.mama/config.json` from the runtime defaults if it does not exist; if it does, leave its settings as they are
+   - Show what is missing and how to fix it
 
 ## Example Usage
 
@@ -65,7 +65,6 @@ You are helping the user view or modify MAMA configuration.
 
 ## System Status
 
-**Tier:** {tier_name} (Tier {tier_number})
 **Database:** {db_path} ({db_size})
 **Embedding Model:** {model_name} ({embedding_dim}-dim)
 **Decision Count:** {total_decisions}
@@ -74,8 +73,6 @@ You are helping the user view or modify MAMA configuration.
 ---
 
 ## Feature Status
-
-**Tier 1 - Full Features** ✅
 
 - ✅ Vector search (semantic similarity)
 - ✅ Graph search (decision evolution)
@@ -88,7 +85,6 @@ You are helping the user view or modify MAMA configuration.
 - Embedding latency: ~3ms
 - Search latency: ~50ms
 - Hook latency: ~100ms
-- Accuracy: 80%
 
 ---
 
@@ -114,69 +110,35 @@ You are helping the user view or modify MAMA configuration.
 {
   "embeddingModel": "{model_name}",
   "embeddingDim": {dim},
-  "databasePath": "{db_path}",
-  "tier": {tier},
-  "tier_detected_at": "{timestamp}"
+  "databasePath": "{db_path}"
 }
 ```
 ````
 
 ````
 
-## Response Format - Tier 2 Degraded Mode
+## Response Format - Requirement Missing
 
 ```markdown
 # ⚙️ MAMA Configuration
 
-## System Status ⚠️
+## System Status ❌
 
-**Tier:** Degraded Mode (Tier 2)
-**Issue:** {missing_component}
-**Impact:** Vector search unavailable, exact match only
-**Accuracy:** 40% (vs 80% in Tier 1)
+**Missing:** {missing_component}
+**Breaks:** {what_it_breaks}
+**Fix:** {how_to_fix}
 
----
-
-## What's Not Working
-
-- ❌ Vector search (no semantic similarity)
-- ❌ Multilingual support
-- ⚠️ Exact match search only
-
-## What Still Works
-
-- ✅ Graph search (decision evolution)
-- ✅ All data saved and retrievable
-- ✅ Auto-context injection (reduced accuracy)
+MAMA has no degraded mode. The affected calls throw rather than returning
+weaker results, so nothing below works until this is fixed.
 
 ---
 
 ## Fix Instructions
 
-### macOS
 ```bash
 # Reinstall dependencies with Node 22.13+
 cd {plugin_path}
 npm install
-npm install --include=optional sharp
-````
-
-### Linux
-
-```bash
-# Reinstall dependencies with Node 22.13+
-cd {plugin_path}
-npm install
-npm install --include=optional sharp
-```
-
-### Windows
-
-```bash
-# Reinstall dependencies with Node 22.13+
-cd {plugin_path}
-npm install
-npm install --include=optional sharp
 ```
 
 After fixing, run: `/mama:configure --tier-check`
@@ -197,15 +159,15 @@ This will:
 
 1. Detect your system capabilities
 2. Create ~/.mama/config.json
-3. Set appropriate tier (1 or 2)
 
 ```
 
 ## Important Notes
 
-- **Tier 1 vs Tier 2**: On Node 22.13+, `node:sqlite` is built in; fallback to Tier 2 now happens when Transformers.js embeddings are unavailable
+- **Requirements**: `node:sqlite` (built into Node 22.13+) and the Transformers.js embedding stack. Either one missing makes the plugin unusable; there is no fallback mode
 - **Model change**: Clears cache, will reload on next search (~3s first time)
 - **DB path change**: Does NOT migrate data (manual migration required)
 - **Config location**: `~/.mama/config.json` (user-specific)
 - **Database location**: Default `~/.claude/mama-memory.db` (shared with Claude Desktop)
 ```
+````
