@@ -26,7 +26,7 @@ removed with it; they described a state that cannot occur.
 
 ## Internal Worker Tool Tiers (Advanced/Legacy)
 
-Separate from the search tiers above, legacy/internal managed workers use a tier field to control
+These are unrelated to search. Legacy/internal managed workers use a tier field to control
 which native tools a subprocess may use. These tiers do not define human-team access and do not
 grant a member access to a Case, memory, artifact, or destination. Human access belongs to the v1
 principal-grant contract. Ground truth for the surviving process-level tier is
