@@ -600,6 +600,13 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         name: 'recursive inner subject',
         scopes: [scope],
       });
+      // This read is bounded at as_of 2500 and every other endpoint is placed inside that
+      // window on purpose (memories at 1000, edges at 10-20). `createNode` stamps wall-clock
+      // time, so the two registry endpoints are pulled into the window too - otherwise the
+      // fixture asks for a boundary its own anchor sits outside of.
+      getAdapter()
+        .prepare('UPDATE registry_nodes SET created_at = 1000 WHERE id IN (?, ?)')
+        .run(anchor, innerSubject);
       insertScopedMemory('recursive-visible-memory', scope.kind, scope.id);
       insertScopedMemory('recursive-hidden-memory', hiddenScope.kind, hiddenScope.id);
       insertEdge({

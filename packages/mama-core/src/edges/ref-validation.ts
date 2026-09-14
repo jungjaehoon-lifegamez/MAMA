@@ -487,9 +487,22 @@ export function visibleTwinRefKeys(
 
   const registryIds = ids('registry');
   if (registryIds.length > 0) {
+    // `created_at` is read, not just `id`: a registry ref must have existed at the requested
+    // `as_of`, the same rule memory, raw and observation refs obey. The entity branch this
+    // replaced applied it (`isWithinVisibilityTime(row.created_at, visibility)`) and the
+    // replacement dropped it, so a packet could cite a node created after the boundary.
+    //
+    // A merged-away node is NOT excluded. Merging redirects identity, it does not retire the
+    // node, and the graph projection's contract is to keep the ORIGINAL ref citable while
+    // resolving the current one beside it (design section 4.1, original/corrected references).
+    // Filtering on `merged_into IS NULL` here broke exactly that - caught by
+    // agent-graph.test.ts.
     const rows = adapter
-      .prepare(`SELECT id FROM registry_nodes WHERE id IN (${placeholders(registryIds.length)})`)
-      .all(...registryIds) as Array<{ id: string }>;
+      .prepare(
+        `SELECT id, created_at FROM registry_nodes
+          WHERE id IN (${placeholders(registryIds.length)})`
+      )
+      .all(...registryIds) as Array<{ id: string; created_at: number }>;
     const admitted = new Set<string>();
     if (hasScopes(visibility.scopes)) {
       const scopeClauses = visibility.scopes
@@ -507,7 +520,10 @@ export function visibleTwinRefKeys(
       bindings.forEach((row) => admitted.add(row.node_id));
     }
     for (const row of rows) {
-      if (!hasScopes(visibility.scopes) || admitted.has(row.id)) {
+      if (
+        isWithinVisibilityTime(row.created_at, visibility) &&
+        (!hasScopes(visibility.scopes) || admitted.has(row.id))
+      ) {
         visible.add(refVisibilityKey({ kind: 'registry', id: row.id }));
       }
     }
@@ -621,8 +637,10 @@ function isTwinRefVisible(
     return isRawVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'registry') {
-    const node = adapter.prepare('SELECT id FROM registry_nodes WHERE id = ?').get(ref.id);
-    if (!node) {
+    const node = adapter
+      .prepare('SELECT created_at FROM registry_nodes WHERE id = ?')
+      .get(ref.id) as { created_at: number } | undefined;
+    if (!node || !isWithinVisibilityTime(node.created_at, visibility)) {
       return false;
     }
     if (!hasScopes(visibility.scopes)) {
