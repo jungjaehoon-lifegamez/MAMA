@@ -239,20 +239,35 @@ describe('M3.4: Installation & Tier Detection', () => {
         cwd: PLUGIN_ROOT,
       });
 
-      expect(output).toContain('Vector search');
+      // Which report prints depends on the machine running the suite. Either way it
+      // must describe what is there or what is missing, never a quality level.
+      if (output.includes('But Not Usable')) {
+        expect(output).toContain('Missing:');
+        expect(output).toMatch(/breaks:/);
+        expect(output).toMatch(/fix:/);
+      } else {
+        expect(output).toContain('Vector search');
+      }
       expect(output).not.toMatch(/Accuracy:/);
       expect(output).not.toMatch(/Tier: [12]/);
     });
 
-    it('should show next steps', () => {
+    it('tells the reader what to do next, and never to try it when it cannot run', () => {
       const output = execSync(`node ${POSTINSTALL_SCRIPT}`, {
         encoding: 'utf8',
         stdio: 'pipe',
         cwd: PLUGIN_ROOT,
       });
 
-      expect(output).toContain('Next steps');
-      expect(output).toMatch(/mama-list|mama-save/);
+      if (output.includes('But Not Usable')) {
+        // Pointing someone at /mama-list when the install cannot open its database
+        // is the same false reassurance this change removed.
+        expect(output).toMatch(/Fix the above/);
+        expect(output).not.toMatch(/mama-list|mama-save/);
+      } else {
+        expect(output).toContain('Next steps');
+        expect(output).toMatch(/mama-list|mama-save/);
+      }
     });
 
     it('should complete within reasonable time', () => {

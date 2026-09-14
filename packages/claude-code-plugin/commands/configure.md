@@ -37,6 +37,7 @@ You are helping the user view or modify MAMA configuration.
 
 5. For `--tier-check`:
    - Re-run the requirement checks (node:sqlite is built into supported Node 22.13+ runtimes; verify Transformers.js availability)
+   - Create `~/.mama/config.json` from the runtime defaults if it does not exist; if it does, leave its settings as they are
    - Show what is missing and how to fix it
 
 ## Example Usage
