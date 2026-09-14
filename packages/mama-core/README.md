@@ -90,10 +90,6 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 - **memory/evolution-engine** - Graph edge resolution
   - `resolveMemoryEvolution(input)` - Determine supersedes/builds_on edges
 
-- **memory/extraction-prompt** - LLM extraction for conversation ingestion
-  - `buildExtractionPrompt(messages)` - Build structured prompt for memory extraction
-  - `parseExtractionResponse(response)` - Parse LLM JSON response into typed units
-
 - **memory/channel-summary-state-store** - Channel state management
   - `recordChannelAudit(input)` - Accumulate audit outcomes into channel state
 
@@ -198,10 +194,13 @@ packages/mama-core/
 │   ├── memory/               # Memory infrastructure
 │       ├── types.ts          # MemoryRecord, MemoryScopeRef, RecallBundle, etc.
 │       ├── api.ts            # saveMemory, recallMemory, buildProfile, etc.
+│       ├── judgment-types.ts # JudgmentCommand, JudgmentReceipt, WorkReference
+│       ├── write-adapters.ts # Write access and command embedding adapters
+│       ├── provenance.ts     # Write provenance capture
+│       ├── provenance-query.ts  # Provenance lookup by memory, run, call
+│       ├── provenance-audit.ts  # Provenance audit records
 │       ├── truth-store.ts    # Truth projection layer
-│       ├── extraction-prompt.ts  # LLM extraction prompt + parser
 │       ├── evolution-engine.ts  # Graph edge resolution
-│       ├── scope-store.ts    # Scope management
 │       ├── event-store.ts    # Audit event persistence
 │       ├── finding-store.ts  # Audit finding persistence
 │       ├── channel-summary-store.ts       # Channel summaries
