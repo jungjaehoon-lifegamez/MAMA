@@ -127,10 +127,6 @@ export {
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
 export {
-  type BackfillResult,
-  type ConnectorEventScopeBackfillInput,
-} from './memory/scope-backfill.js';
-export {
   getMemoryProvenanceAudit,
   listMemoryProvenanceAudit,
   type MemoryProvenanceAuditRecord,
@@ -310,7 +306,6 @@ export * from './cases/types.js';
 export * from './cases/store.js';
 export * from './cases/search-rollup.js';
 export * from './cases/timeline-range.js';
-export * from './cases/wiki-page-index.js';
 export * from './connectors/event-index.js';
 export * from './connectors/observation-versions.js';
 export * from './connectors/observation-visibility.js';

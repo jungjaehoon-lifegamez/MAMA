@@ -1,4 +1,6 @@
-import type { AdapterLike } from './wiki-page-index.js';
+import type { DatabaseAdapter } from '../db-manager.js';
+
+type AdapterLike = Pick<DatabaseAdapter, 'prepare' | 'transaction'>;
 import { resolveCanonicalCaseChain } from './store.js';
 import type { SearchHitDiagnostics } from '../search/search-quality.js';
 
