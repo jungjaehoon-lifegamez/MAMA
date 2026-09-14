@@ -210,7 +210,7 @@ export function initMainAgentLoop(
       // Permission enforcement is handled by MAMA's own RoleManager layer:
       //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
       //   - Multi-agent ToolPermissionManager (tier-based tool access)
-      //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
+      //   - Source-based role mapping (discord=chat_bot, etc.)
       // Headless daemon — no TTY for interactive permission prompts.
       // Security is enforced at the API/network layer (auth-middleware), not Claude CLI permissions.
       dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,

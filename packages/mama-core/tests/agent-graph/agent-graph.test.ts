@@ -637,6 +637,7 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
       });
 
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'projection-assigned',
           expectedRevision: currentIdentityRevision(),
@@ -668,6 +669,7 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         scopes: [scope],
       });
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'projection-assigned-merge',
           expectedRevision: currentIdentityRevision(),
@@ -693,6 +695,7 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
       });
 
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'projection-unresolved',
           expectedRevision: currentIdentityRevision(),
@@ -730,6 +733,7 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         createdAt: 2,
       });
       appendIdentityCorrection(
+        getAdapter(),
         {
           commandId: 'projection-merge',
           expectedRevision: currentIdentityRevision(),

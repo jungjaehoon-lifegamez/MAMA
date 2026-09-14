@@ -7,8 +7,8 @@ import {
 } from './external-lifecycle-fixtures.js';
 
 const operatorContext: AgentContext = {
-  source: 'viewer',
-  platform: 'viewer',
+  source: 'cli',
+  platform: 'cli',
   roleName: 'owner_console',
   role: {
     allowedTools: ['*'],

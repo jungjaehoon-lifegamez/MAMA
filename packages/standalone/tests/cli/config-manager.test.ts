@@ -848,7 +848,7 @@ describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
       expect.arrayContaining(['kagemusha_overview', 'kagemusha_entities', 'kagemusha_messages'])
     );
     // Default mappings still resolve
-    expect(loaded.roles?.sourceMapping.viewer).toBe('os_agent');
+    expect(loaded.roles?.sourceMapping.discord).toBe('chat_bot');
   });
 
   it('inherits the active backend model for default roles missing from an older config', async () => {

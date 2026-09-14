@@ -99,16 +99,6 @@ describe('ContextPromptBuilder', () => {
     it('should normalize platform correctly', () => {
       const role: RoleConfig = { allowedTools: ['*'] };
 
-      const viewerContext = createAgentContext(
-        'viewer',
-        'os_agent',
-        role,
-        { sessionId: 's1' },
-        [],
-        []
-      );
-      expect(viewerContext.platform).toBe('viewer');
-
       const discordContext = createAgentContext(
         'discord',
         'chat_bot',

@@ -108,7 +108,7 @@ export interface PrincipalRepository {
 /**
  * Platform identifiers for agent context
  */
-export type AgentPlatform = 'viewer' | 'discord' | 'telegram' | 'slack' | 'chatwork' | 'cli';
+export type AgentPlatform = 'discord' | 'telegram' | 'slack' | 'chatwork' | 'cli';
 
 /**
  * Session information for agent context
@@ -136,7 +136,7 @@ export interface AgentContext {
 
   /**
    * Message source identifier
-   * @example "discord", "viewer", "telegram"
+   * @example "discord", "telegram"
    */
   source: string;
 
@@ -693,7 +693,7 @@ export type LoadCheckpointInput = Record<string, never>;
  * Browser PDF input
  */
 // ============================================================================
-// OS Management Tool Input Types (viewer-only)
+// OS Management Tool Input Types
 // ============================================================================
 
 /**
@@ -710,24 +710,6 @@ export type BotPlatform = 'discord' | 'telegram' | 'slack' | 'chatwork';
 /**
  * Input for os_set_model tool
  */
-/**
- * Input for os_get_config tool
- */
-export interface GetConfigInput {
-  /** Section to retrieve (optional, returns all if not specified) */
-  section?:
-    | 'agent'
-    | 'database'
-    | 'logging'
-    | 'roles'
-    | 'discord'
-    | 'telegram'
-    | 'slack'
-    | 'chatwork';
-  /** Include sensitive data (tokens) - only works for viewer */
-  includeSensitive?: boolean;
-}
-
 /**
  * Input for os_list_bots tool
  */
@@ -824,8 +806,6 @@ export type GatewayToolInput =
   | CoreContextCompileInput
   | UpdateInput
   | LoadCheckpointInput
-  // OS Management tools
-  | GetConfigInput
   // OS Monitoring tools
   | CodeActInput
   | DriveBrowseInput
@@ -872,12 +852,6 @@ export type GatewayToolName =
   | 'drive_download'
   | 'drive_upload'
   | 'save_integration_token'
-  // OS Management tools (viewer-only)
-  | 'os_get_config'
-  // OS Monitoring tools (viewer-only)
-  // PR Review tools
-  // Webchat tools
-  | 'webchat_send'
   // Code-Act sandbox
   | 'code_act'
   // Report slots
@@ -1143,7 +1117,7 @@ export interface AgentLoopOptions {
   useLanes?: boolean;
   /** Disable auto-recall memory injection (for skill execution) */
   disableAutoRecall?: boolean;
-  /** Message source for session pool (e.g., "discord", "slack", "viewer") */
+  /** Message source for session pool (e.g., "discord", "slack") */
   source?: string;
   /** Host-owned execution actor id, distinct from the authorization role. */
   actorId?: string;

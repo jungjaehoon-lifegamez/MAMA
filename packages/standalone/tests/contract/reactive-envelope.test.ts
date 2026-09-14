@@ -96,18 +96,6 @@ describe('reactive envelope issuance', () => {
       allowedDestinations: [{ kind: 'discord', id: expect.stringMatching(/^discord:channel:/) }],
     },
     {
-      source: 'viewer' as const,
-      envelopeSource: 'viewer',
-      allowedDestinations: [{ kind: 'webchat', id: expect.stringMatching(/^viewer:channel:/) }],
-    },
-    {
-      source: 'mobile' as const,
-      envelopeSource: 'viewer',
-      allowedDestinations: [{ kind: 'webchat', id: expect.stringMatching(/^mobile:channel:/) }],
-      expectedPlatform: 'cli',
-      expectedRoleName: 'chat_bot',
-    },
-    {
       source: 'system' as const,
       envelopeSource: 'watch',
       allowedDestinations: [],

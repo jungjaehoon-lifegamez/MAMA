@@ -462,14 +462,14 @@ describe('MessageRouter principal admission gate', () => {
     expect(channelTails.size).toBe(0);
   });
 
-  it('attaches a host principal to a viewer message and processes it', async () => {
+  it('attaches a host principal to a system message and processes it', async () => {
     const getOrCreate = vi.spyOn(sessionStore, 'getOrCreate');
 
     await expect(
       router.process(
         connectorMessage({
-          source: 'viewer',
-          channelId: 'synthetic-viewer',
+          source: 'system',
+          channelId: 'synthetic-system',
           userId: 'synthetic-host-user',
         })
       )

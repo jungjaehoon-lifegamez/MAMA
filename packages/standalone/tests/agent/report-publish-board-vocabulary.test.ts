@@ -39,8 +39,8 @@ const createMockApi = (): MAMAApiInterface =>
   }) as unknown as MAMAApiInterface;
 
 const agentContext = () => ({
-  source: 'viewer',
-  platform: 'viewer' as const,
+  source: 'cli',
+  platform: 'cli' as const,
   roleName: 'os_agent',
   role: { allowedTools: ['*'], systemControl: true, sensitiveAccess: true },
   session: { sessionId: 'test-session', startedAt: new Date() },
@@ -54,7 +54,8 @@ const VOCABULARY_HTML =
   '<span class="card-badge badge-warning">waiting</span></div>' +
   '<div class="card-action">Confirm the invoice</div></div>';
 
-const GENERIC_HTML = '<section><h3>Today</h3><ul><li>report-card is only text here</li></ul></section>';
+const GENERIC_HTML =
+  '<section><h3>Today</h3><ul><li>report-card is only text here</li></ul></section>';
 
 // The 19:59 live slot: invented card-grid/card wrapper, real badge sub-classes.
 const LIVE_1959_HTML =
@@ -153,9 +154,9 @@ describe('report_publish board vocabulary warning', () => {
     expect(result).not.toHaveProperty('warnings');
     expect(result).not.toHaveProperty('contract');
     expect(publisher).toHaveBeenCalledOnce();
-    expect(
-      warn.mock.calls.filter((call) => String(call[0]).includes('[board] slot'))
-    ).toHaveLength(0);
+    expect(warn.mock.calls.filter((call) => String(call[0]).includes('[board] slot'))).toHaveLength(
+      0
+    );
   });
 
   it('warns in the result and the log but still publishes a generic-HTML slot', async () => {
@@ -193,7 +194,7 @@ describe('report_publish board vocabulary warning', () => {
     expect(
       warn.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith('[board]'))
     ).toEqual(['[board] slot briefing published without the board vocabulary (run run_abc)']);
- 
+
     // The shape is handed back once, not per slot, so the republish needs no
     // second lookup.
     expect(result.contract).toBe(buildReportPublishToolContract());

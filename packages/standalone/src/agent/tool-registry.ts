@@ -32,8 +32,6 @@ export interface ToolDefinitionMeta {
   category: ToolCategory;
   /** Short parameter hint for prompt generation (e.g. "query?, type?, limit?") */
   params?: string;
-  /** If true, only viewers can use this tool */
-  viewerOnly?: boolean;
   /** Exact Codex dynamic-tool schema when the permissive gateway default is insufficient. */
   inputSchema?: HostToolDefinition['inputSchema'];
 }
@@ -42,7 +40,6 @@ export interface HostToolDefinitionOptions {
   allowedTools?: string[];
   blockedTools?: string[];
   disallowedTools?: string[];
-  viewer?: boolean;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────
@@ -714,14 +711,6 @@ register({
   params: 'localPath, folderId, fileName?, destinationCapability?, effect_key?',
 });
 
-// OS Management (viewer-only)
-register({
-  name: 'os_get_config',
-  description: 'Get current configuration',
-  category: 'os_management',
-  viewerOnly: true,
-});
-
 // Code-Act sandbox
 register({
   name: 'code_act',
@@ -1043,11 +1032,11 @@ export class ToolRegistry {
    * Argument validation remains the responsibility of GatewayToolExecutor.
    */
   static getHostToolDefinitions(options: HostToolDefinitionOptions = {}): HostToolDefinition[] {
-    const { allowedTools, blockedTools, disallowedTools, viewer = false } = options;
+    const { allowedTools, blockedTools, disallowedTools } = options;
 
     return ToolRegistry.getAllTools()
       .filter((tool) => {
-        if (tool.name.startsWith('mcp__') || (tool.viewerOnly && !viewer)) {
+        if (tool.name.startsWith('mcp__')) {
           return false;
         }
         if (
@@ -1126,7 +1115,7 @@ export class ToolRegistry {
       business_data:
         'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
       utility: 'Utility',
-      os_management: 'OS Management (viewer-only)',
+      os_management: 'OS Management',
       os_monitoring: 'OS Monitoring & Operator Console',
       code_act: 'Code-Act Sandbox',
       system: 'System',

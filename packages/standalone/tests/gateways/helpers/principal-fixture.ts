@@ -16,8 +16,6 @@ export function withOwnerPrincipal<T extends NormalizedMessage>(
     return message as T & { principal: PrincipalContext };
   }
   const principal =
-    message.source === 'viewer' || message.source === 'mobile' || message.source === 'system'
-      ? makeHostPrincipal(message.source)
-      : OWNER_PRINCIPAL;
+    message.source === 'system' ? makeHostPrincipal(message.source) : OWNER_PRINCIPAL;
   return { ...message, principal };
 }

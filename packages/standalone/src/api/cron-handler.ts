@@ -15,7 +15,7 @@ import {
 } from './types.js';
 import { asyncHandler, validateRequired } from './error-handler.js';
 
-const KNOWN_GATEWAYS = ['discord', 'slack', 'viewer'];
+const KNOWN_GATEWAYS = ['discord', 'slack'];
 const MAX_PROMPT_LENGTH = 10_000;
 
 function validateChannel(channel: string | undefined): void {

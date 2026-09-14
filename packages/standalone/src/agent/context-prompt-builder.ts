@@ -10,14 +10,7 @@ import type { AgentContext, AgentPlatform } from './types.js';
 /**
  * Valid agent platforms (Set for O(1) lookup)
  */
-const VALID_PLATFORMS = new Set<AgentPlatform>([
-  'viewer',
-  'discord',
-  'telegram',
-  'slack',
-  'chatwork',
-  'cli',
-]);
+const VALID_PLATFORMS = new Set<AgentPlatform>(['discord', 'telegram', 'slack', 'chatwork', 'cli']);
 
 /**
  * Build a minimal context summary for token-efficient injection

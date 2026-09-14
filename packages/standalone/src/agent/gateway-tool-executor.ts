@@ -77,7 +77,6 @@ import type {
   MAMAApiInterface,
   MAMAApiSetInput,
   AgentContext,
-  GetConfigInput,
   EnvelopeDenialResult,
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
@@ -116,7 +115,7 @@ import {
   type RegistryPort,
 } from './registry-tool-handlers.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
-import { loadConfig, getConfig } from '../cli/config/config-manager.js';
+import { getConfig } from '../cli/config/config-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { logActivity } from '../db/agent-store.js';
@@ -797,10 +796,6 @@ const TOOL_CATALOG_REVISION = createHash('sha256')
   .update(JSON.stringify(ToolRegistry.getAllTools()))
   .digest('hex');
 
-/**
- * Sensitive patterns that should be masked in config output
- */
-const SENSITIVE_KEYS = ['token', 'bot_token', 'app_token', 'api_token', 'api_key', 'secret'];
 const execFileAsync = promisify(execFile);
 const TELEGRAM_PHOTO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const TELEGRAM_DEFINITIVE_PHOTO_REJECTIONS = [
@@ -1096,9 +1091,7 @@ export class GatewayToolExecutor {
     const agentContext = executionContext?.agentContext ?? null;
     const source = executionContext?.source ?? agentContext?.source ?? '';
     const channelId = executionContext?.channelId ?? agentContext?.session?.channelId ?? '';
-    const agentId =
-      executionContext?.agentId ??
-      (source === 'viewer' ? 'os-agent' : (agentContext?.roleName ?? ''));
+    const agentId = executionContext?.agentId ?? agentContext?.roleName ?? '';
     return {
       agentContext,
       agentId,
@@ -2731,7 +2724,7 @@ export class GatewayToolExecutor {
       mergeNodes: (mergeInput) => core.mergeNodes(mergeInput),
       splitNode: (splitInput) => core.splitNode(splitInput as never),
       appendIdentityCorrection: (correction, trusted) =>
-        core.appendIdentityCorrection(correction as never, trusted as never),
+        core.appendIdentityCorrection(core.getAdapter(), correction as never, trusted as never),
     };
   }
 
@@ -3346,9 +3339,6 @@ export class GatewayToolExecutor {
             throw error;
           }
         }
-        // Browser tools
-        case 'os_get_config':
-          return await this.executeGetConfig(input as GetConfigInput);
         // Code-Act sandbox execution
         case 'code_act':
           return await this.executeCodeAct(input as CodeActInput);
@@ -5935,94 +5925,6 @@ export class GatewayToolExecutor {
       );
     }
     return this.ownerEventEffectLedger;
-  }
-
-  /**
-   * Execute os_get_config tool - Get current configuration
-   * Masks sensitive data for non-viewer sources
-   */
-  private async executeGetConfig(
-    input: GetConfigInput
-  ): Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }> {
-    const { section, includeSensitive } = input;
-
-    try {
-      const config = await loadConfig();
-
-      // Determine if we should show sensitive data
-      const context = this.getActiveContext();
-      const showSensitive =
-        includeSensitive && context?.source === 'viewer' && context?.role.sensitiveAccess;
-
-      // Mask sensitive data
-      const maskedConfig = this.maskSensitiveData(
-        config as unknown as Record<string, unknown>,
-        showSensitive
-      );
-
-      // Return specific section or full config
-      if (section) {
-        const sectionData = maskedConfig[section];
-        if (sectionData === undefined) {
-          return { success: false, error: `Unknown section: ${section}` };
-        }
-        return { success: true, config: { [section]: sectionData } };
-      }
-
-      return { success: true, config: maskedConfig };
-    } catch (err) {
-      return { success: false, error: `Failed to get config: ${err}` };
-    }
-  }
-
-  /**
-   * Recursively mask sensitive data in config object
-   */
-  private maskSensitiveData(
-    obj: Record<string, unknown>,
-    showSensitive: boolean = false
-  ): Record<string, unknown> {
-    if (showSensitive) {
-      return obj;
-    }
-
-    const masked: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(obj)) {
-      if (value === null || value === undefined) {
-        masked[key] = value;
-        continue;
-      }
-
-      // Check if key is sensitive
-      const isSensitive = SENSITIVE_KEYS.some((pattern) =>
-        key.toLowerCase().includes(pattern.toLowerCase())
-      );
-
-      if (isSensitive && typeof value === 'string' && value.length > 0) {
-        // Fully mask sensitive values - don't expose any characters
-        // Show only length hint for debugging without revealing content
-        masked[key] = `***[${value.length} chars]***`;
-      } else if (isSensitive && typeof value !== 'object') {
-        // Non-string sensitive scalars (numbers, booleans) must not pass
-        // through either - the key marked them secret.
-        masked[key] = '***';
-      } else if (Array.isArray(value)) {
-        // Arrays must be descended: a token inside multi_agent.agents[] or a
-        // bots[] entry would otherwise return in clear text (review).
-        masked[key] = value.map((item) =>
-          item !== null && typeof item === 'object' && !Array.isArray(item)
-            ? this.maskSensitiveData(item as Record<string, unknown>, showSensitive)
-            : item
-        );
-      } else if (typeof value === 'object') {
-        masked[key] = this.maskSensitiveData(value as Record<string, unknown>, showSensitive);
-      } else {
-        masked[key] = value;
-      }
-    }
-
-    return masked;
   }
 
   /**

@@ -243,7 +243,7 @@ export async function recordChannelAudit(input: {
 
   if (input.ack.status === 'failed') {
     findingIds.push(
-      await createAuditFinding({
+      createAuditFinding(adapter, {
         kind: 'unsupported_claim',
         severity: 'high',
         summary: input.ack.reason ?? `memory audit failed for ${input.topic}`,
