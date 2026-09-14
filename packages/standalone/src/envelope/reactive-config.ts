@@ -58,20 +58,6 @@ const REACTIVE_ROUTE_TABLE = {
       { kind: 'discord', id: message.channelId },
     ],
   },
-  viewer: {
-    source: 'viewer',
-    rawConnectors: [],
-    allowedDestinations: (message: NormalizedMessage) => [
-      { kind: 'webchat', id: message.channelId },
-    ],
-  },
-  mobile: {
-    source: 'viewer',
-    rawConnectors: [],
-    allowedDestinations: (message: NormalizedMessage) => [
-      { kind: 'webchat', id: message.channelId },
-    ],
-  },
   system: {
     source: 'watch',
     rawConnectors: [],

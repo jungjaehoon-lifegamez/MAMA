@@ -155,7 +155,6 @@ const DEFAULT_PRIVATE_CONNECTOR_POLICY = resolvePrivateConnectorPolicy({
 // uses owner:runtime, so its session lane serializes chat, events, reports,
 // maintenance, and heartbeat before any global-lane choice is considered.
 export const SOURCE_GLOBAL_LANES: Record<string, string> = {
-  viewer: 'viewer',
   system: 'system',
   // Non-owner trigger authoring/review still uses the operator global lane.
   operator: 'operator',
@@ -591,13 +590,7 @@ export function buildAgentToolExecutionContext(
   const agentContext = options.agentContext;
   const context: AgentToolExecutionContext = {
     agentContext,
-    agentId:
-      options.actorId ??
-      (agentContext
-        ? agentContext.source === 'viewer'
-          ? 'os-agent'
-          : agentContext.roleName
-        : undefined),
+    agentId: options.actorId ?? (agentContext ? agentContext.roleName : undefined),
     source: options.source,
     channelId: options.channelId,
     envelope: options.envelope,
@@ -2737,11 +2730,7 @@ export class AgentLoop {
     return {
       model_id: options?.model ?? this.model ?? null,
       model_provider: this.backend,
-      agent_id:
-        options?.envelope?.agent_id ??
-        (agentContext?.source === 'viewer'
-          ? 'os-agent'
-          : (agentContext?.roleName ?? options?.source ?? 'agent')),
+      agent_id: options?.envelope?.agent_id ?? agentContext?.roleName ?? options?.source ?? 'agent',
       instance_id: options?.envelope?.instance_id ?? agentContext?.session?.sessionId ?? null,
       envelope_hash: options?.envelope?.envelope_hash ?? null,
       parent_model_run_id: options?.parentModelRunId ?? null,
@@ -2786,7 +2775,6 @@ export class AgentLoop {
           allowedTools: options?.agentContext?.role.allowedTools,
           blockedTools: options?.agentContext?.role.blockedTools,
           disallowedTools: this.disallowedTools,
-          viewer: options?.agentContext?.platform === 'viewer',
         });
   }
 

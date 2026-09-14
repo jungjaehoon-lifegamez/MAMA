@@ -363,9 +363,6 @@ export function resolvePrivatePrincipalSurface(
   if (agentContext === undefined) {
     return 'legacy-unbound';
   }
-  if (agentContext.source === 'viewer') {
-    return 'os_agent';
-  }
   switch (agentContext.roleName) {
     case 'owner_console':
     case 'operator-report':

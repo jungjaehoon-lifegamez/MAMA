@@ -360,7 +360,7 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 /** Wall for a native child's own grant: long delegated work must not expire mid-run. */
 const SUBAGENT_ENVELOPE_WALL_SECONDS = 1800;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
-const HOST_MESSAGE_SOURCES = new Set<NormalizedMessage['source']>(['viewer', 'mobile', 'system']);
+const HOST_MESSAGE_SOURCES = new Set<NormalizedMessage['source']>(['system']);
 export const PUBLIC_LANE_SYSTEM_PROMPT =
   "You are MAMA's public chat assistant. Answer directly and concisely using only the public conversation. You have no tools.";
 export const MEMBER_LANE_SYSTEM_PROMPT =
@@ -383,7 +383,6 @@ const MEMBER_BLOCKED_TOOLS = [
   'discord_send',
   'slack_send',
   'telegram_send',
-  'webchat_send',
   'task_create',
   'task_update',
   'task_reclassify',
@@ -919,7 +918,7 @@ export class MessageRouter implements TurnProcessor {
     const lane = message.principal?.lane ?? 'owner';
     const sessionChannelId = laneChannelId(message.channelId, lane);
 
-    // Security: Block sensitive configuration requests from non-viewer sources.
+    // Security: Block sensitive configuration requests from chat sources.
     // The wall applies to OWNER-authored text only: untrusted-wrapped blocks
     // (forwarded third-party content) are stripped first - the owner forwarding
     // a phishing message that merely mentions "api key" must reach the persona
@@ -948,7 +947,7 @@ export class MessageRouter implements TurnProcessor {
         details: { source: message.source, channelId: message.channelId },
       });
     }
-    if (message.source !== 'viewer' && containsSensitiveRequest(ownerAuthoredText)) {
+    if (containsSensitiveRequest(ownerAuthoredText)) {
       logSecurityEventOnly({
         type: 'sensitive_request_blocked',
         severity: 'warn',
@@ -1655,7 +1654,7 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
             completedProvenanceReason = 'commit_failed';
           }
           completedOwnerJournalProvenance = result.ownerJournalProvenance;
-          this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
+          this.logFrontdoorActivity(message.text, response, Date.now() - turnStart);
         } else {
           const effectiveText = `${memoryPrefix}${skillPrefix}${observationPrefix}${message.text}${formattingSuffix}`;
           const turnStart = Date.now();
@@ -1666,7 +1665,7 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
             completedProvenanceReason = 'commit_failed';
           }
           completedOwnerJournalProvenance = result.ownerJournalProvenance;
-          this.logFrontdoorActivity(message, message.text, response, Date.now() - turnStart);
+          this.logFrontdoorActivity(message.text, response, Date.now() - turnStart);
         }
 
         if (usesContinuationContext && pendingNotices) {
@@ -1686,7 +1685,7 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
         const durationMs = Date.now() - startTime;
         this.sessionStore.discardIncompleteTurn(session.id);
         this.logAgentActivity(
-          this.resolveFrontdoorAgentId(message),
+          'mama',
           'task_error',
           message.text?.slice(0, 200),
           undefined,
@@ -1722,11 +1721,6 @@ Credentials must not be pasted into chat. This keeps them out of chat logs.`;
           clearInterval(streamFlushTimer);
           streamFlushTimer = null;
         }
-      }
-
-      // Preserve compatibility for historical viewer-source sessions until the source union retires.
-      if (message.source === 'viewer') {
-        response = await this.resolveMediaPaths(response);
       }
 
       const resultObservationRef =
@@ -1931,9 +1925,6 @@ ${historyContext}
       prompt += injectedContext;
     }
 
-    if (agentContext?.platform === 'viewer') {
-      prompt += `\n## Instructions\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
-    }
     if (agentContext) {
       // Store canonicity and external-evidence trust are stable owner policy.
       // Keep this exact text in the durable Codex policy fingerprint below.
@@ -2042,73 +2033,6 @@ ${historyContext}
     }
 
     return prompt || '(continuing conversation)';
-  }
-
-  /**
-   * Post-process agent response: detect image file paths and copy to outbound.
-   * Rewrites paths to ~/.mama/workspace/media/outbound/filename so format.js renders them.
-   */
-  private async resolveMediaPaths(response: string): Promise<string> {
-    const { mkdir, access, copyFile } = await import('node:fs/promises');
-    const path = await import('node:path');
-    const outboundDir = join(homedir(), '.mama', 'workspace', 'media', 'outbound');
-    const imgExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-
-    // Match absolute paths to image files
-    const pathPattern = /(\/[\w./-]+\.(png|jpg|jpeg|gif|webp))/gi;
-    let match;
-    const appended: string[] = [];
-    const matches: string[] = [];
-
-    // Collect all matches first
-    while ((match = pathPattern.exec(response)) !== null) {
-      matches.push(match[1]);
-    }
-
-    if (matches.length === 0) {
-      return response;
-    }
-
-    // Create outbound directory once
-    await mkdir(outboundDir, { recursive: true });
-
-    // Process matches asynchronously
-    for (const filePath of matches) {
-      const ext = path.extname(filePath).toLowerCase();
-      if (!imgExts.includes(ext)) {
-        continue;
-      }
-      if (filePath.includes('/media/outbound/') || filePath.includes('/media/inbound/')) {
-        continue;
-      }
-
-      // Security: Reject paths with traversal sequences to prevent arbitrary file access
-      const resolvedPath = path.resolve(filePath);
-      if (filePath.includes('..') || resolvedPath !== path.normalize(filePath)) {
-        logger.debug(`Skipping path with traversal sequence: ${filePath}`);
-        continue;
-      }
-
-      try {
-        await access(resolvedPath);
-        const filename = `${Date.now()}_${path.basename(resolvedPath)}`;
-        const dest = path.join(outboundDir, filename);
-        await copyFile(resolvedPath, dest);
-        appended.push(`~/.mama/workspace/media/outbound/${filename}`);
-        logger.debug(`Media resolved: ${resolvedPath} → outbound/${filename}`);
-      } catch (err) {
-        // Log the error instead of silently ignoring
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error(`Failed to copy media file ${resolvedPath}: ${message}`);
-        // Continue processing other files - don't rethrow
-      }
-    }
-
-    // Append outbound paths — don't modify original response
-    if (appended.length > 0) {
-      return response + '\n\n' + appended.join('\n');
-    }
-    return response;
   }
 
   /**
@@ -2234,18 +2158,9 @@ ${historyContext}
 
   // ── Activity Logging (shared by MAMA frontdoor + memory agent) ──────
 
-  private resolveFrontdoorAgentId(message: NormalizedMessage): string {
-    return message.source === 'viewer' ? 'os-agent' : 'mama';
-  }
-
-  private logFrontdoorActivity(
-    message: NormalizedMessage,
-    inputText: string,
-    responseText: string,
-    durationMs: number
-  ): void {
+  private logFrontdoorActivity(inputText: string, responseText: string, durationMs: number): void {
     this.logAgentActivity(
-      this.resolveFrontdoorAgentId(message),
+      'mama',
       'task_complete',
       inputText?.slice(0, 200),
       responseText?.slice(0, 500),

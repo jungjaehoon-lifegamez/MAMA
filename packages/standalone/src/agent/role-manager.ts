@@ -1,7 +1,7 @@
 /**
  * Role Manager for Agent Permission Control
  *
- * Manages role-based permissions for different message sources (viewer, discord, etc.)
+ * Manages role-based permissions for different message sources (discord, telegram, etc.)
  * Determines which tools and paths are accessible based on the agent's role.
  */
 
@@ -56,7 +56,7 @@ export class RoleManager {
 
   /**
    * Get the role configuration for a given source
-   * @param source - Message source (e.g., "viewer", "discord", "telegram")
+   * @param source - Message source (e.g., "discord", "telegram")
    * @param trust - Per-message trust context (channelId, chatType)
    * @returns Role configuration for the source
    */
@@ -88,7 +88,7 @@ export class RoleManager {
     }
 
     // A verified direct owner channel is one owner-console surface regardless
-    // of transport. Viewer/mobile/system retain their static mappings.
+    // of transport. System retains its static mapping.
     if (
       OWNER_CONSOLE_CONNECTOR_SOURCES.has(normalizedSource) &&
       principal?.class === 'owner' &&

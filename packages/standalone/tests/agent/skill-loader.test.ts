@@ -257,8 +257,8 @@ describe('SkillLoader', () => {
       ];
 
       const filtered = filterSkillCatalogForContext(catalog, {
-        source: 'viewer',
-        platform: 'viewer',
+        source: 'cli',
+        platform: 'cli',
         roleName: 'os_agent',
         role: {
           allowedTools: ['*'],

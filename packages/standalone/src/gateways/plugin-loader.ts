@@ -30,8 +30,6 @@ const PLUGIN_MESSAGE_SOURCES: ReadonlySet<string> = new Set<MessageSource>([
   'slack',
   'telegram',
   'chatwork',
-  'mobile',
-  'viewer',
   'system',
 ]);
 

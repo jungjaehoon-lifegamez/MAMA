@@ -87,18 +87,6 @@ describe('reactive envelope route policy', () => {
       destination: { kind: 'discord', id: 'discord:1' },
     },
     {
-      source: 'viewer' as const,
-      envelopeSource: 'viewer',
-      rawConnectors: [],
-      destination: { kind: 'webchat', id: 'viewer:1' },
-    },
-    {
-      source: 'mobile' as const,
-      envelopeSource: 'viewer',
-      rawConnectors: [],
-      destination: { kind: 'webchat', id: 'mobile:1' },
-    },
-    {
       source: 'system' as const,
       envelopeSource: 'watch',
       rawConnectors: [],
@@ -413,16 +401,16 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
   });
 
   it('does not widen a non-Telegram host principal even when it is console eligible', () => {
-    const viewer = ownerMessage('viewer-channel', 'private', 'viewer');
-    viewer.principal = {
+    const host = ownerMessage('system-channel', 'private', 'system');
+    host.principal = {
       class: 'owner',
       lane: 'owner',
-      canonicalId: 'viewer:host:host',
+      canonicalId: 'system:host:host',
       consoleEligible: true,
     };
 
     expect(
-      getReactiveRoutePolicy(viewer, ownerConfig(), { HOME: '/tmp/home' }, ['trello']).rawConnectors
+      getReactiveRoutePolicy(host, ownerConfig(), { HOME: '/tmp/home' }, ['trello']).rawConnectors
     ).toEqual([]);
   });
 

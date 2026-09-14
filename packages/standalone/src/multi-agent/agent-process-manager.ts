@@ -658,7 +658,6 @@ export class AgentProcessManager extends EventEmitter {
       ...allowedTools.filter((tool) => tool !== CODE_ACT_MARKER),
     ];
     const platform: AgentPlatform =
-      source === 'viewer' ||
       source === 'discord' ||
       source === 'telegram' ||
       source === 'slack' ||

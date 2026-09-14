@@ -58,7 +58,7 @@ function noteRetiredBuiltinSkill(name: string): void {
   loggedRetiredBuiltinSkills.add(name);
   skillLogger.warn(`[skills] retired builtin skill ignored: ${name}`);
 }
-const VIEWER_HIDDEN_SKILL_IDS = new Set<string>([]);
+const OS_AGENT_HIDDEN_SKILL_IDS = new Set<string>([]);
 
 /**
  * Result of loading a skill's content.
@@ -478,13 +478,12 @@ export function filterSkillCatalogForContext(
   if (!context) {
     return globallyFiltered;
   }
-  const isViewerOsAgent =
-    context.source === 'viewer' || context.platform === 'viewer' || context.roleName === 'os_agent';
-  if (!isViewerOsAgent) {
+  const isOsAgent = context.roleName === 'os_agent';
+  if (!isOsAgent) {
     return globallyFiltered;
   }
   return globallyFiltered.filter((line) => {
-    for (const skillId of VIEWER_HIDDEN_SKILL_IDS) {
+    for (const skillId of OS_AGENT_HIDDEN_SKILL_IDS) {
       if (line.includes(`[${skillId}]`)) {
         return false;
       }
