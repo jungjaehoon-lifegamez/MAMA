@@ -238,7 +238,7 @@ describe('SessionStore', () => {
   describe('Per-message history persistence', () => {
     describe('appendMessage()', () => {
       it('should append a single user message without bot response', () => {
-        const session = store.getOrCreate('viewer', 'test_channel', 'user1');
+        const session = store.getOrCreate('telegram', 'test_channel', 'user1');
         store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
 
         const history = store.getHistory(session.id);
@@ -248,7 +248,7 @@ describe('SessionStore', () => {
       });
 
       it('should append a bot message to the last incomplete turn', () => {
-        const session = store.getOrCreate('viewer', 'test_channel2', 'user1');
+        const session = store.getOrCreate('telegram', 'test_channel2', 'user1');
         store.appendMessage(session.id, { role: 'user', content: 'hello', timestamp: Date.now() });
         store.appendMessage(session.id, {
           role: 'assistant',
@@ -263,7 +263,7 @@ describe('SessionStore', () => {
       });
 
       it('should start a new turn if last turn is complete', () => {
-        const session = store.getOrCreate('viewer', 'test_channel3', 'user1');
+        const session = store.getOrCreate('telegram', 'test_channel3', 'user1');
         store.appendMessage(session.id, { role: 'user', content: 'q1', timestamp: Date.now() });
         store.appendMessage(session.id, {
           role: 'assistant',
@@ -290,7 +290,7 @@ describe('SessionStore', () => {
 
     describe('flushStreamingResponse()', () => {
       it('should update bot field of last turn with accumulated text', () => {
-        const session = store.getOrCreate('viewer', 'flush_test', 'user1');
+        const session = store.getOrCreate('telegram', 'flush_test', 'user1');
         store.appendMessage(session.id, {
           role: 'user',
           content: 'question',
@@ -314,7 +314,7 @@ describe('SessionStore', () => {
       });
 
       it('should return false for empty history', () => {
-        const session = store.getOrCreate('viewer', 'flush_empty', 'user1');
+        const session = store.getOrCreate('telegram', 'flush_empty', 'user1');
         const result = store.flushStreamingResponse(session.id, 'text');
         expect(result).toBe(false);
       });

@@ -202,12 +202,11 @@ describe('ToolRegistry', () => {
       }
     });
 
-    it('should advertise all non-viewer registered tools when allowedTools is undefined', () => {
+    it('should advertise all registered tools when allowedTools is undefined', () => {
       const definitions = ToolRegistry.getHostToolDefinitions();
 
       expect(definitions.length).toBeGreaterThan(0);
       expect(definitions.map((tool) => tool.name)).toContain('mama_search');
-      expect(definitions.map((tool) => tool.name)).not.toContain('os_get_config');
       expect(definitions.every((tool) => ToolRegistry.isRegistered(tool.name))).toBe(true);
       expect(definitions.every((tool) => !tool.name.startsWith('mcp__'))).toBe(true);
     });
@@ -244,19 +243,6 @@ describe('ToolRegistry', () => {
       expect(definitions.map((tool) => tool.name)).not.toContain('task_update');
       expect(definitions.map((tool) => tool.name)).toContain('task_list');
       expect(definitions.map((tool) => tool.name)).toContain('Write');
-    });
-
-    it('should include viewerOnly tools only for authorized viewer runs', () => {
-      const unauthorized = ToolRegistry.getHostToolDefinitions({
-        allowedTools: ['os_get_config'],
-      });
-      const authorized = ToolRegistry.getHostToolDefinitions({
-        allowedTools: ['os_get_config'],
-        viewer: true,
-      });
-
-      expect(unauthorized).toEqual([]);
-      expect(authorized.map((tool) => tool.name)).toEqual(['os_get_config']);
     });
 
     it('should convert metadata to permissive dynamic function definitions', () => {
@@ -461,18 +447,6 @@ describe('ToolRegistry', () => {
   describe('count', () => {
     it('should match getValidToolNames length', () => {
       expect(ToolRegistry.count).toBe(ToolRegistry.getValidToolNames().length);
-    });
-  });
-
-  describe('viewerOnly tools', () => {
-    it('should mark OS management tools as viewerOnly', () => {
-      const tool = ToolRegistry.getTool('os_get_config');
-      expect(tool?.viewerOnly).toBe(true);
-    });
-
-    it('should not mark utility tools as viewerOnly', () => {
-      const tool = ToolRegistry.getTool('Read');
-      expect(tool?.viewerOnly).toBeUndefined();
     });
   });
 });

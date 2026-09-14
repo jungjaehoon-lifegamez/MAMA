@@ -27,12 +27,10 @@ src/core/
 ├── relevance-scorer.js      # Semantic similarity scoring
 ├── decision-formatter.js    # Output formatting
 ├── embedding-cache.js       # In-memory embedding cache
-├── outcome-tracker.js       # Decision outcome updates
 ├── config-loader.js         # Configuration management
 ├── debug-logger.js          # Logging utilities
 ├── errors.js                # Error classes
 ├── time-formatter.js        # Time formatting
-├── query-intent.js          # Query intent detection
 ├── contract-extractor.js    # API contract extraction
 ├── session-utils.js         # Session state management
 ├── memory-inject.js         # Context injection

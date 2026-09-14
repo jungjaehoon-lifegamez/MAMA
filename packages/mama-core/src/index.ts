@@ -278,17 +278,6 @@ export {
 } from './decision-tracker.js';
 
 export {
-  checkNodeVersion,
-  checkSQLite,
-  checkEmbeddings,
-  checkDatabase,
-  getTierDescription,
-  type TierValidation,
-  type CheckResult,
-  type NamedCheckResult,
-} from './tier-validator.js';
-
-export {
   logProgress,
   logComplete,
   logFailed,
@@ -335,26 +324,6 @@ export {
   type SemanticEdges as FormatterSemanticEdges,
   type FormatOptions,
 } from './decision-formatter.js';
-
-export {
-  analyzeOutcome,
-  matchesFailureIndicators,
-  matchesSuccessIndicators,
-  matchesPartialIndicators,
-  extractFailureReason,
-  getRecentDecision,
-  calculateDurationDays,
-  getEvidenceImpact,
-  markOutcome,
-  FAILURE_INDICATORS,
-  SUCCESS_INDICATORS,
-  PARTIAL_INDICATORS,
-  RECENT_WINDOW_MS,
-  type HookContext,
-  type OutcomeType,
-} from './outcome-tracker.js';
-
-export { analyzeIntent, type IntentResult, type AnalyzeOptions } from './query-intent.js';
 
 export {
   generate,

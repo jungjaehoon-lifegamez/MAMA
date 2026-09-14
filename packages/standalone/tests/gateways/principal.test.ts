@@ -345,12 +345,12 @@ describe('Story TG-01/TG-04: gateway principal resolution', () => {
 
   describe('makeHostPrincipal()', () => {
     it('creates a frozen owner-lane principal for a private host surface', () => {
-      const principal = makeHostPrincipal('viewer');
+      const principal = makeHostPrincipal('system');
 
       expect(principal).toEqual({
         class: 'owner',
         lane: 'owner',
-        canonicalId: 'viewer:host:host',
+        canonicalId: 'system:host:host',
         consoleEligible: true,
       });
       expect(Object.isFrozen(principal)).toBe(true);

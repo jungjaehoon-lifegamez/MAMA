@@ -166,7 +166,6 @@ describe('Story OPS-0: per-run scope + operator global lane', () => {
 
       expect(resolve('operator:test')).toBe('operator');
       expect(resolve('operator:worker:board')).toBe('operator');
-      expect(resolve('viewer:main')).toBe('viewer');
       expect(resolve('system:conductor-audit')).toBe('system');
       // Chat transports fall through to the shared 'main' default lane.
       expect(resolve('telegram:7777:42')).toBeUndefined();

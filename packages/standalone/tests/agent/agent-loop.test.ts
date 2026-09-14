@@ -3374,18 +3374,9 @@ Skills provide additional tools.
       );
 
       await agentLoop.run('Hello', {
-        source: 'viewer',
-        channelId: 'mama_os_main',
-        agentContext: {
-          ...createChatBotContext(),
-          source: 'viewer',
-          platform: 'viewer',
-          roleName: 'os_agent',
-          session: {
-            ...createChatBotContext().session,
-            channelId: 'mama_os_main',
-          },
-        },
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: createChatBotContext(),
       });
 
       expect(gatewayExecutorSetCurrentAgentContextMock).not.toHaveBeenCalled();
@@ -3456,39 +3447,15 @@ Skills provide additional tools.
       );
 
       await agentLoop.run('First', {
-        source: 'viewer',
-        channelId: 'mama_os_main',
-        agentContext: {
-          ...createChatBotContext(),
-          source: 'viewer',
-          platform: 'viewer',
-          roleName: 'os_agent',
-        },
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: createChatBotContext(),
       });
       gatewayExecutorClearCurrentAgentContextMock.mockClear();
 
       await agentLoop.run('Second');
 
       expect(gatewayExecutorClearCurrentAgentContextMock).not.toHaveBeenCalled();
-    });
-
-    it('should route viewer frontdoor sessions through a dedicated viewer global lane', async () => {
-      const agentLoop = new AgentLoop(
-        createMockOAuthManager(),
-        { useLanes: true },
-        {},
-        { mamaApi: createMockApi() }
-      );
-
-      agentLoop.setSessionKey('viewer:mama_os_main:user-1');
-      await agentLoop.run('Hello');
-
-      expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
-        'viewer:mama_os_main:user-1',
-        expect.any(Function),
-        'viewer',
-        { priority: 0 }
-      );
     });
 
     it('should route conductor audit sessions through a dedicated system global lane', async () => {

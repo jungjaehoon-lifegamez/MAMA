@@ -13,7 +13,6 @@ export interface CronResultRouterOptions {
     discord?: GatewaySender;
     slack?: GatewaySender;
     telegram?: GatewaySender;
-    viewer?: GatewaySender;
   };
 }
 

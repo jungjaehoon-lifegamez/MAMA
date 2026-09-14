@@ -13,28 +13,6 @@ describe('RoleManager', () => {
   });
 
   describe('getRoleForSource()', () => {
-    it('should return os_agent role for viewer source', () => {
-      const manager = new RoleManager();
-      const { roleName, role } = manager.getRoleForSource('viewer');
-
-      expect(roleName).toBe('os_agent');
-      expect(role.allowedTools).toContain('*');
-      expect(role.systemControl).toBe(true);
-      expect(role.sensitiveAccess).toBe(true);
-    });
-
-    it('keeps the viewer static mapping when its host principal is console eligible', () => {
-      const manager = new RoleManager();
-      const principal: PrincipalContext = {
-        class: 'owner',
-        lane: 'owner',
-        canonicalId: 'viewer:host:host',
-        consoleEligible: true,
-      };
-
-      expect(manager.getRoleForSource('viewer', { principal }).roleName).toBe('os_agent');
-    });
-
     it('resolves admitted public and defensive external principals to zero-tool roles', () => {
       const manager = new RoleManager();
       const publicPrincipal: PrincipalContext = {
@@ -180,7 +158,7 @@ describe('RoleManager', () => {
           },
         },
         sourceMapping: {
-          viewer: 'admin',
+          cli: 'admin',
           discord: 'readonly',
         },
       };
@@ -194,8 +172,10 @@ describe('RoleManager', () => {
 
   describe('isToolAllowed()', () => {
     it('should allow all tools when allowedTools is ["*"]', () => {
+      const role: RoleConfig = {
+        allowedTools: ['*'],
+      };
       const manager = new RoleManager();
-      const { role } = manager.getRoleForSource('viewer');
 
       expect(manager.isToolAllowed(role, 'Bash')).toBe(true);
       expect(manager.isToolAllowed(role, 'Write')).toBe(true);
@@ -326,8 +306,11 @@ describe('RoleManager', () => {
 
   describe('canSystemControl()', () => {
     it('should return true for roles with systemControl', () => {
+      const role: RoleConfig = {
+        allowedTools: ['*'],
+        systemControl: true,
+      };
       const manager = new RoleManager();
-      const { role } = manager.getRoleForSource('viewer');
 
       expect(manager.canSystemControl(role)).toBe(true);
     });
@@ -342,8 +325,11 @@ describe('RoleManager', () => {
 
   describe('canAccessSensitive()', () => {
     it('should return true for roles with sensitiveAccess', () => {
+      const role: RoleConfig = {
+        allowedTools: ['*'],
+        sensitiveAccess: true,
+      };
       const manager = new RoleManager();
-      const { role } = manager.getRoleForSource('viewer');
 
       expect(manager.canAccessSensitive(role)).toBe(true);
     });
@@ -358,8 +344,19 @@ describe('RoleManager', () => {
 
   describe('getCapabilities()', () => {
     it('should return readable capabilities for os_agent', () => {
-      const manager = new RoleManager();
-      const { role } = manager.getRoleForSource('viewer');
+      const manager = new RoleManager({
+        rolesConfig: {
+          definitions: {
+            os_agent: {
+              allowedTools: ['*'],
+              systemControl: true,
+              sensitiveAccess: true,
+            },
+          },
+          sourceMapping: { cli: 'os_agent' },
+        },
+      });
+      const { role } = manager.getRoleForSource('cli');
       const capabilities = manager.getCapabilities(role);
 
       expect(capabilities).toContain('All tools');
@@ -440,12 +437,12 @@ describe('RoleManager', () => {
           },
         },
         sourceMapping: {
-          viewer: 'super_admin',
+          cli: 'super_admin',
         },
       };
 
       manager.updateRolesConfig(newConfig);
-      const { roleName } = manager.getRoleForSource('viewer');
+      const { roleName } = manager.getRoleForSource('cli');
 
       expect(roleName).toBe('super_admin');
     });

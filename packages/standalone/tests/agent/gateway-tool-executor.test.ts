@@ -398,9 +398,9 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     }) satisfies ModelRunRecord;
 
   // Shared context helpers (used by multiple test suites)
-  const createViewerContext = () => ({
-    source: 'viewer',
-    platform: 'viewer' as const,
+  const createOsAgentContext = () => ({
+    source: 'cli',
+    platform: 'cli' as const,
     roleName: 'os_agent',
     role: {
       allowedTools: ['*'],
@@ -444,7 +444,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
   });
 
   const createOwnerContext = () => ({
-    ...createViewerContext(),
+    ...createOsAgentContext(),
     source: 'telegram',
     roleName: 'owner_console',
     role: DEFAULT_ROLES.definitions.owner_console,
@@ -478,7 +478,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           }),
         ];
         cases[1]!.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'telegram',
           roleName: 'owner_console',
           role: DEFAULT_ROLES.definitions.owner_console,
@@ -501,7 +501,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
       it('TG-04/TG-06 forwards the observed analysis basis without replacing it at publish time', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createViewerContext());
+        executor.setAgentContext(createOsAgentContext());
         const publish = vi.fn(() => ({
           acceptedSlotIds: ['briefing'],
           changedSlotIds: ['briefing'],
@@ -520,7 +520,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
       it('TG-06 reports an identical full dashboard as accepted with zero changed slots', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createViewerContext());
+        executor.setAgentContext(createOsAgentContext());
         executor.setReportPublisher(() => ({
           acceptedSlotIds: ['pipeline', 'briefing', 'decisions', 'action_required'],
           changedSlotIds: [],
@@ -547,7 +547,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
       it('TG-06 exposes accepted and changed slot identities for a mixed dashboard publish', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createViewerContext());
+        executor.setAgentContext(createOsAgentContext());
         executor.setReportPublisher(() => ({
           acceptedSlotIds: ['pipeline', 'briefing', 'decisions'],
           changedSlotIds: ['pipeline', 'decisions'],
@@ -577,7 +577,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         'keeps a legacy %s report publisher callback compatible',
         async (_caseName, publisherResult, expectedSlotIds) => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
           executor.setReportPublisher(() => publisherResult);
 
           const result = await executor.execute('report_publish', {
@@ -803,7 +803,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             allowedTools: ['task_lifecycle_reconcile'],
           },
           {
-            agentContext: createViewerContext(),
+            agentContext: createOsAgentContext(),
             executionSurface: 'model_tool',
             workorderAttemptId: seeded.attempt.id,
           }
@@ -829,7 +829,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             allowedTools: ['task_external_bind'],
           },
           {
-            agentContext: createViewerContext(),
+            agentContext: createOsAgentContext(),
             executionSurface: 'model_tool',
             workorderAttemptId: seeded.attempt.id,
           }
@@ -924,7 +924,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
               allowedTools: ['task_update'],
             },
             {
-              agentContext: createViewerContext(),
+              agentContext: createOsAgentContext(),
               executionSurface: 'model_tool',
               workorderAttemptId: seeded.attempt.id,
               causeEventIds: [seeded.candidate.eventId],
@@ -1005,7 +1005,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
               allowedTools: ['task_create'],
             },
             {
-              agentContext: createViewerContext(),
+              agentContext: createOsAgentContext(),
               executionSurface: 'model_tool',
               workorderAttemptId: seeded.attempt.id,
               causeEventIds: [seeded.candidate.eventId],
@@ -1791,35 +1791,6 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
-    describe('viewerOnly enforcement through execute()', () => {
-      // The cull deleted the os_* permission blocks wholesale, but
-      // os_get_config SURVIVES as a live viewerOnly tool - registry metadata
-      // alone does not exercise checkToolPermission (review).
-      it('denies os_get_config from a non-viewer source', async () => {
-        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createDiscordContext());
-        const result = (await executor.execute('os_get_config', {})) as {
-          success: boolean;
-          error?: string;
-        };
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('Permission denied');
-      });
-
-      it('lets os_get_config PAST the permission gate for the viewer source', async () => {
-        // Asserts the permission DECISION, not handler success: the handler
-        // reads live config from $HOME, which CI does not have (and tests
-        // must not depend on - the saveConfig/homedir isolation rule).
-        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createViewerContext());
-        const result = (await executor.execute('os_get_config', {})) as {
-          success: boolean;
-          error?: string;
-        };
-        expect(result.error ?? '').not.toContain('Permission denied');
-      });
-    });
-
     describe('static methods', () => {
       it('should return valid tools', () => {
         const tools = GatewayToolExecutor.getValidTools();
@@ -1833,7 +1804,6 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(tools).toContain('Bash');
         expect(tools).toContain('discord_send');
         expect(tools).toContain('telegram_send');
-        expect(tools).toContain('os_get_config');
       });
 
       it('should check valid tool names', () => {
@@ -1846,7 +1816,6 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(GatewayToolExecutor.isValidTool('Write')).toBe(true);
         expect(GatewayToolExecutor.isValidTool('Bash')).toBe(true);
         expect(GatewayToolExecutor.isValidTool('discord_send')).toBe(true);
-        expect(GatewayToolExecutor.isValidTool('os_get_config')).toBe(true);
         expect(GatewayToolExecutor.isValidTool('invalid')).toBe(false);
         // Old names should be invalid
         expect(GatewayToolExecutor.isValidTool('save')).toBe(false);
@@ -1925,7 +1894,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             .fn()
             .mockResolvedValue({ status: 'running', envelope_hash: envelope.envelope_hash });
           const executor = new GatewayToolExecutor({ mamaApi: api });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
           executor.setOwnerActionEffectLedger(new OwnerActionEffectLedger(db));
           const sendMessage = vi.fn();
           let receiptVisible = false;
@@ -1997,7 +1966,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           readOutboundDeliveryReceipt,
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2084,7 +2053,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           sendSticker: vi.fn(),
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2133,7 +2102,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           sendSticker: vi.fn(),
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2179,7 +2148,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           readOutboundDeliveryReceipt: vi.fn(),
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2254,7 +2223,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           readOutboundDeliveryReceipt: vi.fn().mockReturnValue(null),
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2325,7 +2294,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           readOutboundDeliveryReceipt: vi.fn(),
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2402,7 +2371,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             readOutboundDeliveryReceipt,
           });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             source: 'owner-event',
             platform: 'cli',
             roleName: 'owner_console',
@@ -2503,7 +2472,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           }
         ).driveTools = { prepareUpload, transmitPreparedUpload, recoverUpload };
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2591,7 +2560,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           recoverUpload: vi.fn(),
         };
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'owner-event',
           platform: 'cli',
           roleName: 'owner_console',
@@ -2648,7 +2617,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         };
         executor.setTelegramGateway(telegramGateway);
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'telegram',
           platform: 'telegram',
           roleName: 'owner_console',
@@ -2695,7 +2664,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         };
         executor.setTelegramGateway(telegramGateway);
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'telegram',
           platform: 'telegram',
           roleName: 'owner_console',
@@ -2733,7 +2702,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         };
         executor.setTelegramGateway(telegramGateway);
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'telegram',
           platform: 'telegram',
           roleName: 'owner_console',
@@ -2778,7 +2747,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           sendSticker: vi.fn(),
         });
         const context = {
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           source: 'telegram',
           platform: 'telegram' as const,
           roleName: 'owner_console',
@@ -2812,7 +2781,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
       it('composes structured OCR output directly into the translation primitive', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-        executor.setAgentContext(createViewerContext());
+        executor.setAgentContext(createOsAgentContext());
         const bbox = [
           [0, 0],
           [10, 0],
@@ -2858,7 +2827,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       describe('AC #1: request allowlists narrow injected Code-Act functions', () => {
         it('TG-03/TG-04 discovers, describes, and directly executes an allowed tool', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', {
             code: `
@@ -2895,7 +2864,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         it('returns four complete selected contracts without slicing the largest declarations', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
           const names = [
             'task_temporal_reconcile',
             'context_compile',
@@ -2920,7 +2889,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('TG-04/TG-05 binds pagination to the exact projected policy and filters', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           });
@@ -2965,7 +2934,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('reaches every permitted match in stable order across bounded pages', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           });
@@ -2996,7 +2965,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         it('TG-04/TG-05 hides disabled private metadata and rejects its old cursor generically', async () => {
           const ownerContext = {
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             source: 'telegram',
             roleName: 'owner_console',
             role: { allowedTools: ['code_act', '*'] },
@@ -3047,7 +3016,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         it('rejects invalid search bounds and describe batches explicitly', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           for (const code of [
             `tool_search({ limit: 0 })`,
@@ -3067,7 +3036,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         it('only exposes request-allowed gateway tools inside code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', {
             code: '({ search: typeof mama_search, bash: typeof Bash })',
@@ -3086,7 +3055,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       describe('code_act result records executed host tools (report-audit evidence)', () => {
         it('lists nested host tools that actually executed, in call order', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', {
             code: `
@@ -3116,7 +3085,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
         it('yields an empty list when the script calls no host tool', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', { code: '({ math: 1 + 1 })' });
 
@@ -3130,7 +3099,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       describe('AC #2: request blocklists subtract from injected Code-Act functions', () => {
         it('removes request-blocked gateway tools inside code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', {
             code: '({ read: typeof Read, bash: typeof Bash })',
@@ -3169,7 +3138,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('allows direct code_act for the default owner role', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           });
@@ -3188,7 +3157,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('injects Drive functions for owner_console but not a wildcard non-owner role', async () => {
           const ownerExecutor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           ownerExecutor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           });
@@ -3198,7 +3167,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
 
           const chatExecutor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           chatExecutor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'chat_bot',
             role: { allowedTools: ['code_act', '*'] },
           });
@@ -3226,7 +3195,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             label: 'default os_agent wildcard',
             enabled: true,
             roleName: 'os_agent',
-            source: 'viewer',
+            source: 'cli',
             expected: 'undefined',
           },
           {
@@ -3257,7 +3226,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             privateConnectorPolicy: privatePolicy(scenario.enabled),
           });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             source: scenario.source,
             roleName: scenario.roleName,
             role: { allowedTools: ['code_act', '*'] },
@@ -3280,7 +3249,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             envelopeIssuanceMode: 'off',
           });
           const context = {
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           };
@@ -3306,7 +3275,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('keeps Drive evidence untrusted after Code-Act transforms it', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'owner_console',
             role: DEFAULT_ROLES.definitions.owner_console,
           });
@@ -3330,7 +3299,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it('does not let request allowlists widen the active role', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             roleName: 'limited_code_act',
             role: {
               allowedTools: ['code_act', 'mama_search'],
@@ -3356,7 +3325,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       describe('AC #4: request tool filters are validated', () => {
         it('rejects unknown request tool names before executing code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('code_act', {
             code: '1 + 1',
@@ -3372,7 +3341,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         it.each([0, 4, Number.NaN, '2'])('rejects invalid runtime tier %s', async (tier) => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             tier: tier as unknown as 1,
           });
 
@@ -3390,7 +3359,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           const executeSpy = vi.spyOn(executor, 'execute');
           const context = {
-            ...createViewerContext(),
+            ...createOsAgentContext(),
             tier: 3 as const,
             roleName: 'limited_code_act',
             role: {
@@ -3411,8 +3380,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             {
               agentContext: context,
               agentId: 'limited_code_act',
-              source: 'viewer',
-              channelId: 'viewer',
+              source: 'cli',
+              channelId: 'cli',
               executionSurface: 'model_tool',
               sourceTurnId: 'turn-policy',
               sourceMessageRef: 'message-policy',
@@ -3433,8 +3402,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             { query: 'policy-context' },
             expect.objectContaining({
               agentContext: context,
-              source: 'viewer',
-              channelId: 'viewer',
+              source: 'cli',
+              channelId: 'cli',
               executionSurface: 'code_act',
               sourceTurnId: 'turn-policy',
               sourceMessageRef: 'message-policy',
@@ -3567,7 +3536,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           principalRepository,
         });
         executor.setAgentContext({
-          ...createViewerContext(),
+          ...createOsAgentContext(),
           roleName: 'os_agent',
           role: { allowedTools: ['*'] },
         });
@@ -3848,7 +3817,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           ['mkfifo /tmp/p', 'Blocked: command contains a restricted pattern'],
         ])('should block dangerous Bash command: %s', async (command, expectedError) => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('Bash', { command });
 
@@ -3864,7 +3833,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           'does not classify %s as restricted',
           async (command) => {
             const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-            executor.setAgentContext(createViewerContext());
+            executor.setAgentContext(createOsAgentContext());
             const result = await executor.execute('Bash', { command });
             expect(result.error ?? '').not.toContain('restricted pattern');
           }
@@ -3874,7 +3843,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       describe('AC #2: non-setuid chmod octal modes are not treated as restricted', () => {
         it('does not classify non-setuid chmod octal modes as restricted', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
-          executor.setAgentContext(createViewerContext());
+          executor.setAgentContext(createOsAgentContext());
 
           const result = await executor.execute('Bash', {
             command: 'chmod 0755 does-not-exist || true',

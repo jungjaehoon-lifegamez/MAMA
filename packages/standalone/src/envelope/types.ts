@@ -3,14 +3,7 @@
  * Every worker instance is bound to one envelope at spawn.
  */
 
-export type EnvelopeSource =
-  | 'telegram'
-  | 'slack'
-  | 'chatwork'
-  | 'discord'
-  | 'viewer'
-  | 'cron'
-  | 'watch';
+export type EnvelopeSource = 'telegram' | 'slack' | 'chatwork' | 'discord' | 'cron' | 'watch';
 
 export interface ProjectRef {
   kind: 'project';
@@ -23,15 +16,7 @@ export interface MemoryScope {
 }
 
 export interface DestinationRef {
-  kind:
-    | 'telegram'
-    | 'slack'
-    | 'chatwork'
-    | 'discord'
-    | 'webchat'
-    | 'obsidian'
-    | 'dashboard_slot'
-    | 'drive';
+  kind: 'telegram' | 'slack' | 'chatwork' | 'discord' | 'obsidian' | 'dashboard_slot' | 'drive';
   id: string;
 }
 

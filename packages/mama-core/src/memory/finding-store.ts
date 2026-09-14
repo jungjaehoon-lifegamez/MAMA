@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { getAdapter, initDB } from '../db-manager.js';
+import type { DatabaseAdapter } from '../db-manager.js';
 import type { AuditFindingRecord } from './types.js';
 
 function safeParseJsonArray(value: unknown): string[] {
@@ -29,11 +30,10 @@ function deserializeFinding(row: Record<string, unknown>): AuditFindingRecord {
   };
 }
 
-export async function createAuditFinding(
+export function createAuditFinding(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
   input: Omit<AuditFindingRecord, 'finding_id' | 'status' | 'created_at' | 'resolved_at'>
-): Promise<string> {
-  await initDB();
-  const adapter = getAdapter();
+): string {
   const findingId = `finding_${crypto.randomUUID().replace(/-/g, '')}`;
 
   adapter

@@ -32,8 +32,8 @@ describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational o
   });
 
   const createAgentContext = () => ({
-    source: 'viewer',
-    platform: 'viewer' as const,
+    source: 'cli',
+    platform: 'cli' as const,
     roleName: 'os_agent',
     role: {
       allowedTools: ['*'],
