@@ -267,8 +267,6 @@ export {
   createSupersedesEdge,
   calculateCombinedConfidence,
   detectRefinement,
-  parseReasoningForRelationships,
-  createEdgesFromReasoning,
   updateConfidence,
   VALID_EDGE_TYPES,
   type EdgeType,
@@ -276,7 +274,6 @@ export {
   type ToolExecution,
   type SessionContext,
   type LearnDecisionResult,
-  type ParsedRelationship,
   type EvidenceItem,
 } from './decision-tracker.js';
 
