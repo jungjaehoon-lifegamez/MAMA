@@ -726,6 +726,82 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(lines[0]).toContain('verified');
     });
 
+    // v7 puts identity in the agent's hands, and this lane is the only thing that
+    // periodically judges connector-ingested data. A run that saves text and registers none
+    // of the spellings it saw is exactly the shape that left entity supply at zero for two
+    // months with no signal - the saved and obligated counts cannot tell it apart.
+    it('reports whether the run bound identity, separately from saving', () => {
+      const actions: Array<{ action: string; target: string }> = [];
+      const lines: string[] = [];
+      const hook = buildPromotionAfterHook(
+        {
+          emitAgentAction: (action, target) => actions.push({ action, target }),
+          emitMemoryPromoted: () => {},
+        },
+        {
+          tracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 }),
+          writeTracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 }),
+          identityTracesFor: () => ({
+            getTraceMaxId: () => 0,
+            countObligatedTraceRowsSince: () => 0,
+          }),
+          log: (line) => lines.push(line),
+        }
+      );
+
+      hook(fakeWo, 'PROMOTED 1', 0);
+
+      expect(actions[0].target).toContain('1 saved');
+      expect(actions[0].target).toContain('0 identity');
+      // Reported, never gated: the run still verifies on its obligated traces.
+      expect(lines[0]).toContain('verified');
+      expect(lines[0]).not.toContain('UNVERIFIED');
+    });
+
+    it('counts identity work when the run did it', () => {
+      const actions: Array<{ action: string; target: string }> = [];
+      const hook = buildPromotionAfterHook(
+        {
+          emitAgentAction: (action, target) => actions.push({ action, target }),
+          emitMemoryPromoted: () => {},
+        },
+        {
+          tracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 3 }),
+          writeTracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 }),
+          identityTracesFor: () => ({
+            getTraceMaxId: () => 0,
+            countObligatedTraceRowsSince: () => 2,
+          }),
+          log: () => {},
+        }
+      );
+
+      hook(fakeWo, 'PROMOTED 1', 0);
+
+      expect(actions[0].target).toContain('2 identity');
+    });
+
+    // A daemon without the sessions DB must not report a zero it never measured. Absent and
+    // none are different answers, and only one of them is a finding.
+    it('says identity is unmeasured rather than reporting a zero it did not measure', () => {
+      const actions: Array<{ action: string; target: string }> = [];
+      const hook = buildPromotionAfterHook(
+        {
+          emitAgentAction: (action, target) => actions.push({ action, target }),
+          emitMemoryPromoted: () => {},
+        },
+        {
+          tracesFor: () => ({ getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 }),
+          log: () => {},
+        }
+      );
+
+      hook(fakeWo, 'PROMOTED 1', 0);
+
+      expect(actions[0].target).toContain('identity unmeasured');
+      expect(actions[0].target).not.toContain('0 identity');
+    });
+
     it('promotes the MEASURED count, not the claimed one', () => {
       const run = collect(2);
       run.hook(fakeWo, 'PROMOTED 5', 0);

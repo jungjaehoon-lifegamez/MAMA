@@ -154,6 +154,25 @@ export const LANE_WRITE_TOOLS = {
   'memory-curation': ['mama_save'],
 } as const satisfies Record<string, readonly string[]>;
 
+/**
+ * The subset that proves the lane BOUND IDENTITY, as opposed to only saving text.
+ *
+ * The curation lane is the only thing that periodically judges connector-ingested data, and
+ * v7 puts identity in the agent's hands: the host no longer infers which entity a record is
+ * about. So whether a run resolved the spellings it saw is a third question, separate from
+ * whether it acted and whether it wrote - a run can save a memory and leave every new name
+ * unregistered, and the first two counts cannot tell.
+ *
+ * It stays a count, not a gate. Lane verification observes; it does not block.
+ *
+ * `registry_lookup` is deliberately absent. It reads, and a run that looked a name up and
+ * did nothing with the answer has bound no identity. Only `registry_upsert` and
+ * `registry_correct` leave a node or a correction behind.
+ */
+export const LANE_IDENTITY_TOOLS = {
+  'memory-curation': ['registry_upsert', 'registry_correct'],
+} as const satisfies Record<string, readonly string[]>;
+
 function traceToolList(tools: readonly string[]): string {
   for (const tool of tools) {
     // These are interpolated into SQL. Nothing outside this module supplies them today, and
@@ -362,6 +381,11 @@ export interface LaneAfterHookDeps {
    * writing.
    */
   writeTracesFor?: WorkerTraceQueryFactory;
+  /**
+   * Counts only the lane's identity tools: proves the run BOUND IDENTITY. Optional, and
+   * absent means the line says so rather than reporting a zero it did not measure.
+   */
+  identityTracesFor?: WorkerTraceQueryFactory;
   log: (line: string) => void;
   /** Raised when the run cannot be shown to have done what it reported. */
   onUnverified?: (note: string) => void;
@@ -396,10 +420,16 @@ export function buildPromotionAfterHook(
     const savedCount = deps.writeTracesFor
       ? deps.writeTracesFor(wo.id).countObligatedTraceRowsSince(anchor)
       : traceCount;
+    // Third question, reported and never gated: did the run bind the identities it saw?
+    // A run that saves text and registers nothing is the shape that left entity supply at
+    // zero for two months without any signal.
+    const identityNote = deps.identityTracesFor
+      ? `${deps.identityTracesFor(wo.id).countObligatedTraceRowsSince(anchor)} identity`
+      : 'identity unmeasured';
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
     events.emitAgentAction(
       savedCount > 0 ? 'promoted' : 'no_update',
-      `promotion run: ${savedCount} saved, ${traceCount} obligated trace(s) (${verdict.note})`
+      `promotion run: ${savedCount} saved, ${identityNote}, ${traceCount} obligated trace(s) (${verdict.note})`
     );
     deps.log(
       `[stage2] promotion worker: ${verdict.verified ? 'verified' : 'UNVERIFIED'} - ${verdict.note}`
