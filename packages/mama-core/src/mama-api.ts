@@ -22,14 +22,16 @@
 import {
   DecisionRecord,
   SemanticEdgeItem,
-  fts5Search,
-  ensureMemoryScope,
+  ensureMemoryScopeInAdapter,
   initDB,
+  getAdapter,
+} from './db-manager.js';
+import {
+  fts5Search,
   queryDecisionGraph,
   querySemanticEdges,
-  getAdapter,
   vectorSearch,
-} from './db-manager.js';
+} from './search/decision-queries.js';
 import { appendOutcomeAmendment } from './memory/write-adapters.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
@@ -623,7 +625,7 @@ async function _getReasoningGraphInfo(
   currentId: string
 ): Promise<ReasoningGraphInfo> {
   try {
-    const chain = await queryDecisionGraph(topic);
+    const chain = await queryDecisionGraph(getAdapter(), topic);
 
     if (!chain || chain.length === 0) {
       return {
@@ -724,7 +726,7 @@ async function recall(
   const { format = 'json' } = options;
 
   try {
-    const decisions = await queryDecisionGraph(topic);
+    const decisions = await queryDecisionGraph(getAdapter(), topic);
 
     if (!decisions || decisions.length === 0) {
       if (format === 'markdown') {
@@ -745,7 +747,7 @@ async function recall(
 
     // Query semantic edges for all decisions
     const decisionIds = decisions.map((d: DecisionRecord) => d.id);
-    const rawEdges = await querySemanticEdges(decisionIds);
+    const rawEdges = await querySemanticEdges(getAdapter(), decisionIds);
     const semanticEdges = {
       refines: rawEdges.refines || [],
       refined_by: rawEdges.refined_by || [],
@@ -956,7 +958,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
 
     // 1. Add supersedes chain (evolution history)
     try {
-      const chain = await queryDecisionGraph(candidate.topic, candidate.id);
+      const chain = await queryDecisionGraph(getAdapter(), candidate.topic, candidate.id);
       for (const decision of chain) {
         if (!graphEnhanced.has(decision.id)) {
           graphEnhanced.set(decision.id, {
@@ -976,7 +978,7 @@ async function expandWithGraph(candidates: SearchCandidate[]): Promise<SearchCan
 
     // 2. Add semantic edges (refines, contradicts, builds_on, debates, synthesizes)
     try {
-      const rawEdges = (await querySemanticEdges([candidate.id])) || {};
+      const rawEdges = (await querySemanticEdges(getAdapter(), [candidate.id])) || {};
       const edges = {
         refines: rawEdges.refines || [],
         refined_by: rawEdges.refined_by || [],
@@ -1656,7 +1658,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       const adaptiveThreshold = threshold !== undefined ? threshold : wordCount < 3 ? 0.7 : 0.6;
 
       // Vector search
-      results = await vectorSearch(queryEmbedding, rerankPoolLimit * 2, 0.5); // Get more candidates
+      results = await vectorSearch(getAdapter(), queryEmbedding, rerankPoolLimit * 2, 0.5); // Get more candidates
 
       // Filter by adaptive threshold
       results = results.filter((r) => r.similarity >= adaptiveThreshold);
@@ -1713,7 +1715,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       // Stage 1.7: FTS5 hybrid merge (Haiku Memory Layer)
       {
         try {
-          const ftsResults = await fts5Search(userQuestion, rerankPoolLimit * 2);
+          const ftsResults = await fts5Search(getAdapter(), userQuestion, rerankPoolLimit * 2);
           if (ftsResults.length > 0) {
             // Normalize FTS5 ranks (BM25 returns negative values, closer to 0 = better)
             const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
@@ -2017,7 +2019,7 @@ async function listDecisions(
     if (options.scopes && options.scopes.length > 0) {
       // Scope-filtered query: JOIN memory_scope_bindings + memory_scopes
       const scopeIds = await Promise.all(
-        options.scopes.map((s) => ensureMemoryScope(s.kind, s.id))
+        options.scopes.map((s) => ensureMemoryScopeInAdapter(adapter, s.kind, s.id))
       );
       const placeholders = scopeIds.map(() => '?').join(', ');
       const stmt = adapter.prepare(`

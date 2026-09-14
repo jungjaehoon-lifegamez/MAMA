@@ -8,7 +8,8 @@
  */
 
 const path = require('path');
-const { initDB, vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
+const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
 /**
@@ -52,7 +53,12 @@ const searchDecisionsAndContractsTool = {
       if (decisionLimit > 0 && query) {
         try {
           const queryEmbedding = await generateEmbedding(query, 'query');
-          const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
+          const results = await vectorSearch(
+            getAdapter(),
+            queryEmbedding,
+            decisionLimit,
+            similarityThreshold
+          );
           if (Array.isArray(results)) {
             decisionResults = results.slice(0, decisionLimit);
           }
@@ -79,7 +85,12 @@ const searchDecisionsAndContractsTool = {
         if (contractQuery) {
           try {
             const contractEmbedding = await generateEmbedding(contractQuery, 'query');
-            const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
+            const contractMatches = await vectorSearch(
+              getAdapter(),
+              contractEmbedding,
+              10,
+              similarityThreshold
+            );
             if (Array.isArray(contractMatches)) {
               contractResults = contractMatches
                 .filter((r) => r.topic && r.topic.startsWith('contract_'))

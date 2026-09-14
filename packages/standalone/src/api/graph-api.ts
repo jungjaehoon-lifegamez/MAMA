@@ -63,7 +63,8 @@ import type {
 
 // mama-core is pure JS with no .d.ts — require + any is intentional
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getAdapter, initDB, vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
+const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
+const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
 
@@ -775,7 +776,7 @@ async function getSimilarityEdges(): Promise<SimilarityEdge[]> {
     try {
       const query = `${decision.topic} ${decision.decision}`;
       const embedding = await generateEmbedding(query, 'query');
-      const similar = (await vectorSearch(embedding, 3, 0.7)) as Array<{
+      const similar = (await vectorSearch(getAdapter(), embedding, 3, 0.7)) as Array<{
         id: string;
         similarity: number;
       }>;

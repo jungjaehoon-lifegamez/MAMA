@@ -21,7 +21,8 @@ vi.mock('../../src/embeddings.js', () => ({
 const tmpDir = mkdtempSync(join(tmpdir(), 'promote-status-visibility-'));
 process.env.MAMA_DB_PATH = join(tmpDir, 'test-memory.db');
 
-const { initDB, closeDB, vectorSearch } = await import('../../src/db-manager.js');
+const { initDB, closeDB, getAdapter } = await import('../../src/db-manager.js');
+const { vectorSearch } = await import('../../src/search/decision-queries.js');
 const { saveMemory, promoteMemoryStatus } = await import('../../src/memory/api.js');
 
 const EXCLUDED = ['superseded', 'quarantined', 'contradicted', 'stale'];
@@ -49,13 +50,13 @@ describe('Story R1: promoted memories stay vector-searchable', () => {
       const memoryId = (saved as { id: string }).id;
 
       // Staged (excluded) -> the pre-filter hides it.
-      const before = await vectorSearch(FIXED(), 5, 0.1, undefined, EXCLUDED);
+      const before = await vectorSearch(getAdapter(), FIXED(), 5, 0.1, undefined, EXCLUDED);
       expect(before.map((d) => d.id)).not.toContain(memoryId);
 
       await promoteMemoryStatus({ memoryId, status: 'active' });
 
       // Promotion must sync the adapter status cache - no reloadVectorCache here.
-      const after = await vectorSearch(FIXED(), 5, 0.1, undefined, EXCLUDED);
+      const after = await vectorSearch(getAdapter(), FIXED(), 5, 0.1, undefined, EXCLUDED);
       expect(after.map((d) => d.id)).toContain(memoryId);
     });
   });

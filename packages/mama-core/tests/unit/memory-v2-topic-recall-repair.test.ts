@@ -45,11 +45,14 @@ vi.mock('../../src/db-manager.js', async (importOriginal) => {
       },
     })),
     insertDecisionWithEmbedding: vi.fn(),
-    ensureMemoryScope: vi.fn(async () => 1),
-    vectorSearch: vectorSearchMock,
-    fts5Search: vi.fn(async () => []),
+    ensureMemoryScopeInAdapter: vi.fn(() => 1),
   };
 });
+
+vi.mock('../../src/search/decision-queries.js', () => ({
+  vectorSearch: vectorSearchMock,
+  fts5Search: vi.fn(async () => []),
+}));
 
 function decisionRow(id: string, topic: string, decision: string, created_at: number) {
   return {

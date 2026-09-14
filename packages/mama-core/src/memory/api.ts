@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { canonicalizeJSON } from '../canonicalize.js';
-import { initDB, getAdapter, ensureMemoryScope, vectorSearch, fts5Search } from '../db-manager.js';
+import { initDB, getAdapter, ensureMemoryScopeInAdapter } from '../db-manager.js';
+import { vectorSearch, fts5Search } from '../search/decision-queries.js';
 import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
@@ -282,7 +283,7 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .all() as Record<string, unknown>[];
   } else {
     const scopeIds = await Promise.all(
-      scopes.map((scope) => ensureMemoryScope(scope.kind, scope.id))
+      scopes.map((scope) => ensureMemoryScopeInAdapter(adapter, scope.kind, scope.id))
     );
     const placeholders = scopeIds.map(() => '?').join(', ');
     rows = adapter
@@ -779,7 +780,7 @@ export async function promoteMemoryStatus(input: {
     const primaryScope = scopes[0] ?? null;
     let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
     if (primaryScope) {
-      const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
+      const scopeId = ensureMemoryScopeInAdapter(adapter, primaryScope.kind, primaryScope.id);
       existingCandidates = adapter
         .prepare(
           `
@@ -827,6 +828,7 @@ export async function promoteMemoryStatus(input: {
         // Same exclusion as saveMemoryInternal's fallback: superseded history must
         // not crowd out the prior ACTIVE decision from the 3 candidate slots.
         const semanticResults = await vectorSearch(
+          getAdapter(),
           embedding,
           3,
           0.82,
@@ -1030,6 +1032,7 @@ export async function recallMemory(
         primaryQueryEmbedding = queryEmbedding;
       }
       const vectorResults = await vectorSearch(
+        getAdapter(),
         queryEmbedding,
         vectorLimit,
         searchOptions.threshold,
@@ -1158,7 +1161,7 @@ export async function recallMemory(
         .map((t) => stemToken(t))
         .filter((t) => !FTS5_NOISE_WORDS.has(t));
       const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
-      const ftsResults = await fts5Search(ftsQuery, lexicalLimit);
+      const ftsResults = await fts5Search(getAdapter(), ftsQuery, lexicalLimit);
       if (ftsResults.length > 0) {
         const adapter = getAdapter();
         const fallbackSource: SaveMemoryInput['source'] = {

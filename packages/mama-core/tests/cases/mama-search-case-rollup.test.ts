@@ -9,7 +9,8 @@ vi.mock('../../src/embeddings.js', async () => {
   };
 });
 
-import { fts5Search, getAdapter, vectorSearch } from '../../src/db-manager.js';
+import { getAdapter } from '../../src/db-manager.js';
+import { fts5Search, vectorSearch } from '../../src/search/decision-queries.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { rollUpSearchHits } from '../../src/cases/search-rollup.js';
 import mamaApi, { suggest } from '../../src/mama-api.js';
@@ -660,8 +661,8 @@ describe('Task 11: mama_search case membership roll-up', () => {
       embedding: unitVector(0.95),
     });
 
-    const ftsIds = (await fts5Search('rrffusiontoken', 3)).map((row) => row.id);
-    const vectorIds = (await vectorSearch(queryVector(), 3, 0)).map((row) => row.id);
+    const ftsIds = (await fts5Search(getAdapter(), 'rrffusiontoken', 3)).map((row) => row.id);
+    const vectorIds = (await vectorSearch(getAdapter(), queryVector(), 3, 0)).map((row) => row.id);
     expect(ftsIds).toEqual(['D3', 'D1', 'D2']);
     expect(vectorIds).toEqual(['D1', 'D2', 'D3']);
 

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { getAdapter, queryDecisionGraph } from '../../src/db-manager.js';
+import { getAdapter } from '../../src/db-manager.js';
+import { queryDecisionGraph } from '../../src/search/decision-queries.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { createNode, mergeNodes } from '../../src/registry/store.js';
 import {
@@ -261,7 +262,7 @@ describe('record identity', () => {
     insert.run('current-topic', 'exact-topic', 'current', 'old-cross-topic', null, 2, 2);
     insert.run('prefix-only', 'exact-topic-extra', 'prefix', null, null, 3, 3);
 
-    const graph = await queryDecisionGraph('exact-topic');
+    const graph = await queryDecisionGraph(getAdapter(), 'exact-topic');
     expect(graph.map((row) => row.id)).toEqual(['current-topic', 'old-cross-topic']);
     expect(graph.find((row) => row.id === 'old-cross-topic')?.refined_from).toEqual(['source-a']);
   });
