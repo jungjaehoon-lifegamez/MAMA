@@ -1117,6 +1117,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         buildWorkerTraceQueries,
         LANE_OBLIGATED_TOOLS,
         LANE_WRITE_TOOLS,
+        LANE_IDENTITY_TOOLS,
       } = await import('../../operator/workorder-hooks.js');
       const promotionTracesFor = (attemptId: number) =>
         buildWorkerTraceQueries(
@@ -1141,6 +1142,13 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
                 sessionsDb,
                 'worker:memory-curation',
                 LANE_WRITE_TOOLS['memory-curation'],
+                attemptId
+              ),
+            identityTracesFor: (attemptId: number) =>
+              buildWorkerTraceQueries(
+                sessionsDb,
+                'worker:memory-curation',
+                LANE_IDENTITY_TOOLS['memory-curation'],
                 attemptId
               ),
             log: (line) => console.log(line),
