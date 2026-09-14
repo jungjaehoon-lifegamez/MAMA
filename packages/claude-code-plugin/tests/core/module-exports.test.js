@@ -73,9 +73,9 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('search/decision-queries exports', () => {
+  describe('knowledge read surface exports', () => {
     it('should export the decision read queries', async () => {
-      const queries = await import('@jungjaehoon/mama-core/search/decision-queries');
+      const queries = await import('@jungjaehoon/mama-core/knowledge');
 
       for (const name of [
         'vectorSearch',

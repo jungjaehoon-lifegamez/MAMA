@@ -26,12 +26,8 @@ import {
   initDB,
   getAdapter,
 } from './db-manager.js';
-import {
-  fts5Search,
-  queryDecisionGraph,
-  querySemanticEdges,
-  vectorSearch,
-} from './search/decision-queries.js';
+import { fts5Search, vectorSearch } from './knowledge/search.js';
+import { queryDecisionGraph, querySemanticEdges } from './knowledge/graph-query.js';
 import { appendOutcomeAmendment } from './memory/write-adapters.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';

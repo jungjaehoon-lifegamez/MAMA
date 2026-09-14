@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
-import { queryDecisionGraph } from '../../src/search/decision-queries.js';
+import { queryDecisionGraph } from '../../src/knowledge/graph-query.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { createNode, mergeNodes } from '../../src/registry/store.js';
 import {

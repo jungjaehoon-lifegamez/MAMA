@@ -9,7 +9,7 @@
 
 const path = require('path');
 const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
+const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
 /**

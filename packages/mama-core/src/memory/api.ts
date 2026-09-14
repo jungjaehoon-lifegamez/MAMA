@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { canonicalizeJSON } from '../canonicalize.js';
 import { initDB, getAdapter, ensureMemoryScopeInAdapter } from '../db-manager.js';
-import { vectorSearch, fts5Search } from '../search/decision-queries.js';
+import { vectorSearch, fts5Search } from '../knowledge/search.js';
 import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';

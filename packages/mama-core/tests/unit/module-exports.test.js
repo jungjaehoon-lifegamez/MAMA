@@ -181,9 +181,9 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('search/decision-queries exports', () => {
+  describe('knowledge read surface exports', () => {
     it('should export the decision read queries', async () => {
-      const queries = await import('../../src/search/decision-queries.js');
+      const queries = await import('../../src/knowledge/index.js');
 
       for (const name of [
         'vectorSearch',

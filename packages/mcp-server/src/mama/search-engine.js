@@ -12,7 +12,7 @@
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
+const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
 
 /**
  * Search Engine for narrative/decision search

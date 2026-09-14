@@ -29,6 +29,8 @@ export type {
 } from '../memory/judgment-types.js';
 export { JudgmentError, appendJudgment } from './judgments.js';
 export { ingestSource } from './source-ingest.js';
+export { vectorSearch, fts5Search } from './search.js';
+export { queryDecisionGraph, querySemanticEdges } from './graph-query.js';
 export type { SourceIngestCommand, SourceIngestReceipt } from './source-ingest.js';
 export {
   upsertDecisionEdge,

@@ -22,7 +22,7 @@ const tmpDir = mkdtempSync(join(tmpdir(), 'promote-status-visibility-'));
 process.env.MAMA_DB_PATH = join(tmpDir, 'test-memory.db');
 
 const { initDB, closeDB, getAdapter } = await import('../../src/db-manager.js');
-const { vectorSearch } = await import('../../src/search/decision-queries.js');
+const { vectorSearch } = await import('../../src/knowledge/search.js');
 const { saveMemory, promoteMemoryStatus } = await import('../../src/memory/api.js');
 
 const EXCLUDED = ['superseded', 'quarantined', 'contradicted', 'stale'];

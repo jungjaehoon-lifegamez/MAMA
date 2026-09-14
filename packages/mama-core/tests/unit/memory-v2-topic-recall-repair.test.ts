@@ -49,7 +49,7 @@ vi.mock('../../src/db-manager.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/search/decision-queries.js', () => ({
+vi.mock('../../src/knowledge/search.js', () => ({
   vectorSearch: vectorSearchMock,
   fts5Search: vi.fn(async () => []),
 }));

@@ -10,7 +10,7 @@ vi.mock('../../src/embeddings.js', async () => {
 });
 
 import { getAdapter } from '../../src/db-manager.js';
-import { fts5Search, vectorSearch } from '../../src/search/decision-queries.js';
+import { fts5Search, vectorSearch } from '../../src/knowledge/search.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { rollUpSearchHits } from '../../src/cases/search-rollup.js';
 import mamaApi, { suggest } from '../../src/mama-api.js';

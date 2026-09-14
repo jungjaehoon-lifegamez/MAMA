@@ -23,7 +23,7 @@ require('module').globalPaths.push(CORE_PATH);
 
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
+const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited } = require('./session-state');
 const { shouldProcessFile } = require('./hook-file-filter');

@@ -85,7 +85,7 @@ async function getSavedTopicsFromDB() {
 
   try {
     const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
-    const { vectorSearch } = require('@jungjaehoon/mama-core/search/decision-queries');
+    const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
     await initDB();
 
     // Get recent decisions (no embedding needed, just list recent)
