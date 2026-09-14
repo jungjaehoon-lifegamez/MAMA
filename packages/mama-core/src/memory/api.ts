@@ -468,8 +468,6 @@ type SaveMemoryResult = {
   success: boolean;
   id: string;
   saved_decision_id?: string;
-  timeline_event_id?: string | null;
-  timeline_event_ids?: string[];
 };
 
 async function saveMemoryInternal(

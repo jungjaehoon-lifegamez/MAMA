@@ -251,18 +251,6 @@ export interface PublicSaveMemoryInput {
   entityObservationIds?: string[];
   itemId?: string | null;
   actors?: RecordActor[];
-  timelineEvent?: {
-    id?: string;
-    entity_id?: string;
-    event_type: string;
-    role?: string | null;
-    valid_from?: number | null;
-    valid_to?: number | null;
-    observed_at?: number | null;
-    source_ref?: string | null;
-    summary: string;
-    details?: string | null;
-  };
 }
 
 export interface PublicIngestMemoryInput {

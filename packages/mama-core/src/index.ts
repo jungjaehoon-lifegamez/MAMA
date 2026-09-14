@@ -189,6 +189,7 @@ export {
 export { listVisibleTwinEdgesForRefs } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
 export * from './provenance/source-ref.js';
+export * from './cases/errors.js';
 export * from './agent-graph/index.js';
 export * from './storage/source-archive.js';
 export { default as SQLiteDatabase } from './storage/sqlite.js';

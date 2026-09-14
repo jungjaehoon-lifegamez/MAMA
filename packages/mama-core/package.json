@@ -23,6 +23,7 @@
     "./test-utils": "./dist/test-utils.js",
     "./canonicalize": "./dist/canonicalize.js",
     "./cases/types": "./dist/cases/types.js",
+    "./cases/errors": "./dist/cases/errors.js",
     "./cases/store": "./dist/cases/store.js",
     "./cases/search-rollup": "./dist/cases/search-rollup.js",
     "./cases/timeline-range": "./dist/cases/timeline-range.js",
