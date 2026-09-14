@@ -19,7 +19,6 @@
 | `mama-api.js`           | 2,615 | High-level memory API (save/search/update)        | **SPLIT CANDIDATE** (CC=175, too large) |
 | `embeddings.js`         | 450   | In-process Transformers.js embeddings             | Local model and cache                   |
 | `db-manager.js`         | 380   | SQLite + pure-TS cosine similarity initialization | Handles migrations, tier degradation    |
-| `memory-store.js`       | 520   | CRUD + vector search for decisions                | Tier 1: vector, Tier 2: exact match     |
 | `decision-tracker.js`   | 410   | Graph management (builds_on, debates, etc.)       | Tracks decision evolution chains        |
 | `relevance-scorer.js`   | 290   | Scoring algorithm for search results              | Combines similarity + recency + graph   |
 | `checkpoint-manager.js` | 340   | Session state persistence                         | Stores summary, next_steps, open_files  |

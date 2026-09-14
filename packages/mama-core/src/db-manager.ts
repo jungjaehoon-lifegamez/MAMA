@@ -20,7 +20,7 @@
 
 import path from 'path';
 import os from 'os';
-import { info, warn, error as logError } from './debug-logger.js';
+import { info, error as logError } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
@@ -88,14 +88,6 @@ export interface OutcomeData {
   limitation?: string | null;
   duration_days?: number | null;
   confidence?: number | null;
-}
-
-export interface VectorSearchParams {
-  query: string;
-  limit?: number;
-  threshold?: number;
-  timeWindow?: number;
-  includeSuperseded?: boolean;
 }
 
 export interface DecisionEdgeRow {
@@ -328,7 +320,7 @@ function expandHomePath(value: string): string {
  *
  * Returns better-sqlite3 Database instance
  *
- * Note: Synchronous for backward compatibility with memory-store.js
+ * Note: Synchronous because callers assume a resolved adapter, not a promise.
  * Will throw if database not initialized
  *
  * @returns SQLite database connection
@@ -799,75 +791,6 @@ export async function querySemanticEdges(decisionIds: string[]): Promise<Semanti
 }
 
 /**
- * Query vector search with time window and threshold
- *
- * Story 014.14: AC #1 - Vector Search for Related Decisions
- *
- * @param params - Search parameters
- * @returns Results with similarity scores and decision data
- */
-export async function queryVectorSearch(params: VectorSearchParams): Promise<DecisionRecord[]> {
-  const { query, limit = 10, threshold = 0.75, timeWindow = 90 * 24 * 60 * 60 * 1000 } = params;
-
-  const adapter = getAdapter();
-  const { generateEmbedding } = await import('./embeddings.js');
-
-  try {
-    // Generate embedding for query
-    const embedding = await generateEmbedding(query, 'query');
-
-    const cutoffTime = Date.now() - timeWindow;
-    const candidates = await adapter.vectorSearch(embedding, limit * 5);
-
-    if (!candidates || candidates.length === 0) {
-      return [];
-    }
-
-    const stmt = adapter.prepare(`SELECT * FROM decisions WHERE rowid = ?`);
-    const results: (DecisionRecord & { similarity: number; distance: number })[] = [];
-
-    for (const candidate of candidates) {
-      const decision = stmt.get(candidate.rowid) as DecisionRecord | undefined;
-      if (!decision) {
-        continue;
-      }
-
-      if (decision.created_at < cutoffTime) {
-        continue;
-      }
-
-      const similarity = candidate.similarity ?? Math.max(0, 1 - (candidate.distance ?? 1));
-      const distance = candidate.distance ?? Math.max(0, 1 - similarity);
-
-      if (similarity < threshold) {
-        continue;
-      }
-
-      // Filter out superseded decisions unless explicitly requested
-      if (!params.includeSuperseded && decision.superseded_by) {
-        continue;
-      }
-
-      results.push({
-        ...decision,
-        similarity,
-        distance,
-      });
-
-      if (results.length >= limit) {
-        break;
-      }
-    }
-
-    return results;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logError(`[db-manager] queryVectorSearch failed: ${message}`);
-    return []; // Return empty array on error (graceful degradation)
-  }
-}
-
-/**
  * Update decision outcome
  *
  * @param decisionId - Decision ID
@@ -894,41 +817,6 @@ export async function updateDecisionOutcome(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to update decision outcome: ${message}`);
-  }
-}
-
-/**
- * Get prepared statement
- *
- * For backward compatibility with memory-store.js
- * Returns a compatibility shim that proxies to adapter.prepare()
- *
- * @param sql - SQL statement
- * @returns Statement-like object with run/get/all methods
- */
-export function getPreparedStmt(sql: string): PreparedStatement {
-  if (!dbAdapter) {
-    warn('[db-manager] getPreparedStmt() called before initialization');
-    // Return no-op object for feature detection (won't throw)
-    return {
-      run: () => ({ changes: 0, lastInsertRowid: 0 }),
-      get: () => null,
-      all: () => [],
-    };
-  }
-
-  // Proxy to adapter.prepare() for actual usage
-  try {
-    return dbAdapter.prepare(sql);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    warn(`[db-manager] getPreparedStmt() failed: ${message}`);
-    // Return no-op object on error (graceful degradation)
-    return {
-      run: () => ({ changes: 0, lastInsertRowid: 0 }),
-      get: () => null,
-      all: () => [],
-    };
   }
 }
 

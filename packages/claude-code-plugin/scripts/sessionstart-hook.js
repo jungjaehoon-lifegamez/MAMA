@@ -126,7 +126,7 @@ async function warmDatabase() {
   const startTime = Date.now();
 
   try {
-    const { initDB } = require('@jungjaehoon/mama-core/memory-store');
+    const { initDB } = require('@jungjaehoon/mama-core/db-manager');
     await initDB();
 
     const latencyMs = Date.now() - startTime;
@@ -146,7 +146,7 @@ async function warmDatabase() {
  */
 async function queryRecentContext() {
   try {
-    const { getAdapter } = require('@jungjaehoon/mama-core/memory-store');
+    const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
     const adapter = getAdapter();
 
     // Query recent 5 decisions (excluding checkpoints)

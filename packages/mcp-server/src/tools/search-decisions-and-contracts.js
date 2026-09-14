@@ -8,9 +8,8 @@
  */
 
 const path = require('path');
-const { initDB } = require('@jungjaehoon/mama-core/db-manager');
+const { initDB, vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
-const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
 
 /**
  * search_decisions_and_contracts tool definition

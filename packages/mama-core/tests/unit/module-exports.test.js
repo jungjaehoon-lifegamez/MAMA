@@ -170,9 +170,9 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('memory-store.js exports', () => {
+  describe('db-manager.js exports', () => {
     it('should export required functions', async () => {
-      const store = await import('../../src/memory-store.js');
+      const store = await import('../../src/db-manager.js');
 
       expect(store.queryDecisionGraph).toBeDefined();
       expect(store.getDB).toBeDefined();

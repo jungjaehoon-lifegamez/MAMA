@@ -11,7 +11,7 @@
 
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
-const { vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
+const { vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
 
 /**
  * Search Engine for narrative/decision search

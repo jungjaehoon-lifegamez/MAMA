@@ -63,7 +63,7 @@ import type {
 
 // mama-core is pure JS with no .d.ts — require + any is intentional
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getAdapter, initDB, vectorSearch } = require('@jungjaehoon/mama-core/memory-store');
+const { getAdapter, initDB, vectorSearch } = require('@jungjaehoon/mama-core/db-manager');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DebugLogger } = require('@jungjaehoon/mama-core/debug-logger');
 

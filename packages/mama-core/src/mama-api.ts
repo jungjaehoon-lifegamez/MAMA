@@ -25,14 +25,12 @@ import {
   fts5Search,
   ensureMemoryScope,
   initDB,
-} from './db-manager.js';
-import { appendOutcomeAmendment } from './memory/write-adapters.js';
-import {
   queryDecisionGraph,
   querySemanticEdges,
   getAdapter,
   vectorSearch,
-} from './memory-store.js';
+} from './db-manager.js';
+import { appendOutcomeAmendment } from './memory/write-adapters.js';
 import { formatRecall, formatList, formatContext, SemanticEdges } from './decision-formatter.js';
 import { logProgress, logComplete, logSearching } from './progress-indicator.js';
 import { generateEmbedding } from './embeddings.js';

@@ -15,7 +15,7 @@
  */
 
 import { info } from './debug-logger.js';
-import { initDB, getAdapter } from './memory-store.js';
+import { initDB, getAdapter } from './db-manager.js';
 import type { DatabaseAdapter, DecisionInput, DecisionRecord } from './db-manager.js';
 import { appendJudgment, upsertDecisionEdge } from './knowledge/index.js';
 import { commandEmbedder, unsignedWriteAccess } from './memory/write-adapters.js';
