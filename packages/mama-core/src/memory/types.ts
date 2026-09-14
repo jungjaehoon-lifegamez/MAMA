@@ -1,5 +1,4 @@
 import type { ConnectorEventSearchHit } from '../connectors/types.js';
-import type { ReadIdentity } from '../entities/read-identity.js';
 import type { RecordActor } from '../registry/types.js';
 import type {
   SearchHitDiagnostics,
@@ -88,7 +87,6 @@ export interface MemoryRecord {
   event_date?: string | null;
   /** Source event timestamp in milliseconds when known. Null if not set. */
   event_datetime?: number | null;
-  read_identity?: ReadIdentity;
   retrieval_diagnostics?: SearchHitDiagnostics;
 }
 
@@ -104,7 +102,6 @@ export interface RecallSearchDiagnostics {
   candidate_counts: {
     vector: number;
     lexical: number;
-    entity: number;
     graph_expanded: number;
     vector_only: number;
     rejected_by_strictness: number;
@@ -254,18 +251,6 @@ export interface PublicSaveMemoryInput {
   entityObservationIds?: string[];
   itemId?: string | null;
   actors?: RecordActor[];
-  timelineEvent?: {
-    id?: string;
-    entity_id?: string;
-    event_type: string;
-    role?: string | null;
-    valid_from?: number | null;
-    valid_to?: number | null;
-    observed_at?: number | null;
-    source_ref?: string | null;
-    summary: string;
-    details?: string | null;
-  };
 }
 
 export interface PublicIngestMemoryInput {

@@ -336,35 +336,6 @@ function isRawRowVisible(row: Record<string, unknown>, visibility: TwinVisibilit
   );
 }
 
-function isEntityVisible(
-  adapter: TwinRefVisibilityAdapter,
-  id: string,
-  visibility: TwinVisibility
-): boolean {
-  const row = adapter
-    .prepare(
-      'SELECT scope_kind, scope_id, created_at FROM entity_nodes WHERE id = ? AND status = ? LIMIT 1'
-    )
-    .get(id, 'active') as
-    | {
-        scope_kind: string | null;
-        scope_id: string | null;
-        created_at: number;
-      }
-    | undefined;
-  if (!row) {
-    return false;
-  }
-  if (!isWithinVisibilityTime(row.created_at, visibility)) {
-    return false;
-  }
-  const scopes = visibility.scopes;
-  if (!hasScopes(scopes)) {
-    return true;
-  }
-  return scopes.some((scope) => row.scope_kind === scope.kind && row.scope_id === scope.id);
-}
-
 function refVisibilityKey(ref: TwinRef): string {
   return `${ref.kind}\0${ref.id}`;
 }
@@ -434,32 +405,6 @@ export function visibleTwinRefKeys(
         })
       ) {
         visible.add(refVisibilityKey({ kind: 'observation', id: row.observation_id }));
-      }
-    }
-  }
-
-  const entityIds = ids('entity');
-  if (entityIds.length > 0) {
-    const rows = adapter
-      .prepare(
-        `SELECT id, scope_kind, scope_id, created_at FROM entity_nodes
-          WHERE status = 'active' AND id IN (${placeholders(entityIds.length)})`
-      )
-      .all(...entityIds) as Array<{
-      id: string;
-      scope_kind: string | null;
-      scope_id: string | null;
-      created_at: number;
-    }>;
-    for (const row of rows) {
-      if (
-        isWithinVisibilityTime(row.created_at, visibility) &&
-        (!hasScopes(visibility.scopes) ||
-          visibility.scopes.some(
-            (scope) => row.scope_kind === scope.kind && row.scope_id === scope.id
-          ))
-      ) {
-        visible.add(refVisibilityKey({ kind: 'entity', id: row.id }));
       }
     }
   }
@@ -663,9 +608,6 @@ function isTwinRefVisible(
   if (precomputed && ref.kind !== 'edge') {
     return precomputed.has(refVisibilityKey(ref));
   }
-  if (ref.kind === 'entity') {
-    return isEntityVisible(adapter, ref.id, visibility);
-  }
   if (ref.kind === 'report') {
     return !hasScopes(visibility.scopes);
   }
@@ -759,7 +701,6 @@ export function assertTwinRefsVisible(
   const supportedKinds = new Set([
     'memory',
     'case',
-    'entity',
     'report',
     'edge',
     'raw',

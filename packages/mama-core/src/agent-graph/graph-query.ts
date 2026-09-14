@@ -4,7 +4,6 @@ import {
   visibleTwinRefKeysRecursive,
 } from '../edges/ref-validation.js';
 import type { TwinEdgeRecord, TwinRef, TwinVisibility } from '../edges/types.js';
-import { getEntityNode } from '../entities/store.js';
 import type {
   AgentGraphAdapter,
   AgentGraphEdgeFilters,
@@ -40,9 +39,6 @@ function eventKey(event: AgentGraphTimelineEvent): string {
 }
 
 function eventKindRank(kind: AgentGraphTimelineEvent['kind']): number {
-  if (kind === 'entity') {
-    return 0;
-  }
   if (kind === 'memory') {
     return 1;
   }
@@ -338,14 +334,6 @@ function loadTimelineRecordEvent(
   adapter: AgentGraphAdapter,
   ref: TwinRef
 ): AgentGraphTimelineEvent | null {
-  if (ref.kind === 'entity') {
-    const entity = getEntityNode(ref.id, adapter);
-    if (!entity || entity.status !== 'active') {
-      return null;
-    }
-    return { kind: 'entity', at_ms: entity.created_at, ref, entity };
-  }
-
   if (ref.kind === 'memory') {
     const row = adapter
       .prepare(

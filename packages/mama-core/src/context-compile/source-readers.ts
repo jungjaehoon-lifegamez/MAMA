@@ -25,7 +25,6 @@ export type ContextCandidateKind = ContextRef['kind'];
 export interface ContextCandidateSupport {
   retrieval_source?: string;
   lexical_support?: boolean;
-  entity_support?: boolean;
   scope_support?: boolean;
   graph_source?: 'primary' | 'expanded' | null;
   graph_expanded?: boolean;
@@ -282,7 +281,6 @@ function diagnosticsFromUnknown(value: unknown): SearchHitDiagnostics | undefine
     vector_similarity:
       typeof record.vector_similarity === 'number' ? record.vector_similarity : null,
     lexical_support: record.lexical_support === true,
-    entity_support: record.entity_support === true,
     scope_support: record.scope_support === true,
     graph_source:
       record.graph_source === 'primary' || record.graph_source === 'expanded'
@@ -306,7 +304,6 @@ function supportFromDiagnostics(
   return {
     retrieval_source: diagnostics?.retrieval_source,
     lexical_support: diagnostics?.lexical_support,
-    entity_support: diagnostics?.entity_support,
     scope_support: diagnostics?.scope_support,
     graph_source: diagnostics?.graph_source,
     graph_expanded: diagnostics?.graph_source === 'expanded',
@@ -575,7 +572,6 @@ function adapterScopedRecallMemory(
         retrieval_source: 'context_compile_adapter',
         vector_similarity: null,
         lexical_support: true,
-        entity_support: false,
         scope_support: scopes.length > 0,
         graph_source: null,
         is_vector_only: false,
@@ -1104,7 +1100,6 @@ function edgeNeighborRefs(adapter: ContextSourceAdapter, edge: TwinEdgeRecord): 
 function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): ContextRef | null {
   switch (ref.kind) {
     case 'memory':
-    case 'entity':
     case 'case':
       return { kind: ref.kind, id: ref.id };
     case 'raw': {

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { canonicalizeJSON } from '../../src/canonicalize.js';
 import { getAdapter } from '../../src/db-manager.js';
-import { CaseMergeChainCycleError } from '../../src/entities/errors.js';
+import { CaseMergeChainCycleError } from '../../src/cases/errors.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import {
   assembleCase,

@@ -120,8 +120,6 @@ export interface JudgmentProjections {
     createdBy?: string;
     approvedByUser?: number | null;
   }>;
-  /** decision_entity_sources support rows (entity_observation ids). */
-  entitySources?: string[];
   /**
    * Rows the command marks as superseded by the appended record. This mirrors
    * the legacy save surface where an unsigned caller's explicit `supersedes`
@@ -129,19 +127,6 @@ export interface JudgmentProjections {
    * boundary keeps `replaces` for scope-admitted supersession instead.
    */
   supersedeTargets?: string[];
-  /** entity_timeline_events row for the record. */
-  timelineEvent?: {
-    id: string;
-    entityId: string;
-    eventType: string;
-    role?: string | null;
-    validFrom?: number | null;
-    validTo?: number | null;
-    observedAt?: number | null;
-    sourceRef?: string | null;
-    summary: string;
-    details?: string | null;
-  };
   /** Registry record identity binding (item + actors). */
   recordIdentity?: {
     itemId?: string | null;

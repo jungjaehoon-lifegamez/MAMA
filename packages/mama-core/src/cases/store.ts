@@ -1,5 +1,5 @@
 import { getAdapter, type DatabaseAdapter } from '../db-manager.js';
-import { CaseMergeChainCycleError } from '../entities/errors.js';
+import { CaseMergeChainCycleError } from './errors.js';
 import type {
   CanonicalCaseResolution,
   CaseAssembly,

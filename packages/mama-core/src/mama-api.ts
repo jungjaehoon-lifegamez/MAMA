@@ -115,18 +115,6 @@ interface SaveParams {
   actors?: Array<{ person: string; role: string }>;
   /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
   event_date?: string | null;
-  timelineEvent?: {
-    id?: string;
-    entity_id?: string;
-    event_type: string;
-    role?: string | null;
-    valid_from?: number | null;
-    valid_to?: number | null;
-    observed_at?: number | null;
-    source_ref?: string | null;
-    summary: string;
-    details?: string | null;
-  };
 }
 
 /**
@@ -204,8 +192,6 @@ interface SaveResult {
   success: boolean;
   id: string;
   saved_decision_id?: string;
-  timeline_event_id?: string | null;
-  timeline_event_ids?: string[];
   similar_decisions?: SimilarDecision[];
   warning?: string;
   collaboration_hint?: string;
@@ -369,7 +355,6 @@ async function saveInternal(
     item,
     actors,
     event_date,
-    timelineEvent,
   }: SaveParams,
   options?: TrustedMemoryWriteOptions
 ): Promise<SaveResult> {
@@ -446,11 +431,7 @@ async function saveInternal(
   // when the caller names explicit targets (saveLegacyMemory's legacy field or
   // twin-edge links). Parsing IDs out of prose fabricated edges, so it is gone.
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
-  const {
-    id: decisionId,
-    timeline_event_id: timelineEventId,
-    timeline_event_ids: timelineEventIds,
-  } = await saveLegacyMemory(
+  const { id: decisionId } = await saveLegacyMemory(
     {
       topic,
       kind: is_static === 1 ? 'preference' : 'decision',
@@ -463,7 +444,6 @@ async function saveInternal(
         source_type: 'legacy_save',
       },
       eventDate: event_date ?? undefined,
-      timelineEvent,
       itemId: item ?? undefined,
       actors: actors?.map((actor) => ({ personId: actor.person, role: actor.role })),
     },
@@ -558,8 +538,6 @@ async function saveInternal(
     success: true,
     id: decisionId,
     saved_decision_id: decisionId,
-    timeline_event_id: timelineEventId ?? null,
-    timeline_event_ids: timelineEventIds ?? [],
     ...(similar_decisions.length > 0 && { similar_decisions }),
     ...(warning && { warning }),
     ...(collaboration_hint && { collaboration_hint }),

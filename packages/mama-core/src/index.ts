@@ -189,6 +189,7 @@ export {
 export { listVisibleTwinEdgesForRefs } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
 export * from './provenance/source-ref.js';
+export * from './cases/errors.js';
 export * from './agent-graph/index.js';
 export * from './storage/source-archive.js';
 export { default as SQLiteDatabase } from './storage/sqlite.js';
@@ -197,23 +198,6 @@ export type {
   SQLiteRunResult,
   SQLiteStatement,
 } from './storage/sqlite.js';
-export * from './entities/types.js';
-export * from './entities/errors.js';
-export * from './entities/store.js';
-export * from './entities/normalization.js';
-export * from './entities/projection.js';
-export * from './entities/recall-bridge.js';
-export * from './entities/read-identity.js';
-export * from './entities/audit-metrics.js';
-export * from './entities/provenance-query.js';
-export * from './entities/lineage-store.js';
-export * from './entities/entity-search.js';
-export * from './entities/entity-list.js';
-export * from './entities/entity-orphan-list.js';
-export * from './entities/rollback-preview.js';
-export * from './entities/source-locator.js';
-export * from './entities/policy-types.js';
-export * from './entities/policy-store.js';
 export {
   canonicalizeJSON,
   targetRefHash,

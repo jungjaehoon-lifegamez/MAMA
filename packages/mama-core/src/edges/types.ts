@@ -3,7 +3,6 @@ import type { Buffer } from 'node:buffer';
 export const TWIN_REF_KINDS = [
   'memory',
   'case',
-  'entity',
   'report',
   'edge',
   'raw',

@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter } from '../../src/db-manager.js';
-import { createEntityNode } from '../../src/entities/store.js';
 import {
   ingestConversation,
   ingestConversationWithTrustedProvenance,
@@ -356,15 +355,6 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
 
     it('preserves existing public save fields while stripping caller provenance', async () => {
       const observedAt = Date.parse('2026-04-29T10:00:00.000Z');
-      await createEntityNode({
-        id: 'entity_project_provenance_compat',
-        kind: 'project',
-        preferred_label: 'Provenance Compat Project',
-        status: 'active',
-        scope_kind: 'project',
-        scope_id: PROJECT_SCOPE.id,
-        merged_into: null,
-      });
       const result = await mama.saveMemory({
         topic: 'public_wrapper_compatibility',
         kind: 'decision',
@@ -373,12 +363,6 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
         scopes: [PROJECT_SCOPE],
         source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
         eventDateTime: observedAt,
-        entityObservationIds: [],
-        timelineEvent: {
-          entity_id: 'entity_project_provenance_compat',
-          event_type: 'project_update',
-          summary: 'Compatibility event',
-        },
         excludeIds: [],
         provenance: { envelope_hash: 'attacker_env' },
       } as never);
