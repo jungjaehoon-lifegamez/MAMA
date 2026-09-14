@@ -77,7 +77,6 @@ const KNOWN_DESCRIPTION_DIVERGENCES: readonly string[] = [
   'task_lifecycle_reconcile',
   'task_list',
   'task_reclassify',
-  'task_temporal_reconcile',
   'task_update',
   'telegram_send',
   'translate_conti',

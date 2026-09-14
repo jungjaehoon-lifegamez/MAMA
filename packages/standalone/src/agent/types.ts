@@ -14,7 +14,6 @@ import type { OwnerRuntimeJournalPort } from '../operator/owner-runtime-journal.
 import type { Envelope } from '../envelope/types.js';
 import type { MemberEffectiveScope } from '../gateways/member-effective-scope.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
-import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 import type { ContextCompileService } from './context-compile-service.js';
 import type { GatewayToolExecutor } from './gateway-tool-executor.js';
 import type {
@@ -39,7 +38,6 @@ export type {
 } from '@jungjaehoon/mama-core';
 
 export type ContextCompileInput = CoreContextCompileInput;
-export type TemporalReconcileToolInput = TemporalReconcileInput & { context_packet_id: string };
 
 /** Agent-authored decision only; candidate authority remains in claimed workorder state. */
 export interface ExternalBindingToolInput {
@@ -234,8 +232,6 @@ export type GatewayToolExecutionContext = {
   subagentThreadId?: string;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
-  /** Host-built temporal authority; never accepted from tool input or fallback state. */
-  temporalWorkContext?: TemporalWorkContext;
   /** Wiki task reads must match this exact host-issued range. */
   wikiTaskRange?: WikiTaskRangeAuthority;
   /**
@@ -818,7 +814,6 @@ export type GatewayToolInput =
   | MemberListInput
   | MemberScopeMutationInput
   | MemberScopeListInput
-  | TemporalReconcileToolInput
   | ExternalBindingToolInput
   | ExternalLifecycleReconcileToolInput;
 
@@ -898,7 +893,6 @@ export type GatewayToolName =
   | 'task_create'
   | 'task_update'
   | 'task_reclassify'
-  | 'task_temporal_reconcile'
   | 'contract_no_update'
   | 'schedule_upcoming'
   // System tools
@@ -1134,8 +1128,6 @@ export interface AgentLoopOptions {
   sessionPolicyRole?: RoleConfig;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
-  /** Host-built temporal authority for one claimed temporal workorder. */
-  temporalWorkContext?: TemporalWorkContext;
   /** Host-issued task range for a wiki workorder, including legacy-unbound state. */
   wikiTaskRange?: WikiTaskRangeAuthority;
   /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
@@ -1489,7 +1481,7 @@ export interface GatewayToolExecutorOptions {
   /** Shared context compile service for gateway context_compile calls. */
   contextCompileService?: ContextCompileService;
   /** Test/runtime seam around the trusted context-packet store lookup. */
-  temporalContextPacketLookup?: (input: {
+  contextPacketLookup?: (input: {
     packetId: string;
     envelopeHash: string;
     callerModelRunId: string;

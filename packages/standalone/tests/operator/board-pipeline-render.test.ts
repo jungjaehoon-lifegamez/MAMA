@@ -29,7 +29,7 @@ function task(id: number, overrides: Partial<TaskRecord> = {}): TaskRecord {
     lastTemporalCheckedAt: null,
     nextTemporalCheckAt: null,
     lastTemporalAttemptId: null,
-    temporalState: 'none',
+    dueState: 'none',
     reviewStartedAt: null,
     reviewAnchorEventId: null,
     ...overrides,

@@ -11,12 +11,10 @@ import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   WorkOrderConsumer,
-  WORKORDER_MAX_ATTEMPTS,
   detectTransportErrorResponse,
   classifyTransientModelError,
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
-  classifyTemporalFailure,
   buildTurnKindSection,
   DELEGATED_ATTEMPT_TIMEOUT_MS,
   NATIVE_SUBAGENT_ITEM_NAMES,
@@ -54,22 +52,6 @@ function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
     ...overrides,
   };
   return { deps, ledger, db, notices, activeSends, events, logs };
-}
-
-function enqueueTemporalDue(ledger: TaskLedger): string {
-  const task = ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-  const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-  const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
-  ledger.enqueueTemporalGeneration({
-    generationKey,
-    taskId: task.id,
-    temporalEpoch: task.temporalEpoch,
-    occurrenceKey,
-    checkAt: task.dueAt!,
-    sourceChannel: null,
-    sourceEventId: null,
-  });
-  return generationKey;
 }
 
 describe('Story S2-T3: WorkOrderConsumer', () => {
@@ -215,10 +197,6 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
   });
 
-  it('keeps the temporal retry budget explicit at three attempts', () => {
-    expect(WORKORDER_MAX_ATTEMPTS.temporal).toBe(3);
-  });
-
   it('surfaces owner-runtime journal failure to the owner notice boundary', async () => {
     ctx = makeDeps({
       runner: {
@@ -253,16 +231,10 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       const legs = initLegCadence(legDb, { now: () => Date.now(), hourOfDay: () => 12 });
       legs.declare('workorder-consumer', 1_000);
 
-      const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-      const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-      ctx.ledger.enqueueTemporalGeneration({
-        generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
-        taskId: task.id,
-        temporalEpoch: task.temporalEpoch,
-        occurrenceKey,
-        checkAt: task.dueAt!,
-        sourceChannel: null,
-        sourceEventId: null,
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:long-run',
+        input: { batchId: 'long-run', events: [] },
       });
       // A run that holds `consuming` until we release it.
       let releaseRun!: () => void;
@@ -287,102 +259,15 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     }
   });
 
-  it('never writes temporal model response content to operational logs', async () => {
-    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-    ctx.ledger.enqueueTemporalGeneration({
-      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: task.dueAt!,
-      sourceChannel: null,
-      sourceEventId: null,
-    });
-    const privateResponse = 'private connector evidence must not reach logs';
-    ctx.deps.runner = { runWithContent: async () => ({ response: privateResponse }) };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-
-    expect(ctx.logs.join('\n')).not.toContain(privateResponse);
-  });
-
-  it('stores and reports only a digest when a temporal runner error is private', async () => {
-    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-    const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
-    ctx.ledger.enqueueTemporalGeneration({
-      generationKey,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: task.dueAt!,
-      sourceChannel: null,
-      sourceEventId: null,
-    });
-    const privateError = 'private connector token abc-123';
-    ctx.deps.runner = {
-      runWithContent: async () => Promise.reject(new Error(privateError)),
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-
-    const combined = [
-      ...ctx.logs,
-      ...ctx.notices,
-      ...ctx.activeSends,
-      ...ctx.events.map((event) => event.reason ?? ''),
-      ctx.ledger.getTemporalGeneration(generationKey)?.reason ?? '',
-    ].join('\n');
-    expect(combined).not.toContain(privateError);
-    expect(combined).toContain('sha256=');
-  });
-
-  it('routes temporal exhaustion through the generation transaction', async () => {
-    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-    ctx.ledger.enqueueTemporalGeneration({
-      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: task.dueAt!,
-      sourceChannel: null,
-      sourceEventId: null,
-    });
-    ctx.deps.runner = { runWithContent: async () => Promise.reject(new Error('synthetic')) };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-    await consumer.tick();
-    await consumer.tick();
-    const generation = ctx.ledger.getTemporalGeneration(
-      `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`
-    );
-    expect(generation?.disposition).toBe('exhausted');
-    expect(generation?.reason).toMatch(/^temporal-worker-failure;failure_sha256=[a-f0-9]{64};/);
-    expect(generation?.reason).not.toContain('synthetic');
-    expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
-  });
-
   it.each([
     'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
     'MCP_RESULT_MISSING',
     'MCP_COMPLETED_MUTATION_INTERRUPTED',
-  ] as const)('does not requeue a temporal attempt after terminal ambiguity %s', async (code) => {
-    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-    const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
-    ctx.ledger.enqueueTemporalGeneration({
-      generationKey,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: task.dueAt!,
-      sourceChannel: null,
-      sourceEventId: null,
+  ] as const)('does not requeue an attempt after terminal ambiguity %s', async (code) => {
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: `wiki:terminal-${code}`,
+      input: { batchId: 'terminal', events: [] },
     });
     ctx.deps.runner = {
       runWithContent: async () => {
@@ -395,64 +280,7 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
 
     expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
     expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
-    expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
-    expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
-  });
-
-  it('suppresses only the exact trusted TOOL_CONTRACT_REPEAT Temporal retry', async () => {
-    const generationKey = enqueueTemporalDue(ctx.ledger);
-    ctx.deps.runner = {
-      runWithContent: async () => {
-        throw new AgentError(
-          'Temporal deterministic host-tool contract failure repeated',
-          'TOOL_CONTRACT_REPEAT'
-        );
-      },
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-
-    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
-    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
-    expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
-    expect(ctx.activeSends.join('\n')).toContain('deterministic contract');
-    expect(ctx.activeSends.join('\n')).not.toContain('ambiguous');
-  });
-
-  it('does not trust plain TOOL_CONTRACT_REPEAT text to suppress a Temporal retry', async () => {
-    enqueueTemporalDue(ctx.ledger);
-    ctx.deps.runner = {
-      runWithContent: async () => {
-        throw new Error('TOOL_CONTRACT_REPEAT');
-      },
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-
-    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
-    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
-  });
-
-  it('does not broaden retry suppression to unrelated non-retryable AgentError codes', async () => {
-    enqueueTemporalDue(ctx.ledger);
-    ctx.deps.runner = {
-      runWithContent: async () => {
-        throw new AgentError(
-          'unrelated deterministic-looking error',
-          'CLI_ERROR',
-          undefined,
-          false
-        );
-      },
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-
-    await consumer.tick();
-
-    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
-    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
+    expect(ctx.logs.join('\n')).toContain('non-retryable');
   });
 
   describe('token telemetry: run usage rides the completion event', () => {
@@ -1191,42 +1019,6 @@ describe('Story S2-T3: graceful stop under skipped firings (N1)', () => {
   });
 });
 
-// The operator could not tell an upstream outage from a bug in this code: five consecutive
-// live failures reported `temporal-worker-failure;sha256=...;length=31` and nothing else.
-// The label comes from a closed table, so it adds a cause without quoting the error - which
-// is what keeps it inside the privacy contract asserted above.
-describe('classifyTemporalFailure', () => {
-  it('names the shapes the live failures actually take', () => {
-    expect(classifyTemporalFailure('API Error: 529 Overloaded.')).toBe('upstream-5xx');
-    expect(classifyTemporalFailure('API Error: 500 Internal error')).toBe('upstream-5xx');
-    expect(classifyTemporalFailure('request timed out after 240000ms')).toBe('timeout');
-    expect(classifyTemporalFailure('API Error: 429 rate limit')).toBe('rate-limited');
-    expect(classifyTemporalFailure('connect ECONNREFUSED 127.0.0.1:443')).toBe('network');
-    expect(classifyTemporalFailure('API Error: 400 invalid_request')).toBe('request-rejected');
-  });
-
-  // Honest about its own limits: an unmatched failure says so rather than guessing, and the
-  // caller then reports exactly what it reported before - the digest.
-  it('returns null rather than guessing at an unknown failure', () => {
-    expect(classifyTemporalFailure('Claude CLI exited with code 1')).toBeNull();
-    expect(classifyTemporalFailure('')).toBeNull();
-  });
-
-  // The whole point of the closed table: a label is chosen, never extracted. A reason that
-  // matches a shape AND carries a token must still yield only the label.
-  it('never returns any text taken from the reason', () => {
-    const secret = 'connector-token-9f3a2b';
-    for (const reason of [
-      `API Error: 500 ${secret}`,
-      `timed out while sending ${secret}`,
-      `ECONNREFUSED talking to ${secret}`,
-      secret,
-    ]) {
-      expect(classifyTemporalFailure(reason) ?? '').not.toContain(secret);
-    }
-  });
-});
-
 describe('in-band API errors are transport failures, never content', () => {
   // Live proof: board#2042 completed with "||⏱️ 1 turns|| | API Error: 529
   // Overloaded..." as its response - a false success delivered as content.
@@ -1251,16 +1043,10 @@ describe('in-band API errors are transport failures, never content', () => {
   });
 
   it('a run whose response is an API error FAILS the workorder instead of completing', async () => {
-    const task = ctx2.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
-    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
-    ctx2.ledger.enqueueTemporalGeneration({
-      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: task.dueAt!,
-      sourceChannel: null,
-      sourceEventId: null,
+    ctx2.ledger.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'wiki:in-band-api-error',
+      input: { batchId: 'in-band', events: [] },
     });
     ctx2.deps.runner = {
       runWithContent: async () => ({
@@ -1332,7 +1118,7 @@ describe('transient upstream model errors are named, not anonymous digests', () 
       expect(wiki.length).toBeLessThan(1300);
     });
 
-    it.each(['board', 'wiki', 'memory-curation', 'self-check', 'temporal'] as const)(
+    it.each(['board', 'wiki', 'memory-curation', 'self-check'] as const)(
       'the %s turn carries the two-sentence unattended preamble',
       (kind) => {
         const prompt = buildTurnKindSection(kind);
@@ -1364,13 +1150,6 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     });
 
     /** P3-7: the host hard-requires both, so the RESULT requirement says both. */
-    it('P3-7 states the temporal context packet requirement and the report_publish prohibition', () => {
-      const temporal = buildTurnKindSection('temporal');
-      expect(temporal).toContain(
-        'carrying the context_packet_id of a context_compile made in this attempt'
-      );
-      expect(temporal).toContain('Do not call report_publish.');
-    });
 
     /**
      * The delegated shape asks for a native subagent. A runner without one (the persistent
@@ -1379,25 +1158,33 @@ describe('transient upstream model errors are named, not anonymous digests', () 
      * the result contract already states the outcome the host verifies.
      */
     describe('delegated shape follows the runner capability, not the backend name', () => {
-      const delegatedKinds = ['board', 'wiki', 'temporal'] as const;
+      const delegatedKinds = ['board', 'wiki'] as const;
 
-      it.each(delegatedKinds)('states the delegated shape for a %s turn on a capable runner', (kind) => {
-        const section = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
-        expect(section).toContain('Expected shape: delegate. Spawn ONE native subagent');
-      });
+      it.each(delegatedKinds)(
+        'states the delegated shape for a %s turn on a capable runner',
+        (kind) => {
+          const section = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
+          expect(section).toContain('Expected shape: delegate. Spawn ONE native subagent');
+        }
+      );
 
-      it.each(delegatedKinds)('omits the delegated shape for a %s turn on an incapable runner', (kind) => {
-        const capable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
-        const incapable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false });
-        expect(incapable).not.toContain('Expected shape: delegate');
-        expect(incapable).not.toMatch(/subagent/i);
-        expect(incapable).not.toContain('wait_agent');
-        // Only the shape sentence leaves; the result contract is untouched, and no prose
-        // replaces it telling the agent to do the work inline.
-        expect(incapable).toContain('Result required:');
-        expect(incapable).not.toMatch(/inline|yourself|do the work in this turn/i);
-        expect(incapable.length).toBeLessThan(capable.length);
-      });
+      it.each(delegatedKinds)(
+        'omits the delegated shape for a %s turn on an incapable runner',
+        (kind) => {
+          const capable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: true });
+          const incapable = buildTurnKindSection(kind, undefined, {
+            supportsNativeSubagents: false,
+          });
+          expect(incapable).not.toContain('Expected shape: delegate');
+          expect(incapable).not.toMatch(/subagent/i);
+          expect(incapable).not.toContain('wait_agent');
+          // Only the shape sentence leaves; the result contract is untouched, and no prose
+          // replaces it telling the agent to do the work inline.
+          expect(incapable).toContain('Result required:');
+          expect(incapable).not.toMatch(/inline|yourself|do the work in this turn/i);
+          expect(incapable.length).toBeLessThan(capable.length);
+        }
+      );
 
       it('carries the delta anchor and the omission together on a board delta turn', () => {
         const section = buildTurnKindSection('board', 'delta:2026-09-10', {
@@ -1419,7 +1206,7 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     });
 
     it('treats an omitted capability as incapable, matching runnerSupportsNativeSubagents()', () => {
-      for (const kind of ['board', 'wiki', 'temporal'] as const) {
+      for (const kind of ['board', 'wiki'] as const) {
         const omitted = buildTurnKindSection(kind);
         const incapable = buildTurnKindSection(kind, undefined, { supportsNativeSubagents: false });
         expect(omitted).toBe(incapable);
@@ -1447,9 +1234,6 @@ describe('transient upstream model errors are named, not anonymous digests', () 
     it('keeps the two turn-kind sections that were already outcome contracts', () => {
       expect(buildTurnKindSection('memory-curation')).toContain('mama_save');
       expect(buildTurnKindSection('self-check')).toContain('repair_request({issue_id');
-      expect(buildTurnKindSection('temporal')).toContain(
-        'exactly one successful task_temporal_reconcile'
-      );
     });
   });
 
@@ -1585,7 +1369,7 @@ describe('board turn section names the slot format without the class vocabulary'
     expect(board).toContain('as HTML fragments');
     // 0.41.0 wrote plain text whose newlines collapsed; the format is still stated. The
     // per-class vocabulary is not a turn instruction and stays where it is used.
-    for (const kind of ['board', 'wiki', 'memory-curation', 'self-check', 'temporal'] as const) {
+    for (const kind of ['board', 'wiki', 'memory-curation', 'self-check'] as const) {
       expect(buildTurnKindSection(kind)).not.toContain('report-card');
     }
   });
@@ -1914,11 +1698,7 @@ describe('delegated maintenance attempts', () => {
     ctx.deps.runner = {
       supportsNativeSubagents: false,
       runWithContent: async (content) => {
-        briefs.push(
-          content
-            .map((block) => (block.type === 'text' ? block.text : ''))
-            .join('\n')
-        );
+        briefs.push(content.map((block) => (block.type === 'text' ? block.text : '')).join('\n'));
         return { response: 'ok done' };
       },
     };

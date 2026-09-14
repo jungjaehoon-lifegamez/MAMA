@@ -271,11 +271,11 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
     { backend: 'claude' as const, rawConnectors: ['kagemusha'], privateVisible: true },
     { backend: 'codex' as const, rawConnectors: ['kagemusha'], privateVisible: true },
   ])(
-    'TG-06 keeps the $backend temporal catalog and authorization aligned',
+    'TG-06 keeps the $backend private catalog and authorization aligned',
     async ({ backend, rawConnectors, privateVisible }) => {
       const privatePolicy = enabledPrivatePolicy();
       const policy = buildTurnAgentPolicy(
-        'temporal',
+        'memory-curation',
         'worker-model',
         backend,
         privatePolicy,
@@ -284,9 +284,9 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
       const runner = makeRunner();
 
       await workerRun(runner, {
-        kind: 'temporal',
-        brief: 'Reconcile one temporal task.',
-        input: 'Check the bound source and commit one receipt.',
+        kind: 'memory-curation',
+        brief: 'Curate what the last window produced.',
+        input: 'Read the window and save what is durable.',
         runOptions: {
           gatewayToolsPrompt: policy.gatewayToolsPrompt,
           agentContext: policy.agentContext,
@@ -316,12 +316,12 @@ describe('Story TG-03/TG-04/TG-05: maintenance stays inside One MAMA', () => {
         {
           agentId: 'mama-owner',
           source: 'operator',
-          channelId: 'worker:temporal',
+          channelId: 'worker:memory-curation',
           agentContext: capturedContext,
           envelope: makeEnvelope({
             agent_id: 'mama-owner',
             source: 'watch',
-            channel_id: 'worker:temporal',
+            channel_id: 'worker:memory-curation',
             scope: {
               project_refs: [{ kind: 'project', id: '/workspace/MAMA' }],
               raw_connectors: rawConnectors,

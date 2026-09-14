@@ -771,7 +771,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; due_bucket filters that same derived partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, temporal observation time, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled unless status is explicit.',
+    'Read YOUR native task board progressively - the working tracker you maintain for the owner, who only views it. External connector task sources are separate read-only evidence. view:overview = status/priority/channel/assignee counts and missing/overdue/upcoming/closed due buckets; due_bucket filters that same derived partition before counting and paging (date_due is upcoming). view:items (DEFAULT) = a bounded page of 25 concise rows (limit 1..50) with total/returned/nextCursor and observedAt/readVersion - the first page is NEVER the whole board. Use qualification:legacy_unqualified with include_terminal:false to recalibrate one small active page instead of loading every task. view:detail = full records for 1..4 explicit ids with title/latestEvent paged by text_offset/text_limit. Server-derived temporal_state and normalized due_at; date-only deadlines are preserved separately. A cursor binds its filter, observation time, order and read generation - a changed filter or an intervening write is rejected, restart from page one. Board order: deadline asc (nulls last), then priority high>normal>low. include_terminal:false hides done/cancelled unless status is explicit.',
   category: 'os_monitoring',
   params:
     "view? (overview|items|detail, default items), status? (pending|in_progress|review|blocked|done|cancelled), include_terminal? (default true; false excludes done/cancelled unless status is explicit), qualification? (qualified|legacy_unqualified), channel?, search?, assignee?, priority? (high|normal|low), due_bucket? (missing|overdue|upcoming|closed), due_before?/due_after? (RFC 3339 + offset, exact due_at only), updated_since?/updated_before? (RFC 3339 + offset; updated_at half-open range), order? ('deadline_priority'|'updated'), limit? (items, 1..50, default 25), cursor? (items, nextCursor from the previous page), ids? (detail, 1..4 distinct), text_offset?/text_limit? (detail, code points; default 1000, max 2000)",
@@ -925,29 +925,6 @@ register({
       review_anchor_ref: { type: 'string' },
     },
     required: ['id'],
-    additionalProperties: false,
-  },
-});
-register({
-  name: 'task_temporal_reconcile',
-  description:
-    'Resolve, finalize without a lifecycle change, or defer the host-issued temporal work item using a same-run context packet (staleness is receipted, not gated). Task, generation, occurrence, check, and attempt identity come only from trusted runtime context. Each outcome accepts ONLY its own extra fields: resolved -> status? and/or due_at? (at least one must actually change); final_no_update -> evidence_summary (required, 1-1000 chars); deferred -> next_temporal_check_at (required, RFC 3339 with explicit offset, strictly in the future). A field from another outcome (evidence_summary on resolved/deferred, next_temporal_check_at on resolved/final_no_update, status/due_at outside resolved) is rejected, never stripped.',
-  category: 'os_monitoring',
-  params:
-    "context_packet_id (required), expected_revision (required), outcome (resolved|final_no_update|deferred), reason (required), then only that outcome's fields: resolved -> status? (pending|in_progress|review|blocked|done|cancelled) and/or due_at? (RFC 3339 with explicit offset, or null); final_no_update -> evidence_summary (required); deferred -> next_temporal_check_at (required, strictly future)",
-  inputSchema: {
-    type: 'object',
-    properties: {
-      context_packet_id: { type: 'string' },
-      expected_revision: { type: 'integer', minimum: 0 },
-      outcome: { enum: ['resolved', 'final_no_update', 'deferred'] },
-      reason: { type: 'string' },
-      status: { enum: ['pending', 'in_progress', 'review', 'blocked', 'done', 'cancelled'] },
-      due_at: { type: ['string', 'null'] },
-      evidence_summary: { type: 'string', minLength: 1, maxLength: 1000 },
-      next_temporal_check_at: { type: 'string' },
-    },
-    required: ['context_packet_id', 'expected_revision', 'outcome', 'reason'],
     additionalProperties: false,
   },
 });

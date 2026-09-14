@@ -23,13 +23,7 @@
 import type { SQLiteDatabase } from '../sqlite.js';
 import { OBLIGATED_TOOLS } from './action-verifier.js';
 import type { BoardCandidateAttemptState, WorkOrderRecord } from './task-ledger.js';
-import {
-  captureTemporalEffectSnapshot,
-  verifyTemporalEffect,
-  type TemporalEffectSnapshot,
-  type TemporalVerifierDeps,
-} from './action-verifier.js';
-import type { WorkOrderEffectVerdict, WorkOrderHook } from './workorder-consumer.js';
+import type { WorkOrderEffectVerdict } from './workorder-consumer.js';
 
 export interface BoardCandidateReceiptInspector {
   inspectBoardCandidateAttempt(attemptId: number): BoardCandidateAttemptState;
@@ -461,29 +455,5 @@ export function buildWikiAfterHook(
       return { disposition: 'fail', reason: verdict.note };
     }
     return { disposition: 'complete' };
-  };
-}
-
-export function buildTemporalWorkOrderHook(deps: TemporalVerifierDeps): WorkOrderHook {
-  return {
-    verdictRequired: true,
-    before: (workOrder) => captureTemporalEffectSnapshot(deps, workOrder.id),
-    after: (workOrder, _response, beforeState) => {
-      if (
-        typeof beforeState !== 'object' ||
-        beforeState === null ||
-        !('attemptId' in beforeState)
-      ) {
-        return { disposition: 'fail', reason: 'temporal effect snapshot missing' };
-      }
-      const snapshot = beforeState as TemporalEffectSnapshot;
-      if (snapshot.attemptId !== workOrder.id) {
-        return { disposition: 'fail', reason: 'temporal effect snapshot attempt mismatch' };
-      }
-      const result = verifyTemporalEffect(deps, snapshot);
-      return result.verified
-        ? { disposition: 'complete' }
-        : { disposition: 'fail', reason: result.reason };
-    },
   };
 }

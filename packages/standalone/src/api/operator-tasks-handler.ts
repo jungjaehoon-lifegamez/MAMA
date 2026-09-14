@@ -39,12 +39,7 @@ function serializeTask(task: TaskRecord) {
     due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
     deadline_offset_minutes: task.deadlineOffsetMinutes,
     revision: task.revision,
-    temporal_epoch: task.temporalEpoch,
-    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
-    last_temporal_checked_at: task.lastTemporalCheckedAt,
-    next_temporal_check_at: task.nextTemporalCheckAt,
-    last_temporal_attempt_id: task.lastTemporalAttemptId,
-    temporal_state: task.temporalState,
+    temporal_state: task.dueState,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
   };

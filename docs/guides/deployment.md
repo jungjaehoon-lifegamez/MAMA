@@ -302,7 +302,6 @@ export MAMA_FORCE_TIER_3=true
 MAMA_DB_PATH=~/.claude/mama-memory.db
 MAMA_EMBEDDING_MODEL=Xenova/multilingual-e5-small
 MAMA_ENVELOPE_ISSUANCE=enabled
-MAMA_TEMPORAL_RECONCILE=off
 ```
 
 For Cloudflare Zero Trust deployments of MAMA OS, add:
@@ -315,18 +314,16 @@ Use `MAMA_AUTH_TOKEN` for non-Access tunnels and temporary test exposure. Withou
 
 **Environment Variable Reference:**
 
-| Variable                  | Description                             | Default                        |
-| ------------------------- | --------------------------------------- | ------------------------------ |
-| `MAMA_DB_PATH`            | SQLite DB file path                     | `~/.claude/mama-memory.db`     |
-| `MAMA_EMBEDDING_MODEL`    | Embedding model                         | `Xenova/multilingual-e5-small` |
-| `MAMA_ENVELOPE_ISSUANCE`  | Runtime envelope issuance               | `enabled`                      |
-| `MAMA_TEMPORAL_RECONCILE` | Temporal reconciliation (`off` or `on`) | `off`                          |
-| `MAMA_FORCE_TIER_3`       | Force Tier 3 mode                       | `false`                        |
+| Variable                 | Description               | Default                        |
+| ------------------------ | ------------------------- | ------------------------------ |
+| `MAMA_DB_PATH`           | SQLite DB file path       | `~/.claude/mama-memory.db`     |
+| `MAMA_EMBEDDING_MODEL`   | Embedding model           | `Xenova/multilingual-e5-small` |
+| `MAMA_ENVELOPE_ISSUANCE` | Runtime envelope issuance | `enabled`                      |
+| `MAMA_FORCE_TIER_3`      | Force Tier 3 mode         | `false`                        |
 
 The durable workorder pipeline is always on since v0.28.0 (the former
 `MAMA_STAGE2_WORKORDERS` migration flag is retired: unset or `on` boots fine, an explicit
-`off`/`shadow` fails the boot loudly). Enable `MAMA_TEMPORAL_RECONCILE=on` only after envelope
-and worker transport checks pass.
+`off`/`shadow` fails the boot loudly).
 
 The MAMA OS daemon and its `/health` endpoint listen on the fixed local API port `3847`.
 

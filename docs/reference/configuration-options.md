@@ -27,7 +27,6 @@ Things the old page claimed that DO NOT exist and were never read by any code:
 | `MAMA_SECURITY_LOG_DIR`               | — (env only) | `export MAMA_SECURITY_LOG_DIR=/tmp/x` — redirect security telemetry (events/incidents/denylist). Test suites set this so fixtures never pollute live logs                                                                                                                                                                                                                                                                 |
 | `MAMA_SECURITY_ALERT_CHANNELS`        | — (env only) | `export MAMA_SECURITY_ALERT_CHANNELS="telegram:<chat_id>"` — comma-separated `gateway:channel` targets for security + system-audit MAJOR alerts                                                                                                                                                                                                                                                                           |
 | `MAMA_STAGE2_WORKORDERS`              | — (env only) | RETIRED in v0.28.0 — the workorder pipeline is the only system run path. Unset or `on` boots fine; an explicit `off`/`shadow` (the removed legacy/dual-run modes) fails the boot loudly instead of silently running the pipeline                                                                                                                                                                                          |
-| `MAMA_TEMPORAL_RECONCILE`             | — (env only) | `export MAMA_TEMPORAL_RECONCILE=on` — temporal owner-task reconciliation, `off\|on`, default `off`. `on` requires envelope issuance enabled, a Claude/Codex/Cline backend, the trusted `task_temporal_reconcile` transport tool, and the Stage-2 consumer. Malformed flags or disabled envelope issuance fail before timer-bearing daemon services start. `off` pauses open temporal attempts for safe later resume.      |
 | `MAMA_OPS_ALERT_CHAT`                 | — (env only) | `export MAMA_OPS_ALERT_CHAT=<chat_id>` — telegram chat for workorder retries-exhausted/stale-claim alarms. Falls back to `MAMA_TRIGGER_LOOP_REPORT_CHAT`; unset = log-only (boot says so loudly)                                                                                                                                                                                                                          |
 | `MAMA_TRIGGER_LOOP`                   | — (env only) | Proactive connector monitoring is on by default. Set `MAMA_TRIGGER_LOOP=0` only to opt out. When `MAMA_TRIGGER_LOOP_REPORT_CHAT` is absent, the sole positive-ID entry in `telegram.allowed_chats` is used as the private owner report destination; ambiguous/group allowlists require an explicit report chat.                                                                                                           |
 | `MAMA_TRIGGER_LOOP_REPORT_CHAT`       | — (env only) | `export MAMA_TRIGGER_LOOP_REPORT_CHAT=<chat_id>` — explicit Telegram destination for proactive and on-demand owner reports. The value must be a positive private-chat ID present in `telegram.allowed_chats`; it takes precedence over the sole-positive-ID allowlist fallback. If unset, MAMA uses that fallback only when it is unambiguous, otherwise report delivery stays disabled and logs the missing destination. |
@@ -62,18 +61,7 @@ for configuration compatibility. They are deprecated no-ops: Claude Code, Codex 
 Cline Hub own compaction for their durable sessions. A future breaking release may remove these
 keys after the compatibility window.
 
-### Temporal Reconciliation Runtime
-
-The temporal scanner interval and safety limits are currently fixed host contracts rather than
-configuration knobs:
-
-- scan every 60 seconds;
-- admit at most four exact/deferred and one date-only candidate per scan;
-- allow at most ten open temporal workorders;
-- retry each occurrence at most three times, including stale-claim recovery;
-- keep exhausted generations terminal and schedule deferred results as distinct future
-  generations;
-- stop new admission and durably pause open temporal attempts before awaiting worker drainage.
+### Task Deadlines
 
 `due_at` accepts only valid RFC 3339 instants with `Z` or an explicit numeric offset. Legacy
 `YYYY-MM-DD` deadlines remain supported and retain date-only precision. The read-only
@@ -82,8 +70,7 @@ reflects `done`/`cancelled`, but no configuration maps overdue to `blocked` or e
 `done`.
 
 Trello and any configured private connector remain untrusted read-only evidence, while the native
-task ledger remains owner-task truth. The flag does not enable direct connector writes,
-cross-store lifecycle copying, or exactly-once external alarm delivery.
+task ledger remains owner-task truth.
 
 ---
 

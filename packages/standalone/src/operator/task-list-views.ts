@@ -20,13 +20,7 @@
 
 import { createHash } from 'node:crypto';
 import type { TaskLedger, TaskRecord, ListTasksPageFilter } from './task-ledger.js';
-import {
-  DUE_BUCKETS,
-  dueBucketForTemporalState,
-  parseExactDueAt,
-  type DueBucket,
-  type TemporalState,
-} from './task-temporal.js';
+import { DUE_BUCKETS, parseExactDueAt, type DueBucket, type DueState } from './task-dates.js';
 
 const ITEMS_DEFAULT_LIMIT = 25;
 const ITEMS_MAX_LIMIT = 50;
@@ -50,11 +44,8 @@ const QUALIFICATIONS = ['qualified', 'legacy_unqualified'] as const;
 const VIEWS = ['overview', 'items', 'detail'] as const;
 type ViewName = (typeof VIEWS)[number];
 
-/** Restriction context: when boundTask is set the universe is exactly that task. */
 export interface TaskListViewContext {
   readonly ledger: TaskLedger;
-  /** Present only under a Temporal work context; the sole readable owner row. */
-  readonly boundTask?: TaskRecord;
 }
 
 export interface TextWindow {
@@ -139,12 +130,7 @@ export function serializeTaskToolRecord(task: TaskRecord): Record<string, unknow
     ...task,
     due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
     deadline_offset_minutes: task.deadlineOffsetMinutes,
-    temporal_epoch: task.temporalEpoch,
-    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
-    last_temporal_checked_at: task.lastTemporalCheckedAt,
-    next_temporal_check_at: task.nextTemporalCheckAt,
-    last_temporal_attempt_id: task.lastTemporalAttemptId,
-    temporal_state: task.temporalState,
+    temporal_state: task.dueState,
   };
 }
 
@@ -167,9 +153,6 @@ function runOverviewView(
   filter: NormalizedFilter,
   ctx: TaskListViewContext
 ): OverviewView & { success: true } {
-  if (ctx.boundTask) {
-    return boundOverview(filter, ctx);
-  }
   const data = ctx.ledger.overview(toLedgerFilter(filter));
   return {
     success: true,
@@ -185,40 +168,6 @@ function runOverviewView(
   };
 }
 
-function boundOverview(
-  filter: NormalizedFilter,
-  ctx: TaskListViewContext
-): OverviewView & { success: true } {
-  const task = ctx.boundTask!;
-  const observedAt = ctx.ledger.nowMs();
-  const temporalState = ctx.ledger.temporalStateAt(task, observedAt);
-  const matched = boundTaskMatches(task, filter, temporalState) ? [task] : [];
-  const status: Record<string, number> = {};
-  const priority: Record<string, number> = {};
-  const channels = new Map<string | null, number>();
-  const assignees = new Map<string | null, number>();
-  const due = { missing: 0, overdue: 0, upcoming: 0, closed: 0 };
-  for (const row of matched) {
-    status[row.status] = (status[row.status] ?? 0) + 1;
-    priority[row.priority] = (priority[row.priority] ?? 0) + 1;
-    channels.set(row.sourceChannel, (channels.get(row.sourceChannel) ?? 0) + 1);
-    assignees.set(row.assignee, (assignees.get(row.assignee) ?? 0) + 1);
-    due[dueBucketForTemporalState(temporalState)] += 1;
-  }
-  return {
-    success: true,
-    view: 'overview',
-    total: matched.length,
-    observedAt: new Date(observedAt).toISOString(),
-    readVersion: boundReadVersion(task),
-    status,
-    priority,
-    channels: [...channels].map(([channel, count]) => ({ channel, count })),
-    assignees: [...assignees].map(([assignee, count]) => ({ assignee, count })),
-    due,
-  };
-}
-
 // ─── items ───────────────────────────────────────────────────────────────────
 
 function runItemsView(
@@ -227,9 +176,6 @@ function runItemsView(
   ctx: TaskListViewContext
 ): ItemsView & { success: true } {
   const limit = parseLimit(input.limit);
-  if (ctx.boundTask) {
-    return boundItems(filter, limit, input.cursor, ctx);
-  }
   const currentFp = filterFingerprint(filter);
   let innerCursor: string | undefined;
   let expectedReadVersion: string | undefined;
@@ -277,43 +223,9 @@ function runItemsView(
   };
 }
 
-function boundItems(
-  filter: NormalizedFilter,
-  limit: number,
-  rawCursor: unknown,
-  ctx: TaskListViewContext
-): ItemsView & { success: true } {
-  const task = ctx.boundTask!;
-  const observedAt = ctx.ledger.nowMs();
-  const temporalState = ctx.ledger.temporalStateAt(task, observedAt);
-  const readVersion = boundReadVersion(task);
-  // A single-task universe never paginates; a cursor over it can only be one
-  // that binds this same generation, and there is never a second page.
-  if (rawCursor !== undefined) {
-    decodeItemsCursor(
-      rawCursor,
-      filterFingerprint(filter),
-      filter.order,
-      filter.dueBucket !== undefined
-    );
-  }
-  const matched = boundTaskMatches(task, filter, temporalState) ? [task] : [];
-  const bounded = matched.slice(0, limit);
-  return {
-    success: true,
-    view: 'items',
-    tasks: bounded.map((row) => compactItem(row, temporalState)),
-    total: matched.length,
-    returned: bounded.length,
-    nextCursor: null,
-    observedAt: new Date(observedAt).toISOString(),
-    readVersion,
-  };
-}
-
 function compactItem(
   task: TaskRecord,
-  temporalState: TemporalState = task.temporalState
+  dueState: DueState = task.dueState
 ): Record<string, unknown> {
   return {
     id: task.id,
@@ -328,7 +240,7 @@ function compactItem(
     revision: task.revision,
     sourceChannel: task.sourceChannel,
     sourceEventId: task.sourceEventId,
-    temporal_state: temporalState,
+    temporal_state: dueState,
     // Records vs tasks: what would finish this row, and (once terminal) WHY it
     // closed. Without both, a page of rows cannot be judged - completed work and
     // an item that was never a task look identical.
@@ -355,7 +267,7 @@ function runDetailView(
   const tasks: Array<Record<string, unknown>> = [];
   const missingIds: number[] = [];
   for (const id of ids) {
-    const record = resolveDetailTask(id, ctx);
+    const record = ctx.ledger.getById(id);
     if (!record) {
       missingIds.push(id);
       continue;
@@ -369,14 +281,6 @@ function runDetailView(
     missingIds,
     observedAt: new Date(observedAt).toISOString(),
   };
-}
-
-/** Under a Temporal context only the bound id resolves; every other id is generic missing. */
-function resolveDetailTask(id: number, ctx: TaskListViewContext): TaskRecord | null {
-  if (ctx.boundTask) {
-    return ctx.boundTask.id === id ? ctx.boundTask : null;
-  }
-  return ctx.ledger.getById(id);
 }
 
 function detailRecord(
@@ -446,54 +350,6 @@ function toLedgerFilter(filter: NormalizedFilter): ListTasksPageFilter {
     qualification: filter.qualification,
     order: filter.order,
   };
-}
-
-function boundTaskMatches(
-  task: TaskRecord,
-  filter: NormalizedFilter,
-  temporalState: TemporalState
-): boolean {
-  if (filter.status !== undefined && task.status !== filter.status) return false;
-  if (filter.status === undefined && filter.include_terminal === false) {
-    if (task.status === 'done' || task.status === 'cancelled') return false;
-  }
-  if (filter.channel !== undefined && task.sourceChannel !== filter.channel) return false;
-  if (filter.assignee !== undefined && task.assignee !== filter.assignee) return false;
-  if (filter.priority !== undefined && task.priority !== filter.priority) return false;
-  if (
-    filter.dueBucket !== undefined &&
-    dueBucketForTemporalState(temporalState) !== filter.dueBucket
-  ) {
-    return false;
-  }
-  if (filter.search !== undefined) {
-    const needle = filter.search.toLowerCase();
-    const hay = `${task.title}\n${task.latestEvent ?? ''}\n${task.assignee ?? ''}`.toLowerCase();
-    if (!hay.includes(needle)) return false;
-  }
-  if (
-    filter.dueBeforeMs !== undefined &&
-    !(task.dueAt !== null && task.dueAt < filter.dueBeforeMs)
-  ) {
-    return false;
-  }
-  if (
-    filter.dueAfterMs !== undefined &&
-    !(task.dueAt !== null && task.dueAt >= filter.dueAfterMs)
-  ) {
-    return false;
-  }
-  if (filter.updatedSinceMs !== undefined && !(task.updatedAt >= filter.updatedSinceMs)) {
-    return false;
-  }
-  if (filter.updatedBeforeMs !== undefined && !(task.updatedAt < filter.updatedBeforeMs)) {
-    return false;
-  }
-  if (filter.qualification === 'qualified' && task.completionCriteria === null) return false;
-  if (filter.qualification === 'legacy_unqualified' && task.completionCriteria !== null) {
-    return false;
-  }
-  return true;
 }
 
 function parseView(value: unknown): ViewName {
@@ -699,11 +555,4 @@ function decodeItemsCursor(
     );
   }
   return cursor as ItemsCursorPayload;
-}
-
-function boundReadVersion(task: TaskRecord): string {
-  return createHash('sha256')
-    .update(`bound:${task.id}:${task.revision}:${task.updatedAt}`)
-    .digest('base64url')
-    .slice(0, 22);
 }

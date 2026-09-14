@@ -11,7 +11,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
-import { occurrenceKeyForTask } from '../../src/operator/task-temporal.js';
 import { changeCoverage, listEffects } from '../../src/evidence/effects.js';
 
 describe('task ledger effect recording', () => {
@@ -145,49 +144,6 @@ describe('task ledger effect recording', () => {
       causeState: 'attributed',
       sourceEventIds: ['evt_real'],
     });
-  });
-
-  // The canonical case: a scheduled run closing a work item. This path writes owner rows
-  // with its own SQL, so it was invisible to the ledger while filing a receipt in a second
-  // table - the exact split this design exists to end.
-  it('records the change a temporal run makes to an owner task', () => {
-    const at = Date.parse('2026-07-21T15:00:00Z');
-    db.close();
-    db = new Database(':memory:');
-    ledger = new TaskLedger(db, { now: () => at, timeZone: 'Asia/Seoul' });
-
-    const task = ledger.create({ title: 'due owner task', due_at: '2026-07-22T00:00:00+09:00' });
-    const occurrenceKey = occurrenceKeyForTask(task)!;
-    const generationKey = `task:${task.id}:${occurrenceKey}:check:${at}`;
-    ledger.enqueueTemporalGeneration({
-      generationKey,
-      taskId: task.id,
-      temporalEpoch: task.temporalEpoch,
-      occurrenceKey,
-      checkAt: at,
-      sourceChannel: task.sourceChannel,
-      sourceEventId: task.sourceEventId,
-      priority: 'high',
-    });
-    const claimed = ledger.claimNextWorkOrder()!;
-    const context = ledger.loadTemporalWorkContext(claimed.id);
-
-    ledger.applyTemporalEffect(
-      context,
-      {
-        expected_revision: context.revision,
-        outcome: 'resolved',
-        status: 'done',
-        reason: 'Fresh source evidence confirms completion',
-      },
-      { contextPacketId: 'ctxp_test', contextPacketSha256: 'a'.repeat(64) },
-      at
-    );
-
-    const recorded = listEffects(adapter(), { targetId: String(task.id) });
-    expect(recorded.map((e) => e.kind)).toEqual(['task_update', 'task_create']);
-    // Unattributed on purpose: a clock advanced, no event arrived.
-    expect(recorded[0]).toMatchObject({ causeState: 'unattributed', runId: null });
   });
 
   // Found by the existing suite, which already asserts that legacy 400-character source

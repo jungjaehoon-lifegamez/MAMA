@@ -27,9 +27,7 @@ import type {
   GatewayToolExecutionContext,
   PrincipalRepository,
 } from '../../agent/types.js';
-import { ToolRegistry } from '../../agent/tool-registry.js';
 import { buildGatewayToolCatalog } from '../../agent/gateway-tool-catalog.js';
-import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { runContextRegistry } from '../../agent/code-act/run-context-registry.js';
 import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
@@ -185,13 +183,6 @@ import {
   resolveOwnerEventExecution,
 } from '../../operator/owner-event-policy.js';
 import { initLegCadence, getLegCadence, getLegPageNotifier } from '../../operator/leg-cadence.js';
-import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
-import {
-  closeTemporalRuntimeBeforeDatabase,
-  preflightTemporalStartup,
-  type TemporalRuntime,
-} from '../../operator/temporal-runtime.js';
-import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 import { createCodeActExecutor } from '../runtime/code-act-executor.js';
 import {
   DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS,
@@ -209,7 +200,6 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
-const temporalLogger = new DebugLogger('TemporalReconcile');
 const principalRegistryLogger = new DebugLogger('PrincipalRegistry');
 
 export function workOrderActivityDetails(
@@ -331,7 +321,6 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'task_create',
   'task_update',
   'task_reclassify',
-  'task_temporal_reconcile',
   'contract_no_update',
 ]);
 
@@ -498,16 +487,6 @@ function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[]
 }
 
 /**
- * The connector and channel a temporal task is bound to, as plain values.
- *
- * The workorder payload carries only HASHED source identifiers (they are compared, never
- * read), so the binding has to come from the owner task row. Split on the FIRST colon:
- * `source_channel` is `<connector>:<channelId>` and channel ids contain colons of their own.
- *
- * Returns null when the task names no channel - which is not a failure, it is a task whose
- * reconcile may rest on no raw evidence at all.
- */
-/**
  * The scope a workorder envelope carries.
  *
  * Extracted so the binding can be asserted directly. Composed inline, the only way to test
@@ -552,7 +531,6 @@ export function workOrderEnvelopeScope(input: {
   reconcileChannelKey?: string | null;
   projectId: string;
   laneConnectors: string[];
-  temporalBinding: { connector: string; channel: string } | null;
   privateConnectorPolicy: PrivateConnectorPolicy;
 }): {
   project_refs: Array<{ kind: 'project'; id: string }>;
@@ -560,14 +538,13 @@ export function workOrderEnvelopeScope(input: {
   memory_scopes: MemoryScopeRef[];
   allowed_destinations: never[];
 } {
-  // The trusted owner grant decides readable connectors. Work kind and temporal binding
-  // remain selection and receipt metadata; neither attenuates ordinary read authority.
+  // The trusted owner grant decides readable connectors. Work kind remains selection
+  // and receipt metadata; it does not attenuate ordinary read authority.
   const surface: ConnectorCapabilitySurface = ONE_AGENT_TURN_POLICY.roleName;
   const candidateConnectors = input.laneConnectors;
   return {
     project_refs: [{ kind: 'project' as const, id: input.projectId }],
-    // A temporal run reads its task's connector or nothing. Every other lane keeps the
-    // connectors it was configured with.
+    // Every lane keeps the connectors it was configured with.
     raw_connectors: [
       ...input.privateConnectorPolicy.projectRawConnectors(surface, candidateConnectors),
     ],
@@ -585,30 +562,6 @@ export function workOrderEnvelopeScope(input: {
       // granted channel (PR #217 review, blocking #2/#3).
     ],
     allowed_destinations: [],
-  };
-}
-
-export function temporalTaskBinding(
-  ledger: {
-    getById: (id: number) => {
-      sourceChannel?: string | null;
-      status?: string;
-      reviewAnchorSourceChannel?: string | null;
-    } | null;
-  },
-  taskId: number
-): { connector: string; channel: string } | null {
-  const task = ledger.getById(taskId);
-  const sourceChannel =
-    task?.status === 'review'
-      ? (task.reviewAnchorSourceChannel ?? task.sourceChannel)
-      : task?.sourceChannel;
-  if (typeof sourceChannel !== 'string') return null;
-  const separator = sourceChannel.indexOf(':');
-  if (separator <= 0 || separator === sourceChannel.length - 1) return null;
-  return {
-    connector: sourceChannel.slice(0, separator),
-    channel: sourceChannel.slice(separator + 1),
   };
 }
 
@@ -646,7 +599,7 @@ export { ADMINISTRATION_TOOLS };
 /**
  * Per-turn-kind artifact tools, projected by the HOST. These exist only for scheduled
  * turns and are deliberately absent from the chat grant: a chat turn never publishes a
- * board slot or a wiki page and never files a temporal receipt. They are the tools the
+ * board slot or a wiki page. They are the tools the
  * turn-kind section instructs the turn to use, so grant and instruction cannot drift.
  */
 export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> = {
@@ -663,7 +616,6 @@ export const TURN_KIND_REQUIRED_TOOLS: Record<WorkOrderKind, readonly string[]> 
   ],
   wiki: ['agent_notices', 'contract_no_update', 'wiki_read', 'wiki_publish'],
   'memory-curation': ['agent_notices', 'contract_no_update'],
-  temporal: ['agent_notices', 'contract_no_update', 'task_temporal_reconcile'],
   'self-check': ['agent_notices', 'contract_no_update', 'repair_request', 'issue_close'],
 };
 
@@ -687,7 +639,6 @@ export const TURN_KIND_BLOCKED_TOOLS: Record<WorkOrderKind, ReadonlySet<string>>
   wiki: new Set(),
   'memory-curation': new Set(),
   'self-check': new Set(),
-  temporal: new Set(),
 };
 
 /** Progressive evidence primitives for a scheduled owner-runtime report turn. */
@@ -1110,10 +1061,6 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
-  // Fails the boot on the retired MAMA_STAGE2_WORKORDERS legacy pin
-  // (workorders are the only run path since v0.28.0).
-  const temporalStartup = preflightTemporalStartup(process.env);
-
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   const { connectorConfigLoadResult, privateConnectorPolicy } =
     resolveRuntimeConnectorBootstrap(loadConnectorConfig());
@@ -1121,31 +1068,6 @@ export async function runAgentLoop(
   const ownerRole = projectOwnerRuntimeRole(
     config.roles?.definitions.owner_console ?? DEFAULT_ROLES.definitions.owner_console
   );
-  const temporalPolicy =
-    temporalStartup.temporalFlag === 'on'
-      ? buildTurnAgentPolicy(
-          'temporal',
-          config.agent.model,
-          runtimeBackend,
-          privateConnectorPolicy,
-          [],
-          ownerRole
-        )
-      : null;
-  const temporalEffectiveTools = temporalPolicy
-    ? projectCodeActToolPolicy({
-        tier: requireCodeActTier(temporalPolicy.agentContext.tier),
-        role: temporalPolicy.agentContext.role,
-      }).names
-    : [];
-  const temporalAvailableTools = ToolRegistry.getValidToolNames();
-  if (
-    temporalStartup.temporalFlag === 'on' &&
-    (!temporalEffectiveTools.includes('task_temporal_reconcile') ||
-      !temporalAvailableTools.includes('task_temporal_reconcile'))
-  ) {
-    throw new Error('temporal reconciliation tool policy or transport registry is incompatible');
-  }
 
   const startupBackend = runtimeBackend;
   const usesCodexBackend = startupBackend === 'codex' || hasCodexBackendConfigured(config);
@@ -1967,7 +1889,6 @@ export async function runAgentLoop(
   // Constructed before production runtime assembly registers per-kind
   // completion hooks, and started only after route registration and recovery
   // complete.
-  const { temporalFlag } = temporalStartup;
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
@@ -1977,7 +1898,6 @@ export async function runAgentLoop(
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
   const boardRepairNudge: { current: (() => void) | null } = { current: null };
-  let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
     stop: async () => {
@@ -1990,14 +1910,13 @@ export async function runAgentLoop(
           await stopOwnerEventRuntime?.();
           stopOwnerEventRuntime = null;
         },
-        () =>
-          closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
-            try {
-              operatorDb.close();
-            } catch {
-              /* already closed */
-            }
-          })
+        () => {
+          try {
+            operatorDb.close();
+          } catch {
+            /* already closed */
+          }
+        }
       ).catch(() => {});
     },
   });
@@ -2093,12 +2012,6 @@ export async function runAgentLoop(
         // projection so an unbound or non-private run never advertises private
         // connector tools it cannot execute.
         const workOrderBatch = causeEventIdsFromPayload(wo.payload);
-        let temporalContext: ReturnType<typeof buildTemporalWorkerContext> | undefined;
-        let temporalBinding: { connector: string; channel: string } | null = null;
-        if (wo.workKind === 'temporal') {
-          temporalContext = buildTemporalWorkerContext(taskLedger, wo);
-          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
-        }
         const projectId = resolveReactiveProjectRoot(config, process.env);
         const reconcileChannelKey =
           wo.workKind === 'board' &&
@@ -2110,7 +2023,6 @@ export async function runAgentLoop(
           workKind: wo.workKind,
           projectId,
           laneConnectors: codeActRawConnectors,
-          temporalBinding,
           reconcileChannelKey,
           privateConnectorPolicy,
         });
@@ -2140,9 +2052,6 @@ export async function runAgentLoop(
         // between a bounded run and an unbounded one.
         if (workOrderBatch.length > 0) {
           runOptions.causeEventIds = workOrderBatch;
-        }
-        if (temporalContext) {
-          runOptions.temporalWorkContext = temporalContext;
         }
         if (wo.workKind === 'wiki') {
           const wikiRange =
@@ -2244,20 +2153,6 @@ export async function runAgentLoop(
     });
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
   }
-  const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const temporalAssembly = assembleDaemonTemporalRuntime({
-    flag: temporalFlag,
-    backend: runtimeBackend,
-    envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
-    effectiveTools: temporalEffectiveTools,
-    availableTools: temporalAvailableTools,
-    transportReady: Boolean(agentLoopClient.runWithContent),
-    timeZone: temporalTimeZone,
-    ledger: taskLedger,
-    consumer: workOrderConsumer,
-    log: (line) => temporalLogger.info(line),
-  });
-  temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors({
     connectorConfigLoadResult,
     nudge: () => triggerLoopNudge.current?.(),
@@ -2684,7 +2579,7 @@ export async function runAgentLoop(
           : ownerEventExecution.reason;
         console.error(`[owner-event] disabled: ${reason}`);
       }
-      temporalLogger.info('Trigger loop enabled (MAMA owner-event intake + report mode)');
+      console.error('[owner-event] Trigger loop enabled (intake + report mode)');
     } catch (error) {
       await stopOwnerEventRuntime?.().catch(() => {});
       stopOwnerEventRuntime = null;
@@ -2759,16 +2654,6 @@ export async function runAgentLoop(
     };
   }
   gateways.push({ stop: async () => apiRoutesHandle.stop() });
-
-  // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
-  // recovery/cleanup run after routes are ready, then the consumer starts.
-  const temporalBoot = temporalAssembly.bootAfterRoutes();
-  if (temporalBoot.paused > 0) {
-    temporalLogger.info(`paused ${temporalBoot.paused} open workorder(s)`);
-  }
-  if (temporalBoot.enabled && (temporalBoot.resumed > 0 || temporalBoot.enqueued > 0)) {
-    temporalLogger.info(`resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`);
-  }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────
 

@@ -30,7 +30,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { startOfTaskDate, dateInIanaZone } from './temporal-reconcile.js';
+import { startOfTaskDate, dateInIanaZone } from './task-dates.js';
 
 /** Bound on the watermark string, matching the workorder payload field bound. */
 export const WIKI_WATERMARK_MAX_LENGTH = 1000;

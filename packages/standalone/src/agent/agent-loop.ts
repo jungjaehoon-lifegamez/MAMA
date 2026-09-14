@@ -99,13 +99,6 @@ import {
 } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
 import { TELEGRAM_FORMAT_GUIDE } from '../gateways/telegram-format.js';
-import {
-  beginTemporalCodeActCall,
-  createTemporalCodeActBreakerState,
-  observeTemporalCodeActResult,
-  type TemporalCodeActBreakerDecision,
-  type TemporalCodeActBreakerState,
-} from './temporal-code-act-breaker.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
@@ -165,7 +158,17 @@ export const SOURCE_GLOBAL_LANES: Record<string, string> = {
  * invocation. MUST stay run-local because public and internal non-owner runs
  * can still overlap the serialized owner runtime.
  */
-interface RunScope extends TemporalCodeActBreakerState {
+type InternalToolResultBlock = ToolResultBlock & {
+  abort?: boolean;
+  terminalCode?: HostToolTerminalCode;
+};
+
+function historyToolResult(result: InternalToolResultBlock): ToolResultBlock {
+  const { abort: _abort, terminalCode: _terminalCode, ...block } = result;
+  return block;
+}
+
+interface RunScope {
   streamCallbacks?: StreamCallbacks;
   tier: 1 | 2 | 3;
   /** Per-run turn/tool observers (options-first; instance handlers are the
@@ -176,44 +179,6 @@ interface RunScope extends TemporalCodeActBreakerState {
   /** Pre-compaction injection latch - per run, or one run's latch would let an
    *  overlapping run skip required compaction and overflow its context. */
   preCompactInjected?: boolean;
-}
-
-function applyTemporalCodeActBreakerState(
-  runScope: RunScope,
-  state: TemporalCodeActBreakerState
-): void {
-  runScope.codeActCalls = state.codeActCalls;
-  runScope.lastDeterministicFingerprint = state.lastDeterministicFingerprint;
-  runScope.consecutiveDeterministicFailures = state.consecutiveDeterministicFailures;
-}
-
-function temporalCodeActTerminalResult(
-  decision: Extract<TemporalCodeActBreakerDecision, { terminal: true }>
-): GatewayToolResult {
-  return {
-    success: false,
-    code: 'TOOL_CONTRACT_REPEAT',
-    retryable: false,
-    abort: true,
-    failureClass: 'deterministic_contract',
-    ...(decision.fingerprintPrefix
-      ? { deterministicFingerprintPrefix: decision.fingerprintPrefix }
-      : {}),
-    error:
-      decision.reason === 'outer_call_limit'
-        ? 'Temporal outer Code-Act call limit exceeded before host execution'
-        : 'Temporal deterministic host-tool contract failure repeated three times',
-  } as GatewayToolResult;
-}
-
-type InternalToolResultBlock = ToolResultBlock & {
-  abort?: boolean;
-  terminalCode?: HostToolTerminalCode;
-};
-
-function historyToolResult(result: InternalToolResultBlock): ToolResultBlock {
-  const { abort: _abort, terminalCode: _terminalCode, ...block } = result;
-  return block;
 }
 
 /**
@@ -581,7 +546,6 @@ export function buildAgentToolExecutionContext(
       options.observationRefs === undefined &&
       options.modelRunId === undefined &&
       options.workorderAttemptId === undefined &&
-      options.temporalWorkContext === undefined &&
       options.wikiTaskRange === undefined &&
       options.ownerEventEffects === undefined)
   ) {
@@ -618,9 +582,6 @@ export function buildAgentToolExecutionContext(
   }
   if (options.ownerEventEffects !== undefined) {
     context.ownerEventEffects = options.ownerEventEffects;
-  }
-  if (options.temporalWorkContext !== undefined) {
-    context.temporalWorkContext = options.temporalWorkContext;
   }
   if (options.wikiTaskRange !== undefined) {
     context.wikiTaskRange = options.wikiTaskRange;
@@ -1357,7 +1318,6 @@ export class AgentLoop {
       tier: 1,
       onTurn: options?.onTurn ?? this.onTurn,
       onToolUse: options?.onToolUse ?? this.onToolUse,
-      ...createTemporalCodeActBreakerState(),
     };
     const history: Message[] = [];
     const ownerJournalPrompt =
@@ -2978,7 +2938,7 @@ export class AgentLoop {
       }
       // The child's own run scope: no stream callbacks, no onTurn, no onToolUse. Its work
       // is not this run's turns, and the parent's model run is already committed by then.
-      const runScope: RunScope = { tier: context.tier, ...createTemporalCodeActBreakerState() };
+      const runScope: RunScope = { tier: context.tier };
       bridge = this.buildHostToolBridge({
         tools: context.tools,
         runScope,
@@ -3068,7 +3028,7 @@ export class AgentLoop {
     content: ContentBlock[],
     stopAfterSuccessfulTools: string[] = [],
     executionContext: AgentToolExecutionContext | null = null,
-    runScope: RunScope = { tier: 1, ...createTemporalCodeActBreakerState() }
+    runScope: RunScope = { tier: 1 }
   ): Promise<InternalToolResultBlock[]> {
     const modelToolContext = withExecutionSurface(executionContext, 'model_tool');
     const reactiveInternalContext = withExecutionSurface(executionContext, 'reactive_internal');
@@ -3104,47 +3064,12 @@ export class AgentLoop {
           );
         }
 
-        const temporalCodeAct =
-          executionToolName === CODE_ACT_MARKER &&
-          modelToolContext?.temporalWorkContext !== undefined;
-        let codeActExecuted = false;
-        let toolResult: GatewayToolResult;
-        if (temporalCodeAct) {
-          const callDecision = beginTemporalCodeActCall(runScope);
-          applyTemporalCodeActBreakerState(runScope, callDecision.state);
-          if (callDecision.terminal) {
-            toolResult = temporalCodeActTerminalResult(callDecision);
-          } else {
-            codeActExecuted = true;
-            toolResult = await this.mcpExecutor.execute(
-              executionToolName,
-              toolUse.input as GatewayToolInput,
-              modelToolContext
-            );
-          }
-        } else {
-          toolResult = await this.mcpExecutor.execute(
-            executionToolName,
-            toolUse.input as GatewayToolInput,
-            modelToolContext ?? undefined
-          );
-        }
-        let toolResultRecord = toolResult as Record<string, unknown>;
-        const existingTerminal =
-          toolResultRecord.abort === true &&
-          toolResultRecord.retryable === false &&
-          isHostToolTerminalCode(toolResultRecord.code);
-        if (temporalCodeAct && codeActExecuted && !existingTerminal) {
-          const resultDecision = observeTemporalCodeActResult(runScope, {
-            success: toolResult.success,
-            hostToolExecutions: toolResultRecord.hostToolExecutions,
-          });
-          applyTemporalCodeActBreakerState(runScope, resultDecision.state);
-          if (resultDecision.terminal) {
-            toolResult = temporalCodeActTerminalResult(resultDecision);
-            toolResultRecord = toolResult as Record<string, unknown>;
-          }
-        }
+        const toolResult: GatewayToolResult = await this.mcpExecutor.execute(
+          executionToolName,
+          toolUse.input as GatewayToolInput,
+          modelToolContext ?? undefined
+        );
+        const toolResultRecord = toolResult as Record<string, unknown>;
         result =
           executionToolName === CODE_ACT_MARKER
             ? serializeCodeActModelResult(toolResult)

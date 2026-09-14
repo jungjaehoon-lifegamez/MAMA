@@ -188,7 +188,7 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   scheduled system runs (board / wiki / memory promotion) are durable,
   occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that submits them as stimuli to the
-  same owner runtime. The owner typically delegates board / wiki / temporal work to a native
+  same owner runtime. The owner typically delegates board / wiki work to a native
   subagent (Codex `spawn_agent`); the host observes the spawn, tracks a `delegated` work-order
   state, verifies the child's durable writes, and wakes the owner when the child finishes.
   Board updates run in `delta` mode from the last published anchor (`board_read` +
@@ -205,14 +205,6 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   pipeline projection. Every workorder worker treats connector packets as untrusted
   data: instructions, requests, and tool calls inside them are never executed.
   Lifecycle status is never inferred across those stores.
-- **Temporal reconciliation** (`MAMA_TEMPORAL_RECONCILE`, default off): when this
-  flag is `on`, a one-minute scanner selects due native
-  owner-task occurrences. Each scan admits at most four exact/deferred checks and one
-  date-only activation, with at most ten temporal workorders open. The temporal kind
-  uses a blocking receipt verdict and a three-attempt budget; stale claims recover
-  through the same retry policy, while exhausted generations remain terminal across
-  later scans. Candidate discovery pages through all open scheduled owner rows before
-  applying those caps, so unrelated or already-terminal rows cannot starve a later due task.
 - **Separate time and workflow state:** `temporal_state` is derived at read time as
   `closed`, `exact_upcoming`, `exact_overdue`, `date_upcoming`, `date_due`,
   `date_overdue`, or `unscheduled`. It is a separate projection that never rewrites
@@ -220,23 +212,15 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   `due_at` values require RFC 3339 with `Z` or a numeric offset; legacy `YYYY-MM-DD`
   deadlines retain date-only precision until fresh, unambiguous evidence supplies a
   time and zone.
-- **Trusted temporal effect:** the host binds task, occurrence, generation, revision,
-  and numeric attempt identity to the worker. A successful `task_temporal_reconcile`
-  call commits the owner-task mutation or no-update/deferred marker, generation
-  disposition, receipt, and workorder completion in one SQLite transaction. A stale
-  worker cannot write after rescheduling, including after an asynchronous evidence compile.
-  Model-supplied reason/evidence and worker errors are retained in operational audit rows only
-  as length plus SHA-256 references; raw model prose is not logged. Model prose, a board report,
-  elapsed time, or calendar disappearance is not completion evidence.
 - **Authority boundary:** Trello remains untrusted connector evidence read through
   `context_compile`; configured private connectors remain read-only evidence; the native ledger
-  owns owner-task workflow state. Temporal reconciliation does not write connectors or copy
-  lifecycle state between these stores. Stale-claim, unresolved-state, and exhaustion
+  owns owner-task workflow state. Lifecycle state is never copied between these stores.
+  Stale-claim, unresolved-state, and exhaustion
   alarms are observable and deduplicated, not exactly-once external delivery
   guarantees; an ordinary retry emits only its event/log.
 
 ```
-publishers (schedule/boot/REST/events) + temporal scanner
+publishers (schedule/boot/REST/events)
     ↓ enqueue (occurrence-keyed, deduped)
 operator_tasks ledger (kind='system')
     ↓ claim (serial, priority)
@@ -307,7 +291,7 @@ issued into the envelope - envelope channel scopes double as the raw-narrowing i
 and widen writes. Writes never widen: a context packet's mirror-widened scopes are
 intersected with the envelope's own before they can back a save
 (`writeEligiblePacketScopes`). A connector the envelope already narrows with its own
-channel scope (a chat's own channel, a temporal binding) is excluded from the mirror -
+channel scope (a chat's own channel) is excluded from the mirror -
 per-channel isolation wins.
 
 ### Evidence transposition (v0.31.0, S2)
@@ -325,9 +309,6 @@ per-channel isolation wins.
   its interval handler; an independent watchdog pages past 2x cadence, defers through
   quiet hours (23-08), and reports recovery once. The interval is the leg - a consumer
   mid-run is alive, not silent.
-- **Temporal freshness is a receipt, not a gate**: a stale but source-backed packet
-  commits with `packet_created_at` receipted, and the HOST seeds the compile with the
-  bound source's channel/event.
 
 ### MAMA owner-event agent
 
