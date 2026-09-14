@@ -55,7 +55,10 @@ import {
   sanitizePublicSaveMemoryInput,
   type TrustedMemoryWriteOptions,
 } from './provenance.js';
-import { validateRecordIdentityReferences } from '../registry/record-identity.js';
+import {
+  RecordIdentityError,
+  validateRecordIdentityReferences,
+} from '../registry/record-identity.js';
 
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
@@ -173,75 +176,9 @@ function loadEventDateTimeForObservations(
     : null;
 }
 
-function getTimelineEntityKindPriority(kind: string): number {
-  switch (kind) {
-    case 'work_item':
-      return 0;
-    case 'project':
-      return 1;
-    case 'organization':
-      return 2;
-    case 'person':
-      return 3;
-    default:
-      return 99;
-  }
-}
-
-function resolveTimelineTargetEntityIdFromObservations(
-  adapter: ReturnType<typeof getAdapter>,
-  observationIds: string[]
-): string | null {
-  const uniqueIds = Array.from(new Set(observationIds.filter(Boolean)));
-  if (uniqueIds.length === 0) {
-    return null;
-  }
-
-  const placeholders = uniqueIds.map(() => '?').join(', ');
-  const rows = adapter
-    .prepare(
-      `
-        SELECT
-          n.id AS entity_id,
-          n.kind AS entity_kind,
-          COUNT(*) AS matched_observations
-        FROM entity_lineage_links l
-        JOIN entity_nodes n
-          ON n.id = l.canonical_entity_id
-        WHERE l.entity_observation_id IN (${placeholders})
-          AND l.status = 'active'
-          AND n.status = 'active'
-          AND n.merged_into IS NULL
-        GROUP BY n.id, n.kind
-      `
-    )
-    .all(...uniqueIds) as Array<{
-    entity_id: string;
-    entity_kind: string;
-    matched_observations: number;
-  }>;
-
-  rows.sort((left, right) => {
-    const kindDelta =
-      getTimelineEntityKindPriority(left.entity_kind) -
-      getTimelineEntityKindPriority(right.entity_kind);
-    if (kindDelta !== 0) {
-      return kindDelta;
-    }
-    if (right.matched_observations !== left.matched_observations) {
-      return right.matched_observations - left.matched_observations;
-    }
-    return left.entity_id.localeCompare(right.entity_id);
-  });
-
-  return rows[0]?.entity_id ?? null;
-}
-
 function buildTimelineEventForSave(
-  adapter: ReturnType<typeof getAdapter>,
   memoryId: string,
   topic: string,
-  entityObservationIds: string[],
   timelineEvent:
     | {
         id?: string;
@@ -271,17 +208,16 @@ function buildTimelineEventForSave(
   if (!timelineEvent) {
     return null;
   }
-
-  const resolvedEntityId =
-    timelineEvent.entity_id ??
-    resolveTimelineTargetEntityIdFromObservations(adapter, entityObservationIds);
-  if (!resolvedEntityId) {
-    return null;
+  if (!timelineEvent.entity_id) {
+    throw new RecordIdentityError(
+      'missing_entity_id',
+      'timelineEvent.entity_id is required: the caller chooses which entity the event is about.'
+    );
   }
 
   return {
     id: timelineEvent.id ?? `et_${crypto.randomUUID()}`,
-    entity_id: resolvedEntityId,
+    entity_id: timelineEvent.entity_id,
     event_type: timelineEvent.event_type,
     role: timelineEvent.role ?? null,
     valid_from: timelineEvent.valid_from ?? null,
@@ -657,13 +593,7 @@ async function saveMemoryInternal(
 
   const commandId = `save:${buildDecisionId(input.topic)}`;
   const recordId = judgmentRecordId(commandId);
-  const timelineEvent = buildTimelineEventForSave(
-    adapter,
-    recordId,
-    input.topic,
-    entityObservationIds,
-    input.timelineEvent
-  );
+  const timelineEvent = buildTimelineEventForSave(recordId, input.topic, input.timelineEvent);
 
   // Relationships are persisted only when the caller names their target ids
   // explicitly. Matching topic text or vector similarity is evidence for
