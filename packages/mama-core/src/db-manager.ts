@@ -23,6 +23,8 @@ import os from 'os';
 import { info } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
+import { openDatabase, resolveAdapterDbPath, type DatabaseHandle } from './storage/database.js';
+export { assertTestProcessIsNotUsingRealDb, isTestMode } from './storage/database.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
 import { EMBEDDING_PREFIX_SCHEME } from './embeddings.js';
 
@@ -127,15 +129,13 @@ export interface SemanticEdges {
   synthesized_by: SemanticEdgeItem[];
 }
 
-// Database adapter instance (singleton)
-let dbAdapter: DatabaseAdapter | null = null;
-let dbConnection: unknown = null;
-let isInitialized = false;
-let initializingPromise: Promise<unknown> | null = null; // Single-flight guard for concurrent callers
+// One process-wide handle for callers that have not been given a database of
+// their own yet. `openDatabase` owns the lifetime; this module only holds the
+// handle and hands its adapter out.
+let handle: DatabaseHandle | null = null;
+let openingPromise: Promise<DatabaseHandle> | null = null; // Single-flight guard for concurrent callers
 
 // Migration directory (moved to src/db/migrations for M1.2)
-const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
-const REAL_USER_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 /**
  * Initialize SQLite database adapter and connect
@@ -206,113 +206,24 @@ export function assertEmbeddingSchemeCurrent(adapter: DatabaseAdapter): void {
 }
 
 export async function initDB(): Promise<unknown> {
-  assertTestProcessIsNotUsingRealDb();
-
-  // Already initialized - return immediately
-  if (isInitialized) {
-    return dbConnection;
+  if (handle) {
+    return handle.connection;
+  }
+  if (openingPromise) {
+    return (await openingPromise).connection;
   }
 
-  // Single-flight guard: If initialization is in progress, wait for it
-  if (initializingPromise) {
-    return initializingPromise;
-  }
+  openingPromise = openDatabase().finally(() => {
+    openingPromise = null;
+  });
 
-  // Start initialization and store promise for concurrent callers
-  initializingPromise = (async () => {
-    try {
-      logSearching('Initializing database...');
-
-      // Create SQLite adapter
-      dbAdapter = createAdapter() as unknown as DatabaseAdapter;
-      assertTestProcessIsNotUsingRealDb(resolveAdapterDbPath(dbAdapter), 'adapter.getDbPath()');
-
-      // Connect to database
-      dbConnection = await dbAdapter.connect();
-
-      // Run migrations (includes 012-create-checkpoints-table.sql)
-      await dbAdapter.runMigrations(MIGRATIONS_DIR);
-
-      // Reload vector cache after migrations (new tables/rows may now exist)
-      if (typeof dbAdapter.reloadVectorCache === 'function') {
-        dbAdapter.reloadVectorCache();
-      }
-
-      assertEmbeddingSchemeCurrent(dbAdapter); // fail loud on legacy vectors + new code
-
-      isInitialized = true;
-
-      info(`[db-manager] Database initialized (${dbAdapter.constructor.name})`);
-      logComplete('Database ready');
-
-      return dbConnection;
-    } catch (error) {
-      // Clear state on failure so retry is possible
-      initializingPromise = null;
-      dbAdapter = null;
-      dbConnection = null;
-      isInitialized = false;
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to initialize database: ${message}`);
-    }
-  })();
-
-  return initializingPromise;
+  handle = await openingPromise;
+  return handle.connection;
 }
 
-export function assertTestProcessIsNotUsingRealDb(
-  effectivePath?: string,
-  effectivePathSource = 'adapter'
-): void {
-  if (!isDatabaseBoundaryTestMode()) {
-    return;
-  }
 
-  const configuredPaths = [
-    { name: 'MAMA_DB_PATH', value: process.env.MAMA_DB_PATH },
-    { name: 'MAMA_DATABASE_PATH', value: process.env.MAMA_DATABASE_PATH },
-  ];
-  if (effectivePath) {
-    configuredPaths.push({ name: effectivePathSource, value: effectivePath });
-  }
 
-  for (const configuredPath of configuredPaths) {
-    if (!configuredPath.value) {
-      continue;
-    }
 
-    const resolvedPath = path.resolve(expandHomePath(configuredPath.value));
-    if (resolvedPath === path.resolve(REAL_USER_DB_PATH)) {
-      throw new Error(
-        `[db-boundary] Refusing to initDB against real DB ${REAL_USER_DB_PATH} ` +
-          `from a test process (${configuredPath.name}=${configuredPath.value}). ` +
-          'Set MAMA_DB_PATH to a temporary path before initDB.'
-      );
-    }
-  }
-}
-
-function resolveAdapterDbPath(adapter: DatabaseAdapter): string | undefined {
-  if (typeof adapter.getDbPath === 'function') {
-    return adapter.getDbPath();
-  }
-  return adapter.dbPath;
-}
-
-function isDatabaseBoundaryTestMode(): boolean {
-  return isTestMode();
-}
-
-function expandHomePath(value: string): string {
-  const home = os.homedir();
-  if (value === '~') {
-    return home;
-  }
-  if (value.startsWith('~/')) {
-    return path.join(home, value.slice(2));
-  }
-  return value.replaceAll('${HOME}', home);
-}
 
 /**
  * Get database connection (singleton pattern)
@@ -325,10 +236,10 @@ function expandHomePath(value: string): string {
  * @returns SQLite database connection
  */
 export function getDB(): unknown {
-  if (!dbConnection) {
+  if (!handle) {
     throw new Error('Database not initialized. Call await initDB() first.');
   }
-  return dbConnection;
+  return handle.connection;
 }
 
 /**
@@ -339,10 +250,10 @@ export function getDB(): unknown {
  * @returns Adapter instance
  */
 export function getAdapter(): DatabaseAdapter {
-  if (!dbAdapter) {
+  if (!handle) {
     throw new Error('Database adapter not initialized. Call await initDB() first.');
   }
-  return dbAdapter;
+  return handle.adapter;
 }
 
 export function buildMemoryScopeId(kind: string, externalId: string): string {
@@ -355,12 +266,10 @@ export function buildMemoryScopeId(kind: string, externalId: string): string {
  * Call this on process exit
  */
 export async function closeDB(): Promise<void> {
-  if (dbAdapter) {
-    await dbAdapter.disconnect();
-    dbAdapter = null;
-    dbConnection = null;
-    isInitialized = false;
-    initializingPromise = null; // Clear to allow re-initialization
+  if (handle) {
+    await handle.close();
+    handle = null;
+    openingPromise = null; // Clear to allow re-initialization
     info('[db-manager] Database connection closed');
   }
 }
@@ -567,18 +476,10 @@ export async function updateDecisionOutcome(
  * @returns Actual database path or 'Not initialized'
  */
 export function getDbPath(): string {
-  if (!dbAdapter) {
+  if (!handle) {
     return 'Not initialized';
   }
-  // Use adapter's getDbPath method if available, fallback to description
-  if (typeof dbAdapter.getDbPath === 'function') {
-    return dbAdapter.getDbPath();
-  }
-  // Fallback: try to get path from adapter properties
-  if (dbAdapter.dbPath) {
-    return dbAdapter.dbPath;
-  }
-  return `${dbAdapter.constructor.name} (path unavailable)`;
+  return handle.dbPath;
 }
 
 // Note: Removed auto-registered SIGINT/SIGTERM handlers that called process.exit(0)
@@ -597,18 +498,16 @@ export function getDbPath(): string {
 export function resetDBState(options: { disconnect?: boolean } = {}): void {
   const { disconnect = true } = options;
 
-  if (disconnect && dbAdapter) {
+  if (disconnect && handle) {
     try {
-      dbAdapter.disconnect();
+      handle.adapter.disconnect();
     } catch {
       // Ignore disconnect errors during reset
     }
   }
 
-  dbAdapter = null;
-  dbConnection = null;
-  isInitialized = false;
-  initializingPromise = null;
+  handle = null;
+  openingPromise = null;
 }
 
 /**
@@ -616,8 +515,3 @@ export function resetDBState(options: { disconnect?: boolean } = {}): void {
  *
  * Returns true if MAMA_TEST_MODE, VITEST, or NODE_ENV=test env vars are set
  */
-export function isTestMode(): boolean {
-  return Boolean(
-    process.env.MAMA_TEST_MODE || process.env.VITEST || process.env.NODE_ENV === 'test'
-  );
-}
