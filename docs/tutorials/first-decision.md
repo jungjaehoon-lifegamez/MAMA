@@ -171,7 +171,6 @@ Failure Reason: Over-engineered for our use case, added 2 weeks of complexity
 
 ## Next Steps
 
-- **Understand tiers:** [Understanding Tiers Tutorial](understanding-tiers.md)
 - **Set up automatic context:** [Hook Setup Tutorial](hook-setup.md)
 - **Learn all commands:** [Commands Reference](../reference/commands.md)
 

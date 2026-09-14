@@ -186,13 +186,8 @@ Then update your MCP configuration:
 ```bash
 /mama-list
 
-# Expected output:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🟢 Tier 1 (Full Features Active)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Expected output: the local embedding model loads and the database opens.
 ```
-
-**If you see 🟡 Tier 2:** See [Tier 2 Remediation Guide](tier-2-remediation.md)
 
 ---
 

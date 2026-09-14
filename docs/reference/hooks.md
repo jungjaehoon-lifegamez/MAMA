@@ -25,7 +25,7 @@ UserPromptSubmit is NOT wired - the sections below document only hooks that exis
 ## Embeddings
 
 The core generates embeddings in the process that performs the search. There is no embedding
-HTTP endpoint or compatibility listener. Tier 2 exact-match behavior remains available when the
+HTTP endpoint or compatibility listener. The
 local embedding provider cannot be initialized.
 
 ---

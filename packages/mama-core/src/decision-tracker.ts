@@ -421,7 +421,7 @@ export async function learnDecision(
     };
     const receipt = await appendJudgment(command, unsignedWriteAccess([]), {
       adapter,
-      embedder: commandEmbedder(adapter, embeddingDecision),
+      embedder: commandEmbedder(embeddingDecision),
     });
     const storedDecisionId = receipt.recordId;
 

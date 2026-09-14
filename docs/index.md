@@ -34,7 +34,6 @@ _Step-by-step lessons for beginners_
 
 - [Getting Started](tutorials/getting-started.md) - First-time setup and basic usage
 - [First Decision](tutorials/first-decision.md) - Save and search your first decision
-- [Understanding Tiers](tutorials/understanding-tiers.md) - Tier system explained
 - [Hook Setup](tutorials/hook-setup.md) - Configure automatic context injection
 
 ### 🛠️ [Guides](guides/) - Task-Oriented
@@ -46,7 +45,6 @@ _Step-by-step instructions for specific tasks_
 - [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
 - [Standalone Troubleshooting](guides/standalone-troubleshooting.md) - Fix standalone agent issues
-- [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
 - [Codex Backend](guides/codex-backend.md) - Codex app-server setup and managed runtime behavior
@@ -94,14 +92,12 @@ _Contributing, testing, and development guidelines_
 
 1. Start with [Getting Started Tutorial](tutorials/getting-started.md)
 2. Save your [First Decision](tutorials/first-decision.md)
-3. Learn about [Tier System](tutorials/understanding-tiers.md)
-4. Optional: Set up [Always-On Context](tutorials/hook-setup.md)
+3. Optional: Set up [Always-On Context](tutorials/hook-setup.md)
 
 ### 🔧 I Need to Fix Something
 
 1. Check [Troubleshooting Guide](guides/troubleshooting.md)
-2. For Tier 2 issues: [Tier 2 Remediation](guides/tier-2-remediation.md)
-3. Review [Configuration Guide](guides/configuration.md)
+2. Review [Configuration Guide](guides/configuration.md)
 
 ### 📚 I Want to Understand How It Works
 

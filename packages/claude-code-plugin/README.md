@@ -129,14 +129,8 @@ MAMA Plugin includes two specialized agents (planned, not yet registered):
 
 MAMA operates in **two tiers** with full transparency:
 
-| Tier          | Features                        | Accuracy |
-| ------------- | ------------------------------- | -------- |
-| **🟢 Tier 1** | Vector search + Graph + Recency | 80%      |
-| **🟡 Tier 2** | Exact match only                | 40%      |
-
-**If you see Tier 2:** [Tier 2 Remediation Guide](docs/guides/tier-2-remediation.md)
-
-**Learn more:** [Understanding Tiers Tutorial](docs/tutorials/understanding-tiers.md)
+Search is vector search over the local embedding model, with FTS5 alongside it. There is no
+tiered fallback: the model ships with the package and is always loaded.
 
 ---
 
@@ -146,7 +140,6 @@ MAMA operates in **two tiers** with full transparency:
 
 - **[Getting Started Tutorial](docs/tutorials/getting-started.md)** - 10-minute quickstart
 - **[First Decision Tutorial](docs/tutorials/first-decision.md)** - Best practices
-- **[Understanding Tiers](docs/tutorials/understanding-tiers.md)** - Tier system explained
 
 ### Task-Oriented Guides
 
@@ -202,7 +195,6 @@ export MAMA_DISABLE_HOOKS=true
 
 - **Commands not appearing:** Restart Claude Code, check [Plugin Not Loading](docs/guides/troubleshooting.md#1-plugin-not-loading)
 - **Runtime dependency issues:** Check Node 22.13+ and optional image runtime notes in [Troubleshooting Guide](docs/guides/troubleshooting.md#2-nodejs-runtime-and-optional-dependency-issues)
-- **Tier 2 detected:** Follow [Tier 2 Remediation Guide](docs/guides/tier-2-remediation.md)
 - **Hooks not firing:** Check permissions, see [Hooks Not Firing](docs/guides/troubleshooting.md#4-hooks-not-firing)
 
 **Full guide:** [Troubleshooting Guide](docs/guides/troubleshooting.md)

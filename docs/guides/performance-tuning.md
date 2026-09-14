@@ -120,7 +120,7 @@ This guide helps you optimize MAMA for your specific use case, whether you prior
 **Impact:**
 
 - Affects: First query time, subsequent query time, accuracy
-- Does not affect: Save speed, Tier 2 fallback
+- Does not affect: save speed
 
 ---
 
@@ -277,7 +277,6 @@ npm run test:performance
 
 1. Reduce search_limit to 5-10
 2. Archive old decisions (move to separate DB)
-3. Use Tier 2 fallback (exact match only)
 
 ---
 
@@ -301,7 +300,6 @@ npm run test:performance
 
 1. Use smaller model: `Xenova/all-MiniLM-L6-v2` (~90MB vs ~113MB default)
 2. Restart Claude Code periodically
-3. Use Tier 2 fallback (no model loading)
 
 ---
 
@@ -393,4 +391,3 @@ npm run benchmark:models
 - [Configuration Guide](configuration.md) - All configuration options
 - [Performance Characteristics](../explanation/performance.md) - Design philosophy
 - [Troubleshooting](troubleshooting.md) - Common performance issues
-- [Tier System](../tutorials/understanding-tiers.md) - Fallback behavior

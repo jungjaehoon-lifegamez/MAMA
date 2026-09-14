@@ -46,7 +46,6 @@ Xenova/multilingual-e5-large. There is no embedding HTTP listener or client fall
 ## TIER SYSTEM (AUTOMATIC DEGRADATION)
 
 - **Tier 1:** Vector search + Graph + Recency (80% accuracy) — Requires pure-TS cosine similarity implementation
-- **Tier 2:** Exact match only (40% accuracy) — Automatic fallback when `vectorSearch()` throws (e.g., missing `embeddings` table)
 - **Tier 3:** Skip embeddings entirely — Testing mode (`MAMA_FORCE_TIER_3=true`)
 
 Tier degradation happens at runtime (not user-configurable). Check `db-manager.js` for logic.

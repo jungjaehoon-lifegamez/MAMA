@@ -767,7 +767,7 @@ async function saveMemoryInternal(
   try {
     receipt = await appendJudgment(command, access, {
       adapter,
-      embedder: commandEmbedder(adapter, embeddingDecision),
+      embedder: commandEmbedder(embeddingDecision),
     });
   } catch (error) {
     const rollbackError = (error instanceof Error ? error : new Error(String(error))) as Error & {

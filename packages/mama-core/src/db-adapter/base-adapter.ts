@@ -85,7 +85,6 @@ export abstract class DatabaseAdapter {
   /**
    * Check if vector search is enabled
    */
-  abstract get vectorSearchEnabled(): boolean;
 
   /**
    * Get database path

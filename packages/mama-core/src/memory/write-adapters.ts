@@ -204,16 +204,11 @@ export function relationshipsToCommandFields(
 
 /**
  * Embedder for the command boundary that preserves the legacy enhanced
- * embedding input. Returns no embedder when vector search is disabled so no
- * model load is attempted at all.
+ * embedding input.
  */
-export function commandEmbedder(
-  adapter: Pick<DatabaseAdapter, 'vectorSearchEnabled'>,
-  decision: DecisionInput
-): { embed(text: string, role: 'query' | 'passage'): Promise<Float32Array | null> } | undefined {
-  if (!adapter.vectorSearchEnabled) {
-    return undefined;
-  }
+export function commandEmbedder(decision: DecisionInput): {
+  embed(text: string, role: 'query' | 'passage'): Promise<Float32Array | null>;
+} {
   return { embed: () => prepareDecisionEmbedding(decision) };
 }
 
