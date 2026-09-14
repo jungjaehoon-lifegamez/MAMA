@@ -37,7 +37,6 @@
     "./connectors/types": "./dist/connectors/types.js",
     "./storage/source-archive": "./dist/storage/source-archive.js",
     "./storage/sqlite": "./dist/storage/sqlite.js",
-    "./agent-situation": "./dist/agent-situation/index.js",
     "./agent-graph": "./dist/agent-graph/index.js",
     "./context-compile": "./dist/context-compile/index.js",
     "./provenance/source-ref": "./dist/provenance/source-ref.js",

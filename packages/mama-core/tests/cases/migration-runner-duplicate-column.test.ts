@@ -1472,8 +1472,6 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
           'model_runs',
           'tool_traces',
           'twin_edges',
-          'agent_situation_packets',
-          'agent_situation_refresh_leases',
           'context_packets',
           'vnext_operator_cursors',
           'vnext_operator_commits',

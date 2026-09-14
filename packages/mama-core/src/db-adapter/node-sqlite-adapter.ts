@@ -1073,17 +1073,6 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       info('[node-sqlite-adapter] Repaired skipped twin edge relations migration');
     }
 
-    if (
-      !this.tableExists('agent_situation_packets') ||
-      !this.tableExists('agent_situation_refresh_leases')
-    ) {
-      this.applyRepairMigration(
-        migrationsDir,
-        '036-create-agent-situation-packets.sql',
-        'agent situation packet cache'
-      );
-    }
-
     if (!this.tableExists('context_packets')) {
       this.applyRepairMigration(
         migrationsDir,

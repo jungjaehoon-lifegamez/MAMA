@@ -96,18 +96,6 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
-  describe('package root agent-situation exports', () => {
-    it('should export agent situation packet helpers', async () => {
-      const core = await import('../../src/index.js');
-
-      expect(typeof core.buildAgentSituationCacheKey).toBe('function');
-      expect(typeof core.getAgentSituationRankingPolicy).toBe('function');
-      expect(typeof core.buildAgentSituationPacketRecord).toBe('function');
-      expect(typeof core.getFreshAgentSituationPacket).toBe('function');
-      expect(typeof core.getOrRefreshAgentSituationPacket).toBe('function');
-    });
-  });
-
   describe('package root context-compile exports', () => {
     it('should export context compile ref and visibility helpers', async () => {
       const core = await import('../../src/index.js');
