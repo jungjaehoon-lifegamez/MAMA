@@ -27,17 +27,22 @@ describe('recordChannelAudit atomicity', () => {
       END
     `);
 
-    await expect(
-      recordChannelAudit({
-        channelKey: 'probe-channel',
-        turnId: 'turn-1',
-        topic: 'probe topic',
-        scopeRefs: [],
-        ack: { status: 'failed', action: 'no_op', reason: 'synthetic' } as never,
-      })
-    ).rejects.toThrow('synthetic finding failure');
-
-    db.exec('DROP TRIGGER fail_finding_insert');
+    // The trigger has to come back out even when the assertion below fails, or
+    // every later test in this file aborts on the synthetic failure and the real
+    // cause is buried.
+    try {
+      await expect(
+        recordChannelAudit({
+          channelKey: 'probe-channel',
+          turnId: 'turn-1',
+          topic: 'probe topic',
+          scopeRefs: [],
+          ack: { status: 'failed', action: 'no_op', reason: 'synthetic' } as never,
+        })
+      ).rejects.toThrow('synthetic finding failure');
+    } finally {
+      db.exec('DROP TRIGGER fail_finding_insert');
+    }
 
     for (const table of [
       'memory_events',
