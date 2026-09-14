@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getAdapter } from '../../src/db-manager.js';
 import { appendJudgment } from '../../src/knowledge/judgments.js';
+import { createNode } from '../../src/registry/store.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 
 describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () => {
@@ -28,6 +29,9 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
     db.prepare('DELETE FROM memory_scopes').run();
     db.prepare('DELETE FROM embeddings').run();
     db.prepare('DELETE FROM decisions').run();
+    db.prepare('DELETE FROM record_actors').run();
+    db.prepare('DELETE FROM registry_aliases').run();
+    db.prepare('DELETE FROM registry_nodes').run();
   });
 
   afterAll(async () => cleanupTestDB(dbPath));
@@ -291,5 +295,49 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         access
       )
     ).rejects.toMatchObject({ code: 'COMMITMENT_WITHDRAWN' });
+  });
+
+  /**
+   * `saveMemory` screens identity references before it builds the command, but the command
+   * itself is the public contract and a caller may reach it without that screen. These two
+   * cases hold the boundary's own refusal: remove the check inside the identity writer and
+   * they are the tests that fail.
+   */
+  it('AC #5 refuses an identity projection naming a node that is not registered', async () => {
+    await expect(
+      appendJudgment(
+        {
+          commandId: 'cmd-identity-unknown',
+          topic: 'synthetic-item',
+          summary: 'bind to a node that does not exist',
+          recordKind: 'judgment',
+          scopes: access.scopes,
+          projections: { recordIdentity: { itemId: 'reg_nonexistent', actors: [] } },
+        },
+        access
+      )
+    ).rejects.toMatchObject({ code: 'unknown_node' });
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
+  });
+
+  it('AC #5 refuses an identity projection putting an item node in an actor slot', async () => {
+    const item = createNode({ kind: 'item', name: 'synthetic bound item' });
+    await expect(
+      appendJudgment(
+        {
+          commandId: 'cmd-identity-wrong-kind',
+          topic: 'synthetic-item',
+          summary: 'bind an item where a person belongs',
+          recordKind: 'judgment',
+          scopes: access.scopes,
+          projections: {
+            recordIdentity: { itemId: item, actors: [{ personId: item, role: 'worker' }] },
+          },
+        },
+        access
+      )
+    ).rejects.toMatchObject({ code: 'wrong_kind' });
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
+    expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM record_actors').get()).toEqual({ n: 0 });
   });
 });
