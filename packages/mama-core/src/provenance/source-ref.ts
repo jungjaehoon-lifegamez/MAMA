@@ -1,11 +1,9 @@
 export const STRICT_SOURCE_REF_KINDS = [
   'memory',
   'raw',
-  'entity',
   'case',
   'decision',
   'os_task',
-  'agent_situation_packet',
   'report_slot',
   'context_packet',
   'model_run',

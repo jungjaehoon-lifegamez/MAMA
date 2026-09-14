@@ -13,11 +13,6 @@ import {
   unsignedWriteAccess,
   writeAccessForProvenance,
 } from './write-adapters.js';
-import {
-  ftsSearchWikiPages,
-  vectorSearchWikiPages,
-  type WikiPageIndexRecord,
-} from '../cases/wiki-page-index.js';
 import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
@@ -69,20 +64,12 @@ export interface LegacyMemoryPersistence {
 }
 
 export interface FusedHit {
-  source_type: 'decision' | 'wiki_page';
+  source_type: 'decision';
   source_id: string;
-  record: MemoryRecord | WikiPageIndexRecord;
+  record: MemoryRecord;
   fused_rank_score: number;
-  page_type?: WikiPageIndexRecord['page_type'];
   case_id?: string | null;
   retrieval_diagnostics?: SearchHitDiagnostics;
-}
-
-interface WikiScoreEntry {
-  record: WikiPageIndexRecord;
-  score: number;
-  lexicalSupport: boolean;
-  vectorSimilarity: number | null;
 }
 
 export function buildDecisionId(topic: string): string {
@@ -1201,63 +1188,6 @@ export async function recallMemory(
     fused_rank_score: entry.score,
   }));
 
-  let hasWikiHits = false;
-  const wikiScores = new Map<number, WikiScoreEntry>();
-  const wikiVectorRankMap = new Map<number, number>();
-  const wikiVectorScoreById = new Map<number, number>();
-
-  try {
-    const adapter = getAdapter();
-    const wikiFtsHits = ftsSearchWikiPages(adapter, query, requestedLimit * 2);
-    let wikiVectorHits: ReturnType<typeof vectorSearchWikiPages> = [];
-
-    if (primaryQueryEmbedding) {
-      try {
-        wikiVectorHits = vectorSearchWikiPages(adapter, primaryQueryEmbedding, requestedLimit * 2);
-      } catch (wikiVectorErr) {
-        warn(
-          `[recallMemory] Wiki vector search failed: ${wikiVectorErr instanceof Error ? wikiVectorErr.message : String(wikiVectorErr)}`
-        );
-      }
-    }
-
-    for (let i = 0; i < wikiVectorHits.length; i++) {
-      wikiVectorRankMap.set(wikiVectorHits[i].record.id, i);
-      wikiVectorScoreById.set(wikiVectorHits[i].record.id, wikiVectorHits[i].raw_score);
-    }
-    diagnostics.candidate_counts.lexical += wikiFtsHits.length;
-    diagnostics.candidate_counts.vector += wikiVectorHits.length;
-
-    for (let i = 0; i < wikiFtsHits.length; i++) {
-      const hit = wikiFtsHits[i];
-      const lexScore = 1 / (RRF_K + i + 1);
-      const vecRank = wikiVectorRankMap.get(hit.record.id);
-      const vecBoost = vecRank !== undefined ? 0.2 * (1 / (RRF_K + vecRank + 1)) : 0;
-      wikiScores.set(hit.record.id, {
-        record: hit.record,
-        score: lexScore + vecBoost,
-        lexicalSupport: true,
-        vectorSimilarity: wikiVectorScoreById.get(hit.record.id) ?? null,
-      });
-    }
-
-    for (let i = 0; i < wikiVectorHits.length; i++) {
-      const hit = wikiVectorHits[i];
-      if (wikiScores.has(hit.record.id)) {
-        continue;
-      }
-      wikiScores.set(hit.record.id, {
-        record: hit.record,
-        score: 0.15 * (1 / (RRF_K + i + 1)),
-        lexicalSupport: false,
-        vectorSimilarity: hit.raw_score,
-      });
-    }
-  } catch (wikiFtsErr) {
-    warn(
-      `[recallMemory] Wiki FTS search failed: ${wikiFtsErr instanceof Error ? wikiFtsErr.message : String(wikiFtsErr)}`
-    );
-  }
   fusedHits = decisionFusedHits;
 
   // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
@@ -1311,159 +1241,12 @@ export async function recallMemory(
     // (when itself a single token) appears as a complete word in the query.
     return topicTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTopic);
   };
-  const hasExactWikiSupport = (record: WikiPageIndexRecord): boolean => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery || normalizedQuery.length < EXACT_TOPIC_MIN_QUERY_LENGTH) {
-      return false;
-    }
-    const normalizedTitle = record.title.trim().toLowerCase();
-    if (!normalizedTitle) {
-      return false;
-    }
-    if (normalizedQuery === normalizedTitle) {
-      return true;
-    }
-    const queryTokens = tokenizeForExactTopic(normalizedQuery);
-    const titleTokens = tokenizeForExactTopic(normalizedTitle);
-    // Wiki exact_topic uses TITLE only — page body matches are too lenient
-    // for an "exact" signal and remain available through other diagnostics.
-    return titleTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTitle);
-  };
-  const wikiDecisionIdCache = new Map<number, string[]>();
-  const normalizeWikiDecisionSourceId = (sourceId: string): string | null => {
-    const trimmed = sourceId.trim();
-    if (!trimmed) {
-      return null;
-    }
-    if (trimmed.startsWith('decision://')) {
-      const id = trimmed.slice('decision://'.length).trim();
-      return id || null;
-    }
-    if (trimmed.startsWith('decision:')) {
-      const id = trimmed.slice('decision:'.length).trim();
-      return id || null;
-    }
-    if (/^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
-      return null;
-    }
-    return trimmed;
-  };
-  const loadWikiDecisionIds = (record: WikiPageIndexRecord): string[] => {
-    const cached = wikiDecisionIdCache.get(record.id);
-    if (cached) {
-      return cached;
-    }
-
-    const ids = new Set<string>();
-    for (const sourceId of record.source_ids) {
-      const decisionId = normalizeWikiDecisionSourceId(sourceId);
-      if (decisionId) {
-        ids.add(decisionId);
-      }
-    }
-    if (record.case_id) {
-      const rows = getAdapter()
-        .prepare(
-          `
-            SELECT source_id
-            FROM case_memberships
-            WHERE case_id = ?
-              AND source_type = 'decision'
-              AND status = 'active'
-          `
-        )
-        .all(record.case_id) as Array<{ source_id?: string }>;
-      for (const row of rows) {
-        if (row.source_id) {
-          ids.add(row.source_id);
-        }
-      }
-    }
-
-    const decisionIds = Array.from(ids);
-    wikiDecisionIdCache.set(record.id, decisionIds);
-    return decisionIds;
-  };
-  const wikiScopeSupportCache = new Map<number, boolean>();
-  const hasRequestedWikiScopeSupport = (record: WikiPageIndexRecord): boolean => {
-    if (requestedScopeKeys.size === 0) {
-      return true;
-    }
-    const cached = wikiScopeSupportCache.get(record.id);
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    const decisionIds = loadWikiDecisionIds(record);
-    if (decisionIds.length === 0) {
-      wikiScopeSupportCache.set(record.id, false);
-      return false;
-    }
-
-    const scopeMap = batchLoadScopes(getAdapter(), decisionIds);
-    const supported = decisionIds.some((id) =>
-      (scopeMap.get(id) ?? []).some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`))
-    );
-    wikiScopeSupportCache.set(record.id, supported);
-    return supported;
-  };
   // Combined check used for the wiki *filter* path: a wiki entry must have at
   // least one linked decision that matches BOTH the requested scope AND the
   // requested topicPrefix. Without this, the page passes when scope matches
   // decision A and topic matches decision B — i.e., neither single decision
   // satisfies the caller's filter. Diagnostics reporting (which only signals
   // scope confirmation) keeps using hasRequestedWikiScopeSupport.
-  const wikiCombinedSupportCache = new Map<number, boolean>();
-  const hasWikiDecisionWithScopeAndTopic = (record: WikiPageIndexRecord): boolean => {
-    const requiresScope = requestedScopeKeys.size > 0;
-    const requiresTopic = !!searchOptions.topicPrefix;
-    if (!requiresScope && !requiresTopic) {
-      return true;
-    }
-    const cached = wikiCombinedSupportCache.get(record.id);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const decisionIds = loadWikiDecisionIds(record);
-    if (decisionIds.length === 0) {
-      wikiCombinedSupportCache.set(record.id, false);
-      return false;
-    }
-    const adapter = getAdapter();
-    const scopeMap = requiresScope ? batchLoadScopes(adapter, decisionIds) : null;
-    const topicByDecisionId = new Map<string, string>();
-    if (requiresTopic) {
-      const IN_CHUNK_SIZE = 900;
-      for (let i = 0; i < decisionIds.length; i += IN_CHUNK_SIZE) {
-        const chunk = decisionIds.slice(i, i + IN_CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(', ');
-        const rows = adapter
-          .prepare(`SELECT id, topic FROM decisions WHERE id IN (${placeholders})`)
-          .all(...chunk) as Array<{ id: string; topic?: string }>;
-        for (const row of rows) {
-          topicByDecisionId.set(row.id, String(row.topic ?? ''));
-        }
-      }
-    }
-    const supported = decisionIds.some((id) => {
-      if (requiresScope) {
-        const scopes = scopeMap?.get(id) ?? [];
-        const scopeOk = scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
-        if (!scopeOk) {
-          return false;
-        }
-      }
-      if (requiresTopic) {
-        const topic = topicByDecisionId.get(id) ?? '';
-        if (!topic.startsWith(searchOptions.topicPrefix!)) {
-          return false;
-        }
-      }
-      return true;
-    });
-    wikiCombinedSupportCache.set(record.id, supported);
-    return supported;
-  };
   const buildDiagnostics = (
     record: MemoryRecord,
     graphSource: SearchHitDiagnostics['graph_source']
@@ -1497,42 +1280,6 @@ export async function recallMemory(
       scope_support: scopeSupport,
       graph_source: graphSource,
       is_vector_only: vectorSimilarity !== null && confirmationSignals.length === 0,
-      confirmation_signals: confirmationSignals,
-      metadata_signals: metadataSignals,
-      candidate_threshold_used: searchOptions.threshold,
-    };
-  };
-  const buildWikiDiagnostics = (entry: WikiScoreEntry): SearchHitDiagnostics => {
-    const lexicalSupport = entry.lexicalSupport;
-    const exactTopicSupport = hasExactWikiSupport(entry.record);
-    const scopeSupport = hasRequestedWikiScopeSupport(entry.record);
-    const confirmationSignals = [
-      lexicalSupport ? 'lexical' : null,
-      exactTopicSupport ? 'exact_topic' : null,
-    ].filter((signal): signal is string => signal !== null);
-    // Only attribute 'scope' when the caller actually requested a scope filter.
-    // hasRequestedWikiScopeSupport() returns true by default for unscoped searches,
-    // so without this guard the diagnostics would overstate why the wiki hit passed.
-    const metadataSignals = [
-      requestedScopeKeys.size > 0 && scopeSupport ? 'scope' : null,
-      'graph_primary',
-    ].filter((signal): signal is string => signal !== null);
-    const retrievalSourceForRecord =
-      entry.vectorSimilarity !== null && lexicalSupport
-        ? 'wiki_hybrid_rrf'
-        : entry.vectorSimilarity !== null
-          ? 'wiki_vector_search'
-          : lexicalSupport
-            ? 'wiki_lexical_search'
-            : 'wiki_page';
-
-    return {
-      retrieval_source: retrievalSourceForRecord,
-      vector_similarity: entry.vectorSimilarity,
-      lexical_support: lexicalSupport,
-      scope_support: scopeSupport,
-      graph_source: 'primary',
-      is_vector_only: entry.vectorSimilarity !== null && confirmationSignals.length === 0,
       confirmation_signals: confirmationSignals,
       metadata_signals: metadataSignals,
       candidate_threshold_used: searchOptions.threshold,
@@ -1583,44 +1330,6 @@ export async function recallMemory(
     fusedHits = fusedHits.filter(
       (hit) => hit.source_type !== 'decision' || cappedIds.has(hit.source_id)
     );
-  }
-  const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
-    .sort((a, b) => b.score - a.score)
-    .flatMap((entry) => {
-      if (!hasWikiDecisionWithScopeAndTopic(entry.record)) {
-        return [];
-      }
-
-      const wikiDiagnostics = buildWikiDiagnostics(entry);
-      if (wikiDiagnostics.is_vector_only) {
-        diagnostics.candidate_counts.vector_only += 1;
-      }
-      if (!passesStrictness(wikiDiagnostics)) {
-        diagnostics.candidate_counts.rejected_by_strictness += 1;
-        return [];
-      }
-
-      return [
-        {
-          source_type: 'wiki_page' as const,
-          source_id: entry.record.source_locator,
-          record: searchOptions.diagnostics
-            ? { ...entry.record, retrieval_diagnostics: wikiDiagnostics }
-            : entry.record,
-          fused_rank_score: entry.score,
-          ...(searchOptions.diagnostics ? { retrieval_diagnostics: wikiDiagnostics } : {}),
-          ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
-          ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
-        },
-      ];
-    });
-  hasWikiHits = acceptedWikiFusedHits.length > 0;
-  fusedHits = [...fusedHits, ...acceptedWikiFusedHits].sort(
-    (left, right) => right.fused_rank_score - left.fused_rank_score
-  );
-
-  if (hasWikiHits) {
-    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
   }
 
   // Enrich active records with summaries from their superseded predecessors.
