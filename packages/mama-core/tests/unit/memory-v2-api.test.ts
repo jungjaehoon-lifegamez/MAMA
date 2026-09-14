@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import { saveMemory, recallMemory, buildProfile, ingestMemory } from '../../src/memory/api.js';
-import { createEntityNode, upsertEntityObservation } from '../../src/entities/store.js';
-import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
-import { getAdapter } from '../../src/db-manager.js';
+import { createEntityNode } from '../../src/entities/store.js';
+import { getAdapter, initDB } from '../../src/db-manager.js';
 
 const TEST_DB = '/tmp/test-memory-v2-api.db';
 
@@ -195,126 +194,40 @@ describe('memory v2 api', () => {
     });
   });
 
-  it('should derive the timeline target entity from observation lineage when entity_id is omitted', async () => {
-    await createEntityNode({
-      id: 'entity_project_timeline_derived',
-      kind: 'project',
-      preferred_label: 'Derived Timeline Project',
-      status: 'active',
-      scope_kind: 'project',
-      scope_id: 'repo:test',
-      merged_into: null,
-    });
-    await createEntityNode({
-      id: 'entity_person_timeline_derived',
-      kind: 'person',
-      preferred_label: 'Timeline Owner',
-      status: 'active',
-      scope_kind: 'global',
-      scope_id: null,
-      merged_into: null,
+  it('should refuse a timeline event that does not name its entity', async () => {
+    await initDB();
+    const countRows = (table: string) =>
+      (getAdapter().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    const before = {
+      decisions: countRows('decisions'),
+      timelineEvents: countRows('entity_timeline_events'),
+      memoryEvents: countRows('memory_events'),
+    };
+
+    await expect(
+      saveMemory({
+        topic: 'timeline_contract/missing_entity',
+        kind: 'decision',
+        summary: 'Timeline event without a target entity',
+        details: 'The host must not pick the entity for the caller',
+        confidence: 0.8,
+        scopes: [{ kind: 'project', id: 'repo:test' }],
+        source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
+        timelineEvent: {
+          event_type: 'project_update',
+          observed_at: Date.parse('2026-04-15T12:00:00.000Z'),
+          summary: 'Timeline event without a target entity',
+        },
+      })
+    ).rejects.toMatchObject({
+      name: 'RecordIdentityError',
+      code: 'missing_entity_id',
+      message: expect.stringContaining('entity_id'),
     });
 
-    await upsertEntityObservation({
-      id: 'obs_timeline_derived_channel',
-      observation_type: 'channel',
-      entity_kind_hint: 'project',
-      surface_form: 'Derived Timeline Project',
-      normalized_form: 'derived timeline project',
-      lang: 'en',
-      script: 'Latn',
-      context_summary: 'Project context',
-      related_surface_forms: ['Timeline Owner'],
-      timestamp_observed: Date.parse('2026-04-15T12:00:00.000Z'),
-      scope_kind: 'project',
-      scope_id: 'repo:test',
-      extractor_version: 'history-extractor@v1',
-      embedding_model_version: 'multilingual-e5-large',
-      source_connector: 'slack',
-      source_locator: '/tmp/test/raw.db',
-      source_raw_record_id: 'raw_timeline_derived_channel',
-    });
-    await upsertEntityObservation({
-      id: 'obs_timeline_derived_author',
-      observation_type: 'author',
-      entity_kind_hint: 'person',
-      surface_form: 'Timeline Owner',
-      normalized_form: 'timeline owner',
-      lang: 'en',
-      script: 'Latn',
-      context_summary: 'Author context',
-      related_surface_forms: ['Derived Timeline Project'],
-      timestamp_observed: Date.parse('2026-04-15T12:00:00.000Z'),
-      scope_kind: 'global',
-      scope_id: null,
-      extractor_version: 'history-extractor@v1',
-      embedding_model_version: 'multilingual-e5-large',
-      source_connector: 'slack',
-      source_locator: '/tmp/test/raw.db',
-      source_raw_record_id: 'raw_timeline_derived_author',
-    });
-    await appendEntityLineageLink({
-      canonical_entity_id: 'entity_project_timeline_derived',
-      entity_observation_id: 'obs_timeline_derived_channel',
-      source_entity_id: null,
-      contribution_kind: 'seed',
-      run_id: null,
-      candidate_id: null,
-      review_action_id: null,
-      capture_mode: 'direct',
-      confidence: 1,
-    });
-    await appendEntityLineageLink({
-      canonical_entity_id: 'entity_person_timeline_derived',
-      entity_observation_id: 'obs_timeline_derived_author',
-      source_entity_id: null,
-      contribution_kind: 'seed',
-      run_id: null,
-      candidate_id: null,
-      review_action_id: null,
-      capture_mode: 'direct',
-      confidence: 1,
-    });
-
-    await saveMemory({
-      topic: 'timeline_contract/derived',
-      kind: 'decision',
-      summary: 'Derived timeline target',
-      details: 'Save should pick the project canonical entity from provenance observations',
-      confidence: 0.8,
-      scopes: [{ kind: 'project', id: 'repo:test' }],
-      source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
-      entityObservationIds: ['obs_timeline_derived_author', 'obs_timeline_derived_channel'],
-      timelineEvent: {
-        event_type: 'project_update',
-        observed_at: Date.parse('2026-04-15T12:00:00.000Z'),
-        source_ref: '/tmp/test/raw.db',
-        summary: 'Derived timeline target',
-        details: JSON.stringify({ topic: 'timeline_contract/derived' }),
-      },
-    });
-
-    const row = getAdapter()
-      .prepare(
-        `
-          SELECT entity_id, event_type
-          FROM entity_timeline_events
-          WHERE summary = ?
-          ORDER BY created_at DESC
-          LIMIT 1
-        `
-      )
-      .get('Derived timeline target') as
-      | {
-          entity_id: string;
-          event_type: string;
-        }
-      | undefined;
-
-    expect(row).toEqual({
-      entity_id: 'entity_project_timeline_derived',
-      event_type: 'project_update',
-    });
+    expect(countRows('decisions')).toBe(before.decisions);
+    expect(countRows('entity_timeline_events')).toBe(before.timelineEvents);
+    expect(countRows('memory_events')).toBe(before.memoryEvents);
   });
 
   it('should return status-gated recall by default', async () => {
