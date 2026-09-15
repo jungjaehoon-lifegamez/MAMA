@@ -36,7 +36,7 @@ import {
   TelegramGateway,
   MessageRouter,
 } from '../../gateways/index.js';
-import { normalizeDiscordGuilds } from './utilities.js';
+import { IS_DEFAULT_INSTALL, normalizeDiscordGuilds } from './utilities.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -85,6 +85,16 @@ export async function initGateways(
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
+
+  // A second install on this machine (MAMA_API_PORT set) shares the owner's
+  // config, and therefore the owner's bot tokens. It does not take them. Two
+  // daemons on one token is broken on its own terms - Telegram long polling
+  // conflicts and a Slack socket double-delivers - and the failure that matters
+  // more is that a test install would answer the owner's real channels.
+  if (!IS_DEFAULT_INSTALL) {
+    console.log('[gateway] second install: chat gateways not started (owner tokens are not ours)');
+    return { gateways, discordGateway: null, slackGateway: null, telegramGateway: null };
+  }
 
   // Initialize Discord gateway if enabled (before API server for reference)
   let discordGateway: DiscordGateway | null = null;

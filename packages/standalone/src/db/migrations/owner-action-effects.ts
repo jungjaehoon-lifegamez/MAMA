@@ -130,6 +130,11 @@ function hasUnsupportedOwnerActionConstraints(db: SQLiteDatabase): boolean {
     'CHECK (length(trim(effect_kind)) > 0)',
     "CHECK (status IN ('transmitting','unknown','confirmed'))",
     'CHECK (origin_model_run_id IS NULL OR length(trim(origin_model_run_id)) > 0)',
+    // The pre-origin shape, which is exactly what the rebuild below exists to
+    // convert. Omitting it made every database written before operation origins
+    // look like it carried a constraint this code does not understand, and the
+    // rebuild refused - so the daemon could not open its own older database.
+    'CHECK (length(trim(origin_model_run_id)) > 0)',
     'CHECK (origin_operation_id IS NULL OR length(trim(origin_operation_id)) > 0)',
     'CHECK (length(trim(origin_envelope_hash)) > 0)',
     AT_LEAST_ONE_ORIGIN_CHECK,
