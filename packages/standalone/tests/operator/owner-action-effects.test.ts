@@ -472,6 +472,54 @@ describe('Story TG-04/TG-06: owner action receipts independent of input path', (
       ).toEqual({ count: 0 });
     });
 
+    it('opens a database written before operation origins existed', () => {
+      const { database } = open();
+      database.exec('DROP TABLE owner_action_effects');
+      // The verbatim pre-origin shape. It is written out rather than derived
+      // from the current schema, because deriving it is what hid the defect:
+      // the previous fixture string-replaced today's DDL and so always carried
+      // today's constraint spellings. A real database from that era has
+      // origin_model_run_id NOT NULL with the short CHECK and no
+      // origin_operation_id column at all.
+      database.exec(`
+        CREATE TABLE owner_action_effects (
+          owner_scope TEXT NOT NULL CHECK (length(trim(owner_scope)) > 0),
+          occurrence_key TEXT NOT NULL CHECK (length(trim(occurrence_key)) > 0),
+          action_key TEXT NOT NULL CHECK (length(trim(action_key)) > 0),
+          effect_kind TEXT NOT NULL CHECK (length(trim(effect_kind)) > 0),
+          status TEXT NOT NULL CHECK (status IN ('transmitting','unknown','confirmed')),
+          intent_json TEXT NOT NULL,
+          intent_sha256 TEXT NOT NULL,
+          result_json TEXT,
+          last_error TEXT,
+          origin_model_run_id TEXT NOT NULL CHECK (length(trim(origin_model_run_id)) > 0),
+          origin_envelope_hash TEXT NOT NULL CHECK (length(trim(origin_envelope_hash)) > 0),
+          origin_workorder_attempt_id INTEGER,
+          settled_model_run_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (owner_scope, occurrence_key, action_key)
+        );
+      `);
+      database
+        .prepare(
+          `INSERT INTO owner_action_effects
+           (owner_scope, occurrence_key, action_key, effect_kind, status, intent_json,
+            intent_sha256, origin_model_run_id, origin_envelope_hash, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run('owner:test', 'occurrence', 'legacy', 'Write', 'confirmed', '{}', 'hash', 'mr:1', 'env', 1, 1);
+
+      expect(() => applyOwnerActionEffectsMigration(database)).not.toThrow();
+
+      expect(
+        database
+          .prepare("SELECT origin_model_run_id, origin_operation_id FROM owner_action_effects WHERE action_key='legacy'")
+          .get()
+      ).toEqual({ origin_model_run_id: 'mr:1', origin_operation_id: null });
+      expect(database.pragma('foreign_key_check')).toEqual([]);
+    });
+
     it('carries operation origins and preserves external FK children during repair', () => {
       const { database } = open();
       const canonical = (

@@ -10,7 +10,7 @@ import { mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { writePid, isProcessRunning } from '../utils/pid-manager.js';
-import { API_PORT } from './utilities.js';
+import { API_PORT, IS_DEFAULT_INSTALL } from './utilities.js';
 
 /**
  * Watchdog configuration
@@ -80,8 +80,14 @@ export async function startDaemon(): Promise<number> {
   }
   await writePid(pid);
 
-  // Start watchdog in background (detached)
-  startWatchdog(pid);
+  // A second install (MAMA_API_PORT set) gets no watchdog. The watchdog outlives
+  // its parent by design, writes to the owner's ~/.mama/logs and adopts daemons
+  // through the owner's PID file - so a test run's watchdog keeps resurrecting a
+  // test daemon long after the run is over, against the owner's databases.
+  if (IS_DEFAULT_INSTALL) {
+    // Start watchdog in background (detached)
+    startWatchdog(pid);
+  }
 
   return pid;
 }
