@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed (plugin)
+
+- The `mama-install` skill follows the current setup: the owner runs `mama init` in their own
+  terminal and types every secret at its hidden prompts, the installing agent explains the one
+  choice that sends owner text out (Jev), and installation ends when MAMA answers the owner's first
+  message. It had pointed at `mama status --json`, which the rebuilt CLI no longer has.
+
 ### Changed
 
 - The owner agent works one step at a time instead of starting every turn with everything. A turn

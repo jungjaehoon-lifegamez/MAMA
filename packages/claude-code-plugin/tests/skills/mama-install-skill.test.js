@@ -16,13 +16,25 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(manifest.skills).toContain('./skills/mama-install');
   });
 
-  it('points at the CLI contract without copying onboarding knowledge', () => {
+  it('points at the CLI and the setup guide without copying onboarding knowledge', () => {
     const content = fs.readFileSync(skillPath, 'utf8');
 
     expect(content).toContain('npm i -g @jungjaehoon/mama-os');
     expect(content).toContain('mama --help');
-    expect(content).toContain('mama status --json');
-    expect(content).toContain('complete');
+    expect(content).toContain('mama init');
+    expect(content).toContain('docs/start/owner-setup.md');
+    // mama status --json went away with the rebuilt CLI; setup ends when MAMA answers the owner.
+    expect(content).not.toContain('status --json');
+    expect(content).toContain('MAMA answers');
     expect(content).not.toMatch(/BotFather|allowed_chats|detect-owner|personality|wizard/i);
+  });
+
+  it('keeps secrets with the owner and lets the owner choose Jev', () => {
+    const content = fs.readFileSync(skillPath, 'utf8');
+
+    expect(content).toContain('Never ask for a token, key or password in the conversation');
+    expect(content).toContain('Jev');
+    expect(content).toContain('goes to the Jev service');
+    expect(content).toContain('MAMA works the same without it');
   });
 });
