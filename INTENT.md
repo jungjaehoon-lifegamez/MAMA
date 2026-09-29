@@ -13,9 +13,9 @@ It starts from what Kagemusha already does and adds two things.
 - **What Kagemusha does:** watches changes in connected conversations and work tools and
   recognises the work in them. It creates and updates tasks, refreshes the board and the scheduled
   reports, and forwards feedback and files.
-- **Addition 1 — a wiki and memory that carry over:** the knowledge the work leaves behind (a
-  project's terms, decisions and specifications, how a client works), a page for each day, and
-  the owner's corrections survive new sessions, restarts and model changes.
+- **Addition 1 — a wiki and memory that carry over:** the wiki lets a person see how the work
+  went; memory connects the records and the owner's corrections as nodes and edges so related data
+  is found fast. Both survive new sessions, restarts and model changes.
 - **Addition 2 — task history (the differentiator):** for every task it keeps how it progressed,
   what changed, what the feedback was, and who did what. It can also find **similar past cases**
   and reuse how their feedback went and how they ended.
@@ -55,15 +55,19 @@ member permissions and non-owner input wait until the checks below pass on real 
 - Roles are context for the work, not a judgment of people. Record the evidence cross-checked in
   conversation. If it is not confirmed, mark it unconfirmed. An assignee field in a tool such as
   Trello is one piece of evidence, not the answer.
-- The board is the agent's live view of the work, written after reading the tasks and the
-  conversations, so it shows the same state as the tasks.
-- The wiki keeps what the sources and the tasks do not show on their own: knowledge that stays
-  true and has to be gathered from many messages, rewritten when it changes, never a dated copy
-  of events. A daily page sums up each day: what mattered, what the owner decided, what was missed
-  and learned. What happened stays in the sources; how a case progressed stays in its task.
-- Memory holds corrections and lessons.
-- Tasks and their history must be semantically searchable. That is how similar past cases are
-  found: from how earlier work progressed, what the feedback was, who did what and how it ended.
+- The tasks and the board are the agent's tools for organising the present. The tasks hold each
+  piece of work and its revisions; the board is the live view, written after reading the tasks and
+  the conversations, so it shows the same state as the tasks.
+- The wiki is for people: it lets a person see and understand the history. It is gathered and
+  rewritten from many messages, never a dated copy of events. A daily page sums up each day (what
+  mattered, what the owner decided, what was missed and learned), and a project page keeps the
+  knowledge that stays true (terms, decisions and specifications, how a client works).
+- Memory connects the records as nodes and edges (work and its revisions, source messages, people,
+  lessons and corrections) so the agent finds related data fast. Similar past cases are reached
+  through it and through semantic search over tasks and their history: how earlier work
+  progressed, what the feedback was, who did what and how it ended.
+- Jev, when the owner turns it on, is a classifier that makes this linking and finding faster and
+  easier. Everything works without it.
 
 ## Data and the present moment
 
