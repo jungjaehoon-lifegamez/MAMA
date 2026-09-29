@@ -60,8 +60,8 @@ function toolUsageLines(backend: OwnerRuntimeBackend): string[] {
     ];
   return [
     common,
-    '- Call actions inside exec. Each tools.* call returns JSON text {success, data, error} and does not throw when the action fails, so read results through a helper that throws the error; keep only the rows and fields the turn needs and print only those. Several reads go in one script. For example:',
-    '  const call = async (pending) => { const result = JSON.parse(await pending); if (!result.success) throw new Error(JSON.stringify(result.error)); return result.data; };',
+    '- Call actions inside exec. A tools.* call returns JSON text {success, data, error}, or plain text when the host itself fails, and does not throw when the action fails; read results through a helper that throws the error, keep only the rows and fields the turn needs and print only those. Several reads go in one script. For example:',
+    '  const call = async (pending) => { const raw = await pending; let result; try { result = JSON.parse(raw); } catch { throw new Error(raw); } if (!result.success) throw new Error(JSON.stringify(result.error)); return result.data; };',
     '  const tasks = (await call(tools.work_list({view: "items", text: "<asset or title words>"}))).tasks;',
     '  text(JSON.stringify(tasks.map((task) => [task.commitmentId, task.title, task.status, task.lastEventTime])));',
     '- Never print a whole list or board to find one item; print counts, titles or the matching rows.',

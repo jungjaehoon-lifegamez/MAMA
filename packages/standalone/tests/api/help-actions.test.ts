@@ -94,12 +94,12 @@ describe('action catalog line', () => {
         type: 'object',
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: 50 },
-          window: { type: 'integer', minimum: 5, maximum: 30 },
+          caption: { type: 'string', maxLength: 1024 },
           ids: { type: 'array', minItems: 1, maxItems: 4 },
           asOf: { type: 'integer', minimum: 0 },
         },
       })
-    ).toBe('{limit?: ≤50, window?: 5..30, ids?: ≤4 items, asOf?}');
+    ).toBe('{limit?: ≤50, caption?: ≤1024 chars, ids?: ≤4 items, asOf?}');
   });
 
   it('caps the sentence, never the argument list', () => {

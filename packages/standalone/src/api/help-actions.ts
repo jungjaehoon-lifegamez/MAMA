@@ -49,22 +49,21 @@ function requiredChoice(schema: Schema): string | null {
 }
 
 /**
- * The bound a caller cannot guess from the name, e.g. `≤50` for a limit or `≤4 items` for a list:
+ * The bound a caller cannot guess from the name, e.g. `≤50` for a limit, `≤4 items` for a list or
+ * `≤1024 chars` for a caption:
  * on the first live day the agent sent `limit: 100` to `work.list`, whose maximum is 50.
  */
 function boundText(schema: Schema): string | null {
-  if (typeof schema.maximum === 'number')
-    return typeof schema.minimum === 'number' && schema.minimum > 1
-      ? `${schema.minimum}..${schema.maximum}`
-      : `≤${schema.maximum}`;
+  if (typeof schema.maximum === 'number') return `≤${schema.maximum}`;
   if (typeof schema.maxItems === 'number') return `≤${schema.maxItems} items`;
+  if (typeof schema.maxLength === 'number') return `≤${schema.maxLength} chars`;
   return null;
 }
 
 /**
  * The argument list the agent calls with, as Kagemusha's code_act description lists
  * `task_update({id, status, priority, deadline})`: top-level names, `?` for optional ones, the
- * allowed values of a plain enum and the bound of a number or list.
+ * allowed values of a plain enum and the bound of a number, list or text.
  */
 export function actionSignature(inputSchema: unknown): string {
   const schema = asSchema(inputSchema);

@@ -115,9 +115,10 @@ describe('owner standing prompt', () => {
         `${backend === 'claude' ? 'mcp__mama__help' : 'help'} (actions: [names])`
       );
       if (backend === 'codex') {
-        expect(prompt).toContain('Each tools.* call returns JSON text {success, data, error}');
+        expect(prompt).toContain('A tools.* call returns JSON text {success, data, error}');
         expect(prompt).toContain('tools.work_list({view: "items", text: ');
         expect(prompt).toContain('does not throw when the action fails');
+        expect(prompt).toContain('catch { throw new Error(raw); }');
         expect(prompt).toContain(
           'if (!result.success) throw new Error(JSON.stringify(result.error))'
         );
