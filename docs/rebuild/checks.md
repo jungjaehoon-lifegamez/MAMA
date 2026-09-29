@@ -1334,3 +1334,19 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Codex keeps `exec` and is not offered `code_act`. `actionName` is removed: both backends name actions `work.list`.
 - Evidence: the Claude tool list is 6,801 chars in one tool. A typed schema per tool (the closed #337) came to 21,110. The Codex definitions are 8,401. The Claude path dispatches through `nativeSession.callAction` with the caller's `modelRunId` (`native-session.ts:412`), so `batchRecorded` sees inner `work.no_update` and revisions. The worker starts with an empty environment: `--permission` does not guard `process.env`, and the daemon's holds the `auth.env` credentials. An escaped script now sees no inherited variable. The Claude schema omits `additionalProperties` because the caller hook adds `__mama_caller`. A missing operation id throws instead of falling back. Network is denied by `--permission` on Node 25 only, and web access is granted to both runtimes (owner decision 2026-09-26), so the contract no longer claims it. Standalone suite: 1,160 pass.
 - Still fails: live. The next Claude run checks the first record order's inner traces, then a full report and a correction saved with `memory.save`: the three things that failed at 12:26. Open: a script can outlive a timed-out turn and keep writing under that run. `code_act` and the turn both allow 300 s, as in Kagemusha, and nothing cancels a dispatch when the socket closes.
+
+### Chat report window; stale calendar rows; session start against Kagemusha (2026-09-29)
+
+- **Result.**
+  - The full-report procedure now says a chat request reads the last 24 hours of `source.recent`, however recent the previous report. A scheduled report reads since the time its order gives. Before this, both chat reports (11:44 on Codex, 13:23 on Claude) read only since the report before them, so the 13:23 report opened with "no new changes since 12:30".
+  - The calendar crowding in `source.recent` is data, not code. The pre-rebuild calendar connector stored an event's start as its source time (`timestamp: new Date(startMs)` before #325; now `ev.updated`). In the testbed, 66 rows from that build (63 of them in the future) sorted first as "recent changes". Their source time is reset to their `observedAt`; observations and links stay.
+- **Evidence.**
+  - `connector_event_index` rows: 66 without `updated` against 89 from the current connector. 65 of the 66 events also have a current-format row. The 0.56 `calendar/index.ts` set `timestamp: new Date(startMs)`.
+  - Kagemusha's session start (`session-start-context.ts`, `agent-session.ts:60-70`) is capped at 2,500 chars and holds:
+    - the owner channel's last 10 messages (600);
+    - the last 10 resumable agent turns, delta notify turns included (1,000);
+    - recent decisions (600);
+    - a brain summary (1,000) and the checkpoint (500);
+    - the time.
+  - MAMA's session start at 11:33 (2,801 chars with the first order) held five owner exchanges, four of them full-report requests and their answers, with `<` escaped as `<`. It carried no delta turns, decisions or checkpoint.
+- **Still fails.** A new MAMA session does not see what just happened in the sources or what it decided; that waits for an owner decision on the session start contents.

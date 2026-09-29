@@ -54,6 +54,10 @@ describe('owner standing prompt', () => {
     expect(prompt).toContain(
       'Write the report in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions.'
     );
+    // A chat request read only since the previous chat report on 2026-09-29 (11:44, 13:23).
+    expect(prompt).toContain(
+      'Read source.recent for the last 24 hours when the owner asks, however recent the previous report'
+    );
     expect(ownerPrompt('codex', null, false)).not.toContain('manage.wiki.');
   });
 

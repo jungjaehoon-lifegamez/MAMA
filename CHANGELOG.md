@@ -25,6 +25,9 @@ All notable changes to this project will be documented in this file.
   numbers, lists and objects as strings (`days: "14"`, `slots: "{...}"`), so the board, saved
   corrections and work revisions were refused. Inside `code_act` a failed action throws with its
   error. Codex keeps its own `exec`.
+- A full report you ask for in chat reads the last 24 hours of source changes, however recent the
+  previous report. Two chat reports on 2026-09-29 read only since the report before them and
+  said there were no changes.
 - MCP server: `save` asks to search for related decisions first in plain words instead of a
   "REQUIRED" banner on `search`. Plugin: the session-start greeting instruction is three lines
   instead of fourteen and mentions a checkpoint's next step only when one is shown.

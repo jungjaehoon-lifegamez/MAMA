@@ -114,7 +114,7 @@ function standingPrompt(
     '',
     '## Full report',
     '- When the owner asks for the full report in any words, or a [scheduled_full_report] order arrives:',
-    `  1. Read source.recent since the previous full report (24 hours when the owner asks), work.list view=pipeline and schedule.upcoming with days=14${backend === 'codex' ? ' in one exec script, printing only what the report needs' : ''}. Read originals with source.read only when a line changes the report; tell an empty result from failed or stale collection.`,
+    `  1. Read source.recent for the last 24 hours when the owner asks, however recent the previous report, and since the time the order gives for a scheduled report; with it, work.list view=pipeline and schedule.upcoming with days=14${backend === 'codex' ? ' in one exec script, printing only what the report needs' : ''}. Read originals with source.read only when a line changes the report; tell an empty result from failed or stale collection.`,
     '  2. Compare every open deadline with the calendar and holidays, using event end times for overlaps. Name the items under each stage and list every item waiting on an owner decision with the decision requested.',
     `  3. Publish all four board sections with report.publish; read its contract with help first in a session.`,
     '  4. Write the report in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions. Say plainly when there were no changes.',

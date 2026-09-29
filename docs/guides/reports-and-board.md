@@ -48,9 +48,9 @@ reports:
   reminder_end_hour: 21
 ```
 
-Full reports read `source.recent` since the previous full report (24 hours for the
-first one), the complete open `work.list` pipeline, and `schedule.upcoming`
-(14 days by default). Recent source lines carry references that can be opened with
+A full report reads the complete open `work.list` pipeline, `schedule.upcoming` (14 days by
+default) and `source.recent`: the last 24 hours when you ask for it in chat, or since the previous
+full report for a scheduled one (24 hours for the first). Recent source lines carry references that can be opened with
 `source.read`; a source whose last collection failed is listed with its error. The report names work under each stage,
 lists every item waiting for an owner decision, and compares deadlines with
 calendar events and holidays. The five parts are key situation today, needs a
