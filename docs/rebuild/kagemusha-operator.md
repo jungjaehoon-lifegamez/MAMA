@@ -105,12 +105,13 @@ plan keeps one session and removes the growth instead, and records a superseding
   - the owner channel's last 10 messages (600);
   - the last 10 resumable turns, owner and live delta turns with their replies (750, inside the
     untrusted-content wrapper because they carry source text; Kagemusha gives 1,000 unwrapped);
-  - the latest 10 memory records as recent decisions (600).
+  - the agent's latest checkpoint (500), which it saves with `memory.checkpoint.save` as a
+    hand-off (owner decision 2026-09-29);
+  - the latest 10 memory records as recent decisions, in whatever room is left (600 at most).
 
   Owner and turn lines are capped at 360 chars, and no line repeats. Messenger markup is stripped
-  from replies, and replay windows and record orders are left out. Kagemusha's brain summary and
-  checkpoint have no MAMA counterpart: the owner agent keeps no checkpoint. A resumed durable thread
-  gets nothing extra.
+  from replies, and replay windows and record orders are left out. Kagemusha's brain summary has
+  no MAMA counterpart. A resumed durable thread gets nothing extra.
 
 - **Lessons.** Top 3 by `memory.search` on the owner message or the notify order's message text,
   ≤1,200 chars, advisory. A lesson already shown is not repeated until the next local day or a new

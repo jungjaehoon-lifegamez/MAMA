@@ -362,6 +362,27 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           current: row,
           records: () =>
             readMemoryRecordsInScopes(database.adapter, [...access.scopes], { status: 'active' }),
+          checkpoint: async () => {
+            const listed = await surface.hostToolCall(
+              'memory.checkpoint.list',
+              { limit: 1 },
+              `session-start:${randomUUID()}`
+            );
+            if (listed.status !== 'completed')
+              throw new Error(`memory.checkpoint.list ${listed.status}`);
+            const [latest] = (
+              listed.data as {
+                checkpoints: Array<{ summary?: string; next_steps?: string; timestamp?: number }>;
+              }
+            ).checkpoints;
+            return latest?.summary && typeof latest.timestamp === 'number'
+              ? {
+                  summary: latest.summary,
+                  nextSteps: latest.next_steps ?? '',
+                  createdAt: latest.timestamp,
+                }
+              : null;
+          },
           now: Date.now(),
         }),
       // Kagemusha's lesson recall: the corrections memory.search ranks highest for the turn's text,

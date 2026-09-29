@@ -45,6 +45,7 @@ const OWNER_ACTIONS = [
   'source.read',
   'owner.timezone.set',
   'memory.checkpoint.list',
+  'memory.checkpoint.save',
   'work.create',
   'work.revise',
   'work.list',
@@ -132,6 +133,8 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       'memory.read:record',
       'memory.retire',
       'memory.checkpoint.list',
+      // The agent's hand-off for a later session, shown in its [session_start] as Kagemusha's is.
+      'memory.checkpoint.save',
       'work.show',
     ].includes(contract.name)
   );

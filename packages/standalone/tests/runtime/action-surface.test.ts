@@ -47,6 +47,7 @@ describe('W1 action surface', () => {
       'manage.wiki.read',
       'manage.wiki.update',
       'memory.checkpoint.list',
+      'memory.checkpoint.save',
       'memory.read:provenance',
       'memory.read:record',
       'memory.retire',

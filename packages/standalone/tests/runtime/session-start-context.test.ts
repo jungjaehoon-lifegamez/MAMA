@@ -114,6 +114,11 @@ describe('session start context', () => {
       deliveredRefs: new TelegramMessageLedger(f.ledgerPath).recentDeliveredMessageRefs(),
       current,
       records: async () => records,
+      checkpoint: async () => ({
+        summary: 'Mid full report',
+        nextSteps: 'publish the board',
+        createdAt: 3_600_000,
+      }),
       now: 3_600_000 * 3,
     });
     // Only delivered owner exchanges of this principal, the current one left out, oldest first.
@@ -128,6 +133,11 @@ describe('session start context', () => {
       '[delta chat:client room][source] sender: files sent',
       '[delta chat:client room][agent] [ack]',
     ]);
+    expect(input.checkpoint).toEqual({
+      summary: 'Mid full report',
+      nextSteps: 'publish the board',
+      ageHours: 2,
+    });
     expect(input.decisions).toEqual([
       { topic: 'newer', summary: 'new decision', ageHours: 1 },
       { topic: 'older', summary: 'old decision', ageHours: (3_600_000 * 3 - 1_000) / 3_600_000 },

@@ -77,12 +77,14 @@ export interface SessionStartInput {
   turns: readonly string[];
   /** The latest memory records, newest first. */
   decisions: readonly { topic: string; summary: string; ageHours: number }[];
+  /** The latest session checkpoint the agent saved, if any. */
+  checkpoint?: { summary: string; nextSteps: string; ageHours: number } | null;
 }
 
 // Kagemusha's section budgets (`session-start-context.ts`), with previous turns cut from 1,000 to
 // 750: they carry source text, so they sit inside the ~300-char untrusted-content wrapper. Its brain
-// summary and checkpoint have no MAMA counterpart.
-const SESSION_START_SECTIONS = { ownerMessages: 600, turns: 750, decisions: 600 };
+// summary has no MAMA counterpart.
+const SESSION_START_SECTIONS = { ownerMessages: 600, turns: 750, checkpoint: 500, decisions: 600 };
 const SESSION_START_LINE_LIMIT = 360;
 
 function truncate(text: string, limit: number): string {
@@ -165,6 +167,8 @@ export function sessionStartBlock(
     const used = parts.join('\n').length;
     if (used + 1 + section.length <= SESSION_START_LIMIT) parts.push(section);
   };
+  /** Chars left before the 2,500 cap, after the newline that joins the next section. */
+  const room = (): number => SESSION_START_LIMIT - parts.join('\n').length - 1;
   const owner = recentLines(input.ownerMessages, SESSION_START_SECTIONS.ownerMessages, seen);
   if (owner.length > 0) append(['', 'Recent owner channel:', ...owner].join('\n'));
   const turns = recentLines(input.turns, SESSION_START_SECTIONS.turns, seen);
@@ -178,16 +182,27 @@ export function sessionStartBlock(
         '</previous_turns>',
       ].join('\n')
     );
+  const age = (hours: number): string =>
+    Number.isFinite(hours) ? `${Math.round(hours)}h ago` : '? ago';
+  // Kagemusha's checkpoint section: the agent's own hand-off, outranked by newer turns above.
+  if (input.checkpoint) {
+    const header = `Last checkpoint (${age(input.checkpoint.ageHours)}; newer turns above outrank it):`;
+    const lines = leadingLines(
+      [
+        ...input.checkpoint.summary.split('\n'),
+        ...(input.checkpoint.nextSteps ? [`Next steps: ${input.checkpoint.nextSteps}`] : []),
+      ],
+      Math.min(SESSION_START_SECTIONS.checkpoint, room() - header.length - 2),
+      seen
+    );
+    if (lines.length > 0) append(['', header, ...lines].join('\n'));
+  }
+  // Decisions come last and take what room is left, up to their own budget.
   const decisions = leadingLines(
     input.decisions
       .slice(0, 10)
-      .map(
-        (decision) =>
-          `- [${decision.topic}] ${decision.summary} (${
-            Number.isFinite(decision.ageHours) ? `${Math.round(decision.ageHours)}h` : '?'
-          } ago)`
-      ),
-    SESSION_START_SECTIONS.decisions,
+      .map((decision) => `- [${decision.topic}] ${decision.summary} (${age(decision.ageHours)})`),
+    Math.min(SESSION_START_SECTIONS.decisions, room() - 'Recent decisions:'.length - 2),
     seen
   );
   if (decisions.length > 0) append(['', 'Recent decisions:', ...decisions].join('\n'));

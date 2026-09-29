@@ -76,6 +76,37 @@ describe('turn orders', () => {
     expect(block).not.toContain('Recent decisions:');
   });
 
+  it("keeps the agent's checkpoint and fits decisions into the room left", () => {
+    const full = {
+      ownerMessages: Array.from(
+        { length: 10 },
+        (_, index) => `[owner] ${index} ${'x'.repeat(300)}`
+      ),
+      turns: Array.from(
+        { length: 10 },
+        (_, index) => `[delta room][source] ${index} ${'y'.repeat(300)}`
+      ),
+      decisions: Array.from({ length: 10 }, (_, index) => ({
+        topic: `topic-${index}`,
+        summary: 'z'.repeat(200),
+        ageHours: index,
+      })),
+      checkpoint: {
+        summary: 'Mid full report\nboard half written',
+        nextSteps: 'publish the board',
+        ageHours: 3,
+      },
+    };
+    const block = sessionStartBlock(full, now, { timeZone: 'UTC' });
+    expect(block.length).toBeLessThanOrEqual(SESSION_START_LIMIT);
+    expect(block).toContain(
+      'Last checkpoint (3h ago; newer turns above outrank it):\nMid full report\nboard half written\nNext steps: publish the board'
+    );
+    // Whatever room is left goes to the newest decisions.
+    expect(block).toContain('Recent decisions:\n- [topic-0]');
+    expect(block.indexOf('Last checkpoint')).toBeLessThan(block.indexOf('Recent decisions:'));
+  });
+
   it('opens an empty session with the time alone', () => {
     const block = sessionStartBlock({ ownerMessages: [], turns: [], decisions: [] }, now, {
       timeZone: 'UTC',

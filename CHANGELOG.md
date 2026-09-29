@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
   source changes with the replies) and the ten latest saved records. Before, it saw five owner
   exchanges only, mostly repeated full-report answers, and nothing of what had just come in from
   sources.
+- The owner agent can save a session checkpoint (`memory.checkpoint.save`: what it was in the middle
+  of and what comes next), and a new session shows the latest one, as Kagemusha's does.
 
 ## mama-os [0.58.1] / mcp-server [2.2.2] / plugin [2.0.2] - 2026-09-29
 

@@ -109,9 +109,12 @@ export async function readSessionStartInput(ports: {
   current: MailboxRow;
   /** The owner's active memory records, in any order. */
   records: () => Promise<readonly MemoryRecord[]>;
+  /** The latest session checkpoint the agent saved, if any; `createdAt` in epoch ms. */
+  checkpoint: () => Promise<{ summary: string; nextSteps: string; createdAt: number } | null>;
   now: number;
 }): Promise<SessionStartInput> {
   const records = [...(await ports.records())];
+  const checkpoint = await ports.checkpoint();
   const createdAt = (value: number | string): number =>
     typeof value === 'number' ? value : Date.parse(value);
   return {
@@ -125,5 +128,13 @@ export async function readSessionStartInput(ports: {
         summary: record.summary,
         ageHours: (ports.now - createdAt(record.created_at)) / 3_600_000,
       })),
+    checkpoint:
+      checkpoint === null
+        ? null
+        : {
+            summary: checkpoint.summary,
+            nextSteps: checkpoint.nextSteps,
+            ageHours: (ports.now - checkpoint.createdAt) / 3_600_000,
+          },
   };
 }
