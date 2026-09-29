@@ -335,7 +335,7 @@ export interface RecordOrderPayload {
   deltaStimulusId: string;
   /**
    * The connector the channel belongs to, so the order can name the channel's source.recent key.
-   * Record orders written before 2026-09-29 have none; boot recovery reads them without it.
+   * Record orders written before 2026-09-29 have none; they are still read and rendered.
    */
   source?: string;
   channel: string;
@@ -405,10 +405,11 @@ export function deltaRecordOrder(
   now: Date,
   options: TurnOrderOptions & { wikiEnabled: boolean }
 ): string {
-  if (!record.source)
-    throw new Error(
-      `Record order for ${record.deltaStimulusId} names no source; it was written before record orders carried one`
-    );
+  // Record orders written before 2026-09-29 carry no source, and a retry copies its order, so the
+  // channel is found by name in the list instead of by key; the step stays the same.
+  const context = record.source
+    ? `source.recent({channels: ["${record.source}:${record.channel}"], perChannel: 20})`
+    : `source.recent (find the channel "${record.channel}" in its list, then read its lines with channels and perChannel: 20)`;
   const lines = record.lines.map((line) => {
     const known = Number.isFinite(Date.parse(line.sourceAt));
     return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
@@ -418,7 +419,7 @@ export function deltaRecordOrder(
     currentTime(now, options.timeZone),
     ...(lines.length === 0 ? [] : [wrapUntrustedContent('source_delta', lines.join('\n'))]),
     'Record what this delta changed:',
-    `1. Check this channel's latest context with source.recent({channels: ["${record.source}:${record.channel}"], perChannel: 20}); read an original with source.read only when a line needs its full text.`,
+    `1. Check this channel's latest context with ${context}; read an original with source.read only when a line needs its full text.`,
     `2. Read the current work state with work.list (view=items for the open work; detail for the items this conversation is about) before creating anything; help({topic: 'record'}) has the recording rules.`,
     `3. For each moved item, work.revise (or work.create for newly entrusted work) with derived_from links to the observations below and eventDatetime set to the source event time; update only the board sections that change with report.publish, reading its contract with help first in a session${
       options.wikiEnabled

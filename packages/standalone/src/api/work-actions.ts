@@ -963,7 +963,7 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
                 { type: 'string', minLength: 1 },
               ],
               description:
-                'Only items last written before this epoch-ms time: work that has not moved.',
+                'Only items last written before this time (epoch ms or ISO with offset): work that has not moved.',
             },
             due: {
               type: 'string',

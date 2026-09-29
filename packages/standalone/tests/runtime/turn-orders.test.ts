@@ -251,9 +251,10 @@ describe('turn orders', () => {
     // Boot recovery reads a record order written before it carried its source.
     const { source: _source, ...legacy } = first;
     expect(parseRecordOrder(legacy as never)).toEqual(legacy);
-    expect(() =>
+    // A retry copies its order, so a legacy order is still rendered: the channel found by name.
+    expect(
       deltaRecordOrder(legacy, now, { backend: 'codex', timeZone: 'UTC', wikiEnabled: false })
-    ).toThrow('names no source');
+    ).toContain('source.recent (find the channel "room" in its list');
   });
 
   it("gives the record order Kagemusha's five steps and the batch's observations", () => {
