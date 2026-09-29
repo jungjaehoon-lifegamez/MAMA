@@ -23,6 +23,7 @@ import {
 import { sourceActionRegistrations } from '../api/source-actions.js';
 import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
+import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
 import { workNoUpdateActionRegistrations } from '../api/record-actions.js';
 import type { TimeZoneSetting } from './timezone.js';
 import { reportSourceActionRegistrations } from '../api/report-source-actions.js';
@@ -36,6 +37,7 @@ import type { BoardSlots } from '../operator/board-read-views.js';
 import { LOADABLE_CONNECTORS as OWNER_CONNECTORS } from '../connectors/index.js';
 
 const OWNER_ACTIONS = [
+  'code_act',
   'graph.query',
   'source.search',
   'source.recent',
@@ -188,8 +190,17 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...workNoUpdateActionRegistrations(),
     ...helpActionRegistrations({
       contracts: () =>
-        catalog.list().filter((contract) => ownerAccess.actions!.includes(contract.name)),
+        catalog
+          .list()
+          .filter(
+            (contract) =>
+              contract.name !== CODE_ACT_CONTRACT.name &&
+              ownerAccess.actions!.includes(contract.name)
+          ),
     }),
+    // Claude calls every action from inside code_act, as Kagemusha's code_act; the inner calls go
+    // through the dispatcher below, so each is granted and traced as the caller's.
+    codeActRegistration(() => dispatch),
   ];
   const catalog = createCatalog(registrations);
   const dispatch = createDispatcher(catalog, {
@@ -247,12 +258,16 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     // Progressive, as Kagemusha's code_act catalog: every turn carries one line per action with
     // its arguments; types, allowed values and examples come from `help`. The dispatcher still
     // validates each call against the action's own schema.
+    // Codex calls actions from its own exec, so it is not offered code_act.
     hostToolDefinitions: () =>
-      catalog.list().map((contract) => ({
-        name: contract.name,
-        description: actionCatalogLine(contract),
-        inputSchema: { type: 'object' },
-      })),
+      catalog
+        .list()
+        .filter((contract) => contract.name !== CODE_ACT_CONTRACT.name)
+        .map((contract) => ({
+          name: contract.name,
+          description: actionCatalogLine(contract),
+          inputSchema: { type: 'object' },
+        })),
     hostToolCall: (name, input, operationId, context = {}) =>
       dispatch(
         { action: name, input, operationId },

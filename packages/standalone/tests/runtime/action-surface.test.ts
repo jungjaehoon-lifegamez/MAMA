@@ -37,6 +37,7 @@ describe('W1 action surface', () => {
       scopes: [{ kind: 'project', id: 'workspace-test' }],
     });
     const expected = [
+      'code_act',
       'deliver.discord.file',
       'deliver.slack.file',
       'deliver.telegram.file',
@@ -74,12 +75,13 @@ describe('W1 action surface', () => {
         .sort()
     ).toEqual(expected);
     expect(surface.ownerAccess.actions.slice().sort()).toEqual(expected);
+    // Codex calls actions from its own exec; code_act is for Claude.
     expect(
       surface
         .hostToolDefinitions()
         .map((definition) => definition.name)
         .sort()
-    ).toEqual(expected);
+    ).toEqual(expected.filter((name) => name !== 'code_act'));
     expect(surface.catalog.list().filter((contract) => contract.name === 'work.list')).toHaveLength(
       1
     );

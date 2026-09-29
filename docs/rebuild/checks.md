@@ -1314,3 +1314,23 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: a catalog line shows the bound of a number or list (`work.list({… ids?: ≤4 items, limit?: ≤50 …})`, `caption?: ≤1024 chars`). The Codex tool-use example reads results through a helper that throws `{error}` when an action fails.
 - Evidence: on the argument-list build, the 11:44 chat full report took 171 s, against 61 s at 10:18. The line showed `limit?` without its maximum, so the agent sent `work.list({view: "pipeline", limit: 100})`. It failed twice with `input.limit must be <= 50`. `JSON.parse(raw).data` returned `undefined` without an error, and the first batch silently lost the pipeline. The agent then printed the raw pipeline (25,033 chars) and read it five times in the turn. Codex's `exec` resolves a failed dynamic tool call with its text (`codex-app-server-process.ts` sends `success: false`); Kagemusha's worker rejects the promise (`code-act-worker.ts:67`), so its script stops with the error. Other time went to 34 s of original-source checks on one overdue item, which the owner policy's overdue line asks for in full reports, to 14 s re-publishing one slot, and to 47 s of final text (2,356 tokens, 1,091 of them reasoning). The provider rate was normal, about 50 tok/s. The catalog is 8,362 chars as Codex function definitions (8,234 before). Standalone suite 1,151 pass.
 - Still fails: live. The overdue checks inside the report follow the owner policy; whether they belong in the report turn is the owner's call.
+
+### Claude backend parity, first turns (2026-09-29 12:24–12:40 KST)
+
+- Result: switched to Claude Sonnet 5.5 at xhigh on the argument-bounds build and went back to Codex after 16 minutes. Every MAMA tool on Claude had the schema `{type: 'object'}` (W22), so Claude sent numbers, lists and objects as strings.
+  - Chat full report: 113 s, with 11 invalid-input failures (`perChannel: "10"`, `days: "14"`, `actions: "[\"report.publish\"]"`). `report.publish` with `slots` as a JSON string was refused twice, so the board was not updated; the reply said so.
+  - The owner's readability correction got a shorter report, but `memory.save` with `source` as a string was refused, so the correction was not saved; the reply said so.
+  - One record order failed on `work.revise` (`eventDatetime` as a string), then on a revision with no fields, and was logged lost after three attempts.
+- Evidence: `tool_traces` of runs `mr_090dd08a…` and `mr_7bbfea6d…`, and the record order for delta `1a6dc429…`.
+- Still fails: that batch stays unrecorded; later record orders and the next full report read the same sources.
+
+### Claude calls actions inside one code_act tool (2026-09-29)
+
+- Result: as Kagemusha did on Claude CLI, the Claude backend gets one MCP tool, `code_act`. Its description lists every other action by name, arguments and first sentence, and its JavaScript calls them by name. A failed action throws its error, and the script returns only what the turn needs.
+  - Ported from #332 (Kagemusha's sandbox and worker): a separate Node process under `--permission`, with each call dispatched in the caller's context, so inner calls are traced in the calling model run.
+  - #332's `help`/`list_tools` built-ins are dropped; `help` inside the script is MAMA's action.
+  - `callTool` refuses `code_act` and ungranted names.
+  - The result is quoted as untrusted content.
+  - Codex keeps `exec` and is not offered `code_act`. `actionName` is removed: both backends name actions `work.list`.
+- Evidence: the Claude tool list is 6,801 chars in one tool. A typed schema per tool (the closed #337) came to 21,110. The Codex definitions are 8,401. The Claude path dispatches through `nativeSession.callAction` with the caller's `modelRunId` (`native-session.ts:412`), so `batchRecorded` sees inner `work.no_update` and revisions. Standalone suite: 1,158 pass.
+- Still fails: live. The next Claude run checks the first record order's inner traces, then a full report and a correction saved with `memory.save`: the three things that failed at 12:26.

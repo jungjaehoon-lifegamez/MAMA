@@ -15,11 +15,7 @@ import type { NativeTurnResultRecord } from '@jungjaehoon/mama-core/runtime/nati
 import type { SourceDelta } from '../connectors/framework/polling-scheduler.js';
 import type { QueueCandidateScore, QueueLine, WindowQueue } from '../replay/window-queue.js';
 import type { OwnerExchange } from './recent-owner-exchanges.js';
-import {
-  actionName,
-  SUBAGENT_RUNTIME_RULES,
-  type OwnerRuntimeBackend,
-} from './owner-system-prompt.js';
+import { SUBAGENT_RUNTIME_RULES, type OwnerRuntimeBackend } from './owner-system-prompt.js';
 import {
   RECORD_ORDER_CHANNEL,
   REPORT_CHANNEL,
@@ -348,15 +344,14 @@ export function renderWindowQueue(queue: WindowQueue): string {
  * recording rules, moved here from the standing prompt.
  */
 function replayInstructions(backend: OwnerRuntimeBackend, wikiEnabled: boolean): string[] {
-  const action = (name: string): string => actionName(backend, name);
   return [
     'replay_instructions:',
-    `- You are the orchestrator of this window and must know what happened. Note the time your turn starts. Plan from sections A, B, C, suspected duplicates and unresolved; decide new work (C) yourself and give it an owner; give each native subagent a disjoint set of work items (with their full source lines, history and current revisions) and the topic pages it owns, and wait for every receipt (each commitmentId with revision before and after, created commitmentIds, topic pages updated, anything it could not do). Then read back with ${action('work.list')} view=items changedSince=<your turn start>, compare it with the receipts, and settle gaps, conflicts and duplicates yourself. Only then write the journal's judgment section, the board, Home.md and lessons. The window's current_work already lists every item with its current revision; do not list the whole ledger again. Each subagent adds one entry per moved item to daily/YYYY-MM-DD.md, grouped by project, which you create before dispatching.`,
+    `- You are the orchestrator of this window and must know what happened. Note the time your turn starts. Plan from sections A, B, C, suspected duplicates and unresolved; decide new work (C) yourself and give it an owner; give each native subagent a disjoint set of work items (with their full source lines, history and current revisions) and the topic pages it owns, and wait for every receipt (each commitmentId with revision before and after, created commitmentIds, topic pages updated, anything it could not do). Then read back with work.list view=items changedSince=<your turn start>, compare it with the receipts, and settle gaps, conflicts and duplicates yourself. Only then write the journal's judgment section, the board, Home.md and lessons. The window's current_work already lists every item with its current revision; do not list the whole ledger again. Each subagent adds one entry per moved item to daily/YYYY-MM-DD.md, grouped by project, which you create before dispatching.`,
     `- ${SUBAGENT_RUNTIME_RULES[backend].replace('only when an order asks for one', 'for this window')} When a subagent finishes you verify and integrate its result and do not spawn another for the same objective.`,
-    `- For a moved item, revise or create the work item (${action('work.revise')}, ${action('work.create')}) with a summary of what changed and why, derived_from links to its observations, and the assignee and roles the evidence points to. Record "unconfirmed" only when no observation points to anyone. Set eventDatetime to the source event time, not replay time. When current_work supplies a revision, pass it as expectedRevision; for another write in the same window use the revision the previous write returned.`,
+    `- For a moved item, revise or create the work item (work.revise, work.create) with a summary of what changed and why, derived_from links to its observations, and the assignee and roles the evidence points to. Record "unconfirmed" only when no observation points to anyone. Set eventDatetime to the source event time, not replay time. When current_work supplies a revision, pass it as expectedRevision; for another write in the same window use the revision the previous write returned.`,
     wikiEnabled
-      ? `- With end_of_window_instructions, finish the day's work changes before updating each affected board section with ${action('report.publish')} and topic wiki page with ${action('manage.wiki.update')}.`
-      : `- With end_of_window_instructions, finish the day's work changes before updating each affected board section with ${action('report.publish')}.`,
+      ? `- With end_of_window_instructions, finish the day's work changes before updating each affected board section with report.publish and topic wiki page with manage.wiki.update.`
+      : `- With end_of_window_instructions, finish the day's work changes before updating each affected board section with report.publish.`,
     '- A replay window is history and is not delivered to the owner: it ends without a marker.',
   ];
 }

@@ -11,6 +11,7 @@ import { createCatalog, createDispatcher, startRuntime } from '@jungjaehoon/mama
 import { createClient } from '@jungjaehoon/mama-core/client/client';
 import type { ActionContract, ActionResult } from '@jungjaehoon/mama-core';
 import { resolveActionServerPath } from '../../src/cli/runtime/action-mcp-config.js';
+import { CODE_ACT_CONTRACT } from '../../src/api/code-act-actions.js';
 import { handleRequest } from '../../src/runtime/action-mcp-server.js';
 import { actionMcpSession } from '../helpers/action-mcp-session.js';
 import { readSessionCredential } from '../../src/runtime/session-credential.js';
@@ -54,9 +55,15 @@ describe('mama action MCP server — credential rotation', () => {
         },
         exec: (input, context) => ({ input, principalId: context.access.principalId }),
       },
+      { contract: CODE_ACT_CONTRACT, exec: () => ({ success: true, value: null, logs: [] }) },
     ]);
     const principal = {
-      access: { principalId: 'owner', agentId: 'agent', scopes: [], actions: ['fixture.echo'] },
+      access: {
+        principalId: 'owner',
+        agentId: 'agent',
+        scopes: [],
+        actions: ['fixture.echo', 'code_act'],
+      },
       credentialPath,
     };
     let runtime: Awaited<ReturnType<typeof startRuntime>> | undefined;
@@ -77,7 +84,16 @@ describe('mama action MCP server — credential rotation', () => {
       // A legacy file must never be consulted, including after rotation/removal.
       writeFileSync(join(home, 'session-credential'), first);
       mcp = actionMcpSession();
-      const listed = { result: { tools: [expect.objectContaining({ name: 'fixture.echo' })] } };
+      const listed = {
+        result: {
+          tools: [
+            expect.objectContaining({
+              name: 'code_act',
+              description: expect.stringContaining('fixture.echo({}) — Echo fixture input'),
+            }),
+          ],
+        },
+      };
       expect(await mcp.request('tools/list')).toMatchObject(listed);
       runtime.unservePrincipal('owner');
       const missing = await mcp.request('tools/list');
@@ -126,6 +142,7 @@ describe('mama action MCP server — handleRequest unit surface', () => {
       summary: 'Query the graph',
       inputSchema: { type: 'object' },
     } as ActionContract,
+    CODE_ACT_CONTRACT,
   ];
   const calls: Array<{ action: string; input?: unknown }> = [];
   const client = {
@@ -143,19 +160,51 @@ describe('mama action MCP server — handleRequest unit surface', () => {
     },
   };
 
-  it('tools/list gives each action one line with its arguments and a permissive schema', async () => {
+  it('tools/list gives Claude only code_act, whose description lists every other action', async () => {
     const response = await handleRequest(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       { client: client as never }
     );
     const tools = (response?.result as { tools: Array<Record<string, unknown>> }).tools;
-    expect(tools).toHaveLength(2);
-    expect(tools[0].name).toBe('work.create');
-    expect(tools[0].description).toContain('work.create({topic?}) — ');
-    expect(tools[0].description).toContain('Create a work item');
-    expect(tools[0].description).not.toContain('Examples:');
-    expect(tools[0].inputSchema).toEqual({ type: 'object' });
-    expect(tools[1].description).toBe('graph.query({}) — Query the graph');
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      name: 'code_act',
+      inputSchema: CODE_ACT_CONTRACT.inputSchema,
+    });
+    const description = tools[0].description as string;
+    expect(description.startsWith(CODE_ACT_CONTRACT.summary)).toBe(true);
+    expect(description).toContain('\nActions:\nwork.create({topic?}) — Create a work item');
+    expect(description).toContain('\ngraph.query({}) — Query the graph');
+    expect(description).not.toContain('code_act({');
+    await expect(
+      handleRequest(
+        { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+        { client: { describe: async () => contracts.slice(0, 2) } as never }
+      )
+    ).rejects.toThrow('code_act is not granted');
+  });
+
+  it('marks a code_act script that threw as a failed call', async () => {
+    const response = await handleRequest(
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'code_act', arguments: { code: 'x', __mama_caller: parentCaller } },
+      },
+      {
+        client: {
+          call: async () => ({
+            status: 'completed',
+            operationId: 'op_3',
+            data: { success: false, error: { name: 'Error', message: 'boom' }, logs: [] },
+          }),
+        } as never,
+      }
+    );
+    const result = response?.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text).success).toBe(false);
   });
 
   it('tools/call is one client.call — the adapter executes nothing itself', async () => {

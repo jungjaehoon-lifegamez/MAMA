@@ -19,6 +19,7 @@ import { readSessionCredential } from './session-credential.js';
 import { CLAUDE_CALLER_FIELD } from './claude-caller-hook.js';
 import type { NativeToolCaller } from '@jungjaehoon/mama-core/action-contracts';
 import { actionCatalogLine } from '../api/help-actions.js';
+import { CODE_ACT_CONTRACT } from '../api/code-act-actions.js';
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -62,12 +63,23 @@ function runtimeClient(home: string): Client {
   });
 }
 
-/** One line per action (name, arguments, first sentence), as for the Codex session; `help` has the detail. */
-function describeTool(contract: ActionContract) {
+/**
+ * Claude gets one tool, code_act, as Kagemusha's Claude CLI did: its description lists every other
+ * action by name, arguments and first sentence, and the script calls them by name. Claude CLI has
+ * no code mode of its own, and its Bash sandbox cannot reach the action socket.
+ */
+function codeActTool(contracts: readonly ActionContract[]) {
+  const codeAct = contracts.find((contract) => contract.name === CODE_ACT_CONTRACT.name);
+  if (!codeAct) throw new Error('code_act is not granted to this session');
   return {
-    name: contract.name,
-    description: actionCatalogLine(contract),
-    inputSchema: { type: 'object' },
+    name: codeAct.name,
+    description: [
+      codeAct.summary,
+      '',
+      'Actions:',
+      ...contracts.filter((contract) => contract !== codeAct).map(actionCatalogLine),
+    ].join('\n'),
+    inputSchema: codeAct.inputSchema,
   };
 }
 
@@ -80,7 +92,12 @@ function textResult(value: unknown, isError: boolean): ToolResult {
 
 function resultContent(name: string, result: ActionResult): ToolResult {
   if (result.status === 'completed') {
-    return textResult({ success: true, data: untrustedToolData(name, result.data ?? null) }, false);
+    // A code_act script that threw completes as an action but failed as a call.
+    const failed = (result.data as { success?: unknown } | null)?.success === false;
+    return textResult(
+      { success: !failed, data: untrustedToolData(name, result.data ?? null) },
+      failed
+    );
   }
   return textResult(
     {
@@ -154,7 +171,7 @@ export async function handleRequest(
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: (await deps.client.describe()).map(describeTool) });
+      return reply({ tools: [codeActTool(await deps.client.describe())] });
     case 'tools/call':
       return reply(await callTool(deps.client, request.params ?? {}));
     case 'resources/list':

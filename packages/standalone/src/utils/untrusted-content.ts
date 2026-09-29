@@ -7,6 +7,8 @@
 
 export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
   return (
+    // code_act returns whatever its script read, source text included.
+    toolName === 'code_act' ||
     toolName === 'memory.read:provenance' ||
     toolName === 'source.search' ||
     toolName === 'source.read' ||

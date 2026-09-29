@@ -42,7 +42,7 @@ describe('turn orders', () => {
       timeZone: 'UTC',
     });
     expect(block).not.toContain('</lessons>');
-    expect(block).toContain('mcp__mama__work_list');
+    expect(block).toContain('work.list');
   });
 
   it('marks lessons as advisory and bounds them', () => {
@@ -200,7 +200,7 @@ describe('turn orders', () => {
       }
     );
     expect(noWiki).not.toContain('wiki');
-    expect(noWiki).toContain('mcp__mama__work_no_update');
+    expect(noWiki).toContain('work.no_update');
   });
 
   it('gives scheduled reports their data, leaving the procedure to the standing prompt', () => {

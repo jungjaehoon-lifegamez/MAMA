@@ -1,5 +1,5 @@
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
-import { actionName, type OwnerRuntimeBackend } from './owner-system-prompt.js';
+import type { OwnerRuntimeBackend } from './owner-system-prompt.js';
 import { epochAtLocalDateTime, localStamp } from './timezone.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import type { OwnerExchange } from './recent-owner-exchanges.js';
@@ -75,9 +75,8 @@ export function sessionStartBlock(
   now: Date,
   options: Pick<TurnOrderOptions, 'backend' | 'timeZone'>
 ): string {
-  const action = (name: string): string => actionName(options.backend, name);
   const head = ['[session_start]', currentTime(now, options.timeZone)];
-  const tail = `When a turn needs work or source state newer than these exchanges, read only that part with ${action('work.list')} or ${action('source.recent')}.`;
+  const tail = `When a turn needs work or source state newer than these exchanges, read only that part with work.list or source.recent.`;
   const pairs = exchanges.map(
     (exchange) =>
       `Owner: ${JSON.stringify(clip(exchange.owner, 200))}\nAnswer: ${JSON.stringify(clip(exchange.answer, 300))}`
@@ -277,7 +276,6 @@ export function deltaRecordOrder(
   now: Date,
   options: TurnOrderOptions & { wikiEnabled: boolean }
 ): string {
-  const action = (name: string): string => actionName(options.backend, name);
   const lines = record.lines.map((line) => {
     const known = Number.isFinite(Date.parse(line.sourceAt));
     return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
@@ -287,14 +285,14 @@ export function deltaRecordOrder(
     currentTime(now, options.timeZone),
     ...(lines.length === 0 ? [] : [wrapUntrustedContent('source_delta', lines.join('\n'))]),
     'Record what this delta changed:',
-    `1. Use its lines above; read originals with ${action('source.read')} and observationRefs from the list below only for what the lines do not show.`,
-    `2. Find the work they belong to with ${action('work.list')} (view=items with text) before creating anything.`,
-    `3. For each moved item, ${action('work.revise')} (or ${action('work.create')} for newly entrusted work) with derived_from links to the observations below and eventDatetime set to the source event time; update only the board sections that change with ${action('report.publish')}, reading its contract with ${action('help')} first in a session${
+    `1. Use its lines above; read originals with source.read and observationRefs from the list below only for what the lines do not show.`,
+    `2. Find the work they belong to with work.list (view=items with text) before creating anything.`,
+    `3. For each moved item, work.revise (or work.create for newly entrusted work) with derived_from links to the observations below and eventDatetime set to the source event time; update only the board sections that change with report.publish, reading its contract with help first in a session${
       options.wikiEnabled
-        ? `; add the dated line to the case's topic page with ${action('manage.wiki.update')}`
+        ? `; add the dated line to the case's topic page with manage.wiki.update`
         : ''
     }. A lesson saved here links these observations with derived_from.`,
-    `4. If nothing needs recording, call ${action('work.no_update')} with the reason and the observations below.`,
+    `4. If nothing needs recording, call work.no_update with the reason and the observations below.`,
     '5. Reply exactly [ack].',
     `observations: ${record.observationRefs.join(', ')}`,
   ].join('\n');
@@ -340,7 +338,6 @@ export function scheduledReportOrder(
   options: TurnOrderOptions & { messenger: string }
 ): string {
   const { report, previousFullReportAt } = scheduledReport(payload);
-  const action = (name: string): string => actionName(options.backend, name);
   if (report === 'full') {
     const since =
       previousFullReportAt === null
@@ -362,9 +359,9 @@ export function scheduledReportOrder(
   return [
     '[scheduled_task_reminder]',
     currentTime(now, options.timeZone),
-    `1. Read open work with ${action('work.list')} view=pipeline, keeping only the fields you need in the script.`,
-    `2. Pick the top five to eight by priority and deadline, including every item waiting on an owner decision; check ${action('schedule.upcoming')} if this session has not read it today.`,
-    `3. Update only the action_required board section with ${action('report.publish')}.`,
+    `1. Read open work with work.list view=pipeline, keeping only the fields you need in the script.`,
+    `2. Pick the top five to eight by priority and deadline, including every item waiting on an owner decision; check schedule.upcoming if this session has not read it today.`,
+    `3. Update only the action_required board section with report.publish.`,
     '4. Reply with a three-to-six-line reminder of those items, most urgent first, under a title that names them. If nothing needs the owner now, reply [ack] only.',
     `Messenger: ${options.messenger}`,
   ].join('\n');

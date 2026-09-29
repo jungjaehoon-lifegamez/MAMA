@@ -105,8 +105,10 @@ plan keeps one session and removes the growth instead, and records a superseding
 - **Lessons.** Top 3 by `memory.search` on the owner message or the notify order's message text,
   ≤1,200 chars, advisory. A lesson already shown is not repeated until the next local day or a new
   session, since compactions are not observable.
-- **Tools.** One line per tool and a permissive schema for Codex dynamic tools and the Claude MCP
-  list (`native-session.ts:125`, `action-mcp-server.ts:70`). The line holds the name, the
+- **Tools.** Codex gets one line per tool and a permissive schema as dynamic tools
+  (`native-session.ts:125`) and calls them from `exec`. Claude gets one MCP tool, `code_act`, as
+  Kagemusha's Claude CLI did: its description carries the same lines and the script calls the
+  actions by name (`action-mcp-server.ts`, `api/code-act-actions.ts`). The line holds the name, the
   arguments and the first sentence, as Kagemusha's code_act catalog lists
   `task_update({id, status, priority, deadline})`; a `help` action returns argument types,
   descriptions and examples as text. The usage guidance shows a targeted read filtered inside
@@ -181,10 +183,10 @@ without a separate check".
 6. The case wiki line is written in the record order (INTENT: history is written when the change
    happens); Kagemusha has no wiki.
 7. `brain.observeTurn` keyword extraction and the contract system are not ported.
-8. Codex keeps its native `exec` as the filter; `code_act` (#332) is not needed for the Codex
-   backend. The Claude backend's tool list changes with W22 and is covered by tests only; it is
-   not run live in this change and is recorded as unverified. Whether Claude needs `code_act` is
-   left open.
+8. Codex keeps its native `exec` as the filter and is not offered `code_act`; Claude gets only
+   `code_act` (owner decision 2026-09-29: do it as Kagemusha does). Codex ships a code mode, Claude CLI does not, and
+   Claude's Bash sandbox is denied `~/.mama/runtime/`, where the action socket lives. Kagemusha's
+   own `help()` built-in is not ported; inside `code_act`, `help` is MAMA's action.
 
 ## Implementation notes (code review round 1)
 

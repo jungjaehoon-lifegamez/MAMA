@@ -112,7 +112,7 @@ describe('owner standing prompt', () => {
     (backend) => {
       const prompt = ownerPrompt(backend);
       expect(prompt).toContain(
-        `${backend === 'claude' ? 'mcp__mama__help' : 'help'} (actions: [names])`
+        backend === 'claude' ? 'help({actions: [names]})' : 'help (actions: [names])'
       );
       if (backend === 'codex') {
         expect(prompt).toContain('A tools.* call returns JSON text {success, data, error}');
@@ -124,7 +124,9 @@ describe('owner standing prompt', () => {
         );
         expect(prompt).not.toContain('view: "pipeline"');
       } else {
-        expect(prompt).toContain('Tool results enter this session whole');
+        expect(prompt).toContain('Call every MAMA action inside mcp__mama__code_act');
+        expect(prompt).toContain('const tasks = (await work.list({view: "items", text: ');
+        expect(prompt).toContain('throws its error when it fails');
         expect(prompt).not.toContain('exec');
       }
     }
@@ -188,14 +190,21 @@ describe('owner standing prompt', () => {
         ownerPrincipalId: 'owner-test',
         agentId: 'agent-test',
       });
-      const response = await handleRequest(
-        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
-        { client: { describe: async () => surface.catalog.list() } as Client }
-      );
-      const tools = (response!.result as { tools: Array<{ name: string }> }).tools;
-      const exposedNames = tools.map(({ name }) =>
-        backend === 'claude' ? `mcp__mama__${name.replace(/[^a-zA-Z0-9_-]/g, '_')}` : name
-      );
+      // Codex calls its tools by name; Claude calls the same names inside its one tool, code_act.
+      const exposedNames =
+        backend === 'claude'
+          ? await (async () => {
+              const response = await handleRequest(
+                { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+                { client: { describe: async () => surface.catalog.list() } as Client }
+              );
+              const [tool] = (response!.result as { tools: Array<{ description: string }> }).tools;
+              return [
+                'mcp__mama__code_act',
+                ...[...tool!.description.matchAll(/^([\w.:]+)\(/gm)].map(([, name]) => name!),
+              ];
+            })()
+          : surface.hostToolDefinitions().map(({ name }) => name);
       const mentioned = [
         ...prompt.matchAll(
           /\bmcp__mama__[\w-]+|\b(?:memory|work|graph|source|deliver|report|manage|owner)(?:[.:][\w-]+)+/g

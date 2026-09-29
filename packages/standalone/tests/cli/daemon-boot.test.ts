@@ -246,9 +246,12 @@ describe('daemon bootstrap', () => {
       mcp = actionMcpSession();
       const listed = await mcp.request('tools/list');
       expect(listed.error).toBeUndefined();
-      expect((listed.result as { tools: Array<{ name: string }> }).tools).toEqual(
-        expect.arrayContaining([expect.objectContaining({ name: 'work.create' })])
-      );
+      expect((listed.result as { tools: Array<{ name: string }> }).tools).toEqual([
+        expect.objectContaining({
+          name: 'code_act',
+          description: expect.stringContaining('\nwork.create({'),
+        }),
+      ]);
       const called = await mcp.request('tools/call', {
         name: 'work.create',
         arguments: {

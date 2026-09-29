@@ -30,6 +30,34 @@ function fixture() {
   return { db, surface };
 }
 describe('native tool trace assembly', () => {
+  it('records every action code_act makes as its own trace row in the calling model run', async () => {
+    const { db, surface } = fixture();
+    const run = await beginModelRun(db as unknown as DatabaseInstance, { model_id: 'fixture' });
+    const result = await surface.hostToolCall(
+      'code_act',
+      {
+        code: 'const [a, b] = await Promise.all([memory.checkpoint.list({}), memory.checkpoint.list({})]); return [a, b].length;',
+      },
+      'op-code-act',
+      { session: { modelRunId: run.model_run_id } }
+    );
+    expect(result).toMatchObject({
+      status: 'completed',
+      data: { success: true, value: 2, hostCallCount: 2 },
+    });
+    const rows = db
+      .prepare(
+        'SELECT tool_name, execution_status FROM tool_traces WHERE model_run_id = ? ORDER BY tool_name'
+      )
+      .all(run.model_run_id) as Array<{ tool_name: string; execution_status: string }>;
+    expect(rows.map((row) => row.tool_name)).toEqual([
+      'code_act',
+      'memory.checkpoint.list',
+      'memory.checkpoint.list',
+    ]);
+    expect(rows.every((row) => row.execution_status === 'completed')).toBe(true);
+  });
+
   it('persists paired owner and child observations with bounded redacted inputs and statuses', async () => {
     const { db, surface } = fixture();
     const home = mkdtempSync(join(tmpdir(), 'native-traces-'));

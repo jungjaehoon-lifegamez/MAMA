@@ -19,6 +19,12 @@ All notable changes to this project will be documented in this file.
   reads results through a helper that throws when an action fails: a failed call returns
   `{success: false, error}` without throwing, and a report once dropped the whole pipeline silently. A new session
   is told to read newer work or sources only when a turn needs them.
+- Claude backend: the agent calls MAMA actions from JavaScript inside one tool, `code_act`, as
+  Kagemusha's Claude setup does, and returns only what the turn needs. Its tool list is 6,801
+  characters. Since 0.58.0 each action was its own tool with an empty schema, and Claude sent
+  numbers, lists and objects as strings (`days: "14"`, `slots: "{...}"`), so the board, saved
+  corrections and work revisions were refused. Inside `code_act` a failed action throws with its
+  error. Codex keeps its own `exec`.
 - MCP server: `save` asks to search for related decisions first in plain words instead of a
   "REQUIRED" banner on `search`. Plugin: the session-start greeting instruction is three lines
   instead of fourteen and mentions a checkpoint's next step only when one is shown.
