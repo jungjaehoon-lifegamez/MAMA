@@ -29,9 +29,10 @@ owner policy and the lessons shown with the messages.
 The second turn records the change. The agent finds the work the messages belong
 to, revises or creates it with links to the messages, updates the board sections
 that change and adds a dated line to the case's wiki page. When nothing needs
-recording it says so with `work.no_update`. MAMA then checks the work ledger and
-orders the record again if neither happened, up to three times; after that the
-daemon log shows `record order lost`.
+recording it says so with `work.no_update`. MAMA then checks the work ledger. If
+neither happened, the messages wait and are recorded together with the channel's
+next change, or on their own five minutes later. After three attempts the daemon
+log shows `record order lost`.
 
 Messages more than six hours old when they arrive, such as a first collection's
 history, are stored but not delivered as live changes.

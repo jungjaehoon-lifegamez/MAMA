@@ -64,9 +64,12 @@ export interface TurnLesson extends Lesson {
 
 /** The record order a live delta's notify turn leaves behind (W23). */
 export interface RecordOrderPort {
-  /** Enqueue the first record order for a live delta; called before its reply is routed. */
+  /**
+   * Enqueue the first record order for a live delta, carrying the channel's unrecorded batches;
+   * called before its reply is routed.
+   */
   enqueueFirst(row: MailboxRow): void;
-  /** Check a finished record order; enqueue the next attempt when the batch is still unrecorded. */
+  /** Check a finished record order; a batch still unrecorded waits for its channel's next order. */
   onResult(row: MailboxRow, modelRunId: string | null): void | Promise<void>;
   /** A record row that went uncertain or dead: the same check, run at once. */
   onLost(row: MailboxRow, reason: string): void | Promise<void>;

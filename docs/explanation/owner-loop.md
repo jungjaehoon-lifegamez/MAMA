@@ -52,8 +52,10 @@ and ends in `[notify]` with owner-facing text or `[ack]`. Before that reply is r
 queues a record order for the same messages: the agent revises or creates the work items with
 links to the messages, updates the board sections that changed (`briefing`, `action_required`,
 `decisions`, `pipeline`) and the case's wiki page, or declares that nothing needs recording. The
-daemon then checks the ledger for a revision citing those messages or the declaration, and orders
-the record again, at most three times in all, before it logs the batch as lost. Messages more than
+daemon then checks the ledger for a revision citing those messages or the declaration. A batch
+with neither waits, as Kagemusha's cursor leaves it: it rides with the channel's next record order,
+or goes alone five minutes later when no delta comes first. After three attempts in all the daemon
+logs the batch as lost. Messages more than
 six hours old when they arrive are not delivered as live deltas.
 
 Scheduled full reports default to 08:00, 13:00 and 18:00 Asia/Seoul. Hourly reminders run from

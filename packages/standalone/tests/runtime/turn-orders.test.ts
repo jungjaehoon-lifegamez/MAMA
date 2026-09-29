@@ -260,7 +260,10 @@ describe('turn orders', () => {
       'derived_from links to the observations below and eventDatetime set to the source event time',
       'manage.wiki.update',
       'work.no_update',
-      '5. Reply exactly [ack].',
+      // Kagemusha's order makes the write mandatory and says it is checked (2026-09-29).
+      '5. Step 3 or 4 is required: the order is checked when it ends and counts as done only when these observations are cited',
+      'Correct a refused write',
+      '6. Reply exactly [ack].',
       'observations: obs-1, obs-2',
       '[09-29 01:40] sender: files sent',
       'reading its contract with help first in a session',
@@ -290,6 +293,46 @@ describe('turn orders', () => {
     );
     expect(noWiki).not.toContain('wiki');
     expect(noWiki).toContain('work.no_update');
+  });
+
+  it('covers the batches a record order carries: their observations and the last five lines', () => {
+    const line = (minute: number, text: string) => ({
+      sourceAt: new Date(now.getTime() + minute * 60_000).toISOString(),
+      author: 'sender',
+      text,
+    });
+    const record = {
+      order: 'record' as const,
+      deltaStimulusId: 'source_delta:new',
+      source: 'chat',
+      channel: 'room',
+      observationRefs: ['obs-5', 'obs-6'],
+      lines: [line(5, 'fifth'), line(6, 'sixth')],
+      attempt: 1,
+      carried: [
+        {
+          deltaStimulusId: 'source_delta:old',
+          observationRefs: ['obs-1', 'obs-2'],
+          lines: [line(1, 'first'), line(2, 'second'), line(3, 'third'), line(4, 'fourth')],
+          attempt: 2,
+        },
+      ],
+    };
+    expect(parseRecordOrder(record as never)).toEqual(record);
+    expect(() =>
+      parseRecordOrder({ ...record, carried: [{ deltaStimulusId: 'x' }] } as never)
+    ).toThrow(/deltaStimulusId/);
+    const order = deltaRecordOrder(record, now, {
+      backend: 'codex',
+      timeZone: 'UTC',
+      wikiEnabled: false,
+    });
+    expect(order).toContain('[delta_record] room · 4 messages');
+    expect(order).toContain('observations: obs-1, obs-2, obs-5, obs-6');
+    expect(order).not.toContain('sender: first');
+    for (const text of ['second', 'third', 'fourth', 'fifth', 'sixth'])
+      expect(order).toContain(`sender: ${text}`);
+    expect(order.indexOf('fourth')).toBeLessThan(order.indexOf('fifth'));
   });
 
   it('gives scheduled reports their data, leaving the procedure to the standing prompt', () => {

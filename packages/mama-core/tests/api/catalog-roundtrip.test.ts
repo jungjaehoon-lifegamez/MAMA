@@ -529,4 +529,23 @@ describe('Story R2: action catalog and dispatch roundtrip', () => {
     expect(validateInput(schema, { a: 'ok', n: -1 }, 'input')).toContain('>=');
     expect(validateInput(schema, { a: 'ok', tag: 'z' }, 'input')).toContain('one of');
   });
+
+  it('a refused oneOf names the allowed shapes and the field description', () => {
+    const schema = {
+      type: 'object' as const,
+      properties: {
+        at: {
+          description: 'Event time as epoch milliseconds, e.g. 1760000000000.',
+          oneOf: [{ type: 'number' as const }, { type: 'null' as const }],
+        },
+        mode: { oneOf: [{ const: 'fast' }, { enum: ['slow', 'off'] }] },
+      },
+    };
+    expect(validateInput(schema, { at: '2026-01-01T00:00:00+09:00' }, 'input')).toBe(
+      'input.at must match exactly one of: number, null (0 matched). Event time as epoch milliseconds, e.g. 1760000000000.'
+    );
+    expect(validateInput(schema, { mode: 'up' }, 'input')).toBe(
+      'input.mode must match exactly one of: "fast", "slow" | "off" (0 matched).'
+    );
+  });
 });

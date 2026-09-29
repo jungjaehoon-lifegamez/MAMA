@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- An unrecorded delta batch waits instead of getting the same record order back at once, as
+  Kagemusha leaves a batch behind its cursor: it rides with the channel's next record order, or
+  goes alone five minutes later when no delta of that channel comes first. After three attempts it
+  is still logged as lost. On 2026-09-29 the two immediate retries of one batch reached the same
+  session within two seconds each and were answered `[ack]` with no tool call.
+- The record order says that recording or `work.no_update` is required, that the order is checked
+  when it ends, and that a refused write is corrected and written again. The agent had ended a
+  turn with two refused writes and `[ack]`.
+- `work.create` and `work.revise` accept `eventDatetime` as an ISO time with its offset as well as
+  epoch milliseconds, as `work.list` does for its time bounds.
+
+### Fixed (mama-core)
+
+- A refused `oneOf` input names the allowed shapes and the field's description. It had said only
+  "must match exactly one allowed shape (0 matched)", and the agent dropped the field together
+  with the links it needed.
+
 ## mama-os [0.59.0] / plugin [2.0.3] - 2026-09-29
 
 ### Changed (plugin)

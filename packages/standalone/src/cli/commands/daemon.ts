@@ -492,8 +492,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         ),
       onRecordOrderEvent: (event) => {
         const line = `record order ${event.type} delta=${event.deltaStimulusId} attempt=${event.attempt}${
-          'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''
-        }`;
+          'order' in event ? ` order=${event.order}` : ''
+        }${'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''}`;
         if (event.type === 'lost') logger.error(line);
         else logger.info(line);
       },

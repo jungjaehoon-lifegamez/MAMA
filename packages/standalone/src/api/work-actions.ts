@@ -212,12 +212,19 @@ function workListAsOf(value: unknown): number | undefined {
  * takes: on 2026-09-29 the agent passed "2026-09-29T00:00:00+09:00" and the call failed.
  */
 function workListTime(value: unknown, field: string): number {
-  if (typeof value === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-  }
+  const parsed = offsetIsoTime(value);
+  if (parsed !== undefined) return parsed;
   if (Number.isSafeInteger(value) && (value as number) >= 0) return value as number;
   throw new Error(`work.list ${field} must be epoch milliseconds or an ISO time with its offset`);
+}
+
+const OFFSET_ISO_PATTERN = '^.+(?:Z|[+-]\\d{2}:\\d{2})$';
+
+/** An ISO time that states its offset (Z or ±HH:MM), as epoch ms; undefined for anything else. */
+function offsetIsoTime(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !new RegExp(OFFSET_ISO_PATTERN).test(value)) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function workListFilter(input: Record<string, unknown>): WorkListFilter {
@@ -1134,8 +1141,8 @@ const commandFields: Record<string, ActionSchemaObject> = {
   },
   eventDatetime: {
     description:
-      'Source event time as epoch milliseconds, not replay time, or null, e.g. 1760000000000.',
-    oneOf: [{ type: 'number' }, { type: 'null' }],
+      'Source event time as epoch milliseconds or an ISO time with its offset, not replay time, or null, e.g. 1760000000000 or "2026-01-01T09:30:00+09:00".',
+    oneOf: [{ type: 'number' }, { type: 'string', pattern: OFFSET_ISO_PATTERN }, { type: 'null' }],
   },
   recordedAt: {
     type: 'number',
@@ -1207,6 +1214,21 @@ function assertSourceRefsExist(body: Record<string, unknown>, ports: WorkPorts):
   }
 }
 
+/**
+ * The ledger stores eventDatetime as epoch ms. On 2026-09-29 an agent passed the source time as
+ * "…T12:30:00+09:00", the write was refused, and the record order ended without a record.
+ */
+function withEventEpoch(body: Record<string, unknown>, action: string): Record<string, unknown> {
+  if (typeof body.eventDatetime !== 'string') return body;
+  const eventDatetime = offsetIsoTime(body.eventDatetime);
+  if (eventDatetime === undefined)
+    throw new JudgmentError(
+      'INVALID_COMMAND',
+      `${action} eventDatetime must be epoch milliseconds or an ISO time with its offset`
+    );
+  return { ...body, eventDatetime };
+}
+
 function commandFieldsFrom(body: Record<string, unknown>): Record<string, unknown> {
   const { commitmentId: _commitmentId, expectedRevision: _expectedRevision, ...fields } = body;
   return fields;
@@ -1265,7 +1287,7 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
         ],
       },
       exec: (input, context) => {
-        const body = input as Record<string, unknown>;
+        const body = withEventEpoch(input as Record<string, unknown>, 'work.create');
         assertReplayEventDatetime(body, context, 'work.create');
         assertSourceRefsExist(body, ports);
         return ports.knowledge.createWork(
@@ -1299,7 +1321,7 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
         ],
       },
       exec: (input, context) => {
-        const body = input as Record<string, unknown>;
+        const body = withEventEpoch(input as Record<string, unknown>, 'work.revise');
         assertReplayEventDatetime(body, context, 'work.revise');
         assertSourceRefsExist(body, ports);
         const commitmentId = body.commitmentId as string;

@@ -359,6 +359,30 @@ export interface RecordOrderPayload {
   /** The delta's last lines, as Kagemusha's record turn carries them (five, 300 chars each). */
   lines: RecordOrderLine[];
   attempt: number;
+  /**
+   * Earlier batches of the same channel still unrecorded, taken up with this order the way
+   * Kagemusha's next tick re-reads everything behind its cursor. Absent when there are none.
+   */
+  carried?: RecordOrderBatch[];
+}
+
+/** One delta's batch inside a record order, at the attempt this order makes for it. */
+export interface RecordOrderBatch {
+  deltaStimulusId: string;
+  observationRefs: string[];
+  lines: RecordOrderLine[];
+  attempt: number;
+}
+
+/** The order's own batch first, then the batches it carries. */
+export function recordOrderBatches(record: RecordOrderPayload): RecordOrderBatch[] {
+  const own: RecordOrderBatch = {
+    deltaStimulusId: record.deltaStimulusId,
+    observationRefs: record.observationRefs,
+    lines: record.lines,
+    attempt: record.attempt,
+  };
+  return [own, ...(record.carried ?? [])];
 }
 
 /** The record order's payload, built only from the delta so a replayed result enqueues the same row. */
@@ -391,18 +415,28 @@ export function recordOrderId(deltaStimulusId: string, attempt: number): string 
   return `record:${deltaStimulusId}:${attempt}`;
 }
 
+function isRecordOrderBatch(value: JsonValue): boolean {
+  const batch = payloadObject(value);
+  return (
+    batch !== null &&
+    typeof batch.deltaStimulusId === 'string' &&
+    Array.isArray(batch.observationRefs) &&
+    batch.observationRefs.every((ref) => typeof ref === 'string') &&
+    Array.isArray(batch.lines) &&
+    typeof batch.attempt === 'number'
+  );
+}
+
 export function parseRecordOrder(payload: JsonValue | undefined): RecordOrderPayload {
   const value = payloadObject(payload);
   if (
     !value ||
     value.order !== 'record' ||
-    typeof value.deltaStimulusId !== 'string' ||
+    !isRecordOrderBatch(value) ||
     (value.source !== undefined && typeof value.source !== 'string') ||
     typeof value.channel !== 'string' ||
-    !Array.isArray(value.observationRefs) ||
-    !value.observationRefs.every((ref) => typeof ref === 'string') ||
-    !Array.isArray(value.lines) ||
-    typeof value.attempt !== 'number'
+    (value.carried !== undefined &&
+      (!Array.isArray(value.carried) || !value.carried.every(isRecordOrderBatch)))
   )
     throw new Error(
       'A record order needs deltaStimulusId, channel, observationRefs, lines and attempt'
@@ -426,12 +460,19 @@ export function deltaRecordOrder(
   const context = record.source
     ? `source.recent({channels: ["${record.source}:${record.channel}"], perChannel: 20})`
     : `source.recent (find the channel "${record.channel}" in its list, then read its lines with channels and perChannel: 20)`;
-  const lines = record.lines.map((line) => {
-    const known = Number.isFinite(Date.parse(line.sourceAt));
-    return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
-  });
+  // Carried batches are older than the order's own, so their lines come first; like Kagemusha's
+  // tick, the order shows the last five of everything it covers.
+  const batches = [...(record.carried ?? []), record];
+  const observationRefs = [...new Set(batches.flatMap((batch) => batch.observationRefs))].sort();
+  const lines = batches
+    .flatMap((batch) => batch.lines)
+    .slice(-5)
+    .map((line) => {
+      const known = Number.isFinite(Date.parse(line.sourceAt));
+      return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
+    });
   return [
-    `[delta_record] ${record.channel} · ${record.observationRefs.length} messages`,
+    `[delta_record] ${record.channel} · ${observationRefs.length} messages`,
     currentTime(now, options.timeZone),
     ...(lines.length === 0 ? [] : [wrapUntrustedContent('source_delta', lines.join('\n'))]),
     'Record what this delta changed:',
@@ -443,8 +484,11 @@ export function deltaRecordOrder(
         : ''
     }. A lesson saved here links these observations with derived_from.`,
     `4. If nothing needs recording, call work.no_update with the reason and the observations below.`,
-    '5. Reply exactly [ack].',
-    `observations: ${record.observationRefs.join(', ')}`,
+    // Kagemusha's reconcile order makes the write mandatory and checks it; an agent that did not
+    // know the check ended a turn with two refused writes and [ack].
+    "5. Step 3 or 4 is required: the order is checked when it ends and counts as done only when these observations are cited by a revision's derived_from links or by work.no_update. Correct a refused write (help gives its contract) and write it again.",
+    '6. Reply exactly [ack].',
+    `observations: ${observationRefs.join(', ')}`,
   ].join('\n');
 }
 

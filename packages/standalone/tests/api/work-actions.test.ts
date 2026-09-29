@@ -627,6 +627,46 @@ describe('minimal work actions', () => {
     expect(knowledge.reviseWork).not.toHaveBeenCalled();
   });
 
+  it('reads an offset ISO eventDatetime as epoch ms and names the allowed forms otherwise', async () => {
+    const knowledge = { createWork: vi.fn(), reviseWork: vi.fn().mockReturnValue({}) };
+    const dispatch = createDispatcher(
+      createCatalog(
+        minimalWorkActionRegistrations({
+          observationExists: () => true,
+          knowledge: knowledge as never,
+        })
+      )
+    );
+    const revise = (eventDatetime: unknown, operationId: string) =>
+      dispatch(
+        {
+          action: 'work.revise',
+          operationId,
+          input: {
+            commitmentId: 'commitment-test',
+            summary: 'summary',
+            eventDatetime,
+            set: { title: 'work' },
+          },
+        },
+        { access }
+      );
+
+    expect(await revise('2026-01-01T09:30:00+09:00', 'operation-offset-time')).toMatchObject({
+      status: 'completed',
+    });
+    expect(knowledge.reviseWork.mock.calls[0]![0]).toMatchObject({
+      eventDatetime: Date.parse('2026-01-01T00:30:00Z'),
+    });
+
+    const local = await revise('2026-01-01 09:30', 'operation-local-time');
+    expect(local).toMatchObject({ status: 'failed', error: { code: 'invalid_input' } });
+    expect((local as { error: { message: string } }).error.message).toContain(
+      'must match exactly one of: number, string, null (0 matched). Source event time as epoch milliseconds or an ISO time with its offset'
+    );
+    expect(knowledge.reviseWork).toHaveBeenCalledTimes(1);
+  });
+
   it('describes the owner work contract fields and stable citation handles', () => {
     const knowledge = { createWork: vi.fn(), reviseWork: vi.fn() };
     const contracts = minimalWorkActionRegistrations({

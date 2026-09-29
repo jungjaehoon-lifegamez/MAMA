@@ -407,7 +407,11 @@ export function validateInput(
   if (schema.oneOf !== undefined) {
     const matches = schema.oneOf.filter((sub) => validateInput(sub, value, path) === null).length;
     if (matches !== 1) {
-      return `${path} must match exactly one allowed shape (${matches} matched).`;
+      // A refusal names what is allowed: "(0 matched)" alone once left a caller dropping the
+      // field and the write with it.
+      const shapes = schema.oneOf.map(shapeName).join(', ');
+      const described = schema.description === undefined ? '' : ` ${schema.description}`;
+      return `${path} must match exactly one of: ${shapes} (${matches} matched).${described}`;
     }
   }
   if (typeof value === 'number') {
@@ -495,6 +499,13 @@ export function validateInput(
     }
   }
   return null;
+}
+
+function shapeName(schema: ActionSchemaObject): string {
+  if (schema.const !== undefined) return JSON.stringify(schema.const);
+  if (schema.enum !== undefined)
+    return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
+  return schema.type ?? 'a described shape';
 }
 
 function typeMismatch(
