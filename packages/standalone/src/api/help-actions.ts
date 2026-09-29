@@ -84,6 +84,45 @@ export function actionCatalogLine(
   return `${contract.name}(${actionSignature(contract.inputSchema)}) — ${firstSentence(contract.summary)}`;
 }
 
+/**
+ * The argument types a tool-calling model needs, without descriptions: each argument's type, the
+ * values of an enum, the alternatives of a oneOf, the item type of a list and one level of an
+ * object's fields. Claude calls MCP tools directly; with only `{type: 'object'}` it sent numbers,
+ * lists and objects as strings (`days: "14"`, `slots: "{...}"`) and every such call was refused.
+ */
+export function actionInputTypes(inputSchema: unknown, depth = 0): Schema {
+  const schema = asSchema(inputSchema);
+  if (!schema) return {};
+  if ('const' in schema) return { const: schema.const };
+  if (Array.isArray(schema.enum))
+    return { ...(schema.type === undefined ? {} : { type: schema.type }), enum: schema.enum };
+  const alternatives = Array.isArray(schema.oneOf) ? schema.oneOf : schema.anyOf;
+  if (Array.isArray(alternatives) && depth > 0)
+    return { anyOf: alternatives.map((alternative) => actionInputTypes(alternative, depth + 1)) };
+  if (schema.type === 'array')
+    return {
+      type: 'array',
+      ...(schema.items === undefined ? {} : { items: actionInputTypes(schema.items, depth) }),
+    };
+  if (schema.type === 'object' || schema.properties !== undefined) {
+    const properties = asSchema(schema.properties);
+    if (!properties || depth > 1) return { type: 'object' };
+    return {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(properties).map(([name, property]) => [
+          name,
+          actionInputTypes(property, depth + 1),
+        ])
+      ),
+      ...(Array.isArray(schema.required) && schema.required.length > 0
+        ? { required: schema.required }
+        : {}),
+    };
+  }
+  return schema.type === undefined ? {} : { type: schema.type };
+}
+
 function typeText(value: unknown, depth: number): string {
   const schema = asSchema(value);
   if (!schema) return 'any';

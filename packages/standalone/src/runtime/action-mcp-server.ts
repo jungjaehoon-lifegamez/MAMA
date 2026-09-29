@@ -18,7 +18,7 @@ import { createClient, type Client } from '@jungjaehoon/mama-core/client/client'
 import { readSessionCredential } from './session-credential.js';
 import { CLAUDE_CALLER_FIELD } from './claude-caller-hook.js';
 import type { NativeToolCaller } from '@jungjaehoon/mama-core/action-contracts';
-import { actionCatalogLine } from '../api/help-actions.js';
+import { actionCatalogLine, actionInputTypes } from '../api/help-actions.js';
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -62,12 +62,15 @@ function runtimeClient(home: string): Client {
   });
 }
 
-/** One line per action (name, arguments, first sentence), as for the Codex session; `help` has the detail. */
+/**
+ * One line per action (name, arguments, first sentence), as for the Codex session, with the
+ * argument types Claude needs to call it directly; `help` has descriptions and examples.
+ */
 function describeTool(contract: ActionContract) {
   return {
     name: contract.name,
     description: actionCatalogLine(contract),
-    inputSchema: { type: 'object' },
+    inputSchema: actionInputTypes(contract.inputSchema),
   };
 }
 

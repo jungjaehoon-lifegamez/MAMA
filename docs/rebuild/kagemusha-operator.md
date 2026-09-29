@@ -212,7 +212,9 @@ without a separate check".
   pipeline and 24 hours of sources, and 6 of 7 notify turns copied it; it now shows a targeted
   read. Measured as Codex function definitions the catalog grows from 5,356 to 8,234 chars, so the
   tool-text target moves from 5,000 to 10,000 for the arguments (still a fifth of the 48,106
-  baseline).
+  baseline). On Claude, which calls MCP tools directly rather than from a script, each tool also
+  carries its argument types without descriptions (21,110 chars for the list): with the empty
+  schema of 0.58.0 it sent numbers, lists and objects as strings and every such call was refused.
 - Deploy order: merge the standing corrections into `owner-policy.md` (and fix its line 62)
   before this build runs, because it removes the corrections block (relocate before delete).
 

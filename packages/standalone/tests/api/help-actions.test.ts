@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ActionContract } from '@jungjaehoon/mama-core';
 import {
   actionCatalogLine,
+  actionInputTypes,
   actionSignature,
   helpActionRegistrations,
 } from '../../src/api/help-actions.js';
@@ -136,5 +137,56 @@ describe('help action', () => {
       run({ actions: ['mcp__mama__memory_read_provenance', 'work.list'] }).split('\n\n')
     ).toHaveLength(2);
     expect(() => run({ actions: ['work.delete'] })).toThrow(/unknown actions: work.delete/);
+  });
+});
+
+describe('action input types', () => {
+  it('keeps types, enums, alternatives, list items and one level of object fields; drops descriptions', () => {
+    expect(
+      actionInputTypes({
+        type: 'object',
+        required: ['days', 'slots'],
+        properties: {
+          days: { type: 'integer', minimum: 1, maximum: 90, description: 'Days ahead, e.g. 14.' },
+          view: { type: 'string', enum: ['stored'] },
+          mode: { const: 'stored' },
+          eventDatetime: { oneOf: [{ type: 'number' }, { type: 'null' }] },
+          links: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['relation'],
+              properties: {
+                relation: { type: 'string', enum: ['derived_from'] },
+                target: { type: 'object', properties: { id: { type: 'string' } } },
+              },
+            },
+          },
+          slots: { type: 'object', description: 'Board sections.' },
+        },
+        oneOf: [{ required: ['days'] }],
+      })
+    ).toEqual({
+      type: 'object',
+      properties: {
+        days: { type: 'integer' },
+        view: { type: 'string', enum: ['stored'] },
+        mode: { const: 'stored' },
+        eventDatetime: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+        links: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              relation: { type: 'string', enum: ['derived_from'] },
+              target: { type: 'object' },
+            },
+            required: ['relation'],
+          },
+        },
+        slots: { type: 'object' },
+      },
+      required: ['days', 'slots'],
+    });
   });
 });
