@@ -103,6 +103,36 @@ describe('code_act', () => {
     );
   });
 
+  it('gives an escaped script no inherited environment', async () => {
+    process.env.CODE_ACT_TEST_SECRET = 'must-not-leak';
+    try {
+      const run = surface(['code_act']);
+      const env = await run(
+        'const p = this.constructor.constructor("return process")(); return Object.keys(p.env);'
+      );
+      // The OS may add its own (macOS sets __CF_USER_TEXT_ENCODING); nothing is inherited.
+      const keys = (env as { data: { value: string[] } }).data.value;
+      for (const inherited of ['CODE_ACT_TEST_SECRET', 'PATH', 'HOME'])
+        expect(keys).not.toContain(inherited);
+    } finally {
+      delete process.env.CODE_ACT_TEST_SECRET;
+    }
+  });
+
+  it('returns a single expression, with or without its closing semicolon', async () => {
+    const run = surface(['code_act', 'work.list']);
+    for (const code of ['work.list({ value: "x" })', 'work.list({ value: "x" });']) {
+      const result = await run(code);
+      expect((result as { data: { value: { input: unknown } } }).data.value.input).toEqual({
+        value: 'x',
+      });
+    }
+    const inString = await run('work.list({ value: "a;b" })');
+    expect((inString as { data: { value: { input: unknown } } }).data.value.input).toEqual({
+      value: 'a;b',
+    });
+  });
+
   it('kills a worker that never finishes', async () => {
     const result = await runCodeAct(
       'await new Promise(() => {});',

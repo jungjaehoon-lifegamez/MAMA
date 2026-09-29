@@ -118,8 +118,8 @@ describe('help action', () => {
     expect(run({})).toBe(contracts.map(actionCatalogLine).join('\n'));
   });
 
-  it('returns each contract as text for dotted, Codex and Claude names alike', () => {
-    for (const name of ['work.list', 'work_list', 'mcp__mama__work_list']) {
+  it('returns each contract as text for dotted and Codex names alike', () => {
+    for (const name of ['work.list', 'work_list']) {
       expect(run({ actions: [name] })).toBe(
         [
           'work.list({text, view?: "overview"|"items", links?, eventDatetime?})',
@@ -132,9 +132,7 @@ describe('help action', () => {
         ].join('\n')
       );
     }
-    expect(
-      run({ actions: ['mcp__mama__memory_read_provenance', 'work.list'] }).split('\n\n')
-    ).toHaveLength(2);
+    expect(run({ actions: ['memory_read_provenance', 'work.list'] }).split('\n\n')).toHaveLength(2);
     expect(() => run({ actions: ['work.delete'] })).toThrow(/unknown actions: work.delete/);
   });
 });

@@ -183,9 +183,8 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
         const contracts = ports.contracts();
         if (requested === undefined) return contracts.map(actionCatalogLine).join('\n');
         if (!Array.isArray(requested)) throw invalidInput('actions must be a list of action names');
-        // The model sees tools.work_list (Codex) or mcp__mama__work_list (Claude); both name work.list.
-        const key = (name: string): string =>
-          name.replace(/^mcp__mama__/, '').replace(/[.:]/g, '_');
+        // Codex sees tools.work_list and Claude calls work.list inside code_act; both name work.list.
+        const key = (name: string): string => name.replace(/[.:]/g, '_');
         const byName = new Map(contracts.map((contract) => [key(contract.name), contract]));
         const unknown = requested.filter((name) => !byName.has(key(String(name))));
         if (unknown.length > 0) throw invalidInput(`unknown actions: ${unknown.join(', ')}`);

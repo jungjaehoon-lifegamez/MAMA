@@ -79,7 +79,13 @@ function codeActTool(contracts: readonly ActionContract[]) {
       'Actions:',
       ...contracts.filter((contract) => contract !== codeAct).map(actionCatalogLine),
     ].join('\n'),
-    inputSchema: codeAct.inputSchema,
+    // Without additionalProperties: the PreToolUse hook adds __mama_caller to the input, which
+    // callTool strips before the dispatcher checks the strict schema.
+    inputSchema: {
+      type: 'object',
+      required: ['code'],
+      properties: (codeAct.inputSchema as { properties: Record<string, unknown> }).properties,
+    },
   };
 }
 
@@ -93,7 +99,9 @@ function textResult(value: unknown, isError: boolean): ToolResult {
 function resultContent(name: string, result: ActionResult): ToolResult {
   if (result.status === 'completed') {
     // A code_act script that threw completes as an action but failed as a call.
-    const failed = (result.data as { success?: unknown } | null)?.success === false;
+    const failed =
+      name === CODE_ACT_CONTRACT.name &&
+      (result.data as { success?: unknown } | null)?.success === false;
     return textResult(
       { success: !failed, data: untrustedToolData(name, result.data ?? null) },
       failed

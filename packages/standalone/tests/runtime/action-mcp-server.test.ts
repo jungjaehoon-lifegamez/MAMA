@@ -167,9 +167,15 @@ describe('mama action MCP server — handleRequest unit surface', () => {
     );
     const tools = (response?.result as { tools: Array<Record<string, unknown>> }).tools;
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({
+    // No additionalProperties toward Claude: the caller hook adds __mama_caller to the input.
+    expect(tools[0]).toEqual({
       name: 'code_act',
-      inputSchema: CODE_ACT_CONTRACT.inputSchema,
+      description: expect.any(String),
+      inputSchema: {
+        type: 'object',
+        required: ['code'],
+        properties: (CODE_ACT_CONTRACT.inputSchema as { properties: unknown }).properties,
+      },
     });
     const description = tools[0].description as string;
     expect(description.startsWith(CODE_ACT_CONTRACT.summary)).toBe(true);

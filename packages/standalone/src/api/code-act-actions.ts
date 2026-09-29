@@ -59,10 +59,12 @@ process.on('message', async (msg) => {
   sandbox.globalThis = sandbox;
   try {
     const trimmed = msg.code.trim();
+    // A single line with no statement keyword is returned; its closing semicolon is dropped.
+    const expression = trimmed.replace(/;$/, '');
     const needsReturn =
-      !trimmed.startsWith('return ') && !trimmed.startsWith('return\\n') && !trimmed.includes('\\n') &&
-      !/^(if|for|while|var|let|const|switch|try|throw|class|function)\\b/.test(trimmed);
-    const body = needsReturn ? 'return ' + trimmed : msg.code;
+      !expression.startsWith('return ') && !expression.startsWith('return\\n') && !expression.includes('\\n') &&
+      !/^(if|for|while|var|let|const|switch|try|throw|class|function)\\b/.test(expression);
+    const body = needsReturn ? 'return ' + expression : msg.code;
     const script = new vm.Script('(async () => { ' + body + '\\n})()', { filename: 'code_act.js' });
     const value = await script.runInContext(vm.createContext(sandbox), { timeout: msg.timeoutMs });
     process.send({ type: 'result', success: true, value, logs }, () => process.exit(0));
@@ -102,8 +104,11 @@ export function runCodeAct(
   const startedAt = Date.now();
   let hostCallCount = 0;
   return new Promise((resolve) => {
+    // An empty environment: --permission does not guard process.env, and the daemon's holds
+    // MAMA's own credentials (auth.env), which an escaped script must not read.
     const child = spawn(process.execPath, ['--permission', '-e', WORKER_SOURCE], {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      env: {},
     });
     let stderr = '';
     let settled = false;
@@ -124,7 +129,8 @@ export function runCodeAct(
       timeoutMs
     );
     child.stderr!.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
+      // Keep the tail only: an escaped script could write to stderr for the whole timeout.
+      stderr = (stderr + chunk.toString('utf8')).slice(-2000);
     });
     child.on(
       'message',
@@ -148,6 +154,8 @@ export function runCodeAct(
           return;
         }
         if (msg.type === 'callTool') {
+          // A call that arrives after a timeout must not start an action nobody will see.
+          if (settled) return;
           hostCallCount += 1;
           try {
             const result = await host.call(msg.name!, msg.params);
@@ -192,7 +200,7 @@ export function runCodeAct(
 export const CODE_ACT_CONTRACT: ActionContract = {
   name: 'code_act',
   summary:
-    'Run JavaScript that calls MAMA actions and returns only what the turn needs. Every action is an async function by its name, e.g. `return (await work.list({ view: "items", text: "asset" })).tasks.map((task) => [task.title, task.status])`; a failed action throws with its error; independent calls go together with `Promise.all`; `help({ actions: ["work.revise"] })` returns an action\'s argument types and examples. The code runs in a separate process with no file, process or network access; its return value, console.log lines and any error come back.',
+    'Run JavaScript that calls MAMA actions and returns only what the turn needs. Every action is an async function by its name, e.g. `return (await work.list({ view: "items", text: "asset" })).tasks.map((task) => [task.title, task.status])`; a failed action throws with its error; independent calls go together with `Promise.all`; `help({ actions: ["work.revise"] })` returns an action\'s argument types and examples; a name with a colon is called as `memory["read:provenance"]({...})`. The code runs in a separate process with no file or process access and an empty environment; its return value, console.log lines and any error come back.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -223,6 +231,9 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
           (contract) => contract.name !== CODE_ACT_CONTRACT.name && granted.has(contract.name)
         )
         .map((contract) => ({ name: contract.name }));
+      // Inner writes take their command ids from this one; without it two calls would collide.
+      const operationId = context.operationId;
+      if (!operationId) throw new Error('code_act requires an operation id');
       const callable = new Set(functions.map((fn) => fn.name));
       let calls = 0;
       return runCodeAct((input as { code: string }).code, {
@@ -235,7 +246,7 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
             {
               action: name,
               input: params ?? {},
-              operationId: `${context.operationId ?? 'code_act'}#${calls}`,
+              operationId: `${operationId}#${calls}`,
             },
             context
           );
