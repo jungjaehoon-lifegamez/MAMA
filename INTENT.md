@@ -62,8 +62,8 @@ member permissions and non-owner input wait until the checks below pass on real 
   of events. A daily page sums up each day: what mattered, what the owner decided, what was missed
   and learned. What happened stays in the sources; how a case progressed stays in its task.
 - Memory holds corrections and lessons.
-- Tasks, their history and the wiki must all be semantically searchable. That is how similar cases
-  are found.
+- Tasks and their history must be semantically searchable. That is how similar past cases are
+  found: from how earlier work progressed, what the feedback was, who did what and how it ended.
 
 ## Data and the present moment
 
