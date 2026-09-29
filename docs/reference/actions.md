@@ -12,8 +12,8 @@ The public development-memory MCP server has a [separate tool surface](mcp-tools
 This table is generated from the actual runtime registration assembly and its owner grants: 28
 actions. Purpose text is the first sentence of each registered summary; inputs come from its schema.
 Required markers describe top-level schema requirements; conditional requirements still apply.
-In a turn the agent sees each action's name, arguments (with the values of a plain enum) and first
-sentence, and calls it directly; `help` returns the argument types, descriptions and examples as
+In a turn the agent sees each action's name, arguments (with the values of a plain enum and the
+bound of a number or list) and first sentence, and calls it directly; `help` returns the argument types, descriptions and examples as
 text when it needs them.
 
 | Action                       | Purpose                                                                                                                                                                 | Inputs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |

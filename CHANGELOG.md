@@ -8,14 +8,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- The owner agent's action list shows each action's arguments (and the values of a plain enum)
-  next to its purpose, so the agent calls an action directly instead of reading its contract
+- The owner agent's action list shows each action's arguments (with the values of a plain enum and
+  the bound of a number or list, such as `limit?: ≤50`) next to its purpose, so the agent calls an action directly instead of reading its contract
   first. On the first live day of 0.58.0 the agent read contracts in 11 of 14 turns, one of them
   43,862 characters long.
 - `help` returns argument types, descriptions and examples as text instead of JSON schemas: the six
   contracts one record turn read go from about 42,000 to about 9,800 characters.
 - The tool-use example reads one matching work item and prints only the fields it needs, instead
-  of the whole open pipeline and 24 hours of sources, which notify turns had copied. A new session
+  of the whole open pipeline and 24 hours of sources, which notify turns had copied. On Codex it
+  reads results through a helper that throws when an action fails: a failed call returns
+  `{success: false, error}` without throwing, and a report once dropped the whole pipeline silently. A new session
   is told to read newer work or sources only when a turn needs them.
 - MCP server: `save` asks to search for related decisions first in plain words instead of a
   "REQUIRED" banner on `search`. Plugin: the session-start greeting instruction is three lines

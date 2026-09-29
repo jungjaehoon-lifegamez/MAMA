@@ -49,16 +49,30 @@ function requiredChoice(schema: Schema): string | null {
 }
 
 /**
+ * The bound a caller cannot guess from the name, e.g. `≤50` for a limit or `≤4 items` for a list:
+ * on the first live day the agent sent `limit: 100` to `work.list`, whose maximum is 50.
+ */
+function boundText(schema: Schema): string | null {
+  if (typeof schema.maximum === 'number')
+    return typeof schema.minimum === 'number' && schema.minimum > 1
+      ? `${schema.minimum}..${schema.maximum}`
+      : `≤${schema.maximum}`;
+  if (typeof schema.maxItems === 'number') return `≤${schema.maxItems} items`;
+  return null;
+}
+
+/**
  * The argument list the agent calls with, as Kagemusha's code_act description lists
- * `task_update({id, status, priority, deadline})`: top-level names, `?` for optional ones and the
- * allowed values of a plain enum.
+ * `task_update({id, status, priority, deadline})`: top-level names, `?` for optional ones, the
+ * allowed values of a plain enum and the bound of a number or list.
  */
 export function actionSignature(inputSchema: unknown): string {
   const schema = asSchema(inputSchema);
   if (!schema) return '{}';
   const parts = orderedProperties(schema).map(([name, value, required]) => {
-    const values = asSchema(value) ? enumText(asSchema(value)!) : null;
-    return `${name}${required ? '' : '?'}${values ? `: ${values}` : ''}`;
+    const property = asSchema(value);
+    const detail = property ? (enumText(property) ?? boundText(property)) : null;
+    return `${name}${required ? '' : '?'}${detail ? `: ${detail}` : ''}`;
   });
   const choice = requiredChoice(schema);
   return `{${parts.join(', ')}${choice ? `; one of: ${choice}` : ''}}`;
