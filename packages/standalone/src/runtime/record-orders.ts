@@ -207,9 +207,9 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
   let stopped = false;
 
   /**
-   * An order id is written once. A replayed notify result enqueues its first order again, and
-   * that order's carried batches depend on what was waiting at the time, so the stored order
-   * stands.
+   * An order id is written once: its carried batches depend on what was waiting at the time, so
+   * the stored order stands. enqueueFirst checks before it takes the channel's waiting batches (a
+   * replayed notify result enqueues its first order again); a tick relies on the check here.
    */
   const enqueue = (record: RecordOrderPayload): boolean => {
     const id = recordOrderId(record.deltaStimulusId, record.attempt);
@@ -248,24 +248,29 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
   const tick = (key: string): void => {
     const entry = take(key);
     if (entry === undefined || stopped) return;
-    const batches = [...entry.batches.values()];
+    // The batches whose outcome is still open; a failure below reports only these as lost.
+    let unsettled = [...entry.batches.values()];
     try {
       const stored = storedBatches(options.adapter);
-      const due = batches.filter((batch) => {
+      const recorded: RecordOrderBatch[] = [];
+      const due = unsettled.filter((batch) => {
         const state = stored.get(batch.deltaStimulusId);
         // Another order took it up, or its record arrived while it waited.
         if (state !== undefined && (state.open || state.batch.attempt > batch.attempt))
           return false;
         if (batchRecorded(options.adapter, batch, state?.orders ?? [])) {
-          options.onEvent?.({
-            type: 'recorded',
-            deltaStimulusId: batch.deltaStimulusId,
-            attempt: batch.attempt,
-          });
+          recorded.push(batch);
           return false;
         }
         return true;
       });
+      unsettled = due;
+      for (const batch of recorded)
+        options.onEvent?.({
+          type: 'recorded',
+          deltaStimulusId: batch.deltaStimulusId,
+          attempt: batch.attempt,
+        });
       const [own, ...carried] = due;
       if (own === undefined) return;
       enqueue({
@@ -279,7 +284,7 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
         ...(carried.length === 0 ? {} : { carried: carried.map(next) }),
       });
     } catch (error) {
-      for (const batch of batches)
+      for (const batch of unsettled)
         options.onEvent?.({
           type: 'lost',
           deltaStimulusId: batch.deltaStimulusId,
