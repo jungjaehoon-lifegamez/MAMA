@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- A new owner session starts the way Kagemusha's does, within 2,500 characters: the time, the owner
+  channel's last ten messages, the last ten turns it would resume from (your messages and live
+  source changes with the replies) and the ten latest saved records. Before, it saw five owner
+  exchanges only, mostly repeated full-report answers, and nothing of what had just come in from
+  sources.
+
 ## mama-os [0.58.1] / mcp-server [2.2.2] / plugin [2.0.2] - 2026-09-29
 
 ### Changed

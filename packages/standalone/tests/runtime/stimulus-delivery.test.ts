@@ -670,7 +670,11 @@ describe('one stimulus intake and delivery', () => {
   it('opens a new session with the bounded session start and no pushed ledger or board', async () => {
     const prompts: string[] = [];
     const delivery = createDelivery({
-      recentOwnerExchanges: () => [{ owner: 'earlier request', answer: 'earlier answer' }],
+      sessionStart: () => ({
+        ownerMessages: ['[owner] earlier request', '[agent] earlier answer'],
+        turns: ['[delta room][source] sender: files sent', '[delta room][agent] [ack]'],
+        decisions: [{ topic: 'work/item', summary: 'revised', ageHours: 1 }],
+      }),
     });
     for (const isNewSession of [true, false])
       await delivery.deliver(
@@ -683,7 +687,12 @@ describe('one stimulus intake and delivery', () => {
         context((text) => prompts.push(text), { isNewSession })
       );
     expect(prompts[0]!.startsWith('[session_start]')).toBe(true);
-    expect(prompts[0]).toContain('"earlier request"');
+    for (const part of [
+      '[owner] earlier request',
+      '[delta room][source] sender: files sent',
+      '- [work/item] revised (1h ago)',
+    ])
+      expect(prompts[0]).toContain(part);
     expect(prompts[0]!.length).toBeLessThan(2_600);
     expect(prompts[1]!.startsWith('[owner_message]')).toBe(true);
     for (const prompt of prompts)

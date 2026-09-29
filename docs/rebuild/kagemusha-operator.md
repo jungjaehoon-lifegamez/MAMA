@@ -99,9 +99,18 @@ plan keeps one session and removes the growth instead, and records a superseding
   most three attempts, then the loss is logged loudly. Record replies never reach the owner. A
   `memory.save` in a record order carries `derived_from` links to the batch's observations, since
   the record row itself has no refs (`provenance-live.ts:504–531`).
-- **Session start.** `[session_start]` ≤2,500 chars on a new session: recent owner exchanges,
-  local time, and "read the ledger and sources when you need them". A resumed durable thread gets
-  nothing extra.
+- **Session start.** `[session_start]` ≤2,500 chars on a new session, in Kagemusha's shape
+  (`session-start-context.ts`):
+  - local time first;
+  - the owner channel's last 10 messages (600);
+  - the last 10 resumable turns, owner and live delta turns with their replies (1,000);
+  - the latest 10 memory records as recent decisions (600);
+  - "read newer source messages when a turn needs them".
+
+  Lines are capped at 360 chars and never repeated, and messenger markup is stripped from
+  replies. Kagemusha's brain summary and checkpoint have no MAMA counterpart: the owner agent
+  keeps no checkpoint. A resumed durable thread gets nothing extra.
+
 - **Lessons.** Top 3 by `memory.search` on the owner message or the notify order's message text,
   ≤1,200 chars, advisory. A lesson already shown is not repeated until the next local day or a new
   session, since compactions are not observable.

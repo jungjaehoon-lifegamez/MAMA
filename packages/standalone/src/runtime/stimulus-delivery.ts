@@ -14,7 +14,6 @@ import type { NativeTurnResult } from '@jungjaehoon/mama-core/runtime/native-tur
 import type { NativeTurnResultRecord } from '@jungjaehoon/mama-core/runtime/native-input-journal';
 import type { SourceDelta } from '../connectors/framework/polling-scheduler.js';
 import type { QueueCandidateScore, QueueLine, WindowQueue } from '../replay/window-queue.js';
-import type { OwnerExchange } from './recent-owner-exchanges.js';
 import { SUBAGENT_RUNTIME_RULES, type OwnerRuntimeBackend } from './owner-system-prompt.js';
 import {
   RECORD_ORDER_CHANNEL,
@@ -28,6 +27,7 @@ import {
   scheduledReportOrder,
   sessionStartBlock,
   type Lesson,
+  type SessionStartInput,
 } from './turn-orders.js';
 import { localDateKey, localStamp, type TimeZoneSetting } from './timezone.js';
 
@@ -83,9 +83,8 @@ export interface StimulusDeliveryOptions {
   readResult?: (row: MailboxRow) => NativeTurnResultRecord | null;
   onUncertain?: StimulusDelivery['onUncertain'];
   onDead?: StimulusDelivery['onDead'];
-  recentOwnerExchanges?: (
-    row: MailboxRow
-  ) => readonly OwnerExchange[] | Promise<readonly OwnerExchange[]>;
+  /** What a new session is told before its first order (`[session_start]`). */
+  sessionStart?: (row: MailboxRow) => SessionStartInput | Promise<SessionStartInput>;
   onOwnerResult?: (row: MailboxRow, result: NativeTurnResult) => void | Promise<void>;
   onSourceResult?: (row: MailboxRow, result: NativeTurnResult) => void | Promise<void>;
   /** Scheduled report results only; record orders never reach the owner. */
@@ -604,10 +603,15 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         prepareSessionContent: async ({ isNewSession }) => {
           const lessons = await pickLessons(plan.lessonQuery, isNewSession);
           const start = isNewSession
-            ? sessionStartBlock((await options.recentOwnerExchanges?.(row)) ?? [], new Date(), {
-                backend: options.backend,
-                timeZone: options.timeZone.get(),
-              })
+            ? sessionStartBlock(
+                (await options.sessionStart?.(row)) ?? {
+                  ownerMessages: [],
+                  turns: [],
+                  decisions: [],
+                },
+                new Date(),
+                { timeZone: options.timeZone.get() }
+              )
             : '';
           return text([start, plan.render(lessons, new Date())]);
         },

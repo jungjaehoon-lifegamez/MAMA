@@ -33,7 +33,7 @@ import type { TimeZoneSetting } from './timezone.js';
 import { ownerSystemPrompt } from './owner-system-prompt.js';
 import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
-import { readRecentOwnerExchanges } from './recent-owner-exchanges.js';
+import { readSessionStartInput } from './session-start-context.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
@@ -354,12 +354,16 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         : { onUncertain: options.onStimulusUncertain }),
       ...(options.onStimulusDead === undefined ? {} : { onDead: options.onStimulusDead }),
       ...(options.onStimulusSkipped === undefined ? {} : { onSkipped: options.onStimulusSkipped }),
-      recentOwnerExchanges: (row) =>
-        readRecentOwnerExchanges(
-          intakeRuntime.mailbox!,
-          options.recentDeliveredOwnerMessages?.() ?? [],
-          row
-        ),
+      sessionStart: (row) =>
+        readSessionStartInput({
+          adapter: database.adapter,
+          mailbox: intakeRuntime.mailbox!,
+          deliveredRefs: options.recentDeliveredOwnerMessages?.() ?? [],
+          current: row,
+          records: () =>
+            readMemoryRecordsInScopes(database.adapter, [...access.scopes], { status: 'active' }),
+          now: Date.now(),
+        }),
       // Kagemusha's lesson recall: the corrections memory.search ranks highest for the turn's text,
       // active ones only, read in full.
       lessons:
