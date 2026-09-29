@@ -1,6 +1,6 @@
 # MAMA public MCP server
 
-Development decisions and checkpoints over stdio MCP. Version **2.2.1**
+Development decisions and checkpoints over stdio MCP. Version **2.2.2**
 ([package.json](package.json)); Node.js 22.13+.
 
 The server calls [mama-core](../mama-core/README.md) **in-process**. It opens

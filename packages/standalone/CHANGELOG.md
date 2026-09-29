@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-09-29
+
+### Changed
+
+- Each owner action is listed with its arguments; `help` returns types, descriptions and examples
+  as text; the tool-use example shows a targeted, filtered read. See the root CHANGELOG.
+
 ## [0.58.0] - 2026-09-29
 
 The owner agent runs in the reference operator's structure: a short session start, lessons that

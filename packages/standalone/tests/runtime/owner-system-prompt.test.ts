@@ -116,7 +116,8 @@ describe('owner standing prompt', () => {
       );
       if (backend === 'codex') {
         expect(prompt).toContain('Each tools.* call returns JSON text {success, data}');
-        expect(prompt).toContain('JSON.parse(raw).data');
+        expect(prompt).toContain('tools.work_list({view: "items", text: ');
+        expect(prompt).not.toContain('view: "pipeline"');
       } else {
         expect(prompt).toContain('Tool results enter this session whole');
         expect(prompt).not.toContain('exec');

@@ -31,7 +31,9 @@ describe('turn orders', () => {
     expect(block).toContain('(Asia/Seoul)');
     expect(block).toContain('request 11');
     expect(block).not.toContain('request 0 ');
-    expect(block).toContain('Read work.list and source.recent for anything newer');
+    expect(block).toContain(
+      'When a turn needs work or source state newer than these exchanges, read only that part'
+    );
   });
 
   it('keeps stored text from closing host delimiters in the session start block', () => {

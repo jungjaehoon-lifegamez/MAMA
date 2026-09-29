@@ -143,7 +143,7 @@ describe('mama action MCP server — handleRequest unit surface', () => {
     },
   };
 
-  it('tools/list gives each action one line and a permissive schema; help carries the contract', async () => {
+  it('tools/list gives each action one line with its arguments and a permissive schema', async () => {
     const response = await handleRequest(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       { client: client as never }
@@ -151,10 +151,11 @@ describe('mama action MCP server — handleRequest unit surface', () => {
     const tools = (response?.result as { tools: Array<Record<string, unknown>> }).tools;
     expect(tools).toHaveLength(2);
     expect(tools[0].name).toBe('work.create');
+    expect(tools[0].description).toContain('work.create({topic?}) — ');
     expect(tools[0].description).toContain('Create a work item');
     expect(tools[0].description).not.toContain('Examples:');
     expect(tools[0].inputSchema).toEqual({ type: 'object' });
-    expect(tools[1].description).toBe('Query the graph');
+    expect(tools[1].description).toBe('graph.query({}) — Query the graph');
   });
 
   it('tools/call is one client.call — the adapter executes nothing itself', async () => {

@@ -77,7 +77,7 @@ export function sessionStartBlock(
 ): string {
   const action = (name: string): string => actionName(options.backend, name);
   const head = ['[session_start]', currentTime(now, options.timeZone)];
-  const tail = `Read ${action('work.list')} and ${action('source.recent')} for anything newer than these exchanges.`;
+  const tail = `When a turn needs work or source state newer than these exchanges, read only that part with ${action('work.list')} or ${action('source.recent')}.`;
   const pairs = exchanges.map(
     (exchange) =>
       `Owner: ${JSON.stringify(clip(exchange.owner, 200))}\nAnswer: ${JSON.stringify(clip(exchange.answer, 300))}`

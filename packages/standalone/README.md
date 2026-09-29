@@ -4,7 +4,7 @@ One owner agent on Claude or Codex watches connected work, keeps task revisions 
 answers on Telegram, publishes reports and a board, and recalls corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.58.0**. This README describes the unreleased `rebuild/owner-flow` source.
+Current manifest: **0.58.1**. This README describes the unreleased `rebuild/owner-flow` source.
 Use [owner setup](../../docs/start/owner-setup.md) with Node.js 22.13+ and pnpm.
 
 ## Start and operate

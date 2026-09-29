@@ -1,14 +1,141 @@
 import type { ActionContract, ActionRegistration } from '@jungjaehoon/mama-core';
 
-/**
- * The first sentence of an action's summary: what every turn shows for it. The full contract is
- * one `help` call away, as Kagemusha keeps a one-line catalog and serves detail through `help()`.
- */
-export function actionCatalogLine(summary: string): string {
+type Schema = Record<string, unknown>;
+
+function asSchema(value: unknown): Schema | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Schema)
+    : null;
+}
+
+function firstSentence(summary: string): string {
   const flat = summary.replace(/\s+/g, ' ').trim();
   const end = flat.search(/[.!?](\s|$)/);
   const first = end === -1 ? flat : flat.slice(0, end + 1);
   return first.length <= 160 ? first : `${first.slice(0, 157)}...`;
+}
+
+/** Top-level arguments in schema order, required ones first; `?` marks an optional one. */
+function orderedProperties(schema: Schema): Array<[string, unknown, boolean]> {
+  const properties = asSchema(schema.properties);
+  if (!properties) return [];
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const entries = Object.entries(properties);
+  return [
+    ...entries.filter(([name]) => required.has(name)).map(([name, value]) => [name, value, true]),
+    ...entries.filter(([name]) => !required.has(name)).map(([name, value]) => [name, value, false]),
+  ] as Array<[string, unknown, boolean]>;
+}
+
+function enumText(schema: Schema): string | null {
+  if ('const' in schema) return JSON.stringify(schema.const);
+  return Array.isArray(schema.enum)
+    ? schema.enum.map((value) => JSON.stringify(value)).join('|')
+    : null;
+}
+
+/**
+ * The argument sets a top-level `oneOf`/`anyOf` requires, e.g. `observationRef | observationRefs`
+ * for `source.read`, when each alternative only names required arguments.
+ */
+function requiredChoice(schema: Schema): string | null {
+  const alternatives = Array.isArray(schema.oneOf) ? schema.oneOf : schema.anyOf;
+  if (!Array.isArray(alternatives)) return null;
+  const sets = alternatives.map((alternative) => {
+    const required = asSchema(alternative)?.required;
+    return Array.isArray(required) && required.length > 0 ? required.join(' + ') : null;
+  });
+  return sets.every((set) => set !== null) ? sets.join(' | ') : null;
+}
+
+/**
+ * The argument list the agent calls with, as Kagemusha's code_act description lists
+ * `task_update({id, status, priority, deadline})`: top-level names, `?` for optional ones and the
+ * allowed values of a plain enum.
+ */
+export function actionSignature(inputSchema: unknown): string {
+  const schema = asSchema(inputSchema);
+  if (!schema) return '{}';
+  const parts = orderedProperties(schema).map(([name, value, required]) => {
+    const values = asSchema(value) ? enumText(asSchema(value)!) : null;
+    return `${name}${required ? '' : '?'}${values ? `: ${values}` : ''}`;
+  });
+  const choice = requiredChoice(schema);
+  return `{${parts.join(', ')}${choice ? `; one of: ${choice}` : ''}}`;
+}
+
+/** What every turn shows for an action: its name, arguments and first sentence. */
+export function actionCatalogLine(
+  contract: Pick<ActionContract, 'name' | 'summary' | 'inputSchema'>
+): string {
+  return `${contract.name}(${actionSignature(contract.inputSchema)}) — ${firstSentence(contract.summary)}`;
+}
+
+function typeText(value: unknown, depth: number): string {
+  const schema = asSchema(value);
+  if (!schema) return 'any';
+  const values = enumText(schema);
+  if (values) return values;
+  const alternatives = Array.isArray(schema.oneOf) ? schema.oneOf : schema.anyOf;
+  if (Array.isArray(alternatives))
+    return alternatives.map((alternative) => typeText(alternative, depth)).join(' | ');
+  if (Array.isArray(schema.type)) return schema.type.join(' | ');
+  if (schema.type === 'array') {
+    const item = typeText(schema.items, depth);
+    return `${/[ |]/.test(item) ? `(${item})` : item}[]`;
+  }
+  if (schema.type === 'object' || schema.properties !== undefined) {
+    const properties = orderedProperties(schema);
+    // Two levels show an argument's shape; deeper parts are named `object`, and the argument's
+    // description gives an example of the whole value. Keeping help short is what help is for.
+    if (properties.length === 0 || depth >= 3) return 'object';
+    return `{${properties
+      .map(
+        ([name, property, required]) =>
+          `${name}${required ? '' : '?'}: ${typeText(property, depth + 1)}`
+      )
+      .join(', ')}}`;
+  }
+  return typeof schema.type === 'string' ? schema.type : 'any';
+}
+
+const items = (count: number): string => `${count} item${count === 1 ? '' : 's'}`;
+
+/** The limits the dispatcher enforces on one argument, e.g. ` (at most 4 items)`. */
+function limitsText(value: unknown): string {
+  const schema = asSchema(value);
+  if (!schema) return '';
+  const limits = [
+    typeof schema.minItems === 'number' ? `at least ${items(schema.minItems)}` : null,
+    typeof schema.maxItems === 'number' ? `at most ${items(schema.maxItems)}` : null,
+    typeof schema.minimum === 'number' ? `min ${schema.minimum}` : null,
+    typeof schema.maximum === 'number' ? `max ${schema.maximum}` : null,
+    typeof schema.maxLength === 'number' ? `at most ${schema.maxLength} chars` : null,
+    typeof schema.pattern === 'string' ? `pattern ${schema.pattern}` : null,
+  ].filter((limit) => limit !== null);
+  return limits.length === 0 ? '' : ` (${limits.join(', ')})`;
+}
+
+/** One action's contract as plain lines: signature, summary, each argument and the examples. */
+function helpText(contract: ActionContract): string {
+  const schema = asSchema(contract.inputSchema) ?? {};
+  const lines = [`${contract.name}(${actionSignature(schema)})`, contract.summary];
+  for (const [name, property, required] of orderedProperties(schema)) {
+    const description = asSchema(property)?.description;
+    lines.push(
+      `- ${name}${required ? ' (required)' : ''}: ${typeText(property, 1)}${limitsText(property)}${
+        typeof description === 'string' ? `. ${description}` : ''
+      }`
+    );
+  }
+  const alternatives = [schema.oneOf, schema.anyOf].find(Array.isArray);
+  if (alternatives)
+    lines.push(
+      `- one of: ${requiredChoice(schema) ?? alternatives.map((alternative) => typeText(alternative, 1)).join(' | ')}`
+    );
+  for (const example of contract.examples ?? [])
+    lines.push(`example (${example.title}): ${JSON.stringify(example.input)}`);
+  return lines.join('\n');
 }
 
 function invalidInput(message: string): Error {
@@ -28,7 +155,7 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
       contract: {
         name: 'help',
         summary:
-          "Read actions' full contracts (summary, input schema, examples) before first use; with no names, list every action with its one-line summary.",
+          "Read actions' argument types, allowed values, descriptions and examples as text; with no names, list every action's line.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -36,20 +163,12 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
             actions: { type: 'array', items: { type: 'string', minLength: 1 } },
           },
         },
-        examples: [
-          { title: 'Read two contracts', input: { actions: ['work.list', 'report.publish'] } },
-        ],
+        examples: [{ title: 'Read one contract', input: { actions: ['report.publish'] } }],
       },
       exec: (input) => {
         const requested = (input as { actions?: unknown }).actions;
         const contracts = ports.contracts();
-        if (requested === undefined)
-          return {
-            actions: contracts.map((contract) => ({
-              name: contract.name,
-              summary: actionCatalogLine(contract.summary),
-            })),
-          };
+        if (requested === undefined) return contracts.map(actionCatalogLine).join('\n');
         if (!Array.isArray(requested)) throw invalidInput('actions must be a list of action names');
         // The model sees tools.work_list (Codex) or mcp__mama__work_list (Claude); both name work.list.
         const key = (name: string): string =>
@@ -57,17 +176,7 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
         const byName = new Map(contracts.map((contract) => [key(contract.name), contract]));
         const unknown = requested.filter((name) => !byName.has(key(String(name))));
         if (unknown.length > 0) throw invalidInput(`unknown actions: ${unknown.join(', ')}`);
-        return {
-          actions: requested.map((name) => {
-            const contract = byName.get(key(String(name)))!;
-            return {
-              name: contract.name,
-              summary: contract.summary,
-              inputSchema: contract.inputSchema,
-              ...(contract.examples === undefined ? {} : { examples: contract.examples }),
-            };
-          }),
-        };
+        return requested.map((name) => helpText(byName.get(key(String(name)))!)).join('\n\n');
       },
     },
   ];

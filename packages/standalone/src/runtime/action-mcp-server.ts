@@ -62,11 +62,11 @@ function runtimeClient(home: string): Client {
   });
 }
 
-/** One line per action, as for the Codex session; `help` returns the full contract. */
+/** One line per action (name, arguments, first sentence), as for the Codex session; `help` has the detail. */
 function describeTool(contract: ActionContract) {
   return {
     name: contract.name,
-    description: actionCatalogLine(contract.summary),
+    description: actionCatalogLine(contract),
     inputSchema: { type: 'object' },
   };
 }

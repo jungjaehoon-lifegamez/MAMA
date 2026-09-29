@@ -244,13 +244,13 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     catalog,
     dispatch,
     ownerAccess,
-    // Progressive, as Kagemusha's one-line catalog: every turn carries one line per action; the
-    // full contract comes from `help`. The dispatcher still validates each call against the
-    // action's own schema.
+    // Progressive, as Kagemusha's code_act catalog: every turn carries one line per action with
+    // its arguments; types, allowed values and examples come from `help`. The dispatcher still
+    // validates each call against the action's own schema.
     hostToolDefinitions: () =>
       catalog.list().map((contract) => ({
         name: contract.name,
-        description: actionCatalogLine(contract.summary),
+        description: actionCatalogLine(contract),
         inputSchema: { type: 'object' },
       })),
     hostToolCall: (name, input, operationId, context = {}) =>

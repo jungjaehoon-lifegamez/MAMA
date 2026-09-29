@@ -106,9 +106,11 @@ plan keeps one session and removes the growth instead, and records a superseding
   ≤1,200 chars, advisory. A lesson already shown is not repeated until the next local day or a new
   session, since compactions are not observable.
 - **Tools.** One line per tool and a permissive schema for Codex dynamic tools and the Claude MCP
-  list (`native-session.ts:125`, `action-mcp-server.ts:70`); a `help` action returns the full
-  contract (summary, schema, examples). The usage guidance shows filtering inside `exec` before
-  printing. Action outputs stay as they are (the viewer reads `work.list` shapes,
+  list (`native-session.ts:125`, `action-mcp-server.ts:70`). The line holds the name, the
+  arguments and the first sentence, as Kagemusha's code_act catalog lists
+  `task_update({id, status, priority, deadline})`; a `help` action returns argument types,
+  descriptions and examples as text. The usage guidance shows a targeted read filtered inside
+  `exec` before printing. Action outputs stay as they are (the viewer reads `work.list` shapes,
   `viewer-server.ts:224, 536, 547, 647`).
 
 ## Per-turn table
@@ -135,7 +137,7 @@ plan keeps one session and removes the growth instead, and records a superseding
 | Codex multi-agent messages                     | 2,700              | unchanged                                                                                                                                                    |
 | Session-start blocks                           | 29,000–40,000      | `[session_start]` ≤2,500                                                                                                                                     |
 | Turn text                                      | 300–40,000         | the order, ≤1,600 plus the batch's message lines                                                                                                             |
-| Tool descriptions and schemas                  | 48,106             | ≤5,000: catalog + permissive schemas; `help` on demand                                                                                                       |
+| Tool descriptions and schemas                  | 48,106             | ≤10,000: catalog with arguments + permissive schemas; `help` on demand                                                                                       |
 | Lessons                                        | 5,000–7,000 pushed | ≤1,200, only unseen ones                                                                                                                                     |
 
 Rules that stay in the host prompt: actions over shell; success only when the action returned
@@ -203,6 +205,14 @@ without a separate check".
   record, as Kagemusha's snapshot diff does not ask which turn changed the board.
 - Board content rules stay in the `report.publish` contract and are read with `help` before the
   first publish in a session, as Kagemusha's `help("full-report")` serves its slot vocabulary.
+- After the first live day (0.58.0, 2026-09-29) the catalog line gained the arguments. A line
+  without them made the agent call `help` in 11 of 14 turns, and `help` returned pretty-printed
+  JSON schemas: 43,862 chars for the six actions of one record order. Kagemusha's line carries
+  the signature and it called `help` 25 times in 15 days. The usage example read the whole open
+  pipeline and 24 hours of sources, and 6 of 7 notify turns copied it; it now shows a targeted
+  read. Measured as Codex function definitions the catalog grows from 5,356 to 8,234 chars, so the
+  tool-text target moves from 5,000 to 10,000 for the arguments (still a fifth of the 48,106
+  baseline).
 - Deploy order: merge the standing corrections into `owner-policy.md` (and fix its line 62)
   before this build runs, because it removes the corrections block (relocate before delete).
 

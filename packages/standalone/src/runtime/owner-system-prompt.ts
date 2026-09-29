@@ -52,7 +52,7 @@ function readableSourcesLine(families: readonly StoredSourceFamily[]): string {
 
 function toolUsageLines(backend: OwnerRuntimeBackend): string[] {
   const action = (name: string): string => actionName(backend, name);
-  const common = `- Each action is listed with one line. Before using an action for the first time in a session, read its full contract with ${action('help')} (actions: [names]); with no names it lists every action.`;
+  const common = `- Each action is listed with its arguments and purpose; call it directly. Use ${action('help')} (actions: [names]) only when you need an argument's type, allowed values or an example.`;
   if (backend === 'claude')
     return [
       common,
@@ -60,9 +60,9 @@ function toolUsageLines(backend: OwnerRuntimeBackend): string[] {
     ];
   return [
     common,
-    '- Call actions inside exec. Each tools.* call returns JSON text {success, data}: parse it, keep only the fields the turn needs and print only those. Several reads go in one script. For example:',
-    '  const [work, recent] = (await Promise.all([tools.work_list({view: "pipeline"}), tools.source_recent({since: "24h ago"})])).map((raw) => JSON.parse(raw).data);',
-    '  text(JSON.stringify({ /* only the fields this turn needs from work and recent */ }));',
+    '- Call actions inside exec. Each tools.* call returns JSON text {success, data}: parse it, keep only the rows and fields the turn needs and print only those. Several reads go in one script. For example:',
+    '  const tasks = JSON.parse(await tools.work_list({view: "items", text: "<asset or title words>"})).data.tasks;',
+    '  text(JSON.stringify(tasks.map((task) => [task.commitmentId, task.title, task.status, task.lastEventTime])));',
     '- Never print a whole list or board to find one item; print counts, titles or the matching rows.',
   ];
 }
