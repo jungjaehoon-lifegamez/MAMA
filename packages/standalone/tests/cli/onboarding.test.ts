@@ -33,13 +33,20 @@ const fixtureSecrets = {
   MAMA_TELEGRAM_SOURCE_TOKEN: 'fixture-telegram-source',
 };
 
-function prompt(answers: string[], hidden: string[], tty = [true, true], timezoneAnswer?: string) {
+function prompt(
+  answers: string[],
+  hidden: string[],
+  tty = [true, true],
+  timezoneAnswer?: string,
+  jevAnswer = 'n'
+) {
   const output: string[] = [];
   const adapter: PromptAdapter = {
     stdinIsTTY: tty[0],
     stdoutIsTTY: tty[1],
     text: async (label) => {
       if (label.startsWith('Owner timezone')) return timezoneAnswer ?? '';
+      if (label.startsWith('Use Jev (TypeSafe)')) return jevAnswer;
       if (!answers.length) throw new Error('Unexpected visible prompt');
       return answers.shift()!;
     },
@@ -88,7 +95,33 @@ describe('owner-only onboarding', () => {
       'America/Los_Angeles'
     );
     await runInit(options(p.adapter));
-    expect(loadConfig({ home }).timezone).toBe('America/Los_Angeles');
+    const config = loadConfig({ home });
+    expect(config.timezone).toBe('America/Los_Angeles');
+    // Kagemusha's turn limit; Jev stays off unless the owner chooses it.
+    expect(config.agent.timeout).toBe(900_000);
+    expect(config.jev.enabled).toBe(false);
+    expect(existsSync(join(root, 'jev-key'))).toBe(false);
+  });
+
+  it('turns Jev on when the owner chooses it and keeps its key in its own 0600 file', async () => {
+    const p = prompt(
+      minimal(),
+      [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-jev-key'],
+      [true, true],
+      undefined,
+      'y'
+    );
+    await runInit(options(p.adapter));
+    expect(loadConfig({ home }).jev).toMatchObject({
+      enabled: true,
+      keyFile: join(root, 'jev-key'),
+    });
+    expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
+    expect(statSync(join(root, 'jev-key')).mode & 0o777).toBe(0o600);
+    for (const file of ['config.yaml', 'auth.env', 'start.sh'])
+      expect(readFileSync(join(root, file), 'utf8')).not.toContain('fixture-jev-key');
+    expect(p.output.join('\n')).not.toContain('fixture-jev-key');
+    expect(p.output.join('\n')).toContain('Jev is on');
   });
 
   it.each([

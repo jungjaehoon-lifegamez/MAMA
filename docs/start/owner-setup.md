@@ -54,6 +54,12 @@ do not send them to the agent. `mama init` requires a terminal and refuses to
 overwrite an existing `config.yaml`, `connectors.json`, `start.sh`, or a selected
 existing launch agent.
 
+Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev typed questions
+inside its scripts (the `judge` action) to narrow many messages or items without reading them all.
+Owner text in those calls goes to the Jev service, so it is off unless you choose it. Choosing it
+asks for a Jev API key, stored in `~/.mama/jev-key` (0600), and sets `jev.enabled: true` in
+`config.yaml`; remove that line to turn it off. MAMA works the same without it.
+
 The optional tunnel prompts collect the Cloudflare Access issuer, audience and
 viewer hostname. Configure that Access application and tunnel separately; see
 [Viewer](../guides/viewer.md).
@@ -66,6 +72,7 @@ Setup writes these files under `~/.mama/`:
 | `connectors.json` | Source channels, roles and credential variable names           |
 | `auth.env`        | Tokens, mode 0600; includes a generated viewer bearer token    |
 | `start.sh`        | Loads credentials, sets the executable PATH, starts the daemon |
+| `jev-key`         | Jev API key, mode 0600; only when you chose Jev                |
 | `workspace/`      | Agent files and the default `wiki/` directory                  |
 | `logs/`           | Daemon and security logs                                       |
 

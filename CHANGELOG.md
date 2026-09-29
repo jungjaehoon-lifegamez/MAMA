@@ -35,6 +35,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `mama init` asks whether to use Jev. Choosing it stores the key in `~/.mama/jev-key` (0600) and
+  sets `jev.enabled: true`; MAMA works the same without it. New installs start with a 900-second
+  turn limit, Kagemusha's, instead of 300.
+
 - `judge`: when the owner sets `jev.enabled`, the agent can ask Jev typed questions (noul, choice,
   score) inside its script to narrow many candidates, such as a name spelled several ways or whether
   a message settles a work item, and return only the ones that matter. It is used in pairs: code

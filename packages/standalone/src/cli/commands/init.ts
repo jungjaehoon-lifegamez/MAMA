@@ -293,6 +293,17 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     };
   }
   const viewer: Record<string, string> = {};
+  // Jev (TypeSafe) is the owner's choice: the agent's judge tool, off unless chosen here.
+  const jevKeyPath = join(root, 'jev-key');
+  const jevEnabled = await yes(
+    prompt,
+    'Use Jev (TypeSafe) so the agent can judge many messages or items without reading them all? Owner text in those calls goes to the Jev service'
+  );
+  let jevKey: string | undefined;
+  if (jevEnabled && !existsSync(jevKeyPath)) {
+    prompt.write('Get a Jev API key from TypeSafe: https://docs.typesafe.ai');
+    jevKey = nonblankLine(await prompt.secret('Jev API key'));
+  }
   if (await yes(prompt, 'Expose the viewer through a tunnel')) {
     const issuer = await text(prompt, 'Access issuer (HTTPS URL)');
     let url: URL;
@@ -339,7 +350,8 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
         model,
         effort: 'medium',
         max_turns: 100,
-        timeout: 300_000,
+        // Kagemusha's turn limit; a full report on 2026-09-29 was cut off at 300 s.
+        timeout: 900_000,
         run_token_budget: 0,
       },
       database: { path: join(root, 'memory.db') },
@@ -359,6 +371,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
         vaultPath: join(root, 'workspace'),
         wikiDir: join(root, 'workspace', 'wiki'),
       },
+      ...(jevEnabled ? { jev: { enabled: true } } : {}),
     },
     { home }
   );
@@ -383,6 +396,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     mode: 0o600,
   });
   writeFileSync(join(root, 'start.sh'), script, { flag: 'wx', mode: 0o700 });
+  if (jevKey !== undefined) writeFileSync(jevKeyPath, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
   if (installLaunchAgent) {
     mkdirSync(dirname(plistPath), { recursive: true });
     writeFileSync(plistPath, launchAgent(home), { flag: 'wx', mode: 0o600 });
@@ -399,6 +413,10 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
       prompt.write('Install gws and add its bin directory to PATH in ~/.mama/start.sh.');
     prompt.write('Log in with the Google scopes your selected connectors need: gws auth login.');
   }
+  if (jevEnabled)
+    prompt.write(
+      `Jev is on (jev.enabled in config.yaml); its key is ${shellQuote(jevKeyPath)} (0600). Turn it off by removing jev.enabled.`
+    );
   if (viewer.MAMA_VIEWER_HOSTNAMES)
     prompt.write(
       'Configure your tunnel to the local viewer and protect its hostname with the Access application above.'
