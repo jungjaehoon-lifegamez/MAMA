@@ -1,6 +1,6 @@
 # What MAMA is for
 
-Version 7 · 2026-09-25 (replaces v6 of 2026-09-08)
+Version 8 · 2026-09-29 (replaces v7 of 2026-09-25)
 
 MAMA is a persistent agent that keeps watching and remembering the owner's work. Nobody has to
 explain things from the beginning again: it knows the current situation, reports it, and does the
@@ -13,8 +13,9 @@ It starts from what Kagemusha already does and adds two things.
 - **What Kagemusha does:** watches changes in connected conversations and work tools and
   recognises the work in them. It creates and updates tasks, refreshes the board and the scheduled
   reports, and forwards feedback and files.
-- **Addition 1 — a wiki and memory that carry over:** how the work unfolded, and the owner's
-  corrections, survive new sessions, restarts and model changes.
+- **Addition 1 — a wiki and memory that carry over:** the knowledge the work leaves behind (a
+  project's terms, decisions and specifications, how a client works), a page for each day, and
+  the owner's corrections survive new sessions, restarts and model changes.
 - **Addition 2 — task history (the differentiator):** for every task it keeps how it progressed,
   what changed, what the feedback was, and who did what. It can also find **similar past cases**
   and reuse how their feedback went and how they ended.
@@ -55,9 +56,12 @@ member permissions and non-owner input wait until the checks below pass on real 
   conversation. If it is not confirmed, mark it unconfirmed. An assignee field in a tool such as
   Trello is one piece of evidence, not the answer.
 - The board is the agent's live view of the work, written after reading the tasks and the
-  conversations, so it shows the same state as the tasks. The wiki is the human-readable record of
-  each case.
-  Memory holds corrections and lessons.
+  conversations, so it shows the same state as the tasks.
+- The wiki keeps what the sources and the tasks do not show on their own: knowledge that stays
+  true and has to be gathered from many messages, rewritten when it changes, never a dated copy
+  of events. A daily page sums up each day: what mattered, what the owner decided, what was missed
+  and learned. What happened stays in the sources; how a case progressed stays in its task.
+- Memory holds corrections and lessons.
 - Tasks, their history and the wiki must all be semantically searchable. That is how similar cases
   are found.
 
@@ -66,7 +70,11 @@ member permissions and non-owner input wait until the checks below pass on real 
 - Keep every original and every change from the connected sources. Record collection coverage,
   gaps and failures as separate things.
 - Do not read everything every time. Go from an overview down through search to the originals, as
-  far as needed.
+  far as needed. The agent pulls each next step itself; the host offers indexes and bounded reads
+  and never pushes whole ledgers or procedures into a turn.
+- An import of past data (the September replay) seeds the records; live changes and owner
+  corrections complete and correct them. Judge accuracy on the running flow over time, not on the
+  seed alone.
 - Keep occurrence time, observation time and period of validity apart. Old material is not a
   current fact. A collection gap is not "no change" and not "done".
 
