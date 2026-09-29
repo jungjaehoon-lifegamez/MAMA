@@ -295,7 +295,7 @@ describe('turn orders', () => {
     });
     expect(full).toContain('[scheduled_full_report]');
     expect(full).toContain('Changes since: 24 hours ago');
-    expect(full).toContain('full-report procedure');
+    expect(full).toContain("help({topic: 'full-report'})");
     const since = scheduledReportOrder(
       { report: 'full', hourKey: '2026-09-29:13', previousFullReportAt: '2026-09-29:08' },
       now,

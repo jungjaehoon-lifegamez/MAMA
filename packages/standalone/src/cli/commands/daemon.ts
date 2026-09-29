@@ -421,6 +421,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       runtimeRoot: paths.mamaRoot,
       timeZone,
       replayKeyFile: config.jev?.keyFile,
+      ...(config.jev?.enabled ? { jev: config.jev } : {}),
       workspaceDir: paths.workspaceDir,
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       agentId: OWNER_AGENT_ID,

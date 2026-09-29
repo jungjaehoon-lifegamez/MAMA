@@ -77,11 +77,12 @@ export function actionSignature(inputSchema: unknown): string {
   return `{${parts.join(', ')}${choice ? `; one of: ${choice}` : ''}}`;
 }
 
-/** What every turn shows for an action: its name, arguments and first sentence. */
-export function actionCatalogLine(
-  contract: Pick<ActionContract, 'name' | 'summary' | 'inputSchema'>
-): string {
-  return `${contract.name}(${actionSignature(contract.inputSchema)}) — ${firstSentence(contract.summary)}`;
+/**
+ * What every turn shows for an action: its name and first sentence, an index entry. The
+ * arguments come from help({actions: [name]}) when the agent is about to call it.
+ */
+export function actionCatalogLine(contract: Pick<ActionContract, 'name' | 'summary'>): string {
+  return `${contract.name} — ${firstSentence(contract.summary)}`;
 }
 
 function typeText(value: unknown, depth: number): string {
@@ -160,6 +161,8 @@ function invalidInput(message: string): Error {
 export interface HelpActionPorts {
   /** The granted contracts, read when `help` runs so it sees the finished catalog. */
   contracts(): readonly ActionContract[];
+  /** The procedures a turn reads when it needs one, by topic name. */
+  topics?(): Readonly<Record<string, string>>;
 }
 
 export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistration[] {
@@ -168,27 +171,49 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
       contract: {
         name: 'help',
         summary:
-          "Read actions' argument types, allowed values, descriptions and examples as text; with no names, list every action's line.",
+          "Read what you need next: an action's arguments, allowed values and an example before you first call it (actions), or a procedure when a turn needs it (topic); with neither, list the topics and actions.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           properties: {
-            actions: { type: 'array', items: { type: 'string', minLength: 1 } },
+            actions: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+            topic: { type: 'string', minLength: 1 },
           },
         },
-        examples: [{ title: 'Read one contract', input: { actions: ['report.publish'] } }],
+        examples: [
+          { title: 'Read one contract', input: { actions: ['report.publish'] } },
+          { title: 'Read a procedure', input: { topic: 'full-report' } },
+        ],
       },
       exec: (input) => {
-        const requested = (input as { actions?: unknown }).actions;
+        const { actions: requested, topic } = input as { actions?: unknown; topic?: unknown };
         const contracts = ports.contracts();
-        if (requested === undefined) return contracts.map(actionCatalogLine).join('\n');
+        const topics = ports.topics?.() ?? {};
+        const parts: string[] = [];
+        if (topic !== undefined) {
+          const text = typeof topic === 'string' ? topics[topic] : undefined;
+          if (text === undefined)
+            throw invalidInput(
+              `unknown topic: ${String(topic)}; topics: ${Object.keys(topics).join(', ')}`
+            );
+          parts.push(text);
+        }
+        if (requested === undefined) {
+          if (topic !== undefined) return parts.join('\n\n');
+          return [
+            `Topics: ${Object.keys(topics).join(', ')}`,
+            'Actions:',
+            ...contracts.map(actionCatalogLine),
+          ].join('\n');
+        }
         if (!Array.isArray(requested)) throw invalidInput('actions must be a list of action names');
         // Codex sees tools.work_list and Claude calls work.list inside code_act; both name work.list.
         const key = (name: string): string => name.replace(/[.:]/g, '_');
         const byName = new Map(contracts.map((contract) => [key(contract.name), contract]));
         const unknown = requested.filter((name) => !byName.has(key(String(name))));
         if (unknown.length > 0) throw invalidInput(`unknown actions: ${unknown.join(', ')}`);
-        return requested.map((name) => helpText(byName.get(key(String(name)))!)).join('\n\n');
+        parts.push(...requested.map((name) => helpText(byName.get(key(String(name)))!)));
+        return parts.join('\n\n');
       },
     },
   ];

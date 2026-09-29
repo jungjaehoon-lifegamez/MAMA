@@ -199,6 +199,41 @@ describe('progressive work.list views', () => {
     ).toEqual(['commitment-2', 'commitment-3']);
   });
 
+  it("finds open items by deadline against the owner's today, and work that has not moved", async () => {
+    // now is 2023-11-14 22:15 UTC; a closed item never matches a due filter.
+    const dated = (index: number, deadline: string | null, status = 'pending', updatedAt = 100) =>
+      view(index, {
+        updatedAt,
+        values: { title: `item-${index}`, status, ...(deadline === null ? {} : { deadline }) },
+      });
+    const reader = makeReader([
+      dated(1, '2023-11-13'),
+      dated(2, '2023-11-14'),
+      dated(3, '2023-11-20', 'pending', 300),
+      dated(4, null, 'pending', 300),
+      dated(5, '2023-11-10', 'done'),
+    ]);
+    const ids = async (input: Record<string, unknown>) =>
+      (
+        (await runWorkListView({ view: 'items', ...input }, context(reader.readWork)))
+          .tasks as Array<{
+          commitmentId: string;
+        }>
+      ).map((task) => task.commitmentId);
+    expect(await ids({ due: 'overdue' })).toEqual(['commitment-1']);
+    expect(await ids({ due: 'today' })).toEqual(['commitment-2']);
+    expect(await ids({ due: 'upcoming' })).toEqual(['commitment-3']);
+    expect(await ids({ due: 'unscheduled' })).toEqual(['commitment-4']);
+    expect(await ids({ changedBefore: 200 })).toEqual([
+      'commitment-1',
+      'commitment-2',
+      'commitment-5',
+    ]);
+    await expect(
+      runWorkListView({ view: 'items', due: 'late' }, context(reader.readWork))
+    ).rejects.toThrow('work.list due must be one of overdue|today|upcoming|unscheduled');
+  });
+
   it('continues a filtered items read from the cursor alone and refuses a different filter', async () => {
     const reader = makeReader(Array.from({ length: 80 }, (_, index) => view(index + 1)));
     const first = await runWorkListView(
@@ -315,7 +350,7 @@ describe('progressive work.list views', () => {
         },
       ]),
     });
-    expect(registration.contract.summary).toContain('bounded');
+    expect(registration.contract.summary).toContain('Find owner work by what the turn needs');
   });
 
   it('dispatches the current commitment reader under the caller access', async () => {

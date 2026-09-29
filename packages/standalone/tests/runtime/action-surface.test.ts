@@ -35,6 +35,7 @@ describe('W1 action surface', () => {
       agentId: 'agent-test',
       connectors: ['chatwork', 'slack', 'trello', 'kagemusha'],
       scopes: [{ kind: 'project', id: 'workspace-test' }],
+      judge: { ask: async () => ({}) },
     });
     const expected = [
       'code_act',
@@ -43,6 +44,7 @@ describe('W1 action surface', () => {
       'deliver.telegram.file',
       'graph.query',
       'help',
+      'judge',
       'manage.wiki.publish',
       'manage.wiki.read',
       'manage.wiki.update',

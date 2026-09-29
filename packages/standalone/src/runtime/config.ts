@@ -48,6 +48,8 @@ export interface W1WikiConfig {
 }
 
 export interface W1JevConfig {
+  /** The owner's choice to let the agent call judge; everything works without it. */
+  enabled: boolean;
   keyFile: string;
   vocabFile: string;
 }
@@ -390,8 +392,12 @@ function parseConfigValue(
     throw new ConfigError('telegram.owner_chat_id must be listed in telegram.allowed_chats');
   }
   const jevRaw = raw.jev === undefined ? {} : object(raw.jev, 'jev');
-  collectIgnoredKeys(jevRaw, ['keyFile', 'vocabFile'], 'jev', state);
+  collectIgnoredKeys(jevRaw, ['enabled', 'keyFile', 'vocabFile'], 'jev', state);
+  if (typeof (jevRaw.enabled ?? false) !== 'boolean') {
+    throw new ConfigError('jev.enabled must be boolean');
+  }
   const jev: W1JevConfig = {
+    enabled: (jevRaw.enabled ?? false) as boolean,
     keyFile: configPath(
       text(jevRaw.keyFile ?? join(home, '.mama', 'jev-key'), 'jev.keyFile'),
       home

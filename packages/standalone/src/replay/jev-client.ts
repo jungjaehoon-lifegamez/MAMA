@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 
 export interface JevQuestion {
   readonly type: string;
-  readonly instructions: string;
+  readonly instructions: unknown;
+  /** noul true/false meanings, choice options {key: meaning}, or score levels in order. */
+  readonly criteria?: unknown;
 }
 
 export type JevQuestions = Readonly<Record<string, JevQuestion>>;

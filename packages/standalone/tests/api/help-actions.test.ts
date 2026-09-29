@@ -56,19 +56,20 @@ const contracts = [
   },
 ] as unknown as ActionContract[];
 
-const help = helpActionRegistrations({ contracts: () => contracts })[0]!;
+const help = helpActionRegistrations({
+  contracts: () => contracts,
+  topics: () => ({ 'full-report': 'Full report procedure text.', record: 'Recording text.' }),
+})[0]!;
 const run = (input: unknown) => help.exec(input as never, {} as never) as string;
 
 describe('action catalog line', () => {
-  it("lists the arguments, required first, with a plain enum's values, then the first sentence", () => {
+  it('is an index entry: the name and first sentence, the arguments left to help', () => {
     expect(actionSignature(contracts[0]!.inputSchema)).toBe(
       '{text, view?: "overview"|"items", links?, eventDatetime?}'
     );
-    expect(actionCatalogLine(contracts[0]!)).toBe(
-      'work.list({text, view?: "overview"|"items", links?, eventDatetime?}) — Read owner work progressively.'
-    );
+    expect(actionCatalogLine(contracts[0]!)).toBe('work.list — Read owner work progressively.');
     expect(actionCatalogLine(contracts[2]!)).toBe(
-      'memory.read:provenance({}) — Trace a memory to its cited source messages.'
+      'memory.read:provenance — Trace a memory to its cited source messages.'
     );
   });
 
@@ -102,20 +103,28 @@ describe('action catalog line', () => {
     ).toBe('{limit?: ≤50, caption?: ≤1024 chars, ids?: ≤4 items, asOf?}');
   });
 
-  it('caps the sentence, never the argument list', () => {
-    const line = actionCatalogLine({
-      name: 'x.y',
-      summary: 'z'.repeat(300),
-      inputSchema: { type: 'object', properties: { a: {}, b: {} } },
-    } as never);
-    expect(line.startsWith('x.y({a?, b?}) — ')).toBe(true);
-    expect(line.length).toBe('x.y({a?, b?}) — '.length + 160);
+  it('caps the sentence', () => {
+    const line = actionCatalogLine({ name: 'x.y', summary: 'z'.repeat(300) } as never);
+    expect(line.startsWith('x.y — ')).toBe(true);
+    expect(line.length).toBe('x.y — '.length + 160);
   });
 });
 
 describe('help action', () => {
-  it('lists every action line when no names are given', () => {
-    expect(run({})).toBe(contracts.map(actionCatalogLine).join('\n'));
+  it('lists the topics and every action line when nothing is asked', () => {
+    expect(run({})).toBe(
+      ['Topics: full-report, record', 'Actions:', ...contracts.map(actionCatalogLine)].join('\n')
+    );
+  });
+
+  it('returns a procedure by topic, alone or with contracts, and names the topics when unknown', () => {
+    expect(run({ topic: 'full-report' })).toBe('Full report procedure text.');
+    expect(run({ topic: 'record', actions: ['work.list'] }).split('\n\n')[0]).toBe(
+      'Recording text.'
+    );
+    expect(() => run({ topic: 'reports' })).toThrow(
+      'unknown topic: reports; topics: full-report, record'
+    );
   });
 
   it('returns each contract as text for dotted and Codex names alike', () => {

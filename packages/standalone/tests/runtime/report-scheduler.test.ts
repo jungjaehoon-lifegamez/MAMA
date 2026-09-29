@@ -82,7 +82,7 @@ describe('KST report scheduler', () => {
     expect(order).not.toContain('Slot HTML must use ONLY this class vocabulary');
     expect(order).not.toContain('manage.wiki.update');
     expect(order).not.toContain('daily/YYYY-MM-DD.md');
-    expect(order).toContain('full-report procedure');
+    expect(order).toContain("help({topic: 'full-report'})");
   });
 
   it('uses one delivery identity across model attempts after the schedule write fails', async () => {

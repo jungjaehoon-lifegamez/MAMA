@@ -89,7 +89,7 @@ describe('mama action MCP server — credential rotation', () => {
           tools: [
             expect.objectContaining({
               name: 'code_act',
-              description: expect.stringContaining('fixture.echo({}) — Echo fixture input'),
+              description: expect.stringContaining('fixture.echo — Echo fixture input'),
             }),
           ],
         },
@@ -179,9 +179,9 @@ describe('mama action MCP server — handleRequest unit surface', () => {
     });
     const description = tools[0].description as string;
     expect(description.startsWith(CODE_ACT_CONTRACT.summary)).toBe(true);
-    expect(description).toContain('\nActions:\nwork.create({topic?}) — Create a work item');
-    expect(description).toContain('\ngraph.query({}) — Query the graph');
-    expect(description).not.toContain('code_act({');
+    expect(description).toContain('\nActions:\nwork.create — Create a work item');
+    expect(description).toContain('\ngraph.query — Query the graph');
+    expect(description).not.toContain('code_act —');
     await expect(
       handleRequest(
         { jsonrpc: '2.0', id: 2, method: 'tools/list' },

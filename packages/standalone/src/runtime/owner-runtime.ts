@@ -30,10 +30,11 @@ import { createNativeSession, type NativeSession } from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
 import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { TimeZoneSetting } from './timezone.js';
-import { ownerSystemPrompt } from './owner-system-prompt.js';
+import { ownerHelpTopics, ownerSystemPrompt } from './owner-system-prompt.js';
 import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
 import { readSessionStartInput } from './session-start-context.js';
+import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
@@ -67,6 +68,8 @@ export interface OwnerRuntimeOptions {
   runTokenBudget?: number;
   codexHome?: string;
   replayKeyFile?: string;
+  /** Jev key and vocabulary paths when the owner enabled Jev; with them the agent can call judge. */
+  jev?: { keyFile: string; vocabFile: string };
   codexSandbox?: RuntimeSandbox;
   mcpConfigPath?: string;
   mcpServerPath?: string;
@@ -290,6 +293,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         stored: storedSourceReader,
         workspaceDir: options.workspaceDir,
       },
+      helpTopics: ownerHelpTopics(options.backend, options.wiki?.enabled ?? false),
+      ...(options.jev === undefined
+        ? {}
+        : (() => {
+            const jev = createJevClient(options.jev);
+            // A judge call cites no observation; refs only name the batch a replay window lost.
+            return { judge: { ask: (request) => jev.ask({ ...request, observationRefs: [] }) } };
+          })()),
     });
     const access: JudgmentAccess = surface.ownerAccess;
     const standingText = ownerSystemPrompt(
@@ -297,7 +308,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       null,
       storedSourceFamilies(database.adapter, access.connectors!),
       options.wiki?.enabled ?? false,
-      options.timeZone.get()
+      options.timeZone.get(),
+      options.jev !== undefined
     );
     const ownerPolicyProvider =
       options.ownerPolicyProvider ?? createOwnerPolicyProvider(options.runtimeRoot);

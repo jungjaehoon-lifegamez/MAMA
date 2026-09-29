@@ -24,6 +24,7 @@ function surface() {
     agentId: 'agent',
     connectors: ['chatwork', 'slack', 'trello', 'kagemusha'],
     scopes: [{ kind: 'project', id: 'scope' }],
+    judge: { ask: async () => ({}) },
   });
 }
 
@@ -82,6 +83,7 @@ describe('one owner native session', () => {
         'deliver.telegram.file',
         'graph.query',
         'help',
+        'judge',
         'manage.wiki.publish',
         'manage.wiki.read',
         'manage.wiki.update',

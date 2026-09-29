@@ -249,7 +249,7 @@ describe('daemon bootstrap', () => {
       expect((listed.result as { tools: Array<{ name: string }> }).tools).toEqual([
         expect.objectContaining({
           name: 'code_act',
-          description: expect.stringContaining('\nwork.create({'),
+          description: expect.stringContaining('\nwork.create — '),
         }),
       ]);
       const called = await mcp.request('tools/call', {

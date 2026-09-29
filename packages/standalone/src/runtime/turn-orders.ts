@@ -401,7 +401,7 @@ export function deltaRecordOrder(
     ...(lines.length === 0 ? [] : [wrapUntrustedContent('source_delta', lines.join('\n'))]),
     'Record what this delta changed:',
     `1. Use its lines above; read originals with source.read and observationRefs from the list below only for what the lines do not show.`,
-    `2. Find the work they belong to with work.list (view=items with text) before creating anything.`,
+    `2. Find the work they belong to with work.list (view=items with text) before creating anything; help({topic: 'record'}) has the recording rules.`,
     `3. For each moved item, work.revise (or work.create for newly entrusted work) with derived_from links to the observations below and eventDatetime set to the source event time; update only the board sections that change with report.publish, reading its contract with help first in a session${
       options.wikiEnabled
         ? `; add the dated line to the case's topic page with manage.wiki.update`
@@ -467,14 +467,14 @@ export function scheduledReportOrder(
       '[scheduled_full_report]',
       currentTime(now, options.timeZone),
       `Changes since: ${since}`,
-      'Write the full report by the full-report procedure.',
+      "Write the full report by its procedure, help({topic: 'full-report'}).",
       `Messenger: ${options.messenger}`,
     ].join('\n');
   }
   return [
     '[scheduled_task_reminder]',
     currentTime(now, options.timeZone),
-    `1. Read open work with work.list view=pipeline, keeping only the fields you need in the script.`,
+    `1. Find the open work that needs the owner now (work.list items with due overdue or today, and items waiting on an owner decision), keeping only the fields you need in the script.`,
     `2. Pick the top five to eight by priority and deadline, including every item waiting on an owner decision; check schedule.upcoming if this session has not read it today.`,
     `3. Update only the action_required board section with report.publish.`,
     '4. Reply with a three-to-six-line reminder of those items, most urgent first, under a title that names them. If nothing needs the owner now, reply [ack] only.',

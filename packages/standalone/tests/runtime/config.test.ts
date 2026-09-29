@@ -44,6 +44,7 @@ function validConfig(): W1Config {
     slack: { enabled: false, allowed_channels: [], owner_user_ids: [] },
     delivery: { reports: 'telegram', notifications: 'telegram', security_alerts: 'telegram' },
     jev: {
+      enabled: false,
       keyFile: '/tmp/jev-key',
       vocabFile: '/tmp/vocab.json',
     },
@@ -280,6 +281,7 @@ describe('W1 runtime configuration', () => {
     try {
       const parsed = parseConfig({ ...validConfig(), jev: undefined }, { home: root });
       expect(parsed.jev).toEqual({
+        enabled: false,
         keyFile: join(root, '.mama/jev-key'),
         vocabFile: join(root, '.mama/backfill/vocab.json'),
       });
