@@ -286,7 +286,9 @@ jobs:
   # Step 5: Sync Claude plugin to marketplace
   sync-plugin:
     needs: [prepare-release, publish-mama-server]
-    if: ${{ !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-plugin')) }}
+    # always(): publish-mama-server runs after a skipped publish-mama-core, and without it the skip
+    # propagates here (v0.58.1 skipped the plugin sync this way).
+    if: ${{ always() && !inputs.dry_run && (inputs.packages == 'all' || contains(inputs.packages, 'mama-plugin')) && needs.prepare-release.result == 'success' && (needs.publish-mama-server.result == 'success' || needs.publish-mama-server.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout MAMA
@@ -328,6 +330,11 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add .
+          # An already synced repository has nothing to commit; that is not a failure.
+          if git diff --cached --quiet; then
+            echo "claude-plugins already matches v${{ needs.prepare-release.outputs.mama_plugin_version }}"
+            exit 0
+          fi
           git commit -m "chore: Sync MAMA plugin v${{ needs.prepare-release.outputs.mama_plugin_version }}"
           git push
 
