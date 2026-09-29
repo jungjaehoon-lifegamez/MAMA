@@ -131,7 +131,7 @@ export function ownerHelpTopics(
   return {
     'full-report': [
       'Full report — when the owner asks for it in any words, or a [scheduled_full_report] order arrives:',
-      '1. The ledger is the record: the report is what changed since the previous report on top of it. Find the items written since then, the deadlines and the calendar ahead, and open originals only for a change the ledger does not explain; list what you cannot settle as needing a response rather than searching for it. Tell an empty result from failed or stale collection.',
+      '1. The ledger is the record: the report is what changed since the previous report on top of it. Find the items written since then, the deadlines and the calendar ahead, and open originals only for a change the ledger does not explain. Never leave an item vaguely unconfirmed: settle what the ledger shows (done, cancelled or continuing) and record it; for an item it cannot settle, say what is missing and who can settle it. Tell an empty result from failed or stale collection.',
       '2. Compare every open deadline with the calendar and holidays, using event end times for overlaps. Name the items under each stage and list every item waiting on an owner decision with the decision requested.',
       '3. Publish all four board sections with report.publish; build long sections such as the pipeline inside the script from the ledger rows, so the rows do not pass through your context.',
       '4. Write the report in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions. Say plainly when there were no changes.',
