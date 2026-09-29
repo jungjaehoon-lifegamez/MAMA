@@ -29,8 +29,11 @@ All notable changes to this project will be documented in this file.
 
 - `judge`: when the owner sets `jev.enabled`, the agent can ask Jev typed questions (noul, choice,
   score) inside its script to narrow many candidates, such as a name spelled several ways or whether
-  a message settles a work item, and return only the ones that matter. Off by default; owner text in a
-  `judge` call goes to the Jev service.
+  a message settles a work item, and return only the ones that matter. It is used in pairs: code
+  narrows the candidates, then one call judges one item with its own few messages. A state over
+  6,000 characters is refused, because unrelated content lowers Jev's accuracy; on 2026-09-29 the
+  agent put the whole open ledger in each of 24 calls. Off by default; owner text in a `judge` call
+  goes to the Jev service.
 
 - A new owner session starts the way Kagemusha's does, within 2,500 characters: the time, the owner
   channel's last ten messages, the last ten turns it would resume from (your messages and live

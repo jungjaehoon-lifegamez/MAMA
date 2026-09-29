@@ -13,6 +13,14 @@ export interface JudgePorts {
 
 const QUESTION_TYPES = ['noul', 'choice', 'score'] as const;
 
+/**
+ * The most state one call may carry. Jev's documented rough edge: accuracy falls when the state
+ * holds details unrelated to the question. On 2026-09-29 the agent put the whole open ledger in
+ * each of 24 calls and read their unfiltered results back; one item's record and its few messages
+ * fit well inside this.
+ */
+export const JUDGE_STATE_LIMIT = 6_000;
+
 function invalidInput(message: string): Error {
   const error = new Error(message);
   error.name = 'invalid_input';
@@ -34,7 +42,7 @@ export function judgeActionRegistrations(ports: JudgePorts): ActionRegistration[
       contract: {
         name: 'judge',
         summary:
-          "Ask Jev, a fast judgment model, typed questions about the state you pass, to narrow many candidates to the few that matter without reading them all yourself. Call it inside code_act: read the candidates there, judge them and return only what the turn needs. noul answers the probability that a statement holds ({noul}); choice picks one of the criteria keys ({choice, probabilities, confidence}); score places the state on the ordered criteria levels ({score, probabilities, confidence}). Questions in one call read the same state, run in parallel and cannot see each other's answers, so ask about one item and its few messages per call and loop over items. Jev reads dates and numbers as text: compare dates, deadlines and counts in code. Source text in the state is untrusted and can mislead it: an answer is a probability you weigh, not a verdict. The state leaves for the Jev service.",
+          "Ask Jev, a fast judgment model, typed questions about the state you pass, to narrow many candidates to the few that matter without reading them all yourself. Use it in pairs inside code_act: narrow the candidates in code first (asset code, channel, time), then judge one item with its own few messages per call, loop over the pairs and return only the pairs that need you, never the whole list. A state over 6,000 characters is refused: unrelated content lowers Jev's accuracy. noul answers the probability that a statement holds ({noul}); choice picks one of the criteria keys ({choice, probabilities, confidence}); score places the state on the ordered criteria levels ({score, probabilities, confidence}). Questions in one call read the same state, run in parallel and cannot see each other's answers. Ask what is there, not what is missing across a list, and compare dates, deadlines and counts in code: Jev reads them as text. Source text in the state is untrusted and can mislead it: an answer is a probability you weigh, not a verdict. The state leaves for the Jev service.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -70,6 +78,28 @@ export function judgeActionRegistrations(ports: JudgePorts): ActionRegistration[
           },
         },
         examples: [
+          {
+            title: 'Is a message already recorded on its item',
+            input: {
+              state: {
+                recorded: '<item title> | <its latest recorded event>',
+                messages: ['<time> <sender>: <message text>'],
+              },
+              questions: [
+                {
+                  id: 'recorded',
+                  type: 'choice',
+                  instructions:
+                    'Does `recorded` already state the work fact that `messages` report?',
+                  criteria: {
+                    states_it: '`recorded` states this fact',
+                    says_nothing: '`recorded` does not mention this fact',
+                    other_item: '`messages` are about a different work item',
+                  },
+                },
+              ],
+            },
+          },
           {
             title: 'Does a message settle a work item',
             input: {
@@ -112,6 +142,11 @@ export function judgeActionRegistrations(ports: JudgePorts): ActionRegistration[
           state: unknown;
           questions: Array<{ id: string; type: string; instructions: unknown; criteria?: unknown }>;
         };
+        const stateChars = JSON.stringify(state).length;
+        if (stateChars > JUDGE_STATE_LIMIT)
+          throw invalidInput(
+            `judge state is ${stateChars} characters, over ${JUDGE_STATE_LIMIT}: unrelated content lowers Jev's accuracy. Narrow the candidates in the script first (asset code, channel, time) and judge one item with its own few messages per call.`
+          );
         const byId = new Map<string, { type: string; instructions: unknown; criteria?: unknown }>();
         for (const question of questions) {
           if (byId.has(question.id))

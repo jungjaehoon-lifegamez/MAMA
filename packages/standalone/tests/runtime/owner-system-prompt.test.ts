@@ -80,7 +80,7 @@ describe('owner standing prompt', () => {
     expect(topics.sources).toContain('instead of guessing how its name is spelled');
     expect(topics.sources).not.toContain('judge');
     expect(ownerHelpTopics('codex', false, true).sources).toContain(
-      'judge in the script whether each message is about the item'
+      'judge each item with its own few messages, and return only the pairs that need you'
     );
     expect(ownerPrompt('codex', null, false)).not.toContain('manage.wiki.');
   });

@@ -14,7 +14,11 @@ describe('judge action', () => {
   it('sends the state and each question by id, and returns the answers', async () => {
     const ask = vi.fn(async () => ({ settles: { type: 'choice', choice: 'done' } }));
     const judge = dispatcher(ask);
-    const example = judgeActionRegistrations({ ask }).at(0)!.contract.examples![0]!.input;
+    const example = judgeActionRegistrations({ ask })
+      .at(0)!
+      .contract.examples!.find(
+        (entry) => entry.title === 'Does a message settle a work item'
+      )!.input;
     const result = await judge(example);
     expect(result).toMatchObject({
       status: 'completed',
@@ -89,6 +93,25 @@ describe('judge action', () => {
     )[0];
     expect(Object.keys(request.questions)).toEqual(['constructor', 'toString']);
     expect(request.signal).toBe(signal);
+  });
+
+  it('refuses a state over the limit with the way to narrow it, before calling Jev', async () => {
+    const ask = vi.fn(async () => ({}));
+    const judge = dispatcher(ask);
+    const ledger = Array.from({ length: 40 }, (_, index) => `item ${index} ${'x'.repeat(200)}`);
+    expect(
+      await judge({
+        state: { ledger, messages: ['sender: text'] },
+        questions: [{ id: 'a', type: 'noul', instructions: 'Is it recorded?' }],
+      })
+    ).toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'invalid_input',
+        message: expect.stringContaining('judge one item with its own few messages per call'),
+      },
+    });
+    expect(ask).not.toHaveBeenCalled();
   });
 
   it('surfaces a Jev failure as the call error', async () => {
