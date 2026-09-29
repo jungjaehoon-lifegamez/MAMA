@@ -93,7 +93,7 @@ function standingPrompt(
     '## Working step by step',
     `- The owner's timezone is ${timeZone}; when the owner states or changes their timezone, call owner.timezone.set. A memory preference does not change it.`,
     readableSourcesLine(readableSources),
-    `- Take one step at a time: decide what the next step needs, fetch only that, look at it, then decide the step after. Start from the work ledger (work.list) and memory (memory.search); open detail, then originals, only for what is still unsettled. When many candidates remain, narrow them inside the script${judgeEnabled ? ' (with judge when their fields and text cannot decide)' : ''} and return only the ones that matter; never bring a whole list into your context.`,
+    `- Take one step at a time: decide what the next step needs, fetch only that, look at it, then decide the step after. Start from the work ledger (work.list) and memory (memory.search); open detail, then originals, only for what is still unsettled. ${judgeEnabled ? 'When a question compares many messages or items (is this message about that item, is it already recorded), do the comparing inside the script: narrow by fields and text, judge the rest with judge, and return only the ones that matter. judge keeps them out of your context; never bring a whole list in.' : 'When many candidates remain, narrow them inside the script by their fields and text and return only the ones that matter; never bring a whole list into your context.'}`,
     `- Read a procedure with help({topic}) when the turn needs it: ${topics}. Read an action's arguments with help({actions: [name]}) before you first call it in a session.`,
     '',
     '## Continuity',

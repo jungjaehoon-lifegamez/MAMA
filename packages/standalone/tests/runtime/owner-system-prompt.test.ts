@@ -72,8 +72,9 @@ describe('owner standing prompt', () => {
       expect(prompt).not.toContain(procedure);
     }
     expect(prompt).not.toContain('judge');
+    expect(prompt).toContain('narrow them inside the script by their fields and text');
     expect(ownerSystemPrompt('claude', null, [], true, 'UTC', true)).toContain(
-      'with judge when their fields and text cannot decide'
+      'do the comparing inside the script: narrow by fields and text, judge the rest with judge'
     );
     expect(ownerHelpTopics('codex', false)).not.toHaveProperty('wiki');
     expect(topics.sources).toContain('instead of guessing how its name is spelled');

@@ -207,6 +207,19 @@ function workListAsOf(value: unknown): number | undefined {
   return value as number;
 }
 
+/**
+ * A changed-since/before bound as epoch ms or a timezone-qualified ISO time, as source.recent
+ * takes: on 2026-09-29 the agent passed "2026-09-29T00:00:00+09:00" and the call failed.
+ */
+function workListTime(value: unknown, field: string): number {
+  if (typeof value === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  if (Number.isSafeInteger(value) && (value as number) >= 0) return value as number;
+  throw new Error(`work.list ${field} must be epoch milliseconds or an ISO time with its offset`);
+}
+
 function workListFilter(input: Record<string, unknown>): WorkListFilter {
   const status = workListStatuses(input.status);
   return {
@@ -215,10 +228,12 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
     ...(input.project === undefined ? {} : { project: workListString(input.project, 'project') }),
     ...(input.text === undefined ? {} : { text: workListString(input.text, 'text') }),
     ...(input.asOf === undefined ? {} : { asOf: workListAsOf(input.asOf) }),
-    ...(input.changedSince === undefined ? {} : { changedSince: workListAsOf(input.changedSince) }),
+    ...(input.changedSince === undefined
+      ? {}
+      : { changedSince: workListTime(input.changedSince, 'changedSince') }),
     ...(input.changedBefore === undefined
       ? {}
-      : { changedBefore: workListAsOf(input.changedBefore) }),
+      : { changedBefore: workListTime(input.changedBefore, 'changedBefore') }),
     ...(input.due === undefined ? {} : { due: workListDueFilter(input.due) }),
   };
 }
@@ -916,14 +931,18 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
             text: { type: 'string' },
             asOf: { type: 'integer', minimum: 0 },
             changedSince: {
-              type: 'integer',
-              minimum: 0,
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
               description:
-                'Only items written at or after this epoch-ms time, e.g. the start of your turn.',
+                'Only items written at or after this time (epoch ms or ISO with offset), e.g. the start of your turn.',
             },
             changedBefore: {
-              type: 'integer',
-              minimum: 0,
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
               description:
                 'Only items last written before this epoch-ms time: work that has not moved.',
             },

@@ -224,6 +224,13 @@ describe('progressive work.list views', () => {
     expect(await ids({ due: 'today' })).toEqual(['commitment-2']);
     expect(await ids({ due: 'upcoming' })).toEqual(['commitment-3']);
     expect(await ids({ due: 'unscheduled' })).toEqual(['commitment-4']);
+    expect(await ids({ changedSince: '1970-01-01T00:00:00.250Z' })).toEqual([
+      'commitment-3',
+      'commitment-4',
+    ]);
+    await expect(
+      runWorkListView({ view: 'items', changedSince: 'today' }, context(reader.readWork))
+    ).rejects.toThrow('work.list changedSince must be epoch milliseconds or an ISO time');
     expect(await ids({ changedBefore: 200 })).toEqual([
       'commitment-1',
       'commitment-2',
