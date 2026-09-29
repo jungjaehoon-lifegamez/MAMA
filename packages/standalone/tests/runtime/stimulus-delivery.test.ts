@@ -598,6 +598,7 @@ describe('one stimulus intake and delivery', () => {
         payload: {
           order: 'record',
           deltaStimulusId: 'source_delta:1',
+          source: 'chat',
           channel: 'room',
           observationRefs: ['obs-1'],
           lines: [],

@@ -222,7 +222,12 @@ describe('turn orders', () => {
       channelKey: 'room',
       payload: {
         refs: [
-          { observationRef: 'obs-2', contentPreview: 'b', sourceAt: now.toISOString() },
+          {
+            connector: 'chat',
+            observationRef: 'obs-2',
+            contentPreview: 'b',
+            sourceAt: now.toISOString(),
+          },
           { observationRef: 'obs-1', contentPreview: 'a', sourceAt: now.toISOString() },
           { observationRef: 'obs-1', contentPreview: 'a', sourceAt: now.toISOString() },
         ],
@@ -232,6 +237,7 @@ describe('turn orders', () => {
     expect(first).toMatchObject({
       order: 'record',
       deltaStimulusId: 'source_delta:abc',
+      source: 'chat',
       channel: 'room',
       observationRefs: ['obs-1', 'obs-2'],
       attempt: 1,
@@ -249,6 +255,7 @@ describe('turn orders', () => {
       {
         order: 'record',
         deltaStimulusId: 'source_delta:abc',
+        source: 'chat',
         channel: 'room',
         observationRefs: ['obs-1', 'obs-2'],
         lines: [{ sourceAt: now.toISOString(), author: 'sender', text: 'files sent' }],
@@ -267,8 +274,12 @@ describe('turn orders', () => {
       'observations: obs-1, obs-2',
       '[09-29 01:40] sender: files sent',
       'reading its contract with help first in a session',
+      // Kagemusha's order: the channel's latest context, then the current work state (2026-09-29).
+      '1. Check this channel\'s latest context with source.recent({channels: ["chat:room"], perChannel: 20})',
+      '2. Read the current work state with work.list',
     ])
       expect(order).toContain(part);
+    expect(order).not.toContain('only for what the lines do not show');
     const noWiki = deltaRecordOrder(
       parseRecordOrder(
         recordOrderPayload(

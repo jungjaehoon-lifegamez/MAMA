@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
   the agent finds what it needs and opens originals only for a change the ledger does not explain.
   On 2026-09-29 two full reports took 218 and 301 seconds (the second timed out), re-reading sources
   with 13 source searches.
+- A record turn follows Kagemusha's order: it checks the channel's latest context
+  (`source.recent` for that channel), then reads the current work state (`work.list`), then records
+  or states why nothing changed. It had been told to use only the delta's lines and find work by
+  text search, and on 2026-09-29 it left an owner's short check result in another room ("해결됐군요"
+  after a tk5 check request) unattached.
 - `source.recent` lists the channels that changed (key, count, latest line) and returns lines only
   for the channels the agent asks for. One call had returned 33,077 characters.
 - `work.list` detail gives the current record, its 20 newest evidence refs and its 5 newest
