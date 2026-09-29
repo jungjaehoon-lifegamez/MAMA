@@ -47,6 +47,10 @@ describe('judge action', () => {
       [[noul, noul], 'questions id "a" is repeated'],
       [[{ id: 'c', type: 'choice', instructions: 'Which?' }], 'choice question "c" needs criteria'],
       [
+        [{ id: 'e', type: 'choice', instructions: 'Which?', criteria: {} }],
+        'choice question "e" needs criteria',
+      ],
+      [
         [{ id: 's', type: 'score', instructions: 'How far?', criteria: { low: 'x' } }],
         'score question "s" needs criteria [ordered levels]',
       ],
@@ -57,6 +61,34 @@ describe('judge action', () => {
       });
     }
     expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('keeps ids that name object properties and passes the turn signal', async () => {
+    const ask = vi.fn(async () => ({}));
+    const dispatch = createDispatcher(createCatalog(judgeActionRegistrations({ ask })));
+    const signal = new AbortController().signal;
+    const result = await dispatch(
+      {
+        action: 'judge',
+        input: {
+          state: 'text',
+          questions: [
+            { id: 'constructor', type: 'noul', instructions: 'Is it?' },
+            { id: 'toString', type: 'noul', instructions: 'Is it done?' },
+          ],
+        },
+      },
+      {
+        access: { principalId: 'o', agentId: 'a', scopes: [], actions: ['judge'] },
+        signal,
+      } as unknown as ActionContext
+    );
+    expect(result).toMatchObject({ status: 'completed' });
+    const request = (
+      ask.mock.calls[0] as unknown as [{ questions: object; signal: AbortSignal }]
+    )[0];
+    expect(Object.keys(request.questions)).toEqual(['constructor', 'toString']);
+    expect(request.signal).toBe(signal);
   });
 
   it('surfaces a Jev failure as the call error', async () => {

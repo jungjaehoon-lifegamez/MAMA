@@ -125,6 +125,8 @@ describe('help action', () => {
     expect(() => run({ topic: 'reports' })).toThrow(
       'unknown topic: reports; topics: full-report, record'
     );
+    // An inherited name is not a topic.
+    expect(() => run({ topic: 'toString' })).toThrow('unknown topic: toString');
   });
 
   it('returns each contract as text for dotted and Codex names alike', () => {

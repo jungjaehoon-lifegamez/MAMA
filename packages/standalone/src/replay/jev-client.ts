@@ -14,6 +14,8 @@ export interface JevBatchRequest {
   readonly state: unknown;
   readonly questions: JevQuestions;
   readonly observationRefs: readonly string[];
+  /** Cancels the request with the turn that made it. */
+  readonly signal?: AbortSignal;
 }
 
 export interface JevClientOptions {
@@ -113,6 +115,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
       const text = await response.text();
       if (response.ok) {

@@ -194,6 +194,23 @@ describe('report source reads', () => {
     });
   });
 
+  it('reads a named channel whatever the cap on the channel list', async () => {
+    const { dispatch, access } = setup();
+    const owner = { ...access, principalId: 'owner', channels: undefined };
+    const listed = (await dispatch(
+      { action: 'source.recent', input: { since: now - 60_000 } },
+      { access: owner }
+    )) as { data: { channels: Array<{ key: string }> } };
+    expect(listed.data.channels.length).toBeGreaterThan(1);
+    const key = listed.data.channels[0]!.key;
+    expect(
+      await dispatch(
+        { action: 'source.recent', input: { since: now - 60_000, cap: 1, channels: [key] } },
+        { access: owner }
+      )
+    ).toMatchObject({ status: 'completed', data: { channels: [{ key }] } });
+  });
+
   it('fails loudly as invalid input when recent channels exceed the stated cap', async () => {
     const { dispatch, access } = setup();
     const owner = { ...access, principalId: 'owner', channels: undefined };

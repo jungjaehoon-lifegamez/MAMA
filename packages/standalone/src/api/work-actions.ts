@@ -421,6 +421,11 @@ function workListDueGroup(item: CommitmentView, now: number, timeZone: string): 
   if (state === 'closed') return null;
   if (state === 'unscheduled') return 'unscheduled';
   if (state === 'date_due') return 'today';
+  if (state === 'exact_upcoming') {
+    const values = workListValueObject(item.values);
+    const exact = workListEventTime(values.dueAt ?? values.due_at)!;
+    return localDateKey(exact, timeZone) === localDateKey(now, timeZone) ? 'today' : 'upcoming';
+  }
   return state.endsWith('overdue') ? 'overdue' : 'upcoming';
 }
 
@@ -453,10 +458,15 @@ function workListRankedItems(
     .sort((left, right) => right.score - left.score || right.item.updatedAt - left.item.updatedAt);
 }
 
-function workListFingerprint(filter: WorkListFilter): string {
+/**
+ * The query a cursor belongs to. A due filter depends on the owner's today, so its day is part of
+ * the query: a page read after midnight restarts instead of skipping items that changed group.
+ */
+function workListFingerprint(filter: WorkListFilter, dueDay: string | null): string {
   return createHash('sha256')
     .update(
       JSON.stringify([
+        dueDay,
         filter.status === undefined ? null : [...filter.status].sort(),
         filter.stage ?? null,
         filter.project ?? null,
@@ -535,7 +545,11 @@ function workListCursorQuery(value: unknown): WorkListFilter | undefined {
     : undefined;
 }
 
-function decodeWorkListCursor(value: unknown, filter: WorkListFilter): WorkListCursor {
+function decodeWorkListCursor(
+  value: unknown,
+  filter: WorkListFilter,
+  dueDay: string | null
+): WorkListCursor {
   if (value === '') {
     throw new Error('work.list cursor is empty; omit cursor to start from the first page');
   }
@@ -561,7 +575,7 @@ function decodeWorkListCursor(value: unknown, filter: WorkListFilter): WorkListC
   ) {
     throw new Error('work.list cursor is malformed; restart the items read from the first page');
   }
-  if (candidate.filter !== workListFingerprint(filter)) {
+  if (candidate.filter !== workListFingerprint(filter, dueDay)) {
     throw new Error(
       'work.list cursor belongs to a different query; restart the items read from the first page'
     );
@@ -825,7 +839,9 @@ export async function runWorkListView(
     1,
     WORK_LIST_MAX_LIMIT
   );
-  const decoded = input.cursor === undefined ? null : decodeWorkListCursor(input.cursor, filter);
+  const dueDay = filter.due === undefined ? null : localDateKey(now, ctx.timeZone);
+  const decoded =
+    input.cursor === undefined ? null : decodeWorkListCursor(input.cursor, filter, dueDay);
   if (decoded !== null && decoded.readVersion !== snapshot.readVersion) {
     throw new Error(
       'work.list board changed since this cursor was issued; restart the items read from the first page'
@@ -846,7 +862,7 @@ export async function runWorkListView(
         ? null
         : encodeWorkListCursor({
             v: 1,
-            filter: workListFingerprint(filter),
+            filter: workListFingerprint(filter, dueDay),
             query: filter,
             readVersion: snapshot.readVersion,
             offset: nextOffset,

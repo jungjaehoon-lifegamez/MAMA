@@ -191,7 +191,8 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
         const topics = ports.topics?.() ?? {};
         const parts: string[] = [];
         if (topic !== undefined) {
-          const text = typeof topic === 'string' ? topics[topic] : undefined;
+          const text =
+            typeof topic === 'string' && Object.hasOwn(topics, topic) ? topics[topic] : undefined;
           if (text === undefined)
             throw invalidInput(
               `unknown topic: ${String(topic)}; topics: ${Object.keys(topics).join(', ')}`

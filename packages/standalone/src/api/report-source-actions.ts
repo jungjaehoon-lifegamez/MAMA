@@ -279,7 +279,8 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
             failedAt: row.last_error_at,
           };
         });
-      if (groups.size > Number(cap))
+      // The cap bounds the channel list; a read of named channels returns only those.
+      if (requested === null && groups.size > Number(cap))
         throw invalidInput(
           `source.recent found changes in ${groups.size} channels, more than cap ${cap}; narrow since or cap`
         );

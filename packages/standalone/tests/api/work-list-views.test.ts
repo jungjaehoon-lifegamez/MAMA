@@ -234,6 +234,32 @@ describe('progressive work.list views', () => {
     ).rejects.toThrow('work.list due must be one of overdue|today|upcoming|unscheduled');
   });
 
+  it('counts an exact deadline later today as today, and restarts a due page after midnight', async () => {
+    // now is 2023-11-14 22:15 UTC.
+    const exact = (index: number, dueAt: string) =>
+      view(index, { values: { title: `item-${index}`, status: 'pending', dueAt } });
+    const items = [
+      exact(1, '2023-11-14T23:00:00Z'),
+      exact(2, '2023-11-15T01:00:00Z'),
+      ...Array.from({ length: 3 }, (_, index) => exact(index + 3, '2023-11-14T23:30:00Z')),
+    ];
+    const reader = makeReader(items);
+    const today = await runWorkListView(
+      { view: 'items', due: 'today', limit: 2 },
+      context(reader.readWork)
+    );
+    expect(today.total).toBe(4);
+    const tomorrow = {
+      knowledge: { readWork: reader.readWork },
+      access,
+      now: () => Date.parse('2023-11-15T00:10:00Z'),
+      timeZone: 'UTC',
+    };
+    await expect(
+      runWorkListView({ view: 'items', due: 'today', cursor: today.nextCursor }, tomorrow)
+    ).rejects.toThrow('work.list cursor belongs to a different query');
+  });
+
   it('continues a filtered items read from the cursor alone and refuses a different filter', async () => {
     const reader = makeReader(Array.from({ length: 80 }, (_, index) => view(index + 1)));
     const first = await runWorkListView(

@@ -3,7 +3,12 @@ import type { JevQuestions } from '../replay/jev-client.js';
 
 /** The Jev call the action makes; the daemon passes the configured client. */
 export interface JudgePorts {
-  ask(request: { state: unknown; questions: JevQuestions }): Promise<Record<string, unknown>>;
+  ask(request: {
+    state: unknown;
+    questions: JevQuestions;
+    /** The turn's signal: a cancelled turn cancels its Jev request. */
+    signal?: AbortSignal;
+  }): Promise<Record<string, unknown>>;
 }
 
 const QUESTION_TYPES = ['noul', 'choice', 'score'] as const;
@@ -102,27 +107,35 @@ export function judgeActionRegistrations(ports: JudgePorts): ActionRegistration[
           },
         ],
       },
-      exec: async (input) => {
+      exec: async (input, context) => {
         const { state, questions } = input as {
           state: unknown;
           questions: Array<{ id: string; type: string; instructions: unknown; criteria?: unknown }>;
         };
-        const byId: Record<string, { type: string; instructions: unknown; criteria?: unknown }> =
-          {};
+        const byId = new Map<string, { type: string; instructions: unknown; criteria?: unknown }>();
         for (const question of questions) {
-          if (byId[question.id] !== undefined)
+          if (byId.has(question.id))
             throw invalidInput(`questions id "${question.id}" is repeated`);
-          if (question.type === 'choice' && !isRecord(question.criteria))
+          if (
+            question.type === 'choice' &&
+            (!isRecord(question.criteria) || Object.keys(question.criteria).length === 0)
+          )
             throw invalidInput(`choice question "${question.id}" needs criteria {key: meaning}`);
           if (question.type === 'score' && !Array.isArray(question.criteria))
             throw invalidInput(`score question "${question.id}" needs criteria [ordered levels]`);
-          byId[question.id] = {
+          byId.set(question.id, {
             type: question.type,
             instructions: question.instructions,
             ...(question.criteria === undefined ? {} : { criteria: question.criteria }),
-          };
+          });
         }
-        return { answers: await ports.ask({ state, questions: byId as JevQuestions }) };
+        return {
+          answers: await ports.ask({
+            state,
+            questions: Object.fromEntries(byId) as JevQuestions,
+            ...(context.signal === undefined ? {} : { signal: context.signal }),
+          }),
+        };
       },
     },
   ];
