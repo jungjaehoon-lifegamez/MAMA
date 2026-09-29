@@ -114,7 +114,12 @@ function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
     corrections: 'the owner corrects you or states how something should be done',
     sources: 'reading source messages',
     files: 'attachments and files',
-    ...(wikiEnabled ? { wiki: 'writing wiki pages' } : {}),
+    ...(wikiEnabled
+      ? {
+          wiki: 'a message or the owner settles lasting knowledge for a project page: terms, specifications, decisions, how a client works',
+          daily: 'a [scheduled_daily] order',
+        }
+      : {}),
   };
 }
 
@@ -128,7 +133,7 @@ export function ownerHelpTopics(
   judgeEnabled = false
 ): Record<string, string> {
   const readers =
-    'Board sections and wiki pages are read by people: who, when, what changed, what is awaited next, in sentences a reader understands alone. No ids in their text; a wiki page keeps its evidence ids in sourceIds and sourceRefs.';
+    'Board sections are read by people: who, when, what changed, what is awaited next, in sentences a reader understands alone, with no ids in their text.';
   return {
     'full-report': [
       'Full report — when the owner asks for it in any words, or a [scheduled_full_report] order arrives:',
@@ -169,8 +174,22 @@ export function ownerHelpTopics(
       ? {
           wiki: [
             'Wiki pages:',
-            '- The wiki is organised knowledge, not a copy of the ledger: one page per project, client or long-running topic, a dated line per change and the current state restated; Home.md is the table of contents. Create a page only when none fits, then add it to Home.md.',
-            readers,
+            '- The wiki holds what the sources and the ledger do not show on their own: knowledge that stays true and has to be gathered from many messages. What happened (who sent what, when) stays in the sources, and current state and history stay in the ledger; neither is copied into the wiki.',
+            '- A page is one project, client or long-running topic, in these sections, each rewritten when its knowledge changes and never appended to by date: overview (what it is, the client, the people and their roles, terms such as prices and scope, file specifications); decisions and specifications that stand; terms and what they mean; how the client and the people work (what they often ask to change, who decides). No current-state section and no dated entries.',
+            '- Change a page only when a message or the owner settles such knowledge, and only its section: read the page with manage.wiki.read and replace the section with manage.wiki.update. Most messages settle none.',
+            '- Home.md lists every page with one line on what it covers, not its state. log.md records wiki operations (a page created, reorganised or checked), one line each. Create a page only when none fits, then add it to Home.md.',
+            "- Daily pages (daily/YYYY-MM-DD.md) are written by the daily order only; help({topic: 'daily'}).",
+            'Wiki pages are read by people: sentences a reader understands alone, no ids in their text; a page keeps its evidence ids in sourceIds and sourceRefs.',
+          ].join('\n'),
+          daily: [
+            'Daily page — a [scheduled_daily] order names the day:',
+            '- daily/<day>.md is what that day amounted to, gathered from what the sources, the ledger and the conversation hold for it; it copies none of them. At most 30 lines, in three sections:',
+            '  1. The day in brief: three to five lines on what mattered across projects and why, linking their pages ([[projects/<page>]]).',
+            '  2. What the owner decided: the decisions, instructions and corrections the owner gave that day, one line each, saying where each now lives (a project page, the owner policy, a lesson).',
+            '  3. Missed and learned: what was recorded late or wrong, what the owner had to correct, and the lesson, one line each.',
+            '- Read the day: work.list with eventSince and eventBefore (each item lists its revisions that day, so read them inside the script and keep what the page needs); owner.messages for that day; memory.search for lessons saved that day. Open sources only for what these leave unexplained.',
+            '- Leave out single messages, item states and report text; a quiet day is a short page. Knowledge that day settled and a project page lacks goes to that page too (help topic wiki).',
+            '- The page may exist: read it with manage.wiki.read and publish the new page with manage.wiki.publish and its expectedContentVersion; otherwise publish it new. Add one line to log.md.',
           ].join('\n'),
         }
       : {}),

@@ -4,11 +4,13 @@ parent: Guides
 nav_order: 12
 ---
 
-# Keep a readable work history
+# Keep what the work teaches
 
-Ask MAMA to update the wiki when work changes, then inspect it in the viewer's Wiki
-page or in a Markdown editor. The wiki organizes related knowledge; individual
-task revisions remain in the work ledger.
+The wiki keeps knowledge that stays true and has to be gathered from many
+messages: what a project is, its terms, decisions and specifications, and how a
+client works. What happened stays in the sources, and current state and history
+stay in the work ledger. Each evening the agent adds a page for the day. Read the
+wiki in the viewer's Wiki page or in a Markdown editor.
 
 ## Choose the vault
 
@@ -28,12 +30,13 @@ optional.
 
 The owner agent's instructions use:
 
-| Path                  | Content                                                               |
-| --------------------- | --------------------------------------------------------------------- |
-| `Home.md`             | Table of contents maintained by the agent                             |
-| `daily/YYYY-MM-DD.md` | Dated journal: changed work, decisions, blockers and follow-up        |
-| Topic pages           | History and current state for related, ongoing work                   |
-| `lessons/`            | Reusable lessons, with process/system/client subdirectories available |
+| Path                            | Content                                                                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Home.md`                       | Every page with one line on what it covers                                                                                                    |
+| Project, client and topic pages | Overview, decisions and specifications, terms, how the client works; each section rewritten when its knowledge changes, with no dated entries |
+| `daily/YYYY-MM-DD.md`           | The day in brief, what the owner decided, what was missed and learned; written at `reports.daily_hour` (23:00 by default)                     |
+| `log.md`                        | One line per wiki operation: a page created, reorganised or checked                                                                           |
+| `lessons/`                      | Reusable lessons, with process/system/client subdirectories available                                                                         |
 
 Directories are created at startup. Content and `Home.md` appear when the agent
 publishes them; an empty vault is not a completed wiki.
@@ -44,8 +47,8 @@ publishes them; an empty vault is not a completed wiki.
 are paginated; their version and continuation fields let the agent read the whole
 result without combining different versions.
 
-For an existing page, use `manage.wiki.update` to append to or replace a named
-section, passing the `expectedContentVersion` returned by the read. A concurrent
+For an existing page, use `manage.wiki.update` to replace the named section whose
+knowledge changed, passing the `expectedContentVersion` returned by the read. A concurrent
 change produces a conflict to resolve by reading again. Use
 `manage.wiki.publish` for a new page with `expectedContentVersion: null`, or for a
 version-checked publication of an existing page. Evidence belongs in `sourceIds`
@@ -57,7 +60,8 @@ publication.
 
 ## Check what carried over
 
-Pick a task that changed and compare its original messages, task revisions and
-journal entry. The page should explain who did what, when it happened, the
-feedback and what remains. Ask a later owner session to find that history and a
-similar past case. A saved Markdown file alone does not demonstrate useful recall.
+Pick a project and check that its page answers the questions you would otherwise
+dig through messages for: the terms, the decisions that stand, what the client
+usually asks to change. Read yesterday's daily page and check it names what you
+decided. Ask a later owner session a question the page answers. A saved Markdown
+file alone does not demonstrate useful recall.

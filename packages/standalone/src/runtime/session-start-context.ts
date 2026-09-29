@@ -4,6 +4,7 @@
  * Owner exchanges count only once the transport delivered them.
  */
 import type { MemoryRecord } from '@jungjaehoon/mama-core';
+import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { SessionStartExchange, SessionStartInput } from './turn-orders.js';
 
@@ -25,6 +26,36 @@ function ownerText(row: MailboxRow): string | null {
     typeof payload.text === 'string'
     ? payload.text
     : null;
+}
+
+/**
+ * How long the mailbox keeps an acknowledged owner message (mama-core prunes acked rows after
+ * seven days); owner.messages says so when asked for older days.
+ */
+export const OWNER_MESSAGE_RETENTION_MS = 7 * 86_400_000;
+
+/** The owner's messages in [since, before), oldest first, each with its delivered reply. */
+export function ownerExchangesBetween(
+  mailbox: Mailbox,
+  adapter: DatabaseAdapter,
+  principalId: string,
+  since: number,
+  before: number
+): Array<{ at: number; owner: string; reply: string | null }> {
+  const refs = adapter
+    .prepare(
+      `SELECT stimulus_id FROM mailbox_inputs
+        WHERE principal_id = ? AND kind = 'owner_message' AND occurred_at >= ? AND occurred_at < ?
+        ORDER BY occurred_at, id`
+    )
+    .all(principalId, since, before) as Array<{ stimulus_id: string }>;
+  return refs.flatMap(({ stimulus_id: ref }) => {
+    const row = mailbox.readInput(ref, principalId);
+    const owner = row === null ? null : ownerText(row);
+    return row === null || owner === null
+      ? []
+      : [{ at: row.occurredAt, owner, reply: answerFor(mailbox, row) }];
+  });
 }
 
 /**

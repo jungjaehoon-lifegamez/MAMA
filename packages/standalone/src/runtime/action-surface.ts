@@ -26,6 +26,10 @@ import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.
 import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
 import { workNoUpdateActionRegistrations } from '../api/record-actions.js';
 import { judgeActionRegistrations, type JudgePorts } from '../api/judge-actions.js';
+import {
+  ownerMessageActionRegistrations,
+  type OwnerMessagePorts,
+} from '../api/owner-message-actions.js';
 import type { TimeZoneSetting } from './timezone.js';
 import { reportSourceActionRegistrations } from '../api/report-source-actions.js';
 import {
@@ -46,6 +50,7 @@ const OWNER_ACTIONS = [
   'source.read',
   'judge',
   'owner.timezone.set',
+  'owner.messages',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
   'work.create',
@@ -91,6 +96,8 @@ export interface ActionSurfaceOptions {
   attachmentPorts?: AttachmentActionPorts;
   /** Jev, the agent's filter for candidates it should not read whole; absent unless enabled. */
   judge?: JudgePorts;
+  /** The owner conversation by time span; absent where no owner mailbox exists. */
+  ownerMessages?: OwnerMessagePorts;
   /** The procedures help({topic}) returns, read when a turn needs one. */
   helpTopics?: Readonly<Record<string, string>>;
   timeZone: TimeZoneSetting;
@@ -198,6 +205,9 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...wikiActionRegistrations(options.wikiPorts ?? {}),
     ...workNoUpdateActionRegistrations(),
     ...(options.judge === undefined ? [] : judgeActionRegistrations(options.judge)),
+    ...(options.ownerMessages === undefined
+      ? []
+      : ownerMessageActionRegistrations(options.ownerMessages)),
     ...helpActionRegistrations({
       topics: () => options.helpTopics ?? {},
       contracts: () =>

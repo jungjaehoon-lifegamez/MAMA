@@ -7,7 +7,10 @@ import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import { Mailbox, type StimulusKind } from '@jungjaehoon/mama-core/runtime/mailbox';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
-import { readSessionStartInput } from '../../src/runtime/session-start-context.js';
+import {
+  ownerExchangesBetween,
+  readSessionStartInput,
+} from '../../src/runtime/session-start-context.js';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -83,6 +86,26 @@ const liveDelta = (text: string) => ({
       sourceAt: new Date().toISOString(),
     },
   ],
+});
+
+describe('owner exchanges by span', () => {
+  it("reads the owner's messages in a span with their replies, oldest first", async () => {
+    const f = await fixture();
+    f.add('telegram:owner:100', 'owner_message', { text: 'before the span' }, 'early');
+    f.add('telegram:owner:200', 'owner_message', { text: 'decide the page rule' }, 'noted');
+    f.add('telegram:owner:250', 'owner_message', { text: 'still running' }, '', {
+      finished: false,
+    });
+    f.add('record:batch:1', 'scheduled', { order: 'record' }, '[ack]');
+    f.add('telegram:owner:300', 'owner_message', { text: 'after the span' }, 'late');
+    f.add('telegram:other:220', 'owner_message', { text: 'another principal' }, 'x', {
+      principalId: 'someone-else',
+    });
+    expect(ownerExchangesBetween(f.mailbox, f.database.adapter, 'owner', 150, 300)).toEqual([
+      { at: 200, owner: 'decide the page rule', reply: 'noted' },
+      { at: 250, owner: 'still running', reply: null },
+    ]);
+  });
 });
 
 describe('session start context', () => {

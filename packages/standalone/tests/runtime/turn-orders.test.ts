@@ -258,7 +258,8 @@ describe('turn orders', () => {
       '[delta_record] room · 2 messages',
       'work.list',
       'derived_from links to the observations below and eventDatetime set to the source event time',
-      'manage.wiki.update',
+      // The wiki takes lasting knowledge only; what happened stays in the sources and the ledger.
+      "when the messages settle lasting knowledge (a term, a specification, a decision, how a client works), update that section of the project's wiki page (help topic wiki)",
       'work.no_update',
       // Kagemusha's order makes the write mandatory and says it is checked (2026-09-29).
       '5. Step 3 or 4 is required: the order is checked when it ends and counts as done only when these observations are cited',

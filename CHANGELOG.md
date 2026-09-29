@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- The wiki keeps knowledge that stays true and has to be gathered from many messages: a project's
+  overview and terms, the decisions and specifications that stand, and how a client works. Each
+  section is rewritten when its knowledge changes; pages carry no dated entries and no current
+  state. A record turn updates a page only when the messages settle such knowledge. On 2026-09-29
+  record turns had appended 66 dated lines in one day, 51 of them to one 593-line page, each
+  repeating the revision the same turn wrote to the ledger.
+- A daily page (`daily/YYYY-MM-DD.md`) is written at `reports.daily_hour` (23:00 by default) when
+  the wiki is enabled: the day in brief, what the owner decided, and what was missed and learned,
+  in at most 30 lines. It is not sent to the owner.
+
+### Added
+
+- `work.list` takes `eventSince` and `eventBefore`: items with a revision whose source event time
+  falls in the span, each listing those revisions with their summaries. Write time is not event
+  time; the September backfill wrote a month of events on one day.
+- `owner.messages` reads the owner conversation in a time span, each message with the reply that
+  was delivered. The mailbox keeps seven days; the result says so for older spans.
+- mama-core: a revision chain entry carries `createdAt`, the day of a revision with no event time.
+
 ## mama-os [0.59.1] / mama-core [4.1.1] - 2026-09-29
 
 ### Changed

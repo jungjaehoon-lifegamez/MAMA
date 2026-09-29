@@ -692,6 +692,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       const schedulerFactory = dependencies.createReportScheduler ?? createReportScheduler;
       reportScheduler = schedulerFactory({
         config: config.reports,
+        dailyPages: config.wiki?.enabled === true,
         timeZone,
         statePath: join(paths.runtimeRoot, 'report-schedule-state.json'),
         intake: {

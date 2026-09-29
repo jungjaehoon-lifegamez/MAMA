@@ -33,7 +33,11 @@ import type { TimeZoneSetting } from './timezone.js';
 import { ownerHelpTopics, ownerSystemPrompt } from './owner-system-prompt.js';
 import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
-import { readSessionStartInput } from './session-start-context.js';
+import {
+  OWNER_MESSAGE_RETENTION_MS,
+  ownerExchangesBetween,
+  readSessionStartInput,
+} from './session-start-context.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -292,6 +296,19 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ...(options.attachmentPorts ?? {}),
         stored: storedSourceReader,
         workspaceDir: options.workspaceDir,
+      },
+      ownerMessages: {
+        exchanges: (since, before) => {
+          if (ownerMailbox === undefined) throw new Error('The owner mailbox is not open yet');
+          return ownerExchangesBetween(
+            ownerMailbox,
+            database.adapter,
+            options.ownerPrincipalId,
+            since,
+            before
+          );
+        },
+        retentionMs: OWNER_MESSAGE_RETENTION_MS,
       },
       helpTopics: ownerHelpTopics(
         options.backend,

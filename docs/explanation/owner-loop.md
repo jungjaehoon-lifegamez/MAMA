@@ -51,7 +51,8 @@ A live delta gets two turns in the same session. The first decides only whether 
 and ends in `[notify]` with owner-facing text or `[ack]`. Before that reply is routed, the daemon
 queues a record order for the same messages: the agent revises or creates the work items with
 links to the messages, updates the board sections that changed (`briefing`, `action_required`,
-`decisions`, `pipeline`) and the case's wiki page, or declares that nothing needs recording. The
+`decisions`, `pipeline`) and, when the messages settle lasting knowledge, the project's wiki page,
+or declares that nothing needs recording. The
 daemon then checks the ledger for a revision citing those messages or the declaration. A batch
 with neither waits, as Kagemusha's cursor leaves it: it rides with the channel's next record order,
 or goes alone five minutes later when no delta comes first. After three attempts in all the daemon
@@ -63,9 +64,11 @@ Scheduled full reports default to 08:00, 13:00 and 18:00 Asia/Seoul. Hourly remi
 records an hour as sent only after delivery succeeds. See
 [reports and board](../guides/reports-and-board.md) for operation and verification.
 
-Wiki pages hold organized human-readable context. The current owner guidance uses `Home.md` as
-the table of contents, pages for continuing topics, a dated daily journal, and `lessons/`.
-Work history stays in the ledger. See [wiki](../guides/wiki.md).
+The wiki keeps what the sources and the ledger do not show on their own: knowledge that stays
+true and has to be gathered from many messages, such as a project's terms, decisions and
+specifications, and how a client works. What happened stays in the sources, and current state
+and history stay in the ledger. At 23:00 the agent writes the day's page: the day in brief, what
+the owner decided, and what was missed and learned. See [wiki](../guides/wiki.md).
 
 ## Learn from the next result
 

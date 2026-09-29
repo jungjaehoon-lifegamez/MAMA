@@ -28,7 +28,8 @@ owner policy and the lessons shown with the messages.
 
 The second turn records the change. The agent finds the work the messages belong
 to, revises or creates it with links to the messages, updates the board sections
-that change and adds a dated line to the case's wiki page. When nothing needs
+that change and, when the messages settle lasting knowledge, the project's wiki
+page. When nothing needs
 recording it says so with `work.no_update`. MAMA then checks the work ledger. If
 neither happened, the messages wait and are recorded together with the channel's
 next change, or on their own five minutes later. After three attempts the daemon

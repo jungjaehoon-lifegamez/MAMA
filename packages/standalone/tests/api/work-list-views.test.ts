@@ -109,6 +109,50 @@ function context(readWork: WorkListViewContext['knowledge']['readWork']): WorkLi
 }
 
 describe('progressive work.list views', () => {
+  it('finds what happened in a span by event time, each item with its revisions there', async () => {
+    const day = Date.parse('2026-09-10T00:00:00Z');
+    const next = day + 86_400_000;
+    const entry = (
+      revisionNumber: number,
+      eventDatetime: number | null,
+      createdAt: number,
+      summary: string
+    ) => ({
+      revision: revisionNumber,
+      operation: 'revise' as const,
+      eventDatetime,
+      createdAt,
+      status: 'in_progress',
+      stage: 'Review',
+      summary,
+    });
+    // Written a week later by a backfill, the first item still happened on the day.
+    const reader = makeReader([
+      view(1, {
+        updatedAt: next + 7 * 86_400_000,
+        chain: [
+          entry(1, day - 1, next + 7 * 86_400_000, 'the day before'),
+          entry(2, day + 3_600_000, next + 7 * 86_400_000, 'happened that day'),
+        ],
+      }),
+      view(2, { chain: [entry(1, null, day + 7_200_000, 'no event time, written that day')] }),
+      view(3, { chain: [entry(1, next, next, 'the next day')] }),
+    ]);
+    const result = (await runWorkListView(
+      { view: 'items', eventSince: '2026-09-10T09:00:00+09:00', eventBefore: next },
+      context(reader.readWork)
+    )) as { tasks: Array<{ commitmentId: string; revisions: Array<{ summary: string }> }> };
+    expect(reader.readWork.mock.calls[0]![0]).toMatchObject({ history: 'chain' });
+    expect(
+      result.tasks
+        .map((task) => [task.commitmentId, task.revisions.map((revision) => revision.summary)])
+        .sort()
+    ).toEqual([
+      ['commitment-1', ['happened that day']],
+      ['commitment-2', ['no event time, written that day']],
+    ]);
+  });
+
   it('returns a bounded compact items page and keeps detail-only evidence out', async () => {
     const reader = makeReader(Array.from({ length: 30 }, (_, index) => view(index + 1)));
 

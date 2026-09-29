@@ -36,6 +36,7 @@ describe('W1 action surface', () => {
       connectors: ['chatwork', 'slack', 'trello', 'kagemusha'],
       scopes: [{ kind: 'project', id: 'workspace-test' }],
       judge: { ask: async () => ({}) },
+      ownerMessages: { exchanges: () => [], retentionMs: 1 },
     });
     const expected = [
       'code_act',
@@ -55,6 +56,7 @@ describe('W1 action surface', () => {
       'memory.retire',
       'memory.save',
       'memory.search',
+      'owner.messages',
       'owner.timezone.set',
       'report.publish',
       'report.read',

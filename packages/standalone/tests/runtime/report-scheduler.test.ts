@@ -27,7 +27,12 @@ function setup() {
     sent.push(text);
   };
   const options = {
-    config: { full_report_hours: [8, 13, 18], reminder_start_hour: 9, reminder_end_hour: 21 },
+    config: {
+      full_report_hours: [8, 13, 18],
+      reminder_start_hour: 9,
+      reminder_end_hour: 21,
+      daily_hour: 23,
+    },
     timeZone: createTimeZoneSetting('Asia/Seoul'),
     statePath,
     intake: {
@@ -281,6 +286,80 @@ describe('KST report scheduler', () => {
     );
     expect(ctx.sent).toEqual([]);
     expect(existsSync(ctx.statePath)).toBe(false);
+  });
+
+  it('writes the daily page at its hour, never sends it, and keeps the latest day', async () => {
+    const ctx = setup();
+    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: true });
+    scheduler.tick(new Date('2026-09-29T14:00:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toEqual({
+      report: 'daily',
+      hourKey: '2026-09-29:23',
+      day: '2026-09-29',
+    });
+    await scheduler.onResult(ctx.result(), { response: '[ack]' });
+    expect(ctx.sent).toEqual([]);
+    expect(JSON.parse(readFileSync(ctx.statePath, 'utf8')).lastDailyKey).toBe('2026-09-29');
+    ctx.setPending(false);
+    scheduler.tick(new Date('2026-09-29T14:30:00Z'));
+    expect(ctx.queued).toHaveLength(1);
+    // A page rewritten for an earlier day leaves the latest day in place.
+    await scheduler.onResult(
+      {
+        stimulusId: 'report:rewrite',
+        payload: { report: 'daily', hourKey: '2026-09-29:23', day: '2026-09-01' },
+      },
+      { response: '[ack]' }
+    );
+    expect(JSON.parse(readFileSync(ctx.statePath, 'utf8')).lastDailyKey).toBe('2026-09-29');
+  });
+
+  it('writes no daily page without the wiki, and lets a report due in the same hour go first', async () => {
+    const off = setup();
+    off.scheduler.tick(new Date('2026-09-29T14:00:00Z'));
+    expect(off.queued).toEqual([]);
+    const ctx = setup();
+    const scheduler = createReportScheduler({
+      ...ctx.options,
+      config: { ...ctx.options.config, daily_hour: 21 },
+      dailyPages: true,
+    });
+    scheduler.tick(new Date('2026-09-29T12:00:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'reminder' });
+    await scheduler.onResult(ctx.result(), { response: '[ack]' });
+    ctx.setPending(false);
+    scheduler.tick(new Date('2026-09-29T12:01:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'daily', day: '2026-09-29' });
+  });
+
+  it('reads a schedule state written before daily pages', () => {
+    const ctx = setup();
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    writeFileSync(
+      ctx.statePath,
+      JSON.stringify({ lastFullKey: '2026-09-29:18', lastReminderKey: '2026-09-29:21' })
+    );
+    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: true });
+    scheduler.tick(new Date('2026-09-29T14:00:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'daily' });
+  });
+
+  it('gives the daily order its day as epoch bounds and the procedure topic', () => {
+    const options = { backend: 'codex' as const, messenger: 'telegram', timeZone: 'Asia/Seoul' };
+    const order = scheduledReportOrder(
+      { report: 'daily', hourKey: '2026-09-29:23', day: '2026-09-29' },
+      new Date('2026-09-29T14:00:00Z'),
+      options
+    );
+    expect(order).toContain('[scheduled_daily] 2026-09-29');
+    expect(order).toContain(
+      `eventSince ${Date.parse('2026-09-29T00:00:00+09:00')}, eventBefore ${Date.parse('2026-09-30T00:00:00+09:00')}`
+    );
+    expect(order).toContain("daily/2026-09-29.md by its procedure, help({topic: 'daily'})");
+    expect(order).toContain('Reply exactly [ack].');
+    expect(() =>
+      scheduledReportOrder({ report: 'daily', hourKey: '2026-09-29:23' }, new Date(), options)
+    ).toThrow(/day/);
   });
 
   it('surfaces corrupt schedule state instead of silently forgetting delivered hours', () => {

@@ -58,6 +58,8 @@ export interface W1ReportsConfig {
   full_report_hours: number[];
   reminder_start_hour: number;
   reminder_end_hour: number;
+  /** The hour the day's daily wiki page is written; used only with the wiki enabled. */
+  daily_hour: number;
 }
 
 export interface W1Config {
@@ -169,7 +171,7 @@ function parseReports(value: unknown, state: ParseState): W1ReportsConfig {
   const raw = value === undefined ? {} : object(value, 'reports');
   collectIgnoredKeys(
     raw,
-    ['full_report_hours', 'reminder_start_hour', 'reminder_end_hour'],
+    ['full_report_hours', 'reminder_start_hour', 'reminder_end_hour', 'daily_hour'],
     'reports',
     state
   );
@@ -186,6 +188,10 @@ function parseReports(value: unknown, state: ParseState): W1ReportsConfig {
     reminder_end_hour: reportHour(
       raw.reminder_end_hour === undefined ? 21 : raw.reminder_end_hour,
       'reports.reminder_end_hour'
+    ),
+    daily_hour: reportHour(
+      raw.daily_hour === undefined ? 23 : raw.daily_hour,
+      'reports.daily_hour'
     ),
   };
   if (reports.reminder_start_hour > reports.reminder_end_hour) {

@@ -47,6 +47,8 @@ export interface CommitmentChainEntry {
   revision: number;
   operation: CommitmentRevision['operation'];
   eventDatetime: number | null;
+  /** When the revision was written; the day of a revision with no event time. */
+  createdAt: number;
   status: string | null;
   stage: string | null;
   summary: string | null;
@@ -217,6 +219,7 @@ function buildChain(
       revision: revision.revision,
       operation: revision.operation,
       eventDatetime: revision.eventDatetime,
+      createdAt: revision.createdAt,
       status: revision.operation === 'withdraw' ? 'cancelled' : stringField(values, 'status'),
       stage: stringField(values, 'stage'),
       summary: readJudgmentSummary(adapter, revision.recordRef.id, admitted),

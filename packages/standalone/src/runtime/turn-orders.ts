@@ -480,7 +480,7 @@ export function deltaRecordOrder(
     `2. Read the current work state with work.list (view=items for the open work; detail for the items this conversation is about) before creating anything; help({topic: 'record'}) has the recording rules.`,
     `3. For each moved item, work.revise (or work.create for newly entrusted work) with derived_from links to the observations below and eventDatetime set to the source event time; update only the board sections that change with report.publish, reading its contract with help first in a session${
       options.wikiEnabled
-        ? `; add the dated line to the case's topic page with manage.wiki.update`
+        ? `; when the messages settle lasting knowledge (a term, a specification, a decision, how a client works), update that section of the project's wiki page (help topic wiki)`
         : ''
     }. A lesson saved here links these observations with derived_from.`,
     `4. If nothing needs recording, call work.no_update with the reason and the observations below.`,
@@ -493,21 +493,25 @@ export function deltaRecordOrder(
 }
 
 export interface ScheduledReport {
-  report: 'full' | 'reminder';
+  report: 'full' | 'reminder' | 'daily';
   hourKey: string;
   previousFullReportAt: string | null;
+  /** The day a daily page covers, YYYY-MM-DD in the owner's time zone; null for reports. */
+  day: string | null;
 }
 
 export function scheduledReport(payload: JsonValue | undefined): ScheduledReport {
   const value = payloadObject(payload);
   if (
     !value ||
-    (value.report !== 'full' && value.report !== 'reminder') ||
+    (value.report !== 'full' && value.report !== 'reminder' && value.report !== 'daily') ||
     typeof value.hourKey !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}:\d{2}$/.test(value.hourKey)
+    !/^\d{4}-\d{2}-\d{2}:\d{2}$/.test(value.hourKey) ||
+    (value.report === 'daily' &&
+      (typeof value.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.day)))
   ) {
     throw new Error(
-      'Scheduled report requires { report: full | reminder, hourKey: YYYY-MM-DD:HH }'
+      'Scheduled report requires { report: full | reminder | daily, hourKey: YYYY-MM-DD:HH } and a daily its day: YYYY-MM-DD'
     );
   }
   const previousFullReportAt = value.previousFullReportAt;
@@ -522,6 +526,7 @@ export function scheduledReport(payload: JsonValue | undefined): ScheduledReport
     report: value.report,
     hourKey: value.hourKey,
     previousFullReportAt: typeof previousFullReportAt === 'string' ? previousFullReportAt : null,
+    day: value.report === 'daily' ? (value.day as string) : null,
   };
 }
 
@@ -531,7 +536,18 @@ export function scheduledReportOrder(
   now: Date,
   options: TurnOrderOptions & { messenger: string }
 ): string {
-  const { report, previousFullReportAt } = scheduledReport(payload);
+  const { report, previousFullReportAt, day } = scheduledReport(payload);
+  if (report === 'daily') {
+    const [year, month, date] = day!.split('-').map(Number) as [number, number, number];
+    const nextDay = new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
+    return [
+      `[scheduled_daily] ${day}`,
+      currentTime(now, options.timeZone),
+      `The day in ${options.timeZone}: eventSince ${epochAtLocalDateTime(`${day}T00:00:00`, options.timeZone)}, eventBefore ${epochAtLocalDateTime(`${nextDay}T00:00:00`, options.timeZone)} (epoch ms).`,
+      `Write the daily page daily/${day}.md by its procedure, help({topic: 'daily'}).`,
+      'Reply exactly [ack].',
+    ].join('\n');
+  }
   if (report === 'full') {
     const since =
       previousFullReportAt === null

@@ -48,7 +48,13 @@ describe('owner standing prompt', () => {
       'sources',
       'files',
       'wiki',
+      'daily',
     ]);
+    // The wiki keeps lasting knowledge; what happened stays in the sources and the ledger.
+    expect(topics.wiki).toContain('No current-state section and no dated entries.');
+    expect(topics.wiki).not.toContain('a dated line per change');
+    for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 30 lines'])
+      expect(topics.daily).toContain(part);
     for (const topic of Object.keys(topics)) expect(prompt).toContain(`${topic} (`);
     expect(prompt).toContain('Read a procedure with help({topic}) when the turn needs it');
     expect(prompt).toContain('fetch only that, look at it, then decide the step after');
@@ -225,6 +231,8 @@ describe('owner standing prompt', () => {
         knowledge: {} as Knowledge,
         ownerPrincipalId: 'owner-test',
         agentId: 'agent-test',
+        // The owner runtime always passes the owner conversation; the daily topic names it.
+        ownerMessages: { exchanges: () => [], retentionMs: 1 },
       });
       // Codex calls its tools by name; Claude calls the same names inside its one tool, code_act.
       const exposedNames =

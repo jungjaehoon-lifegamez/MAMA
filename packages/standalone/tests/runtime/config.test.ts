@@ -48,7 +48,12 @@ function validConfig(): W1Config {
       keyFile: '/tmp/jev-key',
       vocabFile: '/tmp/vocab.json',
     },
-    reports: { full_report_hours: [8, 13, 18], reminder_start_hour: 9, reminder_end_hour: 21 },
+    reports: {
+      full_report_hours: [8, 13, 18],
+      reminder_start_hour: 9,
+      reminder_end_hour: 21,
+      daily_hour: 23,
+    },
   };
 }
 
@@ -93,6 +98,7 @@ describe('W1 runtime configuration', () => {
       full_report_hours: [0, 23],
       reminder_start_hour: 1,
       reminder_end_hour: 22,
+      daily_hour: 23,
     });
     expect(warn).not.toHaveBeenCalled();
     expect(parseConfig({ ...base, reports: { full_report_hours: [] } }).reports).toEqual({

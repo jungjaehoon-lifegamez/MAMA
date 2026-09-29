@@ -55,6 +55,13 @@ interface WorkListFilter {
   readonly changedBefore?: number;
   /** Open items by their deadline against the owner's today; closed items never match. */
   readonly due?: WorkListDue;
+  /**
+   * Items with a revision whose source event time falls in [eventSince, eventBefore): what
+   * happened in a span. Write time is not event time: a replay or backfill writes a month of
+   * September events on one day.
+   */
+  readonly eventSince?: number;
+  readonly eventBefore?: number;
 }
 
 const WORK_LIST_DUE = ['overdue', 'today', 'upcoming', 'unscheduled'] as const;
@@ -134,6 +141,7 @@ const WORK_LIST_DEFAULT_LIMIT = 25;
 const WORK_LIST_MAX_LIMIT = 50;
 const WORK_LIST_MAX_DETAIL_IDS = 4;
 const WORK_LIST_DEFAULT_TEXT_LIMIT = 1_000;
+const WORK_LIST_REVISION_SUMMARY_LIMIT = 300;
 const WORK_LIST_MAX_TEXT_LIMIT = 2_000;
 const WORK_LIST_STATUSES: readonly PublicWorkStatus[] = [
   'pending',
@@ -222,7 +230,7 @@ const OFFSET_ISO_PATTERN =
   '^(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::\\d{2}(?:\\.\\d{1,3})?)?(Z|([+-])(\\d{2}):(\\d{2}))$';
 
 /** An ISO time that states its offset (Z or ±HH:MM), as epoch ms; undefined for anything else. */
-function offsetIsoTime(value: unknown): number | undefined {
+export function offsetIsoTime(value: unknown): number | undefined {
   const match = typeof value === 'string' ? new RegExp(OFFSET_ISO_PATTERN).exec(value) : null;
   if (!match) return undefined;
   const parsed = Date.parse(match[0].replace(' ', 'T'));
@@ -259,7 +267,34 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
       ? {}
       : { changedBefore: workListTime(input.changedBefore, 'changedBefore') }),
     ...(input.due === undefined ? {} : { due: workListDueFilter(input.due) }),
+    ...(input.eventSince === undefined
+      ? {}
+      : { eventSince: workListTime(input.eventSince, 'eventSince') }),
+    ...(input.eventBefore === undefined
+      ? {}
+      : { eventBefore: workListTime(input.eventBefore, 'eventBefore') }),
   };
+}
+
+function workListEventBounded(filter: WorkListFilter): boolean {
+  return filter.eventSince !== undefined || filter.eventBefore !== undefined;
+}
+
+/** The revisions in the event bounds; a revision with no event time counts at its write time. */
+function workListEventRevisions(
+  item: CommitmentView,
+  filter: WorkListFilter
+): Array<Record<string, unknown>> {
+  return (item.chain ?? []).flatMap((entry) => {
+    const at = entry.eventDatetime ?? entry.createdAt;
+    if (filter.eventSince !== undefined && at < filter.eventSince) return [];
+    if (filter.eventBefore !== undefined && at >= filter.eventBefore) return [];
+    const summary =
+      entry.summary !== null && entry.summary.length > WORK_LIST_REVISION_SUMMARY_LIMIT
+        ? `${entry.summary.slice(0, WORK_LIST_REVISION_SUMMARY_LIMIT - 1)}…`
+        : entry.summary;
+    return [{ revision: entry.revision, at, status: entry.status, stage: entry.stage, summary }];
+  });
 }
 
 function workListDueFilter(value: unknown): WorkListDue {
@@ -452,6 +487,8 @@ function workListMatches(
   if (filter.changedBefore !== undefined && item.updatedAt >= filter.changedBefore) return false;
   if (filter.due !== undefined && workListDueGroup(item, now, timeZone) !== filter.due)
     return false;
+  if (workListEventBounded(filter) && workListEventRevisions(item, filter).length === 0)
+    return false;
   return true;
 }
 
@@ -514,6 +551,8 @@ function workListFingerprint(filter: WorkListFilter, dueDay: string | null): str
         filter.changedSince ?? null,
         filter.changedBefore ?? null,
         filter.due ?? null,
+        filter.eventSince ?? null,
+        filter.eventBefore ?? null,
       ])
     )
     .digest('base64url')
@@ -540,7 +579,8 @@ function workListReadSnapshot(ctx: WorkListViewContext, filter: WorkListFilter):
   let cursor: string | undefined;
   for (;;) {
     const query: WorkRead = {
-      history: 'current',
+      // The chain carries each revision's event time and summary, read only for an event span.
+      history: workListEventBounded(filter) ? 'chain' : 'current',
       limit: 100,
       ...(filter.asOf === undefined ? {} : { asOf: filter.asOf }),
       ...(cursor === undefined ? {} : { cursor }),
@@ -912,7 +952,10 @@ export async function runWorkListView(
   return {
     success: true,
     view: 'items',
-    tasks: page.map(({ item, score }) => workListCompact(item, now, score, ctx.timeZone)),
+    tasks: page.map(({ item, score }) => ({
+      ...workListCompact(item, now, score, ctx.timeZone),
+      ...(workListEventBounded(filter) ? { revisions: workListEventRevisions(item, filter) } : {}),
+    })),
     total: rankedItems.length,
     returned: page.length,
     nextCursor:
@@ -939,7 +982,7 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
       contract: {
         name: 'work.list',
         summary:
-          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context.',
+          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -994,6 +1037,22 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
               enum: WORK_LIST_DUE,
               description:
                 "Open items whose deadline is past, is the owner's today, is later, or is unset.",
+            },
+            eventSince: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
+              description:
+                'Only items with a revision whose source event time is at or after this time (epoch ms or ISO with offset); each item lists those revisions with their summaries.',
+            },
+            eventBefore: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
+              description:
+                'Only items with a revision whose source event time is before this time; with eventSince, what happened on a day.',
             },
             text_offset: { type: 'integer', minimum: 0 },
             text_limit: { type: 'integer', minimum: 1, maximum: WORK_LIST_MAX_TEXT_LIMIT },

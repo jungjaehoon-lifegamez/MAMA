@@ -1384,3 +1384,9 @@ The implementation writes raw/index data during import only. Replay is the owner
   - A no-update in a carrying order covered batches it did not cite.
   - `Date.parse` rolled February 30 into March.
 - Still fails: not yet seen live; the next unrecorded batch should log `record order waiting` and then `retry … order=…`. `lost` reaches only the log and repeats at each start for a day. `help` received 8 guessed action names that day (`manage.wiki.list`, `report.get`, …).
+
+### The wiki keeps knowledge; a daily page per day (2026-09-29)
+
+- Result: the wiki procedure keeps only lasting knowledge (overview, decisions and specifications, terms, how a client works), rewritten by section with no dated entries or current state; the record order touches the wiki only when messages settle such knowledge. A daily order at 23:00 writes `daily/<day>.md` (the day in brief, the owner's decisions, what was missed and learned). New reads: `work.list` `eventSince`/`eventBefore` (revisions by source event time) and `owner.messages` (owner conversation by span).
+- Evidence: on 2026-09-29, 100 deltas; record turns appended 66 dated lines, 51 to one 51 KB page (two titles, dated sections out of order), repeating the ledger revision written in the same turn. Since 09-27 the wiki took 188 writes and was read 4 times to answer the owner. The ledger's 115 items carried 10 different project spellings, so grouping by code would have split one project; the agent does the grouping. Ledger revisions carry event times back to 09-01 (1–36 a day), so past days can be rebuilt.
+- Still fails: not yet run live. The first daily page is tonight's; the 28 earlier ones are to be rebuilt in the new format, and the 13 project pages still hold dated logs until they are reorganised.
