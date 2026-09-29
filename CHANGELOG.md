@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## mama-os [0.59.0] / plugin [2.0.3] - 2026-09-29
 
 ### Changed (plugin)
 
