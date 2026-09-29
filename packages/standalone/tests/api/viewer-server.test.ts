@@ -250,7 +250,8 @@ describe('viewer HTTP server', () => {
     await withServer(
       async (call) => {
         if (call.action === 'work.list') {
-          expect(call.input).toEqual({ view: 'detail', ids: ['commitment-1'] });
+          // The viewer pages the history from the newest revision until no page is left.
+          expect(call.input).toEqual({ view: 'detail', ids: ['commitment-1'], history_offset: 0 });
           return completed(workDetail());
         }
         if (call.action === 'graph.query') {

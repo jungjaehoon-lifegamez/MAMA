@@ -100,7 +100,7 @@ function withHistory(item: CommitmentView): CommitmentView {
   const values = item.values as Record<string, unknown>;
   return {
     ...item,
-    history: [revision(item.commitmentId, 1, values)],
+    history: item.history ?? [revision(item.commitmentId, 1, values)],
   };
 }
 
@@ -342,17 +342,51 @@ describe('progressive work.list views', () => {
     expect(first.missingIds).toEqual([]);
     expect(task).toHaveProperty('basis');
     expect(task).toHaveProperty('history');
-    expect(task.values.description).toMatchObject({ total: 2_301, nextOffset: 1_000 });
+    expect(task.description).toMatchObject({ total: 2_301, nextOffset: 1_000 });
+    // The text fields are given once, as windows, not again inside values.
+    expect(task.values).not.toHaveProperty('description');
 
     const second = await runWorkListView(
       { view: 'detail', ids: ['commitment-1'], text_offset: 1_000, text_limit: 2_000 },
       context(reader.readWork)
     );
-    expect(second.tasks[0]!.values.description).toMatchObject({
+    expect(second.tasks[0]!.description).toMatchObject({
       value: longText.slice(1_000),
       complete: true,
       nextOffset: null,
     });
+  });
+
+  it('gives the newest five revisions and twenty evidence refs, paging older revisions', async () => {
+    const history = Array.from({ length: 12 }, (_, index) =>
+      revision('commitment-1', index + 1, { latestEvent: `event ${index + 1}` })
+    );
+    const basis = Array.from({ length: 30 }, (_, index) => ({
+      kind: 'observation' as const,
+      id: `obs-${index + 1}`,
+    }));
+    const reader = makeReader([view(1, { revision: 12, history, basis })]);
+    const page = async (offset?: number) =>
+      (
+        await runWorkListView(
+          {
+            view: 'detail',
+            ids: ['commitment-1'],
+            ...(offset === undefined ? {} : { history_offset: offset }),
+          },
+          context(reader.readWork)
+        )
+      ).tasks[0]!;
+    const first = await page();
+    expect(first.history.map((entry: { revision: number }) => entry.revision)).toEqual([
+      12, 11, 10, 9, 8,
+    ]);
+    expect(first).toMatchObject({ historyTotal: 12, historyNextOffset: 5, basisTotal: 30 });
+    expect(first.basis).toHaveLength(20);
+    expect(first.basis.at(-1)).toMatchObject({ id: 'obs-30' });
+    const last = await page(10);
+    expect(last.history.map((entry: { revision: number }) => entry.revision)).toEqual([2, 1]);
+    expect(last.historyNextOffset).toBeNull();
   });
 
   it('registers work.list as the product progressive contract', () => {

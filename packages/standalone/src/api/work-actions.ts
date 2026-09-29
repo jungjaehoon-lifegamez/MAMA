@@ -632,22 +632,37 @@ function workListDetailIds(value: unknown): Array<string | number> {
   return ids;
 }
 
+/**
+ * Detail answers one level at a time: the newest revisions and evidence, with their totals and the
+ * offset of the next page. On 2026-09-29 one detail read of a 52-revision item returned 50,746
+ * characters, every revision's values included.
+ */
+const WORK_LIST_DETAIL_HISTORY_PAGE = 5;
+const WORK_LIST_DETAIL_BASIS_RECENT = 20;
+
 function workListDetailRecord(
   item: CommitmentView,
   textOffset: number,
   textLimit: number,
+  historyOffset: number,
   now: number,
   timeZone: string
 ): Record<string, unknown> {
   if (item.history === undefined)
     throw new Error('work.list detail did not return revision history');
   const values = workListValueObject(item.values);
-  const detailedValues = { ...values } as Record<string, unknown>;
-  for (const field of ['title', 'description', 'latestEvent']) {
-    const value = values[field];
-    if (typeof value === 'string')
-      detailedValues[field] = workListTextWindow(value, textOffset, textLimit);
-  }
+  // The text fields are given once, as windows, above the other values.
+  const otherValues = Object.fromEntries(
+    Object.entries(values).filter(
+      ([field]) => !['title', 'description', 'latestEvent'].includes(field)
+    )
+  );
+  const newestFirst = [...item.history].reverse();
+  const historyPage = newestFirst.slice(
+    historyOffset,
+    historyOffset + WORK_LIST_DETAIL_HISTORY_PAGE
+  );
+  const historyNext = historyOffset + historyPage.length;
   const compact = workListCompact(item, now, undefined, timeZone);
   return {
     ...compact,
@@ -663,9 +678,12 @@ function workListDetailRecord(
       typeof values.latestEvent === 'string'
         ? workListTextWindow(values.latestEvent, textOffset, textLimit)
         : null,
-    values: detailedValues,
-    basis: item.basis,
-    history: item.history,
+    values: otherValues,
+    basis: item.basis.slice(-WORK_LIST_DETAIL_BASIS_RECENT),
+    basisTotal: item.basis.length,
+    history: historyPage,
+    historyTotal: newestFirst.length,
+    historyNextOffset: historyNext < newestFirst.length ? historyNext : null,
     latestJudgmentRef: item.latestJudgmentRef,
   };
 }
@@ -680,6 +698,7 @@ function workListDetail(input: Record<string, unknown>, ctx: WorkListViewContext
     1,
     WORK_LIST_MAX_TEXT_LIMIT
   );
+  const historyOffset = workListNonNegativeInteger(input.history_offset, 'history_offset', 0);
   const asOf = workListAsOf(input.asOf);
   const now = ctx.now?.() ?? Date.now();
   const tasks: Array<Record<string, unknown>> = [];
@@ -696,7 +715,7 @@ function workListDetail(input: Record<string, unknown>, ctx: WorkListViewContext
       missingIds.push(id);
       continue;
     }
-    tasks.push(workListDetailRecord(item, textOffset, textLimit, now, ctx.timeZone));
+    tasks.push(workListDetailRecord(item, textOffset, textLimit, historyOffset, now, ctx.timeZone));
   }
   return {
     success: true,
@@ -896,7 +915,7 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
       contract: {
         name: 'work.list',
         summary:
-          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail with evidence and revision history for up to 4 ids. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context.',
+          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -954,6 +973,12 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
             },
             text_offset: { type: 'integer', minimum: 0 },
             text_limit: { type: 'integer', minimum: 1, maximum: WORK_LIST_MAX_TEXT_LIMIT },
+            history_offset: {
+              type: 'integer',
+              minimum: 0,
+              description:
+                'Detail: skip this many of the newest revisions; each page has 5, historyNextOffset gives the next.',
+            },
             history: { type: 'string', enum: ['current', 'all'] },
           },
         },

@@ -544,32 +544,45 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
     if (commitmentId.trim() === '') {
       throw new ViewerHttpError(400, 'INVALID_COMMITMENT_ID', 'commitment id must be nonblank');
     }
-    const detail = await callAction('work.list', {
-      view: 'detail',
-      ids: [commitmentId],
-    });
-    if (
-      detail === null ||
-      typeof detail !== 'object' ||
-      Array.isArray(detail) ||
-      !Array.isArray((detail as { tasks?: unknown }).tasks)
-    ) {
-      throw new ViewerHttpError(502, 'WORK_DETAIL_INVALID', 'work.list returned no detail tasks');
+    // Detail pages revisions newest first; a person reading the task sees all of them, oldest first.
+    const history: unknown[] = [];
+    let item: unknown;
+    let lastDetail: unknown;
+    let historyOffset: number | null = 0;
+    while (historyOffset !== null) {
+      const detail = await callAction('work.list', {
+        view: 'detail',
+        ids: [commitmentId],
+        history_offset: historyOffset,
+      });
+      if (
+        detail === null ||
+        typeof detail !== 'object' ||
+        Array.isArray(detail) ||
+        !Array.isArray((detail as { tasks?: unknown }).tasks)
+      ) {
+        throw new ViewerHttpError(502, 'WORK_DETAIL_INVALID', 'work.list returned no detail tasks');
+      }
+      lastDetail = detail;
+      item = (detail as { tasks: unknown[] }).tasks[0];
+      if (item === undefined || item === null || typeof item !== 'object' || Array.isArray(item))
+        throw new ViewerHttpError(
+          404,
+          'NOT_FOUND',
+          'work.list returned no detail for the commitment'
+        );
+      const page = (item as { history?: unknown; historyNextOffset?: unknown }).history;
+      if (!Array.isArray(page))
+        throw new ViewerHttpError(
+          502,
+          'WORK_HISTORY_MISSING',
+          'work.list detail returned no revision history'
+        );
+      history.push(...page);
+      const next = (item as { historyNextOffset?: unknown }).historyNextOffset;
+      historyOffset = typeof next === 'number' ? next : null;
     }
-    const item = (detail as { tasks: unknown[] }).tasks[0];
-    if (item === undefined || item === null || typeof item !== 'object' || Array.isArray(item))
-      throw new ViewerHttpError(
-        404,
-        'NOT_FOUND',
-        'work.list returned no detail for the commitment'
-      );
-    const history = (item as { history?: unknown }).history;
-    if (!Array.isArray(history))
-      throw new ViewerHttpError(
-        502,
-        'WORK_HISTORY_MISSING',
-        'work.list detail returned no revision history'
-      );
+    history.reverse();
     const reads = new Map<string, RevisionGraphRead>();
     for (const rawRevision of history) {
       if (
@@ -620,7 +633,10 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       }
       reads.set(`${revision.recordRef.kind}:${revision.recordRef.id}`, { record, evidence });
     }
-    return shapeWorkListDetail(detail, reads);
+    return shapeWorkListDetail(
+      { ...(lastDetail as object), tasks: [{ ...(item as object), history }] },
+      reads
+    );
   };
 
   const legacyGraph = async (params: URLSearchParams): Promise<unknown> => {

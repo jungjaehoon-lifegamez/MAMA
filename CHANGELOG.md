@@ -20,6 +20,9 @@ All notable changes to this project will be documented in this file.
   with 13 source searches.
 - `source.recent` lists the channels that changed (key, count, latest line) and returns lines only
   for the channels the agent asks for. One call had returned 33,077 characters.
+- `work.list` detail gives the current record, its 20 newest evidence refs and its 5 newest
+  revisions with their totals; `history_offset` pages older revisions. One detail read of a
+  52-revision item had returned 50,746 characters. The viewer's task page still shows every revision.
 - `work.list` finds open items by deadline (`due`: overdue, today, upcoming, unscheduled) and work
   that has not moved (`changedBefore`).
 - Working through many items, the agent settles and records one item before the next, so a long turn

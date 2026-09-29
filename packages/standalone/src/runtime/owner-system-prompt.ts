@@ -156,7 +156,7 @@ export function ownerHelpTopics(
       'Reading sources:',
       '- memory.search finds related memories, and memory.read:provenance traces one to its cited source messages. Read preserved sources only for what the ledger does not establish.',
       '- Use progressive source access: source.recent and source.search are bounded navigation, and source.read is required for the cited original content; a preview or index row is not the account of what happened. source.read reads several refs in one call with observationRefs.',
-      `- To check a work item, follow its evidence: work.list detail names the messages it rests on; read what came after them in the same channel (source.search with channel and from) instead of guessing how its name is spelled.${judgeEnabled ? ' With many messages or items, pair them in the script first (asset code, channel, time), judge each item with its own few messages, and return only the pairs that need you; never pass the whole ledger to judge.' : ''} Search by words only for an item with no evidence.`,
+      `- To check a work item, follow its evidence: work.list detail names the messages it rests on; read what came after them in the same channel (source.search with channel and from) instead of guessing how its name is spelled.${judgeEnabled ? ' With many messages or items, pair them in the script first (asset code, channel, time; a message with no asset code, such as a review remark, pairs with the items that moved in its channel that day), judge each item with its own few messages, and return only the pairs that need you; never pass the whole ledger to judge.' : ''} Search by words only for an item with no evidence.`,
     ].join('\n'),
     files: [
       'Attachments and files:',
