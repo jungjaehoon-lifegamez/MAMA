@@ -67,7 +67,7 @@ records an hour as sent only after delivery succeeds. See
 The wiki keeps what the sources and the ledger do not show on their own: knowledge that stays
 true and has to be gathered from many messages, such as a project's terms, decisions and
 specifications, and how a client works. What happened stays in the sources, and current state
-and history stay in the ledger. At 23:00 the agent writes the day's page: the day in brief, what
+and history stay in the ledger. At `reports.daily_hour` (23:00 by default) the agent writes the day's page: the day in brief, what
 the owner decided, and what was missed and learned. See [wiki](../guides/wiki.md).
 
 ## Learn from the next result
