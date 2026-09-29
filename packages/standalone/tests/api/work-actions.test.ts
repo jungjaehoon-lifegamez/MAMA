@@ -664,6 +664,15 @@ describe('minimal work actions', () => {
     expect((local as { error: { message: string } }).error.message).toContain(
       'must match exactly one of: number, string, null (0 matched). Source event time as epoch milliseconds or an ISO time with its offset'
     );
+    // Date.parse would roll these forward to another day instead of refusing them.
+    for (const [time, id] of [
+      ['2026-02-30T09:30:00+09:00', 'operation-impossible-date'],
+      ['2026-01-01T24:00:00Z', 'operation-impossible-hour'],
+    ] as const)
+      expect(await revise(time, id)).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('ISO time with its offset') },
+      });
     expect(knowledge.reviseWork).toHaveBeenCalledTimes(1);
   });
 

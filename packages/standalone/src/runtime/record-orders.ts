@@ -49,6 +49,8 @@ export interface RecordOrdersOptions {
  * Kagemusha's taskboard reconcile check, read from MAMA's ledger: the batch counts as recorded
  * when a work revision cites one of its observations, or an order that included it declared no
  * update. Who wrote the revision does not matter; a revision that cites the batch is the record.
+ * In an order that only carried the batch, the no-update must cite one of its observations: the
+ * order may show none of its lines, and a no-update about the newer messages does not cover it.
  */
 export function batchRecorded(
   adapter: DatabaseAdapter,
@@ -68,30 +70,45 @@ export function batchRecorded(
       .get(...batch.observationRefs);
     if (revised !== undefined) return true;
   }
-  const orderIds = [
-    ...new Set([
-      ...Array.from({ length: RECORD_ORDER_MAX_ATTEMPTS }, (_, index) =>
-        recordOrderId(batch.deltaStimulusId, index + 1)
-      ),
-      ...carryingOrders,
-    ]),
-  ];
+  const ownOrders = Array.from({ length: RECORD_ORDER_MAX_ATTEMPTS }, (_, index) =>
+    recordOrderId(batch.deltaStimulusId, index + 1)
+  );
+  if (noUpdateIn(adapter, ownOrders, null)) return true;
+  const carrying = [...new Set(carryingOrders)].filter((id) => !ownOrders.includes(id));
+  return carrying.length > 0 && noUpdateIn(adapter, carrying, batch.observationRefs);
+}
+
+/** A completed work.no_update in these orders' runs, citing one of `cites` when given. */
+function noUpdateIn(
+  adapter: DatabaseAdapter,
+  orderIds: readonly string[],
+  cites: readonly string[] | null
+): boolean {
   const marks = orderIds.map(() => '?').join(',');
-  const noUpdate = adapter
-    .prepare(
-      `SELECT 1 FROM tool_traces t
-        WHERE t.tool_name = 'work.no_update' AND t.execution_status = 'completed'
-          AND t.model_run_id IN (
-            SELECT r.model_run_id FROM model_runs r
-             WHERE json_extract(r.input_refs_json, '$.sourceMessageRef') IN (${marks})
-            UNION
-            SELECT c.model_run_id FROM model_runs c JOIN model_runs p ON c.parent_model_run_id = p.model_run_id
-             WHERE json_extract(p.input_refs_json, '$.sourceMessageRef') IN (${marks})
-          )
-        LIMIT 1`
-    )
-    .get(...orderIds, ...orderIds);
-  return noUpdate !== undefined;
+  const citing =
+    cites === null
+      ? ''
+      : `AND EXISTS (
+            SELECT 1 FROM json_each(CASE WHEN json_valid(t.input_summary)
+                THEN json_extract(t.input_summary, '$.observationRefs') END) ref
+             WHERE ref.value IN (${cites.map(() => '?').join(',')}))`;
+  return (
+    adapter
+      .prepare(
+        `SELECT 1 FROM tool_traces t
+          WHERE t.tool_name = 'work.no_update' AND t.execution_status = 'completed'
+            AND t.model_run_id IN (
+              SELECT r.model_run_id FROM model_runs r
+               WHERE json_extract(r.input_refs_json, '$.sourceMessageRef') IN (${marks})
+              UNION
+              SELECT c.model_run_id FROM model_runs c JOIN model_runs p ON c.parent_model_run_id = p.model_run_id
+               WHERE json_extract(p.input_refs_json, '$.sourceMessageRef') IN (${marks})
+            )
+            ${citing}
+          LIMIT 1`
+      )
+      .get(...orderIds, ...orderIds, ...(cites ?? [])) !== undefined
+  );
 }
 
 /** Child runs of a record run that this process started and that have not ended yet. */
@@ -107,8 +124,9 @@ function runningChildren(adapter: DatabaseAdapter, modelRunId: string, startedAt
 
 export interface RecordOrders extends RecordOrderPort {
   /**
-   * Re-run the checks a previous process may have lost: every batch of the last day whose latest
-   * order has ended unrecorded waits for its next attempt, or is logged as lost.
+   * Re-run the checks a previous process may have lost: every batch of the last day of record
+   * orders whose latest order has ended unrecorded waits for its next attempt, or is logged as
+   * lost.
    */
   recover(): void;
   /** Drop the checks and timers still waiting; recover() rebuilds them at the next start. */
@@ -132,15 +150,21 @@ interface BatchState extends ChannelOf {
   orders: string[];
 }
 
-/** The batches of the last day's record orders, each at its latest attempt. */
+/**
+ * The batches of the last day of record orders, each at its latest attempt. The day ends at the
+ * latest stored order, not at now: a batch left waiting when the daemon stopped is still read
+ * after a longer stop.
+ */
 function storedBatches(adapter: DatabaseAdapter): Map<string, BatchState> {
   const rows = adapter
     .prepare(
       `SELECT m.stimulus_id, m.payload_json, m.status, n.state AS native_state
          FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id = m.id
-        WHERE m.kind = 'scheduled' AND m.channel_key = ? AND m.created_at >= ?`
+        WHERE m.kind = 'scheduled' AND m.channel_key = ?
+          AND m.created_at >= (SELECT max(created_at) FROM mailbox_inputs
+                                WHERE kind = 'scheduled' AND channel_key = ?) - ?`
     )
-    .all(RECORD_ORDER_CHANNEL, Date.now() - RECOVERY_WINDOW_MS) as Array<{
+    .all(RECORD_ORDER_CHANNEL, RECORD_ORDER_CHANNEL, RECOVERY_WINDOW_MS) as Array<{
     stimulus_id: string;
     payload_json: string;
     status: string;
@@ -214,13 +238,15 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
   const enqueue = (record: RecordOrderPayload): boolean => {
     const id = recordOrderId(record.deltaStimulusId, record.attempt);
     if (orderExists(options.adapter, id)) return false;
-    options.accept({
+    const receipt = options.accept({
       id,
       kind: 'scheduled',
       channelKey: RECORD_ORDER_CHANNEL,
       occurredAt: Date.now(),
       payload: record as unknown as Stimulus['payload'],
     });
+    // The mailbox remembers an id after its row is pruned.
+    if (receipt.state === 'duplicate') return false;
     for (const batch of recordOrderBatches(record))
       if (batch.attempt > 1)
         options.onEvent?.({
@@ -244,6 +270,32 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
     attempt: batch.attempt + 1,
   });
 
+  /**
+   * The waiting batches that still need an order. One that another order took up, or that was
+   * recorded while it waited (by another turn reading the channel), is left out.
+   */
+  const dueBatches = (batches: readonly RecordOrderBatch[]): RecordOrderBatch[] => {
+    if (batches.length === 0) return [];
+    const stored = storedBatches(options.adapter);
+    const recorded: RecordOrderBatch[] = [];
+    const due = batches.filter((batch) => {
+      const state = stored.get(batch.deltaStimulusId);
+      if (state !== undefined && (state.open || state.batch.attempt > batch.attempt)) return false;
+      if (batchRecorded(options.adapter, batch, state?.orders ?? [])) {
+        recorded.push(batch);
+        return false;
+      }
+      return true;
+    });
+    for (const batch of recorded)
+      options.onEvent?.({
+        type: 'recorded',
+        deltaStimulusId: batch.deltaStimulusId,
+        attempt: batch.attempt,
+      });
+    return due;
+  };
+
   // Kagemusha's next tick: the channel's waiting batches go together in one order.
   const tick = (key: string): void => {
     const entry = take(key);
@@ -251,29 +303,11 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
     // The batches whose outcome is still open; a failure below reports only these as lost.
     let unsettled = [...entry.batches.values()];
     try {
-      const stored = storedBatches(options.adapter);
-      const recorded: RecordOrderBatch[] = [];
-      const due = unsettled.filter((batch) => {
-        const state = stored.get(batch.deltaStimulusId);
-        // Another order took it up, or its record arrived while it waited.
-        if (state !== undefined && (state.open || state.batch.attempt > batch.attempt))
-          return false;
-        if (batchRecorded(options.adapter, batch, state?.orders ?? [])) {
-          recorded.push(batch);
-          return false;
-        }
-        return true;
-      });
+      const due = dueBatches(unsettled);
       unsettled = due;
-      for (const batch of recorded)
-        options.onEvent?.({
-          type: 'recorded',
-          deltaStimulusId: batch.deltaStimulusId,
-          attempt: batch.attempt,
-        });
       const [own, ...carried] = due;
       if (own === undefined) return;
-      enqueue({
+      const placed = enqueue({
         order: 'record',
         deltaStimulusId: own.deltaStimulusId,
         ...(entry.source === undefined ? {} : { source: entry.source }),
@@ -283,6 +317,9 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
         attempt: own.attempt + 1,
         ...(carried.length === 0 ? {} : { carried: carried.map(next) }),
       });
+      // The own batch's next order is already stored, older than the day recovery reads; that
+      // order accounts for it, and the rest wait for the next tick.
+      if (!placed) for (const batch of carried) wait(batch, entry);
     } catch (error) {
       for (const batch of unsettled)
         options.onEvent?.({
@@ -296,7 +333,11 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
 
   const wait = (batch: RecordOrderBatch, where: ChannelOf): void => {
     const key = channelKeyOf(where);
-    const entry = waiting.get(key) ?? { ...where, batches: new Map<string, RecordOrderBatch>() };
+    const entry = waiting.get(key) ?? {
+      source: where.source,
+      channel: where.channel,
+      batches: new Map<string, RecordOrderBatch>(),
+    };
     const current = entry.batches.get(batch.deltaStimulusId);
     if (current === undefined || batch.attempt > current.attempt)
       entry.batches.set(batch.deltaStimulusId, batch);
@@ -343,8 +384,11 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
       if (record.observationRefs.length === 0)
         throw new Error(`Live delta ${row.stimulusId} carries no observation to record`);
       if (orderExists(options.adapter, recordOrderId(record.deltaStimulusId, 1))) return;
-      const carried = [...(take(channelKeyOf(record))?.batches.values() ?? [])].map(next);
+      const key = channelKeyOf(record);
+      const carried = dueBatches([...(waiting.get(key)?.batches.values() ?? [])]).map(next);
       enqueue(carried.length === 0 ? record : { ...record, carried });
+      // Taken only once the order is stored, so a refused accept leaves them waiting.
+      take(key);
     },
     // The check waits for child runs in the background so the owner's queue is never held.
     onResult: (row: MailboxRow, modelRunId: string | null) => {
@@ -381,12 +425,25 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
     },
     onLost: (row: MailboxRow, reason: string) => {
       const record = parseRecordOrder(row.payload);
-      const stored = storedBatches(options.adapter);
-      for (const batch of recordOrderBatches(record)) {
-        const state = stored.get(batch.deltaStimulusId);
-        // A row parked again at a later start is stale once a later attempt exists.
-        if (state !== undefined && state.batch.attempt > batch.attempt) continue;
-        settle(batch, record, [...(state?.orders ?? []), row.stimulusId], reason);
+      try {
+        const stored = storedBatches(options.adapter);
+        for (const batch of recordOrderBatches(record)) {
+          const state = stored.get(batch.deltaStimulusId);
+          // The runtime reports a row parked uncertain again at every start. It was settled when it
+          // was first reported: skip it once a later attempt exists, or once it is older than the
+          // day recovery reads (a lost batch would otherwise run again).
+          if (state === undefined || state.batch.attempt > batch.attempt) continue;
+          settle(batch, record, [...state.orders, row.stimulusId], reason);
+        }
+      } catch (error) {
+        // The runtime swallows a failed report, so the loss is named here.
+        for (const batch of recordOrderBatches(record))
+          options.onEvent?.({
+            type: 'lost',
+            deltaStimulusId: batch.deltaStimulusId,
+            attempt: batch.attempt,
+            reason: `record check failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
       }
     },
     recover: () => {

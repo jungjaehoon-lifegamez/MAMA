@@ -15,7 +15,8 @@ All notable changes to this project will be documented in this file.
   when it ends, and that a refused write is corrected and written again. The agent had ended a
   turn with two refused writes and `[ack]`.
 - `work.create` and `work.revise` accept `eventDatetime` as an ISO time with its offset as well as
-  epoch milliseconds, as `work.list` does for its time bounds.
+  epoch milliseconds, as `work.list` does for its time bounds. A date or hour that does not exist
+  (February 30, 24:00) is refused instead of rolling into the next day.
 
 ### Fixed (mama-core)
 

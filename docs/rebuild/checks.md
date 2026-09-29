@@ -1377,4 +1377,10 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: an unrecorded batch waits and rides with its channel's next record order, or goes alone at the next tick (5 minutes). The record order states that the write is required and checked. `work.create`/`work.revise` take `eventDatetime` as an offset ISO time, and a refused `oneOf` names the allowed shapes and the field's description.
 - Evidence: the one batch lost on 2026-09-29 (`source_delta:1a6dc429…`, 12:30). `work.revise` refused `eventDatetime: "…T12:30:00+09:00"` with "must match exactly one allowed shape (0 matched)"; the agent dropped the field with its links, was refused again ("must set, clear, or link"), and ended with `[ack]`. Both retries reached the same session within 2 s and were answered `[ack]` with no tool call. In that day's 77 first-attempt record turns, refusals that named the allowed values (11:48, link kind) were corrected in the same turn. Tests: record orders 19, turn orders 13, work actions 16, core catalog 13.
 - Kept different from Kagemusha: the notify turn is not re-run, attempts stay capped at 3, the wait is per channel (Kagemusha's cursor also holds later channels), and the tick is a 5-minute constant rather than config.
+- Review (CodeRabbit on the PR, the local CLI, an independent reviewer) found five real holes, all fixed with tests:
+  - A row parked uncertain is re-reported at every start, so after a day it would have run a lost batch again. `onLost` now skips batches the recovery day does not hold.
+  - Waiting lived only in memory and recovery read a day back from now. The day now ends at the latest stored order, so a longer stop keeps the batch.
+  - A carried batch that had been recorded while it waited was carried anyway.
+  - A no-update in a carrying order covered batches it did not cite.
+  - `Date.parse` rolled February 30 into March.
 - Still fails: not yet seen live; the next unrecorded batch should log `record order waiting` and then `retry … order=…`. `lost` reaches only the log and repeats at each start for a day. `help` received 8 guessed action names that day (`manage.wiki.list`, `report.get`, …).

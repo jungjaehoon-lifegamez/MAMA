@@ -75,7 +75,12 @@ function revise(adapter: Awaited<ReturnType<typeof database>>, observationId: st
     .run(`record-${observationId}`, observationId);
 }
 
-function noUpdate(adapter: Awaited<ReturnType<typeof database>>, orderId: string, child: boolean) {
+function noUpdate(
+  adapter: Awaited<ReturnType<typeof database>>,
+  orderId: string,
+  child: boolean,
+  cites: string[] = []
+) {
   adapter
     .prepare(
       `INSERT INTO model_runs (model_run_id, status, created_at, input_refs_json) VALUES ('parent', 'committed', 1, ?)`
@@ -89,9 +94,12 @@ function noUpdate(adapter: Awaited<ReturnType<typeof database>>, orderId: string
       .run();
   adapter
     .prepare(
-      `INSERT INTO tool_traces (trace_id, model_run_id, tool_name, execution_status, created_at) VALUES ('trace-1', ?, 'work.no_update', 'completed', 1)`
+      `INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary, execution_status, created_at) VALUES ('trace-1', ?, 'work.no_update', ?, 'completed', 1)`
     )
-    .run(child ? 'child' : 'parent');
+    .run(
+      child ? 'child' : 'parent',
+      JSON.stringify({ reason: 'nothing to record', observationRefs: cites })
+    );
 }
 
 function orders(adapter: Awaited<ReturnType<typeof database>>) {
@@ -126,7 +134,8 @@ function store(
   adapter: Awaited<ReturnType<typeof database>>,
   payload: RecordOrderPayload | Record<string, unknown>,
   status: 'pending' | 'claimed' | 'acked',
-  nativeState?: 'uncertain'
+  nativeState?: 'uncertain',
+  createdAt = Date.now()
 ) {
   const record = payload as RecordOrderPayload;
   const id = `record:${record.deltaStimulusId}:${record.attempt}`;
@@ -135,7 +144,7 @@ function store(
       `INSERT INTO mailbox_inputs (stimulus_id, kind, principal_id, channel_key, preview_json, payload_json, occurred_at, created_at, status)
        VALUES (?, 'scheduled', 'owner', 'operator:record', '[]', ?, 1, ?, ?)`
     )
-    .run(id, JSON.stringify(payload), Date.now(), status);
+    .run(id, JSON.stringify(payload), createdAt, status);
   if (nativeState)
     adapter
       .prepare(`INSERT INTO native_input_deliveries (input_id, state, updated_at) VALUES (?, ?, 1)`)
@@ -160,6 +169,17 @@ const later = {
   channelKey: 'room',
   payload: {
     refs: [{ observationRef: 'obs-3', contentPreview: 'c', sourceAt: new Date().toISOString() }],
+  },
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
+// A delta in another channel, whose order anchors the day recovery reads.
+const other = {
+  stimulusId: 'source_delta:other',
+  channelKey: 'hall',
+  payload: {
+    refs: [{ observationRef: 'obs-9', contentPreview: 'z', sourceAt: new Date().toISOString() }],
   },
 };
 
@@ -220,12 +240,16 @@ describe('record orders', () => {
     }
   );
 
-  it('credits a carried batch with a no-update declared in the order that carried it', async () => {
-    const adapter = await database();
+  it('credits a carried batch with a no-update in the carrying order only when it cites the batch', async () => {
+    const citing = await database();
     const record = recordOrderPayload(delta, 1);
-    noUpdate(adapter, `record:${later.stimulusId}:1`, false);
-    expect(batchRecorded(adapter, record)).toBe(false);
-    expect(batchRecorded(adapter, record, [`record:${later.stimulusId}:1`])).toBe(true);
+    noUpdate(citing, `record:${later.stimulusId}:1`, false, ['obs-3', 'obs-2']);
+    expect(batchRecorded(citing, record)).toBe(false);
+    expect(batchRecorded(citing, record, [`record:${later.stimulusId}:1`])).toBe(true);
+    // A no-update about the newer messages alone does not cover the carried batch.
+    const other = await database();
+    noUpdate(other, `record:${later.stimulusId}:1`, false, ['obs-3']);
+    expect(batchRecorded(other, record, [`record:${later.stimulusId}:1`])).toBe(false);
   });
 
   it('enqueues the first order without refs and with the deterministic payload', async () => {
@@ -276,7 +300,13 @@ describe('record orders', () => {
       attempt: 2,
       order: `record:${delta.stimulusId}:2`,
     });
-    await port.onLost(row(RECORD_ORDER_MAX_ATTEMPTS), 'uncertain after restart');
+    const last = store(
+      adapter,
+      recordOrderPayload(delta, RECORD_ORDER_MAX_ATTEMPTS),
+      'claimed',
+      'uncertain'
+    );
+    await port.onLost(last, 'uncertain after restart');
     expect(events[2]).toMatchObject({
       type: 'lost',
       attempt: RECORD_ORDER_MAX_ATTEMPTS,
@@ -356,6 +386,17 @@ describe('record orders', () => {
     expect(events[1]).toEqual({ type: 'recorded', deltaStimulusId: delta.stimulusId, attempt: 1 });
   });
 
+  it("leaves a batch recorded while it waited out of the channel's next delta order", async () => {
+    const adapter = await database();
+    const { port, accepted, events } = orders(adapter);
+    port.onResult(row(1), 'run-a');
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    revise(adapter, 'obs-2');
+    port.enqueueFirst(deltaRow(later));
+    expect(accepted[0]!.payload).toEqual(recordOrderPayload(later, 1));
+    expect(events[1]).toEqual({ type: 'recorded', deltaStimulusId: delta.stimulusId, attempt: 1 });
+  });
+
   it('retries a batch whose order was parked uncertain, though the row stays claimed', async () => {
     const adapter = await database();
     const parked = store(adapter, recordOrderPayload(delta, 1), 'claimed', 'uncertain');
@@ -377,11 +418,89 @@ describe('record orders', () => {
     expect(accepted).toEqual([]);
   });
 
+  it("keeps the channel's other waiting batches when the own batch's next order is already stored", async () => {
+    const adapter = await database();
+    const { port, accepted, events, tick } = orders(adapter);
+    port.onResult(row(1), 'run-a');
+    port.onResult(
+      {
+        ...row(1),
+        stimulusId: `record:${later.stimulusId}:1`,
+        payload: recordOrderPayload(later, 1) as never,
+      },
+      'run-b'
+    );
+    await vi.waitFor(() => expect(events).toHaveLength(2));
+    // The own batch's next order, stored before the day recovery reads.
+    store(adapter, recordOrderPayload(delta, 2), 'acked', undefined, Date.now() - 2 * DAY);
+    store(adapter, recordOrderPayload(other, 1), 'acked');
+    tick();
+    expect(accepted).toEqual([]);
+    tick();
+    expect(accepted.map((stimulus) => stimulus.id)).toEqual([`record:${later.stimulusId}:2`]);
+  });
+
+  it('does not bring back a batch whose parked row is older than the day recovery reads', async () => {
+    const adapter = await database();
+    const parked = store(
+      adapter,
+      recordOrderPayload(delta, 1),
+      'claimed',
+      'uncertain',
+      Date.now() - 3 * DAY
+    );
+    store(adapter, recordOrderPayload(other, 1), 'acked');
+    const { port, accepted, events, timers } = orders(adapter);
+    await port.onLost(parked, 'uncertain after restart');
+    expect(events).toEqual([]);
+    expect(timers).toEqual([]);
+    expect(accepted).toEqual([]);
+  });
+
+  it('recovers a batch left waiting before a stop longer than a day', async () => {
+    const adapter = await database();
+    store(adapter, recordOrderPayload(delta, 1), 'acked', undefined, Date.now() - 3 * DAY);
+    const { port, accepted, tick } = orders(adapter);
+    port.recover();
+    tick();
+    expect(accepted.map((stimulus) => stimulus.id)).toEqual([`record:${delta.stimulusId}:2`]);
+  });
+
+  it('keeps a waiting batch when the order that would carry it is refused', async () => {
+    const adapter = await database();
+    const accepted: string[] = [];
+    const events: RecordOrderEvent[] = [];
+    const timers: Array<() => void> = [];
+    let refuse = true;
+    const port = createRecordOrders({
+      adapter,
+      accept: (stimulus) => {
+        if (refuse) throw new Error('database is locked');
+        accepted.push(stimulus.id);
+        return { inputId: stimulus.id, state: 'accepted' };
+      },
+      processStartedAt: 0,
+      onEvent: (event) => events.push(event),
+      sleep: async () => {},
+      setTimer: (run) => {
+        timers.push(run);
+        return () => {};
+      },
+    });
+    port.onResult(row(1), 'run-a');
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(() => port.enqueueFirst(deltaRow(later))).toThrow(/locked/);
+    refuse = false;
+    for (const run of timers.splice(0)) run();
+    expect(accepted).toEqual([`record:${delta.stimulusId}:2`]);
+  });
+
   it('stops once the batch is recorded, whichever run wrote it', async () => {
     const adapter = await database();
+    const dead = store(adapter, recordOrderPayload(delta, 1), 'acked');
     const { port, accepted, events } = orders(adapter);
     revise(adapter, 'obs-1');
-    await port.onLost(row(1), 'dead');
+    await port.onLost(dead, 'dead');
     expect(events).toEqual([{ type: 'recorded', deltaStimulusId: delta.stimulusId, attempt: 1 }]);
     expect(accepted).toHaveLength(0);
   });

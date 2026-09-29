@@ -218,13 +218,30 @@ function workListTime(value: unknown, field: string): number {
   throw new Error(`work.list ${field} must be epoch milliseconds or an ISO time with its offset`);
 }
 
-const OFFSET_ISO_PATTERN = '^.+(?:Z|[+-]\\d{2}:\\d{2})$';
+const OFFSET_ISO_PATTERN =
+  '^(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::\\d{2}(?:\\.\\d{1,3})?)?(Z|([+-])(\\d{2}):(\\d{2}))$';
 
 /** An ISO time that states its offset (Z or ±HH:MM), as epoch ms; undefined for anything else. */
 function offsetIsoTime(value: unknown): number | undefined {
-  if (typeof value !== 'string' || !new RegExp(OFFSET_ISO_PATTERN).test(value)) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  const match = typeof value === 'string' ? new RegExp(OFFSET_ISO_PATTERN).exec(value) : null;
+  if (!match) return undefined;
+  const parsed = Date.parse(match[0].replace(' ', 'T'));
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+  // Date.parse rolls an impossible date or hour forward (Feb 30 becomes Mar 2): the wall time
+  // at the stated offset must read back as written.
+  const [, year, month, day, hour, minute, zone, sign, offsetHours, offsetMinutes] = match;
+  const offset =
+    zone === 'Z' ? 0 : (sign === '-' ? -1 : 1) * (Number(offsetHours) * 60 + Number(offsetMinutes));
+  const wall = new Date(parsed + offset * 60_000);
+  const readBack = [
+    wall.getUTCFullYear(),
+    wall.getUTCMonth() + 1,
+    wall.getUTCDate(),
+    wall.getUTCHours(),
+    wall.getUTCMinutes(),
+  ];
+  const written = [year, month, day, hour, minute].map(Number);
+  return readBack.every((part, index) => part === written[index]) ? parsed : undefined;
 }
 
 function workListFilter(input: Record<string, unknown>): WorkListFilter {
