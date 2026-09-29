@@ -5,19 +5,20 @@ export interface OwnerExchange {
   /** When the owner sent the message, epoch ms. */
   at: number;
   owner: string;
-  /** The reply the messenger delivered; null when none was delivered. */
+  /** Your reply as the turn produced it; null while the turn has none. */
   reply: string | null;
 }
 
 export interface OwnerMessagePorts {
-  /** The owner's messages in [since, before), oldest first, each with its delivered reply. */
+  /** The owner's messages in [since, before), oldest first, each with your reply. */
   exchanges(since: number, before: number): readonly OwnerExchange[];
   /** How long owner messages are kept; older conversation is gone. */
   retentionMs: number;
   now?(): number;
 }
 
-const LINE_LIMIT = 400;
+const DEFAULT_CHARS = 400;
+const MAX_CHARS = 4_000;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
@@ -36,8 +37,8 @@ function time(value: unknown, field: string): number {
   );
 }
 
-function clip(text: string): string {
-  return text.length > LINE_LIMIT ? `${text.slice(0, LINE_LIMIT - 1)}…` : text;
+function clip(text: string, chars: number): string {
+  return text.length > chars ? `${text.slice(0, chars - 1)}…` : text;
 }
 
 /**
@@ -50,7 +51,7 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
       contract: {
         name: 'owner.messages',
         summary:
-          "Read your conversation with the owner in a time span: each owner message with the reply that was delivered, oldest first, in pages of 20 (50 max). Messages are kept for seven days; for earlier days the owner's decisions are in the ledger, the lessons and the sources.",
+          "Read your conversation with the owner in a time span: each owner message with your reply, oldest first, in pages of 20 (50 max). A line longer than chars (400 by default) ends with …; read that span again with a larger chars. Messages are kept for seven days; for earlier days the owner's decisions are in the ledger, the lessons and the sources.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -73,6 +74,12 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
             },
             offset: { type: 'integer', minimum: 0, description: 'Skip this many exchanges.' },
             limit: { type: 'integer', minimum: 1, maximum: MAX_LIMIT },
+            chars: {
+              type: 'integer',
+              minimum: 100,
+              maximum: MAX_CHARS,
+              description: 'Longest message or reply text returned; longer text is cut.',
+            },
           },
         },
         examples: [
@@ -88,12 +95,14 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
           before?: unknown;
           offset?: unknown;
           limit?: unknown;
+          chars?: unknown;
         };
         const now = ports.now?.() ?? Date.now();
         const since = time(body.since, 'since');
         const before = body.before === undefined ? now : time(body.before, 'before');
         const offset = typeof body.offset === 'number' ? body.offset : 0;
         const limit = typeof body.limit === 'number' ? body.limit : DEFAULT_LIMIT;
+        const chars = typeof body.chars === 'number' ? body.chars : DEFAULT_CHARS;
         const all = ports.exchanges(since, before);
         const page = all.slice(offset, offset + limit);
         const next = offset + page.length;
@@ -101,8 +110,8 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
           total: all.length,
           messages: page.map((exchange) => ({
             at: exchange.at,
-            owner: clip(exchange.owner),
-            reply: exchange.reply === null ? null : clip(exchange.reply),
+            owner: clip(exchange.owner, chars),
+            reply: exchange.reply === null ? null : clip(exchange.reply, chars),
           })),
           nextOffset: next < all.length ? next : null,
           ...(since < now - ports.retentionMs

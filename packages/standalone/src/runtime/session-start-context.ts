@@ -34,7 +34,7 @@ function ownerText(row: MailboxRow): string | null {
  */
 export const OWNER_MESSAGE_RETENTION_MS = 7 * 86_400_000;
 
-/** The owner's messages in [since, before), oldest first, each with its delivered reply. */
+/** The owner's messages in [since, before), oldest first, each with the reply the turn produced. */
 export function ownerExchangesBetween(
   mailbox: Mailbox,
   adapter: DatabaseAdapter,

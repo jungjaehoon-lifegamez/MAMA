@@ -21,8 +21,11 @@ export interface ReportSchedulerOptions {
   timeZone: TimeZoneSetting;
   statePath: string;
   intake: Pick<StimulusIntake, 'acceptScheduled'>;
-  /** Write a daily wiki page at reports.daily_hour; only with the wiki enabled. */
-  dailyPages?: boolean;
+  /**
+   * Write a daily wiki page at reports.daily_hour; only with the wiki enabled. `written` says
+   * whether daily/<day>.md was written at or after `since`: the day counts as done only then.
+   */
+  dailyPages?: { written(day: string, since: number): boolean };
   /** Includes queued/retrying inputs across restarts, excludes uncertain failed turns. */
   hasPendingReport: () => boolean;
   sendToOwner: (text: string, idempotencyKey: string) => Promise<void>;
@@ -80,15 +83,21 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
         // A full report already sent this hour covers it, even if the hour is no longer a
         // full-report hour after a config change.
         state.lastFullKey !== hourKey;
-    // The daily page waits for a report due in the same hour.
+    // The day's page is due from its hour on; a day missed while the daemon was down or a report
+    // was pending is written at the next tick after midnight. A first start waits for the hour.
+    const [year, month, date] = day.split('-').map(Number) as [number, number, number];
+    const yesterday = new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10);
+    const dailyDay =
+      hour >= options.config.daily_hour ? day : state.lastDailyKey ? yesterday : null;
+    // A report due in the same hour goes first.
     const dailyDue =
       !reportDue &&
-      options.dailyPages === true &&
-      hour === options.config.daily_hour &&
-      (state.lastDailyKey ?? null) !== day;
+      options.dailyPages !== undefined &&
+      dailyDay !== null &&
+      (state.lastDailyKey ?? '') < dailyDay;
     if (!reportDue && !dailyDue) return;
     const payload: Record<string, JsonValue> = dailyDue
-      ? { report: 'daily', hourKey, day }
+      ? { report: 'daily', hourKey, day: dailyDay! }
       : {
           report: full ? 'full' : 'reminder',
           hourKey,
@@ -120,12 +129,15 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       timer = undefined;
     },
     onResult: async (
-      row: Pick<MailboxRow, 'stimulusId' | 'payload'>,
+      row: Pick<MailboxRow, 'stimulusId' | 'payload' | 'occurredAt'>,
       result: Pick<NativeTurnResult, 'response'>
     ): Promise<void> => {
       const { report, hourKey, day } = scheduledReport(row.payload);
       const text = result.response.trim();
       if (!text) throw new Error('Scheduled report returned empty output');
+      // An [ack] without the page would leave the day unwritten for good; failing the turn retries it.
+      if (report === 'daily' && options.dailyPages?.written(day!, row.occurredAt) !== true)
+        throw new Error(`The daily order ended without writing daily/${day}.md`);
       // A reminder with nothing that needs the owner ends with [ack] and is not sent; the last
       // marker decides, as for delta replies. A daily page goes to the wiki, never to the owner.
       const lastMarker = text.slice(

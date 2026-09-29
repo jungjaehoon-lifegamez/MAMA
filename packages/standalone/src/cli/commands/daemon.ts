@@ -1,4 +1,12 @@
-import { closeSync, existsSync, fchmodSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fchmodSync,
+  mkdirSync,
+  openSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -692,7 +700,16 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       const schedulerFactory = dependencies.createReportScheduler ?? createReportScheduler;
       reportScheduler = schedulerFactory({
         config: config.reports,
-        dailyPages: config.wiki?.enabled === true,
+        ...(owner.wikiRoot === null
+          ? {}
+          : {
+              dailyPages: {
+                written: (day: string, since: number) => {
+                  const page = join(owner!.wikiRoot!, 'daily', `${day}.md`);
+                  return existsSync(page) && statSync(page).mtimeMs >= since;
+                },
+              },
+            }),
         timeZone,
         statePath: join(paths.runtimeRoot, 'report-schedule-state.json'),
         intake: {

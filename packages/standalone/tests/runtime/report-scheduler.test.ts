@@ -60,9 +60,16 @@ function setup() {
     setSend: (value: typeof send) => {
       send = value;
     },
-    result: () => ({ stimulusId: queued.at(-1)!.id, payload: queued.at(-1)!.payload }),
+    result: () => ({
+      stimulusId: queued.at(-1)!.id,
+      payload: queued.at(-1)!.payload,
+      occurredAt: queued.at(-1)!.occurredAt,
+    }),
   };
 }
+
+// The daily page counts as written only when the wiki file changed after the order was queued.
+const written = { written: () => true };
 
 describe('KST report scheduler', () => {
   it('uses the configured local hour and observes a timezone change without restart', () => {
@@ -290,7 +297,7 @@ describe('KST report scheduler', () => {
 
   it('writes the daily page at its hour, never sends it, and keeps the latest day', async () => {
     const ctx = setup();
-    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: true });
+    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: written });
     scheduler.tick(new Date('2026-09-29T14:00:00Z'));
     expect(ctx.queued.at(-1)!.payload).toEqual({
       report: 'daily',
@@ -308,6 +315,7 @@ describe('KST report scheduler', () => {
       {
         stimulusId: 'report:rewrite',
         payload: { report: 'daily', hourKey: '2026-09-29:23', day: '2026-09-01' },
+        occurredAt: 0,
       },
       { response: '[ack]' }
     );
@@ -322,7 +330,7 @@ describe('KST report scheduler', () => {
     const scheduler = createReportScheduler({
       ...ctx.options,
       config: { ...ctx.options.config, daily_hour: 21 },
-      dailyPages: true,
+      dailyPages: written,
     });
     scheduler.tick(new Date('2026-09-29T12:00:00Z'));
     expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'reminder' });
@@ -332,6 +340,52 @@ describe('KST report scheduler', () => {
     expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'daily', day: '2026-09-29' });
   });
 
+  it('fails a daily order that ended without its page, leaving the day to write again', async () => {
+    const ctx = setup();
+    const checked: Array<[string, number]> = [];
+    const scheduler = createReportScheduler({
+      ...ctx.options,
+      dailyPages: {
+        written: (day, since) => {
+          checked.push([day, since]);
+          return false;
+        },
+      },
+    });
+    const now = new Date('2026-09-29T14:00:00Z');
+    scheduler.tick(now);
+    await expect(scheduler.onResult(ctx.result(), { response: '[ack]' })).rejects.toThrow(
+      'The daily order ended without writing daily/2026-09-29.md'
+    );
+    expect(checked).toEqual([['2026-09-29', now.getTime()]]);
+    expect(existsSync(ctx.statePath)).toBe(false);
+  });
+
+  it('writes a day missed while the daemon was down after midnight, but nothing before a first page', async () => {
+    const first = setup();
+    const fresh = createReportScheduler({ ...first.options, dailyPages: written });
+    fresh.tick(new Date('2026-09-28T22:00:00Z'));
+    expect(first.queued).toEqual([]);
+    const ctx = setup();
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    writeFileSync(
+      ctx.statePath,
+      JSON.stringify({ lastFullKey: null, lastReminderKey: null, lastDailyKey: '2026-09-27' })
+    );
+    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: written });
+    // 02:00 on the 30th in Seoul: the 29th was missed.
+    scheduler.tick(new Date('2026-09-29T17:00:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toEqual({
+      report: 'daily',
+      hourKey: '2026-09-30:02',
+      day: '2026-09-29',
+    });
+    await scheduler.onResult(ctx.result(), { response: '[ack]' });
+    ctx.setPending(false);
+    scheduler.tick(new Date('2026-09-29T17:30:00Z'));
+    expect(ctx.queued).toHaveLength(1);
+  });
+
   it('reads a schedule state written before daily pages', () => {
     const ctx = setup();
     mkdirSync(join(root, 'runtime'), { recursive: true });
@@ -339,7 +393,7 @@ describe('KST report scheduler', () => {
       ctx.statePath,
       JSON.stringify({ lastFullKey: '2026-09-29:18', lastReminderKey: '2026-09-29:21' })
     );
-    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: true });
+    const scheduler = createReportScheduler({ ...ctx.options, dailyPages: written });
     scheduler.tick(new Date('2026-09-29T14:00:00Z'));
     expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'daily' });
   });

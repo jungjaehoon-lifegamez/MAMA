@@ -21,8 +21,7 @@ All notable changes to this project will be documented in this file.
 - `work.list` takes `eventSince` and `eventBefore`: items with a revision whose source event time
   falls in the span, each listing those revisions with their summaries. Write time is not event
   time; the September backfill wrote a month of events on one day.
-- `owner.messages` reads the owner conversation in a time span, each message with the reply that
-  was delivered. The mailbox keeps seven days; the result says so for older spans.
+- `owner.messages` reads the owner conversation in a time span, each message with your reply. The mailbox keeps seven days; the result says so for older spans.
 - mama-core: a revision chain entry carries `createdAt`, the day of a revision with no event time.
 
 ## mama-os [0.59.1] / mama-core [4.1.1] - 2026-09-29

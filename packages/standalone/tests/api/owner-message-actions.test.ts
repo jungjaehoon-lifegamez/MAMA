@@ -43,6 +43,8 @@ describe('owner.messages', () => {
       'message 22',
     ]);
     expect(rest.nextOffset).toBeNull();
+    const whole = (await exec({ since: 9 * DAY, limit: 1, chars: 1_000 })) as typeof first;
+    expect(whole.messages[0]!.reply).toHaveLength(500);
   });
 
   it('takes ISO times with an offset and says when the span is older than what is kept', async () => {
