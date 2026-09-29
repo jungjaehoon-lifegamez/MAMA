@@ -171,7 +171,7 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
       contract: {
         name: 'help',
         summary:
-          "Read what you need next: an action's arguments, allowed values and an example before you first call it (actions), or a procedure when a turn needs it (topic); with neither, list the topics and actions.",
+          "Read what you need next, one level at a time: several actions give each one's call signature (arguments, allowed values, bounds) and purpose; one action gives its whole contract with argument descriptions and examples; a topic gives a procedure; with neither, list the topics and actions.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -213,7 +213,19 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
         const byName = new Map(contracts.map((contract) => [key(contract.name), contract]));
         const unknown = requested.filter((name) => !byName.has(key(String(name))));
         if (unknown.length > 0) throw invalidInput(`unknown actions: ${unknown.join(', ')}`);
-        parts.push(...requested.map((name) => helpText(byName.get(key(String(name)))!)));
+        const asked = requested.map((name) => byName.get(key(String(name)))!);
+        // One level at a time: several actions give their call lines; one gives its contract.
+        if (asked.length === 1) parts.push(helpText(asked[0]!));
+        else
+          parts.push(
+            [
+              ...asked.map(
+                (contract) =>
+                  `${contract.name}(${actionSignature(contract.inputSchema)}) — ${firstSentence(contract.summary)}`
+              ),
+              'Ask for one action by itself for its argument descriptions and examples.',
+            ].join('\n')
+          );
         return parts.join('\n\n');
       },
     },

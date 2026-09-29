@@ -124,7 +124,8 @@ function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
  */
 export function ownerHelpTopics(
   backend: OwnerRuntimeBackend,
-  wikiEnabled: boolean
+  wikiEnabled: boolean,
+  judgeEnabled = false
 ): Record<string, string> {
   const readers =
     'Board sections and wiki pages are read by people: who, when, what changed, what is awaited next, in sentences a reader understands alone. No ids in their text; a wiki page keeps its evidence ids in sourceIds and sourceRefs.';
@@ -155,6 +156,7 @@ export function ownerHelpTopics(
       'Reading sources:',
       '- memory.search finds related memories, and memory.read:provenance traces one to its cited source messages. Read preserved sources only for what the ledger does not establish.',
       '- Use progressive source access: source.recent and source.search are bounded navigation, and source.read is required for the cited original content; a preview or index row is not the account of what happened. source.read reads several refs in one call with observationRefs.',
+      `- To check a work item, follow its evidence: work.list detail names the messages it rests on; read what came after them in the same channel (source.search with channel and from) instead of guessing how its name is spelled.${judgeEnabled ? ' With many messages or items, judge in the script whether each message is about the item and what it says of its state, and return only those that are.' : ''} Search by words only for an item with no evidence.`,
     ].join('\n'),
     files: [
       'Attachments and files:',

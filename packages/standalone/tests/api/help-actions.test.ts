@@ -143,7 +143,14 @@ describe('help action', () => {
         ].join('\n')
       );
     }
-    expect(run({ actions: ['memory_read_provenance', 'work.list'] }).split('\n\n')).toHaveLength(2);
+    // Several actions: one call line each, not their whole contracts.
+    expect(run({ actions: ['memory_read_provenance', 'work.list'] })).toBe(
+      [
+        'memory.read:provenance({}) — Trace a memory to its cited source messages.',
+        'work.list({text, view?: "overview"|"items", links?, eventDatetime?}) — Read owner work progressively.',
+        'Ask for one action by itself for its argument descriptions and examples.',
+      ].join('\n')
+    );
     expect(() => run({ actions: ['work.delete'] })).toThrow(/unknown actions: work.delete/);
   });
 });

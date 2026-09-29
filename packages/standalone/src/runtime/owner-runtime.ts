@@ -293,7 +293,11 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         stored: storedSourceReader,
         workspaceDir: options.workspaceDir,
       },
-      helpTopics: ownerHelpTopics(options.backend, options.wiki?.enabled ?? false),
+      helpTopics: ownerHelpTopics(
+        options.backend,
+        options.wiki?.enabled ?? false,
+        options.jev !== undefined
+      ),
       ...(options.jev === undefined
         ? {}
         : (() => {
