@@ -86,7 +86,7 @@ const liveDelta = (text: string) => ({
 });
 
 describe('session start context', () => {
-  it("gathers the owner channel, the resumable turns and the latest decisions, as Kagemusha's session start", async () => {
+  it('gathers the last delivered owner exchanges, the checkpoint and the latest decisions', async () => {
     const f = await fixture();
     f.add('owner:1', 'owner_message', { text: 'request 1' }, '<b>answer 1</b>');
     f.add('owner:2', 'owner_message', { text: 'request 2' }, 'answer 2', { delivered: 'ready' });
@@ -109,7 +109,6 @@ describe('session start context', () => {
       { topic: 'newer', summary: 'new decision', created_at: 3_600_000 * 2 },
     ] as unknown as MemoryRecord[];
     const input = await readSessionStartInput({
-      adapter: f.database.adapter,
       mailbox: f.mailbox,
       deliveredRefs: new TelegramMessageLedger(f.ledgerPath).recentDeliveredMessageRefs(),
       current,
@@ -121,18 +120,9 @@ describe('session start context', () => {
       }),
       now: 3_600_000 * 3,
     });
-    // Only delivered owner exchanges of this principal, the current one left out, oldest first.
-    expect(input.ownerMessages).toEqual(['[owner] request 1', '[agent] answer 1']);
-    // Acked owner turns and live delta turns with their replies; replay windows, record orders
-    // and unfinished rows are left out.
-    expect(input.turns).toEqual([
-      '[owner] request 1',
-      '[agent] answer 1',
-      '[owner] request 2',
-      '[agent] answer 2',
-      '[delta chat:client room][source] sender: files sent',
-      '[delta chat:client room][agent] [ack]',
-    ]);
+    // Only delivered owner exchanges of this principal, the current one left out, oldest first;
+    // messenger markup is stripped and source changes, record orders and replays are not carried.
+    expect(input.exchanges).toEqual([{ at: 1, owner: 'request 1', answer: 'answer 1' }]);
     expect(input.checkpoint).toEqual({
       summary: 'Mid full report',
       nextSteps: 'publish the board',

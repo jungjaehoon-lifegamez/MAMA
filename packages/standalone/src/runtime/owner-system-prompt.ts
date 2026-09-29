@@ -97,7 +97,7 @@ function standingPrompt(
     `- Read a procedure with help({topic}) when the turn needs it: ${topics}. Read an action's arguments with help({actions: [name]}) before you first call it in a session.`,
     '',
     '## Continuity',
-    `- A [session_start] block opens a new session with the owner channel, the previous turns, the latest checkpoint and recent decisions; the ledger and the sources hold everything else. When the owner refers to something this session does not show, search before answering; never answer that you do not remember without searching.`,
+    `- A [session_start] block opens a new session with your last ten exchanges with the owner, the latest checkpoint and recent decisions; the ledger and the sources hold everything else. When the owner refers to something this session does not show, search before answering; never answer that you do not remember without searching.`,
     `- Save a checkpoint with memory.checkpoint.save (summary, next_steps) only as a hand-off for a later session: what you were in the middle of and what comes next. Work progress belongs in the ledger, not a checkpoint.`,
     '',
     '## Tools',

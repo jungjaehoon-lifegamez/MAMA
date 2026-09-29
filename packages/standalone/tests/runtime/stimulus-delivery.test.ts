@@ -672,8 +672,7 @@ describe('one stimulus intake and delivery', () => {
     const prompts: string[] = [];
     const delivery = createDelivery({
       sessionStart: () => ({
-        ownerMessages: ['[owner] earlier request', '[agent] earlier answer'],
-        turns: ['[delta room][source] sender: files sent', '[delta room][agent] [ack]'],
+        exchanges: [{ at: 0, owner: 'earlier request', answer: 'earlier answer' }],
         decisions: [{ topic: 'work/item', summary: 'revised', ageHours: 1 }],
       }),
     });
@@ -689,12 +688,11 @@ describe('one stimulus intake and delivery', () => {
       );
     expect(prompts[0]!.startsWith('[session_start]')).toBe(true);
     for (const part of [
-      '[owner] earlier request',
-      '[delta room][source] sender: files sent',
+      'owner: earlier request → you: earlier answer',
       '- [work/item] revised (1h ago)',
     ])
       expect(prompts[0]).toContain(part);
-    expect(prompts[0]!.length).toBeLessThan(2_600);
+    expect(prompts[0]!.length).toBeLessThan(4_500);
     expect(prompts[1]!.startsWith('[owner_message]')).toBe(true);
     for (const prompt of prompts)
       for (const pushed of ['<owner-corrections>', '<open-work-pipeline>', '<current-board>'])

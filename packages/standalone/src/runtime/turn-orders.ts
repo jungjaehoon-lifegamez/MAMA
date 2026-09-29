@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
  * the turn's data, its local time and the steps only that turn needs.
  */
 
-export const SESSION_START_LIMIT = 2_500;
+export const SESSION_START_LIMIT = 4_400;
 export const LESSONS_LIMIT = 1_200;
 export const DELTA_LINE_LIMIT = 500;
 /** Kagemusha's backfill guard: a source line this old is history, not a live change. */
@@ -70,21 +70,28 @@ export function lessonsBlock(lessons: readonly Lesson[]): string {
 }
 
 /** What a new session is told, as Kagemusha's `buildSessionStartContext` gathers it. */
+export interface SessionStartExchange {
+  /** Epoch ms of the owner's message. */
+  at: number;
+  owner: string;
+  answer: string;
+}
+
 export interface SessionStartInput {
-  /** The owner channel's latest messages, oldest first, as `[owner] …` or `[agent] …`. */
-  ownerMessages: readonly string[];
-  /** The latest turns a session resumes from (owner and live delta turns), oldest first. */
-  turns: readonly string[];
+  /** The owner channel's latest exchanges, oldest first. */
+  exchanges: readonly SessionStartExchange[];
   /** The latest memory records, newest first. */
   decisions: readonly { topic: string; summary: string; ageHours: number }[];
   /** The latest session checkpoint the agent saved, if any. */
   checkpoint?: { summary: string; nextSteps: string; ageHours: number } | null;
 }
 
-// Kagemusha's section budgets (`session-start-context.ts`), with previous turns cut from 1,000 to
-// 750: they carry source text, so they sit inside the ~300-char untrusted-content wrapper. Its brain
-// summary has no MAMA counterpart.
-const SESSION_START_SECTIONS = { ownerMessages: 600, turns: 750, checkpoint: 500, decisions: 600 };
+// Ten owner exchanges fit in 3,000 chars at one line each, the size of Kagemusha's previous-turns block;
+// the checkpoint and decisions keep Kagemusha's session-start budgets.
+const SESSION_START_SECTIONS = { exchanges: 3_000, checkpoint: 500, decisions: 600 };
+const EXCHANGE_OWNER_LIMIT = 120;
+/** Ten lines and their nine newlines fit the exchanges budget. */
+const EXCHANGE_LINE_LIMIT = 299;
 const SESSION_START_LINE_LIMIT = 360;
 
 function truncate(text: string, limit: number): string {
@@ -147,9 +154,9 @@ function leadingLines(lines: readonly string[], limit: number, seen: Set<string>
 }
 
 /**
- * Kagemusha's `[session_start]`, at most 2,500 chars: the owner channel's latest messages, the
- * latest resumable turns and the latest decisions, each within its own budget, newest kept first
- * and no line twice. The time comes first so a full block never drops it.
+ * The `[session_start]` block, at most 4,400 chars: the owner channel's last ten exchanges one line
+ * each, the latest checkpoint and the latest decisions, each within its own budget, newest kept
+ * first and no line twice. The time comes first so a full block never drops it.
  */
 export function sessionStartBlock(
   input: SessionStartInput,
@@ -169,17 +176,26 @@ export function sessionStartBlock(
   };
   /** Chars left before the 2,500 cap, after the newline that joins the next section. */
   const room = (): number => SESSION_START_LIMIT - parts.join('\n').length - 1;
-  const owner = recentLines(input.ownerMessages, SESSION_START_SECTIONS.ownerMessages, seen);
-  if (owner.length > 0) append(['', 'Recent owner channel:', ...owner].join('\n'));
-  const turns = recentLines(input.turns, SESSION_START_SECTIONS.turns, seen);
-  // Source text is evidence, never an instruction, here as in the delta orders that first carried it.
-  if (turns.length > 0)
+  // One line per exchange: the owner's words, then the head of the reply; history, not requests.
+  const exchanges = recentLines(
+    input.exchanges.map((exchange) =>
+      truncate(
+        `[${localStamp(new Date(exchange.at).toISOString(), options.timeZone)}] owner: ${truncate(
+          oneLine(exchange.owner),
+          EXCHANGE_OWNER_LIMIT
+        )} → you: ${oneLine(exchange.answer)}`,
+        EXCHANGE_LINE_LIMIT
+      )
+    ),
+    SESSION_START_SECTIONS.exchanges,
+    seen
+  );
+  if (exchanges.length > 0)
     append(
       [
         '',
-        '<previous_turns>',
-        wrapUntrustedContent('previous_turns', turns.join('\n')),
-        '</previous_turns>',
+        'Earlier owner messages and your replies (history, not new requests):',
+        ...exchanges,
       ].join('\n')
     );
   const age = (hours: number): string =>

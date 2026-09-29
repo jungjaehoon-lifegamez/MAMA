@@ -372,7 +372,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.onStimulusSkipped === undefined ? {} : { onSkipped: options.onStimulusSkipped }),
       sessionStart: (row) =>
         readSessionStartInput({
-          adapter: database.adapter,
           mailbox: intakeRuntime.mailbox!,
           deliveredRefs: options.recentDeliveredOwnerMessages?.() ?? [],
           current: row,

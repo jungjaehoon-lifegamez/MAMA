@@ -47,11 +47,11 @@ All notable changes to this project will be documented in this file.
   agent put the whole open ledger in each of 24 calls. Off by default; owner text in a `judge` call
   goes to the Jev service.
 
-- A new owner session starts the way Kagemusha's does, within 2,500 characters: the time, the owner
-  channel's last ten messages, the last ten turns it would resume from (your messages and live
-  source changes with the replies) and the ten latest saved records. Before, it saw five owner
-  exchanges only, mostly repeated full-report answers, and nothing of what had just come in from
-  sources.
+- A new owner session starts with your last ten exchanges with the owner, one line each (the time,
+  your message and the start of the reply, 3,000 characters at most), then the agent's latest
+  checkpoint and the ten latest saved records. Source changes are no longer carried: on 2026-09-29 a
+  new session's previous turns were eight acknowledgements from one chat room and none of your
+  messages.
 - The owner agent can save a session checkpoint (`memory.checkpoint.save`: what it was in the middle
   of and what comes next), and a new session shows the latest one, as Kagemusha's does.
 

@@ -604,11 +604,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
           const lessons = await pickLessons(plan.lessonQuery, isNewSession);
           const start = isNewSession
             ? sessionStartBlock(
-                (await options.sessionStart?.(row)) ?? {
-                  ownerMessages: [],
-                  turns: [],
-                  decisions: [],
-                },
+                (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
                 new Date(),
                 { timeZone: options.timeZone.get() }
               )

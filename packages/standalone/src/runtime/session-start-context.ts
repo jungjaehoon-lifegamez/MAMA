@@ -3,9 +3,9 @@
  * channel's last ten messages, the last ten turns a session resumes from, and the latest decisions.
  * Owner exchanges count only once the transport delivered them.
  */
-import type { DatabaseInstance, MemoryRecord } from '@jungjaehoon/mama-core';
+import type { MemoryRecord } from '@jungjaehoon/mama-core';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
-import { deltaLines, type SessionStartInput } from './turn-orders.js';
+import type { SessionStartExchange, SessionStartInput } from './turn-orders.js';
 
 const RECENT = 10;
 
@@ -27,14 +27,17 @@ function ownerText(row: MailboxRow): string | null {
     : null;
 }
 
-/** The owner channel's last ten messages, oldest first. */
-function ownerMessages(
+/**
+ * The owner channel's last ten exchanges, oldest first: the owner's message and the reply the
+ * transport delivered. Source changes are not carried; the ledger and the sources hold them.
+ */
+function ownerExchanges(
   mailbox: Mailbox,
   deliveredRefs: readonly string[],
   current: MailboxRow
-): string[] {
+): SessionStartExchange[] {
   return deliveredRefs
-    .slice(0, 20)
+    .slice(0, RECENT * 2)
     .map((ref) => mailbox.readInput(ref, current.principalId))
     .filter(
       (row): row is MailboxRow =>
@@ -42,68 +45,15 @@ function ownerMessages(
     )
     .sort((a, b) => b.occurredAt - a.occurredAt || b.id - a.id)
     .flatMap((row) => {
-      const text = ownerText(row);
+      const owner = ownerText(row);
       const answer = answerFor(mailbox, row);
-      return text === null || answer === null ? [] : [[`[agent] ${answer}`, `[owner] ${text}`]];
+      return owner === null || answer === null ? [] : [{ at: row.occurredAt, owner, answer }];
     })
-    .flat()
     .slice(0, RECENT)
     .reverse();
 }
 
-/**
- * The last ten turns a session resumes from, oldest first: owner turns and live delta turns with
- * their replies. Record orders, reports and replay windows are left out, as Kagemusha leaves out its
- * reconcile and system turns.
- */
-function resumableTurns(
-  adapter: DatabaseInstance,
-  mailbox: Mailbox,
-  current: MailboxRow
-): string[] {
-  const rows = (
-    adapter
-      .prepare(
-        `SELECT stimulus_id FROM mailbox_inputs
-          WHERE principal_id = ? AND kind IN ('owner_message', 'source_delta') AND status = 'acked'
-            AND stimulus_id != ?
-          ORDER BY id DESC LIMIT ?`
-      )
-      .all(current.principalId, current.stimulusId, RECENT * 2) as Array<{ stimulus_id: string }>
-  )
-    .map(({ stimulus_id }) => mailbox.readInput(stimulus_id, current.principalId))
-    .filter((row): row is MailboxRow => row !== null);
-  const entries: string[] = [];
-  for (const row of rows) {
-    const answer = answerFor(mailbox, row);
-    if (answer === null) continue;
-    if (row.kind === 'owner_message') {
-      const text = ownerText(row);
-      if (text !== null) entries.push(`[agent] ${answer}`, `[owner] ${text}`);
-      continue;
-    }
-    const payload = row.payload;
-    // A replay window is a batch rebuild, not a live change, even though its refs carry text.
-    if (
-      payload &&
-      typeof payload === 'object' &&
-      !Array.isArray(payload) &&
-      payload.replay !== undefined
-    )
-      continue;
-    const lines = deltaLines(payload);
-    if (lines.length === 0) continue;
-    const channel = `delta ${lines[0]!.channel || row.channelKey}`;
-    entries.push(
-      `[${channel}][agent] ${answer}`,
-      `[${channel}][source] ${lines.map((line) => `${line.author}: ${line.text}`).join(' / ')}`
-    );
-  }
-  return entries.slice(0, RECENT).reverse();
-}
-
 export async function readSessionStartInput(ports: {
-  adapter: DatabaseInstance;
   mailbox: Mailbox;
   deliveredRefs: readonly string[];
   current: MailboxRow;
@@ -118,8 +68,7 @@ export async function readSessionStartInput(ports: {
   const createdAt = (value: number | string): number =>
     typeof value === 'number' ? value : Date.parse(value);
   return {
-    ownerMessages: ownerMessages(ports.mailbox, ports.deliveredRefs, ports.current),
-    turns: resumableTurns(ports.adapter, ports.mailbox, ports.current),
+    exchanges: ownerExchanges(ports.mailbox, ports.deliveredRefs, ports.current),
     decisions: records
       .sort((a, b) => createdAt(b.created_at) - createdAt(a.created_at))
       .slice(0, RECENT)
