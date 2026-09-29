@@ -142,6 +142,7 @@ const WORK_LIST_MAX_LIMIT = 50;
 const WORK_LIST_MAX_DETAIL_IDS = 4;
 const WORK_LIST_DEFAULT_TEXT_LIMIT = 1_000;
 const WORK_LIST_REVISION_SUMMARY_LIMIT = 300;
+const WORK_LIST_EVENT_REVISIONS = 20;
 const WORK_LIST_MAX_TEXT_LIMIT = 2_000;
 const WORK_LIST_STATUSES: readonly PublicWorkStatus[] = [
   'pending',
@@ -273,6 +274,15 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
     ...(input.eventBefore === undefined
       ? {}
       : { eventBefore: workListTime(input.eventBefore, 'eventBefore') }),
+  };
+}
+
+/** An item's revisions in the span, the newest 20 with the count: one item moved 51 times in a day. */
+function workListEventPage(item: CommitmentView, filter: WorkListFilter): Record<string, unknown> {
+  const revisions = workListEventRevisions(item, filter);
+  return {
+    revisions: revisions.slice(-WORK_LIST_EVENT_REVISIONS),
+    revisionsTotal: revisions.length,
   };
 }
 
@@ -954,7 +964,7 @@ export async function runWorkListView(
     view: 'items',
     tasks: page.map(({ item, score }) => ({
       ...workListCompact(item, now, score, ctx.timeZone),
-      ...(workListEventBounded(filter) ? { revisions: workListEventRevisions(item, filter) } : {}),
+      ...(workListEventBounded(filter) ? workListEventPage(item, filter) : {}),
     })),
     total: rankedItems.length,
     returned: page.length,

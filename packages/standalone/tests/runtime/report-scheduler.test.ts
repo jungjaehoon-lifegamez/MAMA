@@ -386,6 +386,17 @@ describe('KST report scheduler', () => {
     expect(ctx.queued).toHaveLength(1);
   });
 
+  it('writes the day that just ended when the daily hour is midnight', () => {
+    const ctx = setup();
+    const scheduler = createReportScheduler({
+      ...ctx.options,
+      config: { ...ctx.options.config, daily_hour: 0 },
+      dailyPages: written,
+    });
+    scheduler.tick(new Date('2026-09-29T15:30:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'daily', day: '2026-09-29' });
+  });
+
   it('reads a schedule state written before daily pages', () => {
     const ctx = setup();
     mkdirSync(join(root, 'runtime'), { recursive: true });

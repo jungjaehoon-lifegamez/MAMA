@@ -155,13 +155,15 @@ export function wikiActionRegistrations(ports: WikiPorts): ActionRegistration[] 
         },
         examples: [
           {
-            title: 'Add today to a project page',
+            title: 'Rewrite a section whose knowledge changed',
             input: {
               path: 'projects/example.md',
               expectedContentVersion: 'a'.repeat(64),
               edits: [
-                { section: '## History', append: '- 9/11: the client approved the second draft.' },
-                { section: '## Current state', replace: 'Approved; delivery at month end.' },
+                {
+                  section: '## Decisions and specifications',
+                  replace: '- Delivery files are PSD at 4K; layer names follow the client sheet.',
+                },
               ],
             },
           },

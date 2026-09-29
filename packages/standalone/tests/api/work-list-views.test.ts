@@ -143,6 +143,23 @@ describe('progressive work.list views', () => {
       context(reader.readWork)
     )) as { tasks: Array<{ commitmentId: string; revisions: Array<{ summary: string }> }> };
     expect(reader.readWork.mock.calls[0]![0]).toMatchObject({ history: 'chain' });
+    const busy = makeReader([
+      view(4, {
+        chain: Array.from({ length: 25 }, (_, index) =>
+          entry(index + 1, day + index * 60_000, day, `move ${index + 1}`)
+        ),
+      }),
+    ]);
+    const [task] = (
+      (await runWorkListView(
+        { view: 'items', eventSince: day, eventBefore: next },
+        context(busy.readWork)
+      )) as { tasks: Array<{ revisions: Array<{ summary: string }>; revisionsTotal: number }> }
+    ).tasks;
+    expect(task!.revisionsTotal).toBe(25);
+    expect(task!.revisions.map((revision) => revision.summary)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `move ${index + 6}`)
+    );
     expect(
       result.tasks
         .map((task) => [task.commitmentId, task.revisions.map((revision) => revision.summary)])

@@ -85,10 +85,17 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
         state.lastFullKey !== hourKey;
     // The day's page is due from its hour on; a day missed while the daemon was down or a report
     // was pending is written at the next tick after midnight. A first start waits for the hour.
+    // At hour 0 the page is for the day that just ended, not the one that began.
     const [year, month, date] = day.split('-').map(Number) as [number, number, number];
     const yesterday = new Date(Date.UTC(year, month - 1, date - 1)).toISOString().slice(0, 10);
     const dailyDay =
-      hour >= options.config.daily_hour ? day : state.lastDailyKey ? yesterday : null;
+      options.config.daily_hour === 0
+        ? yesterday
+        : hour >= options.config.daily_hour
+          ? day
+          : state.lastDailyKey
+            ? yesterday
+            : null;
     // A report due in the same hour goes first.
     const dailyDue =
       !reportDue &&

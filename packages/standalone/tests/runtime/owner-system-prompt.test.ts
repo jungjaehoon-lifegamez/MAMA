@@ -55,6 +55,9 @@ describe('owner standing prompt', () => {
     expect(topics.wiki).not.toContain('a dated line per change');
     for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 30 lines'])
       expect(topics.daily).toContain(part);
+    // log.md is a reserved path the host writes on each publication.
+    expect(topics.daily).not.toContain('log.md');
+    expect(topics.wiki).toContain('The host writes log.md; do not write it.');
     for (const topic of Object.keys(topics)) expect(prompt).toContain(`${topic} (`);
     expect(prompt).toContain('Read a procedure with help({topic}) when the turn needs it');
     expect(prompt).toContain('fetch only that, look at it, then decide the step after');
