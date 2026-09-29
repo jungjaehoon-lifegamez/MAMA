@@ -18,6 +18,7 @@ import {
   createStimulusIntake,
   renderWindowQueue,
   sourceDeltaStimulusId,
+  stimulusFailureReason,
 } from '../../src/runtime/stimulus-delivery.js';
 
 const createDelivery = (
@@ -812,5 +813,18 @@ describe('one stimulus intake and delivery', () => {
     });
 
     expect(accepted[0]?.occurredAt).toBe(Date.parse('2026-01-01T00:00:00.000Z'));
+  });
+});
+
+describe('stimulus failure reason', () => {
+  it('carries the cause an uncertain native input wraps, such as a request timeout', () => {
+    const timeout = new Error('Request timeout');
+    const uncertain = new Error('Native input dispatch began; reconcile its result before replay', {
+      cause: timeout,
+    });
+    expect(stimulusFailureReason(uncertain)).toBe(
+      'Native input dispatch began; reconcile its result before replay: Request timeout'
+    );
+    expect(stimulusFailureReason('plain\nreason')).toBe('plain reason');
   });
 });

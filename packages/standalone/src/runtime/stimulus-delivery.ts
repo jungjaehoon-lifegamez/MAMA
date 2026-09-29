@@ -414,10 +414,18 @@ function replayWindowText(
 }
 
 /** One bounded log line; preserve the original thrown error for runtime settlement. */
+/**
+ * The failure and what caused it: an uncertain native input wraps the backend error (a request
+ * timeout, for one), and the wrapper's message alone hid it from the log on 2026-09-29.
+ */
 export function stimulusFailureReason(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/\s+/g, ' ')
-    .slice(0, 500);
+  const messages: string[] = [];
+  let current: unknown = error;
+  while (current !== undefined && current !== null && messages.length < 3) {
+    messages.push(current instanceof Error ? current.message : String(current));
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return messages.join(': ').replace(/\s+/g, ' ').slice(0, 500);
 }
 
 function replaySourceCeiling(row: MailboxRow): number | undefined {

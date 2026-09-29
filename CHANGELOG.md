@@ -33,6 +33,9 @@ All notable changes to this project will be documented in this file.
 - Working through many items, the agent settles and records one item before the next, so a long turn
   keeps what it finished. A 298-second cleanup turn had recorded nothing when it timed out.
 
+- A failed turn's log line names what caused it: a turn cut off at the time limit logged only that
+  its native input was uncertain, not the request timeout behind it.
+
 ### Added
 
 - `mama init` asks whether to use Jev. Choosing it stores the key in `~/.mama/jev-key` (0600) and
