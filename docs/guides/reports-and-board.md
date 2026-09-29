@@ -14,21 +14,27 @@ and unassigned work.
 The four sections are `briefing`, `action_required`, `decisions`, and `pipeline`.
 MAMA reads them with `report.read` and publishes HTML with `report.publish`.
 When a turn changes work, the agent reads the sections that item is in or leaves
-and publishes them again. Only a scheduled full report rewrites all four. A report
-you ask for in chat is a text answer and leaves the board as it is.
+and publishes them again. A full report rewrites all four, whether it is scheduled
+or you ask for it in chat in any words.
 
 ## What happens after a source change
 
-A source change is handled in one turn that continues from what the agent already
-knows. The host attaches up to five open work items that may be related (same
-source channel within 14 days, or a similar title). The agent revises or creates
-the work item, updates the board sections it affects, adds a dated line to the
-topic's wiki page, and then chooses whether to notify you. Its final output ends
-with `[notify] <text>` for a message to you or `[ack]` for a quiet
-acknowledgement. These are runtime routing markers, not commands you need to send.
+A source change gets two turns. The first shows the agent the new messages and
+asks only whether you need to know now. It ends with `[notify] <text>` for a
+message to you or `[ack]` for a quiet acknowledgement. These are runtime routing
+markers, not commands you need to send. An untagged response is logged but not
+delivered as a notification. The agent judges urgency using the source, your
+owner policy and the lessons shown with the messages.
 
-An untagged source response is logged but not delivered as a notification. The
-agent judges urgency using the source and your saved guidance.
+The second turn records the change. The agent finds the work the messages belong
+to, revises or creates it with links to the messages, updates the board sections
+that change and adds a dated line to the case's wiki page. When nothing needs
+recording it says so with `work.no_update`. MAMA then checks the work ledger and
+orders the record again if neither happened, up to three times; after that the
+daemon log shows `record order lost`.
+
+Messages more than six hours old when they arrive, such as a first collection's
+history, are stored but not delivered as live changes.
 
 ## Set report hours
 
@@ -52,11 +58,11 @@ response, needs a decision, pipeline, and next actions. The owner schedule appea
 under key situation today. An empty activity window is reported plainly, and a
 collection failure is never described as no change.
 
-Full reports also rewrite all four board sections, update the topic wiki pages
-that changed, and write the day's journal. Reminders read the open pipeline (and
-the calendar when the session has not read it), update only `action_required`, and
-deliver a short priority reminder. A full-report hour takes precedence over a
-reminder. Scheduled report text is requested in Korean.
+Full reports also rewrite all four board sections. Reminders read the open
+pipeline (and the calendar when the session has not read it today), update only
+`action_required`, and deliver a three-to-six-line priority reminder. When nothing
+needs you, the reminder is not sent. A full-report hour takes precedence over a
+reminder. The language and style of reports come from your owner policy file.
 
 The scheduler checks every minute. It records an hour as sent only after delivery
 through `delivery.reports` succeeds; pending reports prevent another scheduled report

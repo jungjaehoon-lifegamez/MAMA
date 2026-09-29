@@ -4,15 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## mama-os [0.58.0] / mama-core [4.1.0] - 2026-09-29
+
+MAMA OS now runs its owner agent the way the reference operator does: small inputs, one set of
+instructions, and a separate, checked turn that records each source change. mcp-server and the
+plugin are unchanged in this release.
+
+### Before you upgrade
+
+- Move the corrections that should always apply (language, report and notice style, what a report
+  contains) into `~/.mama/owner-policy.md`. They are no longer shown in full at the start of every
+  session; other saved corrections are shown as lessons only when they match the message at hand.
+- `~/.mama/full-report-phrases.json` is no longer read. Ask for the full report in any words.
+
+### Changed
+
+- A source change gets two turns in the owner session. The first shows the new messages and decides
+  only whether to tell you (`[notify]` or `[ack]`). The second records the change: the agent revises
+  or creates the work with links to the messages, updates the board sections that changed and the
+  case's wiki page, or declares with `work.no_update` that nothing needs recording. MAMA checks the
+  work ledger afterwards and orders the record again, at most three times, before it logs
+  `record order lost`. A daemon restart, graceful or not, resumes these checks.
+- A new owner session starts with a short block (local time and the latest owner exchanges, at most
+  2,500 characters) instead of the corrections, the open pipeline and the board. The agent reads
+  current work and sources with tools.
+- Corrections: rules that always apply come from your owner policy file. With each message from you
+  or source change, the agent is shown up to three matching lessons, preferences or constraints,
+  marked as advice rather than facts and not repeated in the same session on the same day.
+- The agent sees one line per action and reads an action's full contract with the new `help` action
+  before first use. On Codex, the instructions show how to filter tool results inside `exec` so only
+  what the answer needs enters the session.
+- One set of instructions: messenger syntax, boundaries, runtime, continuity, the full-report
+  procedure and tool use. Five instructions that contradicted each other were removed. The Telegram
+  guide keeps syntax only; language and style come from your owner policy file.
+- You ask for the full report in any words; a chat request and a scheduled report follow the same
+  procedure and both rewrite the four board sections. Reports no longer resync the wiki or write a
+  journal.
+- The hourly reminder lists the top five to eight items in three to six lines and is not sent when
+  nothing needs you.
+- Subagents are started only when an order asks for them (replay windows).
+- Messages more than six hours old when they arrive are stored but not delivered as live changes.
+
 ### Fixed
 
+- Live source changes now carry each message's author and text to the agent; before, the agent
+  received only references and had to look every message up.
 - Board sections keep the whole picture. A source change used to replace a section with only its own
   item (a seven-card list became one card); now each section keeps every card that is still true and
-  changes only the moved items. The briefing section also updates when the day's key situation
-  changes, not only at scheduled reports.
-- A new owner session starts with the current board, so it edits sections it can see.
-- Related work is found by the channels of each item's evidence, so a message from the same room
-  finds the work it continues without the agent recording a channel.
+  changes only the moved items.
 - Feedback that continues a work item now shows as that item's history in memory: every revision
   links to the revision it follows, and MAMA OS revisions keep the item's topic. Migration 099 links
   revisions already stored; it leaves their topics as they are. In mama-core, `reviseWork` and
@@ -23,39 +62,28 @@ All notable changes to this project will be documented in this file.
 - The Claude backend passes `--effort` to Opus 4.7 and 4.8 and keeps `max` and `xhigh` on the models
   that support them; before, Opus 4.7/4.8 ran without an effort setting and `max` fell to `high` on
   Sonnet 5.
-- Prompt and tool-description cleanup from a prompt audit: `graph.query` no longer shows an example
-  value its schema rejects and states which inputs each view takes; the agent is no longer told to
-  page through every result or search before every decision; reminders and board sections are
-  described by what the reader needs instead of fixed counts; several one-line tool descriptions now
-  state their defaults, limits and failures.
-- Owner corrections now reach every turn. Every owner correction is shown to the agent in full at
-  the start of a session and again whenever one changes, and corrections win over the built-in
-  instructions. A correction about the current work is applied to the work items and board in the
-  same turn before it is saved, and a new correction is merged with the related earlier one. Hourly
-  reminders now list the source changes handled since the previous reminder.
-- Your `owner-policy.md` reaches the agent in full again. It could be cut whenever the prompt
-  looked too long, and at session start the prompt was measured before the tokenizer had loaded, so
-  Korean text counted at nearly twice its size and the policy was cut to its first lines. The policy
-  is now never cut, and the tokenizer loads before the first prompt.
-- Each report brings its own steps again. The full report and the hourly reminder list what to read,
-  what to publish and how the report is laid out; the always-on instructions keep only rules that
-  apply everywhere, so the same rule is no longer written in two places.
-- You choose the words that ask for a full report in chat. Tell MAMA which words should bring the
-  full report and it saves them (`owner.report_phrases.set`, stored in
-  `~/.mama/full-report-phrases.json`). A message with one of those words gets the same report as the
-  scheduled one: changes from the last 24 hours, with the board published and no wiki pass. Your
-  message and any files come with it, so a question about an earlier report is still answered as a
-  question. The first time you ask in new words, MAMA saves them and writes the report in the same
-  reply.
-- The Telegram formatting guide (allowed tags, escaping, lists) reaches the owner agent again; the
-  0.57.0 rebuild had dropped it. Everything the owner reads leads with the answer, without greetings,
-  acknowledgements or apologies, and is written in the owner's language even when the source is in
-  another language.
+- Tool descriptions from a prompt audit: `graph.query` no longer shows an example value its schema
+  rejects and states which inputs each view takes; several descriptions now state their defaults,
+  limits and failures.
+- Your `owner-policy.md` reaches the agent in full. It could be cut whenever the prompt looked too
+  long, and at session start the prompt was measured before the tokenizer had loaded, so Korean
+  text counted at nearly twice its size and the policy was cut to its first lines.
+
+### Added
+
+- `work.no_update` (declare that a record order needs no work change, with the reason and the
+  messages it covers) and `help` (read full action contracts).
+
+### Removed
+
+- `owner.report_phrases.set`, the list of handled source changes in reminders, the host's
+  related-work candidates, and correction notices sent to a running session.
 
 ### Breaking changes
 
 - **MAMA OS `work.revise` action:** `topic` is no longer accepted; a revision keeps the work item's
   topic. The mama-core API is unchanged for existing callers.
+- **Owner corrections:** see "Before you upgrade".
 
 ## mama-os [0.57.0] / mama-core [4.0.0] / mcp-server [2.2.1] / plugin [2.0.1] - 2026-09-27
 

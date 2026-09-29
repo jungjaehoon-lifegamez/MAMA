@@ -91,13 +91,16 @@ and who was involved. Search runs locally over originals, work history and memor
 
 **The agent.** Your messages, new source changes and scheduled reports all reach one agent
 session. It reads the stored work and sources before answering, updates the work history, writes
-the board and the wiki pages of the work it touched, and can split larger jobs across subagents
-inside the same turn. Every tool call it makes is recorded with the run that made it.
+the board and the wiki pages of the work it touched, and can split a large replay window across
+subagents inside the same turn. A source change gets a short turn that decides whether to tell you
+and a second turn that records it; MAMA checks the work ledger and orders the record again if it is
+missing. Every tool call it makes is recorded with the run that made it.
 
 **Guidance and workflows.** Your corrections are kept as lessons, preferences, constraints and
-workflows, each with a line saying when it applies. The agent sees that list at the start of a
-session, reads the full entry when it applies, and can add, revise or retire workflows as you
-agree on them. Every change keeps its history.
+workflows, each with a line saying when it applies. Rules that always apply go in your owner
+policy file, which the agent holds in every session. With each message from you or source change,
+the agent is shown the few saved lessons that match it best, and can add, revise or retire
+workflows as you agree on them. Every change keeps its history.
 
 **The viewer.** `http://127.0.0.1:3847` shows the board, work items with their history, the memory
 graph, the wiki and logs.
@@ -150,8 +153,8 @@ These are the current package manifests for the unreleased rebuild.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.57.0  |
-| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 4.0.0   |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.58.0  |
+| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 4.1.0   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.2.1   |
 | [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.0.1   |
 

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-09-29
+
+### Added
+
+- Every work revision links to the revision it follows; migration 099 links revisions already
+  stored.
+- `reviseWork` and `withdrawWork` take `topic` as optional; without it a revision keeps the item's
+  topic.
+- The Claude driver passes `--effort` to Opus 4.7 and 4.8 and keeps `max` and `xhigh` on the models
+  that support them.
+
 ## [4.0.0] - 2026-09-27
 
 ### Added

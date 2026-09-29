@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-09-29
+
+The owner agent runs in the reference operator's structure: a short session start, lessons that
+match the message at hand, one line per action with `help` for the full contract, and a separate
+record turn for each source change that MAMA checks against the work ledger. Before upgrading, move
+always-apply corrections into `~/.mama/owner-policy.md`. See the root CHANGELOG.
+
 ## [0.57.0] - 2026-09-27
 
 The product layer is rebuilt around one owner agent on Claude or Codex; see the root CHANGELOG

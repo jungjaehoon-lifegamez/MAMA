@@ -86,8 +86,8 @@ A source delta ending in `[ack]` produces no owner notification. See
 Follow the same stimulus through the mailbox, `model_runs`, `tool_traces`, the
 Telegram message ledger or board slot writer, and the matching `daemon.log`
 entries. Native parent and child tool traces carry their owning model run.
-`stimulus accepted`, `stimulus delivered`, `stimulus failed`, and
-`delta report route=` distinguish stages. A stored task proves a write, not a sent
+`stimulus accepted`, `stimulus delivered`, `stimulus failed`, `stimulus skipped`,
+`delta report route=` and `record order recorded|retry|lost` distinguish stages. A stored task proves a write, not a sent
 reply; inspect the delivery receipt and the owner-visible result separately.
 
 If delivery is uncertain, check its original operation before sending again. Keep

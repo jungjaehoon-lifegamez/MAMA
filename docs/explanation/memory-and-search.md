@@ -64,9 +64,12 @@ phrases and known relevant records.
 
 ## Carry a correction into a later turn
 
-Before each owner turn, the runtime recalls at most three `lesson`, `preference` or `constraint`
-records using the stimulus text, without related-graph expansion. This is a relevance hint, not
-proof that every saved correction will be recalled or applied.
+For an owner message or a delta's notify turn, the runtime runs one `memory.search` with the
+incoming text and shows at most three active `lesson`, `preference` or `constraint` records in
+search order, at most 1,200 characters, without related-graph expansion. A record already shown is
+not shown again in the same session on the same local day. This is a relevance hint, not proof that
+every saved correction will be recalled or applied. Rules that always apply belong in the owner
+policy file instead.
 
 Check the whole cycle: applicable hint, access to the original experience, agent judgment,
 observed result, scoped correction and a better result on the next related request. Repeat in a

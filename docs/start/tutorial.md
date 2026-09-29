@@ -147,8 +147,8 @@ When a connected source adds a new message, MAMA can send a delta notification t
 full report is scheduled for 08:00, 13:00, and 18:00 in your timezone by default. If your
 timezone changes, tell MAMA in the owner chat, for example "My timezone is Europe/Berlin"; the
 next report follows it without a restart. There is no report
-command in the current CLI; leave the daemon running and wait for the next source change or report
-time.
+command in the current CLI; ask for the full report in the owner chat in your own words, or leave
+the daemon running and wait for the next source change or report time.
 
 **You should see:** a Telegram notification summarizing a new change, and a scheduled report with
 sections such as briefing, actions needed, decisions, and pipeline. These are example shapes, not
