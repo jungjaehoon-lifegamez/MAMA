@@ -333,8 +333,11 @@ export interface RecordOrderLine {
 export interface RecordOrderPayload {
   order: 'record';
   deltaStimulusId: string;
-  /** The connector the channel belongs to, so the order can name the channel's source.recent key. */
-  source: string;
+  /**
+   * The connector the channel belongs to, so the order can name the channel's source.recent key.
+   * Record orders written before 2026-09-29 have none; boot recovery reads them without it.
+   */
+  source?: string;
   channel: string;
   observationRefs: string[];
   /** The delta's last lines, as Kagemusha's record turn carries them (five, 300 chars each). */
@@ -378,7 +381,7 @@ export function parseRecordOrder(payload: JsonValue | undefined): RecordOrderPay
     !value ||
     value.order !== 'record' ||
     typeof value.deltaStimulusId !== 'string' ||
-    typeof value.source !== 'string' ||
+    (value.source !== undefined && typeof value.source !== 'string') ||
     typeof value.channel !== 'string' ||
     !Array.isArray(value.observationRefs) ||
     !value.observationRefs.every((ref) => typeof ref === 'string') ||
@@ -386,7 +389,7 @@ export function parseRecordOrder(payload: JsonValue | undefined): RecordOrderPay
     typeof value.attempt !== 'number'
   )
     throw new Error(
-      'A record order needs deltaStimulusId, source, channel, observationRefs, lines and attempt'
+      'A record order needs deltaStimulusId, channel, observationRefs, lines and attempt'
     );
   return value as unknown as RecordOrderPayload;
 }
@@ -402,6 +405,10 @@ export function deltaRecordOrder(
   now: Date,
   options: TurnOrderOptions & { wikiEnabled: boolean }
 ): string {
+  if (!record.source)
+    throw new Error(
+      `Record order for ${record.deltaStimulusId} names no source; it was written before record orders carried one`
+    );
   const lines = record.lines.map((line) => {
     const known = Number.isFinite(Date.parse(line.sourceAt));
     return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;

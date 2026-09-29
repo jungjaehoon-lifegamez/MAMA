@@ -112,8 +112,12 @@ function orders(adapter: Awaited<ReturnType<typeof database>>) {
 function mailboxRow(
   adapter: Awaited<ReturnType<typeof database>>,
   attempt: number,
-  status: 'pending' | 'acked'
+  status: 'pending' | 'acked',
+  legacy = false
 ) {
+  const payload = recordOrderPayload(delta, attempt);
+  // A record order stored before orders carried their source.
+  const { source: _source, ...withoutSource } = payload;
   adapter
     .prepare(
       `INSERT INTO mailbox_inputs (stimulus_id, kind, principal_id, channel_key, preview_json, payload_json, occurred_at, created_at, status)
@@ -121,7 +125,7 @@ function mailboxRow(
     )
     .run(
       `record:${delta.stimulusId}:${attempt}`,
-      JSON.stringify(recordOrderPayload(delta, attempt)),
+      JSON.stringify(legacy ? withoutSource : payload),
       Date.now(),
       status
     );
@@ -139,6 +143,14 @@ describe('record orders', () => {
     const second = orders(adapter);
     second.port.recover();
     expect(second.accepted).toEqual([]);
+  });
+
+  it('recovers at start from a record order stored before orders carried their source', async () => {
+    const adapter = await database();
+    mailboxRow(adapter, 1, 'acked', true);
+    const { port, accepted } = orders(adapter);
+    port.recover();
+    expect(accepted.map((stimulus) => stimulus.id)).toEqual([`record:${delta.stimulusId}:2`]);
   });
 
   it('counts a batch recorded only by a revision citing its observations or a declared no-update', async () => {

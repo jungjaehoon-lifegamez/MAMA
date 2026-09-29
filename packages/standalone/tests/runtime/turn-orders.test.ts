@@ -248,6 +248,12 @@ describe('turn orders', () => {
     expect(recordOrderId('source_delta:abc', 2)).toBe('record:source_delta:abc:2');
     expect(parseRecordOrder(first as never)).toEqual(first);
     expect(() => parseRecordOrder({ order: 'record' })).toThrow(/deltaStimulusId/);
+    // Boot recovery reads a record order written before it carried its source.
+    const { source: _source, ...legacy } = first;
+    expect(parseRecordOrder(legacy as never)).toEqual(legacy);
+    expect(() =>
+      deltaRecordOrder(legacy, now, { backend: 'codex', timeZone: 'UTC', wikiEnabled: false })
+    ).toThrow('names no source');
   });
 
   it("gives the record order Kagemusha's five steps and the batch's observations", () => {
@@ -283,7 +289,11 @@ describe('turn orders', () => {
     const noWiki = deltaRecordOrder(
       parseRecordOrder(
         recordOrderPayload(
-          { stimulusId: 's', channelKey: 'c', payload: { refs: [{ observationRef: 'o' }] } },
+          {
+            stimulusId: 's',
+            channelKey: 'c',
+            payload: { refs: [{ connector: 'chat', observationRef: 'o' }] },
+          },
           1
         ) as never
       ),

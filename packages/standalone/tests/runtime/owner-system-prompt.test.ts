@@ -121,6 +121,7 @@ describe('owner standing prompt', () => {
           {
             order: 'record',
             deltaStimulusId: 's',
+            source: 'chat',
             channel: 'room',
             observationRefs: ['o'],
             lines: [],
