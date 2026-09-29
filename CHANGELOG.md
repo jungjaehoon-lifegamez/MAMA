@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## mama-os [0.59.1] / mama-core [4.1.1] - 2026-09-29
 
 ### Changed
 
