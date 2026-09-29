@@ -186,11 +186,12 @@ export function sessionStartBlock(
     Number.isFinite(hours) ? `${Math.round(hours)}h ago` : '? ago';
   // Kagemusha's checkpoint section: the agent's own hand-off, outranked by newer turns above.
   if (input.checkpoint) {
-    const header = `Last checkpoint (${age(input.checkpoint.ageHours)}; newer turns above outrank it):`;
+    const header = `Last checkpoint (${age(input.checkpoint.ageHours)}; prefer newer turns and decisions over it):`;
     const lines = leadingLines(
+      // The next steps first: a long summary must not push out what the hand-off is for.
       [
-        ...input.checkpoint.summary.split('\n'),
         ...(input.checkpoint.nextSteps ? [`Next steps: ${input.checkpoint.nextSteps}`] : []),
+        ...input.checkpoint.summary.split('\n'),
       ],
       Math.min(SESSION_START_SECTIONS.checkpoint, room() - header.length - 2),
       seen

@@ -100,11 +100,25 @@ describe('turn orders', () => {
     const block = sessionStartBlock(full, now, { timeZone: 'UTC' });
     expect(block.length).toBeLessThanOrEqual(SESSION_START_LIMIT);
     expect(block).toContain(
-      'Last checkpoint (3h ago; newer turns above outrank it):\nMid full report\nboard half written\nNext steps: publish the board'
+      'Last checkpoint (3h ago; prefer newer turns and decisions over it):\nNext steps: publish the board\nMid full report\nboard half written'
     );
     // Whatever room is left goes to the newest decisions.
     expect(block).toContain('Recent decisions:\n- [topic-0]');
     expect(block.indexOf('Last checkpoint')).toBeLessThan(block.indexOf('Recent decisions:'));
+  });
+
+  it('keeps the next steps of a checkpoint whose summary fills its budget', () => {
+    const block = sessionStartBlock(
+      {
+        ownerMessages: [],
+        turns: [],
+        decisions: [],
+        checkpoint: { summary: 's'.repeat(900), nextSteps: 'publish the board', ageHours: 1 },
+      },
+      now,
+      { timeZone: 'UTC' }
+    );
+    expect(block).toContain('Next steps: publish the board');
   });
 
   it('opens an empty session with the time alone', () => {

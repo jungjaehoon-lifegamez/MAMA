@@ -369,7 +369,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               `session-start:${randomUUID()}`
             );
             if (listed.status !== 'completed')
-              throw new Error(`memory.checkpoint.list ${listed.status}`);
+              throw new Error(
+                `memory.checkpoint.list ${listed.status}: ${listed.error.code} ${listed.error.message}`
+              );
             const [latest] = (
               listed.data as {
                 checkpoints: Array<{ summary?: string; next_steps?: string; timestamp?: number }>;
