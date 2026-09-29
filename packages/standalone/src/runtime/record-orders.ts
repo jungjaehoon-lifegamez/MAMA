@@ -85,6 +85,8 @@ export interface RecordOrders extends RecordOrderPort {
    * attempt or is logged as lost.
    */
   recover(): void;
+  /** Drop the checks still waiting; recover() runs them again at the next start. */
+  stop(): void;
 }
 
 const RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -93,6 +95,7 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
   const sleep =
     options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   const childWaitMs = options.childWaitMs ?? 10 * 60 * 1000;
+  let stopped = false;
 
   const enqueue = (record: RecordOrderPayload): void => {
     options.accept({
@@ -145,23 +148,27 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
         if (modelRunId !== null) {
           const deadline = Date.now() + childWaitMs;
           while (
+            !stopped &&
             runningChildren(options.adapter, modelRunId, options.processStartedAt) > 0 &&
             Date.now() < deadline
           )
             await sleep(5_000);
         }
+        if (stopped) return;
         settle(
           record,
           'the order ended without a revision citing the batch or a declared no-update'
         );
-      })().catch((error: unknown) =>
+      })().catch((error: unknown) => {
+        // A check cut off by shutdown is not a loss: recover() runs it at the next start.
+        if (stopped) return;
         options.onEvent?.({
           type: 'lost',
           deltaStimulusId: record.deltaStimulusId,
           attempt: record.attempt,
           reason: `record check failed: ${error instanceof Error ? error.message : String(error)}`,
-        })
-      );
+        });
+      });
     },
     onLost: (row: MailboxRow, reason: string) => {
       settle(parseRecordOrder(row.payload), reason);
@@ -188,8 +195,12 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
       }
       for (const { record, open } of latest.values()) {
         if (open || batchRecorded(options.adapter, record)) continue;
-        settle(record, 'the check was lost when the previous process stopped');
+        // Repeats at each start while the batch stays unrecorded; any revision citing it clears it.
+        settle(record, `still unrecorded at daemon start after attempt ${record.attempt}`);
       }
+    },
+    stop: () => {
+      stopped = true;
     },
   };
 }

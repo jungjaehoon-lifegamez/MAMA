@@ -247,6 +247,38 @@ describe('record orders', () => {
     expect(slept).toBe(1);
   });
 
+  it('drops a check cut off by shutdown without logging a loss', async () => {
+    const adapter = await database();
+    adapter
+      .prepare(
+        `INSERT INTO model_runs (model_run_id, status, created_at, parent_model_run_id) VALUES ('child-running', 'running', 5, 'run-a')`
+      )
+      .run();
+    const events: RecordOrderEvent[] = [];
+    const accepted: string[] = [];
+    let port: ReturnType<typeof createRecordOrders>;
+    const stoppedDuringWait = new Promise<void>((resolve) => {
+      port = createRecordOrders({
+        adapter,
+        accept: (stimulus) => {
+          accepted.push(stimulus.id);
+          return { inputId: stimulus.id, state: 'accepted' };
+        },
+        processStartedAt: 0,
+        onEvent: (event) => events.push(event),
+        sleep: async () => {
+          port.stop();
+          resolve();
+        },
+      });
+    });
+    port!.onResult(row(1), 'run-a');
+    await stoppedDuringWait;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual([]);
+    expect(accepted).toEqual([]);
+  });
+
   it('treats child runs from before this process as ended', async () => {
     const adapter = await database();
     adapter

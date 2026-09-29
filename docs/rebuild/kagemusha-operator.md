@@ -92,9 +92,8 @@ plan keeps one session and removes the growth instead, and records a superseding
 - **Record check.** After the record run and its child runs have ended, the ledger decides (runs
   started before the current daemon process count as ended, since a killed process leaves them
   `running`; `model-run-store.ts:542, 581`): a
-  revision written by one of those runs (revisions store `modelRunId`, `work-actions.ts:1240,
-1278`) with a `derived_from` edge to one of the batch's observations, or a successful
-  `work.no_update` call in those runs. A board or wiki write alone does not pass. When the check
+  revision with a `derived_from` edge to one of the batch's observations, whichever run wrote it,
+  or a successful `work.no_update` call in those runs. A board or wiki write alone does not pass. When the check
   fails, or the record row fails, goes uncertain or dead (`onFailed`, `onUncertain`, `onDead`), the
   ledger check runs first and the next attempt is enqueued only if the batch is still unrecorded; at
   most three attempts, then the loss is logged loudly. Record replies never reach the owner. A
@@ -195,7 +194,13 @@ without a separate check".
   record prompt does, so a retry or a record order that runs after other turns still has them.
 - The backfill guard is measured from when the row was accepted, and a skipped row is logged.
 - At start, record orders of the last day with no attempt still queued are checked again, so a
-  check lost to a hard kill while it waited for child runs is not silent.
+  check lost to a hard kill while it waited for child runs is not silent. A graceful stop drops the
+  waiting checks without logging a loss and leaves them to this start check. A batch still
+  unrecorded after the third attempt is logged again at each start within the day, until any
+  revision cites it.
+- The record check accepts a revision citing a batch observation whichever run wrote it (the plan
+  first said "by those runs"). Observation refs belong to one batch, so the citation itself is the
+  record, as Kagemusha's snapshot diff does not ask which turn changed the board.
 - Board content rules stay in the `report.publish` contract and are read with `help` before the
   first publish in a session, as Kagemusha's `help("full-report")` serves its slot vocabulary.
 - Deploy order: merge the standing corrections into `owner-policy.md` (and fix its line 62)

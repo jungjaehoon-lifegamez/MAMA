@@ -457,6 +457,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       stop: async () => {
         if (stopped) return;
         stopped = true;
+        recordOrders.stop();
         await intakeRuntime.stop();
         rawStore?.close();
         await database.close();
