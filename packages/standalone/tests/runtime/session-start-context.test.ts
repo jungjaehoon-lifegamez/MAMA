@@ -30,7 +30,7 @@ async function fixture() {
     options: {
       principalId?: string;
       delivered?: 'delivered' | 'ready' | null;
-      acked?: boolean;
+      finished?: boolean;
     } = {}
   ) => {
     const principalId = options.principalId ?? 'owner';
@@ -97,7 +97,8 @@ describe('session start context', () => {
     f.add(
       'replay:5',
       'source_delta',
-      { replay: { windowStartMs: 1, windowEndMs: 2 } },
+      // A replay window carries message text in its refs too; it is still not a live change.
+      { ...liveDelta('replayed history'), replay: { windowStartMs: 1, windowEndMs: 2 } },
       'window done'
     );
     f.add('record:6', 'scheduled', { order: 'record' }, '[ack]');

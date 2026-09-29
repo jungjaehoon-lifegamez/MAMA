@@ -46,15 +46,18 @@ describe('turn orders', () => {
     expect(block).toContain('Recent owner channel:');
     expect(block).toContain('answer 11');
     expect(block).not.toContain('request 0 ');
-    // Previous turns: newest first within 1,000 chars, each line at most 360.
-    expect(block).toContain('<previous_turns>');
+    // Previous turns: newest first within 750 chars, each line at most 360, quoted as source text.
+    expect(block).toContain('<previous_turns>\n<<<UNTRUSTED-CONTENT source=previous_turns>>>');
     expect(block).toContain('line 11 ');
     expect(block).not.toContain('line 0 ');
-    for (const line of block.split('\n')) expect(line.length).toBeLessThanOrEqual(360);
+    for (const line of block.split('\n').filter((text) => !text.startsWith('- ['))) {
+      expect(line.length).toBeLessThanOrEqual(360);
+    }
     // Decisions: the latest ten at most, newest first.
     expect(block).toContain('Recent decisions:\n- [work/item-0] revision 0 (0h ago)');
     expect(block).not.toContain('work/item-10');
-    expect(block).toContain('read only that part with source.recent or work.list');
+    // Even full, the block keeps the read hint (line 3) and the decisions.
+    expect(block.split('\n')[2]).toContain('read newer state with source.recent or work.list');
   });
 
   it('never repeats a line and keeps stored text from closing a block', () => {

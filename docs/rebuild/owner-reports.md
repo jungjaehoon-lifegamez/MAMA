@@ -77,7 +77,7 @@ New-session context includes recent owner exchanges from delivered Telegram rece
 Code: [attachments](../../packages/standalone/src/api/attachment-actions.ts),
 [file delivery](../../packages/standalone/src/api/file-delivery.ts),
 [work reads](../../packages/standalone/src/api/work-actions.ts),
-[recent exchanges](../../packages/standalone/src/runtime/recent-owner-exchanges.ts),
+[recent exchanges](../../packages/standalone/src/runtime/session-start-context.ts),
 [replay finalization](../../packages/standalone/src/cli/commands/replay.ts).
 
 ## Common host and live parity — R10

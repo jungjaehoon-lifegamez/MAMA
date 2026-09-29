@@ -101,15 +101,16 @@ plan keeps one session and removes the growth instead, and records a superseding
   the record row itself has no refs (`provenance-live.ts:504–531`).
 - **Session start.** `[session_start]` ≤2,500 chars on a new session, in Kagemusha's shape
   (`session-start-context.ts`):
-  - local time first;
+  - the local time and a read hint first, so a full block never drops them;
   - the owner channel's last 10 messages (600);
-  - the last 10 resumable turns, owner and live delta turns with their replies (1,000);
-  - the latest 10 memory records as recent decisions (600);
-  - "read newer source messages when a turn needs them".
+  - the last 10 resumable turns, owner and live delta turns with their replies (750, inside the
+    untrusted-content wrapper because they carry source text; Kagemusha gives 1,000 unwrapped);
+  - the latest 10 memory records as recent decisions (600).
 
-  Lines are capped at 360 chars and never repeated, and messenger markup is stripped from
-  replies. Kagemusha's brain summary and checkpoint have no MAMA counterpart: the owner agent
-  keeps no checkpoint. A resumed durable thread gets nothing extra.
+  Owner and turn lines are capped at 360 chars, and no line repeats. Messenger markup is stripped
+  from replies, and replay windows and record orders are left out. Kagemusha's brain summary and
+  checkpoint have no MAMA counterpart: the owner agent keeps no checkpoint. A resumed durable thread
+  gets nothing extra.
 
 - **Lessons.** Top 3 by `memory.search` on the owner message or the notify order's message text,
   ≤1,200 chars, advisory. A lesson already shown is not repeated until the next local day or a new

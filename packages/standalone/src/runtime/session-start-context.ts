@@ -82,8 +82,17 @@ function resumableTurns(
       if (text !== null) entries.push(`[agent] ${answer}`, `[owner] ${text}`);
       continue;
     }
-    const lines = deltaLines(row.payload);
-    if (lines.length === 0) continue; // a replay window, not a live change
+    const payload = row.payload;
+    // A replay window is a batch rebuild, not a live change, even though its refs carry text.
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      payload.replay !== undefined
+    )
+      continue;
+    const lines = deltaLines(payload);
+    if (lines.length === 0) continue;
     const channel = `delta ${lines[0]!.channel || row.channelKey}`;
     entries.push(
       `[${channel}][agent] ${answer}`,

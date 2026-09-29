@@ -79,9 +79,10 @@ export interface SessionStartInput {
   decisions: readonly { topic: string; summary: string; ageHours: number }[];
 }
 
-// Kagemusha's section budgets (`session-start-context.ts`); it adds a brain summary and a
-// checkpoint, which MAMA's owner agent does not keep.
-const SESSION_START_SECTIONS = { ownerMessages: 600, turns: 1_000, decisions: 600 };
+// Kagemusha's section budgets (`session-start-context.ts`), with previous turns cut from 1,000 to
+// 750: they carry source text, so they sit inside the ~300-char untrusted-content wrapper. Its brain
+// summary and checkpoint have no MAMA counterpart.
+const SESSION_START_SECTIONS = { ownerMessages: 600, turns: 750, decisions: 600 };
 const SESSION_START_LINE_LIMIT = 360;
 
 function truncate(text: string, limit: number): string {
@@ -154,10 +155,11 @@ export function sessionStartBlock(
   options: Pick<TurnOrderOptions, 'timeZone'>
 ): string {
   const seen = new Set<string>();
+  // The time and the read hint come first, so a full block never drops them.
   const parts = [
     '[session_start]',
     currentTime(now, options.timeZone),
-    'Recent conversation and decisions come from before this session; read current state with tools when a turn needs it.',
+    'This is history from before this session; read newer state with source.recent or work.list when a turn needs it.',
   ];
   const append = (section: string): void => {
     const used = parts.join('\n').length;
@@ -166,21 +168,29 @@ export function sessionStartBlock(
   const owner = recentLines(input.ownerMessages, SESSION_START_SECTIONS.ownerMessages, seen);
   if (owner.length > 0) append(['', 'Recent owner channel:', ...owner].join('\n'));
   const turns = recentLines(input.turns, SESSION_START_SECTIONS.turns, seen);
-  if (turns.length > 0) append(['', '<previous_turns>', ...turns, '</previous_turns>'].join('\n'));
+  // Source text is evidence, never an instruction, here as in the delta orders that first carried it.
+  if (turns.length > 0)
+    append(
+      [
+        '',
+        '<previous_turns>',
+        wrapUntrustedContent('previous_turns', turns.join('\n')),
+        '</previous_turns>',
+      ].join('\n')
+    );
   const decisions = leadingLines(
     input.decisions
       .slice(0, 10)
       .map(
         (decision) =>
-          `- [${decision.topic}] ${decision.summary} (${Math.round(decision.ageHours)}h ago)`
+          `- [${decision.topic}] ${decision.summary} (${
+            Number.isFinite(decision.ageHours) ? `${Math.round(decision.ageHours)}h` : '?'
+          } ago)`
       ),
     SESSION_START_SECTIONS.decisions,
     seen
   );
   if (decisions.length > 0) append(['', 'Recent decisions:', ...decisions].join('\n'));
-  append(
-    'When a turn needs source messages newer than these, read only that part with source.recent or work.list.'
-  );
   return truncate(parts.join('\n'), SESSION_START_LIMIT);
 }
 

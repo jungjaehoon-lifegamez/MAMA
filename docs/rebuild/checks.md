@@ -1353,6 +1353,13 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 ### Session start in Kagemusha's shape (2026-09-29)
 
-- Result: a new owner session receives the time, the owner channel's last 10 messages (600 chars), the last 10 resumable turns (1,000), the latest 10 memory records (600) and the read hint, 2,500 chars at most. Lines are capped at 360 and deduplicated, and messenger markup is stripped from replies. Record orders, reports and replay windows are left out, as Kagemusha leaves out its reconcile and system turns.
+- Result: a new owner session receives, in at most 2,500 chars:
+  - the time and a read hint;
+  - the owner channel's last 10 messages (600 chars);
+  - the last 10 resumable turns (750, inside the untrusted-content wrapper because they carry source text);
+  - the latest 10 memory records (600).
+
+  Owner and turn lines are capped at 360 and deduplicated, and messenger markup is stripped from replies. Record orders, reports and replay windows are left out, as Kagemusha leaves out its reconcile and system turns.
+
 - Evidence: built from a copy of the live database at 13:52, the block was 2,455 chars. It held three owner-channel messages, eight previous turns (delta notify turns such as a chat line and its `[ack]`, plus the owner's report-criteria exchange) and ten records (the 13:31 report lesson, the 13:32 revisions). The 11:33 session start held five owner exchanges, four of them full-report answers. Standalone suite: 1,161 pass.
 - Still fails: live. The next new session's first turn in the rollout should show the block. The owner agent keeps no checkpoint (the `checkpoints` table is empty and `memory.checkpoint.save` is not granted), so that part of Kagemusha's session start waits for an owner decision.
