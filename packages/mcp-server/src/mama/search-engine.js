@@ -12,7 +12,8 @@
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
+// Replaced and retired decisions stay out, as in recall.
+const { vectorSearch, RECALL_EXCLUDED_STATUSES } = require('@jungjaehoon/mama-core/knowledge');
 
 /**
  * Search Engine for narrative/decision search
@@ -57,7 +58,14 @@ class SearchEngine {
       info(`[SearchEngine] Query embedding generated: ${queryEmbedding.length} dimensions`);
 
       // 2. Perform vector search
-      const results = await vectorSearch(getAdapter(), queryEmbedding, limit, threshold);
+      const results = await vectorSearch(
+        getAdapter(),
+        queryEmbedding,
+        limit,
+        threshold,
+        undefined,
+        RECALL_EXCLUDED_STATUSES
+      );
 
       info(`[SearchEngine] Found ${results.length} results above threshold ${threshold}`);
 
@@ -96,7 +104,14 @@ class SearchEngine {
       info(`[SearchEngine] Searching by embedding (limit: ${limit}, threshold: ${threshold})`);
 
       // Perform vector search
-      const results = await vectorSearch(getAdapter(), embedding, limit, threshold);
+      const results = await vectorSearch(
+        getAdapter(),
+        embedding,
+        limit,
+        threshold,
+        undefined,
+        RECALL_EXCLUDED_STATUSES
+      );
 
       info(`[SearchEngine] Found ${results.length} results`);
 

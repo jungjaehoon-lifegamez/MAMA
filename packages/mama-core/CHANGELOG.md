@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Search attaches what a record replaced only inside the reader's scopes, labelled
+  `[Replaced by this record]` (was `[Prior context]`, with no scope check).
+- Default recall leaves out records that only amend another (a retirement or an outcome change);
+  `includeHistory` shows them. A retirement records who retired, like a save.
+- `quarantined` leaves the memory status sets: nothing writes it and the status CHECK refuses it.
+
+### Added
+
+- `RECALL_EXCLUDED_STATUSES` from `@jungjaehoon/mama-core/knowledge`, the statuses default recall
+  leaves out, for other searches to pass to `vectorSearch`.
+
 ## [5.0.0] - 2026-09-30
 
 ### Added

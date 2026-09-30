@@ -9,7 +9,8 @@
 
 const path = require('path');
 const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
+// Replaced and retired decisions and contracts stay out, as in recall.
+const { vectorSearch, RECALL_EXCLUDED_STATUSES } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 
 /**
@@ -58,7 +59,9 @@ const searchDecisionsAndContractsTool = {
           getAdapter(),
           queryEmbedding,
           decisionLimit,
-          similarityThreshold
+          similarityThreshold,
+          undefined,
+          RECALL_EXCLUDED_STATUSES
         );
         if (Array.isArray(results)) {
           decisionResults = results.slice(0, decisionLimit);
@@ -87,7 +90,8 @@ const searchDecisionsAndContractsTool = {
             contractEmbedding,
             contractLimit,
             similarityThreshold,
-            'contract_'
+            'contract_',
+            RECALL_EXCLUDED_STATUSES
           );
           if (Array.isArray(contractMatches)) {
             contractResults = contractMatches

@@ -137,7 +137,7 @@ export type {
   WorkRead,
   WorkWriteResult,
 } from './commitments.js';
-export { vectorSearch, fts5Search } from './search.js';
+export { vectorSearch, fts5Search, RECALL_EXCLUDED_STATUSES } from './search.js';
 export {
   queryDecisionGraph,
   querySemanticEdges,

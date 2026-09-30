@@ -10,6 +10,9 @@
 import type { DatabaseInstance, DecisionRecord } from '../db-manager.js';
 import type { MemoryKindFilter } from '../memory/types.js';
 
+/** Statuses default recall leaves out; history (`includeHistory`) shows them. */
+export const RECALL_EXCLUDED_STATUSES = ['superseded', 'contradicted', 'stale'] as const;
+
 /**
  * Brute-force cosine similarity search over stored embeddings.
  *

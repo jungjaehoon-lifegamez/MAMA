@@ -18,7 +18,8 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    - `reasoning` (required): Why this decision was made
    - `confidence` (optional): 0.0-1.0, default 0.5
    - `outcome` (optional): 'pending', 'success', 'failure', 'partial', 'superseded', default 'pending'
-   - `type` (optional): 'user_decision' or 'assistant_insight', default 'user_decision'
+   - `stated_by_user`: true when the user stated this decision, which is the case when they ran
+     this command with it; false only when you are recording your own insight
    - `failure_reason` (optional): Why this decision failed (if outcome='failure')
    - `limitation` (optional): Known limitations of this decision
 
@@ -26,7 +27,8 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    - First search related decisions with `mcp__plugin_mama_mama__search`. If the new decision
      builds on, debates or combines one, pass `links: [{id, relation, reason}]`; if it replaces one,
      pass `replaces: [{id, reason}]`. Nothing is linked for you, and the reasoning text is not parsed.
-   - Call `mcp__plugin_mama_mama__save` with `type='decision'` and the parsed parameters
+   - Call `mcp__plugin_mama_mama__save` with `type='decision'`, `stated_by_user` and the parsed
+     parameters
    - The tool will return a decision_id
 
 3. Format the response as markdown:

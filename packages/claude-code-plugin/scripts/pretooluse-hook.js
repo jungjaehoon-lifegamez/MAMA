@@ -23,7 +23,8 @@ const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 require('./plugin-deps.js').exitUnlessCoreLoadable('PreToolUse');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
-const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
+// Replaced and retired decisions stay out, as in recall.
+const { vectorSearch, RECALL_EXCLUDED_STATUSES } = require('@jungjaehoon/mama-core/knowledge');
 const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
 const { isFirstEdit, markFileEdited } = require('./session-state');
 const { shouldProcessFile } = require('./hook-file-filter');
@@ -141,7 +142,9 @@ async function main() {
       getAdapter(),
       embedding,
       SEARCH_LIMIT * 2,
-      SIMILARITY_THRESHOLD
+      SIMILARITY_THRESHOLD,
+      undefined,
+      RECALL_EXCLUDED_STATUSES
     );
 
     if (!results || results.length === 0) {
