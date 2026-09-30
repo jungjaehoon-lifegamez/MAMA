@@ -122,7 +122,7 @@ describe('plugin dependencies in CLAUDE_PLUGIN_DATA', () => {
     expect(fs.readdirSync(dataDir).filter((name) => name.includes('lock'))).toEqual([]);
   });
 
-  it('gives back a live lock another session took over first', () => {
+  it('leaves a lock another session took over first', () => {
     const { root, dataDir } = marketplaceCopy();
     const lock = lockBy(dataDir, DEAD);
     const npm = fakeNpm();
@@ -142,6 +142,27 @@ describe('plugin dependencies in CLAUDE_PLUGIN_DATA', () => {
     ).toThrow(/another session is installing/);
     expect(npm.calls).toHaveLength(0);
     expect(fs.readFileSync(path.join(lock, 'owner'), 'utf8')).toBe(`${LIVE} other`);
+  });
+
+  it('runs one takeover at a time, and clears one that was cut off', () => {
+    const { root, dataDir } = marketplaceCopy();
+    lockBy(dataDir, DEAD);
+    const takeover = path.join(dataDir, 'install.lock.takeover');
+    fs.mkdirSync(takeover);
+    const npm = fakeNpm();
+    expect(() =>
+      ensurePluginDependencies({ root, dataDir, install: npm.install, isAlive })
+    ).toThrow(/another session is installing/);
+    expect(fs.existsSync(takeover)).toBe(true);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(takeover, old, old);
+    expect(() =>
+      ensurePluginDependencies({ root, dataDir, install: npm.install, isAlive })
+    ).toThrow(/another session is installing/);
+    expect(fs.existsSync(takeover)).toBe(false);
+    expect(ensurePluginDependencies({ root, dataDir, install: npm.install, isAlive })).toBe(
+      'installed'
+    );
   });
 
   it('removes only its own lock', () => {
