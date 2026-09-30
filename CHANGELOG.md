@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.60.2] / plugin [2.1.2] - 2026-10-01
+
+### Fixed
+
+- Plugin: it installs its own npm dependencies. Claude Code copies a marketplace plugin without
+  running npm install and replaces the copy on every update, so the hooks could not load
+  mama-core even after 2.1.1. The first session start after an install or a dependency change
+  installs them into `${CLAUDE_PLUGIN_DATA}`, which is kept across updates, and every hook loads
+  them from there. Sessions that start together install once; npm stops before the hook's
+  timeout. mama-os has no changes; the release tag follows its version.
+
 ## mama-os [0.60.1] / plugin [2.1.1] - 2026-09-30
 
 ### Changed

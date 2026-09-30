@@ -153,7 +153,7 @@ These are the current package manifests for the unreleased rebuild.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.60.1  |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.60.2  |
 | [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 5.0.0   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.3.0   |
 | [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.1.2   |
