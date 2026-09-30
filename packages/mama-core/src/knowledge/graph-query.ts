@@ -908,6 +908,37 @@ function loadTimelineRecordEvent(
   return null;
 }
 
+/**
+ * Edges as the reader may see them. Both ends being visible does not make a link's evidence
+ * visible, so evidence refs the reader cannot see are left out. Entries without a kind are the
+ * link entries ({id, reason}) an earlier version copied into a record's own edges; they repeat the
+ * edge's target and reason.
+ */
+function withVisibleEvidence(
+  adapter: AgentGraphAdapter,
+  edges: readonly TwinEdgeRecord[],
+  visibility: TwinVisibility
+): TwinEdgeRecord[] {
+  const refsOf = (edge: TwinEdgeRecord): TwinRef[] =>
+    Array.isArray(edge.evidence_refs)
+      ? (edge.evidence_refs as Array<Partial<TwinRef>>).filter(
+          (ref): ref is TwinRef =>
+            typeof ref?.id === 'string' &&
+            (TWIN_REF_KINDS as readonly string[]).includes(ref.kind as string)
+        )
+      : [];
+  const visible = visibleTwinRefKeysRecursive(adapter, edges.flatMap(refsOf), visibility);
+  return edges.map((edge) => {
+    if (!Array.isArray(edge.evidence_refs)) return edge;
+    const evidence = refsOf(edge).filter((ref) => visible.has(`${ref.kind}\0${ref.id}`));
+    return {
+      ...edge,
+      evidence_refs: evidence.length > 0 ? evidence : null,
+      evidence_refs_json: evidence.length > 0 ? JSON.stringify(evidence) : null,
+    };
+  });
+}
+
 export function getGraphNeighborhood(
   adapter: AgentGraphAdapter,
   input: GraphNeighborhoodInput
@@ -966,7 +997,11 @@ export function getGraphNeighborhood(
     frontier = nextFrontier;
   }
 
-  return { nodes, edges, current_projection: projectCurrentEdges(adapter, edges, visibility) };
+  return {
+    nodes,
+    edges: withVisibleEvidence(adapter, edges, { ...visibility, asOfMs: input.as_of_ms }),
+    current_projection: projectCurrentEdges(adapter, edges, visibility),
+  };
 }
 
 export function getGraphPaths(
@@ -1043,8 +1078,14 @@ export function getGraphPaths(
   const pathEdges = [
     ...new Map(paths.flatMap((path) => path.edges).map((edge) => [edge.edge_id, edge])).values(),
   ];
+  const shown = new Map(
+    withVisibleEvidence(adapter, pathEdges, visibility).map((edge) => [edge.edge_id, edge])
+  );
   return {
-    paths,
+    paths: paths.map((path) => ({
+      ...path,
+      edges: path.edges.map((edge) => shown.get(edge.edge_id)!),
+    })),
     limit_reached: limitReached || paths.length >= limit,
     current_projection: projectCurrentEdges(adapter, pathEdges, visibility),
   };
@@ -1089,11 +1130,15 @@ export function getGraphTimeline(
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
   const window = timelineWindow(input);
   const seeds = timelineSeeds(adapter, input.ref, visibility);
-  const edges = listFilteredEdges(adapter, seeds, {
-    visibility,
-    edge_filters: input.edge_filters,
-    as_of_ms: input.as_of_ms,
-  }).filter((edge) => isInTimelineWindow(edge.created_at, window));
+  const edges = withVisibleEvidence(
+    adapter,
+    listFilteredEdges(adapter, seeds, {
+      visibility,
+      edge_filters: input.edge_filters,
+      as_of_ms: input.as_of_ms,
+    }).filter((edge) => isInTimelineWindow(edge.created_at, window)),
+    { ...visibility, asOfMs: input.as_of_ms }
+  );
 
   const refs: TwinRef[] = [];
   const seenRefs = new Set<string>();
@@ -1717,28 +1762,7 @@ function hydrateNode(
   return hydrateRecordNode(adapter, ref);
 }
 
-/**
- * A link's evidence as twin refs. Entries without a kind are the link entries ({id, reason}) an
- * earlier version copied into a record's own edges; they repeat the edge's target and reason.
- */
-function evidenceRefsOf(edge: TwinEdgeRecord): TwinRef[] {
-  return Array.isArray(edge.evidence_refs)
-    ? (edge.evidence_refs as Array<Partial<TwinRef>>).filter(
-        (ref): ref is TwinRef =>
-          typeof ref?.id === 'string' && (TWIN_REF_KINDS as readonly string[]).includes(ref.kind!)
-      )
-    : [];
-}
-
-function pageEdgeAttrs(
-  edge: TwinEdgeRecord,
-  visibleEvidence: ReadonlySet<string>,
-  correctedBy?: readonly EdgeCorrection[]
-): JsonValue {
-  // Both ends being visible does not make the evidence visible: a hidden record is not named.
-  const evidence = evidenceRefsOf(edge).filter((ref) =>
-    visibleEvidence.has(`${ref.kind}\0${ref.id}`)
-  );
+function pageEdgeAttrs(edge: TwinEdgeRecord, correctedBy?: readonly EdgeCorrection[]): JsonValue {
   return {
     ...(correctedBy?.length ? { corrected_by: correctedBy as unknown as JsonValue } : {}),
     edge_type: edge.edge_type,
@@ -1749,7 +1773,7 @@ function pageEdgeAttrs(
     model_run_id: edge.model_run_id,
     reason_classification: edge.reason_classification,
     reason_text: edge.reason_text,
-    evidence_refs: (evidence.length > 0 ? evidence : null) as JsonValue,
+    evidence_refs: (edge.evidence_refs ?? null) as JsonValue,
     created_at: edge.created_at,
     content_hash: edge.content_hash.toString('hex'),
   } as JsonValue;
@@ -2254,12 +2278,11 @@ export function queryGraph(
     ctx.visibility,
     asOf
   );
-  const visibleEvidence = visibleTwinRefKeysRecursive(
-    adapter,
-    collectedEdges.flatMap(evidenceRefsOf),
-    { ...ctx.visibility, asOfMs: asOf }
-  );
-  const pageEdges: WorkGraphPage['edges'] = collectedEdges.map((edge) => {
+  const shownEdges = withVisibleEvidence(adapter, collectedEdges, {
+    ...ctx.visibility,
+    asOfMs: asOf,
+  });
+  const pageEdges: WorkGraphPage['edges'] = shownEdges.map((edge) => {
     const fromProjection = projections.get(projectionKey(edge.edge_id, 'from'));
     const toProjection = projections.get(projectionKey(edge.edge_id, 'to'));
     return {
@@ -2269,7 +2292,7 @@ export function queryGraph(
       to: edge.object_ref,
       resolvedFrom: fromProjection?.current_ref ?? edge.subject_ref,
       resolvedTo: toProjection?.current_ref ?? edge.object_ref,
-      attrs: pageEdgeAttrs(edge, visibleEvidence, corrections.get(edge.edge_id)),
+      attrs: pageEdgeAttrs(edge, corrections.get(edge.edge_id)),
     };
   });
 

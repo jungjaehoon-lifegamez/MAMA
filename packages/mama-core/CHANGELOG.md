@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a required reason and optional evidence, and no new record or revision. The row is its own
   receipt; a retried command id returns the same edge and a different payload under it is a
   conflict. A link to an edge takes `contradicts` and corrects it; graph pages return
-  `corrected_by` on the corrected edge and, on every edge, the `evidence_refs` the reader can see.
+  `corrected_by` on the corrected edge and, on every edge, the `evidence_refs` the reader can see
+  (as do `getGraphNeighborhood`, `getGraphPaths` and `getGraphTimeline`).
   `findLink` returns a stored link with its evidence.
 - `mama.save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`;
   `mama.link` links after saving; `mama.getDecision` reads one decision with every edge in and

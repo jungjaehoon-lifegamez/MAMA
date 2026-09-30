@@ -5,7 +5,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getAdapter } from '../../src/db-manager.js';
-import { createKnowledge, type Knowledge } from '../../src/knowledge/index.js';
+import {
+  createKnowledge,
+  getGraphNeighborhood,
+  type Knowledge,
+} from '../../src/knowledge/index.js';
 import { cleanupTestDB, initTestDB } from '../helpers/test-utils.js';
 
 const access = {
@@ -332,6 +336,16 @@ describe('knowledge/links: appending an edge the agent judged', () => {
 
     expect(evidenceFor(bothAccess)).toEqual([earlier.recordRef, theirs.recordRef]);
     expect(evidenceFor(access)).toEqual([earlier.recordRef]);
+    const neighborhood = getGraphNeighborhood(getAdapter(), {
+      ref: current.recordRef,
+      depth: 1,
+      scopes: access.scopes,
+      principal_id: access.principalId,
+      agent_id: access.agentId,
+    });
+    expect(
+      neighborhood.edges.find((edge) => edge.edge_id === receipt.edgeId)?.evidence_refs
+    ).toEqual([earlier.recordRef]);
   });
 
   it("links to a record with no scope binding, as a record's own links may", async () => {
