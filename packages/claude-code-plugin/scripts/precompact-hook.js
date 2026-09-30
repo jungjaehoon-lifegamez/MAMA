@@ -88,7 +88,7 @@ async function getSavedTopicsFromDB() {
 
   try {
     const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
-    const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');
+    const { vectorSearch, RECALL_EXCLUDED_STATUSES } = require('@jungjaehoon/mama-core/knowledge');
     usePluginDatabase();
     await initDB();
 
@@ -96,7 +96,15 @@ async function getSavedTopicsFromDB() {
     const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
     const embedding = await generateEmbedding('recent decisions architecture', 'query');
     if (embedding) {
-      const results = await vectorSearch(getAdapter(), embedding, 20, 0.3);
+      // Replaced and retired decisions stay out, as in recall.
+      const results = await vectorSearch(
+        getAdapter(),
+        embedding,
+        20,
+        0.3,
+        undefined,
+        RECALL_EXCLUDED_STATUSES
+      );
       if (results && Array.isArray(results)) {
         for (const item of results) {
           if (item.topic) {

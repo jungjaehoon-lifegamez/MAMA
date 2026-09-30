@@ -118,6 +118,11 @@ class MAMAServer {
               type: 'string',
               description: '[Decision] Why. Relations go in links or replaces, not in this text.',
             },
+            stated_by_user: {
+              type: 'boolean',
+              description:
+                '[Decision] true only when the user stated this decision in this conversation; otherwise it is recorded as your own insight.',
+            },
             links: {
               type: 'array',
               items: {
@@ -471,12 +476,14 @@ the other id.`,
         actors,
         links,
         replaces,
+        stated_by_user,
       } = args;
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
       }
       const saved = await mama.save({
-        type: 'user_decision',
+        // Who stated it: the label is read to tell the user's decisions from the agent's.
+        type: stated_by_user === true ? 'user_decision' : 'assistant_insight',
         topic,
         decision,
         reasoning,

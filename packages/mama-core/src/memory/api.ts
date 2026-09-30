@@ -23,7 +23,7 @@ import type { SearchQualityOptions } from '../knowledge/search-quality.js';
 import type { SemanticEdgeItem } from '../db-manager.js';
 import type { DecisionRecord } from '../db-manager.js';
 import type { DatabaseInstance } from '../db-manager.js';
-import { vectorSearch, fts5Search } from '../knowledge/search.js';
+import { vectorSearch, fts5Search, RECALL_EXCLUDED_STATUSES } from '../knowledge/search.js';
 import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embedding/embedder.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
@@ -999,8 +999,6 @@ export async function buildProfile(
   return classifyProfileEntries(records);
 }
 
-/** Statuses default recall leaves out; history (`includeHistory`) shows them. */
-export const RECALL_EXCLUDED_STATUSES = ['superseded', 'contradicted', 'stale'] as const;
 const EXCLUDED_STATUSES: Set<string> = new Set(RECALL_EXCLUDED_STATUSES);
 
 /** The ids among these that only amend another record (a retirement or an outcome change). */
