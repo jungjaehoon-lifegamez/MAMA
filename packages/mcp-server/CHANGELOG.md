@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`.
+- `link {from, to, relation, reason}`: a link after saving, or a correction of a wrong link (to an
+  edgeId, relation `contradicts`).
+- `get_decision {id}`: one decision with every edge in and out, each with the relation, the other
+  decision's id, topic and first line, the reason, and who wrote it (agent, agent_text, host).
+
+### Changed
+
+- The `save` and `save_decision` texts no longer ask for "builds_on: id" in the reasoning; nothing
+  parses it.
+
 ## [2.2.2] - 2026-09-29
 
 ### Changed

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `appendLink` (`Knowledge.appendLink`): one edge appended between records that already exist,
+  with a required reason and optional evidence, and no new record or revision. The row is its own
+  receipt; a retried command id returns the same edge and a different payload under it is a
+  conflict. A link to an edge takes `contradicts` and corrects it; graph pages return
+  `corrected_by` on the corrected edge and `evidence_refs` on every edge.
+- `mama.save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`;
+  `mama.link` links after saving; `mama.getDecision` reads one decision with every edge in and
+  out, each with its reason and writer.
+- An amendment keeps the values it replaced in its record's payload (`replacedValues`).
+
+### Changed
+
+- **Breaking:** the host writes no edge the agent did not state. A work revision or withdrawal no
+  longer links to the previous revision (added in 4.1.0); the revision order is in the
+  commitment's assignments. Migration 099 now only stamps its version.
+- The save hint no longer asks for "builds_on: id" in the reasoning, which nothing parses.
+
+### Removed
+
+- **Breaking:** `evolveMemory`, `promoteMemoryStatus` and the evolution rules that linked memories
+  by topic overlap or vector similarity; the public `insertTwinEdge`; the decision-edge mutators
+  (`upsertDecisionEdge`, `proposeDecisionEdge`, `approveDecisionEdge`, `rejectDecisionEdge`,
+  `deprecateAutoDecisionEdges`, `deleteDecisionEdgesWithAudit`); the legacy `relationships` save
+  path and the `decisionEdges`/`supersedeTargets` projections; `memory.read:graph` view
+  `similarity`.
+
 ## [4.1.0] - 2026-09-29
 
 ### Added
