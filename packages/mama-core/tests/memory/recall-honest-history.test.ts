@@ -113,4 +113,34 @@ describe('search shows history honestly', () => {
     });
     expect(row.model_run_id).toBe('mr_retire');
   });
+
+  it('keeps retirements from crowding an active record out of the text-search pool', async () => {
+    // More retirements than the lexical pool (50) holds, each denser in the query words than the
+    // active record, whose match sits in a long body and ranks below them all.
+    const filler = Array.from({ length: 300 }, (_, n) => `note${n}`).join(' ');
+    const active = await saveJudgmentRecord(
+      getAdapter(),
+      {
+        topic: 'ops/pager',
+        kind: 'decision',
+        summary: `Pager duty ${filler} follows the walrus rota`,
+        details: filler,
+        scopes: [PROJECT_A],
+        source: { package: 'mama-core', source_type: 'test' },
+      },
+      access([PROJECT_A]),
+      `cmd-${randomUUID()}`
+    );
+    for (let n = 0; n < 55; n += 1) {
+      const retired = await save(`ops/draft-${n}`, `Draft ${n}`, [PROJECT_A]);
+      await retireMemoryRecord(
+        getAdapter(),
+        { memoryId: retired.id, status: 'stale', reason: 'walrus rota walrus rota walrus rota' },
+        access([PROJECT_A]),
+        `cmd-${randomUUID()}`
+      );
+    }
+    const found = await recallMemory(getAdapter(), 'walrus rota', { scopes: [PROJECT_A] });
+    expect(found.memories.map((memory) => memory.id)).toContain(active.id);
+  });
 });

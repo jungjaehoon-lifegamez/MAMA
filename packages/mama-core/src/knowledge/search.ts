@@ -89,7 +89,8 @@ export async function fts5Search(
   adapter: DatabaseInstance,
   query: string,
   limit = 10,
-  kind?: MemoryKindFilter
+  kind?: MemoryKindFilter,
+  exclude?: { statuses?: readonly string[]; amendments?: boolean }
 ): Promise<{ id: string; rank: number }[]> {
   // An absent FTS table is a real answer - no rows. A failing adapter is not,
   // so this lookup is left unguarded and its errors reach the caller.
@@ -99,27 +100,29 @@ export async function fts5Search(
   if (!tableCheck) return [];
 
   // Query execution - let errors propagate to the caller
-  const kindClause = Array.isArray(kind)
-    ? `AND d.kind IN (${kind.map(() => '?').join(', ')})`
-    : kind === undefined
+  const kinds = Array.isArray(kind) ? kind : kind === undefined ? [] : [kind];
+  const kindClause = kinds.length === 0 ? '' : `AND d.kind IN (${kinds.map(() => '?').join(', ')})`;
+  // Excluded rows are left out before LIMIT, so they cannot fill the pool ahead of rows that stay.
+  const statuses = exclude?.statuses ?? [];
+  const statusClause =
+    statuses.length === 0
       ? ''
-      : 'AND d.kind = ?';
+      : `AND (d.status IS NULL OR d.status NOT IN (${statuses.map(() => '?').join(', ')}))`;
+  const amendmentClause = exclude?.amendments
+    ? "AND json_extract(d.payload_json, '$.amended') IS NULL"
+    : '';
   const stmt = adapter.prepare(`
     SELECT d.id, rank
     FROM decisions_fts
     JOIN decisions d ON decisions_fts.rowid = d.rowid
     WHERE decisions_fts MATCH ?
       ${kindClause}
+      ${statusClause}
+      ${amendmentClause}
     ORDER BY rank
     LIMIT ?
   `);
-  return (
-    Array.isArray(kind)
-      ? stmt.all(query, ...kind, limit)
-      : kind === undefined
-        ? stmt.all(query, limit)
-        : stmt.all(query, kind, limit)
-  ) as {
+  return stmt.all(query, ...kinds, ...statuses, limit) as {
     id: string;
     rank: number;
   }[];
