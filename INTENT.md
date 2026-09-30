@@ -1,6 +1,6 @@
 # What MAMA is for
 
-Version 8 · 2026-09-29 (replaces v7 of 2026-09-25)
+Version 8 · 2026-09-30 (replaces v7 of 2026-09-25)
 
 MAMA is a persistent agent that keeps watching and remembering the owner's work. Nobody has to
 explain things from the beginning again: it knows the current situation, reports it, and does the
@@ -14,8 +14,9 @@ It starts from what Kagemusha already does and adds two things.
   recognises the work in them. It creates and updates tasks, refreshes the board and the scheduled
   reports, and forwards feedback and files.
 - **Addition 1 — a wiki and memory that carry over:** the wiki lets a person see how the work
-  went; memory connects the records and the owner's corrections as nodes and edges so related data
-  is found fast. Both survive new sessions, restarts and model changes.
+  went; memory keeps the records and the owner's corrections, connected by links the agent judged,
+  so the agent can reach the record of what happened. Both survive new sessions, restarts and
+  model changes.
 - **Addition 2 — task history (the differentiator):** for every task it keeps how it progressed,
   what changed, what the feedback was, and who did what. It can also find **similar past cases**
   and reuse how their feedback went and how they ended.
@@ -62,12 +63,17 @@ member permissions and non-owner input wait until the checks below pass on real 
   rewritten from many messages, never a dated copy of events. A daily page sums up each day (what
   mattered, what the owner decided, what was missed and learned), and a project page keeps the
   knowledge that stays true (terms, decisions and specifications, how a client works).
-- Memory connects the records as nodes and edges (work and its revisions, source messages, people,
-  lessons and corrections) so the agent finds related data fast. Similar past cases are reached
-  through it and through semantic search over tasks and their history: how earlier work
-  progressed, what the feedback was, who did what and how it ended.
-- Jev, when the owner turns it on, is a classifier that makes this linking and finding faster and
-  easier. Everything works without it.
+- Memory connects the records (work and its revisions, source messages, people, lessons and
+  corrections) with links the agent states after judging the relation, each with its reason. A
+  judged link is the ground for reaching the record of what happened: from a piece of work to the
+  linked work's revisions and their source messages. Search is the way in; a similar text is no
+  ground that two records are the same case. Similar past cases are found by searching for the
+  kind of problem and following the links, which is faster than checking the originals again.
+- Records and links are never edited. A change, or a link found wrong, is answered by a newer
+  record or link with its reason, so the history shows what changed and why. The host writes no
+  link the agent did not state.
+- Jev, when the owner turns it on, is a classifier the agent uses to narrow candidates before it
+  judges and links. Everything works without it.
 
 ## Data and the present moment
 
@@ -99,6 +105,10 @@ member permissions and non-owner input wait until the checks below pass on real 
   up contradicting sentences.
 - Learning is done when the next related situation turns out differently, not when something is
   saved.
+- No judgment is right every time. When the evidence shows that an earlier record or link of its
+  own was wrong, the agent appends the correction with its reason, and later judgments follow it.
+- Judge learning over time: whether corrections, the owner's and the agent's own, keep making the
+  next related situation better, not whether one run was right.
 
 ## What the agent decides and what the host provides
 

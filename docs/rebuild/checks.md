@@ -1401,6 +1401,7 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 - Result: INTENT v8 moves the wiki from "the record of each case" to lasting knowledge plus a daily page. It adds two principles: the agent pulls each next step and the host never pre-loads a turn; the September import only seeds records that live flow and corrections complete. plan.md adds W27–W30 and an ordered next list with C3 first.
 - Evidence: the owner decisions of this session (progressive agent, Kagemusha record retries, knowledge wiki and daily pages, no re-import of September). Owner checks C1–C6 are all still open; W23 measured 99 of 100 record orders on the first attempt and `[notify]` at 28%.
+- Merged 2026-09-30 after the owner's review, with that day's decisions: links the agent judged, each with its reason, are the ground for reaching the record of what happened and search is the way in; records and links are appended and never edited, and the host writes no link the agent did not state; learning is judged over time by corrections, the agent's own included. The 09-29 wording "so related data is found fast" was the framing the owner corrected that day.
 
 ### The agent links records with a reason; the host writes no edge (2026-09-30)
 
