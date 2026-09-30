@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The researcher agent reads a decision's edges with `get_decision` and follows them.
+- `/mama:decision` searches related decisions first and passes `links` or `replaces` with their
+  reasons; the save reminder after an edit says so too.
 
 ## [2.0.2] - 2026-09-29
 

@@ -237,6 +237,9 @@ class MAMAServer {
 
 **Without query** — List recent items sorted by time.
 
+**Follow the record**: a result is the way in. Open a decision with get_decision to read its
+edges (what it builds on, replaces or contradicts, with the reasons) and follow them by id.
+
 **Resume session**: type='checkpoint' without query → loads latest checkpoint with full context (narrative, links, next steps).
   Triggers: "이어서", "continue", "where were we", session start.
 

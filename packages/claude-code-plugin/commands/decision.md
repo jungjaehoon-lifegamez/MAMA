@@ -23,6 +23,9 @@ You are helping the user save a decision to MAMA (Memory-Augmented MCP Assistant
    - `limitation` (optional): Known limitations of this decision
 
 2. Use the MCP tool to save the decision:
+   - First search related decisions with `mcp__plugin_mama_mama__search`. If the new decision
+     builds on, debates or combines one, pass `links: [{id, relation, reason}]`; if it replaces one,
+     pass `replaces: [{id, reason}]`. Nothing is linked for you, and the reasoning text is not parsed.
    - Call `mcp__plugin_mama_mama__save` with `type='decision'` and the parsed parameters
    - The tool will return a decision_id
 

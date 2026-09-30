@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `save` and `save_decision` texts no longer ask for "builds_on: id" in the reasoning; nothing
   parses it.
+- `search` says a result is the way in: open it with `get_decision` and follow its edges.
 
 ## [2.2.2] - 2026-09-29
 
