@@ -1217,7 +1217,13 @@ export async function recallMemory(
         .map((t) => stemToken(t))
         .filter((t) => !FTS5_NOISE_WORDS.has(t));
       const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
-      const ftsResults = await fts5Search(searchAdapter, ftsQuery, lexicalLimit, options.kind);
+      const ftsResults = await fts5Search(
+        searchAdapter,
+        ftsQuery,
+        lexicalLimit,
+        options.kind,
+        options.includeHistory ? undefined : { statuses: [...EXCLUDED_STATUSES], amendments: true }
+      );
       if (ftsResults.length > 0) {
         const adapter = searchAdapter;
         const fallbackSource: SaveMemoryInput['source'] = {
@@ -1311,6 +1317,14 @@ export async function recallMemory(
 
       if (options.kind !== undefined) {
         lexicalRecords = lexicalRecords.filter((r) => matchesKind(r.kind));
+      }
+
+      if (!options.includeHistory && lexicalRecords.length > 0) {
+        const amendments = amendmentIds(
+          adapter,
+          lexicalRecords.map((r) => r.id)
+        );
+        lexicalRecords = lexicalRecords.filter((r) => !amendments.has(r.id));
       }
 
       lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
