@@ -462,7 +462,7 @@ describe('one stimulus intake and delivery', () => {
     const delivery = createDelivery({
       recordOrders: records,
       lessons: async () => [
-        { id: 'lesson-1', topic: 'notices', summary: 'hold non-urgent changes' },
+        { id: 'lesson-1', topic: 'notices', summary: 'hold non-urgent changes', ownerRule: false },
       ],
       onSourceResult: async () => {
         order.push('route');
@@ -496,7 +496,7 @@ describe('one stimulus intake and delivery', () => {
     );
     expect(prompt.split('\n')[0]).toMatch(/^\[delta chat:client room ~/);
     expect(prompt).toContain('sender: the files are delivered');
-    expect(prompt).toContain('- notices: hold non-urgent changes');
+    expect(prompt).toContain('- [learned] notices: hold non-urgent changes');
     expect(prompt).toContain('do not record work in this turn');
     expect(order).toEqual(['record', 'route']);
   });
@@ -703,7 +703,9 @@ describe('one stimulus intake and delivery', () => {
   it('shows a lesson once per session day and again in a new session', async () => {
     const prompts: string[] = [];
     const delivery = createDelivery({
-      lessons: async () => [{ id: 'lesson-1', topic: 'style', summary: 'point form' }],
+      lessons: async () => [
+        { id: 'lesson-1', topic: 'style', summary: 'point form', ownerRule: true },
+      ],
     });
     for (const isNewSession of [false, false, true])
       await delivery.deliver(
@@ -715,7 +717,7 @@ describe('one stimulus intake and delivery', () => {
         }),
         context((text) => prompts.push(text), { isNewSession })
       );
-    expect(prompts.map((prompt) => prompt.includes('- style: point form'))).toEqual([
+    expect(prompts.map((prompt) => prompt.includes('- [owner rule] style: point form'))).toEqual([
       true,
       false,
       true,

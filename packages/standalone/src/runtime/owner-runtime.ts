@@ -26,6 +26,7 @@ import { RawStore } from '../storage/source-archive.js';
 import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js';
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
+import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
 import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
@@ -168,8 +169,6 @@ function runtimeModelRun(
   };
 }
 
-const GUIDANCE_KINDS = ['lesson', 'preference', 'constraint', 'workflow'] as const;
-
 function searchHits(data: unknown): Array<{ id: string; score: number }> {
   const results = (data as { results?: unknown } | null)?.results;
   if (!Array.isArray(results)) return [];
@@ -186,14 +185,15 @@ function searchHits(data: unknown): Array<{ id: string; score: number }> {
 }
 
 function isOwnerGuidanceRecord(record: MemoryRecord): boolean {
-  return (GUIDANCE_KINDS as readonly string[]).includes(record.kind);
+  return (RULE_KINDS as readonly string[]).includes(record.kind);
 }
 
 /** Active guidance among the search hits, in the search's own order. */
 export function guidanceInSearchOrder(
   hitIds: readonly string[],
   records: readonly MemoryRecord[],
-  limit: number
+  limit: number,
+  ownerRules: ReadonlySet<string>
 ): TurnLesson[] {
   const active = new Map(
     records
@@ -210,6 +210,7 @@ export function guidanceInSearchOrder(
               topic: record.topic,
               summary: record.summary,
               ...(record.applies_when ? { appliesWhen: record.applies_when } : {}),
+              ownerRule: ownerRules.has(record.id),
             },
           ]
         : [];
@@ -440,15 +441,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           const hits = searchHits(search.data);
           if (hits.length === 0) return [];
           const active = await readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
-            kind: [...GUIDANCE_KINDS],
+            kind: [...RULE_KINDS],
             status: 'active',
           });
           // Ten in search order: the session filter drops lessons already shown and keeps three.
-          return guidanceInSearchOrder(
-            hits.map((hit) => hit.id),
-            active,
-            10
-          );
+          const hitIds = hits.map((hit) => hit.id);
+          return guidanceInSearchOrder(hitIds, active, 10, ownerRuleIds(database.adapter, hitIds));
         }),
       recordOrders,
       ...(options.onOwnerResult === undefined ? {} : { onOwnerResult: options.onOwnerResult }),
