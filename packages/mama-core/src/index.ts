@@ -88,6 +88,7 @@ export {
   readMemoryRecordsInScopes,
   retireMemoryRecord,
   recallMemory,
+  RECALL_EXCLUDED_STATUSES,
   buildProfile,
   ingestMemory,
   buildMemoryBootstrap,

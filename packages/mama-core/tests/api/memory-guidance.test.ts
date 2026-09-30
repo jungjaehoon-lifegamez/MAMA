@@ -169,6 +169,8 @@ describe('scoped guidance memory actions', () => {
   it('retires with a reason and receipt, hides the active entry, and keeps the record', async () => {
     const saved = await saveWorkflow('workflow-retire-target');
     const id = String((saved as { data: { id: string } }).data.id);
+    const kept = await saveWorkflow('workflow-still-active');
+    const keptId = String((kept as { data: { id: string } }).data.id);
     const retired = await call('memory.retire', 'workflow-retire-command', {
       memory_id: id,
       status: 'stale',
@@ -185,9 +187,10 @@ describe('scoped guidance memory actions', () => {
       },
     });
     const active = await call('memory.read:listing', 'workflow-active-list', { status: 'active' });
-    expect((active as { data: { decisions: Array<{ id: string }> } }).data.decisions).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id })])
-    );
+    const listed = (active as { data: { decisions: Array<{ id: string }> } }).data.decisions;
+    // The listing shows the other active rule, so the retired one's absence is the retirement.
+    expect(listed).toEqual(expect.arrayContaining([expect.objectContaining({ id: keptId })]));
+    expect(listed).not.toEqual(expect.arrayContaining([expect.objectContaining({ id })]));
     const retained = await call('memory.read:record', 'workflow-read-retired', { memory_id: id });
     expect(retained).toMatchObject({ data: { record: { id, status: 'stale' } } });
 

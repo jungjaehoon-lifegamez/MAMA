@@ -46,13 +46,7 @@ export type MemoryKindFilter = MemoryKind | [MemoryKind, ...MemoryKind[]];
 export const MEMORY_STATUSES = ['active', 'superseded', 'contradicted', 'stale'] as const;
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 
-export const MEMORY_TRUTH_STATUSES = [
-  'active',
-  'superseded',
-  'contradicted',
-  'stale',
-  'quarantined',
-] as const;
+export const MEMORY_TRUTH_STATUSES = ['active', 'superseded', 'contradicted', 'stale'] as const;
 export type MemoryTruthStatus = (typeof MEMORY_TRUTH_STATUSES)[number];
 
 export const MEMORY_EDGE_TYPES = ['supersedes', 'builds_on', 'synthesizes', 'contradicts'] as const;

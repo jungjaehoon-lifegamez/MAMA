@@ -4,7 +4,8 @@ describe('Memory auditor truth-first contracts', () => {
   it('should expose the approved truth statuses', async () => {
     const types = await import('../../src/memory/types.js');
     const statuses = types.MEMORY_TRUTH_STATUSES;
-    expect(statuses).toContain('quarantined');
+    // No path writes `quarantined` and the decisions CHECK refuses it (migration 098).
+    expect(statuses).toEqual(['active', 'superseded', 'contradicted', 'stale']);
   });
 
   it('should expose the approved memory-agent actions', async () => {
