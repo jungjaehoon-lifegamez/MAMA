@@ -198,8 +198,8 @@ describe('work.link and work.list view links', () => {
       knowledge,
       observationExists: (id) => id === observation.observationId,
     }).find((candidate) => candidate.contract.name === 'work.link')!;
-    const exec = async (input: Record<string, unknown>) =>
-      registration.exec(input, { access, operationId: 'op-evidence' } as never);
+    const exec = async (input: Record<string, unknown>, operationId: string) =>
+      registration.exec(input, { access, operationId } as never);
     const input = {
       from: current.commitmentId,
       to: { kind: 'work', id: earlier.commitmentId },
@@ -208,11 +208,16 @@ describe('work.link and work.list view links', () => {
       evidenceRefs: [observation.observationId],
     };
 
-    const first = (await exec(input)) as { edgeId: string };
-    expect(await exec(input)).toMatchObject({ edgeId: first.edgeId, replayed: true });
-    await expect(exec({ ...input, evidenceRefs: [] })).rejects.toThrow(
+    const first = (await exec(input, 'op-evidence')) as { edgeId: string };
+    expect(await exec(input, 'op-evidence')).toMatchObject({
+      edgeId: first.edgeId,
+      replayed: true,
+    });
+    await expect(exec({ ...input, evidenceRefs: [] }, 'op-evidence')).rejects.toThrow(
       /already bound to another link/
     );
+    await exec({ ...input, evidenceRefs: [] }, 'op-no-evidence');
+    await expect(exec(input, 'op-no-evidence')).rejects.toThrow(/already bound to another link/);
   });
 
   it('keeps the link readable after later revisions, and a retried call returns the same link', async () => {
@@ -244,17 +249,6 @@ describe('work.link and work.list view links', () => {
     await expect(link({ ...input, reason: 'another statement' }, 'op-retry')).rejects.toThrow(
       /already bound to another link/
     );
-    const withEvidence = minimalWorkActionRegistrations({
-      knowledge,
-      observationExists: (id) => id === 'obs_later',
-    }).find((candidate) => candidate.contract.name === 'work.link')!;
-    await expect(
-      (async () =>
-        withEvidence.exec({ ...input, evidenceRefs: ['obs_later'] }, {
-          access,
-          operationId: 'op-retry',
-        } as never))()
-    ).rejects.toThrow(/already bound to another link/);
     const view = (await runWorkListView(
       { view: 'links', ids: [current.commitmentId, earlier.commitmentId] },
       { knowledge, access, timeZone: 'UTC' }

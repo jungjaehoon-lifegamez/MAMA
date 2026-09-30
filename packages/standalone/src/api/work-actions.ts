@@ -1646,10 +1646,12 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
           );
       }
       // A retried call finds its link before the heads are read again: the item may have been
-      // revised since, and the retry must still return the same link. What the link states is
-      // compared on what does not move with the head.
+      // revised since, and the retry must still return the same link. The ends are compared as
+      // revisions of the named items; core's content hash compares the rest of the statement.
       const commandId = operationId(context, 'work.link');
       const earlier = ports.knowledge.findLink(commandId, context.access);
+      let from: { kind: 'memory'; id: string };
+      let to: Parameters<WorkPorts['knowledge']['appendLink']>[0]['to'];
       if (earlier) {
         const isRevisionOf = (ref: { kind: string; id: string }, commitmentId: string) =>
           ref.kind === 'memory' &&
@@ -1661,34 +1663,20 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
           body.to.kind === 'work'
             ? isRevisionOf(earlier.to, body.to.id)
             : earlier.to.kind === body.to.kind && earlier.to.id === body.to.id;
-        // Evidence is compared as core's content hash compares it: the same refs in the same order.
-        const sameEvidence =
-          JSON.stringify(earlier.evidenceRefs.map((ref) => `${ref.kind}:${ref.id}`)) ===
-          JSON.stringify((body.evidenceRefs ?? []).map((id) => `observation:${id}`));
-        if (
-          earlier.relation !== body.relation ||
-          earlier.reason !== body.reason.trim() ||
-          !sameEvidence ||
-          !isRevisionOf(earlier.from, body.from) ||
-          !sameTarget
-        )
+        if (!isRevisionOf(earlier.from, body.from) || !sameTarget)
           throw new JudgmentError(
             'COMMAND_CONFLICT',
             'The command id is already bound to another link'
           );
-        return {
-          edgeId: earlier.edgeId,
-          createdAt: earlier.createdAt,
-          replayed: true,
-          from: { commitmentId: body.from, recordRef: earlier.from },
-          to: earlier.to,
-        };
+        from = earlier.from as { kind: 'memory'; id: string };
+        to = earlier.to;
+      } else {
+        from = headRecord(ports, body.from, context.access);
+        to =
+          body.to.kind === 'work'
+            ? headRecord(ports, body.to.id, context.access)
+            : { kind: body.to.kind, id: body.to.id };
       }
-      const from = headRecord(ports, body.from, context.access);
-      const to =
-        body.to.kind === 'work'
-          ? headRecord(ports, body.to.id, context.access)
-          : { kind: body.to.kind, id: body.to.id };
       const receipt = ports.knowledge.appendLink(
         {
           commandId,
