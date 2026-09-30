@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "mama",
-      "version": "2.1.0",
+      "version": "2.1.1",
       "source": "./plugins/mama",
       "description": "Memory-Augmented MCP Assistant - Track decisions, learn from mistakes, never repeat errors.",
       "author": {

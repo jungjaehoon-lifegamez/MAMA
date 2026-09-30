@@ -317,6 +317,17 @@ jobs:
           cp mama/packages/claude-code-plugin/package.json claude-plugins/plugins/mama/
           cp mama/packages/claude-code-plugin/README.md claude-plugins/plugins/mama/
 
+      # The marketplace copy is installed with npm, which cannot resolve workspace:*. Every sync
+      # from v1.10.0 to v2.1.0 shipped it, so the install failed and no hook could load mama-core.
+      - name: Replace workspace protocol
+        run: |
+          CORE_VERSION=$(jq -r '.version' mama/packages/mama-core/package.json)
+          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" claude-plugins/plugins/mama/package.json
+          if grep -q '"workspace:' claude-plugins/plugins/mama/package.json; then
+            echo "claude-plugins/plugins/mama/package.json still names a workspace: dependency" >&2
+            exit 1
+          fi
+
       - name: Update marketplace.json
         run: |
           cd claude-plugins
