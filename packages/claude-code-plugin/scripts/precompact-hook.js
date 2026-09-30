@@ -12,6 +12,8 @@
 
 const path = require('path');
 const fs = require('fs');
+
+require('./plugin-deps.js').exitUnlessCoreLoadable('PreCompact');
 const { usePluginDatabase } = require('./db-path.js');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');

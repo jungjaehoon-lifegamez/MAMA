@@ -28,8 +28,11 @@ Use the local stdio configuration below when verifying server changes from this 
 
 For released plugin files, the release workflow advertises `/plugin marketplace add
 jungjaehoon-lifegamez/claude-plugins` followed by `/plugin install mama`. A published release may
-lag this checkout. Initial startup can download dependencies and embedding assets; command
-availability alone does not prove a successful memory write.
+lag this checkout. Claude Code installs no npm packages for a plugin, so the first session start
+after an install or a dependency change installs mama-core into the plugin's data folder
+(`~/.claude/plugins/data/<plugin id>`, kept across updates); it took 13 s and 416 MB cold. The
+embedding model downloads on first use. Command availability alone does not prove a successful
+memory write.
 
 ## Verify a complete round trip
 

@@ -1,6 +1,6 @@
 {
   "name": "mama",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Memory-Augmented MCP Assistant - Chat from anywhere, track decisions, never repeat mistakes.",
   "author": {
     "name": "SpineLift Team",
@@ -30,8 +30,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sessionstart-hook.js",
-            "timeout": 15
+            "command": "NODE_PATH=\"${CLAUDE_PLUGIN_DATA}/node_modules\" node \"${CLAUDE_PLUGIN_ROOT}/scripts/sessionstart-hook.js\"",
+            "timeout": 180
           }
         ]
       }
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js",
+            "command": "NODE_PATH=\"${CLAUDE_PLUGIN_DATA}/node_modules\" node \"${CLAUDE_PLUGIN_ROOT}/scripts/pretooluse-hook.js\"",
             "timeout": 5
           }
         ]
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/precompact-hook.js",
+            "command": "NODE_PATH=\"${CLAUDE_PLUGIN_DATA}/node_modules\" node \"${CLAUDE_PLUGIN_ROOT}/scripts/precompact-hook.js\"",
             "timeout": 10
           }
         ]
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+            "command": "NODE_PATH=\"${CLAUDE_PLUGIN_DATA}/node_modules\" node \"${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js\"",
             "timeout": 5
           }
         ]
@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js",
+            "command": "NODE_PATH=\"${CLAUDE_PLUGIN_DATA}/node_modules\" node \"${CLAUDE_PLUGIN_ROOT}/scripts/posttooluse-hook.js\"",
             "timeout": 5
           }
         ]

@@ -28,8 +28,10 @@ function readSkill() {
   return fs.readFileSync(SKILL_PATH, 'utf8');
 }
 
+// A command is `NODE_PATH="…" node "${CLAUDE_PLUGIN_ROOT}/scripts/<hook>.js"`.
 function hookScriptPath(command) {
-  return command.replace('node ${CLAUDE_PLUGIN_ROOT}', PLUGIN_ROOT);
+  const [, script] = command.match(/"\$\{CLAUDE_PLUGIN_ROOT\}\/([^"]+)"/);
+  return path.join(PLUGIN_ROOT, script);
 }
 
 describe('M3.2: MAMA context skill wrapper', () => {
@@ -66,7 +68,7 @@ describe('M3.2: MAMA context skill wrapper', () => {
       for (const matcherGroups of Object.values(pluginConfig.hooks)) {
         for (const matcherGroup of matcherGroups) {
           for (const handler of matcherGroup.hooks) {
-            expect(skill).toContain(path.basename(handler.command));
+            expect(skill).toContain(path.basename(hookScriptPath(handler.command)));
           }
         }
       }
@@ -241,7 +243,7 @@ describe('M3.2: MAMA context skill wrapper', () => {
         expect(skill).toContain(`**${hookName} Hook**`);
         for (const matcherGroup of matcherGroups) {
           for (const handler of matcherGroup.hooks) {
-            expect(skill).toContain(path.basename(handler.command));
+            expect(skill).toContain(path.basename(hookScriptPath(handler.command)));
           }
         }
       }

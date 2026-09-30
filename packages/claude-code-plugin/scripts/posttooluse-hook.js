@@ -12,7 +12,6 @@ const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
-require('module').globalPaths.push(CORE_PATH);
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { shouldProcessFile } = require('./hook-file-filter');
 const { isFirstEdit, markFileEdited } = require('./session-state');
