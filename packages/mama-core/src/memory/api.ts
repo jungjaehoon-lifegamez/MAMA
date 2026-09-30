@@ -23,7 +23,7 @@ import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embedding/embedder.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
 import type { JudgmentCommand, JudgmentReceipt, JsonValue } from './judgment-types.js';
-import { commandEmbedder, writeAccessForProvenance } from './write-adapters.js';
+import { boundScopesOf, commandEmbedder, writeAccessForProvenance } from './write-adapters.js';
 import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
@@ -659,7 +659,6 @@ async function saveMemoryInternal(
   input: SaveMemoryInput,
   provenance: NormalizedMemoryProvenance,
   access: JudgmentAccess,
-  trustedEnvelope: boolean,
   legacy?: LegacyMemoryPersistence,
   commandIdOverride?: string
 ): Promise<SaveMemoryResult> {
@@ -768,8 +767,31 @@ export async function saveMemory(
 ): Promise<SaveMemoryResult> {
   const clean = sanitizePublicSaveMemoryInput(input);
   const provenance = normalizeMemoryWriteProvenance();
-  const access = writeAccessForProvenance(provenance, clean.scopes ?? []);
-  return saveMemoryInternal(adapter, clean, provenance, access, false);
+  const access = writeAccessForProvenance(
+    provenance,
+    uniqueScopes([...(clean.scopes ?? []), ...namedTargetScopes(adapter, clean)])
+  );
+  return saveMemoryInternal(adapter, clean, provenance, access);
+}
+
+/**
+ * The scopes of the records a direct save names in `links` and `replaces`. A direct caller has no
+ * grant of its own, so naming a record admits its partition for that link, as `mama.link` does;
+ * the new record is still bound only to its own scopes.
+ */
+function namedTargetScopes(adapter: DatabaseInstance, input: SaveMemoryInput): MemoryScopeRef[] {
+  const ids = [
+    ...(input.links ?? [])
+      .filter((link) => link.target.kind === 'memory')
+      .map((link) => link.target.id),
+    ...(input.replaces ?? []).map((replacement) => replacement.id),
+  ];
+  return ids.flatMap((id) => boundScopesOf(adapter, id));
+}
+
+/** Access scopes must be unique; the save's own scope and a target's are often the same. */
+function uniqueScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[] {
+  return [...new Map(scopes.map((scope) => [`${scope.kind}\0${scope.id}`, scope])).values()];
 }
 
 /**
@@ -804,7 +826,7 @@ export async function saveJudgmentRecord(
     source_message_ref: session?.sourceMessageRef,
     source_refs: session?.sourceRefs ? [...session.sourceRefs] : undefined,
   });
-  return saveMemoryInternal(adapter, clean, provenance, access, true, undefined, commandId);
+  return saveMemoryInternal(adapter, clean, provenance, access, undefined, commandId);
 }
 
 /**
@@ -855,15 +877,13 @@ export async function saveLegacyMemory(
 ): Promise<SaveMemoryResult> {
   const clean = sanitizePublicSaveMemoryInput(input);
   const provenance = normalizeMemoryWriteProvenance();
-  const effectiveAccess = access ?? writeAccessForProvenance(provenance, clean.scopes ?? []);
-  return saveMemoryInternal(
-    adapter,
-    clean,
-    provenance,
-    effectiveAccess,
-    access !== undefined,
-    legacy
-  );
+  const effectiveAccess =
+    access ??
+    writeAccessForProvenance(
+      provenance,
+      uniqueScopes([...(clean.scopes ?? []), ...namedTargetScopes(adapter, clean)])
+    );
+  return saveMemoryInternal(adapter, clean, provenance, effectiveAccess, legacy);
 }
 
 export type MemoryRetirementStatus = Extract<MemoryStatus, 'stale' | 'superseded'>;

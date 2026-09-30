@@ -113,7 +113,7 @@ You are not just an AI assistant; you are a partner in this project. Your insigh
 **LINKING:**
 When a past decision relates to this one (for example among similar_decisions), link it yourself;
 nothing is linked for you and the reasoning text is not parsed:
-- **links**: [{id, relation, reason}] with relation builds_on, refines, amends, contradicts, debates,
+- **links**: [{id, relation, reason}] with relation builds_on, refines, contradicts, debates,
   synthesizes or mentions, and the reason you judged.
 - **replaces**: [{id, reason}] for a decision this one replaces.
 
@@ -232,15 +232,7 @@ Structure your reasoning with these layers for maximum value:
             id: { type: 'string' },
             relation: {
               type: 'string',
-              enum: [
-                'builds_on',
-                'refines',
-                'amends',
-                'contradicts',
-                'debates',
-                'synthesizes',
-                'mentions',
-              ],
+              enum: ['builds_on', 'refines', 'contradicts', 'debates', 'synthesizes', 'mentions'],
             },
             reason: { type: 'string' },
           },

@@ -16,7 +16,7 @@ import {
 } from '@jungjaehoon/mama-core/knowledge';
 
 export interface WorkPorts {
-  knowledge: Pick<Knowledge, 'createWork' | 'reviseWork' | 'readWork' | 'appendLink'>;
+  knowledge: Pick<Knowledge, 'createWork' | 'reviseWork' | 'readWork' | 'appendLink' | 'findLink'>;
   /** sourceRefs are observationRef handles; core stores them unchecked, so the product checks them. */
   observationExists: (observationId: string) => boolean;
 }
@@ -1538,11 +1538,11 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
   ];
 }
 
+// Replacing and amending change the target's state and are written with a revision (work.revise
+// links, memory.retire), not as a bare link.
 const LINK_RELATIONS = [
   'builds_on',
   'refines',
-  'supersedes',
-  'amends',
   'contradicts',
   'debates',
   'synthesizes',
@@ -1583,7 +1583,7 @@ const linkSchema = {
       type: 'string',
       enum: [...LINK_RELATIONS],
       description:
-        'builds_on for an earlier case or work this continues, supersedes, amends or refines for a correction, contradicts for a reversal or a wrong link, e.g. "builds_on".',
+        'builds_on for an earlier case or work this continues, refines for a correction, contradicts for a reversal or a wrong link, e.g. "builds_on".',
     },
     reason: {
       type: 'string',
@@ -1645,6 +1645,11 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
             `evidenceRefs names an unavailable observation: ${ref}`
           );
       }
+      // A retried call finds its link before the heads are read again: the item may have been
+      // revised since, and the retry must still return the same link.
+      const commandId = operationId(context, 'work.link');
+      const earlier = ports.knowledge.findLink(commandId, context.access);
+      if (earlier) return earlier;
       const from = headRecord(ports, body.from, context.access);
       const to =
         body.to.kind === 'work'
@@ -1652,7 +1657,7 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
           : { kind: body.to.kind, id: body.to.id };
       const receipt = ports.knowledge.appendLink(
         {
-          commandId: operationId(context, 'work.link'),
+          commandId,
           from,
           to,
           relation: body.relation,

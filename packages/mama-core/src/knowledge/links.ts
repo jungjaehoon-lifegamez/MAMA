@@ -3,9 +3,13 @@ import crypto from 'node:crypto';
 import type { DatabaseAdapter } from '../db-manager.js';
 import { canonicalizeJSON } from '../canonicalize.js';
 import type { RecordLink } from '../memory/judgment-types.js';
-import { assertTwinRefsVisible, TwinRefNotVisibleError } from './access.js';
-import { twinVisibilityForAccess } from './graph-query.js';
-import { admittedScopeIds, getTwinEdge, insertTwinEdge, JudgmentError } from './judgments.js';
+import {
+  admittedScopeIds,
+  getTwinEdge,
+  insertTwinEdge,
+  JudgmentError,
+  referenceExists,
+} from './judgments.js';
 import type { JudgmentAccess } from './judgments.js';
 import type { TwinRef } from './twin-edge-types.js';
 
@@ -40,18 +44,20 @@ export interface LinkReceipt {
 
 const TARGET_KINDS = new Set<TwinRef['kind']>(['memory', 'registry', 'observation', 'edge']);
 const EVIDENCE_KINDS = new Set<TwinRef['kind']>(['memory', 'observation']);
+/**
+ * Relations a link states. Replacing (supersedes) and amending change the target's state, so they
+ * are acts written with a record (`replaces`, an amendment), and a source citation (derived_from)
+ * is written with the record that rests on it.
+ */
 const RELATIONS = new Set<RecordLink['relation']>([
-  'supersedes',
   'refines',
   'contradicts',
   'mentions',
-  'derived_from',
   'builds_on',
   'debates',
   'synthesizes',
   'blocks',
   'next_action_for',
-  'amends',
 ]);
 
 function nonblank(value: unknown, field: string): string {
@@ -87,49 +93,35 @@ function linkContentHash(edgeId: string, command: LinkCommand): Buffer {
     .digest();
 }
 
-function assertVisible(
+function assertReachable(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   refs: readonly TwinRef[],
   access: JudgmentAccess
 ): void {
-  try {
-    assertTwinRefsVisible(adapter as never, refs, twinVisibilityForAccess(access));
-  } catch (error) {
-    if (error instanceof TwinRefNotVisibleError) {
+  // The same rule a record's own links follow (judgments.ts): the ends sit in the caller's
+  // admitted scopes, and an edge target has both of its ends there.
+  const scopeIds = admittedScopeIds(access);
+  for (const ref of refs) {
+    if (!referenceExists(adapter, ref as never, scopeIds)) {
       // Echo only the caller's own input: an unavailable id reads the same whether wrong or outside scope.
-      throw new JudgmentError('REFERENCE_NOT_FOUND', `A link end is unavailable: ${error.message}`);
+      throw new JudgmentError(
+        'REFERENCE_NOT_FOUND',
+        `A link end is unavailable: ${ref.kind} ${ref.id}`
+      );
     }
-    throw error;
   }
 }
 
-function assertWritableSubject(
+/** The link a principal already wrote under this command id, if any: a retry finds it here. */
+export function findLink(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
-  recordId: string,
+  commandId: string,
   access: JudgmentAccess
-): void {
-  const row = adapter
-    .prepare(
-      `SELECT (SELECT COUNT(*) FROM memory_scope_bindings b WHERE b.memory_id = d.id) AS bindings
-         FROM decisions d WHERE d.id = ?`
-    )
-    .get(recordId) as { bindings: number } | undefined;
-  if (!row) {
-    throw new JudgmentError('REFERENCE_NOT_FOUND', `A link end is unavailable: memory ${recordId}`);
-  }
-  if (row.bindings === 0) return;
-  const scopeIds = admittedScopeIds(access);
-  const placeholders = scopeIds.map(() => '?').join(', ');
-  const bound =
-    scopeIds.length > 0 &&
-    adapter
-      .prepare(
-        `SELECT 1 FROM memory_scope_bindings WHERE memory_id = ? AND scope_id IN (${placeholders}) LIMIT 1`
-      )
-      .get(recordId, ...scopeIds) !== undefined;
-  if (!bound) {
-    throw new JudgmentError('REFERENCE_NOT_FOUND', `A link end is unavailable: memory ${recordId}`);
-  }
+): LinkReceipt | null {
+  const existing = getTwinEdge(adapter as never, linkEdgeId(access.principalId, commandId));
+  return existing
+    ? { edgeId: existing.edge_id, createdAt: existing.created_at, replayed: true }
+    : null;
 }
 
 export function appendLink(
@@ -181,10 +173,7 @@ export function appendLink(
     return { edgeId, createdAt: existing.created_at, replayed: true };
   };
 
-  // The subject is written to, so it must sit in the caller's write scopes; the other ends are
-  // read, so they follow the read rule, which also checks both ends of an edge target.
-  assertWritableSubject(adapter, command.from.id, access);
-  assertVisible(adapter, [command.to, ...(command.evidenceRefs ?? [])], access);
+  assertReachable(adapter, [command.from, command.to, ...(command.evidenceRefs ?? [])], access);
   const earlier = replay();
   if (earlier) return earlier;
 

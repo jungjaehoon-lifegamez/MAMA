@@ -13,15 +13,15 @@ See [architecture](../../docs/explanation/architecture.md) and
 [package.json](package.json) defines supported import paths; [src/index.ts](src/index.ts)
 defines root exports. Representative root exports:
 
-| Area      | Root exports                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------- |
-| Storage   | `createAdapter`, `SQLiteAdapter`, `initDB`, `getDB`, `getAdapter`, `closeDB`                      |
-| Records   | `createKnowledge`, `appendJudgment`, `ingestSource`                                               |
-| Memory    | `mama`, `createMamaApi`, `saveMemory`, `recallMemory`, `ingestConversation`, `MEMORY_KINDS`       |
-| Search    | `generateEmbedding`, `generateEnhancedEmbedding`, `cosineSimilarity`, `EmbeddingCache`            |
-| Evidence  | `getMemoryProvenance`, `resolveMemoryProvenance`, `insertTwinEdge`, `listVisibleTwinEdgesForRefs` |
-| Execution | `createCatalog`, `createDispatcher`, `createClient`, `startRuntime`, `createActionIpcServer`      |
-| Traces    | `beginModelRun`, `commitModelRun`, `appendToolTrace`, `listToolTracesForRun`                      |
+| Area      | Root exports                                                                                 |
+| --------- | -------------------------------------------------------------------------------------------- |
+| Storage   | `createAdapter`, `SQLiteAdapter`, `initDB`, `getDB`, `getAdapter`, `closeDB`                 |
+| Records   | `createKnowledge`, `appendJudgment`, `ingestSource`                                          |
+| Memory    | `mama`, `createMamaApi`, `saveMemory`, `recallMemory`, `ingestConversation`, `MEMORY_KINDS`  |
+| Search    | `generateEmbedding`, `generateEnhancedEmbedding`, `cosineSimilarity`, `EmbeddingCache`       |
+| Evidence  | `getMemoryProvenance`, `resolveMemoryProvenance`, `listVisibleTwinEdgesForRefs`              |
+| Execution | `createCatalog`, `createDispatcher`, `createClient`, `startRuntime`, `createActionIpcServer` |
+| Traces    | `beginModelRun`, `commitModelRun`, `appendToolTrace`, `listToolTracesForRun`                 |
 
 Every public subpath below is relative to `@jungjaehoon/mama-core`:
 

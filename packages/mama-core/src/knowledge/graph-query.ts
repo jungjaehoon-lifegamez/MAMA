@@ -1189,51 +1189,68 @@ function graphAccessInput(access: JudgmentAccess): {
   };
 }
 
-/** The read rule a caller's access grants, as graph reads apply it, over current and replaced records. */
-export function twinVisibilityForAccess(access: JudgmentAccess): TwinVisibility {
-  return graphVisibility({ ...graphAccessInput(access), history: 'all' });
+interface EdgeCorrection {
+  edgeId: string;
+  reason: string | null;
+  at: number;
+  /** A correction can itself be corrected; the chain reads down to the latest word. */
+  correctedBy?: EdgeCorrection[];
 }
 
 /**
- * Later links that contradict an edge, each with its reason: the edge row is never edited, so a
- * correction is read from the edges that point at it.
+ * Later links that contradict an edge, each with its reason, and the links that contradict those:
+ * the edge row is never edited, so a correction is read from the edges that point at it.
  */
 function edgeCorrections(
   adapter: AgentGraphAdapter,
   edgeIds: readonly string[],
   visibility: TwinVisibility,
   asOfMs: number
-): Map<string, Array<{ edgeId: string; reason: string | null; at: number }>> {
-  const corrections = new Map<
-    string,
-    Array<{ edgeId: string; reason: string | null; at: number }>
-  >();
-  if (edgeIds.length === 0) return corrections;
-  const placeholders = edgeIds.map(() => '?').join(', ');
-  const rows = adapter
-    .prepare(
-      `SELECT edge_id, subject_kind, subject_id, object_id, reason_text, created_at
-         FROM twin_edges
-        WHERE object_kind = 'edge' AND edge_type = 'contradicts'
-          AND object_id IN (${placeholders}) AND created_at <= ?
-        ORDER BY created_at, edge_id`
-    )
-    .all(...edgeIds, asOfMs) as Array<{
-    edge_id: string;
-    subject_kind: TwinRef['kind'];
-    subject_id: string;
-    object_id: string;
-    reason_text: string | null;
-    created_at: number;
-  }>;
-  if (rows.length === 0) return corrections;
-  const subjects = rows.map((row) => ({ kind: row.subject_kind, id: row.subject_id }) as TwinRef);
-  const visible = visibleTwinRefKeysRecursive(adapter as never, subjects, visibility);
-  for (const row of rows) {
-    if (!visible.has(`${row.subject_kind}\0${row.subject_id}`)) continue;
-    const list = corrections.get(row.object_id) ?? [];
-    list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
-    corrections.set(row.object_id, list);
+): Map<string, EdgeCorrection[]> {
+  const byTarget = new Map<string, Array<{ edgeId: string; reason: string | null; at: number }>>();
+  const seen = new Set(edgeIds);
+  let frontier = [...edgeIds];
+  while (frontier.length > 0) {
+    const placeholders = frontier.map(() => '?').join(', ');
+    const rows = adapter
+      .prepare(
+        `SELECT edge_id, subject_kind, subject_id, object_id, reason_text, created_at
+           FROM twin_edges
+          WHERE object_kind = 'edge' AND edge_type = 'contradicts'
+            AND object_id IN (${placeholders}) AND created_at <= ?
+          ORDER BY created_at, edge_id`
+      )
+      .all(...frontier, asOfMs) as Array<{
+      edge_id: string;
+      subject_kind: TwinRef['kind'];
+      subject_id: string;
+      object_id: string;
+      reason_text: string | null;
+      created_at: number;
+    }>;
+    const subjects = rows.map((row) => ({ kind: row.subject_kind, id: row.subject_id }) as TwinRef);
+    const visible = visibleTwinRefKeysRecursive(adapter as never, subjects, visibility);
+    frontier = [];
+    for (const row of rows) {
+      if (!visible.has(`${row.subject_kind}\0${row.subject_id}`)) continue;
+      const list = byTarget.get(row.object_id) ?? [];
+      list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
+      byTarget.set(row.object_id, list);
+      if (!seen.has(row.edge_id)) {
+        seen.add(row.edge_id);
+        frontier.push(row.edge_id);
+      }
+    }
+  }
+  const nest = (edgeId: string): EdgeCorrection[] | undefined =>
+    byTarget.get(edgeId)?.map((correction) => {
+      const further = nest(correction.edgeId);
+      return further ? { ...correction, correctedBy: further } : correction;
+    });
+  const corrections = new Map<string, EdgeCorrection[]>();
+  for (const edgeId of edgeIds) {
+    const list = nest(edgeId);
+    if (list) corrections.set(edgeId, list);
   }
   return corrections;
 }
@@ -1700,10 +1717,7 @@ function hydrateNode(
   return hydrateRecordNode(adapter, ref);
 }
 
-function pageEdgeAttrs(
-  edge: TwinEdgeRecord,
-  correctedBy?: ReadonlyArray<{ edgeId: string; reason: string | null; at: number }>
-): JsonValue {
+function pageEdgeAttrs(edge: TwinEdgeRecord, correctedBy?: readonly EdgeCorrection[]): JsonValue {
   return {
     ...(correctedBy?.length ? { corrected_by: correctedBy as unknown as JsonValue } : {}),
     edge_type: edge.edge_type,

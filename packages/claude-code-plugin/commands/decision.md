@@ -69,5 +69,5 @@ Examples:
 
 - **Reasoning is required**: Never save a decision without reasoning
 - **Topic naming**: Use lowercase with underscores (e.g., 'mama_architecture')
-- **Reuse topics**: Use the SAME topic for related decisions to create evolution graphs
-- **Graph connectivity**: Supersedes edges created automatically when same topic reused
+- **Reuse topics**: Use the SAME topic for related decisions so they are found together
+- **Graph connectivity**: Nothing is linked automatically; name related decisions in `links` or `replaces`, each with its reason

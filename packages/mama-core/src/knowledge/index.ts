@@ -1,4 +1,4 @@
-import { appendLink, type LinkCommand, type LinkReceipt } from './links.js';
+import { appendLink, findLink, type LinkCommand, type LinkReceipt } from './links.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import {
   createJudgmentWriter,
@@ -55,7 +55,7 @@ export {
   listTwinEdgesForRefs,
   mapTwinEdgeRow,
 } from './judgments.js';
-export { appendLink, linkEdgeId, type LinkCommand, type LinkReceipt } from './links.js';
+export { appendLink, findLink, linkEdgeId, type LinkCommand, type LinkReceipt } from './links.js';
 export {
   assertTwinRefsVisible,
   channelGrantClause,
@@ -178,6 +178,8 @@ export interface Knowledge {
    * edge contradicts it.
    */
   appendLink(command: LinkCommand, access: JudgmentAccess): LinkReceipt;
+  /** The link this principal already wrote under a command id, if any. */
+  findLink(commandId: string, access: JudgmentAccess): LinkReceipt | null;
 }
 
 export function createKnowledge(options: KnowledgeOptions): Knowledge {
@@ -193,5 +195,6 @@ export function createKnowledge(options: KnowledgeOptions): Knowledge {
     readWork: (query, access) => readWork(options.adapter, query, access),
     queryGraph: (query, access) => queryKnowledgeGraph(options.adapter, query, access),
     appendLink: (command, access) => appendLink(options.adapter, command, access),
+    findLink: (commandId, access) => findLink(options.adapter, commandId, access),
   };
 }

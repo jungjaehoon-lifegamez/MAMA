@@ -215,4 +215,104 @@ describe('knowledge/links: appending an edge the agent judged', () => {
       ],
     });
   });
+
+  it('corrects a correction, refuses a link to an edge whose far end is out of reach, and takes no state-changing relation', async () => {
+    const current = await work('current', 'current');
+    const earlier = await work('earlier', 'earlier');
+    const theirs = await work('theirs', 'theirs', otherAccess);
+    const from = current.recordRef as { kind: 'memory'; id: string };
+    const link = knowledge.appendLink(
+      { commandId: 'l-1', from, to: earlier.recordRef, relation: 'builds_on', reason: 'same kind' },
+      access
+    );
+    const first = knowledge.appendLink(
+      {
+        commandId: 'l-2',
+        from,
+        to: { kind: 'edge', id: link.edgeId },
+        relation: 'contradicts',
+        reason: 'not the same kind',
+      },
+      access
+    );
+    const second = knowledge.appendLink(
+      {
+        commandId: 'l-3',
+        from,
+        to: { kind: 'edge', id: first.edgeId },
+        relation: 'contradicts',
+        reason: 'it was the same kind after all',
+      },
+      access
+    );
+
+    const page = knowledge.queryGraph(
+      { view: 'neighbors', seeds: [current.recordRef], maxDepth: 1, relations: ['builds_on'] },
+      access
+    );
+    expect(page.edges.find((edge) => edge.id === link.edgeId)?.attrs).toMatchObject({
+      corrected_by: [
+        {
+          edgeId: first.edgeId,
+          correctedBy: [{ edgeId: second.edgeId, reason: 'it was the same kind after all' }],
+        },
+      ],
+    });
+    expect(knowledge.findLink('l-2', access)).toMatchObject({
+      edgeId: first.edgeId,
+      replayed: true,
+    });
+    expect(knowledge.findLink('l-unknown', access)).toBeNull();
+
+    const theirLink = knowledge.appendLink(
+      {
+        commandId: 'l-theirs',
+        from: theirs.recordRef as { kind: 'memory'; id: string },
+        to: theirs.recordRef,
+        relation: 'mentions',
+        reason: 'x',
+      },
+      otherAccess
+    );
+    expect(() =>
+      knowledge.appendLink(
+        {
+          commandId: 'l-4',
+          from,
+          to: { kind: 'edge', id: theirLink.edgeId },
+          relation: 'contradicts',
+          reason: 'x',
+        },
+        access
+      )
+    ).toThrow(/unavailable/);
+    expect(() =>
+      knowledge.appendLink(
+        { commandId: 'l-5', from, to: earlier.recordRef, relation: 'supersedes', reason: 'x' },
+        access
+      )
+    ).toThrow(/Unknown link relation/);
+  });
+
+  it("links to a record with no scope binding, as a record's own links may", async () => {
+    const current = await work('current', 'current');
+    getAdapter()
+      .prepare(
+        `INSERT INTO decisions (id, topic, decision, confidence, created_at, updated_at)
+         VALUES ('unbound-record', 'legacy', 'a record from before scopes', 1, 1, 1)`
+      )
+      .run();
+
+    const receipt = knowledge.appendLink(
+      {
+        commandId: 'l-unbound',
+        from: current.recordRef as { kind: 'memory'; id: string },
+        to: { kind: 'memory', id: 'unbound-record' },
+        relation: 'builds_on',
+        reason: 'continues the legacy record',
+      },
+      access
+    );
+    expect(receipt.replayed).toBe(false);
+  });
 });

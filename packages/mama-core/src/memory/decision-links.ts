@@ -5,6 +5,7 @@ import { canonicalizeJSON } from '../canonicalize.js';
 import { appendLink, type LinkReceipt } from '../knowledge/links.js';
 import type { RecordLink } from './judgment-types.js';
 import type { MemoryScopeRef } from './types.js';
+import { scanMemoryWriteInput, SecretMaterialRefusedError } from './secret-filter.js';
 import { boundScopesOf, unsignedWriteAccess } from './write-adapters.js';
 
 /**
@@ -27,14 +28,31 @@ export function appendDecisionLink(
   adapter: Pick<DatabaseAdapter, 'prepare' | 'transaction' | 'transactionImmediate'>,
   input: DecisionLinkInput
 ): LinkReceipt {
+  // The reason is stored text, like a checkpoint's, so it passes the same secret scan.
+  const scan = scanMemoryWriteInput({ reason: input.reason });
+  if (!scan.clean) throw new SecretMaterialRefusedError(scan.matches);
   const to = isEdgeId(input.to)
     ? { kind: 'edge' as const, id: input.to }
     : { kind: 'memory' as const, id: input.to };
   const scopes = new Map<string, MemoryScopeRef>();
-  for (const scope of [
-    ...boundScopesOf(adapter, input.from),
-    ...(to.kind === 'memory' ? boundScopesOf(adapter, to.id) : []),
-  ]) {
+  // A correction reads the corrected link, so both of its ends must be admitted too.
+  const ends =
+    to.kind === 'edge'
+      ? ((adapter
+          .prepare(
+            `SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?`
+          )
+          .get(to.id) as
+          | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+          | undefined) ?? null)
+      : null;
+  const memoryEnds = [
+    input.from,
+    ...(to.kind === 'memory' ? [to.id] : []),
+    ...(ends?.subject_kind === 'memory' ? [ends.subject_id] : []),
+    ...(ends?.object_kind === 'memory' ? [ends.object_id] : []),
+  ];
+  for (const scope of memoryEnds.flatMap((id) => boundScopesOf(adapter, id))) {
     scopes.set(`${scope.kind}\0${scope.id}`, scope);
   }
   // The same statement retried is the same link; a different reason is a different statement.
@@ -66,7 +84,16 @@ export interface DecisionEdgeView {
   /** agent: stated through a link; agent_text: parsed from reasoning text; host: written by code. */
   source: 'agent' | 'agent_text' | 'host' | 'user';
   edgeId?: string;
-  correctedBy?: Array<{ edgeId: string; reason: string | null; at: number }>;
+  correctedBy?: DecisionCorrection[];
+  /** On an incoming amends edge: the values the amending record replaced on this decision. */
+  replacedValues?: Record<string, unknown>;
+}
+
+export interface DecisionCorrection {
+  edgeId: string;
+  reason: string | null;
+  at: number;
+  correctedBy?: DecisionCorrection[];
 }
 
 export interface DecisionWithEdges {
@@ -89,6 +116,61 @@ function legacySource(reason: string | null, createdBy: string | null): Decision
   if (createdBy === 'llm' || reason?.startsWith('Auto-detected from reasoning'))
     return 'agent_text';
   return 'user';
+}
+
+/** Links that contradict these edges, and the links that contradict those, in two queries per level. */
+function correctionsOf(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  edgeIds: readonly string[]
+): Map<string, DecisionCorrection[]> {
+  const byTarget = new Map<string, DecisionCorrection[]>();
+  let frontier = [...edgeIds];
+  while (frontier.length > 0) {
+    const placeholders = frontier.map(() => '?').join(', ');
+    const rows = adapter
+      .prepare(
+        `SELECT edge_id, object_id, reason_text, created_at FROM twin_edges
+          WHERE object_kind = 'edge' AND edge_type = 'contradicts' AND object_id IN (${placeholders})
+          ORDER BY created_at, edge_id`
+      )
+      .all(...frontier) as Array<{
+      edge_id: string;
+      object_id: string;
+      reason_text: string | null;
+      created_at: number;
+    }>;
+    for (const row of rows) {
+      const list = byTarget.get(row.object_id) ?? [];
+      list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
+      byTarget.set(row.object_id, list);
+    }
+    // A link names only an edge that already exists, so the chain has no cycle.
+    frontier = rows.map((row) => row.edge_id);
+  }
+  const nest = (edgeId: string): DecisionCorrection[] | undefined =>
+    byTarget.get(edgeId)?.map((correction) => {
+      const further = nest(correction.edgeId);
+      return further ? { ...correction, correctedBy: further } : correction;
+    });
+  const nested = new Map<string, DecisionCorrection[]>();
+  for (const edgeId of edgeIds) {
+    const list = nest(edgeId);
+    if (list) nested.set(edgeId, list);
+  }
+  return nested;
+}
+
+function replacedValuesFor(
+  payloadOf: { get: (id: string) => unknown },
+  amendingId: string,
+  targetId: string
+): Record<string, unknown> | undefined {
+  const row = payloadOf.get(amendingId) as { payload_json: string | null } | undefined;
+  if (!row?.payload_json) return undefined;
+  const payload = JSON.parse(row.payload_json) as {
+    replacedValues?: Array<{ target: string; values: Record<string, unknown> }>;
+  };
+  return payload.replacedValues?.find((entry) => entry.target === targetId)?.values;
 }
 
 /** One decision with every edge in and out, each with its reason and who wrote it. */
@@ -142,28 +224,20 @@ export function readDecisionWithEdges(
     relation_attrs_json: string | null;
     source: string;
   }>;
-  const corrections = adapter.prepare(
-    `SELECT edge_id, reason_text, created_at FROM twin_edges
-      WHERE object_kind = 'edge' AND object_id = ? AND edge_type = 'contradicts'
-      ORDER BY created_at, edge_id`
+  const corrections = correctionsOf(
+    adapter,
+    twin.map((edge) => edge.edge_id)
   );
+  const payloadOf = adapter.prepare('SELECT payload_json FROM decisions WHERE id = ?');
   for (const edge of twin) {
     const out = edge.subject_id === id;
     const otherId = out ? edge.object_id : edge.subject_id;
     const attrs = edge.relation_attrs_json
       ? (JSON.parse(edge.relation_attrs_json) as Record<string, unknown>)
       : {};
-    const corrected = (
-      corrections.all(edge.edge_id) as Array<{
-        edge_id: string;
-        reason_text: string | null;
-        created_at: number;
-      }>
-    ).map((correction) => ({
-      edgeId: correction.edge_id,
-      reason: correction.reason_text,
-      at: correction.created_at,
-    }));
+    const corrected = corrections.get(edge.edge_id);
+    const replaced =
+      !out && edge.edge_type === 'amends' ? replacedValuesFor(payloadOf, otherId, id) : undefined;
     edges.push({
       relation: edge.edge_type,
       direction: out ? 'out' : 'in',
@@ -172,7 +246,8 @@ export function readDecisionWithEdges(
       reason: typeof attrs.reason === 'string' ? attrs.reason : edge.reason_text,
       source: edge.source === 'code' ? 'host' : 'agent',
       edgeId: edge.edge_id,
-      ...(corrected.length > 0 ? { correctedBy: corrected } : {}),
+      ...(corrected ? { correctedBy: corrected } : {}),
+      ...(replaced ? { replacedValues: replaced } : {}),
     });
   }
   const legacy = adapter

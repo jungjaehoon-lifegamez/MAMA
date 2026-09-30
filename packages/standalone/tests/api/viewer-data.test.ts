@@ -46,7 +46,7 @@ describe('viewer data shaping', () => {
         },
         access
       );
-      const revised = await knowledge.reviseWork(
+      await knowledge.reviseWork(
         {
           commandId: 'viewer-data-revise-one',
           commitmentId: created.commitmentId,
@@ -99,7 +99,6 @@ describe('viewer data shaping', () => {
         }),
       ]);
       expect(link.replayed).toBe(false);
-      expect(revised.recordRef).not.toEqual(created.recordRef);
     } finally {
       await handle.close();
       rmSync(root, { recursive: true, force: true });

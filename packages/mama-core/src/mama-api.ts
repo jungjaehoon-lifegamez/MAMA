@@ -101,6 +101,16 @@ import type { LinkReceipt } from './knowledge/links.js';
 /**
  * Parameters for mama.save()
  */
+/** Relations a save names; replacing is `replaces`, which also moves the replaced record's state. */
+const SAVE_LINK_RELATIONS: readonly RecordLink['relation'][] = [
+  'builds_on',
+  'refines',
+  'contradicts',
+  'debates',
+  'synthesizes',
+  'mentions',
+];
+
 interface SaveParams {
   topic: string;
   decision: string;
@@ -455,6 +465,11 @@ async function saveInternal(
             links: links.map((link) => {
               if (typeof link.reason !== 'string' || link.reason.trim() === '') {
                 throw new Error('mama.save() each link needs a reason');
+              }
+              if (!SAVE_LINK_RELATIONS.includes(link.relation)) {
+                throw new Error(
+                  `mama.save() link relation must be one of ${SAVE_LINK_RELATIONS.join(', ')}; a replaced decision goes in replaces`
+                );
               }
               return {
                 relation: link.relation,

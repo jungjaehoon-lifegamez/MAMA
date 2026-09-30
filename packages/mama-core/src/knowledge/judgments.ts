@@ -279,7 +279,8 @@ function validateCommandFields(command: JudgmentCommand): void {
   }
 }
 
-function referenceExists(
+/** Whether a link may name this target under the caller's admitted write scopes. */
+export function referenceExists(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   reference: WorkReference,
   admittedScopeIds: readonly string[]
@@ -330,8 +331,26 @@ function referenceExists(
     );
   }
   if (reference.kind === 'edge') {
+    // A correction reads the link it corrects, so both of that link's ends must be reachable.
+    const edge = adapter
+      .prepare(
+        'SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?'
+      )
+      .get(reference.id) as
+      | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+      | undefined;
     return (
-      adapter.prepare('SELECT 1 FROM twin_edges WHERE edge_id = ?').get(reference.id) !== undefined
+      edge !== undefined &&
+      referenceExists(
+        adapter,
+        { kind: edge.subject_kind, id: edge.subject_id } as WorkReference,
+        admittedScopeIds
+      ) &&
+      referenceExists(
+        adapter,
+        { kind: edge.object_kind, id: edge.object_id } as WorkReference,
+        admittedScopeIds
+      )
     );
   }
   return false;
@@ -398,33 +417,54 @@ const AMEND_COLUMN_MAP = {
   supersededBy: 'superseded_by',
 } as const;
 
-/**
- * Set the target's projection columns and return the values they held, so the amending record
- * keeps what it replaced: the columns are a projection, the appended records are the history.
- */
+/** The column values an amendment or a replacement is about to overwrite, per target. */
+function priorValuesFor(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  command: JudgmentCommand
+): Array<{ target: string; values: Record<string, unknown> }> {
+  const read = (id: string, columns: readonly string[]) =>
+    adapter.prepare(`SELECT ${columns.join(', ')} FROM decisions WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+  const replaced = (command.replaces ?? []).map((replacement) => {
+    const prior = read(replacement.id, ['status', 'superseded_by']);
+    return {
+      target: replacement.id,
+      values: { status: prior?.status ?? null, supersededBy: prior?.superseded_by ?? null },
+    };
+  });
+  const amended = (command.amends ?? []).map((amendment) => {
+    const fields = AMEND_FIELDS.filter((field) => field in amendment);
+    const prior = read(
+      amendment.target.id,
+      fields.map((field) => AMEND_COLUMN_MAP[field])
+    );
+    return {
+      target: amendment.target.id,
+      values: Object.fromEntries(
+        fields.map((field) => [field, prior?.[AMEND_COLUMN_MAP[field]] ?? null])
+      ),
+    };
+  });
+  return [...replaced, ...amended];
+}
+
 function applyAmendment(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   amendment: JudgmentAmendment,
   now: number
-): Record<string, unknown> {
-  const fields = AMEND_FIELDS.filter((field) => field in amendment);
-  const prior = adapter
-    .prepare(
-      `SELECT ${fields.map((field) => AMEND_COLUMN_MAP[field]).join(', ')} FROM decisions WHERE id = ?`
-    )
-    .get(amendment.target.id) as Record<string, unknown> | undefined;
+): void {
   const sets: string[] = ['updated_at = ?'];
   const params: unknown[] = [now];
-  const replaced: Record<string, unknown> = {};
-  for (const field of fields) {
-    sets.push(`${AMEND_COLUMN_MAP[field]} = ?`);
-    params.push(amendment[field] ?? null);
-    replaced[field] = prior?.[AMEND_COLUMN_MAP[field]] ?? null;
+  for (const field of AMEND_FIELDS) {
+    if (field in amendment) {
+      sets.push(`${AMEND_COLUMN_MAP[field]} = ?`);
+      params.push(amendment[field] ?? null);
+    }
   }
   adapter
     .prepare(`UPDATE decisions SET ${sets.join(', ')} WHERE id = ?`)
     .run(...params, amendment.target.id);
-  return replaced;
 }
 
 function applyProjections(
@@ -515,7 +555,6 @@ function insertLink(
     model_run_id: command.modelRunId ?? undefined,
     reason_text:
       typeof link.attrs?.reason === 'string' ? link.attrs.reason : (command.reasoning ?? undefined),
-    evidence_refs: command.replaces?.length ? command.replaces : undefined,
     content_hash: contentHash,
     created_at: now,
   });
@@ -591,6 +630,9 @@ async function appendJudgmentOnAdapter(
       }
       return;
     }
+    // What the amendments and replacements will overwrite, kept in this record: the target
+    // columns are a projection, and the appended records are the history.
+    const replacedValues = priorValuesFor(adapter, command);
     const decisionRowId = insertPreparedDecision(
       adapter,
       {
@@ -637,7 +679,11 @@ async function appendJudgmentOnAdapter(
       )
       .run(
         command.recordKind,
-        canonicalizeJSON(command.payload ?? {}),
+        canonicalizeJSON(
+          replacedValues.length > 0
+            ? { ...(command.payload ?? {}), replacedValues }
+            : (command.payload ?? {})
+        ),
         command.appliesFrom ?? null,
         command.appliesUntil ?? null,
         command.record?.kind ?? null,
@@ -661,18 +707,10 @@ async function appendJudgmentOnAdapter(
     for (const [index, link] of (command.links ?? []).entries()) {
       edgeIds.push(insertLink(adapter, command, recordId, link, index, access, now));
     }
-    const replacedValues: Array<{ target: string; values: Record<string, unknown> }> = [];
     for (const replacement of command.replaces ?? []) {
       if (!referenceExists(adapter, { kind: 'memory', id: replacement.id }, admittedScopeIdList)) {
         throw new JudgmentError('REFERENCE_NOT_FOUND', 'A replacement target is unavailable');
       }
-      const prior = adapter
-        .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
-        .get(replacement.id) as { status: unknown; superseded_by: unknown } | undefined;
-      replacedValues.push({
-        target: replacement.id,
-        values: { status: prior?.status ?? null, supersededBy: prior?.superseded_by ?? null },
-      });
       adapter
         .prepare(
           "UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?"
@@ -698,15 +736,7 @@ async function appendJudgmentOnAdapter(
       if (!referenceExists(adapter, amendment.target, admittedScopeIdList)) {
         throw new JudgmentError('REFERENCE_NOT_FOUND', 'An amendment target is unavailable');
       }
-      replacedValues.push({
-        target: amendment.target.id,
-        values: applyAmendment(adapter, amendment, domainNow),
-      });
-    }
-    if (replacedValues.length > 0) {
-      adapter
-        .prepare('UPDATE decisions SET payload_json = ? WHERE id = ?')
-        .run(canonicalizeJSON({ ...(command.payload ?? {}), replacedValues }), recordId);
+      applyAmendment(adapter, amendment, domainNow);
     }
     applyProjections(adapter, command, recordId, effectiveScopes);
     // A commitment's own clock is domain time, like the record's: `updated_at`

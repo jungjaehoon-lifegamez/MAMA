@@ -176,4 +176,39 @@ describe('work.link and work.list view links', () => {
       )
     ).rejects.toThrow(/unavailable/);
   });
+
+  it('keeps the link readable after later revisions, and a retried call returns the same link', async () => {
+    const current = await work('current', 'current v1');
+    const earlier = await work('earlier', 'earlier');
+    const input = {
+      from: current.commitmentId,
+      to: { kind: 'work', id: earlier.commitmentId },
+      relation: 'builds_on',
+      reason: 'the same kind of case',
+    };
+    const first = (await link(input, 'op-retry')) as { edgeId: string };
+    await knowledge.reviseWork(
+      {
+        commandId: 'revise-after-link',
+        commitmentId: current.commitmentId,
+        summary: 'renamed',
+        set: { title: 'current v2' },
+      },
+      access
+    );
+
+    expect(await link(input, 'op-retry')).toMatchObject({ edgeId: first.edgeId, replayed: true });
+    const view = (await runWorkListView(
+      { view: 'links', ids: [current.commitmentId, earlier.commitmentId] },
+      { knowledge, access, timeZone: 'UTC' }
+    )) as { items: Array<{ title: string; links: Array<Record<string, unknown>> }> };
+    expect(view.items[0]).toMatchObject({ title: 'current v2' });
+    expect(view.items[0]!.links).toEqual([expect.objectContaining({ edgeId: first.edgeId })]);
+    expect(view.items[1]!.links).toEqual([
+      expect.objectContaining({
+        direction: 'in',
+        other: expect.objectContaining({ title: 'current v2' }),
+      }),
+    ]);
+  });
 });

@@ -1,7 +1,7 @@
 ---
 name: mama-researcher
 description: Use when researching past decisions, architecture choices, or project history from MAMA memory. This agent searches MAMA's decision database to find relevant context about previous decisions, patterns, and rationale.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, mcp__plugin_mama_mama__search, mcp__plugin_mama_mama__get_decision
 model: haiku
 ---
 
