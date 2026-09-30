@@ -67,6 +67,7 @@ describe('W1 action surface', () => {
       'source.recent',
       'source.search',
       'work.create',
+      'work.link',
       'work.list',
       'work.no_update',
       'work.revise',

@@ -8,8 +8,6 @@
  * A principal that admits nothing sees an empty graph rather than the file.
  */
 import { ensureMemoryScope, type DatabaseAdapter } from '../db-manager.js';
-import { generateEmbedding } from '../embedding/embedder.js';
-import { vectorSearch } from '../knowledge/search.js';
 
 export interface GraphReadNode {
   id: string;
@@ -26,10 +24,6 @@ export interface GraphReadEdge {
   to: string;
   relationship: string;
   reason: string | null;
-}
-
-export interface GraphSimilarityEdge extends GraphReadEdge {
-  similarity: number;
 }
 
 export interface GraphScope {
@@ -127,61 +121,4 @@ export async function countGraphNodes(
     )
     .get(...scopeIds)) as { count?: number } | undefined;
   return row?.count ?? 0;
-}
-
-/**
- * Similarity edges over the admitted set.
- *
- * This embeds a bounded window of admitted nodes and asks the vector index what
- * each is near. It lives here rather than in an HTTP handler because that is
- * where the embedder is — a door that embeds is a door that has opinions about
- * what memory means.
- */
-export async function readGraphSimilarityEdges(
-  adapter: DatabaseAdapter,
-  scopes: readonly GraphScope[],
-  options: { window?: number; neighbors?: number; threshold?: number } = {}
-): Promise<GraphSimilarityEdge[]> {
-  const window = options.window ?? 50;
-  const neighbors = options.neighbors ?? 3;
-  const threshold = options.threshold ?? 0.7;
-  const nodes = await readGraphNodes(adapter, scopes, { limit: Math.max(window * 2, window) });
-  if (nodes.length < 2) {
-    return [];
-  }
-  const admitted = new Set(nodes.map((node) => node.id));
-  const seen = new Set<string>();
-  const edges: GraphSimilarityEdge[] = [];
-  for (const node of nodes.slice(0, window)) {
-    const embedding = await generateEmbedding(`${node.topic} ${node.decision}`, 'query');
-    const similar = (await vectorSearch(
-      adapter as never,
-      embedding,
-      neighbors,
-      threshold
-    )) as Array<{ id: string; similarity?: number }>;
-    for (const match of similar) {
-      // A neighbour the caller may not read is not an edge it may see.
-      if (match.id === node.id || !admitted.has(match.id)) {
-        continue;
-      }
-      const similarity = match.similarity ?? threshold;
-      if (similarity <= threshold) {
-        continue;
-      }
-      const key = [node.id, match.id].sort().join('|');
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      edges.push({
-        from: node.id,
-        to: match.id,
-        relationship: 'similar',
-        reason: null,
-        similarity,
-      });
-    }
-  }
-  return edges;
 }

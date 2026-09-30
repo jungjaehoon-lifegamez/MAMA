@@ -277,13 +277,6 @@ function validateCommandFields(command: JudgmentCommand): void {
       );
     }
   }
-  for (const edge of command.projections?.decisionEdges ?? []) {
-    if (edge.fromId !== undefined) {
-      requireText(edge.fromId, 'projection edge source');
-    }
-    requireText(edge.targetId, 'projection edge target');
-    requireText(edge.relationship, 'projection edge relationship');
-  }
 }
 
 function referenceExists(
@@ -405,30 +398,40 @@ const AMEND_COLUMN_MAP = {
   supersededBy: 'superseded_by',
 } as const;
 
+/**
+ * Set the target's projection columns and return the values they held, so the amending record
+ * keeps what it replaced: the columns are a projection, the appended records are the history.
+ */
 function applyAmendment(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   amendment: JudgmentAmendment,
   now: number
-): void {
+): Record<string, unknown> {
+  const fields = AMEND_FIELDS.filter((field) => field in amendment);
+  const prior = adapter
+    .prepare(
+      `SELECT ${fields.map((field) => AMEND_COLUMN_MAP[field]).join(', ')} FROM decisions WHERE id = ?`
+    )
+    .get(amendment.target.id) as Record<string, unknown> | undefined;
   const sets: string[] = ['updated_at = ?'];
   const params: unknown[] = [now];
-  for (const field of AMEND_FIELDS) {
-    if (field in amendment) {
-      sets.push(`${AMEND_COLUMN_MAP[field]} = ?`);
-      params.push(amendment[field] ?? null);
-    }
+  const replaced: Record<string, unknown> = {};
+  for (const field of fields) {
+    sets.push(`${AMEND_COLUMN_MAP[field]} = ?`);
+    params.push(amendment[field] ?? null);
+    replaced[field] = prior?.[AMEND_COLUMN_MAP[field]] ?? null;
   }
   adapter
     .prepare(`UPDATE decisions SET ${sets.join(', ')} WHERE id = ?`)
     .run(...params, amendment.target.id);
+  return replaced;
 }
 
 function applyProjections(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   command: JudgmentCommand,
   recordId: string,
-  effectiveScopes: readonly MemoryScopeRef[],
-  now: number
+  effectiveScopes: readonly MemoryScopeRef[]
 ): void {
   const projections = command.projections;
   if (!projections) return;
@@ -439,30 +442,6 @@ function applyProjections(
       actors: projections.recordIdentity.actors ?? [],
       scopes: effectiveScopes,
     });
-  }
-  for (const targetId of projections.supersedeTargets ?? []) {
-    adapter
-      .prepare(
-        "UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?"
-      )
-      .run(recordId, now, targetId);
-  }
-  const edgeInsert = adapter.prepare(
-    `INSERT INTO decision_edges
-     (from_id, to_id, relationship, reason, weight, created_at, created_by, approved_by_user)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  for (const edge of projections.decisionEdges ?? []) {
-    edgeInsert.run(
-      edge.fromId ?? recordId,
-      edge.targetId,
-      edge.relationship,
-      edge.reason ?? null,
-      edge.weight ?? 1,
-      now,
-      edge.createdBy ?? 'user',
-      edge.approvedByUser ?? 1
-    );
   }
 }
 
@@ -682,10 +661,18 @@ async function appendJudgmentOnAdapter(
     for (const [index, link] of (command.links ?? []).entries()) {
       edgeIds.push(insertLink(adapter, command, recordId, link, index, access, now));
     }
+    const replacedValues: Array<{ target: string; values: Record<string, unknown> }> = [];
     for (const replacement of command.replaces ?? []) {
       if (!referenceExists(adapter, { kind: 'memory', id: replacement.id }, admittedScopeIdList)) {
         throw new JudgmentError('REFERENCE_NOT_FOUND', 'A replacement target is unavailable');
       }
+      const prior = adapter
+        .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
+        .get(replacement.id) as { status: unknown; superseded_by: unknown } | undefined;
+      replacedValues.push({
+        target: replacement.id,
+        values: { status: prior?.status ?? null, supersededBy: prior?.superseded_by ?? null },
+      });
       adapter
         .prepare(
           "UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?"
@@ -711,9 +698,17 @@ async function appendJudgmentOnAdapter(
       if (!referenceExists(adapter, amendment.target, admittedScopeIdList)) {
         throw new JudgmentError('REFERENCE_NOT_FOUND', 'An amendment target is unavailable');
       }
-      applyAmendment(adapter, amendment, domainNow);
+      replacedValues.push({
+        target: amendment.target.id,
+        values: applyAmendment(adapter, amendment, domainNow),
+      });
     }
-    applyProjections(adapter, command, recordId, effectiveScopes, domainNow);
+    if (replacedValues.length > 0) {
+      adapter
+        .prepare('UPDATE decisions SET payload_json = ? WHERE id = ?')
+        .run(canonicalizeJSON({ ...(command.payload ?? {}), replacedValues }), recordId);
+    }
+    applyProjections(adapter, command, recordId, effectiveScopes);
     // A commitment's own clock is domain time, like the record's: `updated_at`
     // is what the board sorts and filters on, so a caller that states when a
     // revision happened must see that time on the row, not the wall clock the
@@ -854,18 +849,9 @@ async function appendJudgmentOnAdapter(
             access.agentId,
             command.modelRunId ?? null
           );
-        edgeIds.push(
-          insertLink(
-            adapter,
-            command,
-            recordId,
-            { relation: 'builds_on', target: { kind: 'memory', id: current.head_record_id } },
-            command.links?.length ?? 0,
-            // The host links a revision to the record it revises; the agent did not judge it.
-            { ...access, edgeSource: 'code' },
-            now
-          )
-        );
+        // No host edge to the previous revision: the order lives in commitment_assignments, and
+        // how a revision relates to an earlier record is the agent's link to state (owner,
+        // 2026-09-30).
         adapter
           .prepare(
             'UPDATE commitments SET current_revision = ?, head_record_id = ?, withdrawn = ?, updated_at = ?, agent_id = ?, model_run_id = ? WHERE commitment_id = ?'

@@ -11,16 +11,11 @@
 import crypto from 'node:crypto';
 
 import { canonicalizeJSON } from '../canonicalize.js';
-import { buildMemoryScopeId, prepareDecisionEmbedding } from '../db-manager.js';
+import { prepareDecisionEmbedding } from '../db-manager.js';
 import type { DatabaseAdapter, DatabaseInstance, DecisionInput } from '../db-manager.js';
 import { appendJudgment } from '../knowledge/judgments.js';
 import type { JudgmentAccess } from '../knowledge/judgments.js';
-import type {
-  JudgmentAmendment,
-  JudgmentProjections,
-  JsonValue,
-  RecordLink,
-} from './judgment-types.js';
+import type { JudgmentAmendment, JsonValue, RecordLink } from './judgment-types.js';
 import type { MemoryScopeRef } from './types.js';
 import type { NormalizedMemoryProvenance } from './provenance.js';
 
@@ -80,131 +75,6 @@ export function boundScopesOf(
       const record = row as { kind: string; external_id: string };
       return { kind: record.kind as MemoryScopeRef['kind'], id: record.external_id };
     });
-}
-
-/**
- * Fail-first visibility check for explicitly authored relationship targets,
- * preserving the legacy error contract.
- *
- * Trusted envelopes check visibility strictly inside admitted scopes (unbound
- * legacy rows are not reachable — same as the pre-boundary envelope check).
- * Unsigned callers keep the legacy existence check for the original error
- * text; scope admission is then enforced by the command boundary itself.
- */
-export function assertRelationshipTargetsVisible(
-  adapter: Pick<DatabaseAdapter, 'prepare'>,
-  targetIds: readonly string[],
-  admittedScopes: readonly MemoryScopeRef[],
-  trustedEnvelope: boolean
-): void {
-  for (const targetId of targetIds) {
-    if (trustedEnvelope) {
-      const scopeIds = admittedScopes.map((scope) => buildMemoryScopeId(scope.kind, scope.id));
-      const placeholders = scopeIds.map(() => '?').join(', ');
-      const visible =
-        scopeIds.length > 0 &&
-        adapter
-          .prepare(
-            `SELECT 1 FROM decisions d
-             JOIN memory_scope_bindings b ON b.memory_id = d.id
-             WHERE d.id = ? AND b.scope_id IN (${placeholders}) LIMIT 1`
-          )
-          .get(targetId, ...scopeIds) !== undefined;
-      if (!visible) {
-        const denied = new Error('Relationship target is unavailable') as Error & {
-          code?: string;
-        };
-        denied.code = 'relationship_target_unavailable';
-        throw denied;
-      }
-      continue;
-    }
-    const target = adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(targetId);
-    if (!target) {
-      throw new Error(`mama.save() relationship target does not exist: ${targetId}`);
-    }
-  }
-}
-
-export interface ExplicitRelationship {
-  type: string;
-  targetId: string;
-}
-
-const LINK_RELATIONS = new Set<RecordLink['relation']>([
-  'supersedes',
-  'refines',
-  'contradicts',
-  'mentions',
-  'derived_from',
-  'builds_on',
-  'debates',
-  'synthesizes',
-  'blocks',
-  'next_action_for',
-  'case_member',
-]);
-
-/**
- * Map deduplicated legacy relationships onto command fields.
- *
- * Trusted envelopes get the authored form: `supersedes` targets become
- * scope-checked `replaces`, and link-able relations also enter the twin edge
- * graph as explicit `links` — both fail closed inside the boundary.
- *
- * Unsigned callers keep the legacy contract: the adapter already checked that
- * each target exists, so relationships are written only as `decision_edges`
- * projection rows and `supersedes` targets are moved out of current truth
- * through the `supersedeTargets` projection — never as scope-checked authored
- * links the caller was not admitted to.
- */
-export function relationshipsToCommandFields(
-  relationships: readonly ExplicitRelationship[],
-  options?: { trusted?: boolean }
-): {
-  links: RecordLink[];
-  replaces: Array<{ id: string; reason: string }>;
-  decisionEdges: NonNullable<JudgmentProjections['decisionEdges']>;
-  supersedeTargets: string[];
-} {
-  const trusted = options?.trusted === true;
-  const links: RecordLink[] = [];
-  const replaces: Array<{ id: string; reason: string }> = [];
-  const supersedeTargets: string[] = [];
-  const decisionEdges: Array<{
-    targetId: string;
-    relationship: string;
-    reason?: string | null;
-    weight?: number;
-  }> = [];
-  const seen = new Set<string>();
-  for (const relationship of relationships) {
-    const key = `${relationship.type}:${relationship.targetId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const reason = `Explicit ${relationship.type} reference in reasoning`;
-    decisionEdges.push({
-      targetId: relationship.targetId,
-      relationship: relationship.type,
-      reason,
-      weight: 1,
-    });
-    if (relationship.type === 'supersedes') {
-      if (trusted) {
-        replaces.push({ id: relationship.targetId, reason });
-      } else {
-        supersedeTargets.push(relationship.targetId);
-      }
-      continue;
-    }
-    if (trusted && LINK_RELATIONS.has(relationship.type as RecordLink['relation'])) {
-      links.push({
-        relation: relationship.type as RecordLink['relation'],
-        target: { kind: 'memory', id: relationship.targetId },
-      });
-    }
-  }
-  return { links, replaces, decisionEdges, supersedeTargets };
 }
 
 /**

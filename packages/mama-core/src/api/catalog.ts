@@ -27,12 +27,7 @@ import {
   readProjectDecisions,
   readProjectRollups,
 } from '../memory/dashboard-read.js';
-import {
-  countGraphNodes,
-  readGraphEdges,
-  readGraphNodes,
-  readGraphSimilarityEdges,
-} from '../memory/graph-read.js';
+import { countGraphNodes, readGraphEdges, readGraphNodes } from '../memory/graph-read.js';
 import { sanitizeRecallBundle, sanitizeRecallText } from '../memory/recall-sanitize.js';
 import { ingestSource } from '../knowledge/source-ingest.js';
 import { upsertNode, type RegistryScopeRef } from '../registry/store.js';
@@ -1369,14 +1364,14 @@ export function coreActionRegistrations(
       contract: {
         name: 'memory.read:graph',
         summary:
-          'The decision graph this caller may see: `view: graph` returns a bounded page of nodes with the edges joining admitted nodes and the admitted total; `nodes` returns the named ids; `detail` returns one record in full; `similarity` returns what the vector index says is near, over the admitted window. Every view is bounded by the admitted scopes.',
+          'The decision graph this caller may see: `view: graph` returns a bounded page of nodes with the edges joining admitted nodes and the admitted total; `nodes` returns the named ids; `detail` returns one record in full. Every view is bounded by the admitted scopes.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           properties: {
             view: {
               type: 'string',
-              enum: ['graph', 'nodes', 'detail', 'similarity'],
+              enum: ['graph', 'nodes', 'detail'],
               description: 'Memory graph view, e.g. "detail".',
             },
             id: { type: 'string', description: 'One memory id for detail, e.g. "mem_123".' },
@@ -1428,9 +1423,6 @@ export function coreActionRegistrations(
             return { nodes: [] };
           }
           return { nodes: await readGraphNodes(adapter, scopes, { ids, limit: null }) };
-        }
-        if (view === 'similarity') {
-          return { edges: await readGraphSimilarityEdges(adapter, scopes) };
         }
         const [nodes, edges, total] = await Promise.all([
           readGraphNodes(adapter, scopes, { limit }),

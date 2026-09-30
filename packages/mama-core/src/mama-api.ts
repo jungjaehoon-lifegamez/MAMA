@@ -51,7 +51,6 @@ import {
   buildProfile as buildProfileInAdapter,
   ingestMemory as ingestMemoryInAdapter,
   ingestConversation as ingestConversationInAdapter,
-  evolveMemory,
   buildMemoryBootstrap as buildMemoryBootstrapInAdapter,
   createAuditAck,
   recordMemoryAudit as recordMemoryAuditInAdapter,
@@ -86,6 +85,7 @@ import {
   readToolTrace as readToolTraceInAdapter,
 } from './runtime/tool-trace-store.js';
 import { type SearchHitDiagnostics } from './knowledge/search-quality.js';
+import type { RecordLink } from './memory/judgment-types.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -110,6 +110,10 @@ interface SaveParams {
   actors?: Array<{ person: string; role: string }>;
   /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
   event_date?: string | null;
+  /** Decisions this one relates to, each with the relation and the reason the caller judged. */
+  links?: Array<{ id: string; relation: RecordLink['relation']; reason: string }>;
+  /** Decisions this one replaces, each with the reason. */
+  replaces?: Array<{ id: string; reason: string }>;
 }
 
 /**
@@ -347,6 +351,8 @@ async function saveInternal(
     item,
     actors,
     event_date,
+    links,
+    replaces,
   }: SaveParams
 ): Promise<SaveResult> {
   // Validate required fields
@@ -418,9 +424,8 @@ async function saveInternal(
   const dbOutcome =
     outcome in outcomeMap ? outcomeMap[outcome as keyof typeof outcomeMap] : outcome;
 
-  // Reasoning text is evidence, not authority: relationships are only written
-  // when the caller names explicit targets (saveLegacyMemory's legacy field or
-  // twin-edge links). Parsing IDs out of prose fabricated edges, so it is gone.
+  // Reasoning text is evidence, not authority: a relation is written only when the caller names
+  // its target and reason (`links`, `replaces`). Parsing ids out of prose fabricated edges.
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
   const { id: decisionId } = await saveLegacyMemoryInAdapter(
     adapter,
@@ -438,6 +443,21 @@ async function saveInternal(
       eventDate: event_date ?? undefined,
       itemId: item ?? undefined,
       actors: actors?.map((actor) => ({ personId: actor.person, role: actor.role })),
+      ...(links?.length
+        ? {
+            links: links.map((link) => {
+              if (typeof link.reason !== 'string' || link.reason.trim() === '') {
+                throw new Error('mama.save() each link needs a reason');
+              }
+              return {
+                relation: link.relation,
+                target: { kind: 'memory' as const, id: link.id },
+                attrs: { reason: link.reason.trim() },
+              };
+            }),
+          }
+        : {}),
+      ...(replaces?.length ? { replaces } : {}),
     },
     {
       userInvolvement: _userInvolvement,
@@ -547,11 +567,7 @@ function _generateCollaborationHint(similarDecisions: SimilarDecision[]): string
     return null;
   }
 
-  return `Found ${count} related decision(s). Consider:
-- SUPERSEDE: Add "supersedes: <id>" in reasoning to replace a specific prior decision
-- BUILD-ON: Add "builds_on: <id>" in reasoning to extend
-- DEBATE: Add "debates: <id>" in reasoning for alternative view
-- SYNTHESIZE: Add "synthesizes: [id1, id2]" in reasoning to unify`;
+  return `Found ${count} related decision(s). If the new decision replaces, extends, debates or combines one of them, link it with the reason you judged: replaces [{id, reason}] or links [{id, relation, reason}] when saving, or a link afterwards. Nothing is linked for you.`;
 }
 
 /**
@@ -1103,7 +1119,6 @@ export function createMamaApi(adapter: DatabaseInstance) {
       ingestMemoryInAdapter(adapter, input),
     ingestConversation: (input: Parameters<typeof ingestConversationInAdapter>[1]) =>
       ingestConversationInAdapter(adapter, input),
-    evolveMemory: (input: Parameters<typeof evolveMemory>[0]) => evolveMemory(input),
     buildMemoryBootstrap: (params: Parameters<typeof buildMemoryBootstrapInAdapter>[1]) =>
       buildMemoryBootstrapInAdapter(adapter, params),
     createAuditAck: (input: Parameters<typeof createAuditAck>[0]) => createAuditAck(input),
@@ -1195,7 +1210,6 @@ const mama = {
   buildProfile,
   ingestMemory,
   ingestConversation,
-  evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
   recordMemoryAudit,
@@ -1237,7 +1251,6 @@ export {
   buildProfile,
   ingestMemory,
   ingestConversation,
-  evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
   recordMemoryAudit,
@@ -1272,7 +1285,7 @@ export default mama;
 // ambient `mama` facade methods at top level. Merge instead of replacing
 // module.exports: the compiled `exports.X = X` named exports (suggestInAdapter,
 // saveCheckpointInAdapter, ...) are how api/catalog.ts reaches them from dist.
-// Getter-only named exports (evolveMemory, createAuditAck) keep their getter —
+// Getter-only named exports (createAuditAck) keep their getter —
 // it already returns the same function the facade carries.
 if (typeof module !== 'undefined' && module.exports) {
   const target = module.exports as Record<string, unknown>;

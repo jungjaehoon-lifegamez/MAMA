@@ -268,9 +268,10 @@ describe('record identity', () => {
     expect(graph.find((row) => row.id === 'old-cross-topic')?.refined_from).toEqual(['source-a']);
   });
 
-  it('deduplicates repeated explicit edges and denies trusted cross-scope supersedes atomically', async () => {
+  it('writes only the links the caller names, and refuses a replacement outside its scopes atomically', async () => {
     const db = getAdapter();
     db.prepare('DELETE FROM memory_events').run();
+    db.prepare('DELETE FROM twin_edges').run();
     db.prepare('DELETE FROM decisions').run();
     const target = await saveMemory(getAdapter(), {
       topic: 'target',
@@ -280,69 +281,76 @@ describe('record identity', () => {
       scopes: [{ kind: 'project', id: 'b' }],
       source: { package: 'mama-core', source_type: 'test' },
     });
+    const writer = {
+      principalId: 'main_agent',
+      agentId: 'main_agent',
+      scopes: [{ kind: 'project' as const, id: 'b' }],
+      actions: [],
+    };
+    const link = {
+      relation: 'builds_on' as const,
+      target: { kind: 'memory' as const, id: target.id },
+      attrs: { reason: 'extends the target' },
+    };
+    await expect(
+      saveLegacyMemory(
+        getAdapter(),
+        {
+          topic: 'repeated',
+          kind: 'decision',
+          summary: 'repeated',
+          details: 'the same link twice',
+          scopes: [{ kind: 'project', id: 'b' }],
+          source: { package: 'mama-core', source_type: 'test' },
+          links: [link, link],
+        },
+        {},
+        writer
+      )
+    ).rejects.toThrow(/same relation target/);
     await saveLegacyMemory(
       getAdapter(),
       {
-        topic: 'dedupe',
+        topic: 'linked',
         kind: 'decision',
-        summary: 'dedupe',
-        details: 'explicit links',
-        scopes: [{ kind: 'project', id: 'a' }],
+        summary: 'linked',
+        details: 'one named link',
+        scopes: [{ kind: 'project', id: 'b' }],
         source: { package: 'mama-core', source_type: 'test' },
+        links: [link],
       },
-      { relationships: [{ type: 'builds_on', targetIds: [target.id, target.id] }] }
+      {},
+      writer
     );
     expect(
       db
-        .prepare("SELECT COUNT(*) AS count FROM decision_edges WHERE relationship='builds_on'")
-        .get()
-    ).toEqual({ count: 1 });
+        .prepare(
+          "SELECT edge_type, object_id, reason_text FROM twin_edges WHERE edge_type = 'builds_on'"
+        )
+        .all()
+    ).toEqual([
+      { edge_type: 'builds_on', object_id: target.id, reason_text: 'extends the target' },
+    ]);
 
     const before = db.prepare('SELECT COUNT(*) AS count FROM decisions').get();
-    await expect(
-      saveLegacyMemory(
-        getAdapter(),
-        {
-          topic: 'denied',
-          kind: 'decision',
-          summary: 'denied',
-          details: 'cross scope',
-          scopes: [{ kind: 'project', id: 'a' }],
-          source: { package: 'mama-core', source_type: 'test' },
-        },
-        { relationships: [{ type: 'supersedes', targetIds: [target.id] }] },
-        {
-          principalId: 'main_agent',
-          agentId: 'main_agent',
-          scopes: [{ kind: 'project', id: 'a' }],
-        }
-      )
-    ).rejects.toMatchObject({
-      code: 'relationship_target_unavailable',
-      message: 'Relationship target is unavailable',
-    });
-    await expect(
-      saveLegacyMemory(
-        getAdapter(),
-        {
-          topic: 'unknown-denied',
-          kind: 'decision',
-          summary: 'unknown',
-          details: 'same response',
-          scopes: [{ kind: 'project', id: 'a' }],
-          source: { package: 'mama-core', source_type: 'test' },
-        },
-        { relationships: [{ type: 'supersedes', targetIds: ['decision_unknown'] }] },
-        {
-          principalId: 'main_agent',
-          agentId: 'main_agent',
-          scopes: [{ kind: 'project', id: 'a' }],
-        }
-      )
-    ).rejects.toMatchObject({
-      code: 'relationship_target_unavailable',
-      message: 'Relationship target is unavailable',
-    });
+    for (const id of [target.id, 'decision_unknown']) {
+      await expect(
+        saveLegacyMemory(
+          getAdapter(),
+          {
+            topic: 'denied',
+            kind: 'decision',
+            summary: 'denied',
+            details: 'cross scope',
+            scopes: [{ kind: 'project', id: 'a' }],
+            source: { package: 'mama-core', source_type: 'test' },
+            replaces: [{ id, reason: 'replaced' }],
+          },
+          {},
+          { ...writer, scopes: [{ kind: 'project', id: 'a' }] }
+        )
+      ).rejects.toThrow(/unavailable/);
+    }
     expect(db.prepare('SELECT COUNT(*) AS count FROM decisions').get()).toEqual(before);
 
     const targetRow = db.prepare('SELECT rowid FROM decisions WHERE id = ?').get(target.id) as {
@@ -358,13 +366,10 @@ describe('record identity', () => {
         details: 'same scope',
         scopes: [{ kind: 'project', id: 'b' }],
         source: { package: 'mama-core', source_type: 'test' },
+        replaces: [{ id: target.id, reason: 'the owner changed it' }],
       },
-      { relationships: [{ type: 'supersedes', targetIds: [target.id] }] },
-      {
-        principalId: 'main_agent',
-        agentId: 'main_agent',
-        scopes: [{ kind: 'project', id: 'b' }],
-      }
+      {},
+      writer
     );
     expect(db.prepare('SELECT status FROM decisions WHERE id = ?').get(target.id)).toEqual({
       status: 'superseded',

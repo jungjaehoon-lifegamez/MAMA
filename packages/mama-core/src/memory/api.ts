@@ -23,16 +23,9 @@ import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embedding/embedder.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
 import type { JudgmentCommand, JudgmentReceipt, JsonValue } from './judgment-types.js';
-import {
-  assertRelationshipTargetsVisible,
-  commandEmbedder,
-  relationshipsToCommandFields,
-  unsignedWriteAccess,
-  writeAccessForProvenance,
-} from './write-adapters.js';
+import { commandEmbedder, writeAccessForProvenance } from './write-adapters.js';
 import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
-import { resolveMemoryEvolution } from './evolution-engine.js';
 import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
 import { scanMemoryWriteInput, SecretMaterialRefusedError } from './secret-filter.js';
@@ -81,7 +74,6 @@ export interface LegacyMemoryPersistence {
   failureReason?: string | null;
   limitation?: string | null;
   isStatic?: number;
-  relationships?: Array<{ type: string; targetIds: string[] }>;
 }
 
 export interface FusedHit {
@@ -688,37 +680,10 @@ async function saveMemoryInternal(
   const commandId = commandIdOverride ?? `save:${buildDecisionId(input.topic)}`;
   const recordId = judgmentRecordId(commandId);
 
-  // Relationships are persisted only when the caller names their target ids
-  // explicitly. Matching topic text or vector similarity is evidence for
-  // retrieval, not identity.
-  const explicitRelationships = Array.from(
-    new Map(
-      (legacy?.relationships ?? []).flatMap((relationship) =>
-        relationship.targetIds.map((targetId) => [
-          `${relationship.type}:${targetId}`,
-          { type: relationship.type, targetId },
-        ])
-      )
-    ).values()
-  );
-  assertRelationshipTargetsVisible(
-    adapter,
-    explicitRelationships.map((relationship) => relationship.targetId),
-    access.scopes,
-    trustedEnvelope
-  );
-  const { links, replaces, decisionEdges, supersedeTargets } = relationshipsToCommandFields(
-    explicitRelationships,
-    { trusted: trustedEnvelope }
-  );
-  const authoredLinks = [...links, ...(input.links ?? [])];
-  const authoredReplacements = [...replaces, ...(input.replaces ?? [])];
-  const allSupersedeTargets = [
-    ...new Set([
-      ...supersedeTargets,
-      ...(input.replaces ?? []).map((replacement) => replacement.id),
-    ]),
-  ];
+  // A relation is written only when the caller names its target and reason (`links`,
+  // `replaces`); matching topic text or vector similarity is evidence for retrieval, not a link.
+  const authoredLinks = input.links ?? [];
+  const authoredReplacements = input.replaces ?? [];
 
   const embeddingDecision: DecisionInput = {
     id: recordId,
@@ -768,8 +733,6 @@ async function saveMemoryInternal(
       reason: buildSaveEventReason(provenance.tool_name, provenance.gateway_call_id),
     },
     projections: {
-      decisionEdges,
-      ...(allSupersedeTargets.length > 0 ? { supersedeTargets: allSupersedeTargets } : {}),
       ...(input.itemId !== undefined || input.actors !== undefined
         ? {
             recordIdentity: { itemId: input.itemId ?? null, actors: input.actors ?? [] },
@@ -901,222 +864,6 @@ export async function saveLegacyMemory(
     access !== undefined,
     legacy
   );
-}
-
-export async function promoteMemoryStatus(
-  adapter: DatabaseInstance,
-  input: {
-    memoryId: string;
-    status: MemoryStatus;
-    nowMs?: number;
-  }
-): Promise<void> {
-  const memoryId = input.memoryId;
-  const now = input.nowMs ?? Date.now();
-  const targetStatus = input.status;
-  const row = adapter
-    .prepare(
-      `
-        SELECT id, topic, decision, confidence, kind, summary, supersedes
-        FROM decisions
-        WHERE id = ?
-      `
-    )
-    .get(memoryId) as
-    | {
-        id: string;
-        topic: string;
-        decision: string;
-        confidence: number | null;
-        kind: string | null;
-        summary: string | null;
-        supersedes: string | null;
-      }
-    | undefined;
-
-  if (!row) {
-    throw new Error(`Cannot promote missing memory ${memoryId}`);
-  }
-
-  const topic = String(row.topic);
-  const summary = String(row.summary ?? row.decision ?? '');
-  const kind = ((row.kind ?? 'fact') as MemoryKind) || 'fact';
-  const scopes = batchLoadScopes(adapter, [memoryId]).get(memoryId) ?? [];
-  let evolution: ReturnType<typeof resolveMemoryEvolution> = { edges: [] };
-
-  if (targetStatus === 'active') {
-    const primaryScope = scopes[0] ?? null;
-    let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
-    if (primaryScope) {
-      const scopeId = ensureMemoryScope(adapter, primaryScope.kind, primaryScope.id);
-      existingCandidates = adapter
-        .prepare(
-          `
-            SELECT d.id, d.topic, d.summary, d.kind
-            FROM decisions d
-            JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-            WHERE d.topic = ? AND msb.scope_id = ? AND d.id <> ?
-              AND (d.status = 'active' OR d.status IS NULL)
-              AND d.superseded_by IS NULL
-            ORDER BY d.created_at DESC
-            LIMIT 5
-          `
-        )
-        .all(topic, scopeId, memoryId) as Array<{
-        id: string;
-        topic: string;
-        summary: string;
-        kind: string;
-      }>;
-    } else {
-      existingCandidates = adapter
-        .prepare(
-          `
-            SELECT id, topic, summary, kind
-            FROM decisions
-            WHERE topic = ? AND id <> ?
-              AND (status = 'active' OR status IS NULL)
-              AND superseded_by IS NULL
-            ORDER BY created_at DESC
-            LIMIT 5
-          `
-        )
-        .all(topic, memoryId) as Array<{
-        id: string;
-        topic: string;
-        summary: string;
-        kind: string;
-      }>;
-    }
-
-    if (existingCandidates.length === 0) {
-      try {
-        const queryText = `${topic} ${summary}`;
-        const embedding = await generateEmbedding(queryText, 'query');
-        // Same exclusion as saveMemoryInternal's fallback: superseded history must
-        // not crowd out the prior ACTIVE decision from the 3 candidate slots.
-        const semanticResults = await vectorSearch(
-          adapter,
-          embedding,
-          3,
-          0.82,
-          undefined,
-          Array.from(EXCLUDED_STATUSES)
-        );
-
-        let scopeFiltered = semanticResults;
-        if (primaryScope) {
-          const semIds = semanticResults.map((result) => String(result.id));
-          const semScopeMap = batchLoadScopes(adapter, semIds);
-          const scopeKey = `${primaryScope.kind}:${primaryScope.id}`;
-          scopeFiltered = semanticResults.filter((result) => {
-            const resultScopes = semScopeMap.get(String(result.id)) ?? [];
-            return (
-              resultScopes.length === 0 ||
-              resultScopes.some((scope) => `${scope.kind}:${scope.id}` === scopeKey)
-            );
-          });
-        }
-
-        existingCandidates = scopeFiltered
-          .filter((result) => String(result.id) !== memoryId)
-          .filter((result) => {
-            const status = String((result as { status?: unknown }).status || '');
-            return !status || status === 'active' || status === '';
-          })
-          .map((result) => ({
-            id: String(result.id),
-            topic: String(result.topic || ''),
-            summary: String(result.decision || ''),
-            kind: 'fact' as const,
-            _semanticMatch: true,
-          }));
-      } catch {
-        // Semantic search unavailable — proceed with exact-match candidates only.
-      }
-    }
-
-    evolution = resolveMemoryEvolution({
-      incoming: { topic, summary, kind },
-      existing: existingCandidates.map((candidate) => ({
-        ...candidate,
-        kind: (candidate.kind || 'fact') as MemoryRecord['kind'],
-      })),
-    });
-  }
-  const existingSupersedesTarget =
-    typeof row.supersedes === 'string' && row.supersedes.length > 0 ? row.supersedes : null;
-  const supersedesTarget =
-    evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ??
-    (targetStatus === 'active' ? existingSupersedesTarget : null);
-
-  // The status change is an authored amendment: one append-only judgment record
-  // carries it, and the target row's projection columns move in the same
-  // transaction. A replayed command (same id, same payload) returns the stored
-  // receipt instead of rewriting.
-  const commandId = `promote:${memoryId}:${crypto
-    .createHash('sha256')
-    .update(
-      canonicalizeJSON({
-        status: targetStatus,
-        supersedes: supersedesTarget,
-        edges: evolution.edges.map((edge) => `${edge.type}:${edge.to_id}`),
-        now,
-      })
-    )
-    .digest('hex')
-    .slice(0, 16)}`;
-
-  const supersedesEdges = evolution.edges.filter((edge) => edge.type === 'supersedes');
-  const command: JudgmentCommand = {
-    commandId,
-    // Audit records link to the amended memory instead of sharing its topic,
-    // keeping them out of the topic's evolution candidate pool.
-    topic: `judgment/${memoryId}`,
-    summary: `Status '${targetStatus}' applied to ${memoryId}`,
-    recordKind: 'judgment',
-    payload: {
-      amended: memoryId,
-      status: targetStatus,
-      supersedes: supersedesTarget,
-      edges: evolution.edges.map((edge) => ({ type: edge.type, to_id: edge.to_id })),
-    },
-    scopes,
-    agentId: null,
-    links: [{ relation: 'amends', target: { kind: 'memory', id: memoryId } }],
-    amends: [
-      // supersedes is included only when a target resolved: applyAmendment
-      // writes a column for every key present, so a null here would clear the
-      // target's predecessor pointer on non-active promotions.
-      {
-        target: { kind: 'memory', id: memoryId },
-        status: targetStatus,
-        ...(supersedesTarget !== null ? { supersedes: supersedesTarget } : {}),
-      },
-      ...supersedesEdges.map((edge) => ({
-        target: { kind: 'memory' as const, id: edge.to_id },
-        supersededBy: memoryId,
-        status: 'superseded',
-      })),
-    ],
-    projections: {
-      decisionEdges: evolution.edges.map((edge) => ({
-        fromId: memoryId,
-        targetId: edge.to_id,
-        relationship: edge.type,
-        reason: edge.reason ?? null,
-        weight: 1,
-      })),
-    },
-    record: {
-      kind: 'fact',
-      status: 'active',
-      summary: `Status '${targetStatus}' applied to ${memoryId}`,
-    },
-    recordedAt: now,
-    event: { reason: `promote ${memoryId} to '${targetStatus}'` },
-  };
-  await appendJudgment(command, unsignedWriteAccess(scopes), { adapter });
 }
 
 export type MemoryRetirementStatus = Extract<MemoryStatus, 'stale' | 'superseded'>;
@@ -1944,10 +1691,6 @@ export async function ingestMemory(
   input: IngestMemoryInput
 ): Promise<{ success: boolean; id: string }> {
   return ingestMemoryInternal(adapter, sanitizePublicIngestMemoryInput(input));
-}
-
-export async function evolveMemory(input: Parameters<typeof resolveMemoryEvolution>[0]) {
-  return resolveMemoryEvolution(input);
 }
 
 export async function buildMemoryBootstrap(

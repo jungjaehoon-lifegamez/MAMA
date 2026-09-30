@@ -1,3 +1,4 @@
+import { appendLink, type LinkCommand, type LinkReceipt } from './links.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import {
   createJudgmentWriter,
@@ -50,11 +51,11 @@ export { WORK_RECLASSIFY_DISPOSITIONS } from '../memory/judgment-types.js';
 export {
   JudgmentError,
   appendJudgment,
-  insertTwinEdge,
   getTwinEdge,
   listTwinEdgesForRefs,
   mapTwinEdgeRow,
 } from './judgments.js';
+export { appendLink, linkEdgeId, type LinkCommand, type LinkReceipt } from './links.js';
 export {
   assertTwinRefsVisible,
   channelGrantClause,
@@ -149,17 +150,6 @@ export {
   type GraphTimelineResult,
 } from './graph-query.js';
 export type { SourceIngestCommand, SourceIngestReceipt } from './source-ingest.js';
-export {
-  upsertDecisionEdge,
-  proposeDecisionEdge,
-  approveDecisionEdge,
-  rejectDecisionEdge,
-  deprecateAutoDecisionEdges,
-  deleteDecisionEdgesWithAudit,
-  type DecisionEdgeKey,
-  type DecisionEdgeRow,
-  type DecisionEdgeDeleteFailure,
-} from './decision-edges.js';
 
 export interface KnowledgeOptions extends JudgmentKnowledgeOptions {
   adapter: DatabaseInstance;
@@ -183,6 +173,11 @@ export interface Knowledge {
    * paths, timelines, and hydrated details — all under the caller's authority.
    */
   queryGraph(query: WorkGraphQuery, access: JudgmentAccess): WorkGraphPage;
+  /**
+   * Append one edge between existing records, with its reason; nothing is edited. A link to an
+   * edge contradicts it.
+   */
+  appendLink(command: LinkCommand, access: JudgmentAccess): LinkReceipt;
 }
 
 export function createKnowledge(options: KnowledgeOptions): Knowledge {
@@ -197,5 +192,6 @@ export function createKnowledge(options: KnowledgeOptions): Knowledge {
     withdrawWork: (command, access) => withdrawWork(command, access, options),
     readWork: (query, access) => readWork(options.adapter, query, access),
     queryGraph: (query, access) => queryKnowledgeGraph(options.adapter, query, access),
+    appendLink: (command, access) => appendLink(options.adapter, command, access),
   };
 }

@@ -1189,6 +1189,55 @@ function graphAccessInput(access: JudgmentAccess): {
   };
 }
 
+/** The read rule a caller's access grants, as graph reads apply it, over current and replaced records. */
+export function twinVisibilityForAccess(access: JudgmentAccess): TwinVisibility {
+  return graphVisibility({ ...graphAccessInput(access), history: 'all' });
+}
+
+/**
+ * Later links that contradict an edge, each with its reason: the edge row is never edited, so a
+ * correction is read from the edges that point at it.
+ */
+function edgeCorrections(
+  adapter: AgentGraphAdapter,
+  edgeIds: readonly string[],
+  visibility: TwinVisibility,
+  asOfMs: number
+): Map<string, Array<{ edgeId: string; reason: string | null; at: number }>> {
+  const corrections = new Map<
+    string,
+    Array<{ edgeId: string; reason: string | null; at: number }>
+  >();
+  if (edgeIds.length === 0) return corrections;
+  const placeholders = edgeIds.map(() => '?').join(', ');
+  const rows = adapter
+    .prepare(
+      `SELECT edge_id, subject_kind, subject_id, object_id, reason_text, created_at
+         FROM twin_edges
+        WHERE object_kind = 'edge' AND edge_type = 'contradicts'
+          AND object_id IN (${placeholders}) AND created_at <= ?
+        ORDER BY created_at, edge_id`
+    )
+    .all(...edgeIds, asOfMs) as Array<{
+    edge_id: string;
+    subject_kind: TwinRef['kind'];
+    subject_id: string;
+    object_id: string;
+    reason_text: string | null;
+    created_at: number;
+  }>;
+  if (rows.length === 0) return corrections;
+  const subjects = rows.map((row) => ({ kind: row.subject_kind, id: row.subject_id }) as TwinRef);
+  const visible = visibleTwinRefKeysRecursive(adapter as never, subjects, visibility);
+  for (const row of rows) {
+    if (!visible.has(`${row.subject_kind}\0${row.subject_id}`)) continue;
+    const list = corrections.get(row.object_id) ?? [];
+    list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
+    corrections.set(row.object_id, list);
+  }
+  return corrections;
+}
+
 /**
  * Name-free entry: registry alias, decisions FTS, observation metadata. Search
  * seeds are candidates, not citations — refs the caller cannot see are dropped
@@ -1651,8 +1700,12 @@ function hydrateNode(
   return hydrateRecordNode(adapter, ref);
 }
 
-function pageEdgeAttrs(edge: TwinEdgeRecord): JsonValue {
+function pageEdgeAttrs(
+  edge: TwinEdgeRecord,
+  correctedBy?: ReadonlyArray<{ edgeId: string; reason: string | null; at: number }>
+): JsonValue {
   return {
+    ...(correctedBy?.length ? { corrected_by: correctedBy as unknown as JsonValue } : {}),
     edge_type: edge.edge_type,
     relation_attrs: (edge.relation_attrs ?? null) as JsonValue,
     confidence: edge.confidence,
@@ -1661,6 +1714,7 @@ function pageEdgeAttrs(edge: TwinEdgeRecord): JsonValue {
     model_run_id: edge.model_run_id,
     reason_classification: edge.reason_classification,
     reason_text: edge.reason_text,
+    evidence_refs: (edge.evidence_refs ?? null) as JsonValue,
     created_at: edge.created_at,
     content_hash: edge.content_hash.toString('hex'),
   } as JsonValue;
@@ -2159,6 +2213,12 @@ export function queryGraph(
     );
   }
 
+  const corrections = edgeCorrections(
+    adapter,
+    collectedEdges.map((edge) => edge.edge_id),
+    ctx.visibility,
+    asOf
+  );
   const pageEdges: WorkGraphPage['edges'] = collectedEdges.map((edge) => {
     const fromProjection = projections.get(projectionKey(edge.edge_id, 'from'));
     const toProjection = projections.get(projectionKey(edge.edge_id, 'to'));
@@ -2169,7 +2229,7 @@ export function queryGraph(
       to: edge.object_ref,
       resolvedFrom: fromProjection?.current_ref ?? edge.subject_ref,
       resolvedTo: toProjection?.current_ref ?? edge.object_ref,
-      attrs: pageEdgeAttrs(edge),
+      attrs: pageEdgeAttrs(edge, corrections.get(edge.edge_id)),
     };
   });
 

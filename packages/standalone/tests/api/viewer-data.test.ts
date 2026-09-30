@@ -26,7 +26,7 @@ const page = (items: CommitmentPage['items']): CommitmentPage => ({
 });
 
 describe('viewer data shaping', () => {
-  it('shapes real commitment revision edges into the viewer memory graph', async () => {
+  it('draws the links the agent stated and no host edge between revisions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-viewer-graph-data-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });
     try {
@@ -69,20 +69,37 @@ describe('viewer data shaping', () => {
         access
       );
 
+      const earlier = await knowledge.createWork(
+        {
+          commandId: 'viewer-data-earlier',
+          topic: 'viewer-earlier-topic',
+          summary: 'an earlier case',
+          set: { title: 'Earlier case' },
+          scopes: access.scopes,
+        },
+        access
+      );
+      const link = knowledge.appendLink(
+        {
+          commandId: 'viewer-data-link',
+          from: revisedAgain.recordRef as { kind: 'memory'; id: string },
+          to: earlier.recordRef,
+          relation: 'builds_on',
+          reason: 'the same kind of feedback',
+        },
+        { ...access, actions: [] }
+      );
+
       const page = knowledge.queryGraph({ view: 'browse', history: 'all', limit: 10 }, access);
       const graph = shapeArchiveGraph(page, 0, ['memory'], 'UTC');
-      expect(graph.edges.filter((edge) => edge.relationship === 'builds_on')).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            from: `memory:${revised.recordRef.id}`,
-            to: `memory:${created.recordRef.id}`,
-          }),
-          expect.objectContaining({
-            from: `memory:${revisedAgain.recordRef.id}`,
-            to: `memory:${revised.recordRef.id}`,
-          }),
-        ])
-      );
+      expect(graph.edges.filter((edge) => edge.relationship === 'builds_on')).toEqual([
+        expect.objectContaining({
+          from: `memory:${revisedAgain.recordRef.id}`,
+          to: `memory:${earlier.recordRef.id}`,
+        }),
+      ]);
+      expect(link.replayed).toBe(false);
+      expect(revised.recordRef).not.toEqual(created.recordRef);
     } finally {
       await handle.close();
       rmSync(root, { recursive: true, force: true });

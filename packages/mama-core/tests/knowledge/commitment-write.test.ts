@@ -268,13 +268,14 @@ describe('knowledge/commitments: committing owner work', () => {
 
     const view = readWork(adapter, { commitmentId: second.commitmentId }, access).items[0];
     expect(view.latestJudgmentRef).toEqual(revised.recordRef);
+    // Only the links the agent stated: the host adds no edge to the previous revision.
     const allEdges = adapter.prepare('SELECT COUNT(*) AS n FROM twin_edges').get() as {
       n: number;
     };
-    expect(allEdges.n).toBe(3);
+    expect(allEdges.n).toBe(2);
   });
 
-  it('revisions inherit the create topic and form a builds_on chain in graph reads', async () => {
+  it('revisions inherit the create topic, and the host links none of them', async () => {
     const knowledge = createKnowledge({ adapter: getAdapter() });
     const created = await knowledge.createWork(
       {
@@ -317,12 +318,17 @@ describe('knowledge/commitments: committing owner work', () => {
       },
       access
     );
-    expect(page.edges.filter((edge) => edge.relation === 'builds_on')).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ from: revised.recordRef, to: created.recordRef }),
-        expect.objectContaining({ from: revisedAgain.recordRef, to: revised.recordRef }),
-      ])
-    );
+    expect(page.edges).toEqual([]);
+    // The order of revisions is read from the commitment, not from edges.
+    const history = knowledge.readWork(
+      { commitmentId: created.commitmentId, history: 'all' },
+      access
+    ).items[0].history;
+    expect(history?.map((revision) => revision.recordRef)).toEqual([
+      created.recordRef,
+      revised.recordRef,
+      revisedAgain.recordRef,
+    ]);
     const topicRows = getAdapter()
       .prepare('SELECT id, topic FROM decisions WHERE id IN (?, ?, ?) ORDER BY id')
       .all(created.recordRef.id, revised.recordRef.id, revisedAgain.recordRef.id) as Array<{
@@ -453,7 +459,7 @@ describe('knowledge/commitments: committing owner work', () => {
            WHERE subject_kind = 'memory' AND subject_id = ?`
         )
         .all(withdrawn.recordRef.id)
-    ).toContainEqual({ edge_type: 'builds_on', object_id: created.recordRef.id });
+    ).toEqual([]);
     expect(
       getAdapter().prepare('SELECT topic FROM decisions WHERE id = ?').get(withdrawn.recordRef.id)
     ).toEqual({ topic: 'withdraw' });
