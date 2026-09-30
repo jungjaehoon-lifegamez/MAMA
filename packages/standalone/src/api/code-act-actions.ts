@@ -7,6 +7,9 @@
  * with the calling turn's own context, so the grant, session and traces are the caller's.
  * The worker runs under Node's permission model: `vm` gives the code a clean namespace but
  * is not a boundary, and an escaped script must reach no files, processes or network.
+ * The process does not outlive the call: what a script leaves on globalThis goes back to the
+ * host as data and is handed to the same model run's next script, so a failed step is fixed
+ * in place instead of being written again.
  */
 import { spawn } from 'node:child_process';
 import type {
@@ -57,20 +60,41 @@ process.on('message', async (msg) => {
     else sandbox[name] = proxy;
   }
   sandbox.globalThis = sandbox;
+  // The names above are the host's; everything else on globalThis is what the run's scripts left.
+  const reserved = new Set(Object.keys(sandbox));
+  for (const [key, value] of Object.entries(msg.carried || {})) if (!reserved.has(key)) sandbox[key] = value;
+  // Plain data left on globalThis goes back for the run's next script, whether this one returned
+  // or threw: a step that failed is fixed in place, not written again. Functions do not carry, and
+  // a value JSON cannot hold (a cycle) is not carried; the result's kept names show what did.
+  const carried = () => {
+    const kept = {};
+    for (const key of Object.keys(sandbox)) {
+      if (reserved.has(key)) continue;
+      let json;
+      try {
+        json = JSON.stringify(sandbox[key]);
+      } catch (notJson) {
+        continue;
+      }
+      if (json !== undefined) kept[key] = JSON.parse(json);
+    }
+    return kept;
+  };
   try {
-    const trimmed = msg.code.trim();
-    // A single line with no statement keyword is returned; its closing semicolon is dropped.
-    const expression = trimmed.replace(/;$/, '');
-    const needsReturn =
-      !expression.startsWith('return ') && !expression.startsWith('return\\n') && !expression.includes('\\n') &&
-      !/^(if|for|while|var|let|const|switch|try|throw|class|function)\\b/.test(expression);
-    const body = needsReturn ? 'return ' + expression : msg.code;
-    const script = new vm.Script('(async () => { ' + body + '\\n})()', { filename: 'code_act.js' });
+    // Code that parses as one expression is returned, its closing semicolon dropped; anything
+    // else is a function body. A line of several statements is a body, so it runs to the end.
+    const expression = msg.code.trim().replace(/;$/, '');
+    let script;
+    try {
+      script = new vm.Script('(async () => { return (' + expression + '\\n); })()', { filename: 'code_act.js' });
+    } catch (notOneExpression) {
+      script = new vm.Script('(async () => { ' + msg.code + '\\n})()', { filename: 'code_act.js' });
+    }
     const value = await script.runInContext(vm.createContext(sandbox), { timeout: msg.timeoutMs });
-    process.send({ type: 'result', success: true, value, logs }, () => process.exit(0));
+    process.send({ type: 'result', success: true, value, logs, carried: carried() }, () => process.exit(0));
   } catch (error) {
     process.send(
-      { type: 'result', success: false, logs, error: { name: error && error.name ? error.name : 'Error', message: error && error.message ? error.message : String(error) } },
+      { type: 'result', success: false, logs, carried: carried(), error: { name: error && error.name ? error.name : 'Error', message: error && error.message ? error.message : String(error) } },
       () => process.exit(0)
     );
   }
@@ -91,16 +115,26 @@ export interface CodeActResult {
   logs: string[];
   hostCallCount: number;
   durationMs: number;
+  /** The names of the values the code left on globalThis for the run's next code_act. */
+  kept?: string[];
 }
 
-const DEFAULT_TIMEOUT_MS = 300_000;
+type CarriedValues = Record<string, unknown>;
 
-/** Run the code in a fresh worker process; host calls are answered by `host.call`. */
+const DEFAULT_TIMEOUT_MS = 300_000;
+const CARRIED_RUNS = 4;
+
+/**
+ * Run the code in a fresh worker process; host calls are answered by `host.call`. `carried` is
+ * what the run's earlier scripts left on globalThis; the result's `carried` is what this one
+ * leaves. A worker that dies or times out leaves what it was given.
+ */
 export function runCodeAct(
   code: string,
   host: CodeActHost,
-  timeoutMs = DEFAULT_TIMEOUT_MS
-): Promise<CodeActResult> {
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  carried: CarriedValues = {}
+): Promise<CodeActResult & { carried: CarriedValues }> {
   const startedAt = Date.now();
   let hostCallCount = 0;
   return new Promise((resolve) => {
@@ -112,12 +146,22 @@ export function runCodeAct(
     });
     let stderr = '';
     let settled = false;
-    const settle = (result: Omit<CodeActResult, 'hostCallCount' | 'durationMs'>) => {
+    const settle = (
+      result: Omit<CodeActResult, 'hostCallCount' | 'durationMs' | 'kept'>,
+      left: CarriedValues = carried
+    ) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       child.kill('SIGKILL');
-      resolve({ ...result, hostCallCount, durationMs: Date.now() - startedAt });
+      const kept = Object.keys(left);
+      resolve({
+        ...result,
+        hostCallCount,
+        durationMs: Date.now() - startedAt,
+        ...(kept.length > 0 ? { kept } : {}),
+        carried: left,
+      });
     };
     const timer = setTimeout(
       () =>
@@ -143,6 +187,7 @@ export function runCodeAct(
         value?: unknown;
         error?: { name: string; message: string };
         logs?: string[];
+        carried?: CarriedValues;
       }) => {
         if (msg.type === 'ready') {
           child.send({
@@ -150,6 +195,7 @@ export function runCodeAct(
             code,
             functionNames: host.functions.map((fn) => fn.name),
             timeoutMs,
+            carried,
           });
           return;
         }
@@ -174,7 +220,8 @@ export function runCodeAct(
           settle(
             msg.success
               ? { success: true, value: msg.value, logs: msg.logs ?? [] }
-              : { success: false, error: msg.error, logs: msg.logs ?? [] }
+              : { success: false, error: msg.error, logs: msg.logs ?? [] },
+            msg.carried ?? {}
           );
         }
       }
@@ -200,7 +247,7 @@ export function runCodeAct(
 export const CODE_ACT_CONTRACT: ActionContract = {
   name: 'code_act',
   summary:
-    'Run JavaScript that calls MAMA actions and returns only what the turn needs. Every action is an async function by its name, e.g. `return (await work.list({ view: "items", text: "asset" })).tasks.map((task) => [task.title, task.status])`; a failed action throws with its error; independent calls go together with `Promise.all`; `help({ actions: ["work.revise"] })` returns an action\'s argument types and examples; a name with a colon is called as `memory["read:provenance"]({...})`. The code runs in a separate process with no file or process access and an empty environment; its return value, console.log lines and any error come back.',
+    'Run JavaScript that calls MAMA actions and returns only what the turn needs. Every action is an async function by its name, e.g. `return (await work.list({ view: "items", text: "asset" })).tasks.map((task) => [task.title, task.status])`; a failed action throws with its error; independent calls go together with `Promise.all`; `help({ actions: ["work.revise"] })` returns an action\'s argument types and examples; a name with a colon is called as `memory["read:provenance"]({...})`. The code runs in a separate process with no file or process access and an empty environment; its return value, console.log lines and any error come back. Plain data you assign to globalThis (strings, numbers, arrays, objects; not functions) is there again in your next code_act of this turn, even when the script threw, and the result lists it in kept: when a script fails, fix the part that failed instead of sending the whole script again.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -221,6 +268,10 @@ export const CODE_ACT_CONTRACT: ActionContract = {
  * caller is granted, and each call is dispatched with the caller's own context.
  */
 export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionRegistration {
+  // What each run's scripts left on globalThis. Runs are serial in one owner runtime, so the
+  // latest run is the one that continues; the daemon is long-lived and a script can hold a whole
+  // ledger, so only the latest few runs keep theirs.
+  const carriedByRun = new Map<string, CarriedValues>();
   return {
     contract: CODE_ACT_CONTRACT,
     exec: async (input, context: ActionContext) => {
@@ -236,24 +287,39 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
       if (!operationId) throw new Error('code_act requires an operation id');
       const callable = new Set(functions.map((fn) => fn.name));
       let calls = 0;
-      return runCodeAct((input as { code: string }).code, {
-        functions,
-        call: async (name, params) => {
-          // callTool() takes any name; code_act itself would start a worker inside a worker.
-          if (!callable.has(name)) throw new Error(`action_not_granted: ${name}`);
-          calls += 1;
-          const result = await dispatch(
-            {
-              action: name,
-              input: params ?? {},
-              operationId: `${operationId}#${calls}`,
-            },
-            context
-          );
-          if (result.status === 'completed') return result.data;
-          throw new Error(`${result.error.code}: ${result.error.message}`);
+      const runId = context.session?.modelRunId;
+      const { carried, ...result } = await runCodeAct(
+        (input as { code: string }).code,
+        {
+          functions,
+          call: async (name, params) => {
+            // callTool() takes any name; code_act itself would start a worker inside a worker.
+            if (!callable.has(name)) throw new Error(`action_not_granted: ${name}`);
+            calls += 1;
+            const result = await dispatch(
+              {
+                action: name,
+                input: params ?? {},
+                operationId: `${operationId}#${calls}`,
+              },
+              context
+            );
+            if (result.status === 'completed') return result.data;
+            throw new Error(`${result.error.code}: ${result.error.message}`);
+          },
         },
-      });
+        DEFAULT_TIMEOUT_MS,
+        runId === undefined ? {} : (carriedByRun.get(runId) ?? {})
+      );
+      if (runId !== undefined) {
+        carriedByRun.delete(runId);
+        carriedByRun.set(runId, carried);
+        for (const oldest of carriedByRun.keys()) {
+          if (carriedByRun.size <= CARRIED_RUNS) break;
+          carriedByRun.delete(oldest);
+        }
+      }
+      return result;
     },
   };
 }

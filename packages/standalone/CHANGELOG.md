@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `code_act`: plain data a script leaves on `globalThis` is handed to the same model run's next
+  script, also after the script threw, and the result lists it in `kept`. A full report that
+  failed on one row was written again from the start, up to four times in one turn; now the
+  failed part is fixed and the rest is kept. The worker still lives for one call only.
+- `report.publish`: the contract no longer asks for slots under 6 KB (the host accepts 512 KB).
+  The model measured every slot against it, and one report failed on `TextEncoder`, which the
+  sandbox lacks, and was written again. The line repeating what the pipeline is was removed.
+  The full-report procedure says to keep each built section on `globalThis` and fix the part
+  that failed.
+
+### Fixed
+
+- `code_act`: a single line of several statements ran only its first one, because any line not
+  starting with a keyword was returned as one expression. Code is returned only when it parses
+  as one expression.
+
 ## [0.60.0] - 2026-09-30
 
 ### Added

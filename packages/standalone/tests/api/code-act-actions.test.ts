@@ -32,8 +32,11 @@ function surface(actions: string[]) {
     scopes: [],
     actions,
   };
-  return (code: string) =>
-    dispatch({ action: 'code_act', input: { code }, operationId: 'op-1' }, { access });
+  return (code: string, modelRunId?: string) =>
+    dispatch(
+      { action: 'code_act', input: { code }, operationId: 'op-1' },
+      { access, ...(modelRunId === undefined ? {} : { session: { modelRunId } }) }
+    );
 }
 
 describe('code_act', () => {
@@ -127,10 +130,53 @@ describe('code_act', () => {
         value: 'x',
       });
     }
+    // A line of several statements is a body and runs to its end.
+    const statements = await run('globalThis.n = 1; n += 1; return n;');
+    expect((statements as { data: { value: unknown } }).data.value).toBe(2);
     const inString = await run('work.list({ value: "a;b" })');
     expect((inString as { data: { value: { input: unknown } } }).data.value.input).toEqual({
       value: 'a;b',
     });
+  });
+
+  it('carries what a script left on globalThis to the next script of its run, even after it threw', async () => {
+    const run = surface(['code_act', 'work.list']);
+    // A long report fails on one row; the sections it built must not be written again.
+    const failed = await run(
+      'globalThis.slots = { briefing: "<p>built</p>" }; rows = [1, 2]; globalThis.render = () => 1; work = "shadow"; throw new Error("missing ab9015");',
+      'run-1'
+    );
+    expect((failed as { data: unknown }).data).toMatchObject({
+      success: false,
+      error: { message: 'missing ab9015' },
+      kept: ['slots', 'rows'],
+    });
+    const fixed = await run(
+      'rows.push(3); return [slots.briefing, rows.length, typeof render, typeof work.list];',
+      'run-1'
+    );
+    expect((fixed as { data: { value: unknown } }).data.value).toEqual([
+      '<p>built</p>',
+      3,
+      'undefined',
+      'function',
+    ]);
+    const again = await run('return rows.length;', 'run-1');
+    expect((again as { data: { value: unknown } }).data.value).toBe(3);
+    // Another run, or a call with no run, starts empty.
+    for (const other of ['run-2', undefined]) {
+      const fresh = await run('return typeof slots;', other);
+      expect((fresh as { data: { value: unknown } }).data.value).toBe('undefined');
+    }
+  });
+
+  it('keeps the values of the latest runs only', async () => {
+    const run = surface(['code_act']);
+    for (const id of ['r1', 'r2', 'r3', 'r4', 'r5']) await run(`globalThis.id = "${id}";`, id);
+    expect(
+      ((await run('return typeof id;', 'r1')) as { data: { value: unknown } }).data.value
+    ).toBe('undefined');
+    expect(((await run('return id;', 'r5')) as { data: { value: unknown } }).data.value).toBe('r5');
   });
 
   it('kills a worker that never finishes', async () => {
