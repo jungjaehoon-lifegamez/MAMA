@@ -23,6 +23,7 @@ const MARKER = 'installed-dependencies.json';
 const LOCK = 'install.lock';
 const BUSY =
   'another session is installing the plugin dependencies; they are ready from the next session';
+const STALE_TAKEOVER_MS = 30_000;
 
 function hasCore(nodeModules) {
   return fs.existsSync(path.join(nodeModules, ...CORE_PACKAGE, 'package.json'));
@@ -93,10 +94,9 @@ const TARGET_EXISTS = ['EEXIST', 'ENOTEMPTY', 'EPERM'];
 /**
  * Take the install lock: a folder holding its owner's pid and a token. Two npm installs in one
  * folder corrupt it, and sessions can start together. The lock is prepared under a unique name
- * with its owner written, then renamed into place, so no session sees a lock without an owner.
- * A lock whose owner process is gone was left by a hook killed at its timeout; it is renamed
- * aside and removed, unless what was renamed is another session's live lock (both saw the same
- * dead owner and that session took over first), which is put back. Returns the token.
+ * with its owner written, then renamed into place, so no session sees a lock without an owner,
+ * and a rename cannot replace a lock that exists. A lock whose owner process is gone was left by
+ * a hook killed at its timeout, and is taken over. Returns the token.
  */
 function acquireLock(dataDir, { isAlive, beforeTakeover }) {
   const lock = path.join(dataDir, LOCK);
@@ -124,31 +124,33 @@ function acquireLock(dataDir, { isAlive, beforeTakeover }) {
     throw new Error(BUSY);
   }
   beforeTakeover();
-  const aside = path.join(dataDir, `${LOCK}.stale.${randomUUID()}`);
+  // Takeovers run one at a time. Only a takeover removes a lock that another session holds, so
+  // inside it a lock still naming the dead owner is the stale one.
+  const takeover = path.join(dataDir, `${LOCK}.takeover`);
   try {
-    fs.renameSync(lock, aside);
+    fs.mkdirSync(takeover);
   } catch (error) {
-    if (error.code === 'ENOENT') {
-      throw new Error(BUSY);
+    if (error.code !== 'EEXIST') {
+      throw error;
     }
-    throw error;
-  }
-  if (readText(path.join(aside, 'owner')) !== staleOwner) {
-    try {
-      fs.renameSync(aside, lock);
-    } catch (error) {
-      // A newer lock took the place; the renamed lock's owner goes on without its folder.
-      if (!TARGET_EXISTS.includes(error.code)) {
-        throw error;
-      }
+    // A takeover takes milliseconds; one this old was cut off, so the next session may take over.
+    if (Date.now() - fs.statSync(takeover).mtimeMs > STALE_TAKEOVER_MS) {
+      fs.rmSync(takeover, { recursive: true, force: true });
     }
     throw new Error(BUSY);
   }
-  fs.rmSync(aside, { recursive: true, force: true });
-  if (claim()) {
-    return token;
+  try {
+    if (readText(path.join(lock, 'owner')) !== staleOwner) {
+      throw new Error(BUSY);
+    }
+    fs.rmSync(lock, { recursive: true, force: true });
+    if (claim()) {
+      return token;
+    }
+    throw new Error(BUSY);
+  } finally {
+    fs.rmSync(takeover, { recursive: true, force: true });
   }
-  throw new Error(BUSY);
 }
 
 function releaseLock(dataDir, token) {
