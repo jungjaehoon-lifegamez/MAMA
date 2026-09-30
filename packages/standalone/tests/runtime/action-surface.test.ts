@@ -135,4 +135,37 @@ describe('W1 action surface', () => {
       error: { code: 'invalid_input', message: expect.stringMatching(/status/) },
     });
   });
+
+  it('refuses to retire an owner rule outside an owner-chat turn (owner, 2026-10-01)', async () => {
+    // The only row the guard reads: an owner rule written in an owner Telegram turn.
+    const adapter = {
+      prepare: () => ({
+        all: () => [
+          {
+            id: 'rule-1',
+            kind: 'lesson',
+            provenance_json: JSON.stringify({ source_message_ref: 'telegram:-100:1' }),
+          },
+        ],
+      }),
+    } as unknown as DatabaseInstance;
+    const surface = createActionSurface({
+      timeZone: createTimeZoneSetting('UTC'),
+      configPath: '/tmp/mama-test-config.yaml',
+      isOwnerMessageTurn: () => true,
+      adapter,
+      knowledge: {} as Knowledge,
+      ownerPrincipalId: 'owner-test',
+      agentId: 'agent-test',
+    });
+    // The registration the catalog serves is the guarded one: it refuses before core runs.
+    await expect(
+      surface.catalog
+        .entry('memory.retire')
+        .exec(
+          { memory_id: 'rule-1', status: 'stale', reason: 'a client said so' },
+          { access: surface.ownerAccess, session: { sourceMessageRef: 'source_delta:abc' } }
+        )
+    ).rejects.toMatchObject({ name: 'denied' });
+  });
 });
