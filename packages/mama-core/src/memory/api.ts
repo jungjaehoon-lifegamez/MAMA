@@ -6,7 +6,12 @@ import { appendOutcomeAmendment } from './write-adapters.js';
 import { formatList, formatContext } from '../decision-formatter.js';
 import { warn as logWarn } from '../debug-logger.js';
 import type { TextCompletion } from '../runtime/text-completion.js';
-import { queryDecisionGraph, querySemanticEdges } from '../knowledge/graph-query.js';
+import {
+  queryDecisionGraph,
+  querySemanticEdges,
+  STATED_DECISION_EDGES,
+} from '../knowledge/graph-query.js';
+import { correctionsOf, type DecisionCorrection } from './decision-links.js';
 import {
   rollUpSearchHits,
   type SearchRollupLeafHit,
@@ -38,6 +43,7 @@ import {
 import type {
   MemoryKind,
   MemoryKindFilter,
+  MemoryReachedThrough,
   MemoryAgentBootstrap,
   MemoryAuditAck,
   MemoryEdge,
@@ -257,6 +263,29 @@ export async function readMemoryRecordById(
   if (!row) return null;
   const recordScopes = batchLoadScopes(adapter, [id]).get(id) ?? [];
   return toMemoryRecord(row, recordScopes, { package: 'mama-core', source_type: 'db' });
+}
+
+/** The records that state these corrections, down their chains. */
+function correctionAuthors(corrections: readonly DecisionCorrection[]): string[] {
+  return corrections.flatMap((correction) => [
+    correction.from,
+    ...correctionAuthors(correction.correctedBy ?? []),
+  ]);
+}
+
+/** The corrections a reader may see; a hidden correction takes the corrections of it along. */
+function readableCorrections(
+  corrections: readonly DecisionCorrection[],
+  readable: (correction: DecisionCorrection) => boolean
+): DecisionCorrection[] | undefined {
+  const kept = corrections.filter(readable).map((correction) => {
+    const further = correction.correctedBy
+      ? readableCorrections(correction.correctedBy, readable)
+      : undefined;
+    const { correctedBy: _drop, ...rest } = correction;
+    return further ? { ...rest, correctedBy: further } : rest;
+  });
+  return kept.length > 0 ? kept : undefined;
 }
 
 function batchLoadScopes(
@@ -581,7 +610,7 @@ export async function loadEdgesForIds(
   const rows = adapter
     .prepare(
       `SELECT from_id, to_id, relationship AS type, reason
-       FROM decision_edges
+       FROM ${STATED_DECISION_EDGES} e
        WHERE (from_id IN (${placeholders}) OR to_id IN (${placeholders}))
          AND (approved_by_user != 0 OR approved_by_user IS NULL)`
     )
@@ -1500,138 +1529,158 @@ export async function recallMemory(
   bundle.graph_context.edges = [];
 
   if (matched.length > 0 && !options.skipGraphExpansion && searchOptions.includeRelated) {
-    try {
-      const candidates = matched.map((m) => ({
-        id: m.id,
-        topic: m.topic,
-        decision: m.summary,
-        confidence: m.confidence,
-        created_at: m.created_at,
-        similarity: m.confidence ?? 0.5,
-      }));
-      const expanded = await expandWithGraphInAdapter(adapter, candidates);
-      const primaryIds = new Set(matched.map((m) => m.id));
-      let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));
-      let expandedScopeMap = new Map<string, MemoryScopeRef[]>();
+    const candidates = matched.map((m) => ({
+      id: m.id,
+      topic: m.topic,
+      decision: m.summary,
+      confidence: m.confidence,
+      created_at: m.created_at,
+      similarity: m.confidence ?? 0.5,
+    }));
+    const expanded = await expandWithGraphInAdapter(adapter, candidates);
+    const primaryIds = new Set(matched.map((m) => m.id));
+    let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));
+    let expandedScopeMap = new Map<string, MemoryScopeRef[]>();
 
-      // Re-filter expanded results: apply status and scope checks
-      if (!options.includeHistory) {
-        expandedOnly = expandedOnly.filter((e) => {
-          const row = adapter
-            .prepare(`SELECT kind, status FROM decisions WHERE id = ?`)
-            .get(e.id) as { kind?: string; status?: string } | undefined;
-          const status = row?.status || '';
-          return matchesKind(row?.kind) && (!status || !EXCLUDED_STATUSES.has(status));
-        });
-      } else if (options.kind !== undefined) {
-        expandedOnly = expandedOnly.filter((e) => {
-          const row = adapter.prepare(`SELECT kind FROM decisions WHERE id = ?`).get(e.id) as
-            | { kind?: string }
-            | undefined;
-          return matchesKind(row?.kind);
-        });
-      }
-      if (options.scopes && options.scopes.length > 0) {
-        const expandedIds = expandedOnly.map((e) => e.id);
-        expandedScopeMap = batchLoadScopes(adapter, expandedIds);
-        const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-        expandedOnly = expandedOnly.filter((e) => {
-          const scopes = expandedScopeMap.get(e.id) ?? [];
-          if (scopes.length === 0) return false;
-          return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
-        });
-      }
-
-      bundle.graph_context.expanded = expandedOnly.flatMap((e) => {
-        const kindRow = adapter.prepare(`SELECT kind FROM decisions WHERE id = ?`).get(e.id) as
+    // Re-filter expanded results: apply status and scope checks
+    if (!options.includeHistory) {
+      expandedOnly = expandedOnly.filter((e) => {
+        const row = adapter.prepare(`SELECT kind, status FROM decisions WHERE id = ?`).get(e.id) as
+          | { kind?: string; status?: string }
+          | undefined;
+        const status = row?.status || '';
+        return matchesKind(row?.kind) && (!status || !EXCLUDED_STATUSES.has(status));
+      });
+    } else if (options.kind !== undefined) {
+      expandedOnly = expandedOnly.filter((e) => {
+        const row = adapter.prepare(`SELECT kind FROM decisions WHERE id = ?`).get(e.id) as
           | { kind?: string }
           | undefined;
-        const expandedRecord: MemoryRecord = {
-          id: String(e.id),
-          topic: String(e.topic || ''),
-          kind: (kindRow?.kind ?? 'decision') as MemoryKind,
-          summary: String(e.decision || ''),
-          details: '',
-          confidence: (e.graph_rank as number) ?? 0.5,
-          status: 'active' as const,
-          scopes: expandedScopeMap.get(e.id) ?? [],
-          source: {
-            package: 'mama-core' as const,
-            source_type: String(e.graph_source || 'graph_expansion'),
-          },
-          created_at: (e.created_at as number) ?? Date.now(),
-          updated_at: (e.created_at as number) ?? Date.now(),
-        };
-        const expandedDiagnostics = buildDiagnostics(expandedRecord, 'expanded');
-        if (!passesStrictness(expandedDiagnostics)) {
-          diagnostics.candidate_counts.rejected_by_strictness += 1;
-          return [];
-        }
-        return [
-          searchOptions.diagnostics
-            ? {
-                ...expandedRecord,
-                retrieval_diagnostics: expandedDiagnostics,
-              }
-            : expandedRecord,
-        ];
+        return matchesKind(row?.kind);
       });
-      diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
-      // Graph-expanded hits are supporting context for the primary matches -
-      // they must never OUTRANK them. The previous score ((graph_rank)*0.1,
-      // typically 0.05-0.095) sat far above the entire RRF range (<=~0.018),
-      // so expansion hits displaced every primary hit from the fused top-N
-      // (delta-bench root cause: top-5 filled with related-but-wrong topics
-      // while the queried topic's own rows were cut). Scale them into a band
-      // strictly below the weakest primary hit, ordered by graph rank.
-      const minPrimaryScore =
-        fusedHits.length > 0 ? Math.min(...fusedHits.map((hit) => hit.fused_rank_score)) : 0.002;
-      fusedHits = [
-        ...fusedHits,
-        ...bundle.graph_context.expanded.map((record) => ({
-          source_type: 'decision' as const,
-          source_id: record.id,
-          record,
-          fused_rank_score:
-            minPrimaryScore * 0.9 * Math.min(1, Math.max(0.1, record.confidence ?? 0.5)),
-          retrieval_diagnostics: record.retrieval_diagnostics,
-        })),
-      ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
-
-      // bundle.graph_context.expanded is the strictness-filtered set of
-      // expanded nodes that will actually be returned. Use those IDs (not
-      // expandedOnly, which still contains rejected candidates) so edges
-      // never point at nodes that never made it into the graph payload.
-      const acceptedExpandedIds = bundle.graph_context.expanded.map((record) => record.id);
-      const allIds = [...matched.map((m) => m.id), ...acceptedExpandedIds];
-      const allEdges = await loadEdgesForIds(adapter, allIds);
-
-      // Filter out edges pointing to decisions with excluded statuses
-      const activeIds = new Set(allIds);
-      const edgesToCheck = allEdges.filter(
-        (e) => !activeIds.has(e.to_id) || !activeIds.has(e.from_id)
+    }
+    if (options.scopes && options.scopes.length > 0) {
+      const expandedIds = expandedOnly.map((e) => e.id);
+      expandedScopeMap = batchLoadScopes(adapter, expandedIds);
+      const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+      expandedOnly = expandedOnly.filter((e) => {
+        const scopes = expandedScopeMap.get(e.id) ?? [];
+        if (scopes.length === 0) return false;
+        return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
+      });
+      // A correction is stated by a record; its reason shows under the rule the records follow.
+      const correctionScopes = batchLoadScopes(
+        adapter,
+        expandedOnly.flatMap((e) => correctionAuthors(e.edge_corrected_by ?? []))
       );
-      if (edgesToCheck.length > 0) {
-        const checkIds = [
-          ...new Set(
-            edgesToCheck.flatMap((e) => [e.from_id, e.to_id]).filter((id) => !activeIds.has(id))
-          ),
-        ];
-        const placeholders = checkIds.map(() => '?').join(', ');
-        const statusRows = adapter
-          .prepare(`SELECT id, status FROM decisions WHERE id IN (${placeholders})`)
-          .all(...checkIds) as Array<{ id: string; status: string | null }>;
-        const excludedIds = new Set(
-          statusRows.filter((r) => r.status && EXCLUDED_STATUSES.has(r.status)).map((r) => r.id)
+      const readable = (correction: DecisionCorrection): boolean =>
+        (correctionScopes.get(correction.from) ?? []).some((scope) =>
+          requestedScopes.has(`${scope.kind}:${scope.id}`)
         );
-        bundle.graph_context.edges = allEdges.filter(
-          (e) => !excludedIds.has(e.from_id) && !excludedIds.has(e.to_id)
-        );
-      } else {
-        bundle.graph_context.edges = allEdges;
+      expandedOnly = expandedOnly.map((e) =>
+        e.edge_corrected_by
+          ? { ...e, edge_corrected_by: readableCorrections(e.edge_corrected_by, readable) }
+          : e
+      );
+    }
+
+    bundle.graph_context.expanded = expandedOnly.flatMap((e) => {
+      const kindRow = adapter.prepare(`SELECT kind FROM decisions WHERE id = ?`).get(e.id) as
+        | { kind?: string }
+        | undefined;
+      const expandedRecord: MemoryRecord = {
+        id: String(e.id),
+        topic: String(e.topic || ''),
+        kind: (kindRow?.kind ?? 'decision') as MemoryKind,
+        summary: String(e.decision || ''),
+        details: '',
+        confidence: (e.graph_rank as number) ?? 0.5,
+        status: 'active' as const,
+        scopes: expandedScopeMap.get(e.id) ?? [],
+        source: {
+          package: 'mama-core' as const,
+          source_type: String(e.graph_source || 'graph_expansion'),
+        },
+        created_at: (e.created_at as number) ?? Date.now(),
+        updated_at: (e.created_at as number) ?? Date.now(),
+        ...(e.related_to
+          ? {
+              reached_through: {
+                from: e.related_to,
+                relation: String(e.graph_source),
+                reason: e.edge_reason ?? null,
+                ...(e.edge_corrected_by ? { corrected_by: e.edge_corrected_by } : {}),
+              },
+            }
+          : {}),
+      };
+      const expandedDiagnostics = buildDiagnostics(expandedRecord, 'expanded');
+      if (!passesStrictness(expandedDiagnostics)) {
+        diagnostics.candidate_counts.rejected_by_strictness += 1;
+        return [];
       }
-    } catch {
-      // Graph expansion is best-effort; do not fail recall
+      return [
+        searchOptions.diagnostics
+          ? {
+              ...expandedRecord,
+              retrieval_diagnostics: expandedDiagnostics,
+            }
+          : expandedRecord,
+      ];
+    });
+    diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
+    // Graph-expanded hits are supporting context for the primary matches -
+    // they must never OUTRANK them. The previous score ((graph_rank)*0.1,
+    // typically 0.05-0.095) sat far above the entire RRF range (<=~0.018),
+    // so expansion hits displaced every primary hit from the fused top-N
+    // (delta-bench root cause: top-5 filled with related-but-wrong topics
+    // while the queried topic's own rows were cut). Scale them into a band
+    // strictly below the weakest primary hit, ordered by graph rank.
+    const minPrimaryScore =
+      fusedHits.length > 0 ? Math.min(...fusedHits.map((hit) => hit.fused_rank_score)) : 0.002;
+    fusedHits = [
+      ...fusedHits,
+      ...bundle.graph_context.expanded.map((record) => ({
+        source_type: 'decision' as const,
+        source_id: record.id,
+        record,
+        fused_rank_score:
+          minPrimaryScore * 0.9 * Math.min(1, Math.max(0.1, record.confidence ?? 0.5)),
+        retrieval_diagnostics: record.retrieval_diagnostics,
+      })),
+    ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
+
+    // bundle.graph_context.expanded is the strictness-filtered set of
+    // expanded nodes that will actually be returned. Use those IDs (not
+    // expandedOnly, which still contains rejected candidates) so edges
+    // never point at nodes that never made it into the graph payload.
+    const acceptedExpandedIds = bundle.graph_context.expanded.map((record) => record.id);
+    const allIds = [...matched.map((m) => m.id), ...acceptedExpandedIds];
+    const allEdges = await loadEdgesForIds(adapter, allIds);
+
+    // Filter out edges pointing to decisions with excluded statuses
+    const activeIds = new Set(allIds);
+    const edgesToCheck = allEdges.filter(
+      (e) => !activeIds.has(e.to_id) || !activeIds.has(e.from_id)
+    );
+    if (edgesToCheck.length > 0) {
+      const checkIds = [
+        ...new Set(
+          edgesToCheck.flatMap((e) => [e.from_id, e.to_id]).filter((id) => !activeIds.has(id))
+        ),
+      ];
+      const placeholders = checkIds.map(() => '?').join(', ');
+      const statusRows = adapter
+        .prepare(`SELECT id, status FROM decisions WHERE id IN (${placeholders})`)
+        .all(...checkIds) as Array<{ id: string; status: string | null }>;
+      const excludedIds = new Set(
+        statusRows.filter((r) => r.status && EXCLUDED_STATUSES.has(r.status)).map((r) => r.id)
+      );
+      bundle.graph_context.edges = allEdges.filter(
+        (e) => !excludedIds.has(e.from_id) && !excludedIds.has(e.to_id)
+      );
+    } else {
+      bundle.graph_context.edges = allEdges;
     }
   }
 
@@ -1896,6 +1945,8 @@ export interface SearchCandidate {
   graph_rank?: number;
   related_to?: string | null;
   edge_reason?: string | null;
+  /** Later links that contradict the link this record was reached through. */
+  edge_corrected_by?: DecisionCorrection[];
   recency_score?: number;
   recency_age_days?: number;
   final_score?: number;
@@ -1910,6 +1961,7 @@ export async function expandWithGraphInAdapter(
 ): Promise<SearchCandidate[]> {
   const graphEnhanced = new Map<string, SearchCandidate>(); // Use Map for deduplication by ID
   const primaryIds = new Set(candidates.map((c: SearchCandidate) => c.id)); // Track primary candidates
+  const reachedThrough = new Map<string, string>(); // expanded record id -> the link's edge id
 
   // Process each candidate
   for (const candidate of candidates) {
@@ -1922,116 +1974,113 @@ export async function expandWithGraphInAdapter(
       });
     }
 
-    // 1. Add supersedes chain (evolution history)
-    try {
-      const chain = await queryDecisionGraph(adapter, candidate.topic, candidate.id);
-      for (const decision of chain) {
-        if (!graphEnhanced.has(decision.id)) {
-          graphEnhanced.set(decision.id, {
-            ...decision,
-            graph_source: 'supersedes_chain',
-            graph_rank: 0.8, // Lower rank than primary
-            similarity: (candidate.similarity ?? 0) * 0.9, // Inherit similarity, slightly reduced
-            related_to: candidate.id, // Track relationship
-          });
-        }
+    // 1. The records this one replaced, down its supersedes chain
+    const chain = await queryDecisionGraph(adapter, candidate.topic, candidate.id);
+    for (const decision of chain) {
+      if (!graphEnhanced.has(decision.id)) {
+        graphEnhanced.set(decision.id, {
+          ...decision,
+          graph_source: 'supersedes_chain',
+          graph_rank: 0.8, // Lower rank than primary
+          similarity: (candidate.similarity ?? 0) * 0.9, // Inherit similarity, slightly reduced
+          related_to: candidate.id, // Track relationship
+        });
       }
-    } catch (error: unknown) {
-      logWarn(
-        `Failed to get supersedes chain for ${candidate.topic}: ${error instanceof Error ? error.message : String(error)}`
-      );
     }
 
-    // 2. Add semantic edges (refines, contradicts, builds_on, debates, synthesizes)
-    try {
-      const rawEdges = (await querySemanticEdges(adapter, [candidate.id])) || {};
-      const edges = {
-        refines: rawEdges.refines || [],
-        refined_by: rawEdges.refined_by || [],
-        contradicts: rawEdges.contradicts || [],
-        contradicted_by: rawEdges.contradicted_by || [],
-        builds_on: rawEdges.builds_on || [],
-        built_on_by: rawEdges.built_on_by || [],
-        debates: rawEdges.debates || [],
-        debated_by: rawEdges.debated_by || [],
-        synthesizes: rawEdges.synthesizes || [],
-        synthesized_by: rawEdges.synthesized_by || [],
-      };
+    // 2. The links an agent stated (refines, contradicts, builds_on, debates, synthesizes)
+    const rawEdges = (await querySemanticEdges(adapter, [candidate.id])) || {};
+    const edges = {
+      refines: rawEdges.refines || [],
+      refined_by: rawEdges.refined_by || [],
+      contradicts: rawEdges.contradicts || [],
+      contradicted_by: rawEdges.contradicted_by || [],
+      builds_on: rawEdges.builds_on || [],
+      built_on_by: rawEdges.built_on_by || [],
+      debates: rawEdges.debates || [],
+      debated_by: rawEdges.debated_by || [],
+      synthesizes: rawEdges.synthesizes || [],
+      synthesized_by: rawEdges.synthesized_by || [],
+    };
 
-      // Helper to add edge to graph
-      const addEdge = (
-        edge: SemanticEdgeItem,
-        idField: 'to_id' | 'from_id',
-        source: string,
-        rank: number,
-        simFactor: number
-      ): void => {
-        const id = edge[idField];
-        if (!graphEnhanced.has(id)) {
-          graphEnhanced.set(id, {
-            id: id,
-            topic: edge.topic,
-            decision: edge.decision,
-            confidence: edge.confidence,
-            created_at: edge.created_at,
-            graph_source: source,
-            graph_rank: rank,
-            similarity: (candidate.similarity ?? 0) * simFactor,
-            related_to: candidate.id,
-            edge_reason: edge.reason,
-          });
-        }
-      };
-
-      // Add refines edges
-      for (const edge of edges.refines) {
-        addEdge(edge, 'to_id', 'refines', 0.7, 0.85);
+    // Helper to add edge to graph
+    const addEdge = (
+      edge: SemanticEdgeItem,
+      idField: 'to_id' | 'from_id',
+      source: string,
+      rank: number,
+      simFactor: number
+    ): void => {
+      const id = edge[idField];
+      if (!graphEnhanced.has(id)) {
+        graphEnhanced.set(id, {
+          id: id,
+          topic: edge.topic,
+          decision: edge.decision,
+          confidence: edge.confidence,
+          created_at: edge.created_at,
+          graph_source: source,
+          graph_rank: rank,
+          similarity: (candidate.similarity ?? 0) * simFactor,
+          related_to: candidate.id,
+          edge_reason: edge.reason,
+        });
+        if (edge.edge_id) reachedThrough.set(id, edge.edge_id);
       }
+    };
 
-      // Add refined_by edges
-      for (const edge of edges.refined_by) {
-        addEdge(edge, 'from_id', 'refined_by', 0.7, 0.85);
-      }
-
-      // Add contradicts edges (lower rank, but still relevant)
-      for (const edge of edges.contradicts) {
-        addEdge(edge, 'to_id', 'contradicts', 0.6, 0.8);
-      }
-
-      // Story 2.1: Add builds_on edges (high relevance - extending prior work)
-      for (const edge of edges.builds_on) {
-        addEdge(edge, 'to_id', 'builds_on', 0.75, 0.9);
-      }
-
-      // Add built_on_by edges (someone built on this decision)
-      for (const edge of edges.built_on_by) {
-        addEdge(edge, 'from_id', 'built_on_by', 0.75, 0.9);
-      }
-
-      // Add debates edges (alternative view)
-      for (const edge of edges.debates) {
-        addEdge(edge, 'to_id', 'debates', 0.65, 0.85);
-      }
-
-      // Add debated_by edges
-      for (const edge of edges.debated_by) {
-        addEdge(edge, 'from_id', 'debated_by', 0.65, 0.85);
-      }
-
-      // Add synthesizes edges (unified approach)
-      for (const edge of edges.synthesizes) {
-        addEdge(edge, 'to_id', 'synthesizes', 0.7, 0.88);
-      }
-
-      // Add synthesized_by edges
-      for (const edge of edges.synthesized_by) {
-        addEdge(edge, 'from_id', 'synthesized_by', 0.7, 0.88);
-      }
-    } catch (error: unknown) {
-      logWarn(
-        `Failed to get semantic edges for ${candidate.id}: ${error instanceof Error ? error.message : String(error)}`
-      );
+    // Add refines edges
+    for (const edge of edges.refines) {
+      addEdge(edge, 'to_id', 'refines', 0.7, 0.85);
     }
+
+    // Add refined_by edges
+    for (const edge of edges.refined_by) {
+      addEdge(edge, 'from_id', 'refined_by', 0.7, 0.85);
+    }
+
+    // Add contradicts edges (lower rank, but still relevant)
+    for (const edge of edges.contradicts) {
+      addEdge(edge, 'to_id', 'contradicts', 0.6, 0.8);
+    }
+
+    // Story 2.1: Add builds_on edges (high relevance - extending prior work)
+    for (const edge of edges.builds_on) {
+      addEdge(edge, 'to_id', 'builds_on', 0.75, 0.9);
+    }
+
+    // Add built_on_by edges (someone built on this decision)
+    for (const edge of edges.built_on_by) {
+      addEdge(edge, 'from_id', 'built_on_by', 0.75, 0.9);
+    }
+
+    // Add debates edges (alternative view)
+    for (const edge of edges.debates) {
+      addEdge(edge, 'to_id', 'debates', 0.65, 0.85);
+    }
+
+    // Add debated_by edges
+    for (const edge of edges.debated_by) {
+      addEdge(edge, 'from_id', 'debated_by', 0.65, 0.85);
+    }
+
+    // Add synthesizes edges (unified approach)
+    for (const edge of edges.synthesizes) {
+      addEdge(edge, 'to_id', 'synthesizes', 0.7, 0.88);
+    }
+
+    // Add synthesized_by edges
+    for (const edge of edges.synthesized_by) {
+      addEdge(edge, 'from_id', 'synthesized_by', 0.7, 0.88);
+    }
+  }
+
+  // A link the agent later contradicted still leads here; the correction goes with the record.
+  const corrections = correctionsOf(adapter, [...reachedThrough.values()]);
+  for (const [id, edgeId] of reachedThrough) {
+    const correctedBy = corrections.get(edgeId);
+    if (correctedBy)
+      graphEnhanced.set(id, { ...graphEnhanced.get(id)!, edge_corrected_by: correctedBy });
   }
 
   // 3. Convert Map to Array
@@ -2194,8 +2243,170 @@ function buildRankerMeta(
   return meta;
 }
 
+/** One stated link from or to a search hit: a pointer the reader opens. */
+export interface SearchHitLink {
+  id: string;
+  topic: string;
+  /** The record's first line. */
+  summary: string;
+  /** Present when the record is no longer active, e.g. `superseded`. */
+  status?: string;
+  /** Seen from the hit: `builds_on` out, `built_on_by` in, and so on. */
+  relation: string;
+  reason: string | null;
+  corrected_by?: DecisionCorrection[];
+}
+
+/** The relations search follows, and their names seen from the other end. */
+const POINTER_RELATIONS: Record<string, string> = {
+  refines: 'refined_by',
+  contradicts: 'contradicted_by',
+  builds_on: 'built_on_by',
+  debates: 'debated_by',
+  synthesizes: 'synthesized_by',
+  supersedes: 'superseded_by',
+};
+
+/**
+ * Each direct hit names the records its stated links reach, in both directions, including a link
+ * to another hit. Expanded rows rank below every direct hit (a measured regression when they did
+ * not) and are cut at the usual limits, so the link comes along on its hit instead, and the
+ * reader opens the record it names. A scoped search names only records in its scopes, and a
+ * correction only when the record stating it is in them.
+ */
+function withLinkPointers<T extends { id: string; related_to?: string | null }>(
+  rows: T[],
+  adapter: DatabaseAdapter,
+  scopes: readonly MemoryScopeRef[] | undefined
+): Array<T & { links?: SearchHitLink[] }> {
+  const hitIds = rows.filter((row) => !row.related_to).map((row) => row.id);
+  if (hitIds.length === 0) return rows;
+  const hits = hitIds.map(() => '?').join(', ');
+  const relations = Object.keys(POINTER_RELATIONS);
+  const edges = adapter
+    .prepare(
+      `SELECT edge_id, from_id, to_id, relationship, reason FROM ${STATED_DECISION_EDGES} e
+        WHERE (from_id IN (${hits}) OR to_id IN (${hits}))
+          AND relationship IN (${relations.map(() => '?').join(', ')})
+          AND (approved_by_user = 1 OR approved_by_user IS NULL)
+        ORDER BY created_at`
+    )
+    .all(...hitIds, ...hitIds, ...relations) as Array<{
+    edge_id: string | null;
+    from_id: string;
+    to_id: string;
+    relationship: string;
+    reason: string | null;
+  }>;
+  if (edges.length === 0) return rows;
+  const hitSet = new Set(hitIds);
+  const otherIds = [...new Set(edges.flatMap((edge) => [edge.from_id, edge.to_id]))];
+  const records = new Map(
+    (
+      adapter
+        .prepare(
+          `SELECT id, topic, decision, status FROM decisions
+            WHERE id IN (${otherIds.map(() => '?').join(', ')})`
+        )
+        .all(...otherIds) as Array<{ id: string; topic: string; decision: string; status: string }>
+    ).map((record) => [record.id, record])
+  );
+  const corrections = correctionsOf(
+    adapter,
+    edges.flatMap((edge) => (edge.edge_id ? [edge.edge_id] : []))
+  );
+  const requested = scopes?.length ? new Set(scopes.map((s) => `${s.kind}:${s.id}`)) : null;
+  const scopeMap = requested
+    ? batchLoadScopes(adapter as DatabaseInstance, [
+        ...otherIds,
+        ...[...corrections.values()].flatMap((list) => correctionAuthors(list)),
+      ])
+    : new Map<string, MemoryScopeRef[]>();
+  const inScope = (id: string): boolean =>
+    !requested ||
+    (scopeMap.get(id) ?? []).some((scope) => requested.has(`${scope.kind}:${scope.id}`));
+  const byHit = new Map<string, SearchHitLink[]>();
+  const point = (
+    hitId: string,
+    otherId: string,
+    relation: string,
+    edge: (typeof edges)[number]
+  ) => {
+    const record = records.get(otherId);
+    if (!record || !inScope(otherId)) return;
+    const correctedBy = edge.edge_id ? corrections.get(edge.edge_id) : undefined;
+    const readable = correctedBy
+      ? readableCorrections(correctedBy, (correction) => inScope(correction.from))
+      : undefined;
+    const list = byHit.get(hitId) ?? [];
+    list.push({
+      id: record.id,
+      topic: record.topic,
+      summary: record.decision.split('\n')[0]!.slice(0, 200),
+      ...(record.status && record.status !== 'active' ? { status: record.status } : {}),
+      relation,
+      reason: edge.reason,
+      ...(readable ? { corrected_by: readable } : {}),
+    });
+    byHit.set(hitId, list);
+  };
+  for (const edge of edges) {
+    if (hitSet.has(edge.from_id)) point(edge.from_id, edge.to_id, edge.relationship, edge);
+    if (hitSet.has(edge.to_id))
+      point(edge.to_id, edge.from_id, POINTER_RELATIONS[edge.relationship]!, edge);
+  }
+  return rows.map((row) => {
+    const links = row.related_to ? undefined : byHit.get(row.id);
+    return links ? { ...row, links } : row;
+  });
+}
+
+/**
+ * A hit that is one revision of a work item says which one and the item's head. Search ranks an
+ * item's revisions by their text, so an earlier revision can rank above the one that corrected it
+ * (on a copy of the owner's database a revision 16 of 20 ranked first and the head was not in the
+ * top ten); the reader opens the head before answering from an earlier one.
+ */
+function withWorkRevision<T extends { id: string }>(
+  rows: T[],
+  adapter: DatabaseAdapter
+): Array<T & { work_item?: { commitment_id: string; revision: number; head_revision: number } }> {
+  if (rows.length === 0) return rows;
+  const found = new Map(
+    (
+      adapter
+        .prepare(
+          `SELECT a.record_id, a.commitment_id, a.revision, c.current_revision
+             FROM commitment_assignments a
+             JOIN commitments c ON c.commitment_id = a.commitment_id
+            WHERE a.record_id IN (${rows.map(() => '?').join(', ')})`
+        )
+        .all(...rows.map((row) => row.id)) as Array<{
+        record_id: string;
+        commitment_id: string;
+        revision: number;
+        current_revision: number;
+      }>
+    ).map((row) => [row.record_id, row])
+  );
+  return rows.map((row) => {
+    const work = found.get(row.id);
+    return work
+      ? {
+          ...row,
+          work_item: {
+            commitment_id: work.commitment_id,
+            revision: work.revision,
+            head_revision: work.current_revision,
+          },
+        }
+      : row;
+  });
+}
+
 function mapRolledUpResult(result: SearchRollupResult) {
   const record = resultRecord(result);
+  const reached = (record as { reached_through?: MemoryReachedThrough }).reached_through;
   const retrievalDiagnostics = result.retrieval_diagnostics;
   const topic = stringOrNull(record.topic ?? record.title) ?? result.source_id;
   // For wiki_page leaves, prefer the markdown body (`content`) in `decision` so
@@ -2228,10 +2439,13 @@ function mapRolledUpResult(result: SearchRollupResult) {
     created_at: record.created_at ?? null,
     event_date: record.event_date ?? null,
     event_datetime: record.event_datetime ?? null,
-    graph_source: retrievalDiagnostics?.graph_source ?? 'primary',
+    // An expanded record says which hit it came from and through which link, so the reader
+    // can tell it from a direct hit and weigh the link's reason (and any correction of it).
+    graph_source: reached?.relation ?? retrievalDiagnostics?.graph_source ?? 'primary',
     graph_rank: 1,
-    related_to: null,
-    edge_reason: null,
+    related_to: reached?.from ?? null,
+    edge_reason: reached?.reason ?? null,
+    ...(reached?.corrected_by ? { edge_corrected_by: reached.corrected_by } : {}),
     case_id: result.case_id,
     source_type: result.source_type,
     kind: stringOrNull(record.kind) ?? 'decision',
@@ -2443,7 +2657,10 @@ export async function suggestInAdapter(
       const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
         filteredResults.map(mapRolledUpResult)
       );
-      const limitedResults = mappedResults.slice(0, limit);
+      const limitedResults = withWorkRevision(
+        withLinkPointers(mappedResults.slice(0, limit), adapter, options.scopes),
+        adapter
+      );
 
       if (format === 'markdown') {
         const context = limitedResults
@@ -2515,7 +2732,10 @@ export async function suggestInAdapter(
           : {}),
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
-      const limitedRows = rankedRows.slice(0, limit);
+      const limitedRows = withWorkRevision(
+        withLinkPointers(rankedRows.slice(0, limit), adapter, options.scopes),
+        adapter
+      );
 
       if (format === 'markdown') {
         const context = limitedRows

@@ -141,6 +141,7 @@ export { vectorSearch, fts5Search } from './search.js';
 export {
   queryDecisionGraph,
   querySemanticEdges,
+  STATED_DECISION_EDGES,
   getGraphNeighborhood,
   getGraphPaths,
   getGraphTimeline,

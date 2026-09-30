@@ -12,7 +12,6 @@
 
 import type {
   DatabaseAdapter,
-  DecisionEdgeRow,
   DecisionRecord,
   SemanticEdgeItem,
   SemanticEdges,
@@ -78,13 +77,40 @@ function parseRefinedFrom(decision: {
   }
 }
 
+/** The reasons the host's evolution rules gave the legacy `decision_edges` rows they wrote. */
+export const HOST_EDGE_REASON_PREFIXES = [
+  'Semantically similar',
+  'Updated fact',
+  'Related but distinct',
+] as const;
+
+/**
+ * The edges an agent stated between decisions, in the `decision_edges` columns plus `edge_id`:
+ * links in `twin_edges` between two memories that the host did not write, and the legacy
+ * `decision_edges` rows whose reason is not one the host gave. Search expansion follows these and
+ * no host edge (owner, 2026-09-30): a similarity is no ground that two records are the same case.
+ */
+export const STATED_DECISION_EDGES = `(
+  SELECT NULL AS edge_id, from_id, to_id, relationship, reason, weight, created_at, created_by,
+         approved_by_user, decision_id, evidence
+    FROM decision_edges
+   WHERE ${HOST_EDGE_REASON_PREFIXES.map((prefix) => `COALESCE(reason, '') NOT LIKE '${prefix}%'`).join(' AND ')}
+  UNION ALL
+  SELECT edge_id, subject_id, object_id, edge_type,
+         COALESCE(json_extract(relation_attrs_json, '$.reason'), reason_text), confidence,
+         created_at, source, NULL, NULL, NULL
+    FROM twin_edges
+   WHERE subject_kind = 'memory' AND object_kind = 'memory' AND source <> 'code'
+     AND edge_type <> 'derived_from'
+)`;
+
 /**
  * Walk a topic's supersedes chain with a recursive CTE.
  *
  * @param adapter - Database to read through
  * @param topic - Decision topic to query
  * @param anchorId - Start from this decision instead of the topic's current head
- * @returns Decisions ordered by recency, each carrying its approved edges
+ * @returns Decisions ordered by recency
  */
 export async function queryDecisionGraph(
   adapter: DatabaseAdapter,
@@ -106,13 +132,7 @@ export async function queryDecisionGraph(
         `
         )
         .all(topic) as DecisionRecord[];
-      const edgesStmt = adapter.prepare(`
-        SELECT * FROM decision_edges
-        WHERE from_id = ?
-          AND (approved_by_user = 1 OR approved_by_user IS NULL)
-      `);
       for (const decision of decisions) {
-        decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
         decision.refined_from = parseRefinedFrom(decision);
       }
       return decisions;
@@ -137,16 +157,7 @@ export async function queryDecisionGraph(
     `);
     const decisions = stmt.all(anchorId) as DecisionRecord[];
 
-    // Join with decision_edges to include relationships
-    // Prepare statement once outside loop for performance
-    const edgesStmt = adapter.prepare(`
-      SELECT * FROM decision_edges
-      WHERE from_id = ?
-        AND (approved_by_user = 1 OR approved_by_user IS NULL)
-    `);
     for (const decision of decisions) {
-      decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
-
       decision.refined_from = parseRefinedFrom(decision);
     }
 
@@ -195,7 +206,7 @@ export async function querySemanticEdges(
     // Query outgoing edges (from_id = decision)
     const outgoingStmt = adapter.prepare(`
       SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
-      FROM decision_edges e
+      FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.to_id = d.id
       WHERE e.from_id IN (${placeholders})
         AND e.relationship IN (${edgeTypePlaceholders})
@@ -207,7 +218,7 @@ export async function querySemanticEdges(
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
       SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
-      FROM decision_edges e
+      FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.from_id = d.id
       WHERE e.to_id IN (${placeholders})
         AND e.relationship IN (${edgeTypePlaceholders})

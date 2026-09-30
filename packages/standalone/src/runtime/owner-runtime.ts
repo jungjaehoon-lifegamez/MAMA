@@ -427,9 +427,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           // One ranking: retrieval_score is rank within one search, so separate searches per kind
           // would put each kind's first hit on every turn. Guidance is a few dozen records among
           // hundreds of work records, so the search reads deep and keeps guidance in its order.
+          // Lessons rank on the turn's own text; records a link reaches are for the agent to weigh.
           const search = await surface.hostToolCall(
             'memory.search',
-            { query: text.slice(0, 2_000), limit: 40 },
+            { query: text.slice(0, 2_000), limit: 40, includeRelated: false },
             `turn-lessons:${randomUUID()}`
           );
           if (search.status !== 'completed') {

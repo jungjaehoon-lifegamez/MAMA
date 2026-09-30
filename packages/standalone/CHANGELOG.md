@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Turn lessons rank on the turn's own text and do not take records a search reached through a
+  link (`includeRelated: false`).
 - The viewer graph draws stored edges only; revisions of one item are no longer joined by a host
   edge, and the viewer's "Earlier records" block, which read no edges, is removed.
 
