@@ -16,7 +16,9 @@ import { fileURLToPath } from 'url';
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');
-const { ensurePluginDependencies } = require(path.join(PLUGIN_ROOT, 'scripts', 'plugin-deps.js'));
+const { ensurePluginDependencies, runNpmInstall } = require(
+  path.join(PLUGIN_ROOT, 'scripts', 'plugin-deps.js')
+);
 
 /** A plugin copy as the marketplace ships it: package.json and no node_modules. */
 function marketplaceCopy(dependencies = { '@jungjaehoon/mama-core': '^5.0.0' }) {
@@ -177,6 +179,35 @@ describe('plugin dependencies in CLAUDE_PLUGIN_DATA', () => {
     };
     ensurePluginDependencies({ root, dataDir, install: replacedWhileInstalling, isAlive });
     expect(fs.readFileSync(path.join(lock, 'owner'), 'utf8')).toBe(`${LIVE} other`);
+  });
+
+  it('names why it did not install, so SessionStart shows install steps only for a failure', () => {
+    const { root, dataDir } = marketplaceCopy();
+    lockBy(dataDir, LIVE);
+    const codeOf = (options) => {
+      try {
+        ensurePluginDependencies(options);
+      } catch (error) {
+        return error.code;
+      }
+      return null;
+    };
+    expect(codeOf({ root, dataDir, install: fakeNpm().install, isAlive })).toBe('MAMA_DEPS_BUSY');
+    expect(codeOf({ root, dataDir: '', install: fakeNpm().install })).toBe('MAMA_NO_PLUGIN_DATA');
+  });
+
+  it('stops npm itself before the hook would be killed', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mama-plugin-npm-'));
+    const started = Date.now();
+    // A hook killed at its timeout would leave npm running; the next session would install beside it.
+    expect(() =>
+      runNpmInstall(dir, {
+        command: process.execPath,
+        args: ['-e', 'setTimeout(() => {}, 20000)'],
+        timeoutMs: 300,
+      })
+    ).toThrow(/did not finish/);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('installs nothing for a checkout whose own node_modules has mama-core', () => {

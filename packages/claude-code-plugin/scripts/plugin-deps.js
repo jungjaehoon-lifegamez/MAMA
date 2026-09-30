@@ -24,6 +24,13 @@ const LOCK = 'install.lock';
 const BUSY =
   'another session is installing the plugin dependencies; they are ready from the next session';
 const STALE_TAKEOVER_MS = 30_000;
+// The hook stops npm before Claude Code stops the hook (SessionStart timeout 180 s in
+// plugin.json): npm left running by a killed hook would install beside the next session's npm.
+const NPM_TIMEOUT_MS = 150_000;
+
+function codedError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
 
 function hasCore(nodeModules) {
   return fs.existsSync(path.join(nodeModules, ...CORE_PACKAGE, 'package.json'));
@@ -62,14 +69,27 @@ function readText(file) {
   }
 }
 
-function runNpmInstall(dir) {
+function runNpmInstall(
+  dir,
+  {
+    command = 'npm',
+    args = ['install', '--omit=dev', '--no-audit', '--no-fund'],
+    timeoutMs = NPM_TIMEOUT_MS,
+  } = {}
+) {
   // Claude Code reads the SessionStart hook's stdout as its result, so npm's output stays piped.
-  const result = spawnSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+  const result = spawnSync(command, args, {
     cwd: dir,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
+    timeout: timeoutMs,
   });
+  if (result.error && result.error.code === 'ETIMEDOUT') {
+    throw new Error(
+      `npm install in ${dir} did not finish in ${timeoutMs / 1000} s; the next session start continues it`
+    );
+  }
   if (result.error) {
     throw result.error;
   }
@@ -121,7 +141,7 @@ function acquireLock(dataDir, { isAlive, beforeTakeover }) {
   }
   const staleOwner = readText(path.join(lock, 'owner'));
   if (staleOwner === null || isAlive(Number(staleOwner.split(' ')[0]))) {
-    throw new Error(BUSY);
+    throw codedError(BUSY, 'MAMA_DEPS_BUSY');
   }
   beforeTakeover();
   // Takeovers run one at a time. Only a takeover removes a lock that another session holds, so
@@ -137,17 +157,17 @@ function acquireLock(dataDir, { isAlive, beforeTakeover }) {
     if (Date.now() - fs.statSync(takeover).mtimeMs > STALE_TAKEOVER_MS) {
       fs.rmSync(takeover, { recursive: true, force: true });
     }
-    throw new Error(BUSY);
+    throw codedError(BUSY, 'MAMA_DEPS_BUSY');
   }
   try {
     if (readText(path.join(lock, 'owner')) !== staleOwner) {
-      throw new Error(BUSY);
+      throw codedError(BUSY, 'MAMA_DEPS_BUSY');
     }
     fs.rmSync(lock, { recursive: true, force: true });
     if (claim()) {
       return token;
     }
-    throw new Error(BUSY);
+    throw codedError(BUSY, 'MAMA_DEPS_BUSY');
   } finally {
     fs.rmSync(takeover, { recursive: true, force: true });
   }
@@ -177,7 +197,10 @@ function ensurePluginDependencies({
     return 'local';
   }
   if (!dataDir) {
-    throw new Error('CLAUDE_PLUGIN_DATA is not set, so there is no folder to install mama-core in');
+    throw codedError(
+      'CLAUDE_PLUGIN_DATA is not set, so there is no folder to install mama-core in',
+      'MAMA_NO_PLUGIN_DATA'
+    );
   }
   fs.mkdirSync(dataDir, { recursive: true });
   const manifest = dependencyManifest(root);
@@ -216,4 +239,4 @@ function exitUnlessCoreLoadable(hookName) {
   }
 }
 
-module.exports = { ensurePluginDependencies, exitUnlessCoreLoadable };
+module.exports = { ensurePluginDependencies, exitUnlessCoreLoadable, runNpmInstall };

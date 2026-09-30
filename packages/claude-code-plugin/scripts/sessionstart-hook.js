@@ -281,7 +281,7 @@ function writeEnvStatus(status) {
 /**
  * Install mama-core where this session's hooks load it from (plugin-deps.js).
  *
- * @returns {{installed: boolean, error?: string}}
+ * @returns {{installed: boolean, error?: string, code?: string}}
  */
 function ensureDependencies() {
   try {
@@ -292,7 +292,7 @@ function ensureDependencies() {
     return { installed: status === 'installed' };
   } catch (error) {
     logError(`[SessionStart] Dependency install failed: ${error.message}`);
-    return { installed: false, error: error.message };
+    return { installed: false, error: error.message, code: error.code };
   }
 }
 
@@ -332,27 +332,35 @@ async function main() {
   // Ensure dependencies are installed before proceeding
   const depResult = ensureDependencies();
   if (depResult.error) {
-    // Dependencies failed to install - output error and exit
-    const response = {
-      hookSpecificOutput: {
-        hookEventName: 'SessionStart',
-        additionalContext: `⚠️ MAMA: Failed to install dependencies
-
----
-❌ **MAMA Dependency Installation Failed**
-
-Error: ${depResult.error}
-
+    // Another session installing is not a failure, and running npm by hand beside it would
+    // install twice into one folder; the steps are shown only for a failed install.
+    const busy = depResult.code === 'MAMA_DEPS_BUSY';
+    const steps =
+      depResult.code === undefined && process.env.CLAUDE_PLUGIN_DATA
+        ? `
 The next session start tries again. To install by hand:
 \`\`\`bash
 cd "${process.env.CLAUDE_PLUGIN_DATA}"
 npm install --omit=dev
 \`\`\`
-`,
+`
+        : '';
+    const response = {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: busy
+          ? `⏳ MAMA: ${depResult.error}`
+          : `⚠️ MAMA: Failed to install dependencies
+
+---
+❌ **MAMA Dependency Installation Failed**
+
+Error: ${depResult.error}
+${steps}`,
       },
     };
     console.log(JSON.stringify(response));
-    process.exit(1);
+    process.exit(busy ? 0 : 1);
   }
 
   // Upgrade to real logger now that dependencies are available
