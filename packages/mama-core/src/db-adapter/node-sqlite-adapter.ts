@@ -846,9 +846,26 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
           );
           continue;
         }
-        this.rebuildWorkflowMemoryKind098(migrationsDir);
+        this.applyWithForeignKeysOff(migrationsDir, file);
         this.stampMigration(sourceName, version);
         info(`[node-sqlite-adapter] Migration ${file} reconciled successfully`);
+        continue;
+      }
+
+      // 084 rebuilds memory_scopes. Its own PRAGMA foreign_keys = OFF is a no-op inside the
+      // migration transaction, so dropping the table cascaded to every memory scope binding
+      // (a development memory at schema 80 lost all 414 on the way to 099).
+      if (isCore && version === 84) {
+        if (!this.tableExists('memory_scopes')) {
+          // As the plain path does for an ALTER TABLE on a missing table: a legacy database whose
+          // scope tables come later from the structural repair.
+          warn(`[node-sqlite-adapter] Migration ${file} skipped: memory_scopes does not exist`);
+          this.stampMigration(sourceName, version);
+          continue;
+        }
+        this.applyWithForeignKeysOff(migrationsDir, file);
+        this.stampMigration(sourceName, version);
+        info(`[node-sqlite-adapter] Migration ${file} applied successfully`);
         continue;
       }
 
@@ -1730,15 +1747,19 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     }
   }
 
-  private rebuildWorkflowMemoryKind098(migrationsDir: string): void {
-    const migrationPath = path.join(migrationsDir, '098-workflow-memory-kind.sql');
+  /**
+   * A migration that drops and recreates a referenced table: foreign keys go off outside the
+   * transaction (a PRAGMA inside it does nothing), so the drop cascades to no row.
+   */
+  private applyWithForeignKeysOff(migrationsDir: string, file: string): void {
+    const migrationPath = path.join(migrationsDir, file);
     if (!fs.existsSync(migrationPath)) {
-      throw new Error('Migration 098 workflow-kind rebuild SQL is missing');
+      throw new Error(`Migration ${file} SQL is missing`);
     }
     const previousForeignKeys = this.readForeignKeysEnabled();
     this.exec('PRAGMA foreign_keys = OFF');
     if (this.readForeignKeysEnabled()) {
-      throw new Error('Migration 098 could not disable foreign_keys before rebuilding decisions');
+      throw new Error(`Migration ${file} could not disable foreign_keys before its rebuild`);
     }
     try {
       this.transaction(() => {
@@ -1746,7 +1767,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       });
       const violations = this.prepare('PRAGMA foreign_key_check').all();
       if (violations.length > 0) {
-        throw new Error('Migration 098 left foreign key violations');
+        throw new Error(`Migration ${file} left foreign key violations`);
       }
     } finally {
       this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
