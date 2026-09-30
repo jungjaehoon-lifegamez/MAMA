@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
 import { recallMemory, retireMemoryRecord, saveJudgmentRecord } from '../../src/memory/api.js';
+import { appendOutcomeAmendment } from '../../src/memory/write-adapters.js';
 import type { MemoryScopeRef } from '../../src/memory/types.js';
 
 const TEST_DB = path.join(os.tmpdir(), `test-recall-honest-history-${randomUUID()}.db`);
@@ -142,5 +143,48 @@ describe('search shows history honestly', () => {
     }
     const found = await recallMemory(getAdapter(), 'walrus rota', { scopes: [PROJECT_A] });
     expect(found.memories.map((memory) => memory.id)).toContain(active.id);
+  });
+
+  it('does not reach an amendment through a link an agent stated to it', async () => {
+    const plan = await save('ops/launch', 'Launch plan for the release', [PROJECT_A]);
+    const amendment = await appendOutcomeAmendment(
+      plan.id,
+      { outcome: 'SUCCESS', commandId: `outcome-${randomUUID()}` },
+      { adapter: getAdapter() }
+    );
+    // Expansion follows only stated links, so the note links to the amendment itself.
+    const note = await saveJudgmentRecord(
+      getAdapter(),
+      {
+        topic: 'ops/orca-note',
+        kind: 'decision',
+        summary: 'Orca release notes follow the launch outcome',
+        details: 'Orca release notes follow the launch outcome',
+        scopes: [PROJECT_A],
+        source: { package: 'mama-core', source_type: 'test' },
+        links: [
+          {
+            relation: 'builds_on',
+            target: { kind: 'memory', id: amendment.recordId },
+            reason: 'the notes cite the recorded outcome',
+          },
+        ],
+      },
+      access([PROJECT_A]),
+      `cmd-${randomUUID()}`
+    );
+    const query = { scopes: [PROJECT_A], includeRelated: true };
+    const found = await recallMemory(getAdapter(), 'orca release notes', query);
+    expect(found.memories.map((memory) => memory.id)).toContain(note.id);
+    expect(found.graph_context.expanded.map((memory) => memory.id)).not.toContain(
+      amendment.recordId
+    );
+    const withHistory = await recallMemory(getAdapter(), 'orca release notes', {
+      ...query,
+      includeHistory: true,
+    });
+    expect(withHistory.graph_context.expanded.map((memory) => memory.id)).toContain(
+      amendment.recordId
+    );
   });
 });

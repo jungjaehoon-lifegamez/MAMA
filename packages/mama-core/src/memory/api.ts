@@ -1619,6 +1619,14 @@ export async function recallMemory(
         const status = row?.status || '';
         return matchesKind(row?.kind) && (!status || !EXCLUDED_STATUSES.has(status));
       });
+      // A link an agent stated can point at a retirement or an outcome change; it stays out too.
+      if (expandedOnly.length > 0) {
+        const amendments = amendmentIds(
+          adapter,
+          expandedOnly.map((e) => e.id)
+        );
+        expandedOnly = expandedOnly.filter((e) => !amendments.has(e.id));
+      }
     } else if (options.kind !== undefined) {
       expandedOnly = expandedOnly.filter((e) => {
         const row = adapter.prepare(`SELECT kind FROM decisions WHERE id = ?`).get(e.id) as
