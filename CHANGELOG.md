@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.60.1] / plugin [2.1.1] - 2026-09-30
+
+### Changed
+
+- A full report is written once, and a failed step is fixed in place. `code_act` hands the plain
+  data a script leaves on `globalThis` to the same model run's next script, also after the script
+  threw, and lists it in `kept`; parallel scripts of one run keep each other's values. A report
+  that failed on one row had been written again from the start, up to four times in one turn.
+- `report.publish` no longer asks for slots under 6 KB (the host accepts 512 KB); the model had
+  measured every slot against it, and one report failed doing so and was written again.
+
+### Fixed
+
+- `code_act`: a single line of several statements ran only its first statement. Code is returned
+  only when it parses as one expression.
+- Plugin: the marketplace copy named `@jungjaehoon/mama-core` as `workspace:*` since 1.10.0, which
+  npm cannot install, so every hook failed to load mama-core. The release now writes the
+  published core version and fails if a `workspace:` dependency is left.
+
 ## mama-os [0.60.0] / mama-core [5.0.0] / mama-server [2.3.0] / plugin [2.1.0] - 2026-09-30
 
 ### Changed (edges)
