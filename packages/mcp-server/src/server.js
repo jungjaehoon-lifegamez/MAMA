@@ -239,6 +239,8 @@ class MAMAServer {
 
 **Follow the record**: a result is the way in. Open a decision with get_decision to read its
 edges (what it builds on, replaces or contradicts, with the reasons) and follow them by id. A
+hit lists the records its stated links reach (links: id, topic, relation, reason, and
+corrected_by when a later link contradicts it); open the ones that matter with get_decision. A
 result that came through a link names the hit it came from (related_to), the relation
 (graph_source), the link's reason (edge_reason) and any later correction (edge_corrected_by).
 

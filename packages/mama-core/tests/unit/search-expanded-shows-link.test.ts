@@ -88,6 +88,25 @@ describe('search results show the link an expanded record came through', () => {
       graph_source: 'primary',
       related_to: null,
     });
+    // At a limit the direct hits fill, the linked record still comes along on its hit.
+    const hitOnly = (
+      (await suggestInAdapter(await adapter(), 'Roll out on Tuesdays', { limit: 1 })) as {
+        results: Array<Record<string, unknown>>;
+      }
+    ).results;
+    expect(hitOnly.map((row) => row.id)).toEqual(['decision_rollout_hit']);
+    expect(hitOnly[0]!.links).toEqual([
+      expect.objectContaining({
+        id: 'decision_freeze_linked',
+        relation: 'builds_on',
+        reason: 'the rollout day follows the freeze calendar',
+        corrected_by: [
+          expect.objectContaining({
+            reason: 'the calendar changed; the freeze no longer sets the day',
+          }),
+        ],
+      }),
+    ]);
     expect(result.results.find((row) => row.id === 'decision_freeze_linked')).toMatchObject({
       graph_source: 'builds_on',
       related_to: 'decision_rollout_hit',
@@ -133,6 +152,27 @@ describe('search results show the link an expanded record came through', () => {
       ).results.find((row) => row.id === 'decision_backup_linked');
 
     const narrow = await search(['/team/a']);
+    const hitOnly = (
+      (await suggestInAdapter(await adapter(), 'Back up at night', {
+        limit: 1,
+        scopes: [{ kind: 'project' as const, id: '/team/a' }],
+      })) as { results: Array<Record<string, unknown>> }
+    ).results;
+    expect(hitOnly).toHaveLength(1);
+    expect(hitOnly[0]).toMatchObject({
+      id: 'decision_backup_hit',
+      links: [
+        {
+          id: 'decision_backup_linked',
+          topic: 'disk_budget',
+          relation: 'builds_on',
+          reason: 'the backup size follows the disk budget',
+        },
+      ],
+    });
+    expect((hitOnly[0]!.links as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
+      'corrected_by'
+    );
     expect(narrow).toMatchObject({ edge_reason: 'the backup size follows the disk budget' });
     expect(narrow).not.toHaveProperty('edge_corrected_by');
     expect(await search(['/team/a', '/team/b'])).toMatchObject({

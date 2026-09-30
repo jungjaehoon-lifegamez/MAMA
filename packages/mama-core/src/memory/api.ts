@@ -2243,6 +2243,47 @@ function buildRankerMeta(
   return meta;
 }
 
+/** One stated link from a search hit to a record expansion reached through it. */
+export interface SearchHitLink {
+  id: string;
+  topic: string;
+  /** The record's first line. */
+  summary: string;
+  relation: string;
+  reason: string | null;
+  corrected_by?: DecisionCorrection[];
+}
+
+/**
+ * Each direct hit names the records its stated links reach. Expanded rows rank below every direct
+ * hit (a measured regression when they did not), so at the usual limits they are cut; the link
+ * still comes along on its hit, and the reader opens the record it names.
+ */
+function withLinkPointers<T extends { id: string; related_to?: string | null }>(
+  rows: T[],
+  bundle: RecallBundle
+): Array<T & { links?: SearchHitLink[] }> {
+  const byHit = new Map<string, SearchHitLink[]>();
+  for (const record of bundle.graph_context.expanded) {
+    const reached = record.reached_through;
+    if (!reached) continue;
+    const list = byHit.get(reached.from) ?? [];
+    list.push({
+      id: record.id,
+      topic: record.topic,
+      summary: record.summary.split('\n')[0]!.slice(0, 200),
+      relation: reached.relation,
+      reason: reached.reason,
+      ...(reached.corrected_by ? { corrected_by: reached.corrected_by } : {}),
+    });
+    byHit.set(reached.from, list);
+  }
+  return rows.map((row) => {
+    const links = row.related_to ? undefined : byHit.get(row.id);
+    return links ? { ...row, links } : row;
+  });
+}
+
 function mapRolledUpResult(result: SearchRollupResult) {
   const record = resultRecord(result);
   const reached = (record as { reached_through?: MemoryReachedThrough }).reached_through;
@@ -2496,7 +2537,7 @@ export async function suggestInAdapter(
       const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
         filteredResults.map(mapRolledUpResult)
       );
-      const limitedResults = mappedResults.slice(0, limit);
+      const limitedResults = withLinkPointers(mappedResults.slice(0, limit), bundle);
 
       if (format === 'markdown') {
         const context = limitedResults
@@ -2568,7 +2609,7 @@ export async function suggestInAdapter(
           : {}),
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
-      const limitedRows = rankedRows.slice(0, limit);
+      const limitedRows = withLinkPointers(rankedRows.slice(0, limit), bundle);
 
       if (format === 'markdown') {
         const context = limitedRows

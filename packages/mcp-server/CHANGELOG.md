@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Resuming a checkpoint expands its decisions' links through the edges an agent stated, not the
-  host's similarity rows. A `search` result reached through a link names the hit it came from, the
-  relation, the link's reason and any correction.
+  host's similarity rows. Each `search` hit lists the records its stated links reach (`links`), and a
+  result reached through a link names the hit it came from, the relation, the link's reason and any
+  correction.
 - The `save` and `save_decision` texts no longer ask for "builds_on: id" in the reasoning; nothing
   parses it.
 - `search` says a result is the way in: open it with `get_decision` and follow its edges.
