@@ -24,6 +24,7 @@ import { sourceActionRegistrations } from '../api/source-actions.js';
 import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
 import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
+import { guardOwnerRules } from './owner-authority.js';
 import { workNoUpdateActionRegistrations } from '../api/record-actions.js';
 import { judgeActionRegistrations, type JudgePorts } from '../api/judge-actions.js';
 import {
@@ -136,22 +137,29 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
-  const core = coreActionRegistrations(options.knowledge, options.adapter).filter(({ contract }) =>
-    [
-      'graph.query',
-      'memory.save',
-      'memory.search',
-      // The cited source messages behind a memory, checked against the caller's source-read
-      // authority: a fact found by memory.search is traced to its evidence in one call.
-      'memory.read:provenance',
-      'memory.read:record',
-      'memory.retire',
-      'memory.checkpoint.list',
-      // The agent's hand-off for a later session, shown in its [session_start] as Kagemusha's is.
-      'memory.checkpoint.save',
-      'work.show',
-    ].includes(contract.name)
-  );
+  const core = coreActionRegistrations(options.knowledge, options.adapter)
+    .filter(({ contract }) =>
+      [
+        'graph.query',
+        'memory.save',
+        'memory.search',
+        // The cited source messages behind a memory, checked against the caller's source-read
+        // authority: a fact found by memory.search is traced to its evidence in one call.
+        'memory.read:provenance',
+        'memory.read:record',
+        'memory.retire',
+        'memory.checkpoint.list',
+        // The agent's hand-off for a later session, shown in its [session_start] as Kagemusha's is.
+        'memory.checkpoint.save',
+        'work.show',
+      ].includes(contract.name)
+    )
+    // Only an owner-chat turn changes an owner rule (owner-authority.ts).
+    .map((registration) =>
+      registration.contract.name === 'memory.save' || registration.contract.name === 'memory.retire'
+        ? guardOwnerRules(registration, options.adapter, options.ownerPrincipalId)
+        : registration
+    );
   const reportSseClients = options.reportSseClients ?? new Set<ServerResponse>();
   const reportPorts = {
     ...(options.reportStore === undefined || options.reportStore === null

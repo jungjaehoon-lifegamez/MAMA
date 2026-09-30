@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Only the owner changes an owner rule (owner, 2026-10-01). A rule (lesson, preference, constraint,
+  workflow) written in an owner-chat turn is an owner rule. `memory.save` replacing one and
+  `memory.retire` of one are refused in any other turn: a source-change turn, a subagent, a replay.
+  Rules learned in other turns are memory too, and any turn may add or change them. Whose rule it is
+  comes from the message ref the host stores with it, since the mailbox forgets handled messages
+  after seven days.
+- The lessons shown with each turn say whose word each one is: `[owner rule]`, which wins a
+  conflict, or `[learned]`, advice from earlier work. Before, every line read as advice.
+
 ## [0.60.2] - 2026-10-01
 
 No changes to MAMA OS. The release tag follows the mama-os version, so plugin 2.1.2 ships with
