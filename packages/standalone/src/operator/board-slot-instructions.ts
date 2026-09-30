@@ -60,11 +60,10 @@ export function buildReportPublishToolContract(): string {
   const inline = (lines: string[]): string => lines.join(' ').replace(/\s+/g, ' ').trim();
   return inline([
     'Publish dashboard analysis as HTML.',
-    'pipeline is an agent-authored current workflow view; write it from the task ledger and conversations.',
     'SLOT SHAPE:',
     ...buildBoardSlotShapeLines(),
     ...buildBoardHtmlVocabulary(),
-    "Write slot CONTENT in the owner's language; keep each slot under 6KB.",
+    "Write slot CONTENT in the owner's language.",
     'A slot that contains none of report-summary / report-card / report-section-title / report-table',
     'is still published, but the result reports it back as a',
     'warning because the board renders it as plain text.',
