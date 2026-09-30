@@ -119,6 +119,97 @@ describe('search results show the link an expanded record came through', () => {
     });
   });
 
+  it('names a link between two hits on both, with its correction and the replaced record', async () => {
+    await insertDecision(
+      'decision_pair_a',
+      'pair_delivery',
+      'Send large files through Drive',
+      0.99
+    );
+    await insertDecision('decision_pair_b', 'pair_indexing', 'Send the Drive folder index', 0.98);
+    const { default: mama } = (await import('../../src/mama-api.js')) as unknown as {
+      default: { link: (input: Record<string, unknown>) => Promise<{ edgeId: string }> };
+    };
+    const link = await mama.link({
+      from: 'decision_pair_a',
+      to: 'decision_pair_b',
+      relation: 'builds_on',
+      reason: 'delivery sits on the index',
+    });
+    await mama.link({
+      from: 'decision_pair_a',
+      to: link.edgeId,
+      relation: 'contradicts',
+      reason: 'unrelated: delivery came from failed attachments',
+    });
+
+    const { suggestInAdapter } = await import('../../src/memory/api.js');
+    const rows = (
+      (await suggestInAdapter(await adapter(), 'Send large files through Drive', { limit: 2 })) as {
+        results: Array<Record<string, unknown>>;
+      }
+    ).results;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get('decision_pair_a')!.links).toEqual([
+      expect.objectContaining({
+        id: 'decision_pair_b',
+        relation: 'builds_on',
+        reason: 'delivery sits on the index',
+        corrected_by: [
+          expect.objectContaining({ reason: 'unrelated: delivery came from failed attachments' }),
+        ],
+      }),
+    ]);
+    expect(byId.get('decision_pair_b')!.links).toEqual([
+      expect.objectContaining({ id: 'decision_pair_a', relation: 'built_on_by' }),
+    ]);
+  });
+
+  it('says which revision of a work item a hit is, and the item head', async () => {
+    const { createKnowledge } = await import('../../src/knowledge/index.js');
+    const knowledge = createKnowledge({ adapter: await adapter() });
+    const access = {
+      principalId: 'principal-search',
+      agentId: 'agent-search',
+      scopes: [{ kind: 'global' as const, id: 'system' }],
+      actions: [],
+    };
+    const created = await knowledge.createWork(
+      {
+        commandId: 'estimate-create',
+        topic: 'estimate/outfit',
+        summary: 'Client says outfit sway barely changes; the scope may shrink',
+        set: { title: 'Outfit estimate' },
+        scopes: access.scopes,
+      },
+      access
+    );
+    await knowledge.reviseWork(
+      {
+        commandId: 'estimate-revise',
+        commitmentId: created.commitmentId,
+        summary: 'Client corrected: outfit parameters drive the motion; the scope stays',
+        set: { title: 'Outfit estimate (scope stays)' },
+      },
+      access
+    );
+
+    const { suggestInAdapter } = await import('../../src/memory/api.js');
+    const rows = (
+      (await suggestInAdapter(await adapter(), 'outfit sway scope shrink', { limit: 10 })) as {
+        results: Array<Record<string, unknown>>;
+      }
+    ).results.filter((row) => row.topic === 'estimate/outfit');
+    expect(
+      rows
+        .map((row) => row.work_item)
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    ).toEqual([
+      { commitment_id: created.commitmentId, revision: 1, head_revision: 2 },
+      { commitment_id: created.commitmentId, revision: 2, head_revision: 2 },
+    ]);
+  });
+
   it('shows a correction only to a reader who may see the record that states it', async () => {
     await insertDecision('decision_backup_hit', 'backup_window', 'Back up at night', 0.99);
     await insertDecision('decision_backup_linked', 'disk_budget', 'Keep two weeks of disk', 0);

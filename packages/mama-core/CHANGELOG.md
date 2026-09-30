@@ -28,8 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so in the default results: `graph_source` (relation), `related_to` (the hit it came from),
   `edge_reason`, and `edge_corrected_by` when a later link contradicts it and the reader may see
   the record that states the correction. Expanded rows rank below every direct hit and are cut at
-  the usual limits, so each direct hit also lists the records its links reach (`links`: id, topic,
-  summary, relation, reason, corrected_by). Expansion errors are raised instead of logged and
+  the usual limits, so each direct hit also lists the records its links reach in both directions,
+  including another hit (`links`: id, topic, summary, status when not active, relation, reason,
+  corrected_by). A hit that is one revision of a work item says which (`work_item`: commitment_id,
+  revision, head_revision): an earlier revision can rank above the head that corrected it. Expansion errors are raised instead of logged and
   skipped. `STATED_DECISION_EDGES` is exported for readers of the same edges.
 - `queryDecisionGraph` no longer attaches an `edges` list to each decision (nothing read it);
   `DecisionEdgeRow` is removed.

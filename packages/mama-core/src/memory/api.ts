@@ -2243,44 +2243,164 @@ function buildRankerMeta(
   return meta;
 }
 
-/** One stated link from a search hit to a record expansion reached through it. */
+/** One stated link from or to a search hit: a pointer the reader opens. */
 export interface SearchHitLink {
   id: string;
   topic: string;
   /** The record's first line. */
   summary: string;
+  /** Present when the record is no longer active, e.g. `superseded`. */
+  status?: string;
+  /** Seen from the hit: `builds_on` out, `built_on_by` in, and so on. */
   relation: string;
   reason: string | null;
   corrected_by?: DecisionCorrection[];
 }
 
+/** The relations search follows, and their names seen from the other end. */
+const POINTER_RELATIONS: Record<string, string> = {
+  refines: 'refined_by',
+  contradicts: 'contradicted_by',
+  builds_on: 'built_on_by',
+  debates: 'debated_by',
+  synthesizes: 'synthesized_by',
+  supersedes: 'superseded_by',
+};
+
 /**
- * Each direct hit names the records its stated links reach. Expanded rows rank below every direct
- * hit (a measured regression when they did not), so at the usual limits they are cut; the link
- * still comes along on its hit, and the reader opens the record it names.
+ * Each direct hit names the records its stated links reach, in both directions, including a link
+ * to another hit. Expanded rows rank below every direct hit (a measured regression when they did
+ * not) and are cut at the usual limits, so the link comes along on its hit instead, and the
+ * reader opens the record it names. A scoped search names only records in its scopes, and a
+ * correction only when the record stating it is in them.
  */
 function withLinkPointers<T extends { id: string; related_to?: string | null }>(
   rows: T[],
-  bundle: RecallBundle
+  adapter: DatabaseAdapter,
+  scopes: readonly MemoryScopeRef[] | undefined
 ): Array<T & { links?: SearchHitLink[] }> {
+  const hitIds = rows.filter((row) => !row.related_to).map((row) => row.id);
+  if (hitIds.length === 0) return rows;
+  const hits = hitIds.map(() => '?').join(', ');
+  const relations = Object.keys(POINTER_RELATIONS);
+  const edges = adapter
+    .prepare(
+      `SELECT edge_id, from_id, to_id, relationship, reason FROM ${STATED_DECISION_EDGES} e
+        WHERE (from_id IN (${hits}) OR to_id IN (${hits}))
+          AND relationship IN (${relations.map(() => '?').join(', ')})
+          AND (approved_by_user = 1 OR approved_by_user IS NULL)
+        ORDER BY created_at`
+    )
+    .all(...hitIds, ...hitIds, ...relations) as Array<{
+    edge_id: string | null;
+    from_id: string;
+    to_id: string;
+    relationship: string;
+    reason: string | null;
+  }>;
+  if (edges.length === 0) return rows;
+  const hitSet = new Set(hitIds);
+  const otherIds = [...new Set(edges.flatMap((edge) => [edge.from_id, edge.to_id]))];
+  const records = new Map(
+    (
+      adapter
+        .prepare(
+          `SELECT id, topic, decision, status FROM decisions
+            WHERE id IN (${otherIds.map(() => '?').join(', ')})`
+        )
+        .all(...otherIds) as Array<{ id: string; topic: string; decision: string; status: string }>
+    ).map((record) => [record.id, record])
+  );
+  const corrections = correctionsOf(
+    adapter,
+    edges.flatMap((edge) => (edge.edge_id ? [edge.edge_id] : []))
+  );
+  const requested = scopes?.length ? new Set(scopes.map((s) => `${s.kind}:${s.id}`)) : null;
+  const scopeMap = requested
+    ? batchLoadScopes(adapter as DatabaseInstance, [
+        ...otherIds,
+        ...[...corrections.values()].flatMap((list) => correctionAuthors(list)),
+      ])
+    : new Map<string, MemoryScopeRef[]>();
+  const inScope = (id: string): boolean =>
+    !requested ||
+    (scopeMap.get(id) ?? []).some((scope) => requested.has(`${scope.kind}:${scope.id}`));
   const byHit = new Map<string, SearchHitLink[]>();
-  for (const record of bundle.graph_context.expanded) {
-    const reached = record.reached_through;
-    if (!reached) continue;
-    const list = byHit.get(reached.from) ?? [];
+  const point = (
+    hitId: string,
+    otherId: string,
+    relation: string,
+    edge: (typeof edges)[number]
+  ) => {
+    const record = records.get(otherId);
+    if (!record || !inScope(otherId)) return;
+    const correctedBy = edge.edge_id ? corrections.get(edge.edge_id) : undefined;
+    const readable = correctedBy
+      ? readableCorrections(correctedBy, (correction) => inScope(correction.from))
+      : undefined;
+    const list = byHit.get(hitId) ?? [];
     list.push({
       id: record.id,
       topic: record.topic,
-      summary: record.summary.split('\n')[0]!.slice(0, 200),
-      relation: reached.relation,
-      reason: reached.reason,
-      ...(reached.corrected_by ? { corrected_by: reached.corrected_by } : {}),
+      summary: record.decision.split('\n')[0]!.slice(0, 200),
+      ...(record.status && record.status !== 'active' ? { status: record.status } : {}),
+      relation,
+      reason: edge.reason,
+      ...(readable ? { corrected_by: readable } : {}),
     });
-    byHit.set(reached.from, list);
+    byHit.set(hitId, list);
+  };
+  for (const edge of edges) {
+    if (hitSet.has(edge.from_id)) point(edge.from_id, edge.to_id, edge.relationship, edge);
+    if (hitSet.has(edge.to_id))
+      point(edge.to_id, edge.from_id, POINTER_RELATIONS[edge.relationship]!, edge);
   }
   return rows.map((row) => {
     const links = row.related_to ? undefined : byHit.get(row.id);
     return links ? { ...row, links } : row;
+  });
+}
+
+/**
+ * A hit that is one revision of a work item says which one and the item's head. Search ranks an
+ * item's revisions by their text, so an earlier revision can rank above the one that corrected it
+ * (on a copy of the owner's database a revision 16 of 20 ranked first and the head was not in the
+ * top ten); the reader opens the head before answering from an earlier one.
+ */
+function withWorkRevision<T extends { id: string }>(
+  rows: T[],
+  adapter: DatabaseAdapter
+): Array<T & { work_item?: { commitment_id: string; revision: number; head_revision: number } }> {
+  if (rows.length === 0) return rows;
+  const found = new Map(
+    (
+      adapter
+        .prepare(
+          `SELECT a.record_id, a.commitment_id, a.revision, c.current_revision
+             FROM commitment_assignments a
+             JOIN commitments c ON c.commitment_id = a.commitment_id
+            WHERE a.record_id IN (${rows.map(() => '?').join(', ')})`
+        )
+        .all(...rows.map((row) => row.id)) as Array<{
+        record_id: string;
+        commitment_id: string;
+        revision: number;
+        current_revision: number;
+      }>
+    ).map((row) => [row.record_id, row])
+  );
+  return rows.map((row) => {
+    const work = found.get(row.id);
+    return work
+      ? {
+          ...row,
+          work_item: {
+            commitment_id: work.commitment_id,
+            revision: work.revision,
+            head_revision: work.current_revision,
+          },
+        }
+      : row;
   });
 }
 
@@ -2537,7 +2657,10 @@ export async function suggestInAdapter(
       const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
         filteredResults.map(mapRolledUpResult)
       );
-      const limitedResults = withLinkPointers(mappedResults.slice(0, limit), bundle);
+      const limitedResults = withWorkRevision(
+        withLinkPointers(mappedResults.slice(0, limit), adapter, options.scopes),
+        adapter
+      );
 
       if (format === 'markdown') {
         const context = limitedResults
@@ -2609,7 +2732,10 @@ export async function suggestInAdapter(
           : {}),
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
-      const limitedRows = withLinkPointers(rankedRows.slice(0, limit), bundle);
+      const limitedRows = withWorkRevision(
+        withLinkPointers(rankedRows.slice(0, limit), adapter, options.scopes),
+        adapter
+      );
 
       if (format === 'markdown') {
         const context = limitedRows
