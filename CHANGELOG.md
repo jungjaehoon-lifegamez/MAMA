@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
   write edges with their reasons and who wrote them. The "builds_on: id" text instructions are
   gone; `search`, `/mama:decision` and the save reminder say to link and to follow a result's
   edges.
+- Search follows the links an agent stated: search expansion and checkpoint resume read only
+  those, not the host's similarity rows or revision chain. Each search hit lists the records its
+  links reach, with any later correction; a result reached through a link says which link; and a
+  hit that is one revision of a work item says which revision and the head, since an earlier
+  revision can rank above the one that corrected it. Turn lessons rank on the turn's text only.
 - Migration 084 no longer deletes memory scope bindings. Run inside the migration transaction with
   foreign keys on, it had deleted every binding of a database older than schema 84.
 
