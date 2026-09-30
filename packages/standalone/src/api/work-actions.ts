@@ -5,6 +5,7 @@ import { epochAtLocalDateTime, localDateKey } from '../runtime/timezone.js';
 import { recordLinkSchema, scopeRefSchema } from '@jungjaehoon/mama-core/api/catalog';
 import {
   JudgmentError,
+  TWIN_EDGE_TYPES,
   type CommitmentView,
   type JudgmentAccess,
   type CreateWorkCommand,
@@ -15,18 +16,18 @@ import {
 } from '@jungjaehoon/mama-core/knowledge';
 
 export interface WorkPorts {
-  knowledge: Pick<Knowledge, 'createWork' | 'reviseWork' | 'readWork'>;
+  knowledge: Pick<Knowledge, 'createWork' | 'reviseWork' | 'readWork' | 'appendLink' | 'findLink'>;
   /** sourceRefs are observationRef handles; core stores them unchecked, so the product checks them. */
   observationExists: (observationId: string) => boolean;
 }
 
 export interface WorkListPorts {
-  knowledge: Pick<Knowledge, 'readWork'>;
+  knowledge: Pick<Knowledge, 'readWork' | 'queryGraph'>;
   timeZone: TimeZoneSetting;
 }
 
 export interface WorkListViewContext {
-  readonly knowledge: Pick<Knowledge, 'readWork'>;
+  readonly knowledge: Pick<Knowledge, 'readWork' | 'queryGraph'>;
   readonly access: JudgmentAccess;
   readonly now?: () => number;
   readonly timeZone: string;
@@ -131,11 +132,19 @@ interface WorkListPipeline {
   observedAt: string;
 }
 
+export interface WorkListLinks {
+  success: true;
+  view: 'links';
+  items: Array<Record<string, unknown>>;
+  missingIds: Array<string | number>;
+}
+
 export type WorkListViewResult =
   | WorkListOverview
   | WorkListItems
   | WorkListDetail
-  | WorkListPipeline;
+  | WorkListPipeline
+  | WorkListLinks;
 
 const WORK_LIST_DEFAULT_LIMIT = 25;
 const WORK_LIST_MAX_LIMIT = 50;
@@ -762,6 +771,99 @@ function workListDetailRecord(
   };
 }
 
+/**
+ * One step of the walk: every link written from or to any revision of the item, with the relation,
+ * the reason, who wrote it, its evidence, any later correction, and the other end. A link sits on
+ * the revision that wrote it, so every revision is a seed; source citations (derived_from) and the
+ * item's own records are left out, and a correction shows on the link it corrects.
+ */
+function workListLinks(input: Record<string, unknown>, ctx: WorkListViewContext): WorkListLinks {
+  const ids = workListDetailIds(input.ids);
+  const items: Array<Record<string, unknown>> = [];
+  const missingIds: Array<string | number> = [];
+  const otherItems = new Map<string, Record<string, unknown>>();
+  for (const id of ids) {
+    const page = ctx.knowledge.readWork(
+      { history: 'all', ...(typeof id === 'number' ? { rowId: id } : { commitmentId: id }) },
+      ctx.access
+    );
+    const item = page.items[0];
+    if (item === undefined || item.history === undefined) {
+      missingIds.push(id);
+      continue;
+    }
+    const own = new Set(item.history.map((revision) => revision.recordRef.id));
+    const graph = ctx.knowledge.queryGraph(
+      {
+        view: 'neighbors',
+        seeds: item.history.map((revision) => revision.recordRef),
+        maxDepth: 1,
+        direction: 'both',
+        relations: TWIN_EDGE_TYPES.filter((relation) => relation !== 'derived_from'),
+        history: 'all',
+        limit: 500,
+      },
+      ctx.access
+    );
+    const nodes = new Map(graph.nodes.map((node) => [`${node.ref.kind}:${node.ref.id}`, node]));
+    const links: Array<Record<string, unknown>> = [];
+    for (const edge of graph.edges) {
+      const out = own.has(edge.from.id);
+      if (!out && !own.has(edge.to.id)) continue;
+      const other = out ? edge.to : edge.from;
+      if (other.kind === 'edge' || (other.kind === 'memory' && own.has(other.id))) continue;
+      const attrs = (edge.attrs ?? {}) as Record<string, unknown>;
+      const written = (attrs.relation_attrs ?? {}) as Record<string, unknown>;
+      const node = nodes.get(`${other.kind}:${other.id}`);
+      const data = node?.data as { work?: { commitmentId?: string } } | undefined;
+      const commitmentId = other.kind === 'memory' ? data?.work?.commitmentId : undefined;
+      if (commitmentId !== undefined && commitmentId === item.commitmentId) continue;
+      const reason =
+        typeof written.reason === 'string'
+          ? written.reason
+          : typeof attrs.reason_text === 'string'
+            ? attrs.reason_text
+            : null;
+      links.push({
+        edgeId: edge.id,
+        relation: edge.relation,
+        direction: out ? 'out' : 'in',
+        reason,
+        ...(typeof written.role === 'string' ? { role: written.role } : {}),
+        source: attrs.source ?? null,
+        ...(attrs.evidence_refs ? { evidenceRefs: attrs.evidence_refs } : {}),
+        ...(attrs.corrected_by ? { correctedBy: attrs.corrected_by } : {}),
+        other:
+          commitmentId !== undefined
+            ? { kind: 'work', commitmentId }
+            : { kind: other.kind, id: other.id, name: node?.label ?? null },
+      });
+      if (commitmentId !== undefined) otherItems.set(commitmentId, {});
+    }
+    items.push({
+      commitmentId: item.commitmentId,
+      title: workListText(workListValueObject(item.values).title),
+      revisions: item.history.length,
+      links,
+      coverage: graph.coverage,
+    });
+  }
+  // The other items' current title and status, so the next step can be chosen without opening them.
+  for (const commitmentId of otherItems.keys()) {
+    const found = ctx.knowledge.readWork({ commitmentId }, ctx.access).items[0];
+    if (found !== undefined)
+      otherItems.set(commitmentId, {
+        title: workListText(workListValueObject(found.values).title),
+        status: workListStatus(found),
+      });
+  }
+  for (const item of items)
+    for (const link of item.links as Array<{ other: Record<string, unknown> }>)
+      if (link.other.kind === 'work')
+        Object.assign(link.other, otherItems.get(link.other.commitmentId as string) ?? {});
+  return { success: true, view: 'links', items, missingIds };
+}
+
 function workListDetail(input: Record<string, unknown>, ctx: WorkListViewContext): WorkListDetail {
   const ids = workListDetailIds(input.ids);
   const textOffset = workListNonNegativeInteger(input.text_offset, 'text_offset', 0);
@@ -873,13 +975,20 @@ export async function runWorkListView(
 ): Promise<WorkListViewResult> {
   const input = workListObject(rawInput);
   const view = input.view === undefined ? 'items' : input.view;
-  if (view !== 'overview' && view !== 'items' && view !== 'detail' && view !== 'pipeline') {
-    throw new Error('work.list view must be one of overview|items|detail|pipeline');
+  if (
+    view !== 'overview' &&
+    view !== 'items' &&
+    view !== 'detail' &&
+    view !== 'pipeline' &&
+    view !== 'links'
+  ) {
+    throw new Error('work.list view must be one of overview|items|detail|pipeline|links');
   }
-  if (input.ids !== undefined && view !== 'detail') {
-    throw new Error('work.list ids are only valid with view=detail');
+  if (input.ids !== undefined && view !== 'detail' && view !== 'links') {
+    throw new Error('work.list ids are only valid with view=detail or view=links');
   }
   if (view === 'detail') return workListDetail(input, ctx);
+  if (view === 'links') return workListLinks(input, ctx);
   const requested = workListFilter(input);
   const filter =
     input.cursor !== undefined && Object.keys(requested).length === 0
@@ -992,12 +1101,12 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
       contract: {
         name: 'work.list',
         summary:
-          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context.',
+          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context. links for up to 4 ids returns every link from or to the item with its relation, reason, writer, evidence, correction and the other end (item title and status, person, record or observation); follow it to the other item with detail.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           properties: {
-            view: { type: 'string', enum: ['overview', 'items', 'detail', 'pipeline'] },
+            view: { type: 'string', enum: ['overview', 'items', 'detail', 'pipeline', 'links'] },
             ids: {
               type: 'array',
               minItems: 1,
@@ -1425,7 +1534,171 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
         );
       },
     },
+    workLinkRegistration(ports),
   ];
+}
+
+// Replacing and amending change the target's state and are written with a revision (work.revise
+// links, memory.retire), not as a bare link.
+const LINK_RELATIONS = [
+  'builds_on',
+  'refines',
+  'contradicts',
+  'debates',
+  'synthesizes',
+  'mentions',
+  'blocks',
+  'next_action_for',
+] as const;
+
+const linkSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['from', 'to', 'relation', 'reason'],
+  properties: {
+    from: {
+      type: 'string',
+      description: 'commitmentId of the item the link is stated from, e.g. "commitment_123".',
+    },
+    to: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind', 'id'],
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['work', 'memory', 'registry', 'observation', 'edge'],
+          description: 'What the other end is, e.g. "work".',
+        },
+        id: {
+          type: 'string',
+          minLength: 1,
+          description: 'Its id: a commitmentId, record id, node id, observationRef or edgeId.',
+        },
+      },
+      description:
+        'The other end: an item by commitmentId (kind work), one record, a person node, an observation, or a link (kind edge) the new link contradicts, e.g. {"kind":"work","id":"commitment_456"}.',
+    },
+    relation: {
+      type: 'string',
+      enum: [...LINK_RELATIONS],
+      description:
+        'builds_on for an earlier case or work this continues, refines for a correction, contradicts for a reversal or a wrong link, e.g. "builds_on".',
+    },
+    reason: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'What relates the two, in a sentence the next reader can check, e.g. "The same setup problem; it ended in a client FIX after the setup was redone".',
+    },
+    evidenceRefs: {
+      type: 'array',
+      items: { type: 'string', minLength: 1 },
+      description: 'observationRefs the reason rests on, e.g. ["obs_123"].',
+    },
+  },
+} as const;
+
+function headRecord(
+  ports: WorkPorts,
+  commitmentId: string,
+  access: JudgmentAccess
+): { kind: 'memory'; id: string } {
+  const item = ports.knowledge.readWork({ commitmentId }, access).items[0];
+  if (item === undefined)
+    throw new JudgmentError('REFERENCE_NOT_FOUND', `Commitment is unavailable: ${commitmentId}`);
+  return { kind: 'memory', id: item.latestJudgmentRef.id };
+}
+
+export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
+  return {
+    contract: {
+      name: 'work.link',
+      recallableWrite: true,
+      summary:
+        'Link one work item to another item, a record, a person or an observation, with the reason you judged; it appends an edge and writes no revision. A link to a link (to.kind edge, relation contradicts) corrects it: the wrong link stays in the history with the correction beside it.',
+      inputSchema: linkSchema,
+      examples: [
+        {
+          title: 'Link an earlier case of the same kind',
+          input: {
+            from: 'commitment-reference',
+            to: { kind: 'work', id: 'commitment-earlier' },
+            relation: 'builds_on',
+            reason: 'what is the same and how the earlier one ended',
+          },
+        },
+      ],
+    },
+    exec: (input, context) => {
+      const body = input as {
+        from: string;
+        to: { kind: 'work' | 'memory' | 'registry' | 'observation' | 'edge'; id: string };
+        relation: (typeof LINK_RELATIONS)[number];
+        reason: string;
+        evidenceRefs?: string[];
+      };
+      for (const ref of body.evidenceRefs ?? []) {
+        if (!ports.observationExists(ref))
+          throw new JudgmentError(
+            'REFERENCE_NOT_FOUND',
+            `evidenceRefs names an unavailable observation: ${ref}`
+          );
+      }
+      // A retried call finds its link before the heads are read again: the item may have been
+      // revised since, and the retry must still return the same link. The ends are compared as
+      // revisions of the named items; core's content hash compares the rest of the statement.
+      const commandId = operationId(context, 'work.link');
+      const earlier = ports.knowledge.findLink(commandId, context.access);
+      let from: { kind: 'memory'; id: string };
+      let to: Parameters<WorkPorts['knowledge']['appendLink']>[0]['to'];
+      if (earlier) {
+        const isRevisionOf = (ref: { kind: string; id: string }, commitmentId: string) =>
+          ref.kind === 'memory' &&
+          (
+            ports.knowledge.readWork({ commitmentId, history: 'all' }, context.access).items[0]
+              ?.history ?? []
+          ).some((revision) => revision.recordRef.id === ref.id);
+        const sameTarget =
+          body.to.kind === 'work'
+            ? isRevisionOf(earlier.to, body.to.id)
+            : earlier.to.kind === body.to.kind && earlier.to.id === body.to.id;
+        if (!isRevisionOf(earlier.from, body.from) || !sameTarget)
+          throw new JudgmentError(
+            'COMMAND_CONFLICT',
+            'The command id is already bound to another link'
+          );
+        from = earlier.from as { kind: 'memory'; id: string };
+        to = earlier.to;
+      } else {
+        from = headRecord(ports, body.from, context.access);
+        to =
+          body.to.kind === 'work'
+            ? headRecord(ports, body.to.id, context.access)
+            : { kind: body.to.kind, id: body.to.id };
+      }
+      const receipt = ports.knowledge.appendLink(
+        {
+          commandId,
+          from,
+          to,
+          relation: body.relation,
+          reason: body.reason,
+          ...(body.evidenceRefs?.length
+            ? {
+                evidenceRefs: body.evidenceRefs.map((id) => ({
+                  kind: 'observation' as const,
+                  id,
+                })),
+              }
+            : {}),
+          modelRunId: context.session?.modelRunId ?? null,
+        },
+        context.access
+      );
+      return { ...receipt, from: { commitmentId: body.from, recordRef: from }, to };
+    },
+  };
 }
 
 export type { OwnerWorkPatch };

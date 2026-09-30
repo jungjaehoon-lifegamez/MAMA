@@ -12,7 +12,6 @@
 
 import type {
   DatabaseAdapter,
-  DecisionEdgeRow,
   DecisionRecord,
   SemanticEdgeItem,
   SemanticEdges,
@@ -45,7 +44,7 @@ import type {
   WorkGraphQuery,
   WorkReference,
 } from '../memory/judgment-types.js';
-import { TWIN_EDGE_TYPES } from '../knowledge/twin-edge-types.js';
+import { TWIN_EDGE_TYPES, TWIN_REF_KINDS } from '../knowledge/twin-edge-types.js';
 import type {
   TwinEdgeRecord,
   TwinEdgeType,
@@ -78,13 +77,40 @@ function parseRefinedFrom(decision: {
   }
 }
 
+/** The reasons the host's evolution rules gave the legacy `decision_edges` rows they wrote. */
+export const HOST_EDGE_REASON_PREFIXES = [
+  'Semantically similar',
+  'Updated fact',
+  'Related but distinct',
+] as const;
+
+/**
+ * The edges an agent stated between decisions, in the `decision_edges` columns plus `edge_id`:
+ * links in `twin_edges` between two memories that the host did not write, and the legacy
+ * `decision_edges` rows whose reason is not one the host gave. Search expansion follows these and
+ * no host edge (owner, 2026-09-30): a similarity is no ground that two records are the same case.
+ */
+export const STATED_DECISION_EDGES = `(
+  SELECT NULL AS edge_id, from_id, to_id, relationship, reason, weight, created_at, created_by,
+         approved_by_user, decision_id, evidence
+    FROM decision_edges
+   WHERE ${HOST_EDGE_REASON_PREFIXES.map((prefix) => `COALESCE(reason, '') NOT LIKE '${prefix}%'`).join(' AND ')}
+  UNION ALL
+  SELECT edge_id, subject_id, object_id, edge_type,
+         COALESCE(json_extract(relation_attrs_json, '$.reason'), reason_text), confidence,
+         created_at, source, NULL, NULL, NULL
+    FROM twin_edges
+   WHERE subject_kind = 'memory' AND object_kind = 'memory' AND source <> 'code'
+     AND edge_type <> 'derived_from'
+)`;
+
 /**
  * Walk a topic's supersedes chain with a recursive CTE.
  *
  * @param adapter - Database to read through
  * @param topic - Decision topic to query
  * @param anchorId - Start from this decision instead of the topic's current head
- * @returns Decisions ordered by recency, each carrying its approved edges
+ * @returns Decisions ordered by recency
  */
 export async function queryDecisionGraph(
   adapter: DatabaseAdapter,
@@ -106,13 +132,7 @@ export async function queryDecisionGraph(
         `
         )
         .all(topic) as DecisionRecord[];
-      const edgesStmt = adapter.prepare(`
-        SELECT * FROM decision_edges
-        WHERE from_id = ?
-          AND (approved_by_user = 1 OR approved_by_user IS NULL)
-      `);
       for (const decision of decisions) {
-        decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
         decision.refined_from = parseRefinedFrom(decision);
       }
       return decisions;
@@ -137,16 +157,7 @@ export async function queryDecisionGraph(
     `);
     const decisions = stmt.all(anchorId) as DecisionRecord[];
 
-    // Join with decision_edges to include relationships
-    // Prepare statement once outside loop for performance
-    const edgesStmt = adapter.prepare(`
-      SELECT * FROM decision_edges
-      WHERE from_id = ?
-        AND (approved_by_user = 1 OR approved_by_user IS NULL)
-    `);
     for (const decision of decisions) {
-      decision.edges = edgesStmt.all(decision.id) as DecisionEdgeRow[];
-
       decision.refined_from = parseRefinedFrom(decision);
     }
 
@@ -195,7 +206,7 @@ export async function querySemanticEdges(
     // Query outgoing edges (from_id = decision)
     const outgoingStmt = adapter.prepare(`
       SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
-      FROM decision_edges e
+      FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.to_id = d.id
       WHERE e.from_id IN (${placeholders})
         AND e.relationship IN (${edgeTypePlaceholders})
@@ -207,7 +218,7 @@ export async function querySemanticEdges(
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
       SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
-      FROM decision_edges e
+      FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.from_id = d.id
       WHERE e.to_id IN (${placeholders})
         AND e.relationship IN (${edgeTypePlaceholders})
@@ -908,6 +919,37 @@ function loadTimelineRecordEvent(
   return null;
 }
 
+/**
+ * Edges as the reader may see them. Both ends being visible does not make a link's evidence
+ * visible, so evidence refs the reader cannot see are left out. Entries without a kind are the
+ * link entries ({id, reason}) an earlier version copied into a record's own edges; they repeat the
+ * edge's target and reason.
+ */
+function withVisibleEvidence(
+  adapter: AgentGraphAdapter,
+  edges: readonly TwinEdgeRecord[],
+  visibility: TwinVisibility
+): TwinEdgeRecord[] {
+  const refsOf = (edge: TwinEdgeRecord): TwinRef[] =>
+    Array.isArray(edge.evidence_refs)
+      ? (edge.evidence_refs as Array<Partial<TwinRef>>).filter(
+          (ref): ref is TwinRef =>
+            typeof ref?.id === 'string' &&
+            (TWIN_REF_KINDS as readonly string[]).includes(ref.kind as string)
+        )
+      : [];
+  const visible = visibleTwinRefKeysRecursive(adapter, edges.flatMap(refsOf), visibility);
+  return edges.map((edge) => {
+    if (!Array.isArray(edge.evidence_refs)) return edge;
+    const evidence = refsOf(edge).filter((ref) => visible.has(`${ref.kind}\0${ref.id}`));
+    return {
+      ...edge,
+      evidence_refs: evidence.length > 0 ? evidence : null,
+      evidence_refs_json: evidence.length > 0 ? JSON.stringify(evidence) : null,
+    };
+  });
+}
+
 export function getGraphNeighborhood(
   adapter: AgentGraphAdapter,
   input: GraphNeighborhoodInput
@@ -966,7 +1008,11 @@ export function getGraphNeighborhood(
     frontier = nextFrontier;
   }
 
-  return { nodes, edges, current_projection: projectCurrentEdges(adapter, edges, visibility) };
+  return {
+    nodes,
+    edges: withVisibleEvidence(adapter, edges, { ...visibility, asOfMs: input.as_of_ms }),
+    current_projection: projectCurrentEdges(adapter, edges, visibility),
+  };
 }
 
 export function getGraphPaths(
@@ -1043,8 +1089,14 @@ export function getGraphPaths(
   const pathEdges = [
     ...new Map(paths.flatMap((path) => path.edges).map((edge) => [edge.edge_id, edge])).values(),
   ];
+  const shown = new Map(
+    withVisibleEvidence(adapter, pathEdges, visibility).map((edge) => [edge.edge_id, edge])
+  );
   return {
-    paths,
+    paths: paths.map((path) => ({
+      ...path,
+      edges: path.edges.map((edge) => shown.get(edge.edge_id)!),
+    })),
     limit_reached: limitReached || paths.length >= limit,
     current_projection: projectCurrentEdges(adapter, pathEdges, visibility),
   };
@@ -1089,11 +1141,15 @@ export function getGraphTimeline(
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
   const window = timelineWindow(input);
   const seeds = timelineSeeds(adapter, input.ref, visibility);
-  const edges = listFilteredEdges(adapter, seeds, {
-    visibility,
-    edge_filters: input.edge_filters,
-    as_of_ms: input.as_of_ms,
-  }).filter((edge) => isInTimelineWindow(edge.created_at, window));
+  const edges = withVisibleEvidence(
+    adapter,
+    listFilteredEdges(adapter, seeds, {
+      visibility,
+      edge_filters: input.edge_filters,
+      as_of_ms: input.as_of_ms,
+    }).filter((edge) => isInTimelineWindow(edge.created_at, window)),
+    { ...visibility, asOfMs: input.as_of_ms }
+  );
 
   const refs: TwinRef[] = [];
   const seenRefs = new Set<string>();
@@ -1187,6 +1243,72 @@ function graphAccessInput(access: JudgmentAccess): {
     agent_id: access.agentId,
     max_source_ms: access.maxSourceMs,
   };
+}
+
+interface EdgeCorrection {
+  edgeId: string;
+  reason: string | null;
+  at: number;
+  /** A correction can itself be corrected; the chain reads down to the latest word. */
+  correctedBy?: EdgeCorrection[];
+}
+
+/**
+ * Later links that contradict an edge, each with its reason, and the links that contradict those:
+ * the edge row is never edited, so a correction is read from the edges that point at it.
+ */
+function edgeCorrections(
+  adapter: AgentGraphAdapter,
+  edgeIds: readonly string[],
+  visibility: TwinVisibility,
+  asOfMs: number
+): Map<string, EdgeCorrection[]> {
+  const byTarget = new Map<string, Array<{ edgeId: string; reason: string | null; at: number }>>();
+  const seen = new Set(edgeIds);
+  let frontier = [...edgeIds];
+  while (frontier.length > 0) {
+    const placeholders = frontier.map(() => '?').join(', ');
+    const rows = adapter
+      .prepare(
+        `SELECT edge_id, subject_kind, subject_id, object_id, reason_text, created_at
+           FROM twin_edges
+          WHERE object_kind = 'edge' AND edge_type = 'contradicts'
+            AND object_id IN (${placeholders}) AND created_at <= ?
+          ORDER BY created_at, edge_id`
+      )
+      .all(...frontier, asOfMs) as Array<{
+      edge_id: string;
+      subject_kind: TwinRef['kind'];
+      subject_id: string;
+      object_id: string;
+      reason_text: string | null;
+      created_at: number;
+    }>;
+    const subjects = rows.map((row) => ({ kind: row.subject_kind, id: row.subject_id }) as TwinRef);
+    const visible = visibleTwinRefKeysRecursive(adapter as never, subjects, visibility);
+    frontier = [];
+    for (const row of rows) {
+      if (!visible.has(`${row.subject_kind}\0${row.subject_id}`)) continue;
+      const list = byTarget.get(row.object_id) ?? [];
+      list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
+      byTarget.set(row.object_id, list);
+      if (!seen.has(row.edge_id)) {
+        seen.add(row.edge_id);
+        frontier.push(row.edge_id);
+      }
+    }
+  }
+  const nest = (edgeId: string): EdgeCorrection[] | undefined =>
+    byTarget.get(edgeId)?.map((correction) => {
+      const further = nest(correction.edgeId);
+      return further ? { ...correction, correctedBy: further } : correction;
+    });
+  const corrections = new Map<string, EdgeCorrection[]>();
+  for (const edgeId of edgeIds) {
+    const list = nest(edgeId);
+    if (list) corrections.set(edgeId, list);
+  }
+  return corrections;
 }
 
 /**
@@ -1651,8 +1773,9 @@ function hydrateNode(
   return hydrateRecordNode(adapter, ref);
 }
 
-function pageEdgeAttrs(edge: TwinEdgeRecord): JsonValue {
+function pageEdgeAttrs(edge: TwinEdgeRecord, correctedBy?: readonly EdgeCorrection[]): JsonValue {
   return {
+    ...(correctedBy?.length ? { corrected_by: correctedBy as unknown as JsonValue } : {}),
     edge_type: edge.edge_type,
     relation_attrs: (edge.relation_attrs ?? null) as JsonValue,
     confidence: edge.confidence,
@@ -1661,6 +1784,7 @@ function pageEdgeAttrs(edge: TwinEdgeRecord): JsonValue {
     model_run_id: edge.model_run_id,
     reason_classification: edge.reason_classification,
     reason_text: edge.reason_text,
+    evidence_refs: (edge.evidence_refs ?? null) as JsonValue,
     created_at: edge.created_at,
     content_hash: edge.content_hash.toString('hex'),
   } as JsonValue;
@@ -2159,7 +2283,17 @@ export function queryGraph(
     );
   }
 
-  const pageEdges: WorkGraphPage['edges'] = collectedEdges.map((edge) => {
+  const corrections = edgeCorrections(
+    adapter,
+    collectedEdges.map((edge) => edge.edge_id),
+    ctx.visibility,
+    asOf
+  );
+  const shownEdges = withVisibleEvidence(adapter, collectedEdges, {
+    ...ctx.visibility,
+    asOfMs: asOf,
+  });
+  const pageEdges: WorkGraphPage['edges'] = shownEdges.map((edge) => {
     const fromProjection = projections.get(projectionKey(edge.edge_id, 'from'));
     const toProjection = projections.get(projectionKey(edge.edge_id, 'to'));
     return {
@@ -2169,7 +2303,7 @@ export function queryGraph(
       to: edge.object_ref,
       resolvedFrom: fromProjection?.current_ref ?? edge.subject_ref,
       resolvedTo: toProjection?.current_ref ?? edge.object_ref,
-      attrs: pageEdgeAttrs(edge),
+      attrs: pageEdgeAttrs(edge, corrections.get(edge.edge_id)),
     };
   });
 

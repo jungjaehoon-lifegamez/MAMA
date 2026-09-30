@@ -101,8 +101,7 @@ export interface JudgmentRecordFields {
   refinedFrom?: string[] | null;
   /**
    * Legacy `decisions.supersedes` column for records whose predecessor was
-   * declared through the supersedeTargets projection rather than the
-   * scope-checked `replaces` command field.
+   * declared before the scope-checked `replaces` command field.
    */
   supersedes?: string | null;
 }
@@ -139,24 +138,6 @@ export interface JudgmentEventMeta {
  * command itself; they mirror what the legacy writers used to persist inline.
  */
 export interface JudgmentProjections {
-  /** Legacy decision_edges rows kept in sync for recall readers. `fromId`
-   * defaults to the appended record; amendment commands may name another row. */
-  decisionEdges?: Array<{
-    fromId?: string;
-    targetId: string;
-    relationship: string;
-    reason?: string | null;
-    weight?: number;
-    createdBy?: string;
-    approvedByUser?: number | null;
-  }>;
-  /**
-   * Rows the command marks as superseded by the appended record. This mirrors
-   * the legacy save surface where an unsigned caller's explicit `supersedes`
-   * relationship moved the named target out of current truth; the command
-   * boundary keeps `replaces` for scope-admitted supersession instead.
-   */
-  supersedeTargets?: string[];
   /** Registry record identity binding (item + actors). */
   recordIdentity?: {
     itemId?: string | null;

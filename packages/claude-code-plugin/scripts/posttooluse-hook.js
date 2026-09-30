@@ -72,7 +72,8 @@ async function main() {
     console.error(`
 💡 **Reminder**: If this change contains decisions future Claude sessions should know:
    \`/mama:decision topic="<module>_<what>" decision="<why this approach>"\`
-   Include file paths in reasoning for better matching on Read.
+   Include file paths in reasoning for better matching on Read. Link the decisions it builds on
+   or replaces (links / replaces, each with its reason); nothing is linked for you.
 `);
     process.exit(2);
   } catch {

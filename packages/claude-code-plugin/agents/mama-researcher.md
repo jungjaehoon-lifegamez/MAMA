@@ -1,7 +1,7 @@
 ---
 name: mama-researcher
 description: Use when researching past decisions, architecture choices, or project history from MAMA memory. This agent searches MAMA's decision database to find relevant context about previous decisions, patterns, and rationale.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, mcp__plugin_mama_mama__search, mcp__plugin_mama_mama__get_decision
 model: haiku
 ---
 
@@ -18,7 +18,7 @@ You are the MAMA Researcher agent. Your role is to search MAMA memory for releva
 
 1. Use the MAMA MCP tools (`mcp__plugin_mama_mama__search`) to find relevant decisions
 2. Search with semantic queries related to the user's question
-3. Check decision evolution chains (supersedes, builds_on, debates)
+3. Read a decision with `get_decision` and follow its edges (supersedes, builds_on, debates) to the decisions they name, noting each edge's reason and who wrote it
 4. Summarize findings concisely with decision IDs for reference
 
 ## Output Format

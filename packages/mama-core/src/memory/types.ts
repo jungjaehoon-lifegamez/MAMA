@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { RecordActor } from '../registry/types.js';
+import type { DecisionCorrection } from './decision-links.js';
 import type { RecordLink } from './judgment-types.js';
 import type {
   SearchHitDiagnostics,
@@ -121,7 +122,20 @@ export interface MemoryRecord {
   event_datetime?: number | null;
   /** Maintained outcome projection (SUCCESS | FAILED | PARTIAL | pending). Null when unset. */
   outcome?: string | null;
+  /** On a record search expansion added: the hit it came from and the link it followed there. */
+  reached_through?: MemoryReachedThrough;
   retrieval_diagnostics?: SearchHitDiagnostics;
+}
+
+export interface MemoryReachedThrough {
+  /** The search hit the link starts from. */
+  from: string;
+  /** The link's relation as seen from that hit (`builds_on`, `built_on_by`, `supersedes_chain`, ...). */
+  relation: string;
+  /** The reason the agent gave for the link; null for the supersedes chain. */
+  reason: string | null;
+  /** Later links that contradict this one, each with its reason. */
+  corrected_by?: DecisionCorrection[];
 }
 
 export type RecallMemoryOptions = SearchQualityOptions & {

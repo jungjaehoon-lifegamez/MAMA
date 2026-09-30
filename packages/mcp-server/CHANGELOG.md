@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.3.0] - 2026-09-30
+
+### Added
+
+- `save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`.
+- `link {from, to, relation, reason}`: a link after saving, or a correction of a wrong link (to an
+  edgeId, relation `contradicts`).
+- `get_decision {id}`: one decision with every edge in and out, each with the relation, the other
+  decision's id, topic and first line, the reason, and who wrote it (agent, agent_text, host).
+
+### Changed
+
+- Resuming a checkpoint expands its decisions' links through the edges an agent stated, not the
+  host's similarity rows. Each `search` hit lists the records its stated links reach (`links`), and a
+  result reached through a link names the hit it came from, the relation, the link's reason and any
+  correction.
+- The `save` and `save_decision` texts no longer ask for "builds_on: id" in the reasoning; nothing
+  parses it.
+- `search` says a result is the way in: open it with `get_decision` and follow its edges.
 
 ## [2.2.2] - 2026-09-29
 

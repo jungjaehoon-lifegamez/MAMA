@@ -46,10 +46,14 @@ describe('owner standing prompt', () => {
       'record',
       'corrections',
       'sources',
+      'cases',
       'files',
       'wiki',
       'daily',
     ]);
+    // An answer that confirms an earlier case links it; a wrong link is corrected, not deleted.
+    expect(topics.cases).toContain('work.link (relation builds_on)');
+    expect(topics.cases).toContain('relation contradicts');
     // The wiki keeps lasting knowledge; what happened stays in the sources and the ledger.
     expect(topics.wiki).toContain('No current-state section and no dated entries.');
     expect(topics.wiki).not.toContain('a dated line per change');

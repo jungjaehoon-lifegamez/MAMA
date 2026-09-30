@@ -105,7 +105,12 @@ function withHistory(item: CommitmentView): CommitmentView {
 }
 
 function context(readWork: WorkListViewContext['knowledge']['readWork']): WorkListViewContext {
-  return { knowledge: { readWork }, access, now: () => 1_700_000_100_000, timeZone: 'UTC' };
+  return {
+    knowledge: { readWork, queryGraph: vi.fn() },
+    access,
+    now: () => 1_700_000_100_000,
+    timeZone: 'UTC',
+  };
 }
 
 describe('progressive work.list views', () => {
@@ -452,7 +457,7 @@ describe('progressive work.list views', () => {
 
   it('registers work.list as the product progressive contract', () => {
     const registration = workListActionRegistrations({
-      knowledge: { readWork: vi.fn() },
+      knowledge: { readWork: vi.fn(), queryGraph: vi.fn() },
       timeZone: createTimeZoneSetting('UTC'),
     }).at(0)!;
     expect(registration.contract.name).toBe('work.list');
@@ -461,6 +466,7 @@ describe('progressive work.list views', () => {
       'items',
       'detail',
       'pipeline',
+      'links',
     ]);
     expect(registration.contract.inputSchema.properties?.status).toMatchObject({
       oneOf: expect.arrayContaining([

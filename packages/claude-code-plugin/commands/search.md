@@ -52,7 +52,7 @@ Found {count} matches:
 
 ---
 
-**Tip:** Same topic = decision evolution (newer supersedes older)
+**Tip:** Read a decision's links with `get_decision` and follow them
 ```
 
 ### Without Query (Recent Items)
@@ -74,6 +74,6 @@ Use `/mama:search <query>` for semantic search
 ## Important Notes
 
 - **Semantic search**: Uses embeddings for meaning-based matching
-- **Topic evolution**: Same topic = new decision supersedes older (LLM infers from time order)
+- **Topic evolution**: A newer decision replaces an older one only when saved with `replaces`
 - **Cross-lingual**: Works in Korean and English
 - **Unified search**: Searches both decisions and checkpoints

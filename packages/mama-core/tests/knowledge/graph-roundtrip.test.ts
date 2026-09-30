@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { appendObservationVersion } from '../../src/knowledge/observations.js';
 import { getAdapter } from '../../src/db-manager.js';
@@ -81,12 +81,19 @@ describe('Story R1: knowledge.queryGraph over real adapter', () => {
   });
 
   it('browses visible edges in bounded pages without losing isolated roots', async () => {
+    // Each write gets its own millisecond: the page probe counts an unseen edge written in the
+    // same millisecond as the last visible one, and would point at an empty page.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let clock = Date.now();
+    const tick = () => vi.setSystemTime((clock += 5));
+    onTestFinished(() => vi.useRealTimers());
     const itemId = createNode(getAdapter(), {
       kind: 'item',
       name: 'Visible work',
       scopes: ACCESS.scopes,
     });
     for (const number of [1, 2]) {
+      tick();
       await knowledge.appendJudgment(
         {
           commandId: `cmd-browse-${number}`,
@@ -105,6 +112,7 @@ describe('Story R1: knowledge.queryGraph over real adapter', () => {
       name: 'Hidden work',
       scopes: otherAccess.scopes,
     });
+    tick();
     await knowledge.appendJudgment(
       {
         commandId: 'cmd-browse-hidden',
@@ -117,6 +125,7 @@ describe('Story R1: knowledge.queryGraph over real adapter', () => {
       otherAccess
     );
 
+    tick();
     const first = knowledge.queryGraph({ view: 'browse', limit: 1 }, ACCESS);
     expect(first.edges).toHaveLength(1);
     expect(first.nextCursor).toBeTruthy();

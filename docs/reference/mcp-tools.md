@@ -21,6 +21,8 @@ MAMA OS state in `~/.mama/`. Start with the [plugin setup](../start/claude-code-
 | `save`                           | Required `type`: `decision`, `checkpoint`, or `ingest`. Per-type inputs below.                                                                                                                                                                                                                   |
 | `search`                         | Optional `query`, `type` (`all`, `decision`, `checkpoint`), `limit` (default 10), and `scopes`. A query searches decisions semantically and checkpoint summaries by text. Without a query it returns recent decisions and checkpoints, with decisions first.                                     |
 | `update`                         | Required decision `id` and `outcome` (`success`, `failed`, `partial`, case-insensitive); optional `reason`. `failure` is also normalized to `FAILED`.                                                                                                                                            |
+| `link`                           | Required `from`, `to`, `relation` (`builds_on`, `refines`, `contradicts`, `debates`, `synthesizes`, `mentions`) and `reason`. Links two decisions after saving. With `to` set to an `edgeId` and `relation` `contradicts`, it corrects a wrong link; nothing is edited.                          |
+| `get_decision`                   | Required `id`. One decision with `supersedes`, `superseded_by` and every edge in and out: relation, the other decision's id, topic and first line, the reason, who wrote it (`agent`, `agent_text`, `host`) and any correction.                                                                  |
 | `search_decisions_and_contracts` | Related decisions and contracts for tooling. Optional `query`, `filePath`, `toolName`, `decisionLimit` (5), `contractLimit` (3), `similarityThreshold` (0.7).                                                                                                                                    |
 | `case_timeline_range`            | Bounded timeline for stored case data. Required `case_id`; optional `from`, `to` (ISO dates or epoch milliseconds), `order` (`asc` by default or `desc`), `limit` (100 by default, maximum 500), `include_connector_enrichments`. This public MCP tool is separate from OS work-history actions. |
 
@@ -33,14 +35,15 @@ with scoped `type: "all"` searches, only decisions are returned.
 
 | `save.type`  | Required fields                                                                          | Optional fields                                                                                                                       |
 | ------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `decision`   | `topic`, `decision`, `reasoning`                                                         | `confidence` (0–1, default 0.5), `scopes`, `event_date`, registry `item`, and `actors` (`person`, `role`).                            |
+| `decision`   | `topic`, `decision`, `reasoning`                                                         | `confidence` (0–1, default 0.5), `scopes`, `event_date`, registry `item`, `actors` (`person`, `role`), `links` and `replaces`.        |
 | `checkpoint` | `summary`                                                                                | `next_steps`, `open_files`.                                                                                                           |
 | `ingest`     | Nonempty `messages` array of `{role, content}`; roles are `user`, `assistant`, `system`. | `scopes`, `session_date`. Stores a raw conversation observation without creating decisions. The removed `extract` option is rejected. |
 
-Search before saving related decisions. Reuse a topic for retrieval and supply explicit referenced
-decision IDs in reasoning to create relationships, such as `builds_on: <decision-id>` or
-`supersedes: <decision-id>`. Topic reuse alone does not create an edge. Record what was decided,
-why, and the evidence; use `update` after observing the outcome.
+Search before saving related decisions. Name the ones a decision builds on, debates or combines in
+`links` (`[{id, relation, reason}]`) and the ones it replaces in `replaces` (`[{id, reason}]`);
+nothing is linked for you, and the reasoning text is not parsed. Topic reuse alone does not create
+an edge. Read a decision's edges with `get_decision` and follow them. Record what was decided, why,
+and the evidence; use `update` after observing the outcome.
 
 Decision searches also accept `strict`, `strictness` (`recall`, `balanced`, `strict`), `threshold`,
 `disableRecency`, `includeRelated`, `topicPrefix`, `minLexicalSupport`, and `diagnostics`.

@@ -9,7 +9,6 @@ import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
 import {
   ingestConversation,
   ingestMemory,
-  promoteMemoryStatus,
   saveJudgmentRecord,
   saveMemory,
 } from '../../src/memory/api.js';
@@ -158,59 +157,7 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
       });
     });
 
-    it('applies evolution semantics when a staged memory is promoted to active', async () => {
-      const oldMemory = await saveMemory(getAdapter(), {
-        topic: 'manual_promotion_evolution_contract',
-        kind: 'decision',
-        summary: 'Use SQLite for the memory store',
-        details: 'Initial operator decision',
-        confidence: 0.8,
-        scopes: [PROJECT_SCOPE],
-        source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
-      });
-      const stagedMemory = await saveMemory(getAdapter(), {
-        topic: 'manual_promotion_evolution_contract',
-        kind: 'decision',
-        summary: 'Use SQLite for the memory store with reviewed operator provenance',
-        details: 'Manual ingress review approved the replacement memory',
-        confidence: 0.9,
-        status: 'stale',
-        scopes: [PROJECT_SCOPE],
-        source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
-      });
-
-      await promoteMemoryStatus(getAdapter(), { memoryId: stagedMemory.id, status: 'active' });
-
-      expect(
-        getAdapter()
-          .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
-          .get(oldMemory.id)
-      ).toEqual({ status: 'superseded', superseded_by: stagedMemory.id });
-      expect(
-        getAdapter()
-          .prepare('SELECT status, supersedes, superseded_by FROM decisions WHERE id = ?')
-          .get(stagedMemory.id)
-      ).toEqual({ status: 'active', supersedes: oldMemory.id, superseded_by: null });
-      expect(
-        getAdapter()
-          .prepare(`SELECT relationship FROM decision_edges WHERE from_id = ? AND to_id = ?`)
-          .get(stagedMemory.id, oldMemory.id)
-      ).toEqual({ relationship: 'supersedes' });
-      await promoteMemoryStatus(getAdapter(), { memoryId: stagedMemory.id, status: 'active' });
-
-      expect(
-        getAdapter()
-          .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
-          .get(oldMemory.id)
-      ).toEqual({ status: 'superseded', superseded_by: stagedMemory.id });
-      expect(
-        getAdapter()
-          .prepare('SELECT status, supersedes, superseded_by FROM decisions WHERE id = ?')
-          .get(stagedMemory.id)
-      ).toEqual({ status: 'active', supersedes: oldMemory.id, superseded_by: null });
-    });
-
-    it('keeps staged decisions out of current truth until promotion', async () => {
+    it('keeps a stale decision out of current truth', async () => {
       const stagedMemory = await saveMemory(getAdapter(), {
         topic: 'manual_staged_truth_projection_contract',
         kind: 'decision',
@@ -243,18 +190,6 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
           })
         ).some((row) => row.memory_id === stagedMemory.id)
       ).toBe(false);
-
-      await promoteMemoryStatus(getAdapter(), { memoryId: stagedMemory.id, status: 'active' });
-
-      expect(
-        (
-          await queryRelevantTruth(getAdapter(), {
-            query: 'manual staged truth projection',
-            scopes: [PROJECT_SCOPE],
-            includeHistory: false,
-          })
-        ).some((row) => row.memory_id === stagedMemory.id)
-      ).toBe(true);
     });
   });
 
