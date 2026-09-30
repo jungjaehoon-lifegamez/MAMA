@@ -288,7 +288,8 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
       const callable = new Set(functions.map((fn) => fn.name));
       let calls = 0;
       const runId = context.session?.modelRunId;
-      const { carried, ...result } = await runCodeAct(
+      const before = runId === undefined ? {} : (carriedByRun.get(runId) ?? {});
+      const { carried: after, ...result } = await runCodeAct(
         (input as { code: string }).code,
         {
           functions,
@@ -309,17 +310,24 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
           },
         },
         DEFAULT_TIMEOUT_MS,
-        runId === undefined ? {} : (carriedByRun.get(runId) ?? {})
+        before
       );
-      if (runId !== undefined) {
-        carriedByRun.delete(runId);
-        carriedByRun.set(runId, carried);
-        for (const oldest of carriedByRun.keys()) {
-          if (carriedByRun.size <= CARRIED_RUNS) break;
-          carriedByRun.delete(oldest);
-        }
+      if (runId === undefined) return result;
+      // One model message can carry several code_act calls, each started from the same values:
+      // apply only what this call changed, so it does not replace what the others left.
+      const current = { ...(carriedByRun.get(runId) ?? {}) };
+      for (const key of Object.keys(before)) if (!(key in after)) delete current[key];
+      for (const [key, value] of Object.entries(after))
+        if (JSON.stringify(value) !== JSON.stringify(before[key])) current[key] = value;
+      carriedByRun.delete(runId);
+      carriedByRun.set(runId, current);
+      for (const oldest of carriedByRun.keys()) {
+        if (carriedByRun.size <= CARRIED_RUNS) break;
+        carriedByRun.delete(oldest);
       }
-      return result;
+      const { kept: _ownView, ...rest } = result;
+      const kept = Object.keys(current);
+      return kept.length > 0 ? { ...rest, kept } : rest;
     },
   };
 }

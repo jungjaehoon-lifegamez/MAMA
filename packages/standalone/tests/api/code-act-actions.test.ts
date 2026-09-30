@@ -170,6 +170,23 @@ describe('code_act', () => {
     }
   });
 
+  it('keeps what parallel scripts of one run each left', async () => {
+    const run = surface(['code_act']);
+    // One model message can carry two code_act calls; both start from the same values.
+    await run('globalThis.shared = "kept";', 'run-p');
+    await Promise.all([
+      run('globalThis.a = 1; await new Promise((done) => done());', 'run-p'),
+      run('globalThis.b = 2;', 'run-p'),
+    ]);
+    const both = await run('return [shared, a, b];', 'run-p');
+    expect((both as { data: { value: unknown; kept: string[] } }).data.value).toEqual([
+      'kept',
+      1,
+      2,
+    ]);
+    expect((both as { data: { kept: string[] } }).data.kept.sort()).toEqual(['a', 'b', 'shared']);
+  });
+
   it('keeps the values of the latest runs only', async () => {
     const run = surface(['code_act']);
     for (const id of ['r1', 'r2', 'r3', 'r4', 'r5']) await run(`globalThis.id = "${id}";`, id);
