@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import type { DatabaseAdapter } from '../db-manager.js';
 import { canonicalizeJSON } from '../canonicalize.js';
+import { HOST_EDGE_REASON_PREFIXES } from '../knowledge/graph-query.js';
 import { appendLink, type LinkReceipt } from '../knowledge/links.js';
 import type { RecordLink } from './judgment-types.js';
 import type { MemoryScopeRef } from './types.js';
@@ -99,6 +100,8 @@ export interface DecisionEdgeView {
 
 export interface DecisionCorrection {
   edgeId: string;
+  /** The record that states the correction. */
+  from: string;
   reason: string | null;
   at: number;
   correctedBy?: DecisionCorrection[];
@@ -117,17 +120,16 @@ export interface DecisionWithEdges {
   edges: DecisionEdgeView[];
 }
 
-const HOST_REASON_PREFIXES = ['Semantically similar', 'Updated fact', 'Related but distinct'];
-
 function legacySource(reason: string | null, createdBy: string | null): DecisionEdgeView['source'] {
-  if (reason && HOST_REASON_PREFIXES.some((prefix) => reason.startsWith(prefix))) return 'host';
+  if (reason && HOST_EDGE_REASON_PREFIXES.some((prefix) => reason.startsWith(prefix)))
+    return 'host';
   if (createdBy === 'llm' || reason?.startsWith('Auto-detected from reasoning'))
     return 'agent_text';
   return 'user';
 }
 
 /** Links that contradict these edges, and the links that contradict those, in two queries per level. */
-function correctionsOf(
+export function correctionsOf(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   edgeIds: readonly string[]
 ): Map<string, DecisionCorrection[]> {
@@ -137,19 +139,25 @@ function correctionsOf(
     const placeholders = frontier.map(() => '?').join(', ');
     const rows = adapter
       .prepare(
-        `SELECT edge_id, object_id, reason_text, created_at FROM twin_edges
+        `SELECT edge_id, subject_id, object_id, reason_text, created_at FROM twin_edges
           WHERE object_kind = 'edge' AND edge_type = 'contradicts' AND object_id IN (${placeholders})
           ORDER BY created_at, rowid`
       )
       .all(...frontier) as Array<{
       edge_id: string;
+      subject_id: string;
       object_id: string;
       reason_text: string | null;
       created_at: number;
     }>;
     for (const row of rows) {
       const list = byTarget.get(row.object_id) ?? [];
-      list.push({ edgeId: row.edge_id, reason: row.reason_text, at: row.created_at });
+      list.push({
+        edgeId: row.edge_id,
+        from: row.subject_id,
+        reason: row.reason_text,
+        at: row.created_at,
+      });
       byTarget.set(row.object_id, list);
     }
     // A link names only an edge that already exists, so the chain has no cycle.

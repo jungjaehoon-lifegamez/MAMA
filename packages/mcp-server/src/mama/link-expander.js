@@ -11,6 +11,8 @@
 
 const { info, error: logError } = require('@jungjaehoon/mama-core/debug-logger');
 const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+// The edges an agent stated; the host's similarity rows are not followed (owner, 2026-09-30).
+const { STATED_DECISION_EDGES } = require('@jungjaehoon/mama-core/knowledge');
 
 /**
  * Link Expander for decision graph traversal
@@ -118,45 +120,18 @@ class LinkExpander {
    * @returns {Array<Object>} Array of links
    */
   _getLinks(adapter, decisionId, direction, approvedOnly) {
-    try {
-      let query;
-      let params;
-
-      if (direction === 'outgoing') {
-        // Links FROM this decision TO others
-        query = `
-          SELECT from_id, to_id, relationship, reason, weight,
-                 created_by, approved_by_user, decision_id, evidence, created_at
-          FROM decision_edges
-          WHERE from_id = ?
-        `;
-        params = [decisionId];
-      } else {
-        // Links TO this decision FROM others
-        query = `
-          SELECT from_id, to_id, relationship, reason, weight,
-                 created_by, approved_by_user, decision_id, evidence, created_at
-          FROM decision_edges
-          WHERE to_id = ?
-        `;
-        params = [decisionId];
-      }
-
-      // Add approval filter
-      if (approvedOnly) {
-        query += ' AND approved_by_user = 1';
-      }
-
-      query += ' ORDER BY created_at DESC';
-
-      const stmt = adapter.prepare(query);
-      const links = stmt.all(...params);
-
-      return links;
-    } catch (error) {
-      logError(`[LinkExpander] Failed to get ${direction} links: ${error.message}`);
-      return [];
-    }
+    const end = direction === 'outgoing' ? 'from_id' : 'to_id';
+    // A link has no approval flag; a legacy row may.
+    const approval = approvedOnly ? ' AND (approved_by_user = 1 OR approved_by_user IS NULL)' : '';
+    return adapter
+      .prepare(
+        `SELECT from_id, to_id, relationship, reason, weight,
+                created_by, approved_by_user, decision_id, evidence, created_at
+           FROM ${STATED_DECISION_EDGES} e
+          WHERE ${end} = ?${approval}
+          ORDER BY created_at DESC`
+      )
+      .all(decisionId);
   }
 
   /**
@@ -178,32 +153,10 @@ class LinkExpander {
    * @returns {Object} {outgoing: number, incoming: number, total: number}
    */
   countLinks(decisionId, approvedOnly = true) {
-    try {
-      const adapter = getAdapter();
-
-      let outgoingQuery = 'SELECT COUNT(*) as count FROM decision_edges WHERE from_id = ?';
-      let incomingQuery = 'SELECT COUNT(*) as count FROM decision_edges WHERE to_id = ?';
-
-      if (approvedOnly) {
-        outgoingQuery += ' AND approved_by_user = 1';
-        incomingQuery += ' AND approved_by_user = 1';
-      }
-
-      const outgoingStmt = adapter.prepare(outgoingQuery);
-      const incomingStmt = adapter.prepare(incomingQuery);
-
-      const outgoingCount = outgoingStmt.get(decisionId).count;
-      const incomingCount = incomingStmt.get(decisionId).count;
-
-      return {
-        outgoing: outgoingCount,
-        incoming: incomingCount,
-        total: outgoingCount + incomingCount,
-      };
-    } catch (error) {
-      logError(`[LinkExpander] Failed to count links: ${error.message}`);
-      return { outgoing: 0, incoming: 0, total: 0 };
-    }
+    const adapter = getAdapter();
+    const outgoing = this._getLinks(adapter, decisionId, 'outgoing', approvedOnly).length;
+    const incoming = this._getLinks(adapter, decisionId, 'incoming', approvedOnly).length;
+    return { outgoing, incoming, total: outgoing + incoming };
   }
 }
 

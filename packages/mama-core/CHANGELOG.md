@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Search expansion (`suggest`, `memory.search`, recall's related records) follows only the edges
+  an agent stated: links between memories and legacy rows parsed from an agent's reasoning. The
+  host's similarity rows and revision chain are no longer followed. A record reached through a link
+  says so in the default results: `graph_source` (relation), `related_to` (the hit it came from),
+  `edge_reason`, and `edge_corrected_by` when a later link contradicts it and the reader may see
+  the record that states the correction. Expansion errors are raised instead of logged and
+  skipped. `STATED_DECISION_EDGES` is exported for readers of the same edges.
+- `queryDecisionGraph` no longer attaches an `edges` list to each decision (nothing read it);
+  `DecisionEdgeRow` is removed.
+
 - **Breaking:** the host writes no edge the agent did not state. A work revision or withdrawal no
   longer links to the previous revision (added in 4.1.0); the revision order is in the
   commitment's assignments. Migration 099 now only stamps its version.

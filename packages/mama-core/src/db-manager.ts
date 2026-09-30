@@ -101,7 +101,6 @@ export interface DecisionRecord {
   refined_from?: string | string[] | null;
   created_at: number;
   updated_at?: number;
-  edges?: DecisionEdgeRow[];
   /** ISO 8601 date when the event actually occurred. Null if not set. */
   event_date?: string | null;
   /** Source event timestamp in milliseconds when known. Null if not set. */
@@ -116,20 +115,9 @@ export interface OutcomeData {
   confidence?: number | null;
 }
 
-export interface DecisionEdgeRow {
-  from_id: string;
-  to_id: string;
-  relationship: string;
-  reason?: string | null;
-  weight?: number;
-  created_at?: number;
-  created_by?: string;
-  approved_by_user?: number | null;
-  decision_id?: string | null;
-  evidence?: string | null;
-}
-
 export interface SemanticEdgeItem {
+  /** The link's id when it is a `twin_edges` row; null for a legacy `decision_edges` row. */
+  edge_id?: string | null;
   from_id: string;
   to_id: string;
   relationship: string;
