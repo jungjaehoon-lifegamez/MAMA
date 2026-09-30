@@ -24,7 +24,7 @@ const tableColumnCache = new WeakMap<TwinRefVisibilityAdapter, Map<string, Set<s
 // Keep memory-truth quarantine semantics excluded for legacy/backcompat rows even though the
 // decisions.status terminal states: 'superseded' is history a caller holding
 // scope may read under includeReplaced; the rest are holds excluded always.
-const RETIRED_MEMORY_STATUSES = new Set(['quarantined', 'contradicted', 'stale']);
+const RETIRED_MEMORY_STATUSES = new Set(['contradicted', 'stale']);
 
 export class TwinRefNotVisibleError extends Error {
   constructor(ref: TwinRef) {

@@ -407,9 +407,12 @@ describe('Story M1: memory.save through the unified action path', () => {
       );
 
       expect(result.status).toBe('completed');
-      const data = result.data as { success?: boolean; results?: Array<{ summary?: string }> };
+      const data = result.data as { success?: boolean; results?: Array<{ decision?: string }> };
       expect(data.success).not.toBe(false);
-      const summaries = (data.results ?? []).map((row) => row.summary);
+      // A search row carries the text as `decision`; reading `summary` compared undefined values.
+      const summaries = (data.results ?? []).map((row) => row.decision);
+      // The in-scope record is found, so the other scope's absence is the bound, not an empty page.
+      expect(summaries).toContain('deploys freeze over the holiday');
       expect(summaries).not.toContain('holiday deploy freeze elsewhere');
     });
 
@@ -566,6 +569,7 @@ describe('Story M1: memory.save through the unified action path', () => {
       // direct caller (unit/memory-v2-recall-ranking.test.ts reads it there).
       expect(data.profile).toBeDefined();
       const summaries = (data.memories ?? []).map((row) => row.summary ?? '');
+      expect(summaries).toContain('recall-visible scoped decision');
       expect(summaries).not.toContain('recall-hidden other-scope decision');
     });
 

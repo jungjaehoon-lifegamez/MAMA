@@ -59,7 +59,7 @@ export interface EventRow {
  * Statuses every memory read path excludes (source-readers.ts:293, and recall's own
  * history exclusion). Mirrored so a citation cannot present a retired record as current.
  */
-const RETIRED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
+const RETIRED_MEMORY_STATUSES = new Set(['superseded', 'contradicted', 'stale']);
 
 export interface LiveProvenanceOptions {
   /** Scopes active NOW. Not the scopes the memory was written under. */

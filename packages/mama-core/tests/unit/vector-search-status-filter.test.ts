@@ -74,7 +74,6 @@ describe('Story R1: vectorSearch status pre-filter', () => {
 
       const filtered = adapter.vectorSearch(vec(1), 5, undefined, [
         'superseded',
-        'quarantined',
         'contradicted',
         'stale',
       ]);
@@ -88,7 +87,7 @@ describe('Story R1: vectorSearch status pre-filter', () => {
     it('refreshDecisionStatusCache re-includes a previously excluded row', () => {
       const adapter = setupAdapter();
       const rid = seedDecision(adapter, 'p1', 'stale', null, 1);
-      const excluded = ['superseded', 'quarantined', 'contradicted', 'stale'];
+      const excluded = ['superseded', 'contradicted', 'stale'];
 
       expect(adapter.vectorSearch(vec(1), 5, undefined, excluded)!.length).toBe(0);
 
@@ -109,7 +108,7 @@ describe('Story R1: vectorSearch status pre-filter', () => {
       const rid1 = seedDecision(adapter, 'a1', 'active', null, 1);
       const rid2 = seedDecision(adapter, 'a2', 'active', null, 2);
 
-      const excluded = ['superseded', 'quarantined', 'contradicted', 'stale'];
+      const excluded = ['superseded', 'contradicted', 'stale'];
       const before = adapter.vectorSearch(vec(1), 5, undefined, excluded);
       expect(before!.map((r) => r.rowid).sort()).toEqual([rid1, rid2].sort());
 

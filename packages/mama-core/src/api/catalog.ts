@@ -1685,7 +1685,8 @@ export function coreActionRegistrations(
             reason: typeof body.reason === 'string' ? body.reason : '',
           },
           { ...writeAccess, scopes },
-          requiredOperationId(context, 'memory.retire')
+          requiredOperationId(context, 'memory.retire'),
+          context.session
         );
         recordWriteReceipt(context, 'memory.retire', retired.id);
         return retired;
